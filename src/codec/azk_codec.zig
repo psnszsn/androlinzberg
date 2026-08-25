@@ -1,5 +1,6 @@
 //! azk_codec: MediaCodec backend over the Nix-provided system FFmpeg.
-//! C ABI, dlopened by the native island's JNI wrapper.
+//! Called directly by the Zig JNI adapter and also exported as a C ABI for
+//! native tests and the video-layer transport.
 //!
 //! Audio decode path (phase 2 item 3a): send() always accepts a packet by
 //! draining pending frames into an internal queue first; receive() converts
@@ -31,7 +32,7 @@ const VFrame = struct {
     pts: i64,
 };
 
-const Dec = struct {
+pub const Dec = struct {
     ctx: *c.AVCodecContext,
     pkt: *c.AVPacket,
     frame: *c.AVFrame,

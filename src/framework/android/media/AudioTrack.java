@@ -1,4 +1,4 @@
-/* artzig shim: PCM playback over PipeWire (azk_audio.cpp); 16-bit PCM only.
+/* artzig shim: PCM playback over PipeWire (platform/audio.zig); 16-bit PCM only.
  * Non-PCM-16 input is accepted but converted/refused at write time. */
 package android.media;
 

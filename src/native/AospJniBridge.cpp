@@ -1,4 +1,4 @@
-// artzig: register the real AOSP android.graphics JNI natives with a running ART,
+// AOSP C++ ABI bridge: register the framework/HWUI JNI natives with ART,
 // mirroring libs/hwui/apex/jni_runtime.cpp (layoutlib's entry) minus the classes
 // we don't ship yet (Movie and PDF).
 #include <GraphicsJNI.h>
@@ -26,7 +26,6 @@ extern int register_android_graphics_RenderEffect(JNIEnv*);
 extern int register_android_graphics_Typeface(JNIEnv*);
 
 namespace android {
-extern int register_android_hardware_HardwareBuffer(JNIEnv*);
 extern int register_android_graphics_Canvas(JNIEnv*);
 extern int register_android_graphics_CanvasProperty(JNIEnv*);
 extern int register_android_graphics_ColorFilter(JNIEnv*);
@@ -79,15 +78,13 @@ extern int register_android_database_SQLiteGlobal(JNIEnv*);
 extern int register_android_database_SQLiteDebug(JNIEnv*);
 extern int register_android_database_SQLiteRawStatement(JNIEnv*);
 }  // namespace android
-extern "C" int azk_register_audio(JNIEnv*);
-extern "C" int azk_register_codec(JNIEnv*);
-extern "C" int azk_register_host_renderer(JNIEnv*);
 namespace android {
 namespace azk_dummy_reopen {}
 extern int register_android_graphics_drawable_AnimatedVectorDrawable(JNIEnv*);
 }  // namespace android
 extern int register_android_graphics_drawable_AnimatedImageDrawable(JNIEnv*);
 extern int register_android_graphics_ImageDecoder(JNIEnv*);
+extern "C" int azk_register_hardware_buffer(JNIEnv*);
 
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
 // ApkAssets callbacks). The VM is stored at registration time.
@@ -124,7 +121,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
         f, #f \
     }
     static const Entry entries[] = {
-            E(android::register_android_hardware_HardwareBuffer),
+            E(azk_register_hardware_buffer),
             E(android::register_android_graphics_Canvas),
             E(android::register_android_graphics_Color),
             E(android::register_android_graphics_ColorSpace),
@@ -176,7 +173,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_animation_PropertyValuesHolder),
             E(android::register_android_view_DisplayListCanvas),
             E(android::register_android_view_ThreadedRenderer),
-            E(azk_register_host_renderer),
             E(android::register_android_graphics_HardwareRendererObserver),
             E(android::register_android_graphics_HardwareBufferRenderer),
             E(android::register_android_graphics_animation_NativeInterpolatorFactory),
@@ -187,8 +183,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_database_SQLiteGlobal),
             E(android::register_android_database_SQLiteDebug),
             E(android::register_android_database_SQLiteRawStatement),
-            E(azk_register_audio),
-            E(azk_register_codec),
             E(android::register_android_graphics_drawable_VectorDrawable),
             E(android::register_android_graphics_drawable_AnimatedVectorDrawable),
             E(register_android_graphics_drawable_AnimatedImageDrawable),

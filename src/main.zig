@@ -1,10 +1,10 @@
-//! androlinzberg app launcher.
-//! M0 mode (`--smoke`): open a Wayland window, draw a Skia frame, keep
-//! presenting until closed (or `--frames N` then exit). No JVM involved.
+//! androlinzberg launcher: boot ART, register the Android platform natives,
+//! and present Android framework rendering on Wayland.
 const std = @import("std");
 const wayland = @import("platform/wayland.zig");
 const video_layers = @import("platform/video_layers.zig");
 const fonts = @import("platform/fonts.zig");
+const host_natives = @import("host_natives");
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern "c" fn dlopen(path: [*:0]const u8, flags: c_int) ?*anyopaque;
 const Timespec = extern struct { sec: i64, nsec: i64 };
@@ -13,30 +13,6 @@ fn monotonicMs() i64 {
     var ts: Timespec = undefined;
     _ = clock_gettime(1, &ts); // CLOCK_MONOTONIC
     return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
-}
-// Skia smoke shim (M0): lives in the native island (build/island.zig); resolved with dlsym.
-const Shim = struct {
-    wrap: *const fn (c_int, c_int, usize, ?*anyopaque) callconv(.c) ?*anyopaque,
-    destroy: *const fn (?*anyopaque) callconv(.c) void,
-    canvas: *const fn (?*anyopaque) callconv(.c) ?*anyopaque,
-    flush: *const fn (?*anyopaque) callconv(.c) void,
-    clear: *const fn (?*anyopaque, u32) callconv(.c) void,
-    rect: *const fn (?*anyopaque, f32, f32, f32, f32, u32) callconv(.c) void,
-    circle: *const fn (?*anyopaque, f32, f32, f32, u32) callconv(.c) void,
-    text: *const fn (?*anyopaque, [*:0]const u8, f32, f32, f32, u32) callconv(.c) void,
-};
-var skia: Shim = undefined;
-fn loadShim(lib: *std.DynLib) !void {
-    skia = .{
-        .wrap = lib.lookup(@TypeOf(skia.wrap), "azk_surface_wrap_pixels") orelse return error.SymbolNotFound,
-        .destroy = lib.lookup(@TypeOf(skia.destroy), "azk_surface_destroy") orelse return error.SymbolNotFound,
-        .canvas = lib.lookup(@TypeOf(skia.canvas), "azk_surface_canvas") orelse return error.SymbolNotFound,
-        .flush = lib.lookup(@TypeOf(skia.flush), "azk_surface_flush") orelse return error.SymbolNotFound,
-        .clear = lib.lookup(@TypeOf(skia.clear), "azk_canvas_clear") orelse return error.SymbolNotFound,
-        .rect = lib.lookup(@TypeOf(skia.rect), "azk_canvas_draw_rect") orelse return error.SymbolNotFound,
-        .circle = lib.lookup(@TypeOf(skia.circle), "azk_canvas_draw_circle") orelse return error.SymbolNotFound,
-        .text = lib.lookup(@TypeOf(skia.text), "azk_canvas_draw_text") orelse return error.SymbolNotFound,
-    };
 }
 const art = @import("art");
 // force the azk_codec C-ABI exports (ffmpeg MediaCodec backend) into the binary
@@ -49,7 +25,6 @@ const usage =
     \\
     \\usage: androlinzberg [options] <app.apk>
     \\       androlinzberg --java            (AZK_DRAW_CLASS entry, default GraphicsSmoke)
-    \\       androlinzberg [--hwui] [--fullscreen] [--frames N]   (M0/M1 smoke: Skia frames, no JVM)
     \\       androlinzberg --codec-selftest | --codec-make-mp3 | --codec-make-m4v | --javatest
     \\
     \\Paths are resolved relative to the executable's install tree (zig-out/):
@@ -126,15 +101,10 @@ fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtime_ro
     _ = setenv("XDG_DATA_DIRS", data_dirs, 1);
 }
 
-const HwuiSmokeFn = *const fn (pixels: ?*anyopaque, w: c_int, h: c_int, row_bytes: usize) callconv(.c) c_int;
-var hwui_smoke: ?HwuiSmokeFn = null;
-
 pub fn main(init: std.process.Init) !void {
-    const gpa = init.gpa;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     var frames_limit: ?u32 = null;
-    var use_hwui = false;
     var use_java = false;
     var fullscreen = false;
     var apk: ?[]const u8 = null;
@@ -149,8 +119,6 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, args[i], "--frames") and i + 1 < args.len) {
             i += 1;
             frames_limit = try std.fmt.parseInt(u32, args[i], 10);
-        } else if (std.mem.eql(u8, args[i], "--hwui")) {
-            use_hwui = true;
         } else if (std.mem.eql(u8, args[i], "--java")) {
             use_java = true;
         } else if (std.mem.eql(u8, args[i], "--fullscreen")) {
@@ -172,6 +140,7 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, args[i], "--javatest")) {
             var lib = try std.DynLib.open("zig-out/lib/libandroid_platform.so");
             const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
+            const hwui = try lookupHwuiBridges(&lib);
             var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
                 .classpath = &.{"zig-out/framework/classes.dex"},
                 .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
@@ -179,6 +148,7 @@ pub fn main(init: std.process.Init) !void {
             defer rt.releaseProcessState();
             if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
                 if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
+                try host_natives.register(@ptrCast(rt.env), hwui);
             }
             const cls_name = init.minimal.environ.getPosix("AZK_TEST_CLASS") orelse "dev.artzig.TestMain";
             try rt.runMain(cls_name, &.{});
@@ -192,71 +162,11 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    if (use_java) return javaMain(init, frames_limit, apk, fullscreen);
-
-    // the native island (AOSP hwui + static Skia + our shims)
-    const island_path = try std.fs.path.join(init.arena.allocator(), &.{ try installTree(init), "lib", "libandroid_platform.so" });
-    var lib = std.DynLib.open(island_path) catch |e| {
-        std.debug.print("failed to load {s}: {}\n", .{ island_path, e });
-        return e;
-    };
-    try loadShim(&lib);
-    if (use_hwui) {
-        hwui_smoke = lib.lookup(HwuiSmokeFn, "azk_hwui_smoke") orelse return error.SymbolNotFound;
-    }
-
-    const win = try wayland.Window.initOpts(gpa, 800, 600, "androlinzberg", fullscreen);
-    defer win.deinit();
-    var frame_count: u32 = 0;
-
-    // draw + present the first frame
-    try drawFrame(win, frame_count);
-    frame_count += 1;
-
-    outer: while (true) {
-        const events = try win.waitEvents();
-        var need_frame = false;
-        for (events) |ev| switch (ev) {
-            .close => break :outer,
-            .configure => need_frame = true,
-            .frame_done => need_frame = true,
-            .key => |key_event| if (key_event.pressed and key_event.keysym == 0xffc8) {
-                win.toggleFullscreen(); // XKB_KEY_F11
-            },
-            else => {},
-        };
-        if (need_frame) {
-            try drawFrame(win, frame_count);
-            frame_count += 1;
-            if (frames_limit) |lim| {
-                if (frame_count >= lim) break;
-            }
-        }
-    }
-    std.debug.print("androlinzberg: exiting after {d} frames\n", .{frame_count});
-}
-
-fn drawFrame(win: *wayland.Window, frame: u32) !void {
-    const buf = try win.acquire();
-    if (hwui_smoke) |f| {
-        if (f(buf.pixels.ptr, buf.width, buf.height, buf.stride) != 0) return error.HwuiSmoke;
-        try win.present(buf);
+    if (!use_java) {
+        std.debug.print(usage, .{});
         return;
     }
-    const surface = skia.wrap(buf.width, buf.height, buf.stride, buf.pixels.ptr) orelse return error.SkiaSurface;
-    defer skia.destroy(surface);
-    const canvas = skia.canvas(surface).?;
-
-    skia.clear(canvas, 0xff202430);
-    const fw: f32 = @floatFromInt(buf.width);
-    const fh: f32 = @floatFromInt(buf.height);
-    skia.rect(canvas, fw * 0.1, fh * 0.1, fw * 0.9, fh * 0.35, 0xff4caf50);
-    skia.circle(canvas, fw * 0.5, fh * 0.62, @min(fw, fh) * 0.18, 0xffff5722);
-    skia.text(canvas, "androlinzberg: Skia on Wayland", fw * 0.1, fh * 0.9, 32.0, 0xffffffff);
-    _ = frame;
-
-    skia.flush(surface);
-    try win.present(buf);
+    return javaMain(init, frames_limit, apk, fullscreen);
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +175,15 @@ fn drawFrame(win: *wayland.Window, frame: u32) !void {
 
 const RegisterFn = *const fn (env: *anyopaque) callconv(.c) c_int;
 const BitmapReadFn = *const fn (env: *anyopaque, bitmap: art.jni.jobject, dst: ?*anyopaque, w: c_int, h: c_int, row_bytes: usize) callconv(.c) c_int;
-const BindWaylandFn = *const fn (display: *anyopaque, surface: *anyopaque) callconv(.c) void;
+const ConfigureHostFn = *const fn (proxy: *anyopaque, display: ?*anyopaque, surface: ?*anyopaque, width: c_int, height: c_int) callconv(.c) void;
+const DestroyHostFn = *const fn (proxy: *anyopaque) callconv(.c) void;
+
+fn lookupHwuiBridges(lib: *std.DynLib) !host_natives.HwuiBridges {
+    return .{
+        .configure = lib.lookup(ConfigureHostFn, "azk_hwui_configure_host_surface") orelse return error.SymbolNotFound,
+        .destroy = lib.lookup(DestroyHostFn, "azk_hwui_destroy_host_surface") orelse return error.SymbolNotFound,
+    };
+}
 const HardwareDrawAbi = enum { physical, scaled, legacy };
 
 fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullscreen: bool) !void {
@@ -305,7 +223,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     };
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const bitmap_read = lib.lookup(BitmapReadFn, "azk_bitmap_read") orelse return error.SymbolNotFound;
-    const bind_wayland = lib.lookup(BindWaylandFn, "azk_host_renderer_set_wayland") orelse return error.SymbolNotFound;
+    const hwui = try lookupHwuiBridges(&lib);
 
     // System fonts: unless the user points ARTZIG_FONT_FALLBACK_XML at a
     // hand-made config, generate one from fontconfig (must precede ART boot:
@@ -337,6 +255,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     defer rt.releaseProcessState();
     const env = rt.env;
     if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
+    try host_natives.register(@ptrCast(env), hwui);
 
     const e = art.Env{ .env = env };
     // entry class: AZK_DRAW_CLASS, else ApkHost when an APK was given
@@ -509,7 +428,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     const win = try wayland.Window.initOpts(gpa, init_w, init_h, "androlinzberg", fullscreen);
     defer win.deinit();
     if (draw_hardware != null) {
-        bind_wayland(@ptrCast(win.display), @ptrCast(win.surface));
+        host_natives.bindWayland(@ptrCast(win.display), @ptrCast(win.surface));
     }
     video_layers.register(gpa, init.io, win, @ptrCast(env), draw_hardware_abi == .physical) catch |err| {
         std.debug.print("video layers unavailable: {}\n", .{err});

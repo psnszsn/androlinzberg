@@ -1,6 +1,6 @@
 #include "ArtzigGpuPipeline.h"
 
-#include "HostHardwareBuffer.h"
+#include "HardwareBufferRender.h"
 
 #include <algorithm>
 #include <chrono>

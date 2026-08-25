@@ -44,10 +44,19 @@ PipeWire.
 static Skia, the native island (hwui and JNI), the framework dex, the
 resources, and the AIDL code. ATL uses meson and the system Skia.
 
+**The native boundary.** Linux integration and application-owned native logic
+are Zig: MediaCodec JNI, AudioTrack, PipeWire state, Wayland target state,
+HardwareBuffer/GBM, SQLite compatibility, and POSIX shims. C++ remains only
+where the retained HWUI/Skia stack or an AOSP C++ ABI requires it. The exact
+allowlist and ownership rules are documented in
+[`docs/native-boundary.md`](docs/native-boundary.md) and checked by
+`zig build cpp-audit`.
+
 ## Run
 
 ```
 zig build
+zig build native-test cpp-audit
 zig build run -- path/to/app.apk
 ```
 

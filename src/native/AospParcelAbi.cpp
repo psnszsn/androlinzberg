@@ -1,4 +1,4 @@
-// artzig: link-time stand-ins for the libbinder Parcel members referenced by the
+// AOSP C++ ABI stand-ins for the libbinder Parcel members referenced by the
 // input JNI's parcel paths (never taken in-process: parcelForJavaObject -> null,
 // and our Java Parcel is pure-java).
 #include <binder/Parcel.h>

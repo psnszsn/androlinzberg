@@ -10,6 +10,7 @@ pub const Options = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     skia: *std.Build.Step.Compile,
+    art: *std.Build.Module,
     /// output dir of tools/gen-aidl-cpp.sh (build step); contains gen/
     aidl_cpp: std.Build.LazyPath,
 };
@@ -56,11 +57,9 @@ const minikin_srcs = [_][]const u8{
 const skia_extra_srcs = [_][]const u8{"tools/SkSharingProc.cpp"};
 
 const our_srcs = [_][]const u8{
-    "src/native/ArtzigGpuPipeline.cpp",       "src/native/HostHardwareBuffer.cpp",
-    "src/native/azk_host_renderer.cpp",       "src/native/azk_codec_jni.cpp",
-    "src/native/azk_jni.cpp",                 "src/native/azk_audio.cpp",
-    "src/native/posix_strerror_r_compat.cpp", "src/native/azk_entry.cpp",
-    "src/native/parcel_compat.cpp",           "src/platform/skia_shim.cpp",
+    "src/native/ArtzigGpuPipeline.cpp", "src/native/HardwareBufferRender.cpp",
+    "src/native/HwuiRenderProxyBridge.cpp", "src/native/AospJniBridge.cpp",
+    "src/native/AospParcelAbi.cpp",
 };
 
 pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
@@ -77,10 +76,12 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     };
 
     const mod = b.createModule(.{
+        .root_source_file = b.path("src/native/platform_abi.zig"),
         .target = o.target,
         .optimize = o.optimize,
         .link_libc = true,
         .link_libcpp = true,
+        .imports = &.{.{ .name = "art", .module = o.art }},
     });
     const lib = b.addLibrary(.{ .name = "android_platform", .linkage = .dynamic, .root_module = mod });
 
@@ -161,7 +162,6 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     g.add(b.pathJoin(&.{ r.az, "extra/incremental_delivery/incfs/util" }), &.{"map_ptr.cpp"}, &.{});
     g.add(b.pathJoin(&.{ r.az, "extra/frameworks-native/libs/input" }), &gen.input_srcs, &.{ fn_inc, I(b, b.pathJoin(&.{ r.az, "extra/frameworks-native/libs/input" })), input_compat_inc, aidl_inc, binder_inc });
     g.add(b.pathJoin(&.{ r.az, "extra/frameworks-native/libs/attestation" }), &gen.attestation_srcs, &.{fn_inc});
-    g.add(b.pathJoin(&.{ r.app, "src/native/sqlite-compat" }), &.{"sqlite3_android.cpp"}, &.{});
     g.add(b.pathJoin(&.{ r.fb, "core/jni" }), &gen.core_jni_srcs, &.{ I(b, b.pathJoin(&.{ r.app, "src/native/sqlite-compat" })), I(b, b.pathJoin(&.{ r.fb, "core/jni" })), I(b, b.pathJoin(&.{ r.fb, "core/jni/include" })), zip_inc, aidl_inc, apex_inc, input_compat_inc, binder_inc });
     g.add(r.hw, &gen.hwui_srcs, &.{ apex_inc, I(b, b.pathJoin(&.{ r.app, "src/native" })) });
     g.add(r.hw, &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc });
@@ -171,9 +171,9 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
 
     mod.linkLibrary(o.skia);
     for ([_][]const u8{
-        "harfbuzz", "harfbuzz-icu", "freetype2", "fontconfig", "icu-uc",          "icu-i18n",
-        "libpng",   "zlib",         "openssl",   "sqlite3",    "libpipewire-0.3", "egl",
-        "gl",       "wayland-egl",  "gbm",       "libdrm",
+        "harfbuzz",    "harfbuzz-icu", "freetype2", "fontconfig", "icu-uc", "icu-i18n",
+        "libpng",      "zlib",         "openssl",   "sqlite3",    "egl",    "gl",
+        "wayland-egl", "gbm",          "libdrm",
     }) |pc| mod.linkSystemLibrary(pc, .{ .needed = true });
     return lib;
 }

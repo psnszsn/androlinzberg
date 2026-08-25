@@ -3,13 +3,20 @@
 //!
 //! Steps:
 //!   zig build            — build the launcher and ART runtime (zig-out/bin/)
-//!   zig build run -- ... — run it (M0: --smoke draws Skia frames on Wayland)
+//!   zig build run -- ... — run an APK or Java graphics probe
 const std = @import("std");
 const Scanner = @import("wayland").Scanner;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{ .default_target = .{ .cpu_model = .baseline } });
     const optimize = b.standardOptimizeOption(.{});
+
+    const cpp_audit = b.addSystemCommand(&.{ "bash", "tools/check-native-boundary.sh" });
+    cpp_audit.addFileInput(b.path("tools/check-native-boundary.sh"));
+    cpp_audit.setName("audit application C++ boundary");
+    const cpp_audit_step = b.step("cpp-audit", "Verify that C++ is limited to HWUI/Skia/AOSP ABI bridges");
+    cpp_audit_step.dependOn(&cpp_audit.step);
+    b.getInstallStep().dependOn(&cpp_audit.step);
 
     // --- zig-wayland: generate protocol bindings
     const scanner = Scanner.create(b, .{});
@@ -76,6 +83,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .skia = skia_lib,
+        .art = art_mod,
         .aidl_cpp = aidl_cpp,
     });
     b.installArtifact(island);
@@ -164,7 +172,84 @@ pub fn build(b: *std.Build) void {
     }
     codec_mod.linkSystemLibrary("libva", .{ .needed = true, .use_pkg_config = .force });
     exe.root_module.addImport("azk_codec", codec_mod);
+    const codec_jni_mod = b.createModule(.{
+        .root_source_file = b.path("src/codec/jni.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "art", .module = art_mod },
+            .{ .name = "azk_codec", .module = codec_mod },
+        },
+    });
+    const pipewire_tc = b.addTranslateC(.{
+        .root_source_file = b.path("src/platform/azk_pipewire.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    pipewire_tc.addIncludePath(b.path("src/platform"));
+    const audio_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/audio.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "art", .module = art_mod },
+            .{ .name = "pipewire", .module = pipewire_tc.createModule() },
+        },
+    });
+    audio_mod.addIncludePath(b.path("src/platform"));
+    audio_mod.addCSourceFile(.{
+        .file = b.path("src/platform/azk_pipewire.c"),
+        .flags = &.{ "-std=c11", "-D_GNU_SOURCE" },
+    });
+    var pipewire_code: u8 = 0;
+    const pipewire_cflags = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "libpipewire-0.3" }, &pipewire_code, .ignore) catch @panic("pkg-config libpipewire-0.3");
+    var pipewire_flags = std.mem.tokenizeAny(u8, pipewire_cflags, " \n");
+    while (pipewire_flags.next()) |flag| if (std.mem.startsWith(u8, flag, "-I")) {
+        audio_mod.addIncludePath(.{ .cwd_relative = b.dupe(flag[2..]) });
+    };
+    audio_mod.linkSystemLibrary("pipewire-0.3", .{ .needed = true, .use_pkg_config = .no });
+    const host_renderer_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/host_renderer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "art", .module = art_mod }},
+    });
+    const host_natives_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/host_natives.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "art", .module = art_mod },
+            .{ .name = "audio", .module = audio_mod },
+            .{ .name = "codec_jni", .module = codec_jni_mod },
+            .{ .name = "host_renderer", .module = host_renderer_mod },
+        },
+    });
+    exe.root_module.addImport("host_natives", host_natives_mod);
     exe.rdynamic = true;
+
+    const audio_tests = b.addTest(.{ .root_module = audio_mod });
+    const run_audio_tests = b.addRunArtifact(audio_tests);
+    const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
+    const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
+    const platform_abi_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/native/platform_abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "art", .module = art_mod }},
+    });
+    const platform_abi_check = b.addObject(.{ .name = "platform-abi-check", .root_module = platform_abi_test_mod });
+    const launcher_check = b.addObject(.{ .name = "launcher-check", .root_module = exe.root_module });
+    const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
+    native_test_step.dependOn(&run_audio_tests.step);
+    native_test_step.dependOn(&codec_jni_check.step);
+    native_test_step.dependOn(&host_renderer_check.step);
+    native_test_step.dependOn(&platform_abi_check.step);
+    native_test_step.dependOn(&launcher_check.step);
+    native_test_step.dependOn(&cpp_audit.step);
 
     // run the *installed* launcher: it resolves the island/dex/res relative to
     // its own install tree (zig-out/), which the cache-dir copy does not have.
