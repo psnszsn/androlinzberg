@@ -27,7 +27,7 @@ typedef struct AzkHardwareFrame {
     int owns_va_surface;
 } AzkHardwareFrame;
 
-/* Returns 1 when VA-API was selected, 0 when software fallback was selected. */
+/* Returns 1 when VA-API is ready, 0 when hardware video is unavailable. */
 int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref);
 
 /* Export directly when safe, otherwise scale/convert through cached VA VPP. */

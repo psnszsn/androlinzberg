@@ -35,7 +35,7 @@ const usage =
     \\environment: AZK_DRAW_CLASS (entry class), ARTZIG_ROOT, ARTZIG_CA_BUNDLE,
     \\  ARTZIG_FRAMEWORK_RES,
     \\  ARTZIG_FONT_FALLBACK_XML (skip fontconfig font discovery),
-    \\  ARTZIG_VIDEO_DECODER=software, ARTZIG_VAAPI_DEVICE=/dev/dri/renderDNNN,
+    \\  ARTZIG_VAAPI_DEVICE=/dev/dri/renderDNNN,
     \\  ARTZIG_VIDEO_YUV_DMABUF=1 (opt in to direct compositor YUV import),
     \\  ARTZIG_FRAME_PACING_TRACE=1, ARTZIG_EGL_SWAP_INTERVAL=0,
     \\  AZK_SIZE=WxH, AZK_TAP/AZK_SWIPE/AZK_WHEEL/AZK_TYPE/... (test hooks)
@@ -135,8 +135,6 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, args[i], "--codec-selftest")) {
             const n = @import("azk_codec").azk_codec_selftest();
             std.debug.print("codec selftest: {d} samples decoded ({s})\n", .{ n, if (n > 0) "PASS" else "FAIL" });
-            const v = @import("azk_codec").azk_codec_selftest_video();
-            std.debug.print("video selftest: {d} frames decoded ({s})\n", .{ v, if (v > 0) "PASS" else "FAIL" });
             return;
         } else if (std.mem.eql(u8, args[i], "--javatest")) {
             var lib = try std.DynLib.open("zig-out/lib/libandroid_platform.so");

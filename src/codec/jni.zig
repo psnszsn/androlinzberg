@@ -44,16 +44,12 @@ fn nativeReceiveAudio(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, dst
     return result;
 }
 
-fn nativeReceiveVideo(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, dst: jni.jobject, capacity: jni.jint, meta: jni.jintArray, pts: jni.jlongArray, hardware_handle: jni.jlongArray, surface_output: jni.jboolean) callconv(.c) jni.jint {
-    const out_raw = env.*.*.GetDirectBufferAddress.?(env, dst) orelse return -100;
+fn nativeReceiveVideo(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, meta: jni.jintArray, pts: jni.jlongArray, hardware_handle: jni.jlongArray) callconv(.c) jni.jint {
     const decoder: *codec.Dec = @ptrFromInt(@as(usize, @intCast(handle)));
     var values = [3]c_int{ 0, 0, 0 };
     var timestamp: i64 = 0;
     var native_handle: usize = 0;
-    const result = if (surface_output != 0)
-        codec.azk_codec_receive_video2(decoder, @ptrCast(out_raw), capacity, &values, &timestamp, &native_handle)
-    else
-        codec.azk_codec_receive_video(decoder, @ptrCast(out_raw), capacity, &values, &timestamp);
+    const result = codec.azk_codec_receive_video2(decoder, &values, &timestamp, &native_handle);
     env.*.*.SetIntArrayRegion.?(env, meta, 0, values.len, @ptrCast(&values));
     const java_timestamp: jni.jlong = timestamp;
     const java_handle: jni.jlong = @intCast(native_handle);
@@ -78,7 +74,7 @@ pub fn register(env: [*c]jni.JNIEnv) !void {
         .{ .name = "nativeSetVideoTarget", .signature = "(JII)V", .fnPtr = @ptrCast(@constCast(&nativeSetVideoTarget)) },
         .{ .name = "nativeSend", .signature = "(JLjava/nio/ByteBuffer;IIJI)I", .fnPtr = @ptrCast(@constCast(&nativeSend)) },
         .{ .name = "nativeReceiveAudio", .signature = "(JLjava/nio/ByteBuffer;I[I[J)I", .fnPtr = @ptrCast(@constCast(&nativeReceiveAudio)) },
-        .{ .name = "nativeReceiveVideo", .signature = "(JLjava/nio/ByteBuffer;I[I[J[JZ)I", .fnPtr = @ptrCast(@constCast(&nativeReceiveVideo)) },
+        .{ .name = "nativeReceiveVideo", .signature = "(J[I[J[J)I", .fnPtr = @ptrCast(@constCast(&nativeReceiveVideo)) },
         .{ .name = "nativeFlush", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeFlush)) },
         .{ .name = "nativeClose", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeClose)) },
     };

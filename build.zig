@@ -146,7 +146,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    inline for (.{ "libavcodec", "libavutil", "libswscale", "libva", "libdrm" }) |pc| {
+    inline for (.{ "libavcodec", "libavutil", "libva", "libdrm" }) |pc| {
         var code: u8 = 0;
         const out = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", pc }, &code, .ignore) catch @panic("pkg-config " ++ pc);
         var it = std.mem.tokenizeAny(u8, out, " \n");
@@ -167,7 +167,7 @@ pub fn build(b: *std.Build) void {
         .file = b.path("src/codec/azk_vaapi.c"),
         .flags = &.{"-std=c11"},
     });
-    inline for (.{ "libavcodec", "libavutil", "libswscale" }) |lib| {
+    inline for (.{ "libavcodec", "libavutil" }) |lib| {
         codec_mod.linkSystemLibrary(lib, .{ .needed = true, .use_pkg_config = .force });
     }
     codec_mod.linkSystemLibrary("libva", .{ .needed = true, .use_pkg_config = .force });

@@ -25,12 +25,9 @@ const Frame = struct {
 };
 
 const VFrame = struct {
-    rgbx: []u8, // BGRX bytes for the software+wl_shm adapter
-    hardware: ?*c.AzkHardwareFrame = null, // owned VA-API DMA-BUF frame
+    hardware: *c.AzkHardwareFrame, // owned VA-API/VPP DMA-BUF frame
     width: c_int, // decoded/coded dimensions reported to MediaCodec
     height: c_int,
-    rgbx_width: c_int = 0, // possibly reduced to the on-screen layer size
-    rgbx_height: c_int = 0,
     pts: i64,
 };
 
@@ -41,12 +38,6 @@ pub const Dec = struct {
     is_video: bool = false,
     queue: std.ArrayList(Frame) = .empty,
     vqueue: std.ArrayList(VFrame) = .empty,
-    sws: ?*c.SwsContext = null,
-    sws_w: c_int = 0,
-    sws_h: c_int = 0,
-    sws_fmt: c_int = -1,
-    sws_out_w: c_int = 0,
-    sws_out_h: c_int = 0,
     target_w: c_int = 0,
     target_h: c_int = 0,
     hw_device: ?*c.AVBufferRef = null,
@@ -66,88 +57,37 @@ pub const Dec = struct {
             if (r < 0) return error.Decode;
             defer c.av_frame_unref(self.frame);
             if (self.is_video) {
-                if (self.frame.format == c.AV_PIX_FMT_VAAPI) {
-                    const output = fitVideoTarget(
-                        self.frame.width,
-                        self.frame.height,
-                        self.target_w,
-                        self.target_h,
-                    );
-                    const hardware = c.azk_vaapi_export(
-                        self.frame,
-                        output.width,
-                        output.height,
-                        &self.vaapi_vpp,
-                    );
-                    if (hardware) |frame| {
-                        errdefer c.azk_hardware_frame_release(frame);
-                        try self.vqueue.append(gpa, .{
-                            .rgbx = &.{},
-                            .hardware = frame,
-                            .width = self.frame.width,
-                            .height = self.frame.height,
-                            .pts = if (self.frame.pts != c.AV_NOPTS_VALUE) self.frame.pts else 0,
-                        });
-                    } else {
-                        try self.vqueue.append(gpa, try self.downloadVideoFrame(self.frame));
-                    }
-                } else {
-                    try self.vqueue.append(gpa, try self.convertVideoFrame(self.frame));
-                }
+                if (self.frame.format != c.AV_PIX_FMT_VAAPI)
+                    return error.HardwareVideoRequired;
+                const output = fitVideoTarget(
+                    self.frame.width,
+                    self.frame.height,
+                    self.target_w,
+                    self.target_h,
+                );
+                const hardware = c.azk_vaapi_export(
+                    self.frame,
+                    output.width,
+                    output.height,
+                    &self.vaapi_vpp,
+                ) orelse return error.HardwareVideoPresentation;
+                errdefer c.azk_hardware_frame_release(hardware);
+                try self.vqueue.append(gpa, .{
+                    .hardware = hardware,
+                    .width = self.frame.width,
+                    .height = self.frame.height,
+                    .pts = if (self.frame.pts != c.AV_NOPTS_VALUE) self.frame.pts else 0,
+                });
             } else {
                 try self.queue.append(gpa, try convertFrame(self.frame));
             }
         }
     }
-
-    fn downloadVideoFrame(self: *Dec, hardware: *c.AVFrame) !VFrame {
-        var transferred: ?*c.AVFrame = c.av_frame_alloc();
-        if (transferred == null) return error.OutOfMemory;
-        defer c.av_frame_free(&transferred);
-        if (c.av_hwframe_transfer_data(transferred.?, hardware, 0) < 0)
-            return error.HardwareFrameTransfer;
-        transferred.?.pts = hardware.pts;
-        return self.convertVideoFrame(transferred.?);
-    }
-
-    fn convertVideoFrame(self: *Dec, f: *c.AVFrame) !VFrame {
-        const w = f.width;
-        const h = f.height;
-        const output = fitVideoTarget(w, h, self.target_w, self.target_h);
-        if (self.sws == null or self.sws_w != w or self.sws_h != h or self.sws_fmt != f.format or
-            self.sws_out_w != output.width or self.sws_out_h != output.height)
-        {
-            if (self.sws) |old| c.sws_freeContext(old);
-            self.sws = c.sws_getContext(w, h, f.format, output.width, output.height, c.AV_PIX_FMT_BGR0,
-                    c.SWS_BILINEAR, null, null, null) orelse return error.Sws;
-            self.sws_w = w;
-            self.sws_h = h;
-            self.sws_fmt = f.format;
-            self.sws_out_w = output.width;
-            self.sws_out_h = output.height;
-        }
-        const stride: usize = @intCast(output.width * 4);
-        const out = try gpa.alloc(u8, stride * @as(usize, @intCast(output.height)));
-        errdefer gpa.free(out);
-        var dst_data = [_][*c]u8{ out.ptr, null, null, null };
-        var dst_stride = [_]c_int{ @intCast(stride), 0, 0, 0 };
-        if (c.sws_scale(self.sws, &f.data[0], &f.linesize[0], 0, h, &dst_data[0], &dst_stride[0]) < 0)
-            return error.Sws;
-        return .{
-            .rgbx = out,
-            .hardware = null,
-            .width = w,
-            .height = h,
-            .rgbx_width = output.width,
-            .rgbx_height = output.height,
-            .pts = if (f.pts != c.AV_NOPTS_VALUE) f.pts else 0,
-        };
-    }
 };
 
 const VideoSize = struct { width: c_int, height: c_int };
 
-/// Fit the conversion to the visible layer without upscaling or changing the
+/// Fit GPU VPP output to the visible layer without upscaling or changing the
 /// decoded aspect ratio. Wayland performs the final fractional scaling.
 fn fitVideoTarget(width: c_int, height: c_int, target_width: c_int, target_height: c_int) VideoSize {
     if (width <= 0 or height <= 0 or target_width <= 0 or target_height <= 0 or
@@ -260,12 +200,11 @@ pub export fn azk_codec_configure(d: *Dec, extradata: ?[*]const u8, len: c_int, 
         c.av_channel_layout_default(&d.ctx.ch_layout, channels);
     }
     d.ctx.pkt_timebase = .{ .num = 1, .den = 1000000 }; // MediaCodec uses µs
-    // Keep ordering deterministic across both the software and VA-API paths.
     // FFmpeg's hardware decoder performs the GPU work asynchronously.
     d.ctx.thread_count = 1;
     d.ctx.thread_type = 0;
     if (d.is_video) {
-        _ = c.azk_vaapi_prepare(d.ctx, &d.hw_device);
+        if (c.azk_vaapi_prepare(d.ctx, &d.hw_device) == 0) return -3;
     }
     return c.avcodec_open2(d.ctx, null, null);
 }
@@ -331,42 +270,9 @@ pub export fn azk_codec_receive_audio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_m
     return 0;
 }
 
-/// Receive one decoded video frame as BGRX. out_meta: {bytes, width, height}.
-/// Returns 0 = frame, 1 = try again, 2 = end of stream, <0 = error.
-pub export fn azk_codec_receive_video(d: *Dec, dst: [*]u8, dst_cap: c_int, out_meta: [*]c_int, out_pts: *i64) c_int {
-    if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
-    if (d.vqueue.items.len == 0) {
-        if (d.eof_out) return 2;
-        return 1;
-    }
-    const pending = d.vqueue.items[0];
-    out_meta[1] = pending.width;
-    out_meta[2] = pending.height;
-    out_pts.* = pending.pts;
-    if (pending.hardware) |hardware| {
-        _ = d.vqueue.orderedRemove(0);
-        c.azk_hardware_frame_release(hardware);
-        return -3;
-    }
-    if (pending.rgbx.len > dst_cap) {
-        out_meta[0] = @intCast(pending.rgbx.len);
-        return -2;
-    }
-    const f = d.vqueue.orderedRemove(0);
-    defer gpa.free(f.rgbx);
-    @memcpy(dst[0..f.rgbx.len], f.rgbx);
-    out_meta[0] = @intCast(f.rgbx.len);
-    out_meta[1] = f.width;
-    out_meta[2] = f.height;
-    out_pts.* = f.pts;
-    return 0;
-}
-
-/// Software frames return 4 and transfer an owned SoftwareFrame through
-/// out_handle. Hardware frames return 3 and transfer an AzkHardwareFrame.
-/// The legacy receive_video entry point remains the copying buffer API.
-pub export fn azk_codec_receive_video2(d: *Dec, dst: [*]u8, dst_cap: c_int,
-        out_meta: [*]c_int, out_pts: *i64, out_handle: *usize) c_int {
+/// Hardware frames return 3 and transfer an owned AzkHardwareFrame.
+pub export fn azk_codec_receive_video2(d: *Dec, out_meta: [*]c_int,
+        out_pts: *i64, out_handle: *usize) c_int {
     out_handle.* = 0;
     if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
     if (d.vqueue.items.len == 0) {
@@ -377,46 +283,16 @@ pub export fn azk_codec_receive_video2(d: *Dec, dst: [*]u8, dst_cap: c_int,
     out_meta[1] = pending.width;
     out_meta[2] = pending.height;
     out_pts.* = pending.pts;
-    if (pending.hardware) |hardware| {
-        _ = d.vqueue.orderedRemove(0);
-        out_meta[0] = 0;
-        out_handle.* = @intFromPtr(hardware);
-        return 3;
-    }
-    const software = gpa.create(SoftwareFrame) catch return -1;
-    const f = d.vqueue.orderedRemove(0);
-    software.* = .{
-        .rgbx = f.rgbx,
-        .width = f.rgbx_width,
-        .height = f.rgbx_height,
-        .source_width = f.width,
-        .source_height = f.height,
-    };
-    // Surface output owns the native allocation and never writes dst.
+    const frame = d.vqueue.orderedRemove(0);
     out_meta[0] = 0;
-    out_handle.* = @intFromPtr(software);
-    _ = dst;
-    _ = dst_cap;
-    return 4;
+    out_handle.* = @intFromPtr(frame.hardware);
+    return 3;
 }
 
 pub const HardwareFrame = c.AzkHardwareFrame;
 
-pub const SoftwareFrame = struct {
-    rgbx: []u8,
-    width: c_int,
-    height: c_int,
-    source_width: c_int,
-    source_height: c_int,
-};
-
 pub fn releaseHardwareFrame(frame: *HardwareFrame) void {
     c.azk_hardware_frame_release(frame);
-}
-
-pub fn releaseSoftwareFrame(frame: *SoftwareFrame) void {
-    gpa.free(frame.rgbx);
-    gpa.destroy(frame);
 }
 
 test "video conversion target preserves aspect ratio and never upscales" {
@@ -429,10 +305,7 @@ pub export fn azk_codec_flush(d: *Dec) void {
     c.avcodec_flush_buffers(d.ctx);
     for (d.queue.items) |f| gpa.free(f.pcm);
     d.queue.clearRetainingCapacity();
-    for (d.vqueue.items) |f| {
-        if (f.hardware) |hardware| c.azk_hardware_frame_release(hardware);
-        if (f.rgbx.len > 0) gpa.free(f.rgbx);
-    }
+    for (d.vqueue.items) |f| c.azk_hardware_frame_release(f.hardware);
     d.vqueue.clearRetainingCapacity();
     d.eof_sent = false;
     d.eof_out = false;
@@ -441,12 +314,8 @@ pub export fn azk_codec_flush(d: *Dec) void {
 pub export fn azk_codec_close(d: *Dec) void {
     for (d.queue.items) |f| gpa.free(f.pcm);
     d.queue.deinit(gpa);
-    for (d.vqueue.items) |f| {
-        if (f.hardware) |hardware| c.azk_hardware_frame_release(hardware);
-        if (f.rgbx.len > 0) gpa.free(f.rgbx);
-    }
+    for (d.vqueue.items) |f| c.azk_hardware_frame_release(f.hardware);
     d.vqueue.deinit(gpa);
-    if (d.sws) |sws| c.sws_freeContext(sws);
     c.azk_vaapi_vpp_free(&d.vaapi_vpp);
     var hw_device = d.hw_device;
     c.av_buffer_unref(&hw_device);
@@ -585,106 +454,6 @@ pub export fn azk_codec_write_test_m4v(path: [*:0]const u8) c_int {
     return frames;
 }
 
-
-/// Video round-trip selftest: encode moving bars with the mpeg4 encoder,
-/// decode via the MediaCodec path. Returns decoded frame count (>0 = pass).
-pub export fn azk_codec_selftest_video() c_int {
-    const enc = c.avcodec_find_encoder_by_name("mpeg4") orelse return -1;
-    const ectx = c.avcodec_alloc_context3(enc) orelse return -2;
-    defer {
-        var e: ?*c.AVCodecContext = ectx;
-        c.avcodec_free_context(&e);
-    }
-    ectx.*.width = 320;
-    ectx.*.height = 240;
-    ectx.*.pix_fmt = c.AV_PIX_FMT_YUV420P;
-    ectx.*.time_base = .{ .num = 1, .den = 30 };
-    ectx.*.bit_rate = 800000;
-    ectx.*.gop_size = 10;
-    if (c.avcodec_open2(ectx, null, null) < 0) return -3;
-
-    const d = azk_codec_open("mpeg4") orelse return -4;
-    defer azk_codec_close(d);
-    if (d.ctx.extradata_size == 0 and ectx.*.extradata_size > 0) {
-        _ = azk_codec_configure(d, ectx.*.extradata, ectx.*.extradata_size, 0, 0);
-    } else {
-        _ = azk_codec_configure(d, null, 0, 0, 0);
-    }
-
-    const ef = c.av_frame_alloc();
-    defer {
-        var f: ?*c.AVFrame = ef;
-        c.av_frame_free(&f);
-    }
-    ef.*.format = c.AV_PIX_FMT_YUV420P;
-    ef.*.width = 320;
-    ef.*.height = 240;
-    if (c.av_frame_get_buffer(ef, 0) < 0) return -5;
-    const epkt = c.av_packet_alloc();
-    defer {
-        var p: ?*c.AVPacket = epkt;
-        c.av_packet_free(&p);
-    }
-
-    var meta: [3]c_int = undefined;
-    var pts: i64 = 0;
-    const dst = gpa.alloc(u8, 320 * 240 * 4) catch return -6;
-    defer gpa.free(dst);
-    var frames: c_int = 0;
-    var undersized_receive_tested = false;
-    var i: usize = 0;
-    while (i < 30) : (i += 1) {
-        _ = c.av_frame_make_writable(ef);
-        for (0..240) |y| {
-            for (0..320) |x| {
-                ef.*.data[0][y * @as(usize, @intCast(ef.*.linesize[0])) + x] =
-                    @truncate((x + i * 8) / 20 * 32);
-            }
-        }
-        for (0..120) |y| {
-            for (0..160) |x| {
-                ef.*.data[1][y * @as(usize, @intCast(ef.*.linesize[1])) + x] = 128;
-                ef.*.data[2][y * @as(usize, @intCast(ef.*.linesize[2])) + x] = 128;
-            }
-        }
-        ef.*.pts = @intCast(i);
-        if (c.avcodec_send_frame(ectx, ef) < 0) return -7;
-        while (c.avcodec_receive_packet(ectx, epkt) == 0) {
-            if (azk_codec_send(d, epkt.*.data, epkt.*.size, epkt.*.pts, 0) < 0) return -8;
-            c.av_packet_unref(epkt);
-        }
-        while (true) {
-            if (!undersized_receive_tested) {
-                const small = azk_codec_receive_video(d, dst.ptr, 1, &meta, &pts);
-                if (small == -2) {
-                    // A short destination must report the required size and
-                    // leave that exact frame queued for the retry.
-                    if (meta[0] <= 1) return -9;
-                    if (azk_codec_receive_video(d, dst.ptr, @intCast(dst.len),
-                            &meta, &pts) != 0) return -10;
-                    undersized_receive_tested = true;
-                    frames += 1;
-                    continue;
-                }
-                if (small == 0) return -11;
-                break;
-            }
-            if (azk_codec_receive_video(d, dst.ptr, @intCast(dst.len),
-                    &meta, &pts) != 0) break;
-            frames += 1;
-        }
-    }
-    _ = azk_codec_send(d, null, 0, 0, 1);
-    _ = c.avcodec_send_frame(ectx, null);
-    while (c.avcodec_receive_packet(ectx, epkt) == 0) {
-        _ = azk_codec_send(d, epkt.*.data, epkt.*.size, epkt.*.pts, 0);
-        c.av_packet_unref(epkt);
-    }
-    _ = azk_codec_send(d, null, 0, 0, 1);
-    while (azk_codec_receive_video(d, dst.ptr, @intCast(dst.len), &meta, &pts) == 0) frames += 1;
-    if (!undersized_receive_tested) return -12;
-    return frames;
-}
 
 /// Round-trip selftest: encode a sine with the mp3 encoder, decode it with the
 /// same path MediaCodec uses. Returns decoded sample count (>0 = pass).

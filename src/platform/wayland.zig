@@ -690,7 +690,6 @@ pub const Window = struct {
         surface: *wl.Surface,
         subsurface: *wl.Subsurface,
         viewport: ?*wp.Viewport,
-        buffers: [2]?Buffer = .{ null, null },
         src_w: i32 = 0,
         src_h: i32 = 0,
         dst_x: i32 = 0,
@@ -721,42 +720,6 @@ pub const Window = struct {
                     state.layer.win.gpa.destroy(state);
                 },
             }
-        }
-
-        fn buffer(self: *VideoLayer, w: i32, h: i32) !*Buffer {
-            for (&self.buffers) |*slot| {
-                if (slot.*) |*b| {
-                    if (b.width != w or b.height != h) {
-                        b.wl_buffer.destroy();
-                        std.posix.munmap(b.pixels);
-                        slot.* = null;
-                    }
-                }
-            }
-            for (&self.buffers) |*slot| {
-                if (slot.*) |*b| {
-                    if (!b.busy) return b;
-                } else {
-                    const stride: usize = @intCast(w * 4);
-                    const size: usize = stride * @as(usize, @intCast(h));
-                    const memfd = try std.posix.memfd_create("artzig-video", 0);
-                    defer _ = std.c.close(memfd);
-                    if (std.c.ftruncate(memfd, @intCast(size)) != 0) return error.Truncate;
-                    const pixels = try std.posix.mmap(null, size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, memfd, 0);
-                    const pool = try self.win.shm.?.createPool(memfd, @intCast(size));
-                    defer pool.destroy();
-                    const wl_buffer = try pool.createBuffer(0, w, h, @intCast(stride), .xrgb8888);
-                    slot.* = .{ .wl_buffer = wl_buffer, .pixels = pixels, .width = w, .height = h, .stride = stride };
-                    const b = &slot.*.?;
-                    b.wl_buffer.setListener(*Buffer, bufferListener, b);
-                    return b;
-                }
-            }
-            // A wl_buffer remains compositor-owned until wl_buffer.release.
-            // Rewriting a busy SHM buffer produces rectangular mixtures of
-            // multiple video frames on slower/high-resolution outputs. Drop
-            // this frame; the decoder's next frame will be the new latest.
-            return error.NoFreeBuffer;
         }
 
         fn configureViewport(self: *VideoLayer) void {
@@ -833,25 +796,6 @@ pub const Window = struct {
             self.surface.damage(0, 0, width, height);
         }
 
-        /// rgbx: tightly packed 4-byte pixels, w*h. Called from the main thread.
-        pub fn pushFrame(self: *VideoLayer, rgbx: []const u8, w: i32, h: i32) !void {
-            const b = try self.buffer(w, h);
-            const bytes: usize = @intCast(w * 4 * h);
-            @memcpy(b.pixels[0..bytes], rgbx[0..bytes]);
-            self.src_w = w;
-            self.src_h = h;
-            b.busy = true;
-            self.surface.attach(b.wl_buffer, 0, 0);
-            self.configureViewport();
-            self.damageDestination(w, h);
-            self.surface.commit();
-            if (!self.visible) {
-                self.visible = true;
-                self.win.surface.commit();
-            }
-            _ = self.win.display.flush();
-        }
-
         /// Import and present an owned decoded DMA-BUF frame. The frame remains
         /// alive until the compositor sends wl_buffer.release.
         pub fn pushDmabuf(self: *VideoLayer, frame: DmabufFrame) !void {
@@ -900,13 +844,6 @@ pub const Window = struct {
                 self.win.gpa.destroy(state);
             }
             self.dmabuf_buffers.deinit(self.win.gpa);
-            for (&self.buffers) |*slot| {
-                if (slot.*) |*b| {
-                    b.wl_buffer.destroy();
-                    std.posix.munmap(b.pixels);
-                    slot.* = null;
-                }
-            }
             if (self.viewport) |vp| vp.destroy();
             self.subsurface.destroy();
             self.surface.destroy();

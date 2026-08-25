@@ -33,18 +33,12 @@ static enum AVPixelFormat choose_vaapi_format(AVCodecContext *context,
 }
 
 int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref) {
-    const char *selection = getenv("ARTZIG_VIDEO_DECODER");
-    if (selection && strcmp(selection, "software") == 0) {
-        fprintf(stderr, "azk: video decoder: software+wl_shm (forced)\n");
-        return 0;
-    }
-
     typedef int (*DmabufAvailableFn)(void);
     DmabufAvailableFn dmabuf_available =
         (DmabufAvailableFn)dlsym(RTLD_DEFAULT, "azk_video_dmabuf_available");
     if (!dmabuf_available || !dmabuf_available()) {
         fprintf(stderr,
-                "azk: video decoder: software+wl_shm (compositor has no compatible DMA-BUF path)\n");
+                "azk: hardware video unavailable: compositor has no compatible DMA-BUF path\n");
         return 0;
     }
 
@@ -59,7 +53,7 @@ int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref) {
         }
     }
     if (!supported) {
-        fprintf(stderr, "azk: video decoder: software+wl_shm (codec has no VA-API path)\n");
+        fprintf(stderr, "azk: hardware video unavailable: codec has no VA-API path\n");
         return 0;
     }
 
@@ -68,7 +62,7 @@ int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref) {
     int result = av_hwdevice_ctx_create(device_ref, AV_HWDEVICE_TYPE_VAAPI,
                                         device, NULL, 0);
     if (result < 0) {
-        fprintf(stderr, "azk: video decoder: software+wl_shm (VA-API unavailable: %d)\n",
+        fprintf(stderr, "azk: hardware video unavailable: VA-API initialization failed (%d)\n",
                 result);
         return 0;
     }
@@ -262,7 +256,7 @@ static AzkHardwareFrame *take_descriptor(
 
 static void log_vpp_failure(const char *stage, VAStatus status) {
     if (!atomic_flag_test_and_set(&vpp_failure_logged))
-        fprintf(stderr, "azk: VAAPI RGB VPP %s failed: %s (%d); using CPU fallback\n",
+        fprintf(stderr, "azk: VAAPI RGB VPP %s failed: %s (%d); frame rejected\n",
                 stage, vaErrorStr(status), status);
 }
 

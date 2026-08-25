@@ -3,5 +3,4 @@
 #include <libavutil/hwcontext_drm.h>
 #include <libavutil/hwcontext_vaapi.h>
 #include <libavutil/opt.h>
-#include <libswscale/swscale.h>
 #include "azk_vaapi.h"

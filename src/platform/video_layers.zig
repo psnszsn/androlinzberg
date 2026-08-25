@@ -18,14 +18,8 @@ const Record = struct {
     frames: u64 = 0,
     geometry: [8]i32 = .{ 0, 0, 0, 0, 0, 0, 0, 0 },
     geometry_dirty: bool = false,
-    frame: std.ArrayList(u8) = .empty,
-    frame_w: i32 = 0,
-    frame_h: i32 = 0,
-    frame_fresh: bool = false,
     hardware_frame: ?*codec.HardwareFrame = null,
     hardware_fresh: bool = false,
-    software_frame: ?*codec.SoftwareFrame = null,
-    software_fresh: bool = false,
     destroyed: bool = false,
     dead: bool = false,
 };
@@ -87,26 +81,6 @@ fn nativeSetGeometry(
     r.geometry_dirty = true;
 }
 
-fn nativePush(env: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, buf: jni.jobject, w: jni.jint, h: jni.jint) callconv(.c) void {
-    const base_raw = env.*.*.GetDirectBufferAddress.?(env, buf) orelse return;
-    const base: [*]const u8 = @ptrCast(base_raw);
-    const bytes: usize = @intCast(w * 4 * h);
-    g_mutex.lock();
-    defer g_mutex.unlock();
-    const r = record(id) orelse return;
-    if (r.hardware_frame) |hardware| codec.releaseHardwareFrame(hardware);
-    if (r.software_frame) |software| codec.releaseSoftwareFrame(software);
-    r.hardware_frame = null;
-    r.hardware_fresh = false;
-    r.software_frame = null;
-    r.software_fresh = false;
-    r.frame.resize(g_gpa, bytes) catch return;
-    @memcpy(r.frame.items[0..bytes], base[0..bytes]);
-    r.frame_w = w;
-    r.frame_h = h;
-    r.frame_fresh = true;
-}
-
 fn nativePushHardware(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, handle: jni.jlong) callconv(.c) void {
     if (handle == 0) return;
     const frame: *codec.HardwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
@@ -117,42 +91,14 @@ fn nativePushHardware(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, handle: jn
         return;
     };
     if (r.hardware_frame) |old| codec.releaseHardwareFrame(old);
-    if (r.software_frame) |old| codec.releaseSoftwareFrame(old);
     r.hardware_frame = frame;
     r.hardware_fresh = true;
-    r.software_frame = null;
-    r.software_fresh = false;
-    r.frame_fresh = false;
 }
 
 fn nativeReleaseHardware(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c) void {
     if (handle == 0) return;
     const frame: *codec.HardwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
     codec.releaseHardwareFrame(frame);
-}
-
-fn nativePushSoftware(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, handle: jni.jlong) callconv(.c) void {
-    if (handle == 0) return;
-    const frame: *codec.SoftwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
-    g_mutex.lock();
-    defer g_mutex.unlock();
-    const r = record(id) orelse {
-        codec.releaseSoftwareFrame(frame);
-        return;
-    };
-    if (r.hardware_frame) |old| codec.releaseHardwareFrame(old);
-    if (r.software_frame) |old| codec.releaseSoftwareFrame(old);
-    r.hardware_frame = null;
-    r.hardware_fresh = false;
-    r.software_frame = frame;
-    r.software_fresh = true;
-    r.frame_fresh = false;
-}
-
-fn nativeReleaseSoftware(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c) void {
-    if (handle == 0) return;
-    const frame: *codec.SoftwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
-    codec.releaseSoftwareFrame(frame);
 }
 
 fn nativeDestroy(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint) callconv(.c) void {
@@ -175,11 +121,8 @@ pub fn register(gpa: std.mem.Allocator, io: std.Io, win: *wayland.Window, env: [
     const methods = [_]jni.JNINativeMethod{
         .{ .name = "nativeCreate", .signature = "()I", .fnPtr = @ptrCast(@constCast(&nativeCreate)) },
         .{ .name = "nativeSetGeometry", .signature = "(IIIIIIIII)V", .fnPtr = @ptrCast(@constCast(&nativeSetGeometry)) },
-        .{ .name = "nativePush", .signature = "(ILjava/nio/ByteBuffer;II)V", .fnPtr = @ptrCast(@constCast(&nativePush)) },
         .{ .name = "nativePushHardware", .signature = "(IJ)V", .fnPtr = @ptrCast(@constCast(&nativePushHardware)) },
         .{ .name = "nativeReleaseHardware", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeReleaseHardware)) },
-        .{ .name = "nativePushSoftware", .signature = "(IJ)V", .fnPtr = @ptrCast(@constCast(&nativePushSoftware)) },
-        .{ .name = "nativeReleaseSoftware", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeReleaseSoftware)) },
         .{ .name = "nativeDestroy", .signature = "(I)V", .fnPtr = @ptrCast(@constCast(&nativeDestroy)) },
     };
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
@@ -198,14 +141,13 @@ pub export fn azk_video_dmabuf_supports(format: u32, plane_count: c_int, modifie
     const win = g_win orelse return 0;
     if (plane_count <= 0 or plane_count > 4) return 0;
     // Hyprland currently accepts these multi-planar formats but renders their
-    // color planes incorrectly on affected drivers. Keep VA-API decode active,
-    // then hand the converted RGB frame to the SHM layer unless direct YUV
-    // presentation was explicitly requested for a known-good compositor.
+    // color planes incorrectly. Route through VAAPI VPP to an RGB DMA-BUF
+    // unless direct YUV presentation was explicitly requested.
     if (!g_allow_yuv_dmabuf and (format == drm_format_nv12 or format == drm_format_p010)) {
         if (!g_dmabuf_rejection_logged) {
             g_dmabuf_rejection_logged = true;
             std.debug.print(
-                "azk: direct YUV DMA-BUF presentation disabled; using color-correct VAAPI software handoff (set ARTZIG_VIDEO_YUV_DMABUF=1 to opt in)\n",
+                "azk: direct YUV DMA-BUF presentation disabled; using VAAPI VPP RGB DMA-BUF (set ARTZIG_VIDEO_YUV_DMABUF=1 to opt in)\n",
                 .{},
             );
         }
@@ -241,8 +183,6 @@ fn releaseDmabuf(context: *anyopaque) void {
 fn retireRecord(r: *Record) void {
     if (r.layer) |layer| layer.destroy();
     if (r.hardware_frame) |hardware| codec.releaseHardwareFrame(hardware);
-    if (r.software_frame) |software| codec.releaseSoftwareFrame(software);
-    r.frame.deinit(g_gpa);
     r.* = .{ .dead = true };
 }
 
@@ -257,7 +197,7 @@ pub fn process() void {
             retireRecord(r);
             continue;
         }
-        if (r.layer == null and (r.geometry_dirty or r.frame_fresh or r.hardware_fresh or r.software_fresh)) {
+        if (r.layer == null and (r.geometry_dirty or r.hardware_fresh)) {
             r.layer = win.createVideoLayer() catch |e| {
                 std.debug.print("video layer create failed: {}\n", .{e});
                 retireRecord(r);
@@ -299,32 +239,6 @@ pub fn process() void {
                 full_h,
             );
             r.geometry_dirty = false;
-        }
-        if (r.frame_fresh) {
-            layer.pushFrame(r.frame.items, r.frame_w, r.frame_h) catch {};
-            r.frame_fresh = false;
-            r.frames += 1;
-            if (r.frames == 1 or r.frames % 300 == 0) {
-                std.debug.print("azk: video layer frame #{d} {d}x{d} at rect {d},{d} {d}x{d}\n", .{ r.frames, r.frame_w, r.frame_h, r.geometry[0], r.geometry[1], r.geometry[2], r.geometry[3] });
-            }
-        }
-        if (r.software_fresh) {
-            const software = r.software_frame.?;
-            const frame_w = software.width;
-            const frame_h = software.height;
-            const source_w = software.source_width;
-            const source_h = software.source_height;
-            r.software_frame = null;
-            r.software_fresh = false;
-            layer.pushFrame(software.rgbx, frame_w, frame_h) catch {};
-            codec.releaseSoftwareFrame(software);
-            r.frames += 1;
-            if (r.frames == 1 or r.frames % 300 == 0) {
-                std.debug.print(
-                    "azk: video layer software-handoff frame #{d} source={d}x{d} transport={d}x{d}\n",
-                    .{ r.frames, source_w, source_h, frame_w, frame_h },
-                );
-            }
         }
         if (r.hardware_fresh) {
             const hardware = r.hardware_frame.?;
@@ -373,8 +287,6 @@ pub fn deinit() void {
         if (!r.dead) {
             if (r.layer) |layer| layer.destroy();
             if (r.hardware_frame) |hardware| codec.releaseHardwareFrame(hardware);
-            if (r.software_frame) |software| codec.releaseSoftwareFrame(software);
-            r.frame.deinit(g_gpa);
         }
         g_gpa.destroy(r);
     }

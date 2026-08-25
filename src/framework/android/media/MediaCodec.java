@@ -50,18 +50,14 @@ public final class MediaCodec {
     private boolean mAsyncRunning;
     private final boolean[] mInAnnounced = new boolean[NUM_INPUT];
     private final Runnable mPump = this::pump;
-    private final int[] mOutW = new int[NUM_OUTPUT];
-    private final int[] mOutH = new int[NUM_OUTPUT];
     private final long[] mOutHardware = new long[NUM_OUTPUT];
-    private final long[] mOutSoftware = new long[NUM_OUTPUT];
 
     private static native long nativeOpen(String codecName);
     private static native int nativeConfigure(long h, byte[] csd, int sampleRate, int channels);
     private static native void nativeSetVideoTarget(long h, int width, int height);
     private static native int nativeSend(long h, ByteBuffer buf, int offset, int size, long ptsUs, int eof);
     private static native int nativeReceiveAudio(long h, ByteBuffer dst, int cap, int[] meta, long[] pts);
-    private static native int nativeReceiveVideo(long h, ByteBuffer dst, int cap,
-            int[] meta, long[] pts, long[] frameHandle, boolean surfaceOutput);
+    private static native int nativeReceiveVideo(long h, int[] meta, long[] pts, long[] frameHandle);
     private static native void nativeFlush(long h);
     private static native void nativeClose(long h);
 
@@ -130,6 +126,8 @@ public final class MediaCodec {
         if ((flags & CONFIGURE_FLAG_ENCODE) != 0) throw new CodecException("encoders not supported");
         String mime = format != null ? format.getString(MediaFormat.KEY_MIME, "") : "";
         mVideo = mime.startsWith("video/");
+        if (mVideo && surface == null)
+            throw new CodecException("hardware video output requires a Surface");
         mSurface = surface;
         mHandle = nativeOpen(mFfmpegName);
         if (mHandle == 0) throw new CodecException("open failed: " + mFfmpegName);
@@ -148,15 +146,13 @@ public final class MediaCodec {
         }
         int rate = format != null ? format.getInteger(MediaFormat.KEY_SAMPLE_RATE, 0) : 0;
         int ch = format != null ? format.getInteger(MediaFormat.KEY_CHANNEL_COUNT, 0) : 0;
-        if (nativeConfigure(mHandle, csd, rate, ch) < 0) throw new CodecException("configure failed");
-        int w0 = format != null ? format.getInteger(MediaFormat.KEY_WIDTH, 0) : 0;
-        int h0 = format != null ? format.getInteger(MediaFormat.KEY_HEIGHT, 0) : 0;
-        // Surface output is transported by an owned native handle. Allocating
-        // three decoded-frame-sized Java buffers here retained ~100 MiB for a
-        // single 4K format generation even though none of them were written.
-        mOutCap = mVideo && surface != null
-                ? 1
-                : mVideo ? Math.max(w0 * h0 * 4, 1280 * 736 * 4) : OUT_CAP;
+        if (nativeConfigure(mHandle, csd, rate, ch) < 0) {
+            nativeClose(mHandle);
+            mHandle = 0;
+            throw new CodecException("hardware codec configuration failed");
+        }
+        // Surface output is transported only by an owned GPU frame handle.
+        mOutCap = mVideo ? 1 : OUT_CAP;
         for (int i = 0; i < NUM_INPUT; i++) {
             mIn[i] = ByteBuffer.allocateDirect(IN_CAP).order(ByteOrder.nativeOrder());
         }
@@ -279,10 +275,6 @@ public final class MediaCodec {
                 android.view.ArtzigVideoLayer.releaseHardware(mOutHardware[i]);
                 mOutHardware[i] = 0;
             }
-            if (mOutSoftware[i] != 0) {
-                android.view.ArtzigVideoLayer.releaseSoftware(mOutSoftware[i]);
-                mOutSoftware[i] = 0;
-            }
         }
     }
 
@@ -344,35 +336,15 @@ public final class MediaCodec {
             info.set(0, mPendingBytes, mPendingPts, 0);
             return p;
         }
-        if (mOut[slot].capacity() < mOutCap) {
+        if (!mVideo && mOut[slot].capacity() < mOutCap) {
             mOut[slot] = ByteBuffer.allocateDirect(mOutCap).order(ByteOrder.nativeOrder());
         }
         ByteBuffer dst = mOut[slot];
         dst.clear();
         int r;
         synchronized (mNativeLock) {
-            r = mVideo ? nativeReceiveVideo(mHandle, dst, mOutCap, mMeta, mPts, mFrameHandle, mSurface != null)
+            r = mVideo ? nativeReceiveVideo(mHandle, mMeta, mPts, mFrameHandle)
                        : nativeReceiveAudio(mHandle, dst, mOutCap, mMeta, mPts);
-        }
-        while (r == -2 && mVideo) { // frame larger than our buffers: retain, grow, retry
-            int required = mMeta[0];
-            int doubled = mOutCap <= Integer.MAX_VALUE / 2
-                    ? mOutCap * 2 : Integer.MAX_VALUE;
-            int newCap = Math.max(required, doubled);
-            if (newCap <= mOutCap) throw new CodecException("video frame is too large");
-            mOutCap = newCap;
-            // Do not replace buffers currently owned by the client. They are
-            // resized lazily when their slots become available again.
-            for (int i = 0; i < NUM_VIDEO_OUTPUT; i++) {
-                if (!mOutBusy[i] && mOut[i].capacity() < mOutCap) {
-                    mOut[i] = ByteBuffer.allocateDirect(mOutCap).order(ByteOrder.nativeOrder());
-                }
-            }
-            dst = mOut[slot];
-            dst.clear();
-            synchronized (mNativeLock) {
-                r = nativeReceiveVideo(mHandle, dst, mOutCap, mMeta, mPts, mFrameHandle, mSurface != null);
-            }
         }
         if (r == 1) return INFO_TRY_AGAIN_LATER;
         if (r == 2) {
@@ -385,7 +357,7 @@ public final class MediaCodec {
         if (r < 0) throw new CodecException("receive failed: " + r);
         if (mVideo) {
             mOutHardware[slot] = r == 3 ? mFrameHandle[0] : 0;
-            mOutSoftware[slot] = r == 4 ? mFrameHandle[0] : 0;
+            if (r != 3) throw new CodecException("video decoder returned a non-hardware frame");
         }
         boolean formatChanged;
         if (mVideo) {
@@ -397,8 +369,6 @@ public final class MediaCodec {
                         mOutputFormat.getString(MediaFormat.KEY_MIME), mMeta[1], mMeta[2]);
                 setVideoFormatKeys(mOutputFormat, mMeta[1], mMeta[2]);
             }
-            mOutW[slot] = mMeta[1];
-            mOutH[slot] = mMeta[2];
         } else {
             formatChanged = !mFormatReported
                     || mMeta[1] != mOutputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE, 0)
@@ -423,30 +393,18 @@ public final class MediaCodec {
         return slot;
     }
 
-    public ByteBuffer getOutputBuffer(int index) { return mOut[index]; }
+    public ByteBuffer getOutputBuffer(int index) { return mVideo ? null : mOut[index]; }
     public ByteBuffer[] getOutputBuffers() { return mOut; }
 
     public void releaseOutputBuffer(int index, boolean render) {
         long hardware = mOutHardware[index];
-        long software = mOutSoftware[index];
         mOutHardware[index] = 0;
-        mOutSoftware[index] = 0;
         if (hardware != 0) {
             if (render && mSurface != null) {
                 android.view.ArtzigVideoLayer.pushHardware(mSurface, hardware);
             } else {
                 android.view.ArtzigVideoLayer.releaseHardware(hardware);
             }
-        } else if (software != 0) {
-            if (render && mSurface != null) {
-                android.view.ArtzigVideoLayer.pushSoftware(mSurface, software);
-            } else {
-                android.view.ArtzigVideoLayer.releaseSoftware(software);
-            }
-        } else if (render && mVideo && mSurface != null && mOutW[index] > 0) {
-            ByteBuffer b = mOut[index];
-            b.position(0);
-            android.view.ArtzigVideoLayer.push(mSurface, b, mOutW[index], mOutH[index]);
         }
         mOutBusy[index] = false;
     }
@@ -474,7 +432,11 @@ public final class MediaCodec {
     }
     public void setOnFrameRenderedListener(OnFrameRenderedListener listener, android.os.Handler handler) {}
     public void setVideoScalingMode(int mode) {}
-    public void setOutputSurface(Surface surface) { mSurface = surface; }
+    public void setOutputSurface(Surface surface) {
+        if (mVideo && surface == null)
+            throw new CodecException("hardware video output requires a Surface");
+        mSurface = surface;
+    }
     public void setParameters(android.os.Bundle params) {}
     public android.os.PersistableBundle getMetrics() { return new android.os.PersistableBundle(); }
 }

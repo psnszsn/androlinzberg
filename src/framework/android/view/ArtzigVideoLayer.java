@@ -2,7 +2,6 @@
  * layers (natives registered by the Zig launcher). */
 package android.view;
 
-import java.nio.ByteBuffer;
 import java.util.WeakHashMap;
 
 public final class ArtzigVideoLayer {
@@ -22,11 +21,8 @@ public final class ArtzigVideoLayer {
     private static native void nativeSetGeometry(int id,
             int x, int y, int w, int h,
             int visibleX, int visibleY, int visibleW, int visibleH);
-    private static native void nativePush(int id, ByteBuffer rgbx, int w, int h);
     private static native void nativePushHardware(int id, long frame);
     private static native void nativeReleaseHardware(long frame);
-    private static native void nativePushSoftware(int id, long frame);
-    private static native void nativeReleaseSoftware(long frame);
     private static native void nativeDestroy(int id);
 
     /** Creates a layer and a Surface bound to it. */
@@ -84,11 +80,6 @@ public final class ArtzigVideoLayer {
         setGeometry(s, x, y, w, h, x, y, w, h);
     }
 
-    public static void push(Surface s, ByteBuffer rgbx, int w, int h) {
-        int id = idFor(s);
-        if (id > 0) nativePush(id, rgbx, w, h);
-    }
-
     /** Transfers ownership of a decoded DMA-BUF frame to the video layer. */
     public static void pushHardware(Surface s, long frame) {
         int id = idFor(s);
@@ -98,17 +89,6 @@ public final class ArtzigVideoLayer {
 
     public static void releaseHardware(long frame) {
         if (frame != 0) nativeReleaseHardware(frame);
-    }
-
-    /** Transfers ownership of a decoded CPU frame without another JNI copy. */
-    public static void pushSoftware(Surface s, long frame) {
-        int id = idFor(s);
-        if (id > 0) nativePushSoftware(id, frame);
-        else nativeReleaseSoftware(frame);
-    }
-
-    public static void releaseSoftware(long frame) {
-        if (frame != 0) nativeReleaseSoftware(frame);
     }
 
     public static void destroy(Surface s) {
