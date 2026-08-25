@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -11,6 +12,15 @@
 #include <libavutil/hwcontext_vaapi.h>
 #include <va/va.h>
 #include <va/va_drmcommon.h>
+#include <va/va_vpp.h>
+
+struct AzkVaapiVpp {
+    VADisplay display;
+    VAConfigID config;
+    VAContextID context;
+    int width;
+    int height;
+};
 
 static enum AVPixelFormat choose_vaapi_format(AVCodecContext *context,
                                                const enum AVPixelFormat *formats) {
@@ -69,15 +79,116 @@ int azk_vaapi_prepare(AVCodecContext *context, AVBufferRef **device_ref) {
         return 0;
     }
     context->get_format = choose_vaapi_format;
-    fprintf(stderr, "azk: video decoder: vaapi+dmabuf%s%s\n",
+    fprintf(stderr, "azk: video decoder: vaapi ready, DMA-BUF export pending%s%s\n",
             device ? " device=" : "", device ? device : "");
     return 1;
+}
+
+static atomic_flag export_success_logged = ATOMIC_FLAG_INIT;
+static atomic_flag export_failure_logged = ATOMIC_FLAG_INIT;
+static atomic_flag vpp_failure_logged = ATOMIC_FLAG_INIT;
+
+static void print_fourcc(uint32_t format) {
+    fprintf(stderr, "%c%c%c%c (0x%08x)",
+            (char)(format & 0xff), (char)((format >> 8) & 0xff),
+            (char)((format >> 16) & 0xff), (char)((format >> 24) & 0xff),
+            format);
+}
+
+static void log_export_descriptor_once(const char *outcome, const char *reason,
+                                       const VADRMPRIMESurfaceDescriptor *descriptor,
+                                       atomic_flag *guard) {
+    if (atomic_flag_test_and_set(guard)) return;
+    fprintf(stderr, "azk: DMA-BUF export %s: %s; format=", outcome, reason);
+    if (descriptor->num_layers > 0) {
+        print_fourcc(descriptor->layers[0].drm_format);
+    } else {
+        fprintf(stderr, "unavailable");
+    }
+    fprintf(stderr, " layers=%u planes=%u objects=%u modifiers=[",
+            descriptor->num_layers,
+            descriptor->num_layers > 0 ? descriptor->layers[0].num_planes : 0,
+            descriptor->num_objects);
+    const uint32_t object_count = descriptor->num_objects < AZK_DMABUF_MAX_PLANES
+        ? descriptor->num_objects : AZK_DMABUF_MAX_PLANES;
+    for (uint32_t index = 0; index < object_count; ++index) {
+        fprintf(stderr, "%s0x%016llx", index ? "," : "",
+                (unsigned long long)descriptor->objects[index].drm_format_modifier);
+    }
+    fprintf(stderr, "]\n");
 }
 
 static void close_descriptor(VADRMPRIMESurfaceDescriptor *descriptor) {
     for (uint32_t index = 0; index < descriptor->num_objects; ++index) {
         if (descriptor->objects[index].fd >= 0) close(descriptor->objects[index].fd);
     }
+}
+
+static int compositor_supports(
+    const VADRMPRIMESurfaceDescriptor *descriptor);
+
+static const char *descriptor_rejection(
+        const VADRMPRIMESurfaceDescriptor *descriptor) {
+    if (descriptor->num_layers != 1)
+        return "expected one composed layer";
+    if (descriptor->layers[0].num_planes == 0)
+        return "exported layer has no planes";
+    if (descriptor->layers[0].num_planes > AZK_DMABUF_MAX_PLANES)
+        return "exported layer has too many planes";
+    if (descriptor->num_objects > AZK_DMABUF_MAX_PLANES)
+        return "exported surface has too many objects";
+    if (!compositor_supports(descriptor))
+        return "compositor did not advertise the exported format/modifier";
+    return NULL;
+}
+
+void azk_vaapi_vpp_free(AzkVaapiVpp **slot) {
+    if (!slot || !*slot) return;
+    AzkVaapiVpp *vpp = *slot;
+    if (vpp->context != VA_INVALID_ID)
+        vaDestroyContext(vpp->display, vpp->context);
+    if (vpp->config != VA_INVALID_ID)
+        vaDestroyConfig(vpp->display, vpp->config);
+    free(vpp);
+    *slot = NULL;
+}
+
+static int prepare_vpp(AzkVaapiVpp **slot, VADisplay display,
+                       int width, int height) {
+    if (*slot && (*slot)->display == display && (*slot)->width == width &&
+        (*slot)->height == height)
+        return 1;
+
+    azk_vaapi_vpp_free(slot);
+    AzkVaapiVpp *vpp = calloc(1, sizeof(*vpp));
+    if (!vpp) return 0;
+    vpp->display = display;
+    vpp->config = VA_INVALID_ID;
+    vpp->context = VA_INVALID_ID;
+    vpp->width = width;
+    vpp->height = height;
+
+    VAConfigAttrib attribute = {
+        .type = VAConfigAttribRTFormat,
+        .value = VA_RT_FORMAT_RGB32,
+    };
+    VAStatus status = vaCreateConfig(display, VAProfileNone,
+                                     VAEntrypointVideoProc,
+                                     &attribute, 1, &vpp->config);
+    if (status == VA_STATUS_SUCCESS) {
+        status = vaCreateContext(display, vpp->config, width, height,
+                                 VA_PROGRESSIVE, NULL, 0, &vpp->context);
+    }
+    if (status != VA_STATUS_SUCCESS) {
+        if (!atomic_flag_test_and_set(&vpp_failure_logged))
+            fprintf(stderr, "azk: VAAPI RGB VPP setup failed: %s (%d)\n",
+                    vaErrorStr(status), status);
+        *slot = vpp;
+        azk_vaapi_vpp_free(slot);
+        return 0;
+    }
+    *slot = vpp;
+    return 1;
 }
 
 static int compositor_supports(const VADRMPRIMESurfaceDescriptor *descriptor) {
@@ -96,8 +207,169 @@ static int compositor_supports(const VADRMPRIMESurfaceDescriptor *descriptor) {
                     descriptor->layers[0].num_planes, modifiers);
 }
 
-AzkHardwareFrame *azk_vaapi_export(const AVFrame *source) {
-    if (!source || source->format != AV_PIX_FMT_VAAPI || !source->hw_frames_ctx)
+static AzkHardwareFrame *take_descriptor(
+        const AVFrame *source, VADRMPRIMESurfaceDescriptor *descriptor,
+        int width, int height, VADisplay display, VASurfaceID owned_surface) {
+    AzkHardwareFrame *frame = calloc(1, sizeof(*frame));
+    if (!frame) {
+        close_descriptor(descriptor);
+        if (owned_surface != VA_INVALID_SURFACE)
+            vaDestroySurfaces(display, &owned_surface, 1);
+        return NULL;
+    }
+    for (int index = 0; index < AZK_DMABUF_MAX_PLANES; ++index) {
+        frame->fds[index] = -1;
+        frame->object_fds[index] = -1;
+    }
+    frame->width = width;
+    frame->height = height;
+    frame->format = descriptor->layers[0].drm_format;
+    frame->plane_count = descriptor->layers[0].num_planes;
+    frame->object_count = descriptor->num_objects;
+    frame->va_display = display;
+    frame->va_surface = owned_surface;
+    frame->owns_va_surface = owned_surface != VA_INVALID_SURFACE;
+    for (int index = 0; index < frame->object_count; ++index)
+        frame->object_fds[index] = descriptor->objects[index].fd;
+
+    if (frame->owns_va_surface) {
+        frame->device_ref = av_buffer_ref(source->hw_frames_ctx);
+        if (!frame->device_ref) {
+            azk_hardware_frame_release(frame);
+            return NULL;
+        }
+    } else {
+        frame->frame = av_frame_clone(source);
+        if (!frame->frame) {
+            azk_hardware_frame_release(frame);
+            return NULL;
+        }
+    }
+
+    for (int index = 0; index < frame->plane_count; ++index) {
+        const uint32_t object = descriptor->layers[0].object_index[index];
+        if (object >= descriptor->num_objects) {
+            azk_hardware_frame_release(frame);
+            return NULL;
+        }
+        frame->fds[index] = descriptor->objects[object].fd;
+        frame->offsets[index] = descriptor->layers[0].offset[index];
+        frame->strides[index] = descriptor->layers[0].pitch[index];
+        frame->modifiers[index] = descriptor->objects[object].drm_format_modifier;
+    }
+    return frame;
+}
+
+static void log_vpp_failure(const char *stage, VAStatus status) {
+    if (!atomic_flag_test_and_set(&vpp_failure_logged))
+        fprintf(stderr, "azk: VAAPI RGB VPP %s failed: %s (%d); using CPU fallback\n",
+                stage, vaErrorStr(status), status);
+}
+
+static AzkHardwareFrame *export_vpp_rgb(
+        const AVFrame *source, VADisplay display, VASurfaceID input,
+        int target_width, int target_height, AzkVaapiVpp **vpp_slot) {
+    if (target_width <= 0) target_width = source->width;
+    if (target_height <= 0) target_height = source->height;
+    if (!prepare_vpp(vpp_slot, display, target_width, target_height))
+        return NULL;
+    AzkVaapiVpp *vpp = *vpp_slot;
+
+    VASurfaceID output = VA_INVALID_SURFACE;
+    VABufferID pipeline_buffer = VA_INVALID_ID;
+    VASurfaceAttrib pixel_format = {
+        .type = VASurfaceAttribPixelFormat,
+        .flags = VA_SURFACE_ATTRIB_SETTABLE,
+        .value = {
+            .type = VAGenericValueTypeInteger,
+            .value = { .i = VA_FOURCC_BGRX },
+        },
+    };
+    VAStatus status = vaCreateSurfaces(display, VA_RT_FORMAT_RGB32,
+                                       target_width, target_height,
+                                       &output, 1, &pixel_format, 1);
+    if (status != VA_STATUS_SUCCESS) {
+        log_vpp_failure("surface allocation", status);
+        return NULL;
+    }
+
+    VARectangle source_region = {
+        .x = 0, .y = 0,
+        .width = (uint16_t)source->width,
+        .height = (uint16_t)source->height,
+    };
+    VARectangle output_region = {
+        .x = 0, .y = 0,
+        .width = (uint16_t)target_width,
+        .height = (uint16_t)target_height,
+    };
+    const VAProcColorStandardType color_standard = source->height >= 720
+        ? VAProcColorStandardBT709 : VAProcColorStandardBT601;
+    VAProcPipelineParameterBuffer pipeline;
+    memset(&pipeline, 0, sizeof(pipeline));
+    pipeline.surface = input;
+    pipeline.surface_region = &source_region;
+    pipeline.surface_color_standard = color_standard;
+    pipeline.output_region = &output_region;
+    pipeline.output_background_color = 0xff000000;
+    pipeline.output_color_standard = color_standard;
+    pipeline.filter_flags = VA_FILTER_SCALING_FAST |
+                            VA_FILTER_INTERPOLATION_BILINEAR;
+
+    status = vaCreateBuffer(display, vpp->context,
+                            VAProcPipelineParameterBufferType,
+                            sizeof(pipeline), 1, &pipeline, &pipeline_buffer);
+    int picture_begun = 0;
+    if (status == VA_STATUS_SUCCESS) {
+        status = vaBeginPicture(display, vpp->context, output);
+        picture_begun = status == VA_STATUS_SUCCESS;
+    }
+    if (status == VA_STATUS_SUCCESS)
+        status = vaRenderPicture(display, vpp->context, &pipeline_buffer, 1);
+    if (picture_begun) {
+        const VAStatus end_status = vaEndPicture(display, vpp->context);
+        if (status == VA_STATUS_SUCCESS) status = end_status;
+    }
+    if (pipeline_buffer != VA_INVALID_ID)
+        vaDestroyBuffer(display, pipeline_buffer);
+    if (status == VA_STATUS_SUCCESS)
+        status = vaSyncSurface(display, output);
+    if (status != VA_STATUS_SUCCESS) {
+        log_vpp_failure("processing", status);
+        vaDestroySurfaces(display, &output, 1);
+        return NULL;
+    }
+
+    VADRMPRIMESurfaceDescriptor descriptor;
+    memset(&descriptor, 0, sizeof(descriptor));
+    status = vaExportSurfaceHandle(
+        display, output, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
+        VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_COMPOSED_LAYERS,
+        &descriptor);
+    if (status != VA_STATUS_SUCCESS) {
+        log_vpp_failure("DMA-BUF export", status);
+        vaDestroySurfaces(display, &output, 1);
+        return NULL;
+    }
+    const char *rejection = descriptor_rejection(&descriptor);
+    if (rejection) {
+        log_export_descriptor_once("rejected", rejection, &descriptor,
+                                   &export_failure_logged);
+        close_descriptor(&descriptor);
+        vaDestroySurfaces(display, &output, 1);
+        return NULL;
+    }
+
+    log_export_descriptor_once("confirmed", "GPU VPP RGB path active",
+                               &descriptor, &export_success_logged);
+    return take_descriptor(source, &descriptor, target_width, target_height,
+                           display, output);
+}
+
+AzkHardwareFrame *azk_vaapi_export(const AVFrame *source, int target_width,
+                                   int target_height, AzkVaapiVpp **vpp_slot) {
+    if (!source || source->format != AV_PIX_FMT_VAAPI ||
+        !source->hw_frames_ctx || !vpp_slot)
         return NULL;
 
     AVHWFramesContext *frames = (AVHWFramesContext *)source->hw_frames_ctx->data;
@@ -111,48 +383,25 @@ AzkHardwareFrame *azk_vaapi_export(const AVFrame *source) {
         device->display, surface, VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME_2,
         VA_EXPORT_SURFACE_READ_ONLY | VA_EXPORT_SURFACE_COMPOSED_LAYERS,
         &descriptor);
-    if (status != VA_STATUS_SUCCESS) return NULL;
-
-    if (descriptor.num_layers != 1 || descriptor.layers[0].num_planes == 0 ||
-        descriptor.layers[0].num_planes > AZK_DMABUF_MAX_PLANES ||
-        descriptor.num_objects > AZK_DMABUF_MAX_PLANES ||
-        !compositor_supports(&descriptor)) {
-        close_descriptor(&descriptor);
-        return NULL;
-    }
-
-    AzkHardwareFrame *frame = calloc(1, sizeof(*frame));
-    if (!frame) {
-        close_descriptor(&descriptor);
-        return NULL;
-    }
-    frame->frame = av_frame_clone(source);
-    if (!frame->frame) {
-        close_descriptor(&descriptor);
-        free(frame);
-        return NULL;
-    }
-
-    frame->width = source->width;
-    frame->height = source->height;
-    frame->format = descriptor.layers[0].drm_format;
-    frame->plane_count = descriptor.layers[0].num_planes;
-    frame->object_count = descriptor.num_objects;
-    for (int index = 0; index < frame->object_count; ++index)
-        frame->object_fds[index] = descriptor.objects[index].fd;
-
-    for (int index = 0; index < frame->plane_count; ++index) {
-        const uint32_t object = descriptor.layers[0].object_index[index];
-        if (object >= descriptor.num_objects) {
-            azk_hardware_frame_release(frame);
-            return NULL;
+    if (status == VA_STATUS_SUCCESS) {
+        const char *rejection = descriptor_rejection(&descriptor);
+        if (!rejection) {
+            log_export_descriptor_once("confirmed", "direct zero-copy path active",
+                                       &descriptor, &export_success_logged);
+            return take_descriptor(source, &descriptor, source->width,
+                                   source->height, device->display,
+                                   VA_INVALID_SURFACE);
         }
-        frame->fds[index] = descriptor.objects[object].fd;
-        frame->offsets[index] = descriptor.layers[0].offset[index];
-        frame->strides[index] = descriptor.layers[0].pitch[index];
-        frame->modifiers[index] = descriptor.objects[object].drm_format_modifier;
+        log_export_descriptor_once("rejected", rejection, &descriptor,
+                                   &export_failure_logged);
+        close_descriptor(&descriptor);
+    } else if (!atomic_flag_test_and_set(&export_failure_logged)) {
+        fprintf(stderr, "azk: direct DMA-BUF export failed: %s (%d); trying RGB VPP\n",
+                vaErrorStr(status), status);
     }
-    return frame;
+
+    return export_vpp_rgb(source, device->display, surface,
+                          target_width, target_height, vpp_slot);
 }
 
 void azk_hardware_frame_release(AzkHardwareFrame *frame) {
@@ -160,6 +409,11 @@ void azk_hardware_frame_release(AzkHardwareFrame *frame) {
     for (int index = 0; index < frame->object_count; ++index) {
         if (frame->object_fds[index] >= 0) close(frame->object_fds[index]);
     }
+    if (frame->owns_va_surface) {
+        VASurfaceID surface = frame->va_surface;
+        vaDestroySurfaces((VADisplay)frame->va_display, &surface, 1);
+    }
     av_frame_free(&frame->frame);
+    av_buffer_unref(&frame->device_ref);
     free(frame);
 }

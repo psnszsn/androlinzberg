@@ -27,8 +27,10 @@ const Frame = struct {
 const VFrame = struct {
     rgbx: []u8, // BGRX bytes for the software+wl_shm adapter
     hardware: ?*c.AzkHardwareFrame = null, // owned VA-API DMA-BUF frame
-    width: c_int,
+    width: c_int, // decoded/coded dimensions reported to MediaCodec
     height: c_int,
+    rgbx_width: c_int = 0, // possibly reduced to the on-screen layer size
+    rgbx_height: c_int = 0,
     pts: i64,
 };
 
@@ -43,7 +45,12 @@ pub const Dec = struct {
     sws_w: c_int = 0,
     sws_h: c_int = 0,
     sws_fmt: c_int = -1,
+    sws_out_w: c_int = 0,
+    sws_out_h: c_int = 0,
+    target_w: c_int = 0,
+    target_h: c_int = 0,
     hw_device: ?*c.AVBufferRef = null,
+    vaapi_vpp: ?*c.AzkVaapiVpp = null,
     eof_sent: bool = false,
     eof_out: bool = false,
 
@@ -60,7 +67,18 @@ pub const Dec = struct {
             defer c.av_frame_unref(self.frame);
             if (self.is_video) {
                 if (self.frame.format == c.AV_PIX_FMT_VAAPI) {
-                    const hardware = c.azk_vaapi_export(self.frame);
+                    const output = fitVideoTarget(
+                        self.frame.width,
+                        self.frame.height,
+                        self.target_w,
+                        self.target_h,
+                    );
+                    const hardware = c.azk_vaapi_export(
+                        self.frame,
+                        output.width,
+                        output.height,
+                        &self.vaapi_vpp,
+                    );
                     if (hardware) |frame| {
                         errdefer c.azk_hardware_frame_release(frame);
                         try self.vqueue.append(gpa, .{
@@ -95,16 +113,21 @@ pub const Dec = struct {
     fn convertVideoFrame(self: *Dec, f: *c.AVFrame) !VFrame {
         const w = f.width;
         const h = f.height;
-        if (self.sws == null or self.sws_w != w or self.sws_h != h or self.sws_fmt != f.format) {
+        const output = fitVideoTarget(w, h, self.target_w, self.target_h);
+        if (self.sws == null or self.sws_w != w or self.sws_h != h or self.sws_fmt != f.format or
+            self.sws_out_w != output.width or self.sws_out_h != output.height)
+        {
             if (self.sws) |old| c.sws_freeContext(old);
-            self.sws = c.sws_getContext(w, h, f.format, w, h, c.AV_PIX_FMT_BGR0,
+            self.sws = c.sws_getContext(w, h, f.format, output.width, output.height, c.AV_PIX_FMT_BGR0,
                     c.SWS_BILINEAR, null, null, null) orelse return error.Sws;
             self.sws_w = w;
             self.sws_h = h;
             self.sws_fmt = f.format;
+            self.sws_out_w = output.width;
+            self.sws_out_h = output.height;
         }
-        const stride: usize = @intCast(w * 4);
-        const out = try gpa.alloc(u8, stride * @as(usize, @intCast(h)));
+        const stride: usize = @intCast(output.width * 4);
+        const out = try gpa.alloc(u8, stride * @as(usize, @intCast(output.height)));
         errdefer gpa.free(out);
         var dst_data = [_][*c]u8{ out.ptr, null, null, null };
         var dst_stride = [_]c_int{ @intCast(stride), 0, 0, 0 };
@@ -115,10 +138,37 @@ pub const Dec = struct {
             .hardware = null,
             .width = w,
             .height = h,
+            .rgbx_width = output.width,
+            .rgbx_height = output.height,
             .pts = if (f.pts != c.AV_NOPTS_VALUE) f.pts else 0,
         };
     }
 };
+
+const VideoSize = struct { width: c_int, height: c_int };
+
+/// Fit the conversion to the visible layer without upscaling or changing the
+/// decoded aspect ratio. Wayland performs the final fractional scaling.
+fn fitVideoTarget(width: c_int, height: c_int, target_width: c_int, target_height: c_int) VideoSize {
+    if (width <= 0 or height <= 0 or target_width <= 0 or target_height <= 0 or
+        (width <= target_width and height <= target_height))
+        return .{ .width = width, .height = height };
+
+    const source_w: i64 = width;
+    const source_h: i64 = height;
+    const target_w: i64 = target_width;
+    const target_h: i64 = target_height;
+    if (source_w * target_h >= source_h * target_w) {
+        return .{
+            .width = target_width,
+            .height = @intCast(@max(1, @divTrunc(source_h * target_w, source_w))),
+        };
+    }
+    return .{
+        .width = @intCast(@max(1, @divTrunc(source_w * target_h, source_h))),
+        .height = target_height,
+    };
+}
 
 fn avError(e: c_int) c_int {
     return -e; // AVERROR(e)
@@ -220,6 +270,11 @@ pub export fn azk_codec_configure(d: *Dec, extradata: ?[*]const u8, len: c_int, 
     return c.avcodec_open2(d.ctx, null, null);
 }
 
+pub export fn azk_codec_set_video_target(d: *Dec, width: c_int, height: c_int) void {
+    d.target_w = @max(0, width);
+    d.target_h = @max(0, height);
+}
+
 /// Send one encoded packet (or EOF). Always accepts: pending frames are
 /// drained into the queue first. Returns 0 on success, <0 on error.
 pub export fn azk_codec_send(d: *Dec, data: ?[*]const u8, len: c_int, pts_us: i64, eof: c_int) c_int {
@@ -307,8 +362,9 @@ pub export fn azk_codec_receive_video(d: *Dec, dst: [*]u8, dst_cap: c_int, out_m
     return 0;
 }
 
-/// Software frames return 0 and are copied to dst. Hardware frames return 3
-/// and transfer an opaque AzkHardwareFrame through out_handle.
+/// Software frames return 4 and transfer an owned SoftwareFrame through
+/// out_handle. Hardware frames return 3 and transfer an AzkHardwareFrame.
+/// The legacy receive_video entry point remains the copying buffer API.
 pub export fn azk_codec_receive_video2(d: *Dec, dst: [*]u8, dst_cap: c_int,
         out_meta: [*]c_int, out_pts: *i64, out_handle: *usize) c_int {
     out_handle.* = 0;
@@ -327,21 +383,46 @@ pub export fn azk_codec_receive_video2(d: *Dec, dst: [*]u8, dst_cap: c_int,
         out_handle.* = @intFromPtr(hardware);
         return 3;
     }
-    if (pending.rgbx.len > dst_cap) {
-        out_meta[0] = @intCast(pending.rgbx.len);
-        return -2;
-    }
+    const software = gpa.create(SoftwareFrame) catch return -1;
     const f = d.vqueue.orderedRemove(0);
-    defer gpa.free(f.rgbx);
-    @memcpy(dst[0..f.rgbx.len], f.rgbx);
-    out_meta[0] = @intCast(f.rgbx.len);
-    return 0;
+    software.* = .{
+        .rgbx = f.rgbx,
+        .width = f.rgbx_width,
+        .height = f.rgbx_height,
+        .source_width = f.width,
+        .source_height = f.height,
+    };
+    // Surface output owns the native allocation and never writes dst.
+    out_meta[0] = 0;
+    out_handle.* = @intFromPtr(software);
+    _ = dst;
+    _ = dst_cap;
+    return 4;
 }
 
 pub const HardwareFrame = c.AzkHardwareFrame;
 
+pub const SoftwareFrame = struct {
+    rgbx: []u8,
+    width: c_int,
+    height: c_int,
+    source_width: c_int,
+    source_height: c_int,
+};
+
 pub fn releaseHardwareFrame(frame: *HardwareFrame) void {
     c.azk_hardware_frame_release(frame);
+}
+
+pub fn releaseSoftwareFrame(frame: *SoftwareFrame) void {
+    gpa.free(frame.rgbx);
+    gpa.destroy(frame);
+}
+
+test "video conversion target preserves aspect ratio and never upscales" {
+    try std.testing.expectEqual(VideoSize{ .width = 774, .height = 588 }, fitVideoTarget(2842, 2160, 774, 589));
+    try std.testing.expectEqual(VideoSize{ .width = 1920, .height = 1080 }, fitVideoTarget(3840, 2160, 1920, 1080));
+    try std.testing.expectEqual(VideoSize{ .width = 426, .height = 240 }, fitVideoTarget(426, 240, 1920, 1080));
 }
 
 pub export fn azk_codec_flush(d: *Dec) void {
@@ -366,6 +447,7 @@ pub export fn azk_codec_close(d: *Dec) void {
     }
     d.vqueue.deinit(gpa);
     if (d.sws) |sws| c.sws_freeContext(sws);
+    c.azk_vaapi_vpp_free(&d.vaapi_vpp);
     var hw_device = d.hw_device;
     c.av_buffer_unref(&hw_device);
     var ctx: ?*c.AVCodecContext = d.ctx;

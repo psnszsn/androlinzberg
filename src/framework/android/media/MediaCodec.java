@@ -53,13 +53,15 @@ public final class MediaCodec {
     private final int[] mOutW = new int[NUM_OUTPUT];
     private final int[] mOutH = new int[NUM_OUTPUT];
     private final long[] mOutHardware = new long[NUM_OUTPUT];
+    private final long[] mOutSoftware = new long[NUM_OUTPUT];
 
     private static native long nativeOpen(String codecName);
     private static native int nativeConfigure(long h, byte[] csd, int sampleRate, int channels);
+    private static native void nativeSetVideoTarget(long h, int width, int height);
     private static native int nativeSend(long h, ByteBuffer buf, int offset, int size, long ptsUs, int eof);
     private static native int nativeReceiveAudio(long h, ByteBuffer dst, int cap, int[] meta, long[] pts);
     private static native int nativeReceiveVideo(long h, ByteBuffer dst, int cap,
-            int[] meta, long[] pts, long[] frameHandle);
+            int[] meta, long[] pts, long[] frameHandle, boolean surfaceOutput);
     private static native void nativeFlush(long h);
     private static native void nativeClose(long h);
 
@@ -149,7 +151,12 @@ public final class MediaCodec {
         if (nativeConfigure(mHandle, csd, rate, ch) < 0) throw new CodecException("configure failed");
         int w0 = format != null ? format.getInteger(MediaFormat.KEY_WIDTH, 0) : 0;
         int h0 = format != null ? format.getInteger(MediaFormat.KEY_HEIGHT, 0) : 0;
-        mOutCap = mVideo ? Math.max(w0 * h0 * 4, 1280 * 736 * 4) : OUT_CAP;
+        // Surface output is transported by an owned native handle. Allocating
+        // three decoded-frame-sized Java buffers here retained ~100 MiB for a
+        // single 4K format generation even though none of them were written.
+        mOutCap = mVideo && surface != null
+                ? 1
+                : mVideo ? Math.max(w0 * h0 * 4, 1280 * 736 * 4) : OUT_CAP;
         for (int i = 0; i < NUM_INPUT; i++) {
             mIn[i] = ByteBuffer.allocateDirect(IN_CAP).order(ByteOrder.nativeOrder());
         }
@@ -194,21 +201,12 @@ public final class MediaCodec {
 
     public void stop() {
         mAsyncRunning = false;
+        releaseHeldFrames();
     }
 
     private void pump() {
         if (!mAsyncRunning || mCallback == null || mHandle == 0) return;
         try {
-            // announce free input slots (each once until requeued)
-            for (int i = 0; i < NUM_INPUT; i++) {
-                if (!mInBusy[i] && !mInAnnounced[i]) {
-                    mInBusy[i] = true;      // reserved for the client
-                    mInAnnounced[i] = true;
-                    mIn[i].clear();
-                    mCallback.onInputBufferAvailable(this, i);
-                    if (!mAsyncRunning) return;
-                }
-            }
             // deliver at most a few output buffers per tick
             for (int n = 0; n < 3; n++) {
                 BufferInfo info = new BufferInfo();
@@ -223,6 +221,26 @@ public final class MediaCodec {
                 }
                 if (!mAsyncRunning) return;
             }
+            // Do not let asynchronous video input run arbitrarily far ahead
+            // of the three output slots. Decoded RGB frames are large, and the
+            // previous unbounded producer looked like a memory leak.
+            int inputBudget = NUM_INPUT;
+            if (mVideo) {
+                inputBudget = 0;
+                for (int i = 0; i < NUM_VIDEO_OUTPUT; i++) {
+                    if (!mOutBusy[i]) inputBudget++;
+                }
+            }
+            for (int i = 0; i < NUM_INPUT && inputBudget > 0; i++) {
+                if (!mInBusy[i] && !mInAnnounced[i]) {
+                    mInBusy[i] = true;
+                    mInAnnounced[i] = true;
+                    mIn[i].clear();
+                    mCallback.onInputBufferAvailable(this, i);
+                    inputBudget--;
+                    if (!mAsyncRunning) return;
+                }
+            }
         } catch (CodecException e) {
             mCallback.onError(this, e);
         }
@@ -230,7 +248,7 @@ public final class MediaCodec {
     }
 
     public void flush() {
-        releaseHeldHardwareFrames();
+        releaseHeldFrames();
         synchronized (mNativeLock) { if (mHandle != 0) nativeFlush(mHandle); }
         java.util.Arrays.fill(mInBusy, false);
         java.util.Arrays.fill(mOutBusy, false);
@@ -243,7 +261,7 @@ public final class MediaCodec {
 
     public void release() {
         mAsyncRunning = false;
-        releaseHeldHardwareFrames();
+        releaseHeldFrames();
         synchronized (mNativeLock) {
             if (mHandle != 0) { nativeClose(mHandle); mHandle = 0; }
         }
@@ -255,11 +273,15 @@ public final class MediaCodec {
     public String getCanonicalName() { return mName; }
     public MediaCodecInfo getCodecInfo() { return MediaCodecList.infoFor(mName); }
 
-    private void releaseHeldHardwareFrames() {
+    private void releaseHeldFrames() {
         for (int i = 0; i < mOutHardware.length; i++) {
             if (mOutHardware[i] != 0) {
                 android.view.ArtzigVideoLayer.releaseHardware(mOutHardware[i]);
                 mOutHardware[i] = 0;
+            }
+            if (mOutSoftware[i] != 0) {
+                android.view.ArtzigVideoLayer.releaseSoftware(mOutSoftware[i]);
+                mOutSoftware[i] = 0;
             }
         }
     }
@@ -286,6 +308,11 @@ public final class MediaCodec {
         }
         int r = 0;
         synchronized (mNativeLock) {
+            if (mVideo) {
+                nativeSetVideoTarget(mHandle,
+                        mSurface != null ? android.view.ArtzigVideoLayer.targetWidth(mSurface) : 0,
+                        mSurface != null ? android.view.ArtzigVideoLayer.targetHeight(mSurface) : 0);
+            }
             if (size > 0) r = nativeSend(mHandle, mIn[index], offset, size, presentationTimeUs, 0);
             if (eos) { nativeSend(mHandle, mIn[index], 0, 0, presentationTimeUs, 1); mSawInputEos = true; }
         }
@@ -324,7 +351,7 @@ public final class MediaCodec {
         dst.clear();
         int r;
         synchronized (mNativeLock) {
-            r = mVideo ? nativeReceiveVideo(mHandle, dst, mOutCap, mMeta, mPts, mFrameHandle)
+            r = mVideo ? nativeReceiveVideo(mHandle, dst, mOutCap, mMeta, mPts, mFrameHandle, mSurface != null)
                        : nativeReceiveAudio(mHandle, dst, mOutCap, mMeta, mPts);
         }
         while (r == -2 && mVideo) { // frame larger than our buffers: retain, grow, retry
@@ -344,7 +371,7 @@ public final class MediaCodec {
             dst = mOut[slot];
             dst.clear();
             synchronized (mNativeLock) {
-                r = nativeReceiveVideo(mHandle, dst, mOutCap, mMeta, mPts, mFrameHandle);
+                r = nativeReceiveVideo(mHandle, dst, mOutCap, mMeta, mPts, mFrameHandle, mSurface != null);
             }
         }
         if (r == 1) return INFO_TRY_AGAIN_LATER;
@@ -356,7 +383,10 @@ public final class MediaCodec {
             return slot;
         }
         if (r < 0) throw new CodecException("receive failed: " + r);
-        if (mVideo) mOutHardware[slot] = r == 3 ? mFrameHandle[0] : 0;
+        if (mVideo) {
+            mOutHardware[slot] = r == 3 ? mFrameHandle[0] : 0;
+            mOutSoftware[slot] = r == 4 ? mFrameHandle[0] : 0;
+        }
         boolean formatChanged;
         if (mVideo) {
             formatChanged = !mFormatReported
@@ -398,12 +428,20 @@ public final class MediaCodec {
 
     public void releaseOutputBuffer(int index, boolean render) {
         long hardware = mOutHardware[index];
+        long software = mOutSoftware[index];
         mOutHardware[index] = 0;
+        mOutSoftware[index] = 0;
         if (hardware != 0) {
             if (render && mSurface != null) {
                 android.view.ArtzigVideoLayer.pushHardware(mSurface, hardware);
             } else {
                 android.view.ArtzigVideoLayer.releaseHardware(hardware);
+            }
+        } else if (software != 0) {
+            if (render && mSurface != null) {
+                android.view.ArtzigVideoLayer.pushSoftware(mSurface, software);
+            } else {
+                android.view.ArtzigVideoLayer.releaseSoftware(software);
             }
         } else if (render && mVideo && mSurface != null && mOutW[index] > 0) {
             ByteBuffer b = mOut[index];

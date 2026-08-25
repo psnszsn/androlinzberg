@@ -36,6 +36,7 @@ const usage =
     \\  ARTZIG_FRAMEWORK_RES,
     \\  ARTZIG_FONT_FALLBACK_XML (skip fontconfig font discovery),
     \\  ARTZIG_VIDEO_DECODER=software, ARTZIG_VAAPI_DEVICE=/dev/dri/renderDNNN,
+    \\  ARTZIG_VIDEO_YUV_DMABUF=1 (opt in to direct compositor YUV import),
     \\  ARTZIG_FRAME_PACING_TRACE=1, ARTZIG_EGL_SWAP_INTERVAL=0,
     \\  AZK_SIZE=WxH, AZK_TAP/AZK_SWIPE/AZK_WHEEL/AZK_TYPE/... (test hooks)
     \\  F11 toggles xdg-shell fullscreen mode.

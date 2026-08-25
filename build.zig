@@ -232,6 +232,18 @@ pub fn build(b: *std.Build) void {
 
     const audio_tests = b.addTest(.{ .root_module = audio_mod });
     const run_audio_tests = b.addRunArtifact(audio_tests);
+    const wayland_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/platform/wayland.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{ .name = "wayland", .module = wayland_mod }},
+        }),
+    });
+    wayland_tests.root_module.linkSystemLibrary("wayland-client", .{ .needed = true });
+    wayland_tests.root_module.linkSystemLibrary("xkbcommon", .{ .needed = true });
+    const run_wayland_tests = b.addRunArtifact(wayland_tests);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
     const platform_abi_test_mod = b.createModule(.{
@@ -245,6 +257,7 @@ pub fn build(b: *std.Build) void {
     const launcher_check = b.addObject(.{ .name = "launcher-check", .root_module = exe.root_module });
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
     native_test_step.dependOn(&run_audio_tests.step);
+    native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
     native_test_step.dependOn(&host_renderer_check.step);
     native_test_step.dependOn(&platform_abi_check.step);

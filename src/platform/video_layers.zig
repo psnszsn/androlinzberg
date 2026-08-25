@@ -8,6 +8,11 @@ const codec = @import("azk_codec");
 const art = @import("art");
 const jni = art.jni;
 
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+
+const drm_format_nv12: u32 = 0x3231564e;
+const drm_format_p010: u32 = 0x30313050;
+
 const Record = struct {
     layer: ?*wayland.Window.VideoLayer = null,
     frames: u64 = 0,
@@ -19,6 +24,8 @@ const Record = struct {
     frame_fresh: bool = false,
     hardware_frame: ?*codec.HardwareFrame = null,
     hardware_fresh: bool = false,
+    software_frame: ?*codec.SoftwareFrame = null,
+    software_fresh: bool = false,
     destroyed: bool = false,
     dead: bool = false,
 };
@@ -37,6 +44,8 @@ var g_records: std.ArrayList(*Record) = .empty;
 var g_gpa: std.mem.Allocator = undefined;
 var g_win: ?*wayland.Window = null;
 var g_android_physical_pixels = false;
+var g_dmabuf_rejection_logged = false;
+var g_allow_yuv_dmabuf = false;
 
 fn record(id: jni.jint) ?*Record {
     if (id < 1 or id > g_records.items.len) return null;
@@ -86,8 +95,11 @@ fn nativePush(env: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, buf: jni.jobject
     defer g_mutex.unlock();
     const r = record(id) orelse return;
     if (r.hardware_frame) |hardware| codec.releaseHardwareFrame(hardware);
+    if (r.software_frame) |software| codec.releaseSoftwareFrame(software);
     r.hardware_frame = null;
     r.hardware_fresh = false;
+    r.software_frame = null;
+    r.software_fresh = false;
     r.frame.resize(g_gpa, bytes) catch return;
     @memcpy(r.frame.items[0..bytes], base[0..bytes]);
     r.frame_w = w;
@@ -105,8 +117,11 @@ fn nativePushHardware(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, handle: jn
         return;
     };
     if (r.hardware_frame) |old| codec.releaseHardwareFrame(old);
+    if (r.software_frame) |old| codec.releaseSoftwareFrame(old);
     r.hardware_frame = frame;
     r.hardware_fresh = true;
+    r.software_frame = null;
+    r.software_fresh = false;
     r.frame_fresh = false;
 }
 
@@ -114,6 +129,30 @@ fn nativeReleaseHardware(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) ca
     if (handle == 0) return;
     const frame: *codec.HardwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
     codec.releaseHardwareFrame(frame);
+}
+
+fn nativePushSoftware(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, handle: jni.jlong) callconv(.c) void {
+    if (handle == 0) return;
+    const frame: *codec.SoftwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
+    g_mutex.lock();
+    defer g_mutex.unlock();
+    const r = record(id) orelse {
+        codec.releaseSoftwareFrame(frame);
+        return;
+    };
+    if (r.hardware_frame) |old| codec.releaseHardwareFrame(old);
+    if (r.software_frame) |old| codec.releaseSoftwareFrame(old);
+    r.hardware_frame = null;
+    r.hardware_fresh = false;
+    r.software_frame = frame;
+    r.software_fresh = true;
+    r.frame_fresh = false;
+}
+
+fn nativeReleaseSoftware(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c) void {
+    if (handle == 0) return;
+    const frame: *codec.SoftwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
+    codec.releaseSoftwareFrame(frame);
 }
 
 fn nativeDestroy(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint) callconv(.c) void {
@@ -128,6 +167,10 @@ pub fn register(gpa: std.mem.Allocator, io: std.Io, win: *wayland.Window, env: [
     g_io = io;
     g_win = win;
     g_android_physical_pixels = android_physical_pixels;
+    g_allow_yuv_dmabuf = if (getenv("ARTZIG_VIDEO_YUV_DMABUF")) |value|
+        std.mem.eql(u8, std.mem.span(value), "1")
+    else
+        false;
     const cls = env.*.*.FindClass.?(env, "android/view/ArtzigVideoLayer") orelse return error.NoClass;
     const methods = [_]jni.JNINativeMethod{
         .{ .name = "nativeCreate", .signature = "()I", .fnPtr = @ptrCast(@constCast(&nativeCreate)) },
@@ -135,6 +178,8 @@ pub fn register(gpa: std.mem.Allocator, io: std.Io, win: *wayland.Window, env: [
         .{ .name = "nativePush", .signature = "(ILjava/nio/ByteBuffer;II)V", .fnPtr = @ptrCast(@constCast(&nativePush)) },
         .{ .name = "nativePushHardware", .signature = "(IJ)V", .fnPtr = @ptrCast(@constCast(&nativePushHardware)) },
         .{ .name = "nativeReleaseHardware", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeReleaseHardware)) },
+        .{ .name = "nativePushSoftware", .signature = "(IJ)V", .fnPtr = @ptrCast(@constCast(&nativePushSoftware)) },
+        .{ .name = "nativeReleaseSoftware", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeReleaseSoftware)) },
         .{ .name = "nativeDestroy", .signature = "(I)V", .fnPtr = @ptrCast(@constCast(&nativeDestroy)) },
     };
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
@@ -152,8 +197,38 @@ pub export fn azk_video_dmabuf_available() c_int {
 pub export fn azk_video_dmabuf_supports(format: u32, plane_count: c_int, modifiers: [*]const u64) c_int {
     const win = g_win orelse return 0;
     if (plane_count <= 0 or plane_count > 4) return 0;
+    // Hyprland currently accepts these multi-planar formats but renders their
+    // color planes incorrectly on affected drivers. Keep VA-API decode active,
+    // then hand the converted RGB frame to the SHM layer unless direct YUV
+    // presentation was explicitly requested for a known-good compositor.
+    if (!g_allow_yuv_dmabuf and (format == drm_format_nv12 or format == drm_format_p010)) {
+        if (!g_dmabuf_rejection_logged) {
+            g_dmabuf_rejection_logged = true;
+            std.debug.print(
+                "azk: direct YUV DMA-BUF presentation disabled; using color-correct VAAPI software handoff (set ARTZIG_VIDEO_YUV_DMABUF=1 to opt in)\n",
+                .{},
+            );
+        }
+        return 0;
+    }
     for (0..@intCast(plane_count)) |index| {
-        if (!win.supportsVideoDmabuf(format, modifiers[index])) return 0;
+        if (!win.supportsVideoDmabuf(format, modifiers[index])) {
+            if (!g_dmabuf_rejection_logged) {
+                g_dmabuf_rejection_logged = true;
+                std.debug.print(
+                    "azk: compositor rejected DMA-BUF format=0x{x} plane={d} modifier=0x{x}; advertised modifiers=[",
+                    .{ format, index, modifiers[index] },
+                );
+                var first = true;
+                for (win.dmabuf_formats.items) |supported| {
+                    if (supported.format != format) continue;
+                    std.debug.print("{s}0x{x}", .{ if (first) "" else ",", supported.modifier });
+                    first = false;
+                }
+                std.debug.print("]\n", .{});
+            }
+            return 0;
+        }
     }
     return 1;
 }
@@ -161,6 +236,14 @@ pub export fn azk_video_dmabuf_supports(format: u32, plane_count: c_int, modifie
 fn releaseDmabuf(context: *anyopaque) void {
     const frame: *codec.HardwareFrame = @ptrCast(@alignCast(context));
     codec.releaseHardwareFrame(frame);
+}
+
+fn retireRecord(r: *Record) void {
+    if (r.layer) |layer| layer.destroy();
+    if (r.hardware_frame) |hardware| codec.releaseHardwareFrame(hardware);
+    if (r.software_frame) |software| codec.releaseSoftwareFrame(software);
+    r.frame.deinit(g_gpa);
+    r.* = .{ .dead = true };
 }
 
 /// Main-thread tick: apply pending rects, frames, and destroys.
@@ -171,16 +254,13 @@ pub fn process() void {
     for (g_records.items) |r| {
         if (r.dead) continue;
         if (r.destroyed) {
-            if (r.layer) |l| l.destroy();
-            if (r.hardware_frame) |hardware| codec.releaseHardwareFrame(hardware);
-            r.frame.deinit(g_gpa);
-            r.* = .{ .dead = true };
+            retireRecord(r);
             continue;
         }
-        if (r.layer == null and (r.geometry_dirty or r.frame_fresh or r.hardware_fresh)) {
+        if (r.layer == null and (r.geometry_dirty or r.frame_fresh or r.hardware_fresh or r.software_fresh)) {
             r.layer = win.createVideoLayer() catch |e| {
                 std.debug.print("video layer create failed: {}\n", .{e});
-                r.dead = true;
+                retireRecord(r);
                 continue;
             };
         }
@@ -226,6 +306,24 @@ pub fn process() void {
             r.frames += 1;
             if (r.frames == 1 or r.frames % 300 == 0) {
                 std.debug.print("azk: video layer frame #{d} {d}x{d} at rect {d},{d} {d}x{d}\n", .{ r.frames, r.frame_w, r.frame_h, r.geometry[0], r.geometry[1], r.geometry[2], r.geometry[3] });
+            }
+        }
+        if (r.software_fresh) {
+            const software = r.software_frame.?;
+            const frame_w = software.width;
+            const frame_h = software.height;
+            const source_w = software.source_width;
+            const source_h = software.source_height;
+            r.software_frame = null;
+            r.software_fresh = false;
+            layer.pushFrame(software.rgbx, frame_w, frame_h) catch {};
+            codec.releaseSoftwareFrame(software);
+            r.frames += 1;
+            if (r.frames == 1 or r.frames % 300 == 0) {
+                std.debug.print(
+                    "azk: video layer software-handoff frame #{d} source={d}x{d} transport={d}x{d}\n",
+                    .{ r.frames, source_w, source_h, frame_w, frame_h },
+                );
             }
         }
         if (r.hardware_fresh) {
@@ -275,6 +373,7 @@ pub fn deinit() void {
         if (!r.dead) {
             if (r.layer) |layer| layer.destroy();
             if (r.hardware_frame) |hardware| codec.releaseHardwareFrame(hardware);
+            if (r.software_frame) |software| codec.releaseSoftwareFrame(software);
             r.frame.deinit(g_gpa);
         }
         g_gpa.destroy(r);

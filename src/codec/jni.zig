@@ -20,6 +20,10 @@ fn nativeConfigure(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, csd: j
     return codec.azk_codec_configure(decoder, @ptrCast(base), len, sample_rate, channels);
 }
 
+fn nativeSetVideoTarget(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, width: jni.jint, height: jni.jint) callconv(.c) void {
+    codec.azk_codec_set_video_target(@ptrFromInt(@as(usize, @intCast(handle))), width, height);
+}
+
 fn nativeSend(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, buffer: jni.jobject, offset: jni.jint, size: jni.jint, pts_us: jni.jlong, eof: jni.jint) callconv(.c) jni.jint {
     const decoder: *codec.Dec = @ptrFromInt(@as(usize, @intCast(handle)));
     const raw = env.*.*.GetDirectBufferAddress.?(env, buffer);
@@ -40,13 +44,16 @@ fn nativeReceiveAudio(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, dst
     return result;
 }
 
-fn nativeReceiveVideo(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, dst: jni.jobject, capacity: jni.jint, meta: jni.jintArray, pts: jni.jlongArray, hardware_handle: jni.jlongArray) callconv(.c) jni.jint {
+fn nativeReceiveVideo(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, dst: jni.jobject, capacity: jni.jint, meta: jni.jintArray, pts: jni.jlongArray, hardware_handle: jni.jlongArray, surface_output: jni.jboolean) callconv(.c) jni.jint {
     const out_raw = env.*.*.GetDirectBufferAddress.?(env, dst) orelse return -100;
     const decoder: *codec.Dec = @ptrFromInt(@as(usize, @intCast(handle)));
     var values = [3]c_int{ 0, 0, 0 };
     var timestamp: i64 = 0;
     var native_handle: usize = 0;
-    const result = codec.azk_codec_receive_video2(decoder, @ptrCast(out_raw), capacity, &values, &timestamp, &native_handle);
+    const result = if (surface_output != 0)
+        codec.azk_codec_receive_video2(decoder, @ptrCast(out_raw), capacity, &values, &timestamp, &native_handle)
+    else
+        codec.azk_codec_receive_video(decoder, @ptrCast(out_raw), capacity, &values, &timestamp);
     env.*.*.SetIntArrayRegion.?(env, meta, 0, values.len, @ptrCast(&values));
     const java_timestamp: jni.jlong = timestamp;
     const java_handle: jni.jlong = @intCast(native_handle);
@@ -68,9 +75,10 @@ pub fn register(env: [*c]jni.JNIEnv) !void {
     const methods = [_]jni.JNINativeMethod{
         .{ .name = "nativeOpen", .signature = "(Ljava/lang/String;)J", .fnPtr = @ptrCast(@constCast(&nativeOpen)) },
         .{ .name = "nativeConfigure", .signature = "(J[BII)I", .fnPtr = @ptrCast(@constCast(&nativeConfigure)) },
+        .{ .name = "nativeSetVideoTarget", .signature = "(JII)V", .fnPtr = @ptrCast(@constCast(&nativeSetVideoTarget)) },
         .{ .name = "nativeSend", .signature = "(JLjava/nio/ByteBuffer;IIJI)I", .fnPtr = @ptrCast(@constCast(&nativeSend)) },
         .{ .name = "nativeReceiveAudio", .signature = "(JLjava/nio/ByteBuffer;I[I[J)I", .fnPtr = @ptrCast(@constCast(&nativeReceiveAudio)) },
-        .{ .name = "nativeReceiveVideo", .signature = "(JLjava/nio/ByteBuffer;I[I[J[J)I", .fnPtr = @ptrCast(@constCast(&nativeReceiveVideo)) },
+        .{ .name = "nativeReceiveVideo", .signature = "(JLjava/nio/ByteBuffer;I[I[J[JZ)I", .fnPtr = @ptrCast(@constCast(&nativeReceiveVideo)) },
         .{ .name = "nativeFlush", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeFlush)) },
         .{ .name = "nativeClose", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeClose)) },
     };

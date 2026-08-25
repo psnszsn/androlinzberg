@@ -17,6 +17,19 @@ const DmabufFormat = struct {
     modifier: u64,
 };
 
+const DmabufTableEntry = extern struct {
+    format: u32,
+    padding: u32,
+    modifier: u64,
+};
+
+fn selectDmabufImportModifier(formats: []const DmabufFormat, format: u32, modifier: u64) ?u64 {
+    for (formats) |supported| {
+        if (supported.format == format and supported.modifier == modifier) return modifier;
+    }
+    return null;
+}
+
 /// One owned decoded frame at the video-transport seam. Ownership transfers
 /// to pushDmabuf and is returned through release_fn after wl_buffer.release.
 pub const DmabufFrame = struct {
@@ -81,6 +94,8 @@ pub const Window = struct {
     viewporter: ?*wp.Viewporter = null,
     fractional_scale_manager: ?*wp.FractionalScaleManagerV1 = null,
     dmabuf: ?*zwp.LinuxDmabufV1 = null,
+    dmabuf_feedback: ?*zwp.LinuxDmabufFeedbackV1 = null,
+    dmabuf_table: ?[]align(std.heap.page_size_min) u8 = null,
     dmabuf_formats: std.ArrayList(DmabufFormat) = .empty,
     shm: ?*wl.Shm = null,
     wm_base: ?*xdg.WmBase = null,
@@ -175,11 +190,14 @@ pub const Window = struct {
                 } else if (std.mem.orderZ(u8, g.interface, wp.FractionalScaleManagerV1.interface.name) == .eq) {
                     self.fractional_scale_manager = registry.bind(g.name, wp.FractionalScaleManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.LinuxDmabufV1.interface.name) == .eq) {
-                    // Version 3 advertises format/modifier pairs directly. That
-                    // is sufficient for import validation and avoids exposing
-                    // the v4 feedback protocol outside this module.
-                    self.dmabuf = registry.bind(g.name, zwp.LinuxDmabufV1, @min(g.version, 3)) catch return;
-                    self.dmabuf.?.setListener(*Window, dmabufListener, self);
+                    const version = @min(g.version, 4);
+                    self.dmabuf = registry.bind(g.name, zwp.LinuxDmabufV1, version) catch return;
+                    if (version >= 4) {
+                        self.dmabuf_feedback = self.dmabuf.?.getDefaultFeedback() catch return;
+                        self.dmabuf_feedback.?.setListener(*Window, dmabufFeedbackListener, self);
+                    } else {
+                        self.dmabuf.?.setListener(*Window, dmabufListener, self);
+                    }
                 } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
                     self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
@@ -207,11 +225,53 @@ pub const Window = struct {
         self.dmabuf_formats.append(self.gpa, pair) catch {};
     }
 
-    pub fn supportsVideoDmabuf(self: *Window, format: u32, modifier: u64) bool {
-        for (self.dmabuf_formats.items) |supported| {
-            if (supported.format == format and supported.modifier == modifier) return true;
+    fn dmabufFeedbackListener(feedback: *zwp.LinuxDmabufFeedbackV1, event: zwp.LinuxDmabufFeedbackV1.Event, self: *Window) void {
+        switch (event) {
+            .format_table => |table| {
+                if (self.dmabuf_table) |old| std.posix.munmap(old);
+                self.dmabuf_table = null;
+                self.dmabuf_formats.clearRetainingCapacity();
+                defer _ = std.c.close(table.fd);
+                if (table.size == 0 or table.size % @sizeOf(DmabufTableEntry) != 0) return;
+                self.dmabuf_table = std.posix.mmap(
+                    null,
+                    table.size,
+                    .{ .READ = true },
+                    .{ .TYPE = .PRIVATE },
+                    table.fd,
+                    0,
+                ) catch null;
+            },
+            .tranche_formats => |formats| {
+                const table = self.dmabuf_table orelse return;
+                const entries = @as([*]const DmabufTableEntry, @ptrCast(@alignCast(table.ptr)))[0 .. table.len / @sizeOf(DmabufTableEntry)];
+                for (formats.indices.*.slice(u16)) |index| {
+                    if (index >= entries.len) continue;
+                    const entry = entries[index];
+                    self.dmabuf_formats.append(self.gpa, .{
+                        .format = entry.format,
+                        .modifier = entry.modifier,
+                    }) catch {};
+                }
+            },
+            .done => {
+                // Import support is immutable for this Window. Stop feedback
+                // updates so codec threads can read dmabuf_formats lock-free.
+                feedback.destroy();
+                self.dmabuf_feedback = null;
+                if (self.dmabuf_table) |table| std.posix.munmap(table);
+                self.dmabuf_table = null;
+            },
+            .main_device, .tranche_done, .tranche_target_device, .tranche_flags => {},
         }
-        return false;
+    }
+
+    pub fn supportsVideoDmabuf(self: *Window, format: u32, modifier: u64) bool {
+        return selectDmabufImportModifier(self.dmabuf_formats.items, format, modifier) != null;
+    }
+
+    fn videoDmabufImportModifier(self: *Window, format: u32, modifier: u64) ?u64 {
+        return selectDmabufImportModifier(self.dmabuf_formats.items, format, modifier);
     }
 
     pub fn hasVideoDmabuf(self: *Window) bool {
@@ -601,6 +661,8 @@ pub const Window = struct {
         if (self.fractional_scale) |fractional_scale| fractional_scale.destroy();
         if (self.viewport) |viewport| viewport.destroy();
         self.surface.destroy();
+        if (self.dmabuf_feedback) |feedback| feedback.destroy();
+        if (self.dmabuf_table) |table| std.posix.munmap(table);
         if (self.dmabuf) |dmabuf| dmabuf.destroy();
         if (self.viewporter) |viewporter| viewporter.destroy();
         if (self.fractional_scale_manager) |manager| manager.destroy();
@@ -799,14 +861,14 @@ pub const Window = struct {
                 return error.InvalidDmabuf;
 
             for (0..frame.plane_count) |index| {
-                if (!self.win.supportsVideoDmabuf(frame.format, frame.modifiers[index]))
+                if (self.win.videoDmabufImportModifier(frame.format, frame.modifiers[index]) == null)
                     return error.UnsupportedDmabufFormat;
             }
 
             const params = try factory.createParams();
             defer params.destroy();
             for (0..frame.plane_count) |index| {
-                const modifier = frame.modifiers[index];
+                const modifier = self.win.videoDmabufImportModifier(frame.format, frame.modifiers[index]).?;
                 params.add(frame.fds[index], @intCast(index), frame.offsets[index], frame.strides[index], @truncate(modifier >> 32), @truncate(modifier));
             }
             const wl_buffer = try params.createImmed(frame.width, frame.height, frame.format, .{});
@@ -868,3 +930,17 @@ pub const Window = struct {
         return layer;
     }
 };
+
+test "DMA-BUF import modifier requires an exact advertised layout" {
+    const format = drm_format_nv12;
+    const tiled: u64 = 0x0200000010401b04;
+    const linear: u64 = 0;
+    const supported = [_]DmabufFormat{
+        .{ .format = format, .modifier = drm_format_mod_invalid },
+        .{ .format = format, .modifier = linear },
+    };
+
+    try std.testing.expectEqual(linear, selectDmabufImportModifier(&supported, format, linear).?);
+    try std.testing.expect(selectDmabufImportModifier(&supported, format, tiled) == null);
+    try std.testing.expect(selectDmabufImportModifier(&supported, drm_format_p010, tiled) == null);
+}
