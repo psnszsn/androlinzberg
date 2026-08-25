@@ -56,6 +56,7 @@ pub const BionicLoader = struct {
     var lib: ?std.DynLib = null;
     var guest_dir: ?[*:0]const u8 = null;
     var host_lib_dir: ?[:0]const u8 = null;
+    var host_lib_dir_buf: [4096]u8 = undefined;
     threadlocal var last_was_bionic = false;
     var dlopen_fn: *const fn (?[*:0]const u8, c_int) callconv(.c) ?*anyopaque = undefined;
     var dlsym_fn: *const fn (?*anyopaque, [*:0]const u8) callconv(.c) ?*anyopaque = undefined;
@@ -67,10 +68,12 @@ pub const BionicLoader = struct {
     /// `Options.native_loader`.
     pub fn init(a: std.mem.Allocator, root: []const u8, overlay_dir: ?[]const u8) Error!*const NativeLoader {
         if (lib == null) {
-            const lib_dir = overlay_dir orelse try std.fs.path.join(a, &.{ root, "lib64" });
+            var lib_dir_buf: [4096]u8 = undefined;
+            const lib_dir = overlay_dir orelse std.fmt.bufPrint(&lib_dir_buf, "{s}/lib64", .{root}) catch return Error.OutOfMemory;
             const p = try std.fs.path.joinZ(a, &.{ lib_dir, "libdl_bio.so" });
             defer a.free(p);
             var l = std.DynLib.openZ(p) catch return Error.LibartLoadFailed;
+            errdefer l.close();
             dlopen_fn = l.lookup(@TypeOf(dlopen_fn), "bionic_dlopen") orelse return Error.SymbolNotFound;
             dlsym_fn = l.lookup(@TypeOf(dlsym_fn), "bionic_dlsym") orelse return Error.SymbolNotFound;
             dlerror_fn = l.lookup(@TypeOf(dlerror_fn), "bionic_dlerror") orelse return Error.SymbolNotFound;
@@ -81,7 +84,9 @@ pub const BionicLoader = struct {
             const debug_slot = l.lookup(*?*anyopaque, "_r_debug_ptr") orelse return Error.SymbolNotFound;
             debug_slot.* = host.dlsym(null, "_r_debug") orelse return Error.SymbolNotFound;
             guest_dir = host.getenv("ARTZIG_NATIVE_LIB_DIR");
-            host_lib_dir = std.fs.path.joinZ(a, &.{ root, "lib64" }) catch return Error.OutOfMemory;
+            const persistent_dir = std.fmt.bufPrint(host_lib_dir_buf[0 .. host_lib_dir_buf.len - 1], "{s}/lib64", .{root}) catch return Error.OutOfMemory;
+            host_lib_dir_buf[persistent_dir.len] = 0;
+            host_lib_dir = host_lib_dir_buf[0..persistent_dir.len :0];
             // These are glibc DSOs exporting bionic_* ABI adapters. Keep them
             // in the host link-map (and globally visible) rather than letting
             // the guest linker parse them as if they came from an APK.
