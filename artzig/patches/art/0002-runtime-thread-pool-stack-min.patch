@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Sun, 23 Aug 2026 19:16:27 +0200
+Subject: [PATCH] runtime: thread pool stack size must be at least
+ PTHREAD_STACK_MIN
+
+Ported from art_standalone eb04efa9. On hosts with 64K pages (arm64) PTHREAD_STACK_MIN
+exceeds 64K and pthread_attr_setstacksize fails.
+---
+ runtime/runtime.cc | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/runtime/runtime.cc b/runtime/runtime.cc
+index d6c1162..1248156 100644
+--- a/runtime/runtime.cc
++++ b/runtime/runtime.cc
+@@ -37,6 +37,8 @@
+ #include <string.h>
+ 
+ #include <cstdio>
++#include <limits.h>
++#include <pthread.h>
+ #include <cstdlib>
+ #include <limits>
+ #include <thread>
+@@ -1264,7 +1266,9 @@ void Runtime::InitNonZygoteOrPostFork(
+   if (!is_system_server &&
+       android::base::GetBoolProperty("dalvik.vm.parallel-image-loading", false)) {
+     ScopedTrace timing("CreateThreadPool");
+-    constexpr size_t kStackSize = 64 * KB;
++    // Hosts with large pages (e.g. 64K arm64) have PTHREAD_STACK_MIN > 64K and
++    // pthread_attr_setstacksize would fail.
++    const size_t kStackSize = std::max(static_cast<size_t>(64 * KB), static_cast<size_t>(PTHREAD_STACK_MIN));
+     constexpr size_t kMaxRuntimeWorkers = 4u;
+     const size_t num_workers =
+         std::min(static_cast<size_t>(std::thread::hardware_concurrency()), kMaxRuntimeWorkers);

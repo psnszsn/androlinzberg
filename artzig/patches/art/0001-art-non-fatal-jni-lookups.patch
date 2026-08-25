@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Sun, 23 Aug 2026 17:14:22 +0200
+Subject: [PATCH] jni: add ART_NON_FATAL_JNI_LOOKUPS to make failed JNI lookups
+ non-fatal
+
+Ported from art_standalone dfb2ba5d. When the env var is set, FindClass and
+Get[Static]{Method,Field}ID log and clear the pending exception instead of
+leaving it, and null-argument checks (both in the plain and CheckJNI paths)
+log instead of aborting. ATL relies on this for apps that build a JNI cache
+of not-yet-implemented framework classes at startup.
+---
+ runtime/jni/check_jni.cc    |  9 +++++-
+ runtime/jni/jni_internal.cc | 64 +++++++++++++++++++++++++++++++++----
+ 2 files changed, 66 insertions(+), 7 deletions(-)
+
+diff --git a/runtime/jni/check_jni.cc b/runtime/jni/check_jni.cc
+index a05a3e9..e54f8d8 100644
+--- a/runtime/jni/check_jni.cc
++++ b/runtime/jni/check_jni.cc
+@@ -51,6 +51,8 @@
+ #include "thread.h"
+ #include "well_known_classes.h"
+ 
++extern bool art_non_fatal_jni_lookups;
++
+ namespace art HIDDEN {
+ 
+ // This helper cannot be in the anonymous namespace because it needs to be
+@@ -859,7 +861,12 @@ class ScopedCheck {
+       if (null_ok) {
+         return true;
+       } else {
+-        AbortF("%s received NULL %s", function_name_, what);
++        if (art_non_fatal_jni_lookups) {
++          LOG(ERROR) << function_name_ << " received NULL " << what
++                     << " (ART_NON_FATAL_JNI_LOOKUPS set, not aborting)";
++        } else {
++          AbortF("%s received NULL %s", function_name_, what);
++        }
+         return false;
+       }
+     }
+diff --git a/runtime/jni/jni_internal.cc b/runtime/jni/jni_internal.cc
+index 1dde2de..e11951a 100644
+--- a/runtime/jni/jni_internal.cc
++++ b/runtime/jni/jni_internal.cc
+@@ -16,6 +16,7 @@
+ 
+ #include "jni_internal.h"
+ 
++#include <cstdlib>
+ #include <log/log.h>
+ 
+ #include <cstdarg>
+@@ -70,10 +71,32 @@
+ #include "thread.h"
+ #include "well_known_classes-inl.h"
+ 
++// ATL: when ART_NON_FATAL_JNI_LOOKUPS is set, failed JNI lookups (FindClass,
++// Get[Static]{Method,Field}ID) and null-argument checks log instead of
++// leaving a pending exception / aborting. Useful for apps that build a JNI
++// cache of every class they might use at startup, most of which is never
++// touched. Use wisely.
++bool art_non_fatal_jni_lookups = false;
++
++// Read once at load time so the hot paths never call getenv().
++__attribute__((constructor)) static void art_non_fatal_jni_lookups_init() {
++  art_non_fatal_jni_lookups = getenv("ART_NON_FATAL_JNI_LOOKUPS") != nullptr;
++}
++
+ namespace art HIDDEN {
+ 
+ namespace {
+ 
++static void clear_exception_if_non_fatal_env_set(JNIEnv* env) {
++  if (art_non_fatal_jni_lookups) {
++    if (env->ExceptionCheck()) {
++      LOG(ERROR) << "ART_NON_FATAL_JNI_LOOKUPS set, clearing the exception:";
++      env->ExceptionDescribe();
++      env->ExceptionClear();
++    }
++  }
++}
++
+ // Frees the given va_list upon destruction.
+ // This also guards the returns from inside of the CHECK_NON_NULL_ARGUMENTs.
+ struct ScopedVAArgs {
+@@ -634,7 +657,11 @@ static JavaVMExt* JavaVmExtFromEnv(JNIEnv* env) {
+ 
+ #define CHECK_NON_NULL_ARGUMENT_FN_NAME(name, value, return_val) \
+   if (UNLIKELY((value) == nullptr)) { \
+-    JavaVmExtFromEnv(env)->JniAbort(name, #value " == null"); \
++    if (art_non_fatal_jni_lookups) { \
++      LOG(ERROR) << name << ": " #value " == null (ART_NON_FATAL_JNI_LOOKUPS set, not aborting)"; \
++    } else { \
++      JavaVmExtFromEnv(env)->JniAbort(name, #value " == null"); \
++    } \
+     return return_val; \
+   }
+ 
+@@ -681,7 +708,12 @@ class JNI {
+         runtime->IsStarted() ? GetClassLoader<kEnableIndexIds>(soa) : nullptr);
+     ObjPtr<mirror::Class> c = class_linker->FindClass(
+         soa.Self(), descriptor.c_str(), descriptor.length(), class_loader);
+-    return soa.AddLocalReference<jclass>(c);
++    jclass ret = soa.AddLocalReference<jclass>(c);
++    if (ret == nullptr) {
++      LOG(ERROR) << "FindClass(" << name << ") returning NULL";
++      clear_exception_if_non_fatal_env_set(env);
++    }
++    return ret;
+   }
+ 
+   static jmethodID FromReflectedMethod(JNIEnv* env, jobject jlr_method) {
+@@ -997,7 +1029,12 @@ class JNI {
+     CHECK_NON_NULL_ARGUMENT(name);
+     CHECK_NON_NULL_ARGUMENT(sig);
+     ScopedObjectAccess soa(env);
+-    return FindMethodID<kEnableIndexIds>(soa, java_class, name, sig, false);
++    jmethodID ret = FindMethodID<kEnableIndexIds>(soa, java_class, name, sig, false);
++    if (ret == nullptr) {
++      LOG(ERROR) << "GetMethodID(" << name << ", " << sig << ") returning NULL";
++      clear_exception_if_non_fatal_env_set(env);
++    }
++    return ret;
+   }
+ 
+   static jmethodID GetStaticMethodID(JNIEnv* env, jclass java_class, const char* name,
+@@ -1006,7 +1043,12 @@ class JNI {
+     CHECK_NON_NULL_ARGUMENT(name);
+     CHECK_NON_NULL_ARGUMENT(sig);
+     ScopedObjectAccess soa(env);
+-    return FindMethodID<kEnableIndexIds>(soa, java_class, name, sig, true);
++    jmethodID ret = FindMethodID<kEnableIndexIds>(soa, java_class, name, sig, true);
++    if (ret == nullptr) {
++      LOG(ERROR) << "GetStaticMethodID(" << name << ", " << sig << ") returning NULL";
++      clear_exception_if_non_fatal_env_set(env);
++    }
++    return ret;
+   }
+ 
+   static jobject CallObjectMethod(JNIEnv* env, jobject obj, jmethodID mid, ...) {
+@@ -1537,7 +1579,12 @@ class JNI {
+     CHECK_NON_NULL_ARGUMENT(name);
+     CHECK_NON_NULL_ARGUMENT(sig);
+     ScopedObjectAccess soa(env);
+-    return FindFieldID<kEnableIndexIds>(soa, java_class, name, sig, false);
++    jfieldID ret = FindFieldID<kEnableIndexIds>(soa, java_class, name, sig, false);
++    if (ret == nullptr) {
++      LOG(ERROR) << "GetFieldID(" << name << ", " << sig << ") returning NULL";
++      clear_exception_if_non_fatal_env_set(env);
++    }
++    return ret;
+   }
+ 
+   static jfieldID GetStaticFieldID(JNIEnv* env, jclass java_class, const char* name,
+@@ -1546,7 +1593,12 @@ class JNI {
+     CHECK_NON_NULL_ARGUMENT(name);
+     CHECK_NON_NULL_ARGUMENT(sig);
+     ScopedObjectAccess soa(env);
+-    return FindFieldID<kEnableIndexIds>(soa, java_class, name, sig, true);
++    jfieldID ret = FindFieldID<kEnableIndexIds>(soa, java_class, name, sig, true);
++    if (ret == nullptr) {
++      LOG(ERROR) << "GetStaticFieldID(" << name << ", " << sig << ") returning NULL";
++      clear_exception_if_non_fatal_env_set(env);
++    }
++    return ret;
+   }
+ 
+   static jobject GetObjectField(JNIEnv* env, jobject obj, jfieldID fid) {

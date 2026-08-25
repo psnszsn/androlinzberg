@@ -1,0 +1,156 @@
+/* artzig shim: android.app.ContextImpl — concrete Context over the real Resources
+ * stack (framework-res.apk [+ app apk later]). Hand-written platform glue (ATL pattern). */
+package android.app;
+import android.content.Context;
+import android.content.res.ApkAssets;
+import android.content.res.AssetManager;
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.util.DisplayMetrics;
+public class ContextImpl extends Context {
+    private final Resources mResources;
+    private final Resources.Theme mTheme;
+    private final String mPackageName;
+    public ContextImpl(Resources resources, String packageName, int themeResId) {
+        mResources = resources;
+        mPackageName = packageName;
+        mTheme = resources.newTheme();
+        if (themeResId != 0) mTheme.applyStyle(themeResId, true);
+    }
+    /** Boot-time factory: framework-res only (app apk added when APKs load, M4). */
+    public static ContextImpl createSystemContext(String frameworkResPath, int width, int height,
+            int scale120, int themeResId) throws java.io.IOException {
+        AssetManager.createSystemAssetsInZygoteLocked(false, frameworkResPath);
+        ApkAssets apk = ApkAssets.loadFromPath(frameworkResPath, ApkAssets.PROPERTY_SYSTEM);
+        AssetManager am = new AssetManager.Builder().addApkAssets(apk).build();
+        DisplayMetrics dm = new DisplayMetrics();
+        dm.setToDefaults();
+        float density = scale120 / 120f;
+        int densityDpi = Math.round(160f * density);
+        android.view.ArtzigDisplay.configure(width, height, densityDpi);
+        dm.widthPixels = dm.noncompatWidthPixels = width;
+        dm.heightPixels = dm.noncompatHeightPixels = height;
+        dm.densityDpi = dm.noncompatDensityDpi = densityDpi;
+        dm.density = dm.noncompatDensity = density;
+        dm.scaledDensity = dm.noncompatScaledDensity = dm.density;
+        dm.xdpi = dm.noncompatXdpi = densityDpi;
+        dm.ydpi = dm.noncompatYdpi = densityDpi;
+        Configuration config = new Configuration();
+        config.setToDefaults();
+        config.densityDpi = densityDpi;
+        config.screenWidthDp = (int) (width / dm.density);
+        config.screenHeightDp = (int) (height / dm.density);
+        config.smallestScreenWidthDp = Math.min(config.screenWidthDp, config.screenHeightDp);
+        config.orientation = width >= height
+                ? Configuration.ORIENTATION_LANDSCAPE : Configuration.ORIENTATION_PORTRAIT;
+        Resources res = new Resources(am, dm, config);
+        return new ContextImpl(res, "android", themeResId);
+    }
+    @Override public Resources getResources() { return mResources; }
+    @Override public AssetManager getAssets() { return mResources.getAssets(); }
+    @Override public Resources.Theme getTheme() { return mTheme; }
+    @Override public String getPackageName() { return mPackageName; }
+    private static final android.content.pm.PackageManager sPackageManager =
+            new android.content.pm.PackageManager() {};
+    @Override public android.content.pm.PackageManager getPackageManager() { return sPackageManager; }
+    private ClassLoader mClassLoader;
+    public void setClassLoaderOverride(ClassLoader cl) { mClassLoader = cl; }
+    @Override public ClassLoader getClassLoader() {
+        return mClassLoader != null ? mClassLoader : getClass().getClassLoader();
+    }
+    @Override public Context getApplicationContext() {
+        Application app = ActivityThread.currentApplication();
+        return app != null ? app : this;
+    }
+    @Override public android.view.Display getDisplay() { return android.view.ArtzigDisplay.get(); }
+    @Override public android.view.Display getDisplayNoVerify() { return android.view.ArtzigDisplay.get(); }
+    private android.content.ContentResolver mContentResolver;
+    @Override public android.content.ContentResolver getContentResolver() {
+        if (mContentResolver == null) mContentResolver = new android.content.ContentResolver() {};
+        return mContentResolver;
+    }
+    private android.view.LayoutInflater mInflater;
+    private android.view.WindowManagerImpl mWindowManager;
+    private android.app.job.JobScheduler mJobScheduler;
+    private android.hardware.input.InputManager mInputManager;
+    private android.view.inputmethod.InputMethodManager mInputMethodManager;
+    private Context mOuterContext;
+    /** Real Android: ContextImpl.setOuterContext — the Activity/Application facade. */
+    public void setOuterContext(Context outer) { mOuterContext = outer; mInflater = null; }
+    public Context getOuterContext() { return mOuterContext != null ? mOuterContext : this; }
+    @Override public Object getSystemService(String name) {
+        switch (name) {
+            case LAYOUT_INFLATER_SERVICE:
+                if (mInflater == null) mInflater = new com.android.internal.policy.PhoneLayoutInflater(getOuterContext());
+                return mInflater;
+            case WINDOW_SERVICE:
+                if (mWindowManager == null) mWindowManager = new android.view.WindowManagerImpl(this);
+                return mWindowManager;
+            case CLIPBOARD_SERVICE:
+                return new android.content.ClipboardManager();
+            case ACTIVITY_SERVICE:
+                return new android.app.ActivityManager();
+            case AUDIO_SERVICE:
+                return new android.media.AudioManager();
+            case NOTIFICATION_SERVICE:
+                return new android.app.NotificationManager();
+            case ALARM_SERVICE:
+                return new android.app.AlarmManager();
+            case CONNECTIVITY_SERVICE:
+                return new android.net.ConnectivityManager();
+            case INPUT_METHOD_SERVICE:
+                if (mInputMethodManager == null) {
+                    mInputMethodManager = android.view.inputmethod.InputMethodManager
+                            .createStubInstance(getDisplayId(), getMainLooper());
+                }
+                return mInputMethodManager;
+            case POWER_SERVICE:
+                return new android.os.PowerManager();
+            case UI_MODE_SERVICE:
+                return new android.app.UiModeManager();
+            case BATTERY_SERVICE:
+                return new android.os.BatteryManager();
+            case INPUT_SERVICE:
+                if (mInputManager == null) mInputManager = new android.hardware.input.InputManager(this);
+                return mInputManager;
+            case "media_metrics":
+                return new android.media.metrics.MediaMetricsManager();
+            case "usagestats":
+                return new android.app.usage.UsageStatsManager();
+            case WIFI_SERVICE:
+                return new android.net.wifi.WifiManager();
+            case JOB_SCHEDULER_SERVICE:
+                if (mJobScheduler == null) mJobScheduler = new android.app.job.JobScheduler();
+                return mJobScheduler;
+            case VIBRATOR_SERVICE:
+                return new android.os.Vibrator();
+            case ACCESSIBILITY_SERVICE:
+                return android.view.accessibility.AccessibilityManager.getInstance(this);
+            default:
+                return null;
+        }
+    }
+    @Override public String getSystemServiceName(Class<?> serviceClass) {
+        if (serviceClass == android.view.LayoutInflater.class) return LAYOUT_INFLATER_SERVICE;
+        if (serviceClass == android.view.WindowManager.class) return WINDOW_SERVICE;
+        if (serviceClass == android.app.UiModeManager.class) return UI_MODE_SERVICE;
+        if (serviceClass == android.os.BatteryManager.class) return BATTERY_SERVICE;
+        if (serviceClass == android.app.job.JobScheduler.class) return JOB_SCHEDULER_SERVICE;
+        if (serviceClass == android.net.wifi.WifiManager.class) return WIFI_SERVICE;
+        if (serviceClass == android.media.metrics.MediaMetricsManager.class) return "media_metrics";
+        if (serviceClass == android.app.usage.UsageStatsManager.class) return "usagestats";
+        if (serviceClass == android.app.ActivityManager.class) return ACTIVITY_SERVICE;
+        if (serviceClass == android.app.NotificationManager.class) return NOTIFICATION_SERVICE;
+        if (serviceClass == android.app.AlarmManager.class) return ALARM_SERVICE;
+        if (serviceClass == android.media.AudioManager.class) return AUDIO_SERVICE;
+        if (serviceClass == android.net.ConnectivityManager.class) return CONNECTIVITY_SERVICE;
+        if (serviceClass == android.os.PowerManager.class) return POWER_SERVICE;
+        if (serviceClass == android.os.Vibrator.class) return VIBRATOR_SERVICE;
+        if (serviceClass == android.view.accessibility.AccessibilityManager.class) return ACCESSIBILITY_SERVICE;
+        if (serviceClass == android.content.ClipboardManager.class) return CLIPBOARD_SERVICE;
+        if (serviceClass == android.hardware.input.InputManager.class) return INPUT_SERVICE;
+        if (serviceClass == android.view.inputmethod.InputMethodManager.class) return INPUT_METHOD_SERVICE;
+        if (serviceClass == android.hardware.display.DisplayManager.class) return DISPLAY_SERVICE;
+        return null;
+    }
+}

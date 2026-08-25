@@ -1,0 +1,95 @@
+From ead221f1f83f0643088f4f13b6468180ac74e769 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Tue, 25 Aug 2026 11:17:13 +0200
+Subject: [PATCH] Add Artzig host CA bundle adapter
+
+---
+ .../com/android/org/conscrypt/Platform.java   | 44 +++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/repackaged/platform/src/main/java/com/android/org/conscrypt/Platform.java b/repackaged/platform/src/main/java/com/android/org/conscrypt/Platform.java
+index 1b7d605..5acd785 100644
+--- a/repackaged/platform/src/main/java/com/android/org/conscrypt/Platform.java
++++ b/repackaged/platform/src/main/java/com/android/org/conscrypt/Platform.java
+@@ -43,8 +43,12 @@ import dalvik.system.VMRuntime;
+ 
+ import libcore.net.NetworkSecurityPolicy;
+ 
++import java.io.BufferedReader;
++import java.io.ByteArrayInputStream;
+ import java.io.FileDescriptor;
++import java.io.FileInputStream;
+ import java.io.IOException;
++import java.io.InputStreamReader;
+ import java.lang.System;
+ import java.lang.reflect.Field;
+ import java.lang.reflect.InvocationTargetException;
+@@ -54,12 +58,15 @@ import java.net.InetSocketAddress;
+ import java.net.Socket;
+ import java.net.SocketException;
+ import java.net.SocketImpl;
++import java.nio.charset.StandardCharsets;
+ import java.security.AlgorithmParameters;
+ import java.security.KeyStore;
+ import java.security.KeyStoreException;
+ import java.security.NoSuchAlgorithmException;
+ import java.security.PrivateKey;
++import java.security.cert.Certificate;
+ import java.security.cert.CertificateException;
++import java.security.cert.CertificateFactory;
+ import java.security.cert.X509Certificate;
+ import java.security.spec.AlgorithmParameterSpec;
+ import java.security.spec.ECParameterSpec;
+@@ -512,6 +519,10 @@ final public class Platform {
+     }
+ 
+     static KeyStore getDefaultCertKeyStore() throws KeyStoreException {
++        String caBundle = System.getProperty("artzig.ca.bundle");
++        if (caBundle != null) {
++            return loadArtzigCertKeyStore(caBundle);
++        }
+         KeyStore keyStore = KeyStore.getInstance("AndroidCAStore");
+         try {
+             keyStore.load(null, null);
+@@ -521,6 +532,39 @@ final public class Platform {
+         return keyStore;
+     }
+ 
++    private static KeyStore loadArtzigCertKeyStore(String caBundle) throws KeyStoreException {
++        try (BufferedReader input = new BufferedReader(new InputStreamReader(
++                new FileInputStream(caBundle), StandardCharsets.US_ASCII))) {
++            KeyStore keyStore = KeyStore.getInstance("BKS");
++            keyStore.load(null, null);
++            CertificateFactory factory = CertificateFactory.getInstance("X.509");
++            StringBuilder pem = null;
++            String line;
++            int index = 0;
++            while ((line = input.readLine()) != null) {
++                if (line.equals("-----BEGIN CERTIFICATE-----")) {
++                    pem = new StringBuilder();
++                }
++                if (pem != null) {
++                    pem.append(line).append('\n');
++                    if (line.equals("-----END CERTIFICATE-----")) {
++                        Certificate certificate = factory.generateCertificate(
++                                new ByteArrayInputStream(
++                                        pem.toString().getBytes(StandardCharsets.US_ASCII)));
++                        keyStore.setCertificateEntry("artzig-system-" + index++, certificate);
++                        pem = null;
++                    }
++                }
++            }
++            if (index == 0) {
++                throw new KeyStoreException("No certificates in host CA bundle: " + caBundle);
++            }
++            return keyStore;
++        } catch (IOException | CertificateException | NoSuchAlgorithmException e) {
++            throw new KeyStoreException("Could not load host CA bundle: " + caBundle, e);
++        }
++    }
++
+     static ConscryptCertStore newDefaultCertStore() {
+         return new TrustedCertificateStore();
+     }
+-- 
+2.55.0

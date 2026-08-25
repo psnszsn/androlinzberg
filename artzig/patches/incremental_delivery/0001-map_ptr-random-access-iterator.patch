@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 01:54:30 +0200
+Subject: [PATCH] map_ptr: complete the random-access iterator operator set
+
+map_ptr::const_iterator declares random_access_iterator_tag but only provides
+++/+=(int); libstdc++'s std::lower_bound/std::advance need --, -=, and
+ptrdiff_t arithmetic (libc++ is lenient). Used by LoadedArsc sparse-type
+lookup.
+---
+ incfs/util/include/util/map_ptr.h | 44 ++++++++++++++++++++++++-------
+ 1 file changed, 35 insertions(+), 9 deletions(-)
+
+diff --git a/incfs/util/include/util/map_ptr.h b/incfs/util/include/util/map_ptr.h
+index 9a6aebf..dee5440 100644
+--- a/incfs/util/include/util/map_ptr.h
++++ b/incfs/util/include/util/map_ptr.h
+@@ -168,11 +168,6 @@ public:
+             return safe_ptr_ - other.safe_ptr_;
+         }
+ 
+-        const_iterator operator+(int n) const {
+-            const_iterator other = *this;
+-            other += n;
+-            return other;
+-        }
+ 
+         reference operator*() const { return safe_ptr_; }
+ 
+@@ -181,10 +176,6 @@ public:
+             return *this;
+         }
+ 
+-        const_iterator& operator+=(int n) {
+-            safe_ptr_ = safe_ptr_ + n;
+-            return *this;
+-        }
+ 
+         const const_iterator operator++(int) {
+             const_iterator temp(*this);
+@@ -192,6 +183,41 @@ public:
+             return temp;
+         }
+ 
++        // libstdc++ requires the full random-access operator set for
++        // std::lower_bound/std::advance (libc++ is more lenient).
++        const_iterator& operator--() {
++            safe_ptr_ = safe_ptr_ + (-1);
++            return *this;
++        }
++
++        const_iterator operator--(int) {
++            const_iterator temp(*this);
++            safe_ptr_ = safe_ptr_ + (-1);
++            return temp;
++        }
++
++        const_iterator& operator+=(std::ptrdiff_t n) {
++            safe_ptr_ = safe_ptr_ + n;
++            return *this;
++        }
++
++        const_iterator& operator-=(std::ptrdiff_t n) {
++            safe_ptr_ = safe_ptr_ + (-n);
++            return *this;
++        }
++
++        const_iterator operator+(std::ptrdiff_t n) const {
++            const_iterator other = *this;
++            other += n;
++            return other;
++        }
++
++        const_iterator operator-(std::ptrdiff_t n) const {
++            const_iterator other = *this;
++            other -= n;
++            return other;
++        }
++
+     private:
+         explicit const_iterator(const map_ptr<T>& ptr) : safe_ptr_(ptr) {}
+         map_ptr<T> safe_ptr_;

@@ -1,0 +1,486 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 00:26:00 +0200
+Subject: [PATCH 1/5] hwui: build against stock skia m144 (nixpkgs)
+
+- CanvasOps/RecordingCanvas/SkiaCanvas: drawPoints/drawAtlas moved to SkSpan upstream
+- CanvasTransform: gradient info uses SkColor4f in m144
+- MinikinSkia: SkFont getWidths/getBounds Span API
+- BitmapFactory/ImageDecoder: SkCanvas ColorBehavior ctor is framework-gated and
+  absent from stock libskia; the plain SkBitmap ctor is equivalent here
+---
+ libs/hwui/CanvasTransform.cpp   | 10 ++++++----
+ libs/hwui/RecordingCanvas.cpp   | 11 +++++++----
+ libs/hwui/SkiaCanvas.cpp        |  2 +-
+ libs/hwui/canvas/CanvasOps.h    |  8 ++++----
+ libs/hwui/hwui/ImageDecoder.cpp |  4 ++--
+ libs/hwui/hwui/MinikinSkia.cpp  |  6 +++---
+ libs/hwui/jni/BitmapFactory.cpp |  4 ++--
+ 7 files changed, 25 insertions(+), 20 deletions(-)
+
+diff --git a/libs/hwui/CanvasTransform.cpp b/libs/hwui/CanvasTransform.cpp
+index 30e7a628..0c9ff853 100644
+--- a/libs/hwui/CanvasTransform.cpp
++++ b/libs/hwui/CanvasTransform.cpp
+@@ -97,20 +97,22 @@ static void applyColorTransform(ColorTransform transform, SkPaint& paint) {
+     paint.setColor(newColor);
+ 
+     if (paint.getShader()) {
++        // artzig: skia m144 gradient info uses SkColor4f
+         SkAndroidFrameworkUtils::LinearGradientInfo info;
+-        std::array<SkColor, 10> _colorStorage;
++        std::array<SkColor4f, 10> _colorStorage;
+         std::array<SkScalar, _colorStorage.size()> _offsetStorage;
+         info.fColorCount = _colorStorage.size();
+         info.fColors = _colorStorage.data();
+         info.fColorOffsets = _offsetStorage.data();
+ 
+         if (SkAndroidFrameworkUtils::ShaderAsALinearGradient(paint.getShader(), &info) &&
+-            info.fColorCount <= _colorStorage.size()) {
++            info.fColorCount <= (int)_colorStorage.size()) {
+             for (int i = 0; i < info.fColorCount; i++) {
+-                info.fColors[i] = transformColor(transform, info.fColors[i]);
++                info.fColors[i] = SkColor4f::FromColor(
++                        transformColor(transform, info.fColors[i].toSkColor()));
+             }
+             paint.setShader(SkGradientShader::MakeLinear(
+-                    info.fPoints, info.fColors, info.fColorOffsets, info.fColorCount,
++                    info.fPoints, info.fColors, nullptr, info.fColorOffsets, info.fColorCount,
+                     info.fTileMode, info.fGradientFlags, nullptr));
+         }
+     }
+diff --git a/libs/hwui/RecordingCanvas.cpp b/libs/hwui/RecordingCanvas.cpp
+index 60d7f2d1..f24261bc 100644
+--- a/libs/hwui/RecordingCanvas.cpp
++++ b/libs/hwui/RecordingCanvas.cpp
+@@ -497,7 +497,7 @@ struct DrawPoints final : Op {
+     SkPaint paint;
+     void draw(SkCanvas* c, const SkMatrix&) const {
+         if (paint.isAntiAlias()) {
+-            c->drawPoints(mode, count, pod<SkPoint>(this), paint);
++            c->drawPoints(mode, SkSpan<const SkPoint>(pod<SkPoint>(this), count), paint); // artzig: m144 Span API
+         } else {
+             c->save();
+ #ifdef __ANDROID__
+@@ -506,7 +506,7 @@ struct DrawPoints final : Op {
+             transform.postConcat(pixelSnap);
+             c->setMatrix(transform);
+ #endif
+-            c->drawPoints(mode, count, pod<SkPoint>(this), paint);
++            c->drawPoints(mode, SkSpan<const SkPoint>(pod<SkPoint>(this), count), paint); // artzig: m144 Span API
+             c->restore();
+         }
+     }
+@@ -606,8 +606,11 @@ struct DrawAtlas final : Op {
+         auto texs = pod<SkRect>(this, count * sizeof(SkRSXform));
+         auto colors = has_colors ? pod<SkColor>(this, count * (sizeof(SkRSXform) + sizeof(SkRect)))
+                                  : nullptr;
+-        c->drawAtlas(atlas.get(), xforms, texs, colors, count, mode, sampling, maybe_unset(cull),
+-                     &paint);
++        // artzig: m144 Span API
++        c->drawAtlas(atlas.get(), SkSpan<const SkRSXform>(xforms, count),
++                     SkSpan<const SkRect>(texs, count),
++                     colors ? SkSpan<const SkColor>(colors, count) : SkSpan<const SkColor>(),
++                     mode, sampling, maybe_unset(cull), &paint);
+     }
+ };
+ struct DrawShadowRec final : Op {
+diff --git a/libs/hwui/SkiaCanvas.cpp b/libs/hwui/SkiaCanvas.cpp
+index 7f5ca44f..2f3de7d5 100644
+--- a/libs/hwui/SkiaCanvas.cpp
++++ b/libs/hwui/SkiaCanvas.cpp
+@@ -508,7 +508,7 @@ void SkiaCanvas::drawPoints(const float* points, int count, const Paint& paint,
+         points += 2;
+     }
+ 
+-    applyLooper(&paint, [&](const SkPaint& p) { mCanvas->drawPoints(mode, count, pts.get(), p); });
++    applyLooper(&paint, [&](const SkPaint& p) { mCanvas->drawPoints(mode, SkSpan<const SkPoint>(pts.get(), count), p); }); // artzig: m144 Span API
+ }
+ 
+ void SkiaCanvas::drawPoint(float x, float y, const Paint& paint) {
+diff --git a/libs/hwui/canvas/CanvasOps.h b/libs/hwui/canvas/CanvasOps.h
+index 2dcbca82..c2297d31 100644
+--- a/libs/hwui/canvas/CanvasOps.h
++++ b/libs/hwui/canvas/CanvasOps.h
+@@ -191,10 +191,10 @@ struct CanvasOp<CanvasOpType::DrawPoints> {
+     SkPaint paint;
+     sk_sp<Points> points;
+     void draw(SkCanvas* canvas) const {
++        // artzig: upstream skia (m144) takes SkSpan
+         canvas->drawPoints(
+             SkCanvas::kPoints_PointMode,
+-            count,
+-            points->data(),
++            SkSpan<const SkPoint>(points->data(), count),
+             paint
+         );
+     }
+@@ -305,10 +305,10 @@ struct CanvasOp<CanvasOpType::DrawLines> {
+     SkPaint paint;
+     sk_sp<Points> points;
+     void draw(SkCanvas* canvas) const {
++        // artzig: upstream skia (m144) takes SkSpan
+         canvas->drawPoints(
+             SkCanvas::kLines_PointMode,
+-            count,
+-            points->data(),
++            SkSpan<const SkPoint>(points->data(), count),
+             paint
+         );
+     }
+diff --git a/libs/hwui/hwui/ImageDecoder.cpp b/libs/hwui/hwui/ImageDecoder.cpp
+index a9a5db81..9aca5bc0 100644
+--- a/libs/hwui/hwui/ImageDecoder.cpp
++++ b/libs/hwui/hwui/ImageDecoder.cpp
+@@ -457,7 +457,7 @@ SkCodec::Result ImageDecoder::decode(void* pixels, size_t rowBytes) {
+         if (!mCurrentFrameIsIndependent) {
+             SkMatrix inverse;
+             if (outputMatrix.invert(&inverse)) {
+-                SkCanvas canvas(tmp, SkCanvas::ColorBehavior::kLegacy);
++                SkCanvas canvas(tmp); // artzig: gated ColorBehavior ctor absent in stock skia
+                 canvas.setMatrix(inverse);
+                 SkBitmap priorFrame;
+                 priorFrame.installPixels(outputInfo, pixels, rowBytes);
+@@ -491,7 +491,7 @@ SkCodec::Result ImageDecoder::decode(void* pixels, size_t rowBytes) {
+         SkPaint paint;
+         paint.setBlendMode(SkBlendMode::kSrc);
+ 
+-        SkCanvas canvas(scaledBm, SkCanvas::ColorBehavior::kLegacy);
++        SkCanvas canvas(scaledBm); // artzig: gated ColorBehavior ctor absent in stock skia
+         canvas.setMatrix(outputMatrix);
+         tmp.setImmutable(); // Don't want asImage() to force copy
+         canvas.drawImage(tmp.asImage(), 0, 0, SkSamplingOptions(SkFilterMode::kLinear), &paint);
+diff --git a/libs/hwui/hwui/MinikinSkia.cpp b/libs/hwui/hwui/MinikinSkia.cpp
+index f0bcfe53..3fe505c5 100644
+--- a/libs/hwui/hwui/MinikinSkia.cpp
++++ b/libs/hwui/hwui/MinikinSkia.cpp
+@@ -62,7 +62,7 @@ float MinikinFontSkia::GetHorizontalAdvance(uint32_t glyph_id, const minikin::Mi
+     uint16_t glyph16 = glyph_id;
+     SkScalar skWidth;
+     MinikinFontSkia_SetSkiaFont(this, &skFont, paint, fakery);
+-    skFont.getWidths(&glyph16, 1, &skWidth);
++    skFont.getWidths(SkSpan<const SkGlyphID>(&glyph16, 1), SkSpan<SkScalar>(&skWidth, 1)); // artzig: m144 Span API
+ #ifdef VERBOSE
+     ALOGD("width for typeface %d glyph %d = %f", mTypeface->uniqueID(), glyph_id, skWidth);
+ #endif
+@@ -75,7 +75,7 @@ void MinikinFontSkia::GetHorizontalAdvances(uint16_t* glyph_ids, uint32_t count,
+                                             float* outAdvances) const {
+     SkFont skFont;
+     MinikinFontSkia_SetSkiaFont(this, &skFont, paint, fakery);
+-    skFont.getWidths(glyph_ids, count, outAdvances);
++    skFont.getWidths(SkSpan<const SkGlyphID>(glyph_ids, count), SkSpan<SkScalar>(outAdvances, count)); // artzig: m144 Span API
+ }
+ 
+ void MinikinFontSkia::GetBounds(minikin::MinikinRect* bounds, uint32_t glyph_id,
+@@ -85,7 +85,7 @@ void MinikinFontSkia::GetBounds(minikin::MinikinRect* bounds, uint32_t glyph_id,
+     uint16_t glyph16 = glyph_id;
+     SkRect skBounds;
+     MinikinFontSkia_SetSkiaFont(this, &skFont, paint, fakery);
+-    skFont.getWidths(&glyph16, 1, nullptr, &skBounds);
++    skFont.getBounds(SkSpan<const SkGlyphID>(&glyph16, 1), SkSpan<SkRect>(&skBounds, 1), nullptr); // artzig: m144 Span API
+     bounds->mLeft = skBounds.fLeft;
+     bounds->mTop = skBounds.fTop;
+     bounds->mRight = skBounds.fRight;
+diff --git a/libs/hwui/jni/BitmapFactory.cpp b/libs/hwui/jni/BitmapFactory.cpp
+index 8b43f1db..ab148af9 100644
+--- a/libs/hwui/jni/BitmapFactory.cpp
++++ b/libs/hwui/jni/BitmapFactory.cpp
+@@ -275,7 +275,7 @@ static bool decodeGainmap(std::unique_ptr<SkAndroidCodec> codec, const SkGainmap
+         // what we want.
+         paint.setBlendMode(SkBlendMode::kSrc);
+ 
+-        SkCanvas canvas(gainmapBitmap, SkCanvas::ColorBehavior::kLegacy);
++        SkCanvas canvas(gainmapBitmap); // artzig: gated ColorBehavior ctor absent in stock skia
+         canvas.scale(scaleX, scaleY);
+         decodeBitmap.setImmutable();  // so .asImage() doesn't make a copy
+         canvas.drawImage(decodeBitmap.asImage(), 0.0f, 0.0f,
+@@ -588,7 +588,7 @@ static jobject doDecode(JNIEnv* env, std::unique_ptr<SkStreamRewindable> stream,
+         // what we want.
+         paint.setBlendMode(SkBlendMode::kSrc);
+ 
+-        SkCanvas canvas(outputBitmap, SkCanvas::ColorBehavior::kLegacy);
++        SkCanvas canvas(outputBitmap); // artzig: gated ColorBehavior ctor absent in stock skia
+         canvas.scale(scaleX, scaleY);
+         decodingBitmap.setImmutable(); // so .asImage() doesn't make a copy
+         canvas.drawImage(decodingBitmap.asImage(), 0.0f, 0.0f,
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 00:37:35 +0200
+Subject: [PATCH 2/5] hwui jni: stock-skia m144 adjustments
+
+Matrix/PathEffect/Paint/Path/fonts: Span API call sites; MaskFilter: emboss (deprecated)
+approximated with plain blur (SkEmbossMaskFilter pulls private skia internals);
+Region: getBoundaryPath/toString stubbed (framework-gated / raster internals).
+---
+ libs/hwui/jni/MaskFilter.cpp              |  6 ++++--
+ libs/hwui/jni/Paint.cpp                   |  2 +-
+ libs/hwui/jni/Path.cpp                    |  2 +-
+ libs/hwui/jni/PathEffect.cpp              |  2 +-
+ libs/hwui/jni/Region.cpp                  |  7 +++++--
+ libs/hwui/jni/android_graphics_Matrix.cpp | 12 ++++++------
+ libs/hwui/jni/fonts/Font.cpp              |  2 +-
+ 7 files changed, 19 insertions(+), 14 deletions(-)
+
+diff --git a/libs/hwui/jni/MaskFilter.cpp b/libs/hwui/jni/MaskFilter.cpp
+index cbd45203..a1235040 100644
+--- a/libs/hwui/jni/MaskFilter.cpp
++++ b/libs/hwui/jni/MaskFilter.cpp
+@@ -41,8 +41,10 @@ public:
+         }
+ 
+         SkScalar sigma = convertRadiusToSigma(radius);
+-        SkMaskFilter* filter =  SkBlurMaskFilter::MakeEmboss(sigma,
+-                direction, ambient, specular).release();
++        // artzig: SkEmbossMaskFilter is deprecated & its impl pulls private skia
++        // internals absent from stock libskia; approximate with a plain blur.
++        (void)ambient; (void)specular;
++        SkMaskFilter* filter = SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, sigma).release();
+         ThrowIAE_IfNull(env, filter);
+         return reinterpret_cast<jlong>(filter);
+     }
+diff --git a/libs/hwui/jni/Paint.cpp b/libs/hwui/jni/Paint.cpp
+index 8d3a5eb2..f619e41a 100644
+--- a/libs/hwui/jni/Paint.cpp
++++ b/libs/hwui/jni/Paint.cpp
+@@ -72,7 +72,7 @@ static void getPosTextPath(const SkFont& font, const uint16_t glyphs[], int coun
+         SkPath* fDst;
+         const SkPoint* fPos;
+     } rec = { dst, pos };
+-    font.getPaths(glyphs, count, [](const SkPath* src, const SkMatrix& mx, void* ctx) {
++    font.getPaths(SkSpan<const SkGlyphID>(glyphs, count), [](const SkPath* src, const SkMatrix& mx, void* ctx) { // artzig: m144 Span API
+         Rec* rec = (Rec*)ctx;
+         if (src) {
+             SkMatrix tmp(mx);
+diff --git a/libs/hwui/jni/Path.cpp b/libs/hwui/jni/Path.cpp
+index a5e04763..2ae255e8 100644
+--- a/libs/hwui/jni/Path.cpp
++++ b/libs/hwui/jni/Path.cpp
+@@ -183,7 +183,7 @@ public:
+         SkPathDirection dir = static_cast<SkPathDirection>(dirHandle);
+         AutoJavaFloatArray  afa(env, array, 8);
+         const float* src = afa.ptr();
+-        obj->addRoundRect(rect, src, dir);
++        obj->addRoundRect(rect, SkSpan<const float>(src, 8), dir); // artzig: m144 Span API (8 radii)
+     }
+ 
+     static void addPath__PathFF(JNIEnv* env, jclass clazz, jlong objHandle, jlong srcHandle,
+diff --git a/libs/hwui/jni/PathEffect.cpp b/libs/hwui/jni/PathEffect.cpp
+index 3dbe1a67..f7ec7673 100644
+--- a/libs/hwui/jni/PathEffect.cpp
++++ b/libs/hwui/jni/PathEffect.cpp
+@@ -36,7 +36,7 @@ public:
+         AutoJavaFloatArray autoInterval(env, intervalArray);
+         int         count = autoInterval.length() & ~1;  // even number
+         SkScalar* intervals = autoInterval.ptr();
+-        SkPathEffect* effect = SkDashPathEffect::Make(intervals, count, phase).release();
++        SkPathEffect* effect = SkDashPathEffect::Make(SkSpan<const SkScalar>(intervals, count), phase).release(); // artzig: m144 Span API
+         return reinterpret_cast<jlong>(effect);
+     }
+ 
+diff --git a/libs/hwui/jni/Region.cpp b/libs/hwui/jni/Region.cpp
+index 1e064b82..f4dd52f1 100644
+--- a/libs/hwui/jni/Region.cpp
++++ b/libs/hwui/jni/Region.cpp
+@@ -83,7 +83,10 @@ static jboolean Region_getBounds(JNIEnv* env, jobject, jlong regionHandle, jobje
+ static jboolean Region_getBoundaryPath(JNIEnv* env, jobject, jlong regionHandle, jlong pathHandle) {
+     const SkRegion* region = reinterpret_cast<SkRegion*>(regionHandle);
+     SkPath*   path = reinterpret_cast<SkPath*>(pathHandle);
+-    bool result = region->getBoundaryPath(path);
++    // artzig: SkRegion::getBoundaryPath pulls the raster internals absent from
++    // stock libskia; approximate with the bounds rect (API is rarely used).
++    bool result = !region->isEmpty();
++    if (result) path->addRect(SkRect::Make(region->getBounds()));
+     return boolTojboolean(result);
+ }
+ 
+@@ -189,7 +192,7 @@ static void Region_scale(JNIEnv* env, jobject region, jfloat scale, jobject dst)
+ 
+ static jstring Region_toString(JNIEnv* env, jobject clazz, jlong regionHandle) {
+     SkRegion* region = reinterpret_cast<SkRegion*>(regionHandle);
+-    char* str = region->toString();
++    char* str = strdup("SkRegion()"); // artzig: framework-gated toString absent
+     if (str == NULL) {
+         return NULL;
+     }
+diff --git a/libs/hwui/jni/android_graphics_Matrix.cpp b/libs/hwui/jni/android_graphics_Matrix.cpp
+index eedc069e..420f6cfc 100644
+--- a/libs/hwui/jni/android_graphics_Matrix.cpp
++++ b/libs/hwui/jni/android_graphics_Matrix.cpp
+@@ -62,11 +62,11 @@ public:
+         float* srcArray = autoSrc.ptr() + srcIndex;
+         float* dstArray = autoDst.ptr() + dstIndex;
+         if (isPts)
+-            matrix->mapPoints((SkPoint*) dstArray, (const SkPoint*) srcArray,
+-                    ptCount);
++            matrix->mapPoints(SkSpan<SkPoint>((SkPoint*) dstArray, ptCount),
++                    SkSpan<const SkPoint>((const SkPoint*) srcArray, ptCount)); // artzig: m144 Span API
+         else
+-            matrix->mapVectors((SkVector*) dstArray, (const SkVector*) srcArray,
+-                    ptCount);
++            matrix->mapVectors(SkSpan<SkVector>((SkVector*) dstArray, ptCount),
++                    SkSpan<const SkVector>((const SkVector*) srcArray, ptCount)); // artzig: m144 Span API
+     }
+ 
+     static jboolean mapRect__RectFRectF(JNIEnv* env, jobject clazz,
+@@ -106,8 +106,8 @@ public:
+         float* dst = autoDst.ptr() + dstIndex;
+         bool result;
+ 
+-        result = matrix->setPolyToPoly((const SkPoint*) src,
+-                (const SkPoint*) dst, ptCount);
++        result = matrix->setPolyToPoly(SkSpan<const SkPoint>((const SkPoint*) src, ptCount),
++                SkSpan<const SkPoint>((const SkPoint*) dst, ptCount)); // artzig: m144 Span API
+         return result ? JNI_TRUE : JNI_FALSE;
+     }
+ 
+diff --git a/libs/hwui/jni/fonts/Font.cpp b/libs/hwui/jni/fonts/Font.cpp
+index 6a05b6c2..06a8a705 100644
+--- a/libs/hwui/jni/fonts/Font.cpp
++++ b/libs/hwui/jni/fonts/Font.cpp
+@@ -168,7 +168,7 @@ static jfloat Font_getGlyphBounds(JNIEnv* env, jobject, jlong fontHandle, jint g
+     uint16_t glyph16 = glyphId;
+     SkRect skBounds;
+     SkScalar skWidth;
+-    skFont->getWidthsBounds(&glyph16, 1, &skWidth, &skBounds, nullptr);
++    skFont->getWidthsBounds(SkSpan<const SkGlyphID>(&glyph16, 1), SkSpan<SkScalar>(&skWidth, 1), SkSpan<SkRect>(&skBounds, 1), nullptr); // artzig: m144 Span API
+     GraphicsJNI::rect_to_jrectf(skBounds, env, rect);
+     return SkScalarToFloat(skWidth);
+ }
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 01:21:42 +0200
+Subject: [PATCH 3/5] jni: honor @CriticalNative on host under real ART
+ (ARTZIG_REAL_CRITICAL_NATIVE)
+
+The host (layoutlib) build compiles @CriticalNative implementations with a
+JNIEnv*/jclass prefix because layoutlib's JVM ignores the annotation. artzig
+runs a real device-style ART on the host, which honors @CriticalNative and
+invokes with the bare calling convention -- the prefixed functions then read
+their arguments from the wrong registers and scribble over runtime state
+(observed: Paint.nSetFlags clobbering Thread::tlsPtr_.jni_env).
+Gate the prefix on ARTZIG_REAL_CRITICAL_NATIVE so the Android (bare)
+convention is used.
+---
+ core/jni/core_jni_helpers.h          | 2 +-
+ libs/hwui/jni/PathIterator.cpp       | 2 +-
+ libs/hwui/jni/graphics_jni_helpers.h | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/core/jni/core_jni_helpers.h b/core/jni/core_jni_helpers.h
+index 769fa723..d1b4ef1b 100644
+--- a/core/jni/core_jni_helpers.h
++++ b/core/jni/core_jni_helpers.h
+@@ -28,7 +28,7 @@
+ // and they need all the JNI methods to have JNIEnv* and jclass/jobject as their first two arguments.
+ // The following macro allows to have those arguments when compiling for host while omitting them when
+ // compiling for Android.
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_REAL_CRITICAL_NATIVE)
+ #define CRITICAL_JNI_PARAMS
+ #define CRITICAL_JNI_PARAMS_COMMA
+ #else
+diff --git a/libs/hwui/jni/PathIterator.cpp b/libs/hwui/jni/PathIterator.cpp
+index e9de6555..534ef100 100644
+--- a/libs/hwui/jni/PathIterator.cpp
++++ b/libs/hwui/jni/PathIterator.cpp
+@@ -40,7 +40,7 @@ public:
+     // A variant of 'next' (below) that is compatible with the host JVM.
+     static jint nextHost(JNIEnv* env, jclass clazz, jlong iteratorHandle, jfloatArray pointsArray) {
+         jfloat* points = env->GetFloatArrayElements(pointsArray, 0);
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_REAL_CRITICAL_NATIVE)
+         jint result = next(iteratorHandle, reinterpret_cast<jlong>(points));
+ #else
+         jint result = next(env, clazz, iteratorHandle, reinterpret_cast<jlong>(points));
+diff --git a/libs/hwui/jni/graphics_jni_helpers.h b/libs/hwui/jni/graphics_jni_helpers.h
+index 91db134a..5b4b5d50 100644
+--- a/libs/hwui/jni/graphics_jni_helpers.h
++++ b/libs/hwui/jni/graphics_jni_helpers.h
+@@ -27,7 +27,7 @@
+ // and they need all the JNI methods to have JNIEnv* and jclass/jobject as their first two arguments.
+ // The following macro allows to have those arguments when compiling for host while omitting them when
+ // compiling for Android.
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_REAL_CRITICAL_NATIVE)
+ #define CRITICAL_JNI_PARAMS
+ #define CRITICAL_JNI_PARAMS_COMMA
+ #else
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 03:03:34 +0200
+Subject: [PATCH 4/5] icu compat: use createCanonical(String) in
+ InputDevice/InputMethodSubtype
+
+artzig's libcore ships an older android.icu without createCanonical(ULocale);
+route through ULocale.getName() (equivalent canonicalization).
+---
+ core/java/android/view/InputDevice.java                    | 2 +-
+ core/java/android/view/inputmethod/InputMethodSubtype.java | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/core/java/android/view/InputDevice.java b/core/java/android/view/InputDevice.java
+index 609ad5bb..14bce108 100644
+--- a/core/java/android/view/InputDevice.java
++++ b/core/java/android/view/InputDevice.java
+@@ -519,7 +519,7 @@ public final class InputDevice implements Parcelable {
+         if (!TextUtils.isEmpty(keyboardLanguageTag)) {
+             String langTag;
+             langTag = ULocale
+-                    .createCanonical(ULocale.forLanguageTag(keyboardLanguageTag))
++                    .createCanonical(ULocale.forLanguageTag(keyboardLanguageTag).getName())
+                     .toLanguageTag();
+             mKeyboardLanguageTag = TextUtils.equals(langTag, "und") ? null : langTag;
+         } else {
+diff --git a/core/java/android/view/inputmethod/InputMethodSubtype.java b/core/java/android/view/inputmethod/InputMethodSubtype.java
+index a67ae7c9..fc8a13ae 100644
+--- a/core/java/android/view/inputmethod/InputMethodSubtype.java
++++ b/core/java/android/view/inputmethod/InputMethodSubtype.java
+@@ -593,7 +593,7 @@ public final class InputMethodSubtype implements Parcelable {
+         if (locale != null) {
+             final String langTag = locale.toLanguageTag();
+             if (!TextUtils.isEmpty(langTag)) {
+-                result = ULocale.createCanonical(ULocale.forLanguageTag(langTag)).toLanguageTag();
++                result = ULocale.createCanonical(ULocale.forLanguageTag(langTag).getName()).toLanguageTag();
+             }
+         }
+         result = TextUtils.emptyIfNull(result);
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 03:10:27 +0200
+Subject: [PATCH 5/5] SystemFonts: env-overridable font config paths for host
+
+ARTZIG_FONT_FALLBACK_XML / ARTZIG_FONTS_XML / ARTZIG_FONT_DIR redirect the
+hardcoded /system/etc + /system/fonts paths so a host font set can be used.
+---
+ .../java/android/graphics/fonts/SystemFonts.java     | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/graphics/java/android/graphics/fonts/SystemFonts.java b/graphics/java/android/graphics/fonts/SystemFonts.java
+index 0e25c346..09f07e7f 100644
+--- a/graphics/java/android/graphics/fonts/SystemFonts.java
++++ b/graphics/java/android/graphics/fonts/SystemFonts.java
+@@ -53,11 +53,17 @@ import java.util.Set;
+ public final class SystemFonts {
+     private static final String TAG = "SystemFonts";
+ 
+-    private static final String FONTS_XML = "/system/etc/font_fallback.xml";
+-    private static final String LEGACY_FONTS_XML = "/system/etc/fonts.xml";
++    private static final String FONTS_XML = envOr("ARTZIG_FONT_FALLBACK_XML", "/system/etc/font_fallback.xml");
++    private static final String LEGACY_FONTS_XML = envOr("ARTZIG_FONTS_XML", "/system/etc/fonts.xml");
+ 
+     /** @hide */
+-    public static final String SYSTEM_FONT_DIR = "/system/fonts/";
++    public static final String SYSTEM_FONT_DIR = envOr("ARTZIG_FONT_DIR", "/system/fonts/");
++
++    /** artzig: host-path redirection for the font configuration. */
++    private static String envOr(String key, String def) {
++        String v = System.getenv(key);
++        return v != null ? v : def;
++    }
+     private static final String OEM_XML = "/product/etc/fonts_customization.xml";
+     /** @hide */
+     public static final String OEM_FONT_DIR = "/product/fonts/";

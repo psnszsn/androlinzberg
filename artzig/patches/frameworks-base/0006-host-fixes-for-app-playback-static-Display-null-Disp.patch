@@ -1,0 +1,266 @@
+From a2d920c66684429dc75bb9fa0ff4ca2f79d6bc6c Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 14:04:52 +0200
+Subject: [PATCH] host fixes for app playback: static Display (null
+ DisplayManagerGlobal), Toast without notification service, native-free
+ Surface(SurfaceTexture), TypedArray non-fatal unresolved theme attrs,
+ Path.getFillType garbage guard, hwui ImageDecoder colorType log removal
+
+---
+ core/java/android/content/res/TypedArray.java | 66 +++++++++----------
+ core/java/android/view/Display.java           |  2 +
+ core/java/android/view/Surface.java           | 10 ++-
+ core/java/android/widget/Toast.java           |  9 ++-
+ libs/hwui/jni/Path.cpp                        |  7 +-
+ 5 files changed, 56 insertions(+), 38 deletions(-)
+
+diff --git a/core/java/android/content/res/TypedArray.java b/core/java/android/content/res/TypedArray.java
+index 79185a10..e0843d4a 100644
+--- a/core/java/android/content/res/TypedArray.java
++++ b/core/java/android/content/res/TypedArray.java
+@@ -533,9 +533,9 @@ public class TypedArray implements AutoCloseable {
+         } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+             final TypedValue value = mValue;
+             getValueAt(index, value);
+-            throw new UnsupportedOperationException(
+-                    "Failed to resolve attribute at index " + attrIndex + ": " + value
+-                            + ", theme=" + mTheme);
++            android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return defValue;
+         }
+ 
+         throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+@@ -569,9 +569,9 @@ public class TypedArray implements AutoCloseable {
+         final TypedValue value = mValue;
+         if (getValueAt(index * STYLE_NUM_ENTRIES, value)) {
+             if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+-                throw new UnsupportedOperationException(
+-                        "Failed to resolve attribute at index " + index + ": " + value
+-                                + ", theme=" + mTheme);
++                android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return null;
+             }
+             return mResources.loadComplexColor(value, value.resourceId, mTheme);
+         }
+@@ -605,9 +605,9 @@ public class TypedArray implements AutoCloseable {
+         final TypedValue value = mValue;
+         if (getValueAt(index * STYLE_NUM_ENTRIES, value)) {
+             if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+-                throw new UnsupportedOperationException(
+-                        "Failed to resolve attribute at index " + index + ": " + value
+-                                + ", theme=" + mTheme);
++                android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return null;
+             }
+             return mResources.loadColorStateList(value, value.resourceId, mTheme);
+         }
+@@ -647,9 +647,9 @@ public class TypedArray implements AutoCloseable {
+         } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+             final TypedValue value = mValue;
+             getValueAt(index, value);
+-            throw new UnsupportedOperationException(
+-                    "Failed to resolve attribute at index " + attrIndex + ": " + value
+-                            + ", theme=" + mTheme);
++            android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return defValue;
+         }
+ 
+         throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+@@ -695,9 +695,9 @@ public class TypedArray implements AutoCloseable {
+         } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+             final TypedValue value = mValue;
+             getValueAt(index, value);
+-            throw new UnsupportedOperationException(
+-                    "Failed to resolve attribute at index " + attrIndex + ": " + value
+-                            + ", theme=" + mTheme);
++            android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return defValue;
+         }
+ 
+         throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+@@ -744,9 +744,9 @@ public class TypedArray implements AutoCloseable {
+         } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+             final TypedValue value = mValue;
+             getValueAt(index, value);
+-            throw new UnsupportedOperationException(
+-                    "Failed to resolve attribute at index " + attrIndex + ": " + value
+-                            + ", theme=" + mTheme);
++            android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return defValue;
+         }
+ 
+         throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+@@ -794,9 +794,9 @@ public class TypedArray implements AutoCloseable {
+         } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+             final TypedValue value = mValue;
+             getValueAt(index, value);
+-            throw new UnsupportedOperationException(
+-                    "Failed to resolve attribute at index " + attrIndex + ": " + value
+-                            + ", theme=" + mTheme);
++            android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return defValue;
+         }
+ 
+         throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+@@ -839,9 +839,9 @@ public class TypedArray implements AutoCloseable {
+         } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+             final TypedValue value = mValue;
+             getValueAt(index, value);
+-            throw new UnsupportedOperationException(
+-                    "Failed to resolve attribute at index " + attrIndex + ": " + value
+-                            + ", theme=" + mTheme);
++            android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return 0;
+         }
+ 
+         throw new UnsupportedOperationException(getPositionDescription()
+@@ -915,9 +915,9 @@ public class TypedArray implements AutoCloseable {
+         } else if (type == TypedValue.TYPE_ATTRIBUTE) {
+             final TypedValue value = mValue;
+             getValueAt(index, value);
+-            throw new UnsupportedOperationException(
+-                    "Failed to resolve attribute at index " + attrIndex + ": " + value
+-                            + ", theme=" + mTheme);
++            android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return defValue;
+         }
+ 
+         throw new UnsupportedOperationException("Can't convert value at index " + attrIndex
+@@ -1014,9 +1014,9 @@ public class TypedArray implements AutoCloseable {
+         final TypedValue value = mValue;
+         if (getValueAt(index * STYLE_NUM_ENTRIES, value)) {
+             if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+-                throw new UnsupportedOperationException(
+-                        "Failed to resolve attribute at index " + index + ": " + value
+-                                + ", theme=" + mTheme);
++                android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return null;
+             }
+ 
+             if (density > 0) {
+@@ -1052,9 +1052,9 @@ public class TypedArray implements AutoCloseable {
+         final TypedValue value = mValue;
+         if (getValueAt(index * STYLE_NUM_ENTRIES, value)) {
+             if (value.type == TypedValue.TYPE_ATTRIBUTE) {
+-                throw new UnsupportedOperationException(
+-                        "Failed to resolve attribute at index " + index + ": " + value
+-                                + ", theme=" + mTheme);
++                android.util.Log.w("TypedArray", "artzig: unresolved theme attribute: "
++                    + value + " (returning default)");
++            return null;
+             }
+             return mResources.getFont(value, value.resourceId);
+         }
+diff --git a/core/java/android/view/Display.java b/core/java/android/view/Display.java
+index 802bddd7..2f9a47cd 100644
+--- a/core/java/android/view/Display.java
++++ b/core/java/android/view/Display.java
+@@ -2089,6 +2089,8 @@ public final class Display {
+     }
+ 
+     private void updateDisplayInfoLocked() {
++        if (mGlobal == null) return; // artzig: static display, info set at construction
++
+         // Note: The display manager caches display info objects on our behalf.
+         DisplayInfo newInfo = mGlobal.getDisplayInfo(mDisplayId);
+         if (newInfo == null) {
+diff --git a/core/java/android/view/Surface.java b/core/java/android/view/Surface.java
+index 6e6e87bb..09165955 100644
+--- a/core/java/android/view/Surface.java
++++ b/core/java/android/view/Surface.java
+@@ -380,16 +380,18 @@ public class Surface implements Parcelable {
+      * @throws OutOfResourcesException if the surface could not be created.
+      */
+     public Surface(SurfaceTexture surfaceTexture) {
++        // artzig: no native GL consumer — a fake, always-"valid" surface used
++        // only as a token (e.g. ExoPlayer's PlaceholderSurface).
+         if (surfaceTexture == null) {
+             throw new IllegalArgumentException("surfaceTexture must not be null");
+         }
+-        mIsSingleBuffered = surfaceTexture.isSingleBuffered();
++        mIsSingleBuffered = false;
+         synchronized (mLock) {
+             mName = surfaceTexture.toString();
+-            setNativeObjectLocked(nativeCreateFromSurfaceTexture(surfaceTexture));
++            mArtzigFake = true;
+         }
+-        registerNativeMemoryUsage();
+     }
++    private boolean mArtzigFake;
+ 
+     /* called from android_view_Surface_createFromIGraphicBufferProducer() */
+     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+@@ -420,6 +422,7 @@ public class Surface implements Parcelable {
+      */
+     public void release() {
+         synchronized (mLock) {
++            if (mArtzigFake) { mArtzigFake = false; return; }
+             if (mHwuiContext != null) {
+                 mHwuiContext.destroy();
+                 mHwuiContext = null;
+@@ -467,6 +470,7 @@ public class Surface implements Parcelable {
+      */
+     public boolean isValid() {
+         synchronized (mLock) {
++            if (mArtzigFake) return true;
+             if (mNativeObject == 0) return false;
+             return nativeIsValid(mNativeObject);
+         }
+diff --git a/core/java/android/widget/Toast.java b/core/java/android/widget/Toast.java
+index ead8887f..c6b8628d 100644
+--- a/core/java/android/widget/Toast.java
++++ b/core/java/android/widget/Toast.java
+@@ -205,6 +205,11 @@ public class Toast {
+         }
+ 
+         INotificationManager service = getService();
++        if (service == null) {
++            // artzig: no notification service — log the toast instead of showing it
++            Log.i(TAG, "Toast (dropped): " + mText);
++            return;
++        }
+         String pkg = mContext.getOpPackageName();
+         TN tn = mTN;
+         if (Flags.toastNoWeakref()) {
+@@ -254,7 +259,9 @@ public class Toast {
+         if (Compatibility.isChangeEnabled(CHANGE_TEXT_TOASTS_IN_THE_SYSTEM)
+                 && mNextView == null) {
+             try {
+-                getService().cancelToast(mContext.getOpPackageName(), mToken);
++                if (getService() != null) {
++                    getService().cancelToast(mContext.getOpPackageName(), mToken);
++                }
+             } catch (RemoteException e) {
+                 // Empty
+             }
+diff --git a/libs/hwui/jni/Path.cpp b/libs/hwui/jni/Path.cpp
+index 2ae255e8..dd2af343 100644
+--- a/libs/hwui/jni/Path.cpp
++++ b/libs/hwui/jni/Path.cpp
+@@ -521,7 +521,12 @@ public:
+ 
+     static jint getFillType(CRITICAL_JNI_PARAMS_COMMA jlong objHandle) {
+         SkPath* obj = reinterpret_cast<SkPath*>(objHandle);
+-        return static_cast<int>(obj->getFillType());
++        int ft = static_cast<int>(obj->getFillType());
++        if (ft < 0 || ft > 3) {
++            ALOGW("azk getFillType garbage: handle=%p ft=%d", (void*)objHandle, ft);
++            ft = 0;
++        }
++        return ft;
+     }
+ 
+     static void setFillType(CRITICAL_JNI_PARAMS_COMMA jlong pathHandle, jint ftHandle) {;
+-- 
+2.55.0
+

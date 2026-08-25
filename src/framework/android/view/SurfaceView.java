@@ -1,0 +1,169 @@
+/* artzig shim: SurfaceView over a Wayland subsurface video layer. The view
+ * punches a transparent hole so the layer (placed below the UI surface)
+ * shows through; the compositor scales the buffer to the view rect. */
+package android.view;
+
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Rect;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.AttributeSet;
+
+import java.util.concurrent.CopyOnWriteArrayList;
+
+public class SurfaceView extends View {
+    private final CopyOnWriteArrayList<SurfaceHolder.Callback> mCallbacks =
+            new CopyOnWriteArrayList<>();
+    private Surface mSurface;
+    private boolean mCreated;
+    private int mLifecycleGeneration;
+    private final int[] mLocation = new int[2];
+    private final Rect mVisibleRect = new Rect();
+    private int mLastX = Integer.MIN_VALUE, mLastY, mLastW, mLastH;
+    private int mLastVisibleX, mLastVisibleY, mLastVisibleW, mLastVisibleH;
+
+    public SurfaceView(Context context) { this(context, null); }
+    public SurfaceView(Context context, AttributeSet attrs) { this(context, attrs, 0); }
+    public SurfaceView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, 0);
+    }
+    public SurfaceView(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
+        super(context, attrs, defStyleAttr, defStyleRes);
+        setWillNotDraw(false);
+    }
+
+    private final SurfaceHolder mHolder = new SurfaceHolder() {
+        @Override public void addCallback(SurfaceHolder.Callback callback) {
+            mCallbacks.addIfAbsent(callback);
+            if (mCreated) callback.surfaceCreated(this);
+        }
+        @Override public void removeCallback(SurfaceHolder.Callback callback) {
+            mCallbacks.remove(callback);
+        }
+        @Override public boolean isCreating() { return false; }
+        @Override public void setType(int type) {}
+        @Override public void setFixedSize(int width, int height) {}
+        @Override public void setSizeFromLayout() {}
+        @Override public void setFormat(int format) {}
+        @Override public void setKeepScreenOn(boolean screenOn) {}
+        @Override public Canvas lockCanvas() { return null; }
+        @Override public Canvas lockCanvas(Rect dirty) { return null; }
+        @Override public void unlockCanvasAndPost(Canvas canvas) {}
+        @Override public Rect getSurfaceFrame() {
+            return new Rect(0, 0, getWidth(), getHeight());
+        }
+        @Override public Surface getSurface() { return mSurface; }
+    };
+
+    public SurfaceHolder getHolder() { return mHolder; }
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        ++mLifecycleGeneration;
+        if (mSurface == null) {
+            mSurface = ArtzigVideoLayer.createSurface();
+            // The destination cache belongs to the old native video layer.
+            // A replacement surface must receive its rectangle even when the
+            // Java view was reattached at exactly the same bounds.
+            mLastX = Integer.MIN_VALUE;
+        }
+        if (!mCreated) {
+            mCreated = true;
+            for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceCreated(mHolder);
+        }
+        updateRect();
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        final int detachedGeneration = ++mLifecycleGeneration;
+        // ViewGroup reparenting detaches and attaches the view synchronously.
+        // Keep the video surface alive across that operation so clients do not
+        // block their playback thread detaching a surface that is immediately
+        // reused. A genuinely removed view remains detached through the next
+        // main-loop turn and is destroyed there.
+        new Handler(Looper.getMainLooper()).post(() -> {
+            if (mLifecycleGeneration != detachedGeneration) return;
+            if (mCreated) {
+                mCreated = false;
+                for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceDestroyed(mHolder);
+            }
+            if (mSurface != null) {
+                ArtzigVideoLayer.destroy(mSurface);
+                mSurface = null;
+            }
+        });
+        super.onDetachedFromWindow();
+    }
+
+    @Override protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        updateRect();
+        if (mCreated) {
+            for (SurfaceHolder.Callback cb : mCallbacks) {
+                cb.surfaceChanged(mHolder, android.graphics.PixelFormat.RGBX_8888,
+                        getWidth(), getHeight());
+            }
+        }
+    }
+
+    private void updateRect() {
+        if (mSurface == null || getWidth() == 0) return;
+        getLocationInWindow(mLocation);
+        View root = getRootView();
+        boolean visible = isShown() && getGlobalVisibleRect(mVisibleRect)
+                && root != null
+                && mVisibleRect.intersect(0, 0, root.getWidth(), root.getHeight())
+                && mVisibleRect.intersect(mLocation[0], mLocation[1],
+                        mLocation[0] + getWidth(), mLocation[1] + getHeight());
+        int visibleX = visible ? mVisibleRect.left : 0;
+        int visibleY = visible ? mVisibleRect.top : 0;
+        int visibleW = visible ? mVisibleRect.width() : 0;
+        int visibleH = visible ? mVisibleRect.height() : 0;
+        if (mLocation[0] != mLastX || mLocation[1] != mLastY
+                || getWidth() != mLastW || getHeight() != mLastH
+                || visibleX != mLastVisibleX || visibleY != mLastVisibleY
+                || visibleW != mLastVisibleW || visibleH != mLastVisibleH) {
+            mLastX = mLocation[0];
+            mLastY = mLocation[1];
+            mLastW = getWidth();
+            mLastH = getHeight();
+            mLastVisibleX = visibleX;
+            mLastVisibleY = visibleY;
+            mLastVisibleW = visibleW;
+            mLastVisibleH = visibleH;
+            ArtzigVideoLayer.setGeometry(mSurface,
+                    mLastX, mLastY, mLastW, mLastH,
+                    visibleX, visibleY, visibleW, visibleH);
+        }
+    }
+
+    /**
+     * Host traversal hook. A real SurfaceView has a RenderThread position
+     * listener which keeps its SurfaceControl in step with ancestor property
+     * animations. The host Wayland subsurface needs the equivalent update
+     * even when this view's cached display list is not re-recorded.
+     */
+    void updateSurfacePosition$artzig() {
+        updateRect();
+    }
+
+    @Override public void draw(Canvas canvas) {
+        // Restrict the transparent hole to this view. Clearing the canvas color
+        // would clear the entire damage clip, which can extend beyond our bounds
+        // while a resize or ancestor animation is in progress.
+        canvas.punchHole(0f, 0f, getWidth(), getHeight(), 0f, 0f, getAlpha());
+        super.draw(canvas);
+    }
+
+    @Override protected void dispatchDraw(Canvas canvas) {
+        updateRect();
+        super.dispatchDraw(canvas);
+    }
+
+    public SurfaceControl getSurfaceControl() { return new SurfaceControl(); }
+    public void setZOrderOnTop(boolean onTop) {}
+    public void setZOrderMediaOverlay(boolean isMediaOverlay) {}
+    public void setSecure(boolean isSecure) {}
+    public void setUseAlpha() {}
+}

@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 24 Aug 2026 22:38:00 +0200
+Subject: [PATCH] expose no-IPC input method manager for host contexts
+
+Artzig renders Android views without an Android system server. Allow its
+ContextImpl to construct the existing layoutlib-style input method manager
+instead of returning null for INPUT_METHOD_SERVICE.
+
+---
+ core/java/android/view/inputmethod/InputMethodManager.java | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/core/java/android/view/inputmethod/InputMethodManager.java b/core/java/android/view/inputmethod/InputMethodManager.java
+index d5f471edf..c519ab0a4 100644
+--- a/core/java/android/view/inputmethod/InputMethodManager.java
++++ b/core/java/android/view/inputmethod/InputMethodManager.java
+@@ -1602,7 +1602,12 @@ public final class InputMethodManager {
+     }
+ 
+     @NonNull
+-    private static InputMethodManager createStubInstance(int displayId, Looper looper) {
++    /**
++     * Creates an input-method manager that never performs IPC.  In addition to layoutlib,
++     * this is used by hosts which render Android views without an Android system server.
++     * @hide
++     */
++    public static InputMethodManager createStubInstance(int displayId, Looper looper) {
+         // If InputMethodManager is running for layoutlib, stub out IPCs into IMMS.
+         final Class<IInputMethodManager> c = IInputMethodManager.class;
+         final IInputMethodManager stubInterface =
+-- 
+2.51.0
+

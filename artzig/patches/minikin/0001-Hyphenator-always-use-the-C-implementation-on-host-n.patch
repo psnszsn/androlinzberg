@@ -1,0 +1,30 @@
+From 6a5381925f55842312b8f7cc5dc2154bb5f18b2c Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 05:08:34 +0200
+Subject: [PATCH] Hyphenator: always use the C++ implementation on host (no
+ Rust hyphenator)
+
+---
+ libs/minikin/Hyphenator.cpp | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/libs/minikin/Hyphenator.cpp b/libs/minikin/Hyphenator.cpp
+index bea773c..37d857c 100644
+--- a/libs/minikin/Hyphenator.cpp
++++ b/libs/minikin/Hyphenator.cpp
+@@ -125,11 +125,7 @@ private:
+ // static
+ Hyphenator* Hyphenator::loadBinary(const uint8_t* patternData, size_t dataSize, size_t minPrefix,
+                                    size_t minSuffix, const std::string& locale) {
+-#ifdef __linux__
+-    if (features::rust_hyphenator()) {
+-        return new HyphenatorRust(patternData, dataSize, minPrefix, minSuffix, locale);
+-    }
+-#endif  // __linux__
++    // artzig: no Rust hyphenator on host; always use the C++ implementation.
+     return HyphenatorCXX::loadBinary(patternData, dataSize, minPrefix, minSuffix, locale);
+ }
+ 
+-- 
+2.55.0
+

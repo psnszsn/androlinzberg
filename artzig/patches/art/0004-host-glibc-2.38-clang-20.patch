@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Sun, 23 Aug 2026 19:57:04 +0200
+Subject: [PATCH] host: build against glibc >= 2.38 / recent clang
+
+Soong builds host ART against a glibc 2.17 sysroot; when compiling against a
+current glibc (artzig builds with zig's clang and the system glibc):
+- <ucontext.h> no longer includes <signal.h>: runtime_common.h needs it explicitly
+- glibc 2.38 provides strlcpy: don't shadow it in libartbase/base/strlcpy.h
+- MINSIGSTKSZ / PTHREAD_STACK_MIN are sysconf() calls since glibc 2.34, so they are
+  neither constexpr nor size_t (ART's pragma-enforced -Wconversion made that an error)
+- clang 20 -Wnontrivial-memcall on a union memcpy in subtype_check.h
+---
+ libartbase/base/strlcpy.h |  4 +++-
+ runtime/runtime_common.h  |  1 +
+ runtime/subtype_check.h   |  2 +-
+ runtime/thread.cc         |  6 ++++--
+ runtime/thread_linux.cc   | 12 +++++++-----
+ 5 files changed, 16 insertions(+), 9 deletions(-)
+
+diff --git a/libartbase/base/strlcpy.h b/libartbase/base/strlcpy.h
+index b5978c5..2528444 100644
+--- a/libartbase/base/strlcpy.h
++++ b/libartbase/base/strlcpy.h
+@@ -26,7 +26,9 @@
+ // Bionic exposes this function, but the host glibc does not. Remove this shim when we compile
+ // against bionic on the host, also.
+ 
+-#if !defined(__BIONIC__) && !defined(__APPLE__) && !defined(ANDROID_HOST_MUSL)
++// glibc >= 2.38 provides strlcpy itself.
++#if !defined(__BIONIC__) && !defined(__APPLE__) && !defined(ANDROID_HOST_MUSL) && \
++    !(defined(__GLIBC__) && __GLIBC_PREREQ(2, 38))
+ 
+ static inline size_t strlcpy(char* dst, const char* src, size_t size) {
+   // Extra-lazy implementation: this is only a host shim, and we don't have to call this often.
+diff --git a/runtime/runtime_common.h b/runtime/runtime_common.h
+index 803b1aa..d331161 100644
+--- a/runtime/runtime_common.h
++++ b/runtime/runtime_common.h
+@@ -25,6 +25,7 @@
+ #define _XOPEN_SOURCE
+ #endif
+ 
++#include <signal.h>
+ #include <sys/utsname.h>
+ #include <ucontext.h>
+ 
+diff --git a/runtime/subtype_check.h b/runtime/subtype_check.h
+index 45b82f5..46f496a 100644
+--- a/runtime/subtype_check.h
++++ b/runtime/subtype_check.h
+@@ -453,7 +453,7 @@ struct SubtypeCheck {
+ 
+     if (kIsDebugBuild) {
+       SubtypeCheckBitsAndStatus tmp;
+-      memcpy(&tmp, &int32_data, sizeof(tmp));
++      memcpy(reinterpret_cast<void*>(&tmp), &int32_data, sizeof(tmp));
+       DCHECK_EQ(0, memcmp(&tmp, &current_bits_and_status, sizeof(tmp))) << int32_data;
+     }
+     return current_bits_and_status;
+diff --git a/runtime/thread.cc b/runtime/thread.cc
+index 8d37d40..49a5e34 100644
+--- a/runtime/thread.cc
++++ b/runtime/thread.cc
+@@ -718,8 +718,10 @@ static size_t FixStackSize(size_t stack_size) {
+   }
+ 
+   // It's not possible to request a stack smaller than the system-defined PTHREAD_STACK_MIN.
+-  if (stack_size < PTHREAD_STACK_MIN) {
+-    stack_size = PTHREAD_STACK_MIN;
++  // glibc >= 2.34 defines PTHREAD_STACK_MIN as a sysconf() call returning long.
++  const size_t min_stack_size = static_cast<size_t>(PTHREAD_STACK_MIN);
++  if (stack_size < min_stack_size) {
++    stack_size = min_stack_size;
+   }
+ 
+   if (Runtime::Current()->GetImplicitStackOverflowChecks()) {
+diff --git a/runtime/thread_linux.cc b/runtime/thread_linux.cc
+index 860d0e5..a965c0d 100644
+--- a/runtime/thread_linux.cc
++++ b/runtime/thread_linux.cc
+@@ -33,8 +33,10 @@ static void SigAltStack(stack_t* new_stack, stack_t* old_stack) {
+ // handler or do a stack unwind, this is too small.  We allocate 32K
+ // instead of the minimum signal stack size.
+ // TODO: We shouldn't do logging (with locks) in signal handlers.
+-static constexpr int kHostAltSigStackSize =
+-    32 * KB < MINSIGSTKSZ ? MINSIGSTKSZ : 32 * KB;
++// Not constexpr: with glibc >= 2.34 and _GNU_SOURCE, MINSIGSTKSZ is a sysconf() call.
++static inline int HostAltSigStackSize() {
++  return 32 * KB < MINSIGSTKSZ ? MINSIGSTKSZ : 32 * KB;
++}
+ 
+ void Thread::SetUpAlternateSignalStack() {
+   // Create and set an alternate signal stack.
+@@ -42,8 +44,8 @@ void Thread::SetUpAlternateSignalStack() {
+   LOG(FATAL) << "Invalid use of alternate signal stack on Android";
+ #endif
+   stack_t ss;
+-  ss.ss_sp = new uint8_t[kHostAltSigStackSize];
+-  ss.ss_size = kHostAltSigStackSize;
++  ss.ss_sp = new uint8_t[HostAltSigStackSize()];
++  ss.ss_size = HostAltSigStackSize();
+   ss.ss_flags = 0;
+   CHECK(ss.ss_sp != nullptr);
+   SigAltStack(&ss, nullptr);
+@@ -63,7 +65,7 @@ void Thread::TearDownAlternateSignalStack() {
+   // Tell the kernel to stop using it.
+   ss.ss_sp = nullptr;
+   ss.ss_flags = SS_DISABLE;
+-  ss.ss_size = kHostAltSigStackSize;  // Avoid ENOMEM failure with Mac OS' buggy libc.
++  ss.ss_size = HostAltSigStackSize();  // Avoid ENOMEM failure with Mac OS' buggy libc.
+   SigAltStack(&ss, nullptr);
+ 
+   // Free it.

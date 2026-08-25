@@ -1,0 +1,18 @@
+.{
+    .name = .androlinzberg,
+    .version = "0.0.0",
+    .fingerprint = 0x8503f76f1f09d06e,
+    .minimum_zig_version = "0.17.0-dev.1818+7051f8e73",
+    .dependencies = .{
+        .artzig = .{ .path = "artzig" },
+        .wayland = .{ .path = "vendor/zig-wayland" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "build",
+        "tools",
+        "vendor/zig-wayland",
+    },
+}

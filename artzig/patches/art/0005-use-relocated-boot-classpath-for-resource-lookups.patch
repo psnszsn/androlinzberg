@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 24 Aug 2026 18:48:00 +0200
+Subject: [PATCH] ART: use relocated boot classpath for resource lookups
+
+Keep canonical /apex boot-classpath locations for boot-image identity, but
+return the actual opened filenames to VMClassLoader resource lookup when a
+host runtime relocates those jars. This prevents ClassPathURLStreamHandler
+from trying to open nonexistent /apex paths on the host.
+---
+ runtime/native/java_lang_VMClassLoader.cc | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/runtime/native/java_lang_VMClassLoader.cc b/runtime/native/java_lang_VMClassLoader.cc
+index c723a1291acccacd9258cc7b9a8949b54eaef8b4..72a672a396b874c980587f5b6e1d3f0fd3bb368e 100644
+--- a/runtime/native/java_lang_VMClassLoader.cc
++++ b/runtime/native/java_lang_VMClassLoader.cc
+@@ -134,6 +134,19 @@ static jclass VMClassLoader_findLoadedClass(JNIEnv* env, jclass, jobject javaLoa
+  * Returns an array of entries from the boot classpath that could contain resources.
+  */
+ static jobjectArray VMClassLoader_getBootClassPathEntries(JNIEnv* env, jclass) {
++  Runtime* runtime = Runtime::Current();
++  const std::vector<std::string>& filenames = runtime->GetBootClassPath();
++  const std::vector<std::string>& locations = runtime->GetBootClassPathLocations();
++  ScopedObjectAccess soa(Thread::ForEnv(env));
++
++  // Boot images identify their dex files by canonical Android locations such as
++  // /apex/com.android.art/..., even when a host runtime opens those jars from a
++  // relocated runtime tree. Resource lookup must use the filenames that were
++  // actually opened rather than the canonical dex locations.
++  if (filenames != locations) {
++    return soa.AddLocalReference<jobjectArray>(CreateStringArray(soa.Self(), filenames));
++  }
++
+   ClassLinker* class_linker = Runtime::Current()->GetClassLinker();
+   const std::vector<const DexFile*>& path = class_linker->GetBootClassPath();
+   auto is_base_dex = [](const DexFile* dex_file) {
+@@ -160,7 +173,6 @@ static jobjectArray VMClassLoader_getBootClassPathEntries(JNIEnv* env, jclass) {
+     return is_base_dex(dex_file);
+   };
+   auto get_location = [](const DexFile* dex_file) { return dex_file->GetLocation(); };
+-  ScopedObjectAccess soa(Thread::ForEnv(env));
+   return soa.AddLocalReference<jobjectArray>(CreateStringArray(
+       soa.Self(),
+       jar_count,
+-- 
+2.51.0

@@ -1,0 +1,124 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Tue, 25 Aug 2026 00:12:00 +0200
+Subject: [PATCH] linker: search DT_NEEDED scope for handle dlsym
+
+Match Android's dlsym(handle, symbol) behavior by searching the handle and
+its dependency group. This is required for JNI libraries that keep JNI_OnLoad
+and native entry points in a DT_NEEDED implementation DSO. Also keep the
+per-relocation and wrapper diagnostics behind LINKER_DEBUG.
+---
+ linker/dlfcn.c |  2 +-
+ linker/linker.c | 56 ++++++++++++++++++++++++++++++++++++++++++++++----
+ linker/linker.h |  1 +
+ 3 files changed, 54 insertions(+), 5 deletions(-)
+
+diff --git a/linker/dlfcn.c b/linker/dlfcn.c
+index 5389531..68a7ca8 100644
+--- a/linker/dlfcn.c
++++ b/linker/dlfcn.c
+@@ -171,7 +171,7 @@ void *bionic_dlsym(void *handle, const char *symbol)
+ 		}
+ 	} else if (is_this_our_handle) {
+ 		found = (soinfo *)handle;
+-		sym = apkenv_lookup_in_library(found, symbol);
++		sym = apkenv_lookup_in_library_scope(found, symbol, &found);
+ 	} else {
+ 		sym = 0;
+ 	}
+diff --git a/linker/linker.c b/linker/linker.c
+index a04acaa..1111111 100644
+--- a/linker/linker.c
++++ b/linker/linker.c
+@@ -634,6 +634,56 @@ ElfW(Sym) * apkenv_lookup_in_library(soinfo *si, const char *name)
+ 	return apkenv__elf_lookup(si, &(struct symbol_name){ .name = name });
+ }
+ 
++/* dlsym(handle, ...) searches the handle's local group, including DT_NEEDED
++ * dependencies. The old shim searched only the top-level object, which meant
++ * JNI_OnLoad and native methods exported by a dependency were invisible.
++ * Keep this independent of the process-global load order: several JNI DSOs
++ * legitimately export the same entry point name (especially JNI_OnLoad). */
++static ElfW(Sym) *apkenv_lookup_scope_recursive(soinfo *si,
++						 const char *name,
++						 soinfo **found,
++						 soinfo **visited,
++						 size_t *visited_count)
++{
++	for (size_t i = 0; i < *visited_count; i++) {
++		if (visited[i] == si)
++			return NULL;
++	}
++	if (*visited_count >= 128)
++		return NULL;
++	visited[(*visited_count)++] = si;
++
++	ElfW(Sym) *sym = apkenv_lookup_in_library(si, name);
++	if (sym != NULL && sym->st_shndx != SHN_UNDEF) {
++		*found = si;
++		return sym;
++	}
++	/* Synthetic entries such as libdl stand in for dependencies satisfied by
++	 * the host loader and do not have an Android dynamic section to walk. */
++	if (si->dynamic == NULL)
++		return NULL;
++
++	for (ElfW(Dyn) *d = si->dynamic; d->d_tag != DT_NULL; d++) {
++		if (d->d_tag != DT_NEEDED)
++			continue;
++		soinfo *dependency = (soinfo *)d->d_un.d_val;
++		if (!apkenv_validate_soinfo(dependency))
++			continue;
++		sym = apkenv_lookup_scope_recursive(
++			dependency, name, found, visited, visited_count);
++		if (sym != NULL)
++			return sym;
++	}
++	return NULL;
++}
++
++ElfW(Sym) *apkenv_lookup_in_library_scope(soinfo *si, const char *name, soinfo **found)
++{
++	soinfo *visited[128];
++	size_t visited_count = 0;
++	return apkenv_lookup_scope_recursive(si, name, found, visited, &visited_count);
++}
++
+ /* This is used by dl_sym().  It performs a global symbol lookup.
+  */
+ ElfW(Sym) * apkenv_lookup(const char *name, soinfo **found, soinfo *start)
+@@ -1819,7 +1869,7 @@ static int apkenv_reloc_library(soinfo *si, ElfW(Reloc) * rel, unsigned count)
+ 				// normal symbol
+ 			} else if ((sym_addr = (uintptr_t)dlsym(RTLD_DEFAULT, sym_name))) {
+ 				if (strstr(sym_name, "pthread_"))
+-					fprintf(stderr, "symbol may need to be wrapped: %s\n", sym_name);
++					LINKER_DEBUG_PRINTF("symbol may need to be wrapped: %s\n", sym_name);
+ 				LINKER_DEBUG_PRINTF("%s hooked symbol %s to %p\n", si->name, sym_name, (void *)sym_addr);
+ 			} else if (!sym_addr && !strncmp(sym_name, "gl", 2)) {
+ 				LINKER_DEBUG_PRINTF("=======================================\n");
+@@ -2252,9 +2302,9 @@ static bool apkenv_relocate_android_relocs(soinfo *si)
+ 			// FIXME: clean up apkenv_reloc_library so we don't need to do this
+ 			// (this function expects an array, and will probably be extra slow like this)
+ #if defined(USE_RELA)
+-			fprintf(stderr, "calling apkenv_reloc_library with packed reloc: {.offset = 0x%lx, .r_info = 0x%lx, .r_addend = 0x%lx}\n", reloc.r_offset, reloc.r_info, reloc.r_addend);
++			LINKER_DEBUG_PRINTF("calling apkenv_reloc_library with packed reloc: {.offset = 0x%lx, .r_info = 0x%lx, .r_addend = 0x%lx}\n", reloc.r_offset, reloc.r_info, reloc.r_addend);
+ #else
+-			fprintf(stderr, "calling apkenv_reloc_library with packed reloc: {.offset = 0x%lx, .r_info = 0x%lx}\n", reloc.r_offset, reloc.r_info);
++			LINKER_DEBUG_PRINTF("calling apkenv_reloc_library with packed reloc: {.offset = 0x%lx, .r_info = 0x%lx}\n", reloc.r_offset, reloc.r_info);
+ #endif
+ 			ret = apkenv_reloc_library(si, &reloc, 1);
+ 			if (unlikely(ret))
+diff --git a/linker/linker.h b/linker/linker.h
+index 268f8f3..c8be54b 100644
+--- a/linker/linker.h
++++ b/linker/linker.h
+@@ -271,6 +271,7 @@ extern soinfo apkenv_libdl_info;
+ soinfo *apkenv_find_library(const char *name, const bool try_glibc, int glibc_flags, void **glibc_handle);
+ unsigned apkenv_unload_library(soinfo *si);
+ ElfW(Sym) *apkenv_lookup_in_library(soinfo *si, const char *name);
++ElfW(Sym) *apkenv_lookup_in_library_scope(soinfo *si, const char *name, soinfo **found);
+ ElfW(Sym) *apkenv_lookup(const char *name, soinfo **found, soinfo *start);
+ soinfo *apkenv_find_containing_library(const void *addr);
+ ElfW(Sym) *apkenv_find_containing_symbol(const void *addr, soinfo *si);
+-- 
+2.51.0

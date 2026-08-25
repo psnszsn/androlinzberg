@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Sun, 23 Aug 2026 22:46:50 +0200
+Subject: [PATCH] libstdc++: nothrow_t default ctor is explicit since C++11
+ (build under clang/libc++)
+
+---
+ libstdc++_standalone/new.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/libstdc++_standalone/new.cpp b/libstdc++_standalone/new.cpp
+index 9e80fac..d7d6dbc 100644
+--- a/libstdc++_standalone/new.cpp
++++ b/libstdc++_standalone/new.cpp
+@@ -21,7 +21,8 @@
+ 
+ #include <stdio.h>
+ 
+-extern "C++" __attribute__((weak)) const std::nothrow_t std::nothrow = {};
++// artzig: nothrow_t's default ctor is explicit since C++11; copy-list-init fails under libc++
++extern "C++" __attribute__((weak)) const std::nothrow_t std::nothrow = std::nothrow_t();
+ 
+ void* operator new(std::size_t size) {
+     void* p = malloc(size);

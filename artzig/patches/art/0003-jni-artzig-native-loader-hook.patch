@@ -1,0 +1,156 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Sun, 23 Aug 2026 19:18:59 +0200
+Subject: [PATCH] =?UTF-8?q?jni:=20artzig=5Fset=5Fnative=5Floader()=20?=
+ =?UTF-8?q?=E2=80=94=20pluggable=20dlopen/dlsym=20for=20embedders?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replaces art_standalone's hard-wired bionic_translation calls in java_vm_ext.cc
+(c4d89077 and friends) with a runtime hook: the embedding host installs
+{dlopen, dlsym, dlerror} before JNI_CreateJavaVM and System.loadLibrary()/JNI
+symbol resolution go through it; otherwise libnativeloader is used as upstream.
+---
+ runtime/jni/artzig_native_loader.h | 33 +++++++++++++++
+ runtime/jni/java_vm_ext.cc         | 66 ++++++++++++++++++++++--------
+ 2 files changed, 82 insertions(+), 17 deletions(-)
+ create mode 100644 runtime/jni/artzig_native_loader.h
+
+diff --git a/runtime/jni/artzig_native_loader.h b/runtime/jni/artzig_native_loader.h
+new file mode 100644
+index 0000000..be66c1c
+--- /dev/null
++++ b/runtime/jni/artzig_native_loader.h
+@@ -0,0 +1,33 @@
++/*
++ * artzig: pluggable native-library loader.
++ *
++ * An embedding host (e.g. one that runs Android apps with bionic_translation)
++ * can route System.loadLibrary()/JNI symbol lookup through its own dlopen/dlsym
++ * instead of the host libc's. Install before JNI_CreateJavaVM; the pointers
++ * must stay valid for the lifetime of the runtime. Pass nullptr to restore the
++ * default behaviour.
++ */
++#ifndef ART_RUNTIME_JNI_ARTZIG_NATIVE_LOADER_H_
++#define ART_RUNTIME_JNI_ARTZIG_NATIVE_LOADER_H_
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct ArtzigNativeLoader {
++  /* Same contract as dlopen(3)/dlsym(3)/dlerror(3). `path` may be a bare
++   * library name; `library_path` is the -Djava.library.path / class loader
++   * search path (colon separated), or NULL. */
++  void* (*dlopen)(const char* path, int flags, const char* library_path);
++  void* (*dlsym)(void* handle, const char* symbol);
++  const char* (*dlerror)(void);
++};
++
++__attribute__((visibility("default")))
++void artzig_set_native_loader(const struct ArtzigNativeLoader* loader);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif  // ART_RUNTIME_JNI_ARTZIG_NATIVE_LOADER_H_
+diff --git a/runtime/jni/java_vm_ext.cc b/runtime/jni/java_vm_ext.cc
+index 2c17537..b0d66e2 100644
+--- a/runtime/jni/java_vm_ext.cc
++++ b/runtime/jni/java_vm_ext.cc
+@@ -19,6 +19,8 @@
+ #include <dlfcn.h>
+ #include <string_view>
+ 
++#include "artzig_native_loader.h"
++
+ #include "android-base/stringprintf.h"
+ 
+ #include "art_method-inl.h"
+@@ -53,6 +55,12 @@
+ #include "ti/agent.h"
+ #include "well_known_classes-inl.h"
+ 
++static const ArtzigNativeLoader* artzig_native_loader = nullptr;
++
++extern "C" void artzig_set_native_loader(const ArtzigNativeLoader* loader) {
++  artzig_native_loader = loader;
++}
++
+ namespace art HIDDEN {
+ 
+ using android::base::StringAppendF;
+@@ -172,6 +180,9 @@ class SharedLibrary {
+       REQUIRES(!Locks::mutator_lock_) {
+     CHECK(!NeedsNativeBridge());
+ 
++    if (artzig_native_loader != nullptr) {
++      return artzig_native_loader->dlsym(handle_, symbol_name.c_str());
++    }
+     return dlsym(handle_, symbol_name.c_str());
+   }
+ 
+@@ -1063,23 +1074,44 @@ bool JavaVMExt::LoadNativeLibrary(JNIEnv* env,
+   Locks::mutator_lock_->AssertNotHeld(self);
+   const char* path_str = path.empty() ? nullptr : path.c_str();
+   bool needs_native_bridge = false;
+-  char* nativeloader_error_msg = nullptr;
+-  void* handle = android::OpenNativeLibrary(
+-      env,
+-      runtime_->GetTargetSdkVersion(),
+-      path_str,
+-      class_loader,
+-      (caller_location.empty() ? nullptr : caller_location.c_str()),
+-      library_path.get(),
+-      &needs_native_bridge,
+-      &nativeloader_error_msg);
+-  VLOG(jni) << "[Call to dlopen(\"" << path << "\", RTLD_NOW) returned " << handle << "]";
+-
+-  if (handle == nullptr) {
+-    *error_msg = nativeloader_error_msg;
+-    android::NativeLoaderFreeErrorMessage(nativeloader_error_msg);
+-    VLOG(jni) << "dlopen(\"" << path << "\", RTLD_NOW) failed: " << *error_msg;
+-    return false;
++  void* handle = nullptr;
++  if (artzig_native_loader != nullptr) {
++    // artzig: embedder-provided loader (e.g. bionic_translation).
++    std::string library_path_str;
++    if (library_path.get() != nullptr) {
++      ScopedUtfChars chars(env, library_path.get());
++      if (chars.c_str() != nullptr) {
++        library_path_str = chars.c_str();
++      }
++    }
++    handle = artzig_native_loader->dlopen(
++        path_str, RTLD_NOW, library_path_str.empty() ? nullptr : library_path_str.c_str());
++    VLOG(jni) << "[Call to artzig dlopen(\"" << path << "\", RTLD_NOW) returned " << handle << "]";
++    if (handle == nullptr) {
++      const char* err = artzig_native_loader->dlerror();
++      *error_msg = err != nullptr ? err : "unknown error";
++      VLOG(jni) << "artzig dlopen(\"" << path << "\", RTLD_NOW) failed: " << *error_msg;
++      return false;
++    }
++  } else {
++    char* nativeloader_error_msg = nullptr;
++    handle = android::OpenNativeLibrary(
++        env,
++        runtime_->GetTargetSdkVersion(),
++        path_str,
++        class_loader,
++        (caller_location.empty() ? nullptr : caller_location.c_str()),
++        library_path.get(),
++        &needs_native_bridge,
++        &nativeloader_error_msg);
++    VLOG(jni) << "[Call to dlopen(\"" << path << "\", RTLD_NOW) returned " << handle << "]";
++
++    if (handle == nullptr) {
++      *error_msg = nativeloader_error_msg;
++      android::NativeLoaderFreeErrorMessage(nativeloader_error_msg);
++      VLOG(jni) << "dlopen(\"" << path << "\", RTLD_NOW) failed: " << *error_msg;
++      return false;
++    }
+   }
+ 
+   if (env->ExceptionCheck() == JNI_TRUE) {

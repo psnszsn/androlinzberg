@@ -1,0 +1,8 @@
+.zig-cache/
+zig-out/
+zig-pkg/
+.cache/
+.native-cache/
+.direnv/
+vendor/*
+!vendor/zig-wayland
