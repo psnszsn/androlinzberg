@@ -1,5 +1,5 @@
 //! Wayland client window: xdg_toplevel + wl_shm double buffer + input + vsync.
-//! Built on zig-wayland (vendored, next-zig branch). The pixel format is
+//! Built on zig-wayland (pinned next-zig revision). The pixel format is
 //! argb8888 (== Skia kBGRA_8888 premul on little-endian).
 const std = @import("std");
 const wayland = @import("wayland");

@@ -5,7 +5,10 @@
     .minimum_zig_version = "0.17.0-dev.1818+7051f8e73",
     .dependencies = .{
         .artzig = .{ .path = "artzig" },
-        .wayland = .{ .path = "vendor/zig-wayland" },
+        .wayland = .{
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/3b5004a124b399839865f28ae99425a2dd4815f3.tar.gz",
+            .hash = "wayland-0.7.0-dev-lQa1kvr8AQA1T2WbWSm95e1hfefbeHJJ_-5ApPLYx8ni",
+        },
     },
     .paths = .{
         "build.zig",
@@ -13,6 +16,5 @@
         "src",
         "build",
         "tools",
-        "vendor/zig-wayland",
     },
 }
