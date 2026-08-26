@@ -26,6 +26,8 @@ pub fn build(b: *std.Build) void {
     scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
     scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
     scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
+    scanner.addCustomProtocol(b.path("src/protocol/wlr-virtual-pointer-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("src/protocol/virtual-keyboard-unstable-v1.xml"));
     scanner.generate("wl_compositor", 4);
     scanner.generate("wl_seat", 5);
     scanner.generate("wl_output", 2);
@@ -35,6 +37,8 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wp_fractional_scale_manager_v1", 1);
     scanner.generate("zwp_linux_dmabuf_v1", 4);
     scanner.generate("wp_cursor_shape_manager_v1", 1);
+    scanner.generate("zwlr_virtual_pointer_manager_v1", 2);
+    scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
     // --- embedded artzig runtime (ART) module
     const artzig_dep = b.dependency("artzig", .{ .target = target, .optimize = optimize });
     const art_mod = artzig_dep.module("art");
@@ -245,6 +249,16 @@ pub fn build(b: *std.Build) void {
     const run_wayland_tests = b.addRunArtifact(wayland_tests);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
+    const test_control_check = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test_control.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{ .name = "art", .module = art_mod }},
+        }),
+    });
+    const run_test_control = b.addRunArtifact(test_control_check);
     const platform_abi_test_mod = b.createModule(.{
         .root_source_file = b.path("src/native/platform_abi.zig"),
         .target = target,
@@ -259,6 +273,7 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
     native_test_step.dependOn(&host_renderer_check.step);
+    native_test_step.dependOn(&run_test_control.step);
     native_test_step.dependOn(&platform_abi_check.step);
     native_test_step.dependOn(&launcher_check.step);
     native_test_step.dependOn(&cpp_audit.step);

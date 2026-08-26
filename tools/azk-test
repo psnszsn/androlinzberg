@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""Dependency-free client for Androlinzberg's private Varlink test API."""
+
+import argparse
+import json
+import os
+import socket
+import sys
+
+INTERFACE = "dev.artzig.androlinzberg.test1"
+RAW_LOG_LIMIT = 1024 * 1024
+
+
+class VarlinkError(RuntimeError):
+    def __init__(self, response):
+        self.response = response
+        super().__init__(json.dumps(response, sort_keys=True))
+
+
+def selector_from(args):
+    selector = {}
+    for source, target in (
+        ("resource_id", "resource_id"),
+        ("text", "text"),
+        ("description", "content_description"),
+        ("class_name", "class_name"),
+        ("role", "role"),
+        ("index", "index"),
+    ):
+        value = getattr(args, source, None)
+        if value is not None:
+            selector[target] = value
+    if getattr(args, "all_windows", False):
+        selector["window"] = "all"
+    return selector
+
+
+def wait_value(kind="now", timeout_ms=5000, stable_frames=2, after=None):
+    value = {"kind": kind, "timeout_ms": timeout_ms}
+    if kind == "idle":
+        value["stable_frames"] = stable_frames
+    if after is not None:
+        value["after"] = after
+    return value
+
+
+def call(address, method, parameters, timeout):
+    path = address[5:] if address.startswith("unix:") else address
+    request = json.dumps(
+        {"method": f"{INTERFACE}.{method}", "parameters": parameters},
+        separators=(",", ":"),
+    ).encode() + b"\0"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(timeout)
+        connection.connect(path)
+        connection.sendall(request)
+        chunks = []
+        while True:
+            chunk = connection.recv(65536)
+            if not chunk:
+                raise RuntimeError("test service closed before replying")
+            if b"\0" in chunk:
+                before, _ = chunk.split(b"\0", 1)
+                chunks.append(before)
+                break
+            chunks.append(chunk)
+    response = json.loads(b"".join(chunks))
+    if "error" in response:
+        raise VarlinkError(response)
+    return response.get("parameters", {})
+
+
+def add_selector(parser, required=False):
+    parser.add_argument("--id", dest="resource_id", help="exact Android resource id")
+    parser.add_argument("--text", help="exact visible text")
+    parser.add_argument("--description", help="exact content description")
+    parser.add_argument("--class", dest="class_name", help="exact Android class name")
+    parser.add_argument("--role", help="normalized accessibility role")
+    parser.add_argument("--index", type=int, help="zero-based match index")
+    parser.add_argument("--all-windows", action="store_true")
+    if required:
+        parser.set_defaults(selector_required=True)
+
+
+def add_settle(parser):
+    parser.add_argument(
+        "--settle", choices=("now", "idle", "tree_changed", "frame_presented"),
+        default="idle",
+    )
+    parser.add_argument("--stable-frames", type=int, default=2)
+
+
+def add_action_commands(commands, destination="action_command", step=False):
+    for name, help_text in (
+        ("click", "activate a matching node"),
+        ("type", "focus a matching node and type text"),
+        ("set-text", "set editable text semantically"),
+        ("key", "focus a matching node and press a named key"),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.set_defaults(**{destination: name})
+        add_selector(command, required=True)
+        if name in ("type", "set-text"):
+            command.add_argument("value")
+        elif name == "key":
+            command.add_argument(
+                "value", help="Enter, Backspace, Tab, Escape, arrows, Home/End, or Delete"
+            )
+        if name in ("click", "type"):
+            command.add_argument("--via", choices=("wayland", "semantic"), default="wayland")
+        add_settle(command)
+        if step:
+            command.add_argument(
+                "--allow-missing", action="store_true",
+                help="report new missing-functionality issues without failing the step",
+            )
+
+
+def build_parser():
+    result = argparse.ArgumentParser(prog="azk-test")
+    result.add_argument(
+        "--socket", default=os.environ.get("AZK_TEST_SOCKET"),
+        help="unix socket path (defaults to AZK_TEST_SOCKET)",
+    )
+    result.add_argument("--timeout", type=float, default=10.0, help="client timeout in seconds")
+    commands = result.add_subparsers(dest="command", required=True)
+
+    observe = commands.add_parser("observe", help="inspect matching accessible nodes")
+    add_selector(observe)
+    observe.add_argument("--tree", action="store_true", help="include the complete snapshot")
+    observe.add_argument(
+        "--wait", choices=("now", "ready", "idle", "exists", "absent"), default="now"
+    )
+    observe.add_argument("--stable-frames", type=int, default=2)
+
+    wait = commands.add_parser("wait", help="wait for accessibility or presentation state")
+    add_selector(wait)
+    wait.add_argument("kind", choices=("ready", "idle", "exists", "absent"))
+    wait.add_argument("--stable-frames", type=int, default=2)
+
+    add_action_commands(commands)
+
+    commands.add_parser("mark", help="print cursors for a later incremental diagnosis")
+    diagnose = commands.add_parser("diagnose", help="dump tree and diagnostics since a mark")
+    diagnose.add_argument(
+        "--since", help="mark JSON, response JSON containing a mark, or @path (default: all)"
+    )
+
+    step = commands.add_parser(
+        "step", help="perform one action and return its logs, issues, events, and resulting tree"
+    )
+    step_commands = step.add_subparsers(dest="step_command", required=True)
+    add_action_commands(step_commands, destination="step_command", step=True)
+    return result
+
+
+def action_value(args, name):
+    if name == "click":
+        return {"kind": "click", "via": args.via, "text": None, "key": None}
+    if name == "type":
+        return {
+            "kind": "set_text" if args.via == "semantic" else "type_keys",
+            "via": args.via,
+            "text": args.value,
+            "key": None,
+        }
+    if name == "set-text":
+        return {"kind": "set_text", "via": "semantic", "text": args.value, "key": None}
+    return {"kind": "key", "via": "wayland", "text": None, "key": args.value}
+
+
+def observe_now(args, timeout_ms):
+    return call(
+        args.socket,
+        "Observe",
+        {
+            "selector": None,
+            "wait": wait_value("now", timeout_ms),
+            "include_tree": False,
+        },
+        args.timeout + 1,
+    )
+
+
+def observation_mark(parameters):
+    return parameters.get("observation", {}).get("mark", {})
+
+
+def extract_mark(value):
+    if not isinstance(value, dict):
+        raise ValueError("mark JSON must be an object")
+    required = {"epoch", "command_seq", "input_seq", "tree_revision"}
+    if required.issubset(value):
+        return value
+    for key in ("mark", "observation", "diagnostics", "parameters"):
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            try:
+                return extract_mark(nested)
+            except ValueError:
+                pass
+    raise ValueError("JSON does not contain a test-control mark")
+
+
+def load_mark(source):
+    if source is None:
+        return None
+    if source.startswith("@"):
+        with open(source[1:], encoding="utf-8") as stream:
+            value = json.load(stream)
+    else:
+        value = json.loads(source)
+    return extract_mark(value)
+
+
+def raw_log_position():
+    path = os.environ.get("AZK_TEST_RAW_LOG")
+    if not path:
+        return None, 0
+    try:
+        return path, os.path.getsize(path)
+    except OSError:
+        return path, 0
+
+
+def read_raw_log(path, offset):
+    if not path:
+        return "", False
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(offset)
+            content = stream.read(RAW_LOG_LIMIT + 1)
+    except OSError as error:
+        return f"<could not read raw log: {error}>", False
+    truncated = len(content) > RAW_LOG_LIMIT
+    return content[:RAW_LOG_LIMIT].decode(errors="replace"), truncated
+
+
+def append_step_record(record):
+    path = os.environ.get("AZK_TEST_STEP_LOG")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as stream:
+        json.dump(record, stream, separators=(",", ":"), sort_keys=True)
+        stream.write("\n")
+
+
+def perform_parameters(args, name, selector, timeout_ms):
+    return {
+        "selector": selector,
+        "action": action_value(args, name),
+        "settle": wait_value(args.settle, timeout_ms, args.stable_frames),
+    }
+
+
+def run_step(args, timeout_ms, selector):
+    before_parameters = observe_now(args, timeout_ms)
+    before = observation_mark(before_parameters)
+    raw_path, raw_offset = raw_log_position()
+    action = action_value(args, args.step_command)
+    action_parameters = None
+    action_error = None
+    try:
+        action_parameters = call(
+            args.socket,
+            "Perform",
+            perform_parameters(args, args.step_command, selector, timeout_ms),
+            args.timeout + 1,
+        )
+    except VarlinkError as error:
+        action_error = error.response
+    except (OSError, RuntimeError, json.JSONDecodeError) as error:
+        action_error = {
+            "error": "ClientTransportError",
+            "parameters": {"message": str(error)},
+        }
+
+    diagnostic_error = None
+    diagnostics = {}
+    try:
+        diagnosed = call(args.socket, "Diagnose", {"since": before}, args.timeout + 1)
+        diagnostics = diagnosed.get("diagnostics", {})
+    except (OSError, RuntimeError, json.JSONDecodeError) as error:
+        diagnostic_error = str(error)
+
+    raw_log, raw_log_truncated = read_raw_log(raw_path, raw_offset)
+    runtime = diagnostics.get("runtime", {})
+    issues = runtime.get("issues", []) if isinstance(runtime, dict) else []
+    after = observation_mark(action_parameters or {}) or diagnostics.get("mark", {})
+    ok = (
+        action_error is None
+        and diagnostic_error is None
+        and (getattr(args, "allow_missing", False) or not issues)
+    )
+    record = {
+        "ok": ok,
+        "action": {"selector": selector, **action},
+        "before": before,
+        "after": after,
+        "action_result": (action_parameters or {}).get("result"),
+        "action_error": action_error,
+        "diagnostic_error": diagnostic_error,
+        "diagnostics": diagnostics,
+        "raw_log": raw_log,
+        "raw_log_truncated": raw_log_truncated,
+    }
+    append_step_record(record)
+    return record, 0 if ok else 3
+
+
+def main():
+    args = build_parser().parse_args()
+    if not args.socket:
+        raise SystemExit("--socket or AZK_TEST_SOCKET is required")
+    timeout_ms = max(1, int(args.timeout * 1000))
+    selector = selector_from(args)
+    if getattr(args, "selector_required", False) and not selector:
+        raise SystemExit("at least one selector option is required")
+
+    exit_code = 0
+    if args.command == "diagnose":
+        parameters = call(
+            args.socket, "Diagnose", {"since": load_mark(args.since)}, args.timeout + 1
+        )
+    elif args.command == "mark":
+        parameters = {"mark": observation_mark(observe_now(args, timeout_ms))}
+    elif args.command == "step":
+        parameters, exit_code = run_step(args, timeout_ms, selector)
+    elif args.command in ("observe", "wait"):
+        kind = args.wait if args.command == "observe" else args.kind
+        parameters = call(
+            args.socket,
+            "Observe",
+            {
+                "selector": selector or None,
+                "wait": wait_value(kind, timeout_ms, args.stable_frames),
+                "include_tree": getattr(args, "tree", False),
+            },
+            args.timeout + 1,
+        )
+    else:
+        parameters = call(
+            args.socket,
+            "Perform",
+            perform_parameters(args, args.action_command, selector, timeout_ms),
+            args.timeout + 1,
+        )
+
+    json.dump(parameters, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+    return exit_code
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+        print(f"azk-test: {error}", file=sys.stderr)
+        raise SystemExit(1)

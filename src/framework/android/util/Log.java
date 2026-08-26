@@ -44,6 +44,11 @@ public final class Log {
         return sw.toString();
     }
     public static int println(int priority, String tag, String msg) {
+        try {
+            ArtzigTestDiagnostics.recordLog(priority, tag, msg);
+        } catch (Throwable ignored) {
+            // Diagnostics must never change application logging behavior.
+        }
         System.err.println("VDIWEA".charAt(Math.max(0, Math.min(priority - VERBOSE, 5))) + "/" + tag + ": " + msg);
         return 0;
     }

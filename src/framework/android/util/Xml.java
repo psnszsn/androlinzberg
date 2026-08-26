@@ -27,15 +27,19 @@ public class Xml {
     public static XmlSerializer newSerializer() {
         return new com.android.org.kxml2.io.KXmlSerializer();
     }
-    public static TypedXmlPullParser newFastPullParser() { throw new UnsupportedOperationException(); }
-    public static TypedXmlPullParser newBinaryPullParser() { throw new UnsupportedOperationException(); }
+    public static TypedXmlPullParser newFastPullParser() { throw ArtzigTestDiagnostics.unsupported(
+            "android.util.Xml", "newFastPullParser", null); }
+    public static TypedXmlPullParser newBinaryPullParser() { throw ArtzigTestDiagnostics.unsupported(
+            "android.util.Xml", "newBinaryPullParser", null); }
     public static TypedXmlPullParser resolvePullParser(InputStream in) throws IOException {
-        throw new UnsupportedOperationException();
+        throw ArtzigTestDiagnostics.unsupported("android.util.Xml", "resolvePullParser", null);
     }
-    public static TypedXmlSerializer newFastSerializer() { throw new UnsupportedOperationException(); }
-    public static TypedXmlSerializer newBinarySerializer() { throw new UnsupportedOperationException(); }
+    public static TypedXmlSerializer newFastSerializer() { throw ArtzigTestDiagnostics.unsupported(
+            "android.util.Xml", "newFastSerializer", null); }
+    public static TypedXmlSerializer newBinarySerializer() { throw ArtzigTestDiagnostics.unsupported(
+            "android.util.Xml", "newBinarySerializer", null); }
     public static TypedXmlSerializer resolveSerializer(OutputStream out) throws IOException {
-        throw new UnsupportedOperationException();
+        throw ArtzigTestDiagnostics.unsupported("android.util.Xml", "resolveSerializer", null);
     }
     public static void parse(String xml, org.xml.sax.ContentHandler contentHandler) throws SAXException {
         try {

@@ -70,3 +70,54 @@ variables.
 For a headless test, use `tools/shot.sh out.png ./zig-out/bin/androlinzberg
 path/to/app.apk`. It runs the app in a headless compositor and makes a
 screenshot.
+
+## Headless accessibility tests
+
+Set `AZK_TEST_SOCKET` to enable the private Varlink accessibility service. The
+`tools/azk-test` client can inspect the active Android accessibility tree and
+perform either semantic actions or real pointer/keyboard input routed through
+the compositor:
+
+```sh
+export AZK_TEST_SOCKET="$XDG_RUNTIME_DIR/androlinzberg-test.sock"
+./zig-out/bin/androlinzberg app.apk &
+tools/azk-test wait ready
+tools/azk-test click --text "Sign in"          # virtual pointer via Wayland
+tools/azk-test type --id com.example:id/email me@example.com
+tools/azk-test set-text --id com.example:id/email 'unicode ✓'
+tools/azk-test step click --text "Save"        # action + logs/issues/tree delta
+tools/azk-test observe --tree
+```
+
+`step` takes a cursor immediately before the action, performs it, and returns
+only the Android logs, accessibility events, and structured missing-framework
+issues produced after that cursor, together with the resulting accessibility
+tree. It exits nonzero when the action fails or a new missing-functionality
+issue is reported; pass `--allow-missing` to collect known gaps without failing.
+For manual multi-action analysis, save `azk-test mark` and pass that response to
+`azk-test diagnose --since @mark.json`.
+
+For reproducible Cage runs, pass an executable test program to the existing
+headless harness. The test inherits `AZK_TEST_SOCKET`; the harness waits for
+the service and writes `result.png`, `result.a11y.json`, the complete process
+output in `result.log`, and one compact record per `step` in
+`result.steps.jsonl`. A failed test also gets `result.failure.json` with the
+final tree and diagnostics:
+
+```sh
+tools/shot.sh result.png --test ./tests/login-ui -- \
+  ./zig-out/bin/androlinzberg app.apk
+```
+
+The repository's built-in ViewHost can exercise the complete path without an
+APK:
+
+```sh
+tools/shot.sh /tmp/control.png --test tools/test-control-smoke.sh -- \
+  ./zig-out/bin/androlinzberg --java
+```
+
+Selectors are exact and must identify one node before an action is applied.
+They can match resource id, text, content description, Android class, or
+normalized role. `click`, `type`, and `key` use Cage's wlroots virtual-input
+protocols by default; `set-text` uses `AccessibilityNodeInfo.ACTION_SET_TEXT`.

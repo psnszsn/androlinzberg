@@ -4,6 +4,7 @@ const std = @import("std");
 const wayland = @import("platform/wayland.zig");
 const video_layers = @import("platform/video_layers.zig");
 const fonts = @import("platform/fonts.zig");
+const test_control = @import("test_control.zig");
 const host_natives = @import("host_natives");
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern "c" fn dlopen(path: [*:0]const u8, flags: c_int) ?*anyopaque;
@@ -38,6 +39,7 @@ const usage =
     \\  ARTZIG_VAAPI_DEVICE=/dev/dri/renderDNNN,
     \\  ARTZIG_VIDEO_YUV_DMABUF=1 (opt in to direct compositor YUV import),
     \\  ARTZIG_FRAME_PACING_TRACE=1, ARTZIG_EGL_SWAP_INTERVAL=0,
+    \\  AZK_TEST_SOCKET=/path/to/control.sock (private Varlink test service),
     \\  AZK_SIZE=WxH, AZK_TAP/AZK_SWIPE/AZK_WHEEL/AZK_TYPE/... (test hooks)
     \\  F11 toggles xdg-shell fullscreen mode.
     \\
@@ -318,6 +320,14 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         env.*.*.ExceptionClear.?(env);
         break :blk null;
     };
+    var control_android: ?test_control.Android = null;
+    var control_server: ?test_control.Server = null;
+    if (init.minimal.environ.getPosix("AZK_TEST_SOCKET")) |address| {
+        control_android = try test_control.Android.init(env, cls);
+        control_server = try test_control.Server.init(gpa, address);
+        std.debug.print("azk test control: {s}\n", .{address});
+    }
+    defer if (control_server) |*server| server.deinit();
     var button_held = false;
     // synthetic tap injection for headless testing: AZK_TAP="x,y@frame"
     // AZK_TAP="x,y@frame[;x,y@frame...]": synthetic taps
@@ -427,6 +437,20 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     }
     const win = try wayland.Window.initOpts(gpa, init_w, init_h, "androlinzberg", fullscreen);
     defer win.deinit();
+    if (control_server) |*server| {
+        if (win.testInputAvailable()) {
+            if (win.prepareTestInput()) {
+                server.setInput(.{
+                    .context = win,
+                    .tap_fn = controlTap,
+                    .type_fn = controlType,
+                    .key_fn = controlKey,
+                });
+            } else |err| {
+                std.debug.print("azk test input unavailable: {}\n", .{err});
+            }
+        }
+    }
     host_natives.bindWayland(@ptrCast(win.display), @ptrCast(win.surface));
     video_layers.register(gpa, init.io, win, @ptrCast(env), draw_hardware_abi == .physical) catch |err| {
         std.debug.print("video layers unavailable: {}\n", .{err});
@@ -434,6 +458,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     defer video_layers.deinit();
     defer if (shutdown) |mid| jenv_call_void(env, cls, mid);
     var frame_count: u32 = 0;
+    var presented_frame_count: u64 = 0;
     const trace_frame_pacing = init.minimal.environ.getPosix("ARTZIG_FRAME_PACING_TRACE") != null;
     var callback_samples: u32 = 0;
     var callback_last_ns: i128 = 0;
@@ -443,6 +468,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     try javaFrame(win, env, cls, draw_hardware, draw_hardware_abi);
     try syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen);
     frame_count += 1;
+    if (control_server) |*server| if (control_android) |*android| {
+        server.tick(android, frame_count, presented_frame_count);
+    };
 
     outer: while (true) {
         const events = try win.waitEvents();
@@ -451,6 +479,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             .close => break :outer,
             .configure, .fullscreen_changed => need_frame = true,
             .frame_done => {
+                presented_frame_count += 1;
                 need_frame = true;
                 if (trace_frame_pacing) {
                     const now_ns: i128 = std.Io.Clock.awake.now(init.io).nanoseconds;
@@ -484,13 +513,16 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 try e.check();
             },
             .pointer_motion => |m| if (button_held) {
+                if (control_server) |*server| server.noteInput();
                 if (motion) |mid| jenv_call_motion(env, cls, mid, 2, inputX(win, draw_hardware_abi, m.x), inputY(win, draw_hardware_abi, m.y));
             } else if (hover) |mid| {
+                if (control_server) |*server| server.noteInput();
                 const icon = jenv_call_hover(env, cls, mid, inputX(win, draw_hardware_abi, m.x), inputY(win, draw_hardware_abi, m.y));
                 win.setCursorShape(cursorShapeFromPointerIcon(icon));
             },
             .pointer_button => |b| switch (b.button) {
                 0x110 => if (motion) |mid| { // BTN_LEFT
+                    if (control_server) |*server| server.noteInput();
                     button_held = b.pressed;
                     jenv_call_motion(env, cls, mid, if (b.pressed) 0 else 1, inputX(win, draw_hardware_abi, b.x), inputY(win, draw_hardware_abi, b.y));
                 },
@@ -500,6 +532,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 else => {},
             },
             .key => |k| {
+                if (control_server) |*server| server.noteInput();
                 if (k.pressed and k.keysym == 0xffc8) {
                     win.toggleFullscreen(); // XKB_KEY_F11
                 } else if (key) |mid| {
@@ -510,6 +543,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 }
             },
             .pointer_axis => |a| if (scroll) |mid| {
+                if (control_server) |*server| server.noteInput();
                 // wayland: ~15 units per wheel detent, positive = content down.
                 // android: AXIS_VSCROLL positive = scroll up, 1.0 per detent.
                 jenv_call_scroll(env, cls, mid, inputX(win, draw_hardware_abi, win.pointer_x), inputY(win, draw_hardware_abi, win.pointer_y), @floatCast(-a.horizontal / 15.0), @floatCast(-a.vertical / 15.0));
@@ -608,6 +642,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 if (frame_count >= lim) break;
             }
         }
+        if (control_server) |*server| if (control_android) |*android| {
+            server.tick(android, frame_count, presented_frame_count);
+        };
         video_layers.process();
     }
     std.debug.print("androlinzberg: exiting after {d} java frames\n", .{frame_count});
@@ -659,6 +696,18 @@ fn inputX(win: *const wayland.Window, abi: HardwareDrawAbi, x: f64) f32 {
 
 fn inputY(win: *const wayland.Window, abi: HardwareDrawAbi, y: f64) f32 {
     return @floatCast(if (abi == .physical) win.surfaceToBufferY(y) else y);
+}
+
+fn controlTap(context: *anyopaque, x: i32, y: i32) !void {
+    try @as(*wayland.Window, @ptrCast(@alignCast(context))).testTap(x, y);
+}
+
+fn controlType(context: *anyopaque, text: []const u8) !void {
+    try @as(*wayland.Window, @ptrCast(@alignCast(context))).testType(text);
+}
+
+fn controlKey(context: *anyopaque, key: []const u8) !void {
+    try @as(*wayland.Window, @ptrCast(@alignCast(context))).testKey(key);
 }
 
 /// android.view.PointerIcon.TYPE_* -> wp_cursor_shape_device_v1.shape

@@ -7,6 +7,8 @@ public final class RavenwoodEnvironment {
     public static void ensureRavenwoodInitialized() {}
     public static RavenwoodEnvironment workaround() { return sInstance; }
     public boolean isRunningOnRavenwood$ravenwood() { return false; }
-    public <T> T fromAddress(long address) { throw new UnsupportedOperationException("ravenwood-only"); }
+    public <T> T fromAddress(long address) { throw android.util.ArtzigTestDiagnostics.unsupported(
+            "com.android.internal.ravenwood.RavenwoodEnvironment", "fromAddress",
+            "ravenwood-only"); }
     public String getRavenwoodRuntimePath() { return "/"; }
 }

@@ -629,8 +629,44 @@ public final class ApkHost {
         if (sRoot != null) sRoot.destroy();
         sRoot = new android.view.ViewRootImpl(sContext);
         sRoot.setView(a.getWindow().getDecorView(), sWidth, sHeight);
+        android.view.ArtzigAccessibilityBridge.setActivityRoot(sRoot);
         sGestureWin = null;
         sGestureWinValid = false;
+    }
+
+    /** Test-control JNI surface. Android semantics stay in the framework bridge. */
+    public static String accessibilitySnapshot() {
+        return android.view.ArtzigAccessibilityBridge.snapshot();
+    }
+
+    public static String accessibilityDiagnostics(long afterRevision) {
+        return android.view.ArtzigAccessibilityBridge.diagnostics(afterRevision);
+    }
+
+    public static String testDiagnostics(long afterLogSequence, long afterIssueSequence) {
+        return android.util.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence);
+    }
+
+    public static long diagnosticLogSequence() {
+        return android.util.ArtzigTestDiagnostics.logSequence();
+    }
+
+    public static long diagnosticIssueSequence() {
+        return android.util.ArtzigTestDiagnostics.issueSequence();
+    }
+
+    public static long accessibilityRevision() {
+        return android.view.ArtzigAccessibilityBridge.revision();
+    }
+
+    public static boolean accessibilityIdle() {
+        return android.view.ArtzigAccessibilityBridge.isIdle();
+    }
+
+    public static boolean accessibilityPerform(long expectedRevision, long windowId,
+            int viewId, int virtualId, int action, String text) {
+        return android.view.ArtzigAccessibilityBridge.perform(expectedRevision, windowId,
+                viewId, virtualId, action, text);
     }
 
     /** Deliver component teardown and release host rendering before Wayland
@@ -673,6 +709,7 @@ public final class ApkHost {
         android.view.ArtzigWindowStack.clear();
         if (sRoot != null) sRoot.destroy();
         sRoot = null;
+        android.view.ArtzigAccessibilityBridge.setActivityRoot(null);
         Log.i(TAG, "views detached");
         try {
             android.view.ThreadedRenderer.destroyInstance();

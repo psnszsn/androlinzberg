@@ -119,6 +119,41 @@ public final class ViewHost {
         sRoot = new android.view.ViewRootImpl(sContext);
         android.view.View decor = sActivity.getWindow().getDecorView();
         sRoot.setView(decor, width, height);
+        android.view.ArtzigAccessibilityBridge.setActivityRoot(sRoot);
+    }
+
+    public static String accessibilitySnapshot() {
+        return android.view.ArtzigAccessibilityBridge.snapshot();
+    }
+
+    public static String accessibilityDiagnostics(long afterRevision) {
+        return android.view.ArtzigAccessibilityBridge.diagnostics(afterRevision);
+    }
+
+    public static String testDiagnostics(long afterLogSequence, long afterIssueSequence) {
+        return android.util.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence);
+    }
+
+    public static long diagnosticLogSequence() {
+        return android.util.ArtzigTestDiagnostics.logSequence();
+    }
+
+    public static long diagnosticIssueSequence() {
+        return android.util.ArtzigTestDiagnostics.issueSequence();
+    }
+
+    public static long accessibilityRevision() {
+        return android.view.ArtzigAccessibilityBridge.revision();
+    }
+
+    public static boolean accessibilityIdle() {
+        return android.view.ArtzigAccessibilityBridge.isIdle();
+    }
+
+    public static boolean accessibilityPerform(long expectedRevision, long windowId,
+            int viewId, int virtualId, int action, String text) {
+        return android.view.ArtzigAccessibilityBridge.perform(expectedRevision, windowId,
+                viewId, virtualId, action, text);
     }
 
     /** Per-frame: record the view tree; RenderThread presents it directly through EGL. */

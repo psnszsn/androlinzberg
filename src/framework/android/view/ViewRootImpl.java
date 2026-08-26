@@ -14,6 +14,8 @@ import android.os.Looper;
 import java.util.ArrayList;
 
 public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
+    private static long sNextArtzigAccessibilityWindowId = 1;
+    final long mArtzigAccessibilityWindowId = sNextArtzigAccessibilityWindowId++;
     public final Context mContext;
     final Handler mHandler;
     final Choreographer mChoreographer;
@@ -94,6 +96,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         view.dispatchWindowVisibilityChanged(View.VISIBLE);
         view.dispatchWindowFocusChanged(true);
         requestLayout();
+        ArtzigAccessibilityBridge.markChanged("root-attached");
     }
     public View getView() { return mView; }
 
@@ -113,6 +116,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         mInvalidateRects.clear();
         mAttachInfo = null;
         mRenderNode.discardDisplayList();
+        ArtzigAccessibilityBridge.markChanged("root-destroyed");
     }
 
     /** Overlay-window traversal (artzig): size by LayoutParams within max bounds,
@@ -220,6 +224,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     void scheduleTraversals() {
         if (!mTraversalScheduled) {
             mTraversalScheduled = true;
+            ArtzigAccessibilityBridge.markChanged("traversal");
             if (mFrameListener != null) mHandler.post(mFrameListener);
         }
     }
@@ -250,8 +255,13 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     @Override public void recomputeViewAttributes(View child) {}
     @Override public void clearChildFocus(View child) {}
     @Override public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) { return false; }
-    @Override public boolean requestSendAccessibilityEvent(View child, android.view.accessibility.AccessibilityEvent event) { return false; }
-    @Override public void notifySubtreeAccessibilityStateChanged(View child, View source, int changeType) {}
+    @Override public boolean requestSendAccessibilityEvent(View child, android.view.accessibility.AccessibilityEvent event) {
+        ArtzigAccessibilityBridge.markAccessibilityEvent(event);
+        return true;
+    }
+    @Override public void notifySubtreeAccessibilityStateChanged(View child, View source, int changeType) {
+        ArtzigAccessibilityBridge.markChanged("subtree:" + changeType);
+    }
     @Override public boolean canResolveLayoutDirection() { return true; }
     @Override public boolean isLayoutDirectionResolved() { return true; }
     @Override public int getLayoutDirection() { return View.LAYOUT_DIRECTION_LTR; }
