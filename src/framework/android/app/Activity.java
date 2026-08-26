@@ -73,6 +73,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void postponeEnterTransition() {}
     public void startPostponedEnterTransition() {}
     public android.net.Uri getReferrer() { return null; }
+    public int getLaunchedFromUid() { return android.os.Process.myUid(); }
     public String getCallingPackage() { return null; }
     public android.content.ComponentName getCallingActivity() { return null; }
     public void setShowWhenLocked(boolean showWhenLocked) {}

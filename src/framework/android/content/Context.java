@@ -26,6 +26,7 @@ public abstract class Context {
             LOCATION_SERVICE = "location", MEDIA_SESSION_SERVICE = "media_session",
             NOTIFICATION_SERVICE = "notification", POWER_SERVICE = "power",
             SEARCH_SERVICE = "search", SENSOR_SERVICE = "sensor", STORAGE_SERVICE = "storage",
+            SHORTCUT_SERVICE = "shortcut",
             STORAGE_STATS_SERVICE = "storagestats",
             TELEPHONY_SERVICE = "phone", UI_MODE_SERVICE = "uimode", USER_SERVICE = "user",
             VIBRATOR_SERVICE = "vibrator", WALLPAPER_SERVICE = "wallpaper",
@@ -177,6 +178,9 @@ public abstract class Context {
     public android.view.autofill.AutofillManager.AutofillClient getAutofillClient() { return null; }
     public void setAutofillClient(android.view.autofill.AutofillManager.AutofillClient client) {}
     public int getDeviceId() { return DEVICE_ID_DEFAULT; }
+    public void registerDeviceIdChangeListener(java.util.concurrent.Executor executor,
+            java.util.function.IntConsumer listener) {}
+    public void unregisterDeviceIdChangeListener(java.util.function.IntConsumer listener) {}
     public int getNextAutofillId() { return 1; }
     public static android.os.IBinder getToken(Context context) { return null; }
     public android.view.Display getDisplayNoVerify() { return null; }

@@ -80,6 +80,8 @@ public class ContextImpl extends Context {
     private android.view.WindowManagerImpl mWindowManager;
     private android.app.job.JobScheduler mJobScheduler;
     private android.hardware.input.InputManager mInputManager;
+    private android.hardware.SensorManager mSensorManager;
+    private android.content.pm.ShortcutManager mShortcutManager;
     private android.view.inputmethod.InputMethodManager mInputMethodManager;
     private android.view.autofill.AutofillManager mAutofillManager;
     private Context mOuterContext;
@@ -129,6 +131,12 @@ public class ContextImpl extends Context {
             case INPUT_SERVICE:
                 if (mInputManager == null) mInputManager = new android.hardware.input.InputManager(this);
                 return mInputManager;
+            case SENSOR_SERVICE:
+                if (mSensorManager == null) mSensorManager = new android.hardware.SensorManager();
+                return mSensorManager;
+            case SHORTCUT_SERVICE:
+                if (mShortcutManager == null) mShortcutManager = new android.content.pm.ShortcutManager();
+                return mShortcutManager;
             case "media_metrics":
                 return new android.media.metrics.MediaMetricsManager();
             case "usagestats":
@@ -175,6 +183,8 @@ public class ContextImpl extends Context {
         if (serviceClass == android.view.accessibility.AccessibilityManager.class) return ACCESSIBILITY_SERVICE;
         if (serviceClass == android.content.ClipboardManager.class) return CLIPBOARD_SERVICE;
         if (serviceClass == android.hardware.input.InputManager.class) return INPUT_SERVICE;
+        if (serviceClass == android.hardware.SensorManager.class) return SENSOR_SERVICE;
+        if (serviceClass == android.content.pm.ShortcutManager.class) return SHORTCUT_SERVICE;
         if (serviceClass == android.view.inputmethod.InputMethodManager.class) return INPUT_METHOD_SERVICE;
         if (serviceClass == android.view.autofill.AutofillManager.class) return AUTOFILL_MANAGER_SERVICE;
         if (serviceClass == android.hardware.display.DisplayManager.class) return DISPLAY_SERVICE;

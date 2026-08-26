@@ -4,6 +4,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
 public class Intent implements Parcelable, Cloneable {
     public static final String ACTION_VIEW = "android.intent.action.VIEW";
     public static final String ACTION_MAIN = "android.intent.action.MAIN";
@@ -48,7 +51,18 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_ASSIST_INPUT_DEVICE_ID = "android.intent.extra.ASSIST_INPUT_DEVICE_ID";
     public static final String EXTRA_ASSIST_PACKAGE = "android.intent.extra.ASSIST_PACKAGE";
     public static final int FLAG_RECEIVER_FOREGROUND = 0x10000000;
-    public Intent addCategory(String category) { return this; }
+    public Intent addCategory(String category) {
+        if (mCategories == null) mCategories = new HashSet<>();
+        mCategories.add(category);
+        return this;
+    }
+    public void removeCategory(String category) {
+        if (mCategories != null) {
+            mCategories.remove(category);
+            if (mCategories.isEmpty()) mCategories = null;
+        }
+    }
+    public Set<String> getCategories() { return mCategories; }
     public void removeExtra(String name) { if (mExtras != null) mExtras.remove(name); }
     public static final int FLAG_ACTIVITY_NEW_DOCUMENT = 0x00080000;
     public static final int FLAG_ACTIVITY_CLEAR_TOP = 0x04000000;
@@ -71,7 +85,9 @@ public class Intent implements Parcelable, Cloneable {
     private String mAction;
     private Uri mData;
     private String mType;
+    private String mIdentifier;
     private String mPackage;
+    private HashSet<String> mCategories;
     private Bundle mExtras;
     private int mFlags;
     public Intent() {}
@@ -79,7 +95,8 @@ public class Intent implements Parcelable, Cloneable {
     public Intent(Intent o) {
         mComponent = o.mComponent;
         mAction = o.mAction; mData = o.mData; mType = o.mType;
-        mPackage = o.mPackage; mFlags = o.mFlags;
+        mIdentifier = o.mIdentifier; mPackage = o.mPackage; mFlags = o.mFlags;
+        mCategories = o.mCategories != null ? new HashSet<>(o.mCategories) : null;
         mExtras = o.mExtras != null ? new android.os.Bundle(o.mExtras) : null;
     }
     public Intent(String action, Uri uri) { mAction = action; mData = uri; }
@@ -96,6 +113,8 @@ public class Intent implements Parcelable, Cloneable {
     public Intent addFlags(int flags) { mFlags |= flags; return this; }
     public Intent setPackage(String packageName) { mPackage = packageName; return this; }
     public String getPackage() { return mPackage; }
+    public Intent setIdentifier(String identifier) { mIdentifier = identifier; return this; }
+    public String getIdentifier() { return mIdentifier; }
     public Intent putExtra(String name, String value) { extras().putString(name, value); return this; }
     public Intent putExtra(String name, int value) { extras().putInt(name, value); return this; }
     public Intent putExtra(String name, boolean value) { extras().putBoolean(name, value); return this; }
@@ -161,12 +180,36 @@ public class Intent implements Parcelable, Cloneable {
     public Intent putExtra(String name, android.os.Parcelable[] value) { extras().putParcelableArray(name, value); return this; }
     public Intent putExtra(String name, android.os.Bundle value) { extras().putBundle(name, value); return this; }
     private Bundle extras() { if (mExtras == null) mExtras = new Bundle(); return mExtras; }
+    public boolean filterEquals(Intent other) {
+        return other != null
+                && Objects.equals(mAction, other.mAction)
+                && Objects.equals(mData, other.mData)
+                && Objects.equals(mType, other.mType)
+                && Objects.equals(mIdentifier, other.mIdentifier)
+                && Objects.equals(mPackage, other.mPackage)
+                && Objects.equals(mComponent, other.mComponent)
+                && Objects.equals(mCategories, other.mCategories);
+    }
+    public int filterHashCode() {
+        int code = 0;
+        if (mAction != null) code += mAction.hashCode();
+        if (mData != null) code += mData.hashCode();
+        if (mType != null) code += mType.hashCode();
+        if (mIdentifier != null) code += mIdentifier.hashCode();
+        if (mPackage != null) code += mPackage.hashCode();
+        if (mComponent != null) code += mComponent.hashCode();
+        if (mCategories != null) code += mCategories.hashCode();
+        return code;
+    }
     public static final class FilterComparison {
         private final Intent mIntent;
         public FilterComparison(Intent intent) { mIntent = intent; }
         public Intent getIntent() { return mIntent; }
-        @Override public boolean equals(Object o) { return o instanceof FilterComparison; }
-        @Override public int hashCode() { return 0; }
+        @Override public boolean equals(Object o) {
+            return o instanceof FilterComparison
+                    && mIntent.filterEquals(((FilterComparison) o).mIntent);
+        }
+        @Override public int hashCode() { return mIntent.filterHashCode(); }
     }
     @Override public int describeContents() { return 0; }
     @Override public void writeToParcel(Parcel out, int flags) { out.writeString(mAction); }

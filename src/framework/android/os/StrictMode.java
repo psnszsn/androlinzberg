@@ -33,10 +33,12 @@ public final class StrictMode {
             public Builder permitDiskReads() { return this; }
             public Builder permitDiskWrites() { return this; }
             public Builder permitNetwork() { return this; }
+            public Builder permitUnbufferedIo() { return this; }
             public Builder detectNetwork() { return this; }
             public Builder detectResourceMismatches() { return this; }
             public Builder detectUnbufferedIo() { return this; }
             public Builder penaltyLog() { return this; }
+            public Builder penaltyDeath() { return this; }
             public ThreadPolicy build() { return new ThreadPolicy(); }
         }
     }

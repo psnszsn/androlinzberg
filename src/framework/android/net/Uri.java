@@ -94,7 +94,9 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         public Builder encodedPath(String path) { mEncodedPath = path; return this; }
         public Builder appendPath(String segment) { return appendEncodedPath(encode(segment)); }
         public Builder appendEncodedPath(String segment) {
-            if (segment == null) return this;
+            // Android's PathPart concatenation turns a null segment into the literal "null".
+            // Some apps rely on this when optional URI metadata is absent.
+            if (segment == null) segment = "null";
             if (mEncodedPath == null || mEncodedPath.isEmpty()) mEncodedPath = "/";
             else if (!mEncodedPath.endsWith("/")) mEncodedPath += "/";
             while (segment.startsWith("/")) segment = segment.substring(1);

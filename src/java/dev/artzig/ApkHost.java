@@ -178,6 +178,13 @@ public final class ApkHost {
                         return;
                     }
                 }
+                if (f != null) {
+                    android.view.inputmethod.EditorInfo info =
+                            new android.view.inputmethod.EditorInfo();
+                    android.view.inputmethod.InputConnection connection =
+                            f.onCreateInputConnection(info);
+                    if (connection != null && connection.commitText(str, 1)) return;
+                }
                 if (f == null) Log.i(TAG, "key: no focused view for text input");
                 // legacy string-injection event: TextView commits getCharacters()
                 android.view.KeyEvent ev = new android.view.KeyEvent(now, str,
@@ -307,6 +314,10 @@ public final class ApkHost {
         String versionName = null;
         java.util.ArrayList<android.content.pm.ProviderInfo> providers = new java.util.ArrayList<>();
         android.content.pm.ProviderInfo currentProvider = null;
+        java.util.ArrayList<android.content.pm.ServiceInfo> services = new java.util.ArrayList<>();
+        java.util.HashMap<String, java.util.Set<String>> serviceActions = new java.util.HashMap<>();
+        android.content.pm.ServiceInfo currentService = null;
+        java.util.HashSet<String> currentServiceActions = null;
         XmlResourceParser p = mam.openXmlResourceParser("AndroidManifest.xml");
         String currentActivity = null;
         String currentActivityTag = null;
@@ -328,6 +339,13 @@ public final class ApkHost {
                 } else if (ev == XmlResourceParser.END_TAG && p.getName().equals("provider")) {
                     if (currentProvider != null) providers.add(currentProvider);
                     currentProvider = null;
+                } else if (ev == XmlResourceParser.END_TAG && p.getName().equals("service")) {
+                    if (currentService != null) {
+                        services.add(currentService);
+                        serviceActions.put(currentService.name, currentServiceActions);
+                    }
+                    currentService = null;
+                    currentServiceActions = null;
                 }
                 continue;
             }
@@ -376,25 +394,49 @@ public final class ApkHost {
                             "http://schemas.android.com/apk/res/android", "initOrder", 0);
                     currentProvider.metaData = new android.os.Bundle();
                     break;
+                case "service":
+                    currentService = new android.content.pm.ServiceInfo();
+                    currentService.name = attr(p, "name");
+                    currentService.processName = attr(p, "process");
+                    currentService.permission = attr(p, "permission");
+                    currentService.enabled = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "enabled", true);
+                    currentService.exported = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "exported", false);
+                    currentService.directBootAware = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "directBootAware", false);
+                    currentService.foregroundServiceType = p.getAttributeIntValue(
+                            "http://schemas.android.com/apk/res/android", "foregroundServiceType", 0);
+                    currentService.metaData = new android.os.Bundle();
+                    currentServiceActions = new java.util.HashSet<>();
+                    break;
                 case "meta-data":
-                    if (currentProvider != null) {
+                    android.os.Bundle componentMetaData = currentProvider != null
+                            ? currentProvider.metaData
+                            : currentService != null ? currentService.metaData : null;
+                    if (componentMetaData != null) {
                         String name = attr(p, "name");
                         String value = attr(p, "value");
                         int resource = p.getAttributeResourceValue(
                                 "http://schemas.android.com/apk/res/android", "resource", 0);
                         if (name != null && resource != 0) {
-                            currentProvider.metaData.putInt(name, resource);
+                            componentMetaData.putInt(name, resource);
                         } else if (name != null && value != null) {
                             if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
-                                currentProvider.metaData.putBoolean(name, Boolean.parseBoolean(value));
+                                componentMetaData.putBoolean(name, Boolean.parseBoolean(value));
                             } else {
-                                currentProvider.metaData.putString(name, value);
+                                componentMetaData.putString(name, value);
                             }
                         }
                     }
                     break;
                 case "action":
-                    if ("android.intent.action.MAIN".equals(attr(p, "name"))) isMain = true;
+                    String action = attr(p, "name");
+                    if (currentService != null) {
+                        if (action != null) currentServiceActions.add(action);
+                    } else if ("android.intent.action.MAIN".equals(action)) {
+                        isMain = true;
+                    }
                     break;
                 case "category":
                     if ("android.intent.category.LAUNCHER".equals(attr(p, "name"))) isLauncher = true;
@@ -423,6 +465,22 @@ public final class ApkHost {
         providers.sort((left, right) -> Integer.compare(right.initOrder, left.initOrder));
         android.content.pm.PackageManager.configureHostedProviders(providers);
         if (mainActivity != null && mainActivity.startsWith(".")) mainActivity = pkg + mainActivity;
+        android.content.pm.PackageManager.configureHostedLauncher(mainActivity);
+        java.util.HashMap<String, java.util.Set<String>> normalizedServiceActions =
+                new java.util.HashMap<>();
+        for (android.content.pm.ServiceInfo service : services) {
+            String manifestName = service.name;
+            if (service.name != null && service.name.startsWith(".")) service.name = pkg + service.name;
+            service.packageName = pkg;
+            if (service.processName == null || service.processName.isEmpty()) service.processName = pkg;
+            if (service.processName.startsWith(":")) service.processName = pkg + service.processName;
+            service.applicationInfo = new android.content.pm.ApplicationInfo();
+            service.applicationInfo.packageName = pkg;
+            java.util.Set<String> actions = serviceActions.get(manifestName);
+            normalizedServiceActions.put(service.name,
+                    actions != null ? actions : java.util.Collections.emptySet());
+        }
+        android.content.pm.PackageManager.configureHostedServices(services, normalizedServiceActions);
         if (appClass != null && appClass.startsWith(".")) appClass = pkg + appClass;
 
         // --- classloader over the apk (+ bundled native libs)

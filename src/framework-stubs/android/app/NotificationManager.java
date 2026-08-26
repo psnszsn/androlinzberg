@@ -14,6 +14,9 @@ public class NotificationManager {
     public static final int IMPORTANCE_DEFAULT = 3;
     public static final int IMPORTANCE_HIGH = 4;
     public static final int IMPORTANCE_MAX = 5;
+    public static final int BUBBLE_PREFERENCE_NONE = 0;
+    public static final int BUBBLE_PREFERENCE_SELECTED = 1;
+    public static final int BUBBLE_PREFERENCE_ALL = 2;
     public static final String ACTION_INTERRUPTION_FILTER_CHANGED =
             "android.app.action.INTERRUPTION_FILTER_CHANGED";
 
@@ -28,6 +31,15 @@ public class NotificationManager {
     public void createNotificationChannelGroup(NotificationChannelGroup group) {}
     public void createNotificationChannelGroups(List<NotificationChannelGroup> groups) {}
     public NotificationChannel getNotificationChannel(String channelId) { return mChannels.get(channelId); }
+    public NotificationChannel getNotificationChannel(String channelId, String conversationId) {
+        for (NotificationChannel channel : mChannels.values()) {
+            if (java.util.Objects.equals(channelId, channel.getParentChannelId())
+                    && java.util.Objects.equals(conversationId, channel.getConversationId())) {
+                return channel;
+            }
+        }
+        return null;
+    }
     public List<NotificationChannel> getNotificationChannels() { return new ArrayList<>(mChannels.values()); }
     public void deleteNotificationChannel(String channelId) { mChannels.remove(channelId); }
     public void notify(int id, Notification notification) {}
@@ -35,7 +47,14 @@ public class NotificationManager {
     public void cancel(int id) {}
     public void cancel(String tag, int id) {}
     public void cancelAll() {}
+    public android.service.notification.StatusBarNotification[] getActiveNotifications() {
+        return new android.service.notification.StatusBarNotification[0];
+    }
     public boolean areNotificationsEnabled() { return false; }
+    public boolean areBubblesEnabled() { return false; }
+    public boolean areBubblesAllowed() { return false; }
+    public int getBubblePreference() { return BUBBLE_PREFERENCE_NONE; }
+    public boolean canUseFullScreenIntent() { return false; }
     public int getImportance() { return IMPORTANCE_NONE; }
     public boolean isNotificationPolicyAccessGranted() { return false; }
 }

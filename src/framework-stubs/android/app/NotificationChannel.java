@@ -20,6 +20,9 @@ public final class NotificationChannel implements Parcelable {
     private Uri mSound;
     private AudioAttributes mAudioAttributes;
     private int mLockscreenVisibility = -1000;
+    private boolean mAllowBubbles;
+    private String mParentChannelId;
+    private String mConversationId;
 
     public NotificationChannel(String id, CharSequence name, int importance) {
         mId = id; mName = name; mImportance = importance;
@@ -50,11 +53,14 @@ public final class NotificationChannel implements Parcelable {
     public AudioAttributes getAudioAttributes() { return mAudioAttributes; }
     public void setLockscreenVisibility(int lockscreenVisibility) { mLockscreenVisibility = lockscreenVisibility; }
     public int getLockscreenVisibility() { return mLockscreenVisibility; }
-    public void setAllowBubbles(boolean allowBubbles) {}
-    public boolean canBubble() { return false; }
-    public String getConversationId() { return null; }
-    public String getParentChannelId() { return null; }
-    public void setConversationId(String parentChannelId, String conversationId) {}
+    public void setAllowBubbles(boolean allowBubbles) { mAllowBubbles = allowBubbles; }
+    public boolean canBubble() { return mAllowBubbles; }
+    public String getConversationId() { return mConversationId; }
+    public String getParentChannelId() { return mParentChannelId; }
+    public void setConversationId(String parentChannelId, String conversationId) {
+        mParentChannelId = parentChannelId;
+        mConversationId = conversationId;
+    }
 
     @Override public int describeContents() { return 0; }
     @Override public void writeToParcel(Parcel dest, int flags) { dest.writeString(mId); }

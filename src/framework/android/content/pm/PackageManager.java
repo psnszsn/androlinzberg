@@ -6,7 +6,11 @@ public abstract class PackageManager {
     private static String sHostedVersionName;
     private static String sHostedSourceDir;
     private static String sHostedDataDir;
+    private static String sHostedLauncherActivity;
     private static java.util.List<ProviderInfo> sHostedProviders = new java.util.ArrayList<>();
+    private static java.util.List<ServiceInfo> sHostedServices = new java.util.ArrayList<>();
+    private static java.util.Map<String, java.util.Set<String>> sHostedServiceActions =
+            new java.util.HashMap<>();
     public static void configureHostedPackage(String packageName, int versionCode,
             String versionName, String sourceDir, String dataDir) {
         sHostedPackageName = packageName;
@@ -15,12 +19,31 @@ public abstract class PackageManager {
         sHostedSourceDir = sourceDir;
         sHostedDataDir = dataDir;
     }
+    public static void configureHostedLauncher(String activityName) {
+        sHostedLauncherActivity = activityName;
+    }
     public static void configureHostedProviders(java.util.List<ProviderInfo> providers) {
         java.util.ArrayList<ProviderInfo> copy = new java.util.ArrayList<>();
         if (providers != null) {
             for (ProviderInfo provider : providers) copy.add(new ProviderInfo(provider));
         }
         sHostedProviders = copy;
+    }
+    public static void configureHostedServices(java.util.List<ServiceInfo> services,
+            java.util.Map<String, java.util.Set<String>> actionsByClassName) {
+        java.util.ArrayList<ServiceInfo> serviceCopy = new java.util.ArrayList<>();
+        if (services != null) {
+            for (ServiceInfo service : services) serviceCopy.add(new ServiceInfo(service));
+        }
+        java.util.HashMap<String, java.util.Set<String>> actionCopy = new java.util.HashMap<>();
+        if (actionsByClassName != null) {
+            for (java.util.Map.Entry<String, java.util.Set<String>> entry
+                    : actionsByClassName.entrySet()) {
+                actionCopy.put(entry.getKey(), new java.util.HashSet<>(entry.getValue()));
+            }
+        }
+        sHostedServices = serviceCopy;
+        sHostedServiceActions = actionCopy;
     }
     public static final int MATCH_UNINSTALLED_PACKAGES = 0x00002000;
     public static final int GET_SHARED_LIBRARY_FILES = 0x00000400;
@@ -55,11 +78,11 @@ public abstract class PackageManager {
         return new java.util.ArrayList<>();
     }
     public java.util.List<ResolveInfo> queryIntentServices(android.content.Intent intent, ResolveInfoFlags flags) {
-        return new java.util.ArrayList<>();
+        return queryIntentServices(intent, (int) flags.getValue());
     }
     public java.util.List<ResolveInfo> queryIntentServicesAsUser(android.content.Intent intent,
             ResolveInfoFlags flags, int userId) {
-        return new java.util.ArrayList<>();
+        return queryIntentServices(intent, (int) flags.getValue());
     }
     public static final String FEATURE_WATCH = "android.hardware.type.watch";
     public static final String FEATURE_LEANBACK = "android.software.leanback";
@@ -73,7 +96,10 @@ public abstract class PackageManager {
         return new android.graphics.drawable.ColorDrawable(0);
     }
     public CharSequence getText(String packageName, int resid, ApplicationInfo appInfo) { return null; }
-    public ResolveInfo resolveService(android.content.Intent intent, int flags) { return null; }
+    public ResolveInfo resolveService(android.content.Intent intent, int flags) {
+        java.util.List<ResolveInfo> matches = queryIntentServices(intent, flags);
+        return matches.isEmpty() ? null : matches.get(0);
+    }
     public ResolveInfo resolveActivity(android.content.Intent intent, int flags) { return null; }
     public ActivityInfo getReceiverInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {
@@ -91,11 +117,54 @@ public abstract class PackageManager {
         return new java.util.ArrayList<>();
     }
     public java.util.List<ResolveInfo> queryIntentServices(android.content.Intent intent, int flags) {
-        return new java.util.ArrayList<>();
+        java.util.ArrayList<ResolveInfo> result = new java.util.ArrayList<>();
+        if (intent == null) return result;
+        android.content.ComponentName requested = intent.getComponent();
+        for (ServiceInfo service : sHostedServices) {
+            if (!service.enabled && (flags & MATCH_DISABLED_COMPONENTS) == 0) continue;
+            if (requested != null) {
+                if (!requested.getPackageName().equals(service.packageName)
+                        || !requested.getClassName().equals(service.name)) continue;
+            } else {
+                if (intent.getPackage() != null
+                        && !intent.getPackage().equals(service.packageName)) continue;
+                java.util.Set<String> actions = sHostedServiceActions.get(service.name);
+                if (intent.getAction() == null || actions == null
+                        || !actions.contains(intent.getAction())) continue;
+            }
+            ResolveInfo resolveInfo = new ResolveInfo();
+            resolveInfo.serviceInfo = new ServiceInfo(service);
+            result.add(resolveInfo);
+        }
+        return result;
     }
     public ServiceInfo getServiceInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {
+        for (ServiceInfo service : sHostedServices) {
+            if (component.getPackageName().equals(service.packageName)
+                    && component.getClassName().equals(service.name)
+                    && (service.enabled || (flags & MATCH_DISABLED_COMPONENTS) != 0)) {
+                return new ServiceInfo(service);
+            }
+        }
         throw new NameNotFoundException(component.flattenToString());
+    }
+    public android.content.Intent getLaunchIntentForPackage(String packageName) {
+        if (packageName == null || !packageName.equals(sHostedPackageName)
+                || sHostedLauncherActivity == null) return null;
+        return new android.content.Intent(android.content.Intent.ACTION_MAIN)
+                .setPackage(packageName)
+                .setComponent(new android.content.ComponentName(
+                        packageName, sHostedLauncherActivity))
+                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                        | android.content.Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+    }
+    public String[] getPackagesForUid(int uid) {
+        if (uid == android.os.Process.myUid() && sHostedPackageName != null) {
+            return new String[] { sHostedPackageName };
+        }
+        return new String[0];
     }
     public ActivityInfo getActivityInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {

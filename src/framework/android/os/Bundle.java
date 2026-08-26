@@ -23,6 +23,10 @@ public class Bundle extends BaseBundle implements Parcelable, Cloneable {
     public float getFloat(String k) { return getFloat(k, 0f); }
     public float getFloat(String k, float d) { Object v = mMap.get(k); return v instanceof Float ? (Float) v : d; }
     public CharSequence getCharSequence(String k) { Object v = mMap.get(k); return v instanceof CharSequence ? (CharSequence) v : null; }
+    public CharSequence getCharSequence(String k, CharSequence defaultValue) {
+        CharSequence value = getCharSequence(k);
+        return value != null ? value : defaultValue;
+    }
     public <T extends Parcelable> T getParcelable(String k) { Object v = mMap.get(k); return (T) v; }
     public <T> T getParcelable(String k, Class<T> clazz) { Object v = mMap.get(k); return clazz.isInstance(v) ? clazz.cast(v) : null; }
     public Serializable getSerializable(String k) { Object v = mMap.get(k); return v instanceof Serializable ? (Serializable) v : null; }

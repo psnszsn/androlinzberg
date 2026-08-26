@@ -31,14 +31,8 @@ public class UriMatcher {
 
     public int match(Uri uri) {
         if (uri == null) return NO_MATCH;
-        String raw = uri.getPath();
-        String[] segments;
-        if (raw == null || raw.isEmpty() || "/".equals(raw)) {
-            segments = new String[0];
-        } else {
-            if (raw.charAt(0) == '/') raw = raw.substring(1);
-            segments = raw.isEmpty() ? new String[0] : raw.split("/");
-        }
+        List<String> pathSegments = uri.getPathSegments();
+        String[] segments = pathSegments.toArray(new String[0]);
         for (Rule rule : rules) {
             if (rule.authority != null && !rule.authority.equals(uri.getAuthority())) continue;
             if (rule.path.length != segments.length) continue;

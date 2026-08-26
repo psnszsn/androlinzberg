@@ -3,6 +3,8 @@ package android.os;
 public final class Message {
     public int what, arg1, arg2;
     public Object obj;
+    public Messenger replyTo;
+    public int sendingUid = -1;
     public long when;
     int flags;
     Handler target;

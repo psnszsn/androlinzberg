@@ -19,6 +19,10 @@ public class PendingIntent {
             android.content.Intent intent, int flags, android.os.Bundle options) { return new PendingIntent(); }
     public static PendingIntent getActivities(android.content.Context context, int requestCode,
             android.content.Intent[] intents, int flags) { return new PendingIntent(); }
+    public static PendingIntent getActivities(android.content.Context context, int requestCode,
+            android.content.Intent[] intents, int flags, android.os.Bundle options) {
+        return new PendingIntent();
+    }
     public boolean isImmutable() { return true; }
     public String getCreatorPackage() { return "org.schabi.newpipe"; }
     public android.content.IntentSender getIntentSender() { return new android.content.IntentSender(); }

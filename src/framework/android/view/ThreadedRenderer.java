@@ -109,7 +109,16 @@ public final class ThreadedRenderer extends HardwareRenderer {
     }
 
     public static Bitmap createHardwareBitmap(RenderNode node, int width, int height) {
-        return HardwareRenderer.createHardwareBitmap(node, width, height);
+        Bitmap bitmap = HardwareRenderer.createHardwareBitmap(node, width, height);
+        if (bitmap != null) return bitmap;
+
+        // AOSP's HardwareRenderer JNI implements RenderNode snapshots through
+        // AHardwareBuffer only on Android.  The hosted build deliberately
+        // returns null from that native method, but callers such as Compose's
+        // GraphicsLayer.toImageBitmap() require a real Bitmap.  Preserve the
+        // snapshot dimensions with a transparent software bitmap so transient
+        // cross-fade overlays can complete instead of wrapping a null bitmap.
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
     private native void nConfigureHostSurface(int width, int height);
