@@ -3,6 +3,13 @@
 - Always run Zig build/run commands with `-j10` (for example,
   `zig build -j10 run`) to avoid overwhelming the system.
 
+## JVM language policy
+
+Use Kotlin for new repository-owned JVM code. Keep directly reused AOSP and
+generated sources in Java, and do not copy or translate an AOSP class merely to
+make it Kotlin. Follow `docs/kotlin.md` for compiler, interoperability, and
+migration requirements.
+
 ## AOSP reuse policy
 
 Treat the vendored AOSP tree under `artzig/extra/frameworks-base` as the

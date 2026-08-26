@@ -41,8 +41,12 @@ DMA-BUF when the compositor supports them. It implements `AudioTrack` on
 PipeWire.
 
 **The build.** One command, `zig build`, builds all parts: the launcher, a
-static Skia, the native island (hwui and JNI), the framework dex, the
-resources, and the AIDL code. ATL uses meson and the system Skia.
+static Skia, the native island (hwui and JNI), the mixed Java/Kotlin framework
+jar, the resources, and the AIDL code. ATL uses meson and the system Skia.
+
+Repository-owned JVM code is Kotlin-first; direct AOSP and generated sources
+remain Java. The compiler, interoperability, and migration rules are documented
+in [`docs/kotlin.md`](docs/kotlin.md).
 
 **The native boundary.** Linux integration and application-owned native logic
 are Zig: MediaCodec JNI, AudioTrack, PipeWire state, Wayland target state,

@@ -1,5 +1,5 @@
-//! Framework Java: the vendored AOSP subset + our shims -> classes.dex, plus
-//! framework-res.apk (aapt2) and the AIDL-generated Java. Replaces
+//! Framework JVM: the vendored AOSP subset + our Java/Kotlin replacements ->
+//! a multidex framework.jar, plus framework-res.apk (aapt2) and generated Java. Replaces
 //! tools/build-java.sh; the curated source list lives in tools/java-srcs.py.
 //!
 //! zig's Run step does not hash directory contents, so steps that depend on
@@ -13,8 +13,10 @@ pub const Options = struct {
 };
 
 pub const Result = struct {
-    /// directory containing classes.dex
-    dex_dir: LazyPath,
+    /// Classpath jar containing classes.dex and any secondary dex files.
+    classpath_jar: LazyPath,
+    /// Test dex whose kotlin.KotlinVersion must shadow the host copy.
+    kotlin_shadow_fixture: LazyPath,
     res_apk: LazyPath,
     java_step: *std.Build.Step,
 };
@@ -35,11 +37,17 @@ pub fn build(b: *std.Build, o: Options) Result {
     const dep = o.artzig;
     const fb = dep.path("extra/frameworks-base");
     const core_all = dep.namedLazyPath("core-all-jar");
-    const stamp_java = stamp(b, "java.stamp", &.{
-        fb.path(b, "core/java"),          fb.path(b, "graphics/java"),
+    const stamp_jvm = stamp(b, "jvm.stamp", &.{
+        fb.path(b, "core/java"),           fb.path(b, "graphics/java"),
         fb.path(b, "libs/hwui/apex/java"), dep.path("extra/modules-utils/java"),
-        b.path("src/framework"),          b.path("src/framework-stubs"),
-        b.path("src/java"),               b.path("tools/java-srcs.py"),
+        b.path("src/framework"),           b.path("src/framework-stubs"),
+        b.path("src/java"),                b.path("tools/java-srcs.py"),
+        b.path("tools/compile-jvm.sh"),
+    });
+    const stamp_kotlinc = stamp(b, "kotlinc.stamp", &.{
+        dep.path("vendor/external/kotlinc/bin"),
+        dep.path("vendor/external/kotlinc/lib"),
+        dep.path("vendor/external/kotlinc/build.txt"),
     });
     const stamp_res = stamp(b, "res.stamp", &.{ fb.path(b, "core/res"), b.path("tools/build-res.sh") });
     const stamp_aidl = stamp(b, "aidl.stamp", &.{ b.path("tools/aidl-list.txt"), b.path("tools/build-aidl.sh"), b.path("aidl-compat") });
@@ -74,15 +82,19 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("APP=", b.path("."));
     srcs.addPrefixedDirectoryArg("AIDL=", aidl_dir);
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
-    srcs.addFileInput(stamp_java);
+    srcs.addFileInput(stamp_jvm);
 
-    // 4. javac against the system-modules image
-    const javac = b.addSystemCommand(&.{"javac"});
-    javac.addPrefixedDirectoryArg("--system=", sysmod_dir);
-    javac.addArgs(&.{ "-encoding", "UTF-8", "-g", "-parameters", "-XDstringConcat=inline", "-Xmaxerrs", "2000", "-nowarn", "-d" });
-    const classes_dir = javac.addOutputDirectoryArg("classes");
-    javac.addPrefixedFileArg("@", srcs_txt);
-    javac.addFileInput(stamp_java);
+    // 4. mixed Kotlin/Java compile against the Android system-modules image.
+    // The helper owns Kotlin-first/Java-second ordering and their classpaths.
+    const compile = b.addSystemCommand(&.{"bash"});
+    compile.addFileArg(b.path("tools/compile-jvm.sh"));
+    compile.addFileArg(core_plus);
+    compile.addDirectoryArg(sysmod_dir);
+    compile.addFileArg(srcs_txt);
+    compile.addDirectoryArg(dep.path("vendor/external/kotlinc"));
+    const classes_dir = compile.addOutputDirectoryArg("classes");
+    compile.addFileInput(stamp_jvm);
+    compile.addFileInput(stamp_kotlinc);
 
     // 5. d8 (via a classes jar; the r8 CLI takes jars, not directories)
     const jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
@@ -96,11 +108,40 @@ pub fn build(b: *std.Build, o: Options) Result {
     d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "34", "--lib" });
     d8.addFileArg(core_plus);
     d8.addArg("--output");
-    const dex_dir = d8.addOutputDirectoryArg("framework-dex");
+    const classpath_jar = d8.addOutputFileArg("framework.jar");
     d8.addFileArg(classes_jar);
+    d8.addFileArg(dep.path("vendor/external/kotlinc/lib/kotlin-stdlib.jar"));
 
-    const java_step = b.step("java", "Build the framework dex (javac + d8), framework-res.apk and AIDL Java");
-    java_step.dependOn(&b.addInstallFileWithDir(dex_dir.path(b, "classes.dex"), .{ .custom = "framework" }, "classes.dex").step);
+    // A tiny app dex used to verify that APK-bundled kotlin.* classes win over
+    // the host's pinned stdlib without making the rest of the APK child-first.
+    const fixture_javac = b.addSystemCommand(&.{"javac"});
+    fixture_javac.addPrefixedDirectoryArg("--system=", sysmod_dir);
+    fixture_javac.addArgs(&.{ "-source", "21", "-target", "21", "-d" });
+    const fixture_classes = fixture_javac.addOutputDirectoryArg("kotlin-shadow-classes");
+    fixture_javac.addFileArg(b.path("testdata/kotlin-shadow/kotlin/KotlinVersion.java"));
+    fixture_javac.addFileArg(b.path("testdata/kotlin-shadow/fixture/NewerKotlinCaller.java"));
+
+    const fixture_jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
+    const fixture_classes_jar = fixture_jar.addOutputFileArg("kotlin-shadow-classes.jar");
+    fixture_jar.addArg("-C");
+    fixture_jar.addDirectoryArg(fixture_classes);
+    fixture_jar.addArg(".");
+
+    const fixture_d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
+    fixture_d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
+    fixture_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "34", "--lib" });
+    fixture_d8.addFileArg(core_plus);
+    fixture_d8.addArg("--output");
+    const kotlin_shadow_fixture = fixture_d8.addOutputFileArg("kotlin-shadow.jar");
+    fixture_d8.addFileArg(fixture_classes_jar);
+
+    const java_step = b.step("java", "Build the framework jar (kotlinc + javac + d8), framework-res.apk and generated Java");
+    java_step.dependOn(&b.addInstallFileWithDir(classpath_jar, .{ .custom = "framework" }, "framework.jar").step);
     java_step.dependOn(&b.addInstallFileWithDir(res_apk, .{ .custom = "res" }, "framework-res.apk").step);
-    return .{ .dex_dir = dex_dir, .res_apk = res_apk, .java_step = java_step };
+    return .{
+        .classpath_jar = classpath_jar,
+        .kotlin_shadow_fixture = kotlin_shadow_fixture,
+        .res_apk = res_apk,
+        .java_step = java_step,
+    };
 }

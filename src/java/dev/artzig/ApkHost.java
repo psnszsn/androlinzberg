@@ -17,7 +17,6 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
-import dalvik.system.PathClassLoader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -31,7 +30,7 @@ public final class ApkHost {
     private static ContextImpl sContext;
     private static android.view.ViewRootImpl sRoot;
     private static long sDownTime;
-    private static PathClassLoader sClassLoader;
+    private static HostedApkClassLoader sClassLoader;
     private static final java.util.ArrayList<android.content.ContentProvider> sProviders =
             new java.util.ArrayList<>();
     private static int sWidth, sHeight, sScale120;
@@ -521,7 +520,8 @@ public final class ApkHost {
 
         // --- classloader over the apk (+ bundled native libs)
         String libPath = extractNativeLibraries(apkPath);
-        PathClassLoader cl = new PathClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader());
+        HostedApkClassLoader cl = new HostedApkClassLoader(
+                apkPath, libPath, ClassLoader.getSystemClassLoader());
         sClassLoader = cl;
 
         // input service: reflective default-answering IInputManager so

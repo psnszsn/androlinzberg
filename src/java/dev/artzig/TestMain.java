@@ -20,6 +20,7 @@ public final class TestMain {
         System.out.println("7: drawCircle");
         c.drawCircle(32f, 32f, 10f, p);
         System.out.println("8: getPixel " + Integer.toHexString(b.getPixel(32, 32)));
+        PathProbe.main(args);
         System.out.println("done");
     }
 }

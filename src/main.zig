@@ -29,7 +29,7 @@ const usage =
     \\       androlinzberg --codec-selftest | --codec-make-mp3 | --codec-make-m4v | --javatest
     \\
     \\Paths are resolved relative to the executable's install tree (zig-out/):
-    \\  lib/libandroid_platform.so, framework/classes.dex, res/framework-res.apk.
+    \\  lib/libandroid_platform.so, framework/framework.jar, res/framework-res.apk.
     \\The ART runtime is installed beside the executable at bin/art and is
     \\rebuilt by Zig when its inputs change. ARTZIG_ROOT overrides it.
     \\
@@ -143,7 +143,7 @@ pub fn main(init: std.process.Init) !void {
             const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
             const hwui = try lookupHwuiBridges(&lib);
             var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
-                .classpath = &.{"zig-out/framework/classes.dex"},
+                .classpath = &.{"zig-out/framework/framework.jar"},
                 .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
             });
             defer rt.releaseProcessState();
@@ -152,7 +152,7 @@ pub fn main(init: std.process.Init) !void {
                 try host_natives.register(@ptrCast(rt.env), hwui);
             }
             const cls_name = init.minimal.environ.getPosix("AZK_TEST_CLASS") orelse "dev.artzig.TestMain";
-            try rt.runMain(cls_name, &.{});
+            try rt.runMain(cls_name, args[i + 1 ..]);
             const e2 = art.Env{ .env = rt.env };
             const cls2 = try e2.findClass("dev/artzig/GraphicsSmoke");
             const draw2 = try e2.getStaticMethodID(cls2, "draw", "(II)Landroid/graphics/Bitmap;");
@@ -240,9 +240,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         }
     }
 
-    // Boot ART with the framework dex.
+    // Boot ART with the multidex framework jar.
     const rt_v = try art.Runtime.create(gpa, init.io, init.minimal.environ, .{
-        .classpath = &.{try std.fs.path.join(arena, &.{ tree, "framework", "classes.dex" })},
+        .classpath = &.{try std.fs.path.join(arena, &.{ tree, "framework", "framework.jar" })},
         .library_path = &.{runtime_overlay_dir},
         .root = runtime_root,
         .libart_path = libart_overlay,

@@ -92,7 +92,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(island);
     b.step("island", "Build libandroid_platform.so").dependOn(&b.addInstallArtifact(island, .{}).step);
 
-    // --- framework Java (dex), framework-res.apk, AIDL Java (build/java.zig)
+    // --- framework JVM jar (Java + Kotlin), framework-res.apk, generated Java
     const java = @import("build/java.zig").build(b, .{ .artzig = artzig_dep });
     b.getInstallStep().dependOn(java.java_step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
@@ -277,6 +277,15 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&platform_abi_check.step);
     native_test_step.dependOn(&launcher_check.step);
     native_test_step.dependOn(&cpp_audit.step);
+
+    const jvm_test_run = std.Build.Step.Run.create(b, "run JVM integration tests");
+    jvm_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    jvm_test_run.addArg("--javatest");
+    jvm_test_run.addFileArg(java.kotlin_shadow_fixture);
+    jvm_test_run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.KotlinClassLoaderSmoke");
+    jvm_test_run.step.dependOn(b.getInstallStep());
+    const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
+    jvm_test_step.dependOn(&jvm_test_run.step);
 
     // run the *installed* launcher: it resolves the island/dex/res relative to
     // its own install tree (zig-out/), which the cache-dir copy does not have.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""java-srcs.py — the curated framework source list (what is real AOSP vs
-shimmed). Generated once from the retired tools/build-java.sh; now the
-source of truth. Usage: java-srcs.py <out.txt> FB=<dir> MU=<dir> APP=<dir> AIDL=<dir> RES=<dir>"""
+"""java-srcs.py — the curated framework JVM source list (what is real AOSP vs
+replaced). Generated once from the retired tools/build-java.sh; now the source
+of truth for both Java and Kotlin. Usage: java-srcs.py <out.txt> FB=<dir>
+MU=<dir> APP=<dir> AIDL=<dir> RES=<dir>"""
 import fnmatch, os, sys
 out = sys.argv[1]
 R = dict(a.split('=', 1) for a in sys.argv[2:])
@@ -17,7 +18,7 @@ def add(root, maxdepth=None, not_path=(), not_name=()):
         depth = dp[len(root):].count('/') + 1
         if maxdepth is not None and depth > maxdepth: dns[:] = []; continue
         for f in fns:
-            if not f.endswith('.java'): continue
+            if not f.endswith(('.java', '.kt')): continue
             p = os.path.join(dp, f)
             if any(fnmatch.fnmatch(p, g) for g in not_path): continue
             if any(fnmatch.fnmatch(f, g) for g in not_name): continue
