@@ -5,7 +5,6 @@
 package android.view;
 
 import android.content.Context;
-import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.RecordingCanvas;
 import android.graphics.RenderNode;
@@ -28,6 +27,10 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     private final ArrayList<View> mInvalidateViews = new ArrayList<>();
     private final ArrayList<View.AttachInfo.InvalidateInfo> mInvalidateRects = new ArrayList<>();
     private boolean mInvalidatePosted;
+    private boolean mApplyInsetsScheduled;
+    private final WindowInsets mWindowInsets = new WindowInsets.Builder()
+            .setInsets(WindowInsets.Type.systemBars(), android.graphics.Insets.NONE)
+            .build();
     private final Runnable mInvalidateOnAnimation = () -> {
         final ArrayList<View> views;
         final ArrayList<View.AttachInfo.InvalidateInfo> rects;
@@ -96,6 +99,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         view.dispatchWindowVisibilityChanged(View.VISIBLE);
         view.dispatchWindowFocusChanged(true);
         requestLayout();
+        requestFitSystemWindows();
         ArtzigAccessibilityBridge.markChanged("root-attached");
     }
     public View getView() { return mView; }
@@ -119,8 +123,8 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         ArtzigAccessibilityBridge.markChanged("root-destroyed");
     }
 
-    /** Overlay-window traversal (artzig): size by LayoutParams within max bounds,
-     *  record a transparent display list, and return its RenderNode. */
+    /** Overlay-window traversal (artzig): size by LayoutParams within max bounds
+     *  and return a display list that can be composited over the activity. */
     public RenderNode doTraversalWindow(WindowManager.LayoutParams lp, int maxW, int maxH) {
         if (mView == null) return null;
         mTraversalScheduled = false;
@@ -149,7 +153,10 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         mRenderNode.setPosition(0, 0, w, h);
         RecordingCanvas canvas = mRenderNode.beginRecording(w, h);
         try {
-            canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR);
+            // The host replays this node directly into the activity composite,
+            // rather than into a separate Android window surface. Recording a
+            // CLEAR here would therefore punch through the already-drawn
+            // activity at transparent popup corners.
             mView.draw(canvas);
         } finally {
             mRenderNode.endRecording();
@@ -421,8 +428,17 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public View getCommonPredecessor(View first, View second) { return null; }
     public void notifyEnterAnimationComplete() {}
     public ViewParent getParentForAccessibility() { return null; }
-    @Override public void requestFitSystemWindows() {}
-    public WindowInsets getWindowInsets(boolean forceConstruct) { return WindowInsets.CONSUMED; }
+    @Override public void requestFitSystemWindows() {
+        if (mApplyInsetsScheduled) return;
+        mApplyInsetsScheduled = true;
+        mHandler.post(() -> {
+            mApplyInsetsScheduled = false;
+            if (mView == null) return;
+            mView.dispatchApplyWindowInsets(mWindowInsets);
+            requestLayout();
+        });
+    }
+    public WindowInsets getWindowInsets(boolean forceConstruct) { return mWindowInsets; }
     public void getWindowVisibleDisplayFrame(android.graphics.Rect outRect) { outRect.set(0, 0, mWidth, mHeight); }
     public void dispatchInvalidateDelayed(View view, long delayMilliseconds) {
         mHandler.postDelayed(view::invalidate, delayMilliseconds);

@@ -2,6 +2,9 @@
 package android.view;
 import android.content.Context;
 public final class WindowManagerImpl implements WindowManager {
+    private static int sWindowWidth = 1280;
+    private static int sWindowHeight = 720;
+    private static float sWindowDensity = 1.0f;
     private final Context mContext;
     public WindowManagerImpl(Context context) { mContext = context; }
     @Override public void addView(View view, ViewGroup.LayoutParams params) {
@@ -17,9 +20,16 @@ public final class WindowManagerImpl implements WindowManager {
     public WindowManagerImpl createLocalWindowManager(Window parentWindow) { return this; }
     public WindowManagerImpl createPresentationWindowManager(android.content.Context displayContext) { return this; }
     @Override public android.graphics.Region getCurrentImeTouchRegion() { return new android.graphics.Region(); }
+    public static synchronized void configureWindowMetrics(int width, int height, float density) {
+        sWindowWidth = Math.max(1, width);
+        sWindowHeight = Math.max(1, height);
+        sWindowDensity = density > 0 ? density : 1.0f;
+    }
     @Override public WindowMetrics getCurrentWindowMetrics() {
-        return new WindowMetrics(new android.graphics.Rect(0, 0, 1280, 720),
-                android.view.WindowInsets.CONSUMED, 1.0f);
+        synchronized (WindowManagerImpl.class) {
+            return new WindowMetrics(new android.graphics.Rect(0, 0, sWindowWidth, sWindowHeight),
+                    android.view.WindowInsets.CONSUMED, sWindowDensity);
+        }
     }
     @Override public WindowMetrics getMaximumWindowMetrics() { return getCurrentWindowMetrics(); }
     @Override public void requestAppKeyboardShortcuts(KeyboardShortcutsReceiver receiver, int deviceId) {}

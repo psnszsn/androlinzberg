@@ -151,6 +151,14 @@ public class Intent implements Parcelable, Cloneable {
     public <T> T getParcelableExtra(String name, Class<T> clazz) {
         return mExtras != null ? mExtras.getParcelable(name, clazz) : null;
     }
+    public <T extends android.os.Parcelable> java.util.ArrayList<T> getParcelableArrayListExtra(
+            String name) {
+        return mExtras != null ? mExtras.<T>getParcelableArrayList(name) : null;
+    }
+    public <T> java.util.ArrayList<T> getParcelableArrayListExtra(
+            String name, Class<? extends T> clazz) {
+        return mExtras != null ? mExtras.getParcelableArrayList(name, clazz) : null;
+    }
     public Intent setComponent(ComponentName component) { mComponent = component; return this; }
     public ComponentName getComponent() { return mComponent; }
     private ComponentName mComponent;
@@ -179,6 +187,11 @@ public class Intent implements Parcelable, Cloneable {
     public Intent putExtra(String name, boolean[] value) { extras().putBooleanArray(name, value); return this; }
     public Intent putExtra(String name, android.os.Parcelable[] value) { extras().putParcelableArray(name, value); return this; }
     public Intent putExtra(String name, android.os.Bundle value) { extras().putBundle(name, value); return this; }
+    public Intent putParcelableArrayListExtra(String name,
+            java.util.ArrayList<? extends android.os.Parcelable> value) {
+        extras().putParcelableArrayList(name, value);
+        return this;
+    }
     private Bundle extras() { if (mExtras == null) mExtras = new Bundle(); return mExtras; }
     public boolean filterEquals(Intent other) {
         return other != null

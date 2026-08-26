@@ -59,7 +59,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void invalidateOptionsMenu() {}
     public void closeOptionsMenu() {}
     public void openOptionsMenu() {}
-    public void recreate() {}
+    public void recreate() { ActivityThread.recreateActivityInProcess(this); }
     public void finishAffinity() {}
     public boolean shouldShowRequestPermissionRationale(String permission) { return false; }
     public void requestPermissions(String[] permissions, int requestCode) {}
@@ -217,6 +217,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
     protected void onPause() {}
     protected void onStop() {}
     protected void onDestroy() {}
+    protected void onSaveInstanceState(Bundle outState) {}
+    protected void onRestoreInstanceState(Bundle savedInstanceState) {}
     public final void performCreate(Bundle state) {
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreCreated(this, state);
         onCreate(state);
@@ -263,6 +265,16 @@ public class Activity extends ContextWrapper implements Window.Callback,
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
             cb.onActivityDestroyed(this);
             cb.onActivityPostDestroyed(this);
+        }
+    }
+    public final void performSaveInstanceState(Bundle outState) {
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
+            cb.onActivityPreSaveInstanceState(this, outState);
+        }
+        onSaveInstanceState(outState);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
+            cb.onActivitySaveInstanceState(this, outState);
+            cb.onActivityPostSaveInstanceState(this, outState);
         }
     }
     // ---- Window.Callback ----

@@ -176,6 +176,7 @@ public final class ViewHost {
         android.content.res.Resources res = sContext.getResources();
         android.util.DisplayMetrics dm = res.getDisplayMetrics();
         float density = scale120 / 120f;
+        android.view.WindowManagerImpl.configureWindowMetrics(width, height, density);
         int densityDpi = Math.round(160f * density);
         android.view.ArtzigDisplay.configure(width, height, densityDpi);
         dm.widthPixels = dm.noncompatWidthPixels = width;

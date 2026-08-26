@@ -18,6 +18,7 @@ public class Bundle extends BaseBundle implements Parcelable, Cloneable {
     public void putSerializable(String k, Serializable v) { mMap.put(k, v); }
     public void putBundle(String k, Bundle v) { mMap.put(k, v); }
     public void putByteArray(String k, byte[] v) { mMap.put(k, v); }
+    public void putIntegerArrayList(String k, ArrayList<Integer> v) { mMap.put(k, v); }
     public void putStringArrayList(String k, ArrayList<String> v) { mMap.put(k, v); }
     public void putParcelableArrayList(String k, ArrayList<? extends Parcelable> v) { mMap.put(k, v); }
     public float getFloat(String k) { return getFloat(k, 0f); }
@@ -32,6 +33,8 @@ public class Bundle extends BaseBundle implements Parcelable, Cloneable {
     public Serializable getSerializable(String k) { Object v = mMap.get(k); return v instanceof Serializable ? (Serializable) v : null; }
     public Bundle getBundle(String k) { Object v = mMap.get(k); return v instanceof Bundle ? (Bundle) v : null; }
     public byte[] getByteArray(String k) { Object v = mMap.get(k); return v instanceof byte[] ? (byte[]) v : null; }
+    @SuppressWarnings("unchecked")
+    public ArrayList<Integer> getIntegerArrayList(String k) { return (ArrayList<Integer>) mMap.get(k); }
     public ArrayList<String> getStringArrayList(String k) { Object v = mMap.get(k); return (ArrayList<String>) v; }
     public <T extends Parcelable> ArrayList<T> getParcelableArrayList(String k) { return (ArrayList<T>) mMap.get(k); }
     public <T> ArrayList<T> getParcelableArrayList(String k, Class<? extends T> clazz) { return (ArrayList<T>) mMap.get(k); }

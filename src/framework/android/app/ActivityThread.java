@@ -7,6 +7,7 @@ public final class ActivityThread {
     public interface Launcher {
         void startActivity(android.content.Intent intent);
         void finishActivity(Activity activity);
+        void recreateActivity(Activity activity);
     }
     private static Launcher sLauncher;
     public static void setLauncher(Launcher launcher) { sLauncher = launcher; }
@@ -16,6 +17,9 @@ public final class ActivityThread {
     }
     public static void finishActivityInProcess(Activity activity) {
         if (sLauncher != null) sLauncher.finishActivity(activity);
+    }
+    public static void recreateActivityInProcess(Activity activity) {
+        if (sLauncher != null) sLauncher.recreateActivity(activity);
     }
     /** artzig: in-process services (ApkHost installs the manager). */
     public interface ServiceManagerHook {

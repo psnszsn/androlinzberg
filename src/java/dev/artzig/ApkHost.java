@@ -40,6 +40,10 @@ public final class ApkHost {
     private static boolean sPendingNewPipeRelayout;
     private static boolean sHostFullscreenSuppressed;
     private static final java.util.ArrayDeque<Activity> sBackStack = new java.util.ArrayDeque<>();
+    private static final java.util.HashMap<String, Integer> sActivityConfigChanges =
+            new java.util.HashMap<>();
+    private static final java.util.HashMap<String, Integer> sActivityOrientations =
+            new java.util.HashMap<>();
     private ApkHost() {}
 
     /** Extract the host ABI from the APK because the desktop/bionic bridge
@@ -298,6 +302,8 @@ public final class ApkHost {
     /** Boot the APK: returns after Application.onCreate + MainActivity.onCreate. */
     public static void init(int width, int height, int scale120) throws Exception {
         sWidth = width; sHeight = height; sScale120 = scale120;
+        android.view.WindowManagerImpl.configureWindowMetrics(
+                width, height, scale120 / 120f);
         if (Looper.myLooper() == null) Looper.prepareMainLooper();
         long tFonts = SystemClock.uptimeMillis();
         android.graphics.Typeface.loadPreinstalledSystemFontMap();
@@ -322,18 +328,29 @@ public final class ApkHost {
         String currentActivity = null;
         String currentActivityTag = null;
         boolean currentActivityEnabled = true;
+        int currentActivityConfigChanges = 0;
+        int currentActivityOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        java.util.HashMap<String, Integer> activityConfigChanges = new java.util.HashMap<>();
+        java.util.HashMap<String, Integer> activityOrientations = new java.util.HashMap<>();
         boolean isMain = false, isLauncher = false;
         int appThemeRes = 0;
         for (int ev = p.next(); ev != XmlResourceParser.END_DOCUMENT; ev = p.next()) {
             if (ev != XmlResourceParser.START_TAG) {
                 if (ev == XmlResourceParser.END_TAG && currentActivityTag != null
                         && p.getName().equals(currentActivityTag)) {
+                    if ("activity".equals(currentActivityTag) && currentActivity != null) {
+                        activityConfigChanges.put(currentActivity, currentActivityConfigChanges);
+                        activityOrientations.put(currentActivity, currentActivityOrientation);
+                    }
                     if (currentActivityEnabled && isMain && isLauncher && mainActivity == null) {
                         mainActivity = currentActivity;
                     }
                     currentActivity = null;
                     currentActivityTag = null;
                     currentActivityEnabled = true;
+                    currentActivityConfigChanges = 0;
+                    currentActivityOrientation =
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
                     isMain = false;
                     isLauncher = false;
                 } else if (ev == XmlResourceParser.END_TAG && p.getName().equals("provider")) {
@@ -366,6 +383,13 @@ public final class ApkHost {
                     currentActivityTag = "activity";
                     currentActivityEnabled = p.getAttributeBooleanValue(
                             "http://schemas.android.com/apk/res/android", "enabled", true);
+                    currentActivityConfigChanges = android.content.pm.ActivityInfo
+                            .activityInfoConfigNativeToJava(p.getAttributeIntValue(
+                                    "http://schemas.android.com/apk/res/android",
+                                    "configChanges", 0));
+                    currentActivityOrientation = p.getAttributeIntValue(
+                            "http://schemas.android.com/apk/res/android", "screenOrientation",
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                     break;
                 case "activity-alias":
                     currentActivity = attr(p, "targetActivity");
@@ -466,6 +490,18 @@ public final class ApkHost {
         android.content.pm.PackageManager.configureHostedProviders(providers);
         if (mainActivity != null && mainActivity.startsWith(".")) mainActivity = pkg + mainActivity;
         android.content.pm.PackageManager.configureHostedLauncher(mainActivity);
+        sActivityConfigChanges.clear();
+        sActivityOrientations.clear();
+        for (java.util.Map.Entry<String, Integer> entry : activityConfigChanges.entrySet()) {
+            String name = entry.getKey();
+            if (name.startsWith(".")) name = pkg + name;
+            sActivityConfigChanges.put(name, entry.getValue());
+        }
+        for (java.util.Map.Entry<String, Integer> entry : activityOrientations.entrySet()) {
+            String name = entry.getKey();
+            if (name.startsWith(".")) name = pkg + name;
+            sActivityOrientations.put(name, entry.getValue());
+        }
         java.util.HashMap<String, java.util.Set<String>> normalizedServiceActions =
                 new java.util.HashMap<>();
         for (android.content.pm.ServiceInfo service : services) {
@@ -521,11 +557,15 @@ public final class ApkHost {
             android.hardware.input.InputManagerGlobal.createTestSession(
                     (android.hardware.input.IInputManager) im);
         }
-        // A desktop compositor may initially tile the window wider than tall.
-        // Android phone apps must not mistake that arbitrary tile shape for a
-        // sensor rotation; start them in portrait until they request landscape.
-        int displayWidth = Math.min(width, height);
-        int displayHeight = Math.max(width, height);
+        // A resizable Activity starts with the current window bounds; a fixed
+        // manifest orientation constrains those bounds before onCreate.
+        Integer manifestOrientation = sActivityOrientations.get(mainActivity);
+        int initialOrientation = manifestOrientation != null ? manifestOrientation
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        boolean initialLandscape = resolveLandscapeConfiguration(
+                initialOrientation, width, height);
+        int displayWidth = initialLandscape ? Math.max(width, height) : Math.min(width, height);
+        int displayHeight = initialLandscape ? Math.min(width, height) : Math.max(width, height);
         sContext = makeContext(frameworkRes, apkPath, displayWidth, displayHeight,
                 scale120, appThemeRes, pkg);
         sContext.setClassLoaderOverride(cl);
@@ -569,6 +609,7 @@ public final class ApkHost {
                 .getDeclaredConstructor().newInstance();
         sActivity = initialActivity;
         initialActivity.attach(sContext);
+        applyActivityManifestInfo(initialActivity);
         initialActivity.performCreate(null);
         if (sActivity == initialActivity) {
             initialActivity.performStart();
@@ -592,6 +633,7 @@ public final class ApkHost {
                     Activity a = (Activity) c.getDeclaredConstructor().newInstance();
                     a.setIntent(intent);
                     a.attach(sContext);
+                    applyActivityManifestInfo(a);
                     a.performCreate(null);
                     a.performStart();
                     a.performResume();
@@ -610,7 +652,53 @@ public final class ApkHost {
                 Log.i(TAG, "finished " + a.getClass().getName()
                         + ", back to " + sActivity.getClass().getName());
             }
+            @Override public void recreateActivity(Activity a) {
+                if (a == sActivity) recreateCurrentActivity();
+            }
         });
+    }
+
+    private static void applyActivityManifestInfo(Activity activity) {
+        String name = activity.getClass().getName();
+        android.content.pm.ActivityInfo info = activity.getActivityInfo();
+        info.name = name;
+        info.packageName = sContext.getPackageName();
+        Integer changes = sActivityConfigChanges.get(name);
+        info.configChanges = changes != null ? changes : 0;
+        Integer orientation = sActivityOrientations.get(name);
+        info.screenOrientation = orientation != null ? orientation
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        activity.setRequestedOrientation(info.screenOrientation);
+    }
+
+    private static void recreateCurrentActivity() {
+        Activity old = sActivity;
+        if (old == null) return;
+        try {
+            android.os.Bundle state = new android.os.Bundle();
+            old.performSaveInstanceState(state);
+            android.content.Intent intent = old.getIntent();
+            Class<?> activityClass = old.getClass();
+            old.performPause();
+            old.performStop();
+            old.performDestroy();
+            android.view.ArtzigWindowStack.clear();
+
+            Activity replacement = (Activity) activityClass.getDeclaredConstructor().newInstance();
+            if (intent != null) replacement.setIntent(intent);
+            replacement.attach(sContext);
+            applyActivityManifestInfo(replacement);
+            sActivity = replacement;
+            replacement.performCreate(state);
+            if (sActivity == replacement) {
+                replacement.performStart();
+                replacement.performResume();
+                show(replacement);
+            }
+            Log.i(TAG, "recreated " + activityClass.getName() + " for configuration change");
+        } catch (Throwable t) {
+            Log.e(TAG, "activity recreation failed", t);
+        }
     }
 
     // ---- in-process services
@@ -835,12 +923,20 @@ public final class ApkHost {
         return requested && !sHostFullscreenSuppressed;
     }
 
-    private static boolean wantsLandscapeConfiguration() {
-        if (sActivity == null) return false;
-        int orientation = sActivity.getRequestedOrientation();
+    static boolean resolveLandscapeConfiguration(int orientation, int width, int height) {
         if (android.content.pm.ActivityInfo.isFixedOrientationLandscape(orientation)) return true;
         if (android.content.pm.ActivityInfo.isFixedOrientationPortrait(orientation)) return false;
-        return false;
+        // Unspecified, sensor, and user-controlled orientations follow the
+        // actual resizable desktop window. Treating every non-fixed request as
+        // portrait made wide windows publish portrait Configuration dimensions.
+        return width >= height;
+    }
+
+    private static boolean wantsLandscapeConfiguration(int width, int height) {
+        int orientation = sActivity == null
+                ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                : sActivity.getRequestedOrientation();
+        return resolveLandscapeConfiguration(orientation, width, height);
     }
 
     /** Prevent an app's unchanged immersive flags from immediately undoing a
@@ -858,7 +954,7 @@ public final class ApkHost {
         int width = bufferWidth;
         int height = bufferHeight;
         if (sActivity == null) init(width, height, scale120);
-        int desiredOrientation = wantsLandscapeConfiguration()
+        int desiredOrientation = wantsLandscapeConfiguration(width, height)
                 ? Configuration.ORIENTATION_LANDSCAPE : Configuration.ORIENTATION_PORTRAIT;
         // Requested orientation is Android application state, not Wayland
         // presentation state. Deliver it immediately so applications can react
@@ -946,10 +1042,13 @@ public final class ApkHost {
         try {
             Resources res = sContext.getResources();
             DisplayMetrics dm = res.getDisplayMetrics();
-            int oldOrientation = res.getConfiguration().orientation;
+            Configuration oldConfig = new Configuration(res.getConfiguration());
+            int oldOrientation = oldConfig.orientation;
+            int oldDensityDpi = dm.densityDpi;
             float density = scale120 / 120f;
             int densityDpi = Math.round(160f * density);
-            boolean landscape = wantsLandscapeConfiguration();
+            android.view.WindowManagerImpl.configureWindowMetrics(width, height, density);
+            boolean landscape = wantsLandscapeConfiguration(width, height);
             int displayWidth = landscape ? Math.max(width, height) : Math.min(width, height);
             int displayHeight = landscape ? Math.min(width, height) : Math.max(width, height);
             android.view.ArtzigDisplay.configure(displayWidth, displayHeight, densityDpi);
@@ -968,8 +1067,27 @@ public final class ApkHost {
             config.orientation = landscape ? Configuration.ORIENTATION_LANDSCAPE
                     : Configuration.ORIENTATION_PORTRAIT;
             res.updateConfiguration(config, dm);
-            sRoot.setSize(width, height);
-            sActivity.onConfigurationChanged(config);
+            int changes = 0;
+            if (oldConfig.orientation != config.orientation) {
+                changes |= android.content.pm.ActivityInfo.CONFIG_ORIENTATION;
+            }
+            if (oldConfig.screenWidthDp != config.screenWidthDp
+                    || oldConfig.screenHeightDp != config.screenHeightDp) {
+                changes |= android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE;
+            }
+            if (oldConfig.smallestScreenWidthDp != config.smallestScreenWidthDp) {
+                changes |= android.content.pm.ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE;
+            }
+            if (oldDensityDpi != densityDpi) {
+                changes |= android.content.pm.ActivityInfo.CONFIG_DENSITY;
+            }
+            int unhandledChanges = changes & ~sActivity.getActivityInfo().configChanges;
+            if (unhandledChanges != 0) {
+                recreateCurrentActivity();
+            } else {
+                sRoot.setSize(width, height);
+                sActivity.onConfigurationChanged(config);
+            }
             if (oldOrientation != Configuration.ORIENTATION_UNDEFINED
                     && oldOrientation != config.orientation) {
                 sPendingNewPipeOrientation = landscape ? 1 : 0;

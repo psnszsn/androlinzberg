@@ -1,6 +1,7 @@
 /* artzig: focused smoke checks for hosted-package framework behavior. */
 package dev.artzig;
 
+import android.app.AlarmManager;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.ComponentName;
@@ -12,7 +13,13 @@ import android.graphics.Bitmap;
 import android.graphics.RenderNode;
 import android.graphics.drawable.Icon;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
+import android.os.SystemClock;
 import android.view.ThreadedRenderer;
+import android.view.ViewRootImpl;
+import android.view.WindowManagerImpl;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -25,7 +32,8 @@ public final class FrameworkCompatSmoke {
         if (!condition) throw new AssertionError(message);
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
+        if (Looper.getMainLooper() == null) Looper.prepareMainLooper();
         Intent filtered = new Intent(Intent.ACTION_VIEW)
                 .setPackage("org.example")
                 .addCategory(Intent.CATEGORY_BROWSABLE);
@@ -84,6 +92,68 @@ public final class FrameworkCompatSmoke {
         require(PendingIntent.getActivities(null, 7, new Intent[] { new Intent() }, 0,
                         new Bundle()) != null,
                 "PendingIntent.getActivities options overload");
+        Bundle accessibilityExtras = new Bundle();
+        ArrayList<Integer> spanStarts = new ArrayList<>();
+        spanStarts.add(4);
+        accessibilityExtras.putIntegerArrayList("span-starts", spanStarts);
+        require(accessibilityExtras.getIntegerArrayList("span-starts") == spanStarts,
+                "Bundle integer array list");
+        ArrayList<android.os.Parcelable> notificationItems = new ArrayList<>();
+        notificationItems.add(new Intent("notification-item"));
+        Intent notificationIntent = new Intent().putParcelableArrayListExtra(
+                "notification-items", notificationItems);
+        require(notificationIntent.getParcelableArrayListExtra("notification-items")
+                        == notificationItems,
+                "Intent parcelable array list extra");
+        require(!new ViewRootImpl(null).getWindowInsets(false).isConsumed(),
+                "host zero window insets propagate to descendants");
+        WindowManagerImpl.configureWindowMetrics(411, 731, 1.5f);
+        android.view.WindowMetrics resizedMetrics =
+                new WindowManagerImpl(null).getCurrentWindowMetrics();
+        require(resizedMetrics.getBounds().width() == 411
+                        && resizedMetrics.getBounds().height() == 731
+                        && resizedMetrics.getDensity() == 1.5f,
+                "current window metrics follow host resize");
+        require(ApkHost.resolveLandscapeConfiguration(
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
+                        1280, 720),
+                "unspecified orientation follows a wide desktop window");
+        require(!ApkHost.resolveLandscapeConfiguration(
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
+                        420, 800),
+                "unspecified orientation follows a tall phone window");
+        require(!ApkHost.resolveLandscapeConfiguration(
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
+                        1280, 720),
+                "fixed portrait orientation overrides window geometry");
+        require(ApkHost.resolveLandscapeConfiguration(
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
+                        420, 800),
+                "fixed landscape orientation overrides window geometry");
+        require(android.content.pm.ActivityInfo.activityInfoConfigNativeToJava(0x0200)
+                        == android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE,
+                "manifest screenSize config change uses Java ActivityInfo bit");
+        boolean[] recreationRequested = { false };
+        android.app.ActivityThread.setLauncher(new android.app.ActivityThread.Launcher() {
+            @Override public void startActivity(Intent intent) {}
+            @Override public void finishActivity(android.app.Activity activity) {}
+            @Override public void recreateActivity(android.app.Activity activity) {
+                recreationRequested[0] = true;
+            }
+        });
+        new android.app.Activity().recreate();
+        android.app.ActivityThread.setLauncher(null);
+        require(recreationRequested[0], "Activity.recreate reaches the process activity host");
+        boolean[] alarmFired = { false };
+        AlarmManager alarmManager = new AlarmManager();
+        alarmManager.setExact(AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + 30, "compat-alarm",
+                () -> alarmFired[0] = true, new Handler(Looper.getMainLooper()));
+        drainMainLooper();
+        require(!alarmFired[0], "future alarm is not delivered immediately");
+        Thread.sleep(40);
+        drainMainLooper();
+        require(alarmFired[0], "future alarm is delivered when due");
         RenderNode snapshotNode = new RenderNode("compat-snapshot");
         snapshotNode.setPosition(0, 0, 3, 2);
         Bitmap snapshot = ThreadedRenderer.createHardwareBitmap(snapshotNode, 3, 2);
@@ -96,5 +166,13 @@ public final class FrameworkCompatSmoke {
         require(icon.getBitmap() != null && !icon.getBitmap().isMutable(),
                 "mutable bitmap icon copy");
         System.out.println("framework compat smoke: PASS");
+    }
+
+    private static void drainMainLooper() {
+        Message message;
+        while ((message = Looper.myQueue().pollDueMessage$artzig()) != null) {
+            message.getTarget().dispatchMessage(message);
+            message.recycle();
+        }
     }
 }
