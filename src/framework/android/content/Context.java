@@ -26,6 +26,7 @@ public abstract class Context {
             LOCATION_SERVICE = "location", MEDIA_SESSION_SERVICE = "media_session",
             NOTIFICATION_SERVICE = "notification", POWER_SERVICE = "power",
             SEARCH_SERVICE = "search", SENSOR_SERVICE = "sensor", STORAGE_SERVICE = "storage",
+            STORAGE_STATS_SERVICE = "storagestats",
             TELEPHONY_SERVICE = "phone", UI_MODE_SERVICE = "uimode", USER_SERVICE = "user",
             VIBRATOR_SERVICE = "vibrator", WALLPAPER_SERVICE = "wallpaper",
             WIFI_SERVICE = "wifi", WINDOW_SERVICE = "window", ACCESSIBILITY_SERVICE = "accessibility",
@@ -186,6 +187,10 @@ public abstract class Context {
     public void enforceCallingOrSelfPermission(String permission, String message) {}
     public String getOpPackageName() { return getPackageName(); }
     public String getAttributionTag() { return null; }
+    public AttributionSource getAttributionSource() {
+        return new AttributionSource(android.os.Process.myUid(), getOpPackageName(),
+                getAttributionTag());
+    }
     public android.os.UserHandle getUser() { return android.os.UserHandle.SYSTEM; }
     public int getUserId() { return 0; }
     public Context createConfigurationContext(Configuration overrideConfiguration) { return this; }

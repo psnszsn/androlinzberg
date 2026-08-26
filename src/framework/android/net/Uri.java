@@ -9,8 +9,31 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     public abstract String getAuthority();
     public abstract String getLastPathSegment();
     public abstract String toString();
+    public Builder buildUpon() { return new Builder(this); }
     @Override public int compareTo(Uri other) { return toString().compareTo(other.toString()); }
-    public String getQueryParameter(String key) { return null; }
+    public java.util.List<String> getPathSegments() {
+        java.util.ArrayList<String> result = new java.util.ArrayList<>();
+        String rawPath = null;
+        try { rawPath = new java.net.URI(toString()).getRawPath(); } catch (Exception ignored) {}
+        if (rawPath == null || rawPath.isEmpty()) return result;
+        for (String segment : rawPath.split("/")) {
+            if (!segment.isEmpty()) result.add(decode(segment));
+        }
+        return result;
+    }
+    public String getQueryParameter(String key) {
+        String rawQuery = null;
+        try { rawQuery = new java.net.URI(toString()).getRawQuery(); } catch (Exception ignored) {}
+        if (rawQuery == null) return null;
+        for (String pair : rawQuery.split("&")) {
+            int equals = pair.indexOf('=');
+            String rawKey = equals >= 0 ? pair.substring(0, equals) : pair;
+            if (key.equals(decode(rawKey))) {
+                return decode(equals >= 0 ? pair.substring(equals + 1) : "");
+            }
+        }
+        return null;
+    }
     public String getHost() { java.net.URI u; try { u = new java.net.URI(toString()); } catch (Exception e) { return null; } return u.getHost(); }
     public void checkContentUriWithoutPermission(String location, int flags) {}
     public void checkFileUriExposed(String location) {}
@@ -41,6 +64,70 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         public Uri createFromParcel(Parcel in) { return parse(in.readString()); }
         public Uri[] newArray(int size) { return new Uri[size]; }
     };
+    public static final class Builder {
+        private String mScheme;
+        private String mAuthority;
+        private String mEncodedPath = "";
+        private String mEncodedQuery;
+        private String mEncodedFragment;
+        public Builder() {}
+        Builder(Uri base) {
+            try {
+                java.net.URI parsed = new java.net.URI(base.toString());
+                mScheme = parsed.getScheme();
+                mAuthority = parsed.getRawAuthority();
+                mEncodedPath = parsed.getRawPath();
+                mEncodedQuery = parsed.getRawQuery();
+                mEncodedFragment = parsed.getRawFragment();
+                if (mEncodedPath == null) mEncodedPath = "";
+            } catch (Exception ignored) {
+                mEncodedPath = base.toString();
+            }
+        }
+        public Builder scheme(String scheme) { mScheme = scheme; return this; }
+        public Builder authority(String authority) { mAuthority = authority; return this; }
+        public Builder encodedAuthority(String authority) { mAuthority = authority; return this; }
+        public Builder path(String path) {
+            mEncodedPath = path == null ? null : encode(path).replace("%2F", "/");
+            return this;
+        }
+        public Builder encodedPath(String path) { mEncodedPath = path; return this; }
+        public Builder appendPath(String segment) { return appendEncodedPath(encode(segment)); }
+        public Builder appendEncodedPath(String segment) {
+            if (segment == null) return this;
+            if (mEncodedPath == null || mEncodedPath.isEmpty()) mEncodedPath = "/";
+            else if (!mEncodedPath.endsWith("/")) mEncodedPath += "/";
+            while (segment.startsWith("/")) segment = segment.substring(1);
+            mEncodedPath += segment;
+            return this;
+        }
+        public Builder query(String query) {
+            mEncodedQuery = query == null ? null : encode(query);
+            return this;
+        }
+        public Builder encodedQuery(String query) { mEncodedQuery = query; return this; }
+        public Builder appendQueryParameter(String key, String value) {
+            String pair = encode(key) + "=" + encode(value);
+            mEncodedQuery = mEncodedQuery == null || mEncodedQuery.isEmpty()
+                    ? pair : mEncodedQuery + "&" + pair;
+            return this;
+        }
+        public Builder clearQuery() { mEncodedQuery = null; return this; }
+        public Builder fragment(String fragment) {
+            mEncodedFragment = fragment == null ? null : encode(fragment);
+            return this;
+        }
+        public Builder encodedFragment(String fragment) { mEncodedFragment = fragment; return this; }
+        public Uri build() {
+            StringBuilder out = new StringBuilder();
+            if (mScheme != null) out.append(mScheme).append(':');
+            if (mAuthority != null) out.append("//").append(mAuthority);
+            if (mEncodedPath != null) out.append(mEncodedPath);
+            if (mEncodedQuery != null) out.append('?').append(mEncodedQuery);
+            if (mEncodedFragment != null) out.append('#').append(mEncodedFragment);
+            return Uri.parse(out.toString());
+        }
+    }
     private static final class StringUri extends Uri {
         private final String mStr;
         StringUri(String s) { mStr = s; }

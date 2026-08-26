@@ -53,6 +53,13 @@ public class ContextImpl extends Context {
     private static final android.content.pm.PackageManager sPackageManager =
             new android.content.pm.PackageManager() {};
     @Override public android.content.pm.PackageManager getPackageManager() { return sPackageManager; }
+    @Override public android.content.pm.ApplicationInfo getApplicationInfo() {
+        try {
+            return sPackageManager.getApplicationInfo(mPackageName, 0);
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            return new android.content.pm.ApplicationInfo();
+        }
+    }
     private ClassLoader mClassLoader;
     public void setClassLoaderOverride(ClassLoader cl) { mClassLoader = cl; }
     @Override public ClassLoader getClassLoader() {
@@ -74,6 +81,7 @@ public class ContextImpl extends Context {
     private android.app.job.JobScheduler mJobScheduler;
     private android.hardware.input.InputManager mInputManager;
     private android.view.inputmethod.InputMethodManager mInputMethodManager;
+    private android.view.autofill.AutofillManager mAutofillManager;
     private Context mOuterContext;
     /** Real Android: ContextImpl.setOuterContext — the Activity/Application facade. */
     public void setOuterContext(Context outer) { mOuterContext = outer; mInflater = null; }
@@ -98,6 +106,8 @@ public class ContextImpl extends Context {
                 return new android.app.AlarmManager();
             case CONNECTIVITY_SERVICE:
                 return new android.net.ConnectivityManager();
+            case TELEPHONY_SERVICE:
+                return new android.telephony.TelephonyManager();
             case INPUT_METHOD_SERVICE:
                 if (mInputMethodManager == null) {
                     mInputMethodManager = android.view.inputmethod.InputMethodManager
@@ -106,6 +116,12 @@ public class ContextImpl extends Context {
                 return mInputMethodManager;
             case POWER_SERVICE:
                 return new android.os.PowerManager();
+            case USER_SERVICE:
+                return new android.os.UserManager();
+            case STORAGE_SERVICE:
+                return new android.os.storage.StorageManager();
+            case STORAGE_STATS_SERVICE:
+                return new android.app.usage.StorageStatsManager();
             case UI_MODE_SERVICE:
                 return new android.app.UiModeManager();
             case BATTERY_SERVICE:
@@ -126,6 +142,12 @@ public class ContextImpl extends Context {
                 return new android.os.Vibrator();
             case ACCESSIBILITY_SERVICE:
                 return android.view.accessibility.AccessibilityManager.getInstance(this);
+            case AUTOFILL_MANAGER_SERVICE:
+                if (mAutofillManager == null) {
+                    mAutofillManager = new android.view.autofill.AutofillManager(
+                            getOuterContext(), null);
+                }
+                return mAutofillManager;
             default:
                 return null;
         }
@@ -144,12 +166,17 @@ public class ContextImpl extends Context {
         if (serviceClass == android.app.AlarmManager.class) return ALARM_SERVICE;
         if (serviceClass == android.media.AudioManager.class) return AUDIO_SERVICE;
         if (serviceClass == android.net.ConnectivityManager.class) return CONNECTIVITY_SERVICE;
+        if (serviceClass == android.telephony.TelephonyManager.class) return TELEPHONY_SERVICE;
         if (serviceClass == android.os.PowerManager.class) return POWER_SERVICE;
+        if (serviceClass == android.os.UserManager.class) return USER_SERVICE;
+        if (serviceClass == android.os.storage.StorageManager.class) return STORAGE_SERVICE;
+        if (serviceClass == android.app.usage.StorageStatsManager.class) return STORAGE_STATS_SERVICE;
         if (serviceClass == android.os.Vibrator.class) return VIBRATOR_SERVICE;
         if (serviceClass == android.view.accessibility.AccessibilityManager.class) return ACCESSIBILITY_SERVICE;
         if (serviceClass == android.content.ClipboardManager.class) return CLIPBOARD_SERVICE;
         if (serviceClass == android.hardware.input.InputManager.class) return INPUT_SERVICE;
         if (serviceClass == android.view.inputmethod.InputMethodManager.class) return INPUT_METHOD_SERVICE;
+        if (serviceClass == android.view.autofill.AutofillManager.class) return AUTOFILL_MANAGER_SERVICE;
         if (serviceClass == android.hardware.display.DisplayManager.class) return DISPLAY_SERVICE;
         return null;
     }

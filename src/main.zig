@@ -377,13 +377,19 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         hov[1] = try std.fmt.parseFloat(f32, it.next() orelse "0");
         hover_frame = try std.fmt.parseInt(u32, it.next() orelse "3", 10);
     }
-    // AZK_TYPE="text@frame": type text (unicode) at frame; "\n" = enter (testing)
-    var type_text: []const u8 = "";
-    var type_frame: u32 = 0;
+    // AZK_TYPE="text@frame[;...]": type text (unicode) at frames; "\n" = enter (testing)
+    const TypeEvent = struct { text: []const u8, frame: u32 };
+    var type_events: std.ArrayList(TypeEvent) = .empty;
+    defer type_events.deinit(gpa);
     if (init.minimal.environ.getPosix("AZK_TYPE")) |spec| {
-        if (std.mem.lastIndexOfScalar(u8, spec, '@')) |at| {
-            type_text = spec[0..at];
-            type_frame = try std.fmt.parseInt(u32, spec[at + 1 ..], 10);
+        var groups = std.mem.tokenizeScalar(u8, spec, ';');
+        while (groups.next()) |group| {
+            if (std.mem.lastIndexOfScalar(u8, group, '@')) |at| {
+                try type_events.append(gpa, .{
+                    .text = group[0..at],
+                    .frame = try std.fmt.parseInt(u32, group[at + 1 ..], 10),
+                });
+            }
         }
     }
     // AZK_BACK="frame[;frame...]": simulate mouse back button presses (testing)
@@ -517,9 +523,10 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             }
             hover_frame = 0;
         }
-        if (type_frame != 0 and frame_count == type_frame) {
+        for (type_events.items) |*type_event| {
+        if (type_event.frame != 0 and frame_count == type_event.frame) {
             if (key) |mid| {
-                var it = (std.unicode.Utf8View.init(type_text) catch std.unicode.Utf8View.initUnchecked("")).iterator();
+                var it = (std.unicode.Utf8View.init(type_event.text) catch std.unicode.Utf8View.initUnchecked("")).iterator();
                 var pending_escape = false;
                 while (it.nextCodepoint()) |cp| {
                     if (!pending_escape and cp == '\\') {
@@ -536,7 +543,8 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                     pending_escape = false;
                 }
             }
-            type_frame = 0;
+            type_event.frame = 0;
+        }
         }
         for (presses.items) |*press| {
             if (press.down != 0 and frame_count == press.down) {

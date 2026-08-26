@@ -14,10 +14,13 @@ public final class ProviderInfo extends ComponentInfo implements Parcelable {
     public boolean isSyncable;
     public ProviderInfo() {}
     public ProviderInfo(ProviderInfo orig) {
+        super(orig);
         authority = orig.authority;
         readPermission = orig.readPermission;
         writePermission = orig.writePermission;
         grantUriPermissions = orig.grantUriPermissions;
+        forceUriPermissions = orig.forceUriPermissions;
+        pathPermissions = orig.pathPermissions;
         multiprocess = orig.multiprocess;
         initOrder = orig.initOrder;
         isSyncable = orig.isSyncable;

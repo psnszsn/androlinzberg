@@ -1,6 +1,27 @@
 /* artzig shim: android.content.pm.PackageManager — placeholder type. */
 package android.content.pm;
 public abstract class PackageManager {
+    private static String sHostedPackageName;
+    private static int sHostedVersionCode;
+    private static String sHostedVersionName;
+    private static String sHostedSourceDir;
+    private static String sHostedDataDir;
+    private static java.util.List<ProviderInfo> sHostedProviders = new java.util.ArrayList<>();
+    public static void configureHostedPackage(String packageName, int versionCode,
+            String versionName, String sourceDir, String dataDir) {
+        sHostedPackageName = packageName;
+        sHostedVersionCode = versionCode;
+        sHostedVersionName = versionName;
+        sHostedSourceDir = sourceDir;
+        sHostedDataDir = dataDir;
+    }
+    public static void configureHostedProviders(java.util.List<ProviderInfo> providers) {
+        java.util.ArrayList<ProviderInfo> copy = new java.util.ArrayList<>();
+        if (providers != null) {
+            for (ProviderInfo provider : providers) copy.add(new ProviderInfo(provider));
+        }
+        sHostedProviders = copy;
+    }
     public static final int MATCH_UNINSTALLED_PACKAGES = 0x00002000;
     public static final int GET_SHARED_LIBRARY_FILES = 0x00000400;
     public static final int MATCH_DEFAULT_ONLY = 0x00010000;
@@ -22,6 +43,12 @@ public abstract class PackageManager {
         private final long mValue;
         private ResolveInfoFlags(long value) { mValue = value; }
         public static ResolveInfoFlags of(long value) { return new ResolveInfoFlags(value); }
+        public long getValue() { return mValue; }
+    }
+    public static final class PackageInfoFlags {
+        private final long mValue;
+        private PackageInfoFlags(long value) { mValue = value; }
+        public static PackageInfoFlags of(long value) { return new PackageInfoFlags(value); }
         public long getValue() { return mValue; }
     }
     public java.util.List<ResolveInfo> queryIntentActivities(android.content.Intent intent, ResolveInfoFlags flags) {
@@ -80,16 +107,31 @@ public abstract class PackageManager {
     }
     public ProviderInfo getProviderInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {
+        for (ProviderInfo provider : sHostedProviders) {
+            if (component.getPackageName().equals(provider.packageName)
+                    && component.getClassName().equals(provider.name)) {
+                return new ProviderInfo(provider);
+            }
+        }
         throw new NameNotFoundException(component.flattenToString());
     }
     public PackageInfo getPackageInfo(String packageName, int flags) throws NameNotFoundException {
         PackageInfo pi = new PackageInfo();
         pi.packageName = packageName;
-        pi.versionName = "1.0";
+        if (packageName != null && packageName.equals(sHostedPackageName)) {
+            pi.versionCode = sHostedVersionCode;
+            pi.versionName = sHostedVersionName;
+        } else {
+            pi.versionName = "1.0";
+        }
         pi.signingInfo = new SigningInfo();
         pi.signatures = new Signature[] { new Signature(new byte[] { 4, 2 }) };
         pi.applicationInfo = new ApplicationInfo();
         return pi;
+    }
+    public PackageInfo getPackageInfo(String packageName, PackageInfoFlags flags)
+            throws NameNotFoundException {
+        return getPackageInfo(packageName, (int) flags.getValue());
     }
     public CharSequence getApplicationLabel(ApplicationInfo info) {
         return info.packageName != null ? info.packageName : "app";
@@ -107,10 +149,22 @@ public abstract class PackageManager {
     public java.util.List<ResolveInfo> queryBroadcastReceivers(android.content.Intent intent, int flags) {
         return new java.util.ArrayList<>();
     }
-    public java.util.List<ResolveInfo> queryContentProviders(String processName, int uid, int flags) {
-        return new java.util.ArrayList<>();
+    public java.util.List<ProviderInfo> queryContentProviders(String processName, int uid, int flags) {
+        java.util.ArrayList<ProviderInfo> result = new java.util.ArrayList<>();
+        for (ProviderInfo provider : sHostedProviders) {
+            if (processName == null || processName.equals(provider.processName)) {
+                result.add(new ProviderInfo(provider));
+            }
+        }
+        return result;
     }
-    public ProviderInfo resolveContentProvider(String authority, int flags) { return null; }
+    public ProviderInfo resolveContentProvider(String authority, int flags) {
+        if (authority == null) return null;
+        for (ProviderInfo provider : sHostedProviders) {
+            if (authority.equals(provider.authority)) return new ProviderInfo(provider);
+        }
+        return null;
+    }
     public boolean hasSigningCertificate(String packageName, byte[] certificate, int type) { return false; }
     public boolean hasSigningCertificate(int uid, byte[] certificate, int type) { return false; }
     public String[] getSystemSharedLibraryNames() { return new String[0]; }
@@ -126,6 +180,11 @@ public abstract class PackageManager {
         info.name = packageName;
         info.enabled = true;
         info.metaData = new android.os.Bundle();
+        if (packageName != null && packageName.equals(sHostedPackageName)) {
+            info.sourceDir = sHostedSourceDir;
+            info.publicSourceDir = sHostedSourceDir;
+            info.dataDir = sHostedDataDir;
+        }
         return info;
     }
     public android.content.res.Resources getResourcesForApplication(ApplicationInfo app)

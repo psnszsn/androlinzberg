@@ -99,6 +99,7 @@ public class Intent implements Parcelable, Cloneable {
     public Intent putExtra(String name, String value) { extras().putString(name, value); return this; }
     public Intent putExtra(String name, int value) { extras().putInt(name, value); return this; }
     public Intent putExtra(String name, boolean value) { extras().putBoolean(name, value); return this; }
+    public Intent putExtras(Bundle src) { extras().putAll(src); return this; }
     public Bundle getExtras() { return mExtras; }
     public boolean hasExtra(String name) { return mExtras != null && mExtras.containsKey(name); }
     public String getStringExtra(String name) { return mExtras != null ? mExtras.getString(name) : null; }
@@ -127,6 +128,9 @@ public class Intent implements Parcelable, Cloneable {
     public int getIntExtra(String name, int def) { return mExtras != null ? mExtras.getInt(name, def) : def; }
     public <T extends android.os.Parcelable> T getParcelableExtra(String name) {
         return mExtras != null ? mExtras.<T>getParcelable(name) : null;
+    }
+    public <T> T getParcelableExtra(String name, Class<T> clazz) {
+        return mExtras != null ? mExtras.getParcelable(name, clazz) : null;
     }
     public Intent setComponent(ComponentName component) { mComponent = component; return this; }
     public ComponentName getComponent() { return mComponent; }

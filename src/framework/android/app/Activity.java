@@ -48,6 +48,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public boolean isInMultiWindowMode() { return false; }
     public boolean isInPictureInPictureMode() { return false; }
     public boolean isTaskRoot() { return true; }
+    public void applyOverrideConfiguration(Configuration overrideConfiguration) {}
     public void overridePendingTransition(int enterAnim, int exitAnim) {}
     public void setRequestedOrientation(int requestedOrientation) {
         mRequestedOrientation = requestedOrientation;
@@ -183,8 +184,26 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void setContentView(int layoutResID) { mWindow.setContentView(layoutResID); }
     public void setContentView(View view, ViewGroup.LayoutParams params) { mWindow.setContentView(view, params); }
     public <T extends View> T findViewById(int id) { return mWindow.findViewById(id); }
+    public final <T extends View> T requireViewById(int id) {
+        T view = findViewById(id);
+        if (view == null) throw new IllegalArgumentException("ID does not reference a View");
+        return view;
+    }
     private CharSequence mTitle = "";
     public CharSequence getTitle() { return mTitle; }
+    public String getLocalClassName() {
+        String className = getClass().getName();
+        String packageName = getPackageName();
+        return className.startsWith(packageName + ".")
+                ? className.substring(packageName.length() + 1) : className;
+    }
+    public android.window.SplashScreen getSplashScreen() {
+        return new android.window.SplashScreen() {
+            @Override public void setSplashScreenTheme(int themeId) {}
+            @Override public void setOnExitAnimationListener(
+                    android.window.SplashScreen.OnExitAnimationListener listener) {}
+        };
+    }
     public int getTitleColor() { return 0; }
     public void setTitleColor(int textColor) {}
     public void setTitle(CharSequence title) { mTitle = title; if (mWindow != null) mWindow.setTitle(title); }

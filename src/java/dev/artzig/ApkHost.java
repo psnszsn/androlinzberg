@@ -32,6 +32,8 @@ public final class ApkHost {
     private static android.view.ViewRootImpl sRoot;
     private static long sDownTime;
     private static PathClassLoader sClassLoader;
+    private static final java.util.ArrayList<android.content.ContentProvider> sProviders =
+            new java.util.ArrayList<>();
     private static int sWidth, sHeight, sScale120;
     private static int sPendingNewPipeOrientation = -1;
     private static int sNewPipeRelayoutOrientation = -1;
@@ -301,21 +303,40 @@ public final class ApkHost {
         AssetManager mam = new AssetManager.Builder()
                 .addApkAssets(ApkAssets.loadFromPath(apkPath)).build();
         String pkg = null, appClass = null, mainActivity = null, theme = null;
+        int versionCode = 0;
+        String versionName = null;
+        java.util.ArrayList<android.content.pm.ProviderInfo> providers = new java.util.ArrayList<>();
+        android.content.pm.ProviderInfo currentProvider = null;
         XmlResourceParser p = mam.openXmlResourceParser("AndroidManifest.xml");
         String currentActivity = null;
+        String currentActivityTag = null;
+        boolean currentActivityEnabled = true;
         boolean isMain = false, isLauncher = false;
         int appThemeRes = 0;
         for (int ev = p.next(); ev != XmlResourceParser.END_DOCUMENT; ev = p.next()) {
             if (ev != XmlResourceParser.START_TAG) {
-                if (ev == XmlResourceParser.END_TAG && p.getName().equals("activity")) {
-                    if (isMain && isLauncher && mainActivity == null) mainActivity = currentActivity;
-                    currentActivity = null; isMain = false; isLauncher = false;
+                if (ev == XmlResourceParser.END_TAG && currentActivityTag != null
+                        && p.getName().equals(currentActivityTag)) {
+                    if (currentActivityEnabled && isMain && isLauncher && mainActivity == null) {
+                        mainActivity = currentActivity;
+                    }
+                    currentActivity = null;
+                    currentActivityTag = null;
+                    currentActivityEnabled = true;
+                    isMain = false;
+                    isLauncher = false;
+                } else if (ev == XmlResourceParser.END_TAG && p.getName().equals("provider")) {
+                    if (currentProvider != null) providers.add(currentProvider);
+                    currentProvider = null;
                 }
                 continue;
             }
             switch (p.getName()) {
                 case "manifest":
                     pkg = p.getAttributeValue(null, "package");
+                    versionCode = p.getAttributeIntValue(
+                            "http://schemas.android.com/apk/res/android", "versionCode", 0);
+                    versionName = attr(p, "versionName");
                     break;
                 case "application":
                     appClass = attr(p, "name");
@@ -324,6 +345,53 @@ public final class ApkHost {
                     break;
                 case "activity":
                     currentActivity = attr(p, "name");
+                    currentActivityTag = "activity";
+                    currentActivityEnabled = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "enabled", true);
+                    break;
+                case "activity-alias":
+                    currentActivity = attr(p, "targetActivity");
+                    currentActivityTag = "activity-alias";
+                    currentActivityEnabled = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "enabled", true);
+                    break;
+                case "provider":
+                    currentProvider = new android.content.pm.ProviderInfo();
+                    currentProvider.name = attr(p, "name");
+                    currentProvider.authority = attr(p, "authorities");
+                    currentProvider.processName = attr(p, "process");
+                    currentProvider.readPermission = attr(p, "readPermission");
+                    currentProvider.writePermission = attr(p, "writePermission");
+                    currentProvider.enabled = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "enabled", true);
+                    currentProvider.exported = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "exported", false);
+                    currentProvider.grantUriPermissions = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "grantUriPermissions", false);
+                    currentProvider.multiprocess = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "multiprocess", false);
+                    currentProvider.directBootAware = p.getAttributeBooleanValue(
+                            "http://schemas.android.com/apk/res/android", "directBootAware", false);
+                    currentProvider.initOrder = p.getAttributeIntValue(
+                            "http://schemas.android.com/apk/res/android", "initOrder", 0);
+                    currentProvider.metaData = new android.os.Bundle();
+                    break;
+                case "meta-data":
+                    if (currentProvider != null) {
+                        String name = attr(p, "name");
+                        String value = attr(p, "value");
+                        int resource = p.getAttributeResourceValue(
+                                "http://schemas.android.com/apk/res/android", "resource", 0);
+                        if (name != null && resource != 0) {
+                            currentProvider.metaData.putInt(name, resource);
+                        } else if (name != null && value != null) {
+                            if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+                                currentProvider.metaData.putBoolean(name, Boolean.parseBoolean(value));
+                            } else {
+                                currentProvider.metaData.putString(name, value);
+                            }
+                        }
+                    }
                     break;
                 case "action":
                     if ("android.intent.action.MAIN".equals(attr(p, "name"))) isMain = true;
@@ -338,6 +406,22 @@ public final class ApkHost {
         Log.i(TAG, "pkg=" + pkg + " app=" + appClass + " main=" + mainActivity + " theme=0x"
                 + Integer.toHexString(appThemeRes));
         if (pkg == null) throw new IllegalStateException("no package in manifest");
+        android.content.pm.PackageManager.configureHostedPackage(
+                pkg, versionCode, versionName, apkPath,
+                android.os.Environment.getDataDirectory().getAbsolutePath());
+        for (java.util.Iterator<android.content.pm.ProviderInfo> it = providers.iterator();
+                it.hasNext();) {
+            android.content.pm.ProviderInfo provider = it.next();
+            if (provider.name != null && provider.name.startsWith(".")) provider.name = pkg + provider.name;
+            provider.packageName = pkg;
+            if (provider.processName == null || provider.processName.isEmpty()) provider.processName = pkg;
+            if (provider.processName.startsWith(":")) provider.processName = pkg + provider.processName;
+            provider.applicationInfo = new android.content.pm.ApplicationInfo();
+            provider.applicationInfo.packageName = pkg;
+            if (!provider.enabled || !pkg.equals(provider.processName)) it.remove();
+        }
+        providers.sort((left, right) -> Integer.compare(right.initOrder, left.initOrder));
+        android.content.pm.PackageManager.configureHostedProviders(providers);
         if (mainActivity != null && mainActivity.startsWith(".")) mainActivity = pkg + mainActivity;
         if (appClass != null && appClass.startsWith(".")) appClass = pkg + appClass;
 
@@ -349,9 +433,22 @@ public final class ApkHost {
         // input service: reflective default-answering IInputManager so
         // InputManagerGlobal (VelocityTracker etc.) works without a real service.
         {
+            android.view.InputDevice virtualKeyboard = new android.view.InputDevice.Builder()
+                    .setId(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD)
+                    .setName("artzig virtual keyboard")
+                    .setDescriptor("artzig-virtual-keyboard")
+                    .setSources(android.view.InputDevice.SOURCE_KEYBOARD)
+                    .setKeyboardType(android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC)
+                    .setKeyCharacterMap(android.view.KeyCharacterMap.obtainEmptyMap(
+                            android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))
+                    .build();
             Class<?> iim = android.hardware.input.IInputManager.class;
             Object im = java.lang.reflect.Proxy.newProxyInstance(iim.getClassLoader(),
                     new Class<?>[] { iim }, (proxy, method, args) -> {
+                if (method.getName().equals("getInputDevice")) return virtualKeyboard;
+                if (method.getName().equals("getInputDeviceIds")) {
+                    return new int[] { android.view.KeyCharacterMap.VIRTUAL_KEYBOARD };
+                }
                 Class<?> rt = method.getReturnType();
                 if (rt == boolean.class) return false;
                 if (rt == int.class || rt == byte.class || rt == short.class) return 0;
@@ -374,6 +471,12 @@ public final class ApkHost {
         sContext = makeContext(frameworkRes, apkPath, displayWidth, displayHeight,
                 scale120, appThemeRes, pkg);
         sContext.setClassLoaderOverride(cl);
+        if (Thread.getDefaultUncaughtExceptionHandler() == null) {
+            Thread.setDefaultUncaughtExceptionHandler((thread, throwable) ->
+                    Log.e(TAG, "uncaught exception on " + thread.getName(), throwable));
+        }
+        installServiceManager();
+        installActivityLauncher();
 
         // A hosted process has no keystore daemon. Install the compatible,
         // persistent provider before Application.onCreate initializes its
@@ -391,22 +494,33 @@ public final class ApkHost {
         }
         android.app.ActivityThread.setApplication(app);
         app.attach(sContext);
+        sProviders.clear();
+        for (android.content.pm.ProviderInfo info : providers) {
+            Log.i(TAG, "installing provider " + info.name + " authority=" + info.authority);
+            android.content.ContentProvider provider = (android.content.ContentProvider)
+                    cl.loadClass(info.name).getDeclaredConstructor().newInstance();
+            provider.attachInfo(sContext, info);
+            sProviders.add(provider);
+        }
         Log.i(TAG, "Application.onCreate: " + app.getClass().getName());
         app.onCreate();
 
         // --- MainActivity
         Log.i(TAG, "starting " + mainActivity);
-        sActivity = (Activity) cl.loadClass(mainActivity).getDeclaredConstructor().newInstance();
-        sActivity.attach(sContext);
-        sActivity.performCreate(null);
-        sActivity.performStart();
-        sActivity.performResume();
-
-        sRoot = new android.view.ViewRootImpl(sContext);
-        sRoot.setView(sActivity.getWindow().getDecorView(), width, height);
+        Activity initialActivity = (Activity) cl.loadClass(mainActivity)
+                .getDeclaredConstructor().newInstance();
+        sActivity = initialActivity;
+        initialActivity.attach(sContext);
+        initialActivity.performCreate(null);
+        if (sActivity == initialActivity) {
+            initialActivity.performStart();
+            initialActivity.performResume();
+            show(initialActivity);
+        }
         Log.i(TAG, "activity up");
+    }
 
-        installServiceManager();
+    private static void installActivityLauncher() {
         // in-process activity stack for Context.startActivity / Activity.finish
         android.app.ActivityThread.setLauncher(new android.app.ActivityThread.Launcher() {
             @Override public void startActivity(android.content.Intent intent) {
@@ -579,6 +693,7 @@ public final class ApkHost {
         sActivity = null;
         sContext = null;
         sClassLoader = null;
+        sProviders.clear();
         sGestureWin = null;
         sGestureWinValid = false;
         Log.i(TAG, "shutdown complete");

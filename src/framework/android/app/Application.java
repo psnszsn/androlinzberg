@@ -1,13 +1,10 @@
 /* artzig shim: android.app.Application — ContextWrapper-based (full lifecycle in M4). */
 package android.app;
 import android.content.Context;
-import android.content.pm.ApplicationInfo;
 import android.content.res.Configuration;
 public class Application extends android.content.ContextWrapper {
-    private final ApplicationInfo mInfo = new ApplicationInfo();
     public Application() { super(null); }
     public void attach(Context base) { attachBaseContext(base); }
-    @Override public ApplicationInfo getApplicationInfo() { return mInfo; }
     public void onCreate() {}
     public void onTerminate() {}
     public void onConfigurationChanged(Configuration newConfig) {}
