@@ -2,6 +2,8 @@
 // mirroring libs/hwui/apex/jni_runtime.cpp (layoutlib's entry) minus the classes
 // we don't ship yet (Movie and PDF).
 #include <GraphicsJNI.h>
+#include <Bitmap.h>
+#include <jni/Bitmap.h>
 #include <SkGraphics.h>
 #include <jni.h>
 #include <Properties.h>
@@ -86,6 +88,33 @@ extern int register_android_graphics_drawable_AnimatedImageDrawable(JNIEnv*);
 extern int register_android_graphics_ImageDecoder(JNIEnv*);
 extern "C" int azk_register_hardware_buffer(JNIEnv*);
 
+static jint azk_Bitmap_nativeConfig(JNIEnv*, jclass, jlong bitmap_handle) {
+    android::Bitmap& bitmap = android::bitmap::toBitmap(bitmap_handle);
+    if (bitmap.isHardware()) {
+        return GraphicsJNI::kHardware_LegacyBitmapConfig;
+    }
+
+    // Skia's native N32 color type aliases one of RGBA_8888/BGRA_8888.
+    // Android's mapper handles that alias, but host-created bitmaps can use
+    // the other byte order. Both are Bitmap.Config.ARGB_8888 at the Java API.
+    const SkColorType color_type = bitmap.info().colorType();
+    if (color_type == kRGBA_8888_SkColorType || color_type == kBGRA_8888_SkColorType) {
+        return GraphicsJNI::kARGB_8888_LegacyBitmapConfig;
+    }
+    return GraphicsJNI::colorTypeToLegacyBitmapConfig(color_type);
+}
+
+static int azk_register_android_graphics_Bitmap(JNIEnv* env) {
+    if (register_android_graphics_Bitmap(env) < 0) return -1;
+
+    jclass bitmap_class = env->FindClass("android/graphics/Bitmap");
+    if (bitmap_class == nullptr) return -1;
+    const JNINativeMethod methods[] = {
+            {"nativeConfig", "(J)I", reinterpret_cast<void*>(azk_Bitmap_nativeConfig)},
+    };
+    return env->RegisterNatives(bitmap_class, methods, 1);
+}
+
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
 // ApkAssets callbacks). The VM is stored at registration time.
 #include <android_runtime/AndroidRuntime.h>
@@ -128,7 +157,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_graphics_Color),
             E(android::register_android_graphics_ColorSpace),
             E(register_android_graphics_Graphics),
-            E(register_android_graphics_Bitmap),
+            E(azk_register_android_graphics_Bitmap),
             E(register_android_graphics_BitmapFactory),
             E(register_android_graphics_BitmapRegionDecoder),
             E(register_android_graphics_RuntimeXfermode),

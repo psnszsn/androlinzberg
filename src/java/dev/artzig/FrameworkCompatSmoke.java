@@ -10,6 +10,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.RenderNode;
+import android.graphics.drawable.Icon;
 import android.os.Bundle;
 import android.view.ThreadedRenderer;
 import java.util.ArrayList;
@@ -88,6 +89,12 @@ public final class FrameworkCompatSmoke {
         Bitmap snapshot = ThreadedRenderer.createHardwareBitmap(snapshotNode, 3, 2);
         require(snapshot != null && snapshot.getWidth() == 3 && snapshot.getHeight() == 2,
                 "host RenderNode bitmap fallback");
+        Bitmap mutableIconBitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        require(mutableIconBitmap.getConfig() == Bitmap.Config.ARGB_8888,
+                "host 8888 bitmap config");
+        Icon icon = Icon.createWithBitmap(mutableIconBitmap);
+        require(icon.getBitmap() != null && !icon.getBitmap().isMutable(),
+                "mutable bitmap icon copy");
         System.out.println("framework compat smoke: PASS");
     }
 }
