@@ -11,6 +11,7 @@ public class ApplicationInfo extends PackageItemInfo {
     public boolean enabled = true;
     public int minSdkVersion = 23;
     public int flags;
+    public String processName;
     public String sourceDir, dataDir, nativeLibraryDir, publicSourceDir;
     public String[] splitSourceDirs, splitPublicSourceDirs, resourceDirs, overlayPaths, sharedLibraryFiles;
     public String[] splitNames;

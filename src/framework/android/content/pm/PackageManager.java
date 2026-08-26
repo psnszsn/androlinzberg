@@ -7,6 +7,8 @@ public abstract class PackageManager {
     private static String sHostedSourceDir;
     private static String sHostedDataDir;
     private static String sHostedLauncherActivity;
+    private static java.util.Map<String, ActivityInfo> sHostedActivities =
+            new java.util.HashMap<>();
     private static java.util.List<ProviderInfo> sHostedProviders = new java.util.ArrayList<>();
     private static java.util.List<ServiceInfo> sHostedServices = new java.util.ArrayList<>();
     private static java.util.Map<String, java.util.Set<String>> sHostedServiceActions =
@@ -21,6 +23,20 @@ public abstract class PackageManager {
     }
     public static void configureHostedLauncher(String activityName) {
         sHostedLauncherActivity = activityName;
+    }
+    public static void configureHostedPackage(HostedPackage hostedPackage,
+            String sourceDir, String dataDir) {
+        configureHostedPackage(hostedPackage.getPackageName(), hostedPackage.getVersionCode(),
+                hostedPackage.getVersionName(), sourceDir, dataDir);
+        configureHostedLauncher(hostedPackage.getLauncherActivityName());
+        configureHostedProviders(hostedPackage.getProviders());
+        configureHostedServices(hostedPackage.getServices(), hostedPackage.getServiceActions());
+        java.util.HashMap<String, ActivityInfo> activityCopy = new java.util.HashMap<>();
+        for (java.util.Map.Entry<String, ActivityInfo> entry
+                : hostedPackage.getActivities().entrySet()) {
+            activityCopy.put(entry.getKey(), new ActivityInfo(entry.getValue()));
+        }
+        sHostedActivities = activityCopy;
     }
     public static void configureHostedProviders(java.util.List<ProviderInfo> providers) {
         java.util.ArrayList<ProviderInfo> copy = new java.util.ArrayList<>();
@@ -168,11 +184,12 @@ public abstract class PackageManager {
     }
     public ActivityInfo getActivityInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {
-        ActivityInfo ai = new ActivityInfo();
-        ai.packageName = component.getPackageName();
-        ai.name = component.getClassName();
-        ai.applicationInfo = new ApplicationInfo();
-        return ai;
+        ActivityInfo activity = sHostedActivities.get(component.getClassName());
+        if (activity != null && component.getPackageName().equals(activity.packageName)
+                && (activity.enabled || (flags & MATCH_DISABLED_COMPONENTS) != 0)) {
+            return new ActivityInfo(activity);
+        }
+        throw new NameNotFoundException(component.flattenToString());
     }
     public ProviderInfo getProviderInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {
@@ -196,6 +213,8 @@ public abstract class PackageManager {
         pi.signingInfo = new SigningInfo();
         pi.signatures = new Signature[] { new Signature(new byte[] { 4, 2 }) };
         pi.applicationInfo = new ApplicationInfo();
+        pi.applicationInfo.packageName = packageName;
+        pi.applicationInfo.processName = packageName;
         return pi;
     }
     public PackageInfo getPackageInfo(String packageName, PackageInfoFlags flags)
@@ -247,6 +266,7 @@ public abstract class PackageManager {
         ApplicationInfo info = new ApplicationInfo();
         info.packageName = packageName;
         info.name = packageName;
+        info.processName = packageName;
         info.enabled = true;
         info.metaData = new android.os.Bundle();
         if (packageName != null && packageName.equals(sHostedPackageName)) {

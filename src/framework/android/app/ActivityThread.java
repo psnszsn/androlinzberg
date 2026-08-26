@@ -3,47 +3,79 @@ package android.app;
 public final class ActivityThread {
     private static Application sApplication;
     private static ActivityThread sThread;
-    /** artzig: in-process activity launching (ApkHost installs the launcher). */
-    public interface Launcher {
-        void startActivity(android.content.Intent intent);
-        void finishActivity(Activity activity);
-        void recreateActivity(Activity activity);
+    private static String sPackageName;
+    private static String sProcessName;
+    /** Host-only presentation seam; lifecycle policy stays in HostedActivityRuntime. */
+    public interface HostAdapter {
+        android.content.Context getActivityContext();
+        java.lang.ClassLoader getActivityClassLoader();
+        void showActivity(Activity activity);
+        void clearActivityWindows();
+        void resizeActivityRoot(Activity activity, int width, int height);
     }
-    private static Launcher sLauncher;
-    public static void setLauncher(Launcher launcher) { sLauncher = launcher; }
+    public static void configureActivityHost(HostAdapter adapter,
+            java.util.Map<String, android.content.pm.ActivityInfo> activities) {
+        HostedActivityRuntime.configure(adapter, activities);
+    }
+    public static Activity launchMainActivity(String activityClassName) {
+        return HostedActivityRuntime.launchMain(activityClassName);
+    }
+    public static Activity currentActivity() { return HostedActivityRuntime.currentActivity(); }
+    public static int getManifestOrientation(String activityClassName) {
+        return HostedActivityRuntime.manifestOrientation(activityClassName);
+    }
+    public static boolean applyConfigurationInProcess(android.content.res.Configuration config,
+            int changes, int width, int height) {
+        return HostedActivityRuntime.applyConfiguration(config, changes, width, height);
+    }
+    public static void shutdownActivitiesInProcess() { HostedActivityRuntime.shutdown(); }
+    public static Application bindApplicationInProcess(android.content.Context context,
+            java.lang.ClassLoader classLoader, String applicationClassName,
+            java.util.List<android.content.pm.ProviderInfo> providers) {
+        // AOSP receives both names in AppBindData before installing providers.
+        sPackageName = context.getPackageName();
+        sProcessName = sPackageName;
+        return HostedApplicationRuntime.bind(
+                context, classLoader, applicationClassName, providers);
+    }
+    public static void shutdownApplicationInProcess() {
+        HostedApplicationRuntime.shutdown();
+        sPackageName = null;
+        sProcessName = null;
+    }
     public static void startActivityInProcess(android.content.Intent intent) {
-        if (sLauncher != null) sLauncher.startActivity(intent);
+        if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.startActivity(intent);
         else android.util.Log.w("ActivityThread", "startActivity dropped (no launcher): " + intent);
     }
     public static void finishActivityInProcess(Activity activity) {
-        if (sLauncher != null) sLauncher.finishActivity(activity);
+        if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.finishActivity(activity);
     }
     public static void recreateActivityInProcess(Activity activity) {
-        if (sLauncher != null) sLauncher.recreateActivity(activity);
+        if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.recreateActivity(activity);
     }
-    /** artzig: in-process services (ApkHost installs the manager). */
-    public interface ServiceManagerHook {
-        android.content.ComponentName startService(android.content.Intent intent);
-        boolean stopService(android.content.Intent intent);
-        boolean bindService(android.content.Intent intent, android.content.ServiceConnection conn, int flags);
-        void unbindService(android.content.ServiceConnection conn);
+    public static void configureServiceHost(android.content.Context context,
+            java.lang.ClassLoader classLoader) {
+        HostedServiceRuntime.configure(context, classLoader);
     }
-    private static ServiceManagerHook sServices;
-    public static void setServiceManager(ServiceManagerHook hook) { sServices = hook; }
+    public static void shutdownServicesInProcess() { HostedServiceRuntime.shutdown(); }
     public static android.content.ComponentName startServiceInProcess(android.content.Intent intent) {
-        if (sServices != null) return sServices.startService(intent);
+        if (HostedServiceRuntime.isConfigured()) return HostedServiceRuntime.startService(intent);
         android.util.Log.w("ActivityThread", "startService dropped (no manager): " + intent);
         return null;
     }
     public static boolean stopServiceInProcess(android.content.Intent intent) {
-        return sServices != null && sServices.stopService(intent);
+        if (HostedServiceRuntime.isConfigured()) return HostedServiceRuntime.stopService(intent);
+        return false;
     }
     public static boolean bindServiceInProcess(android.content.Intent intent,
             android.content.ServiceConnection conn, int flags) {
-        return sServices != null && sServices.bindService(intent, conn, flags);
+        if (HostedServiceRuntime.isConfigured()) {
+            return HostedServiceRuntime.bindService(intent, conn, flags);
+        }
+        return false;
     }
     public static void unbindServiceInProcess(android.content.ServiceConnection conn) {
-        if (sServices != null) sServices.unbindService(conn);
+        if (HostedServiceRuntime.isConfigured()) HostedServiceRuntime.unbindService(conn);
     }
     public static Application currentApplication() { return sApplication; }
     public static ActivityThread currentActivityThread() { return sThread; }
@@ -55,8 +87,8 @@ public final class ActivityThread {
         public android.window.ActivityWindowInfo getActivityWindowInfo() { return mActivityWindowInfo; }
     }
     public ActivityClientRecord getActivityClient(android.os.IBinder token) { return null; }
-    public static String currentPackageName() { return sApplication != null ? "app" : null; }
-    public static String currentProcessName() { return "artzig"; }
+    public static String currentPackageName() { return sPackageName; }
+    public static String currentProcessName() { return sProcessName; }
     public static boolean isSystem() { return false; }
     public static void setApplication(Application app) { sApplication = app; }
 }

@@ -1,0 +1,201 @@
+package android.app
+
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.os.Bundle
+import android.util.Log
+import java.util.ArrayDeque
+
+/**
+ * In-process activity lifecycle used when AMS and system_server are absent.
+ *
+ * The ordering follows the vendored AOSP ActivityThread launch, pause, stop,
+ * destroy, relaunch, and activity-configuration paths. The complete AOSP
+ * ActivityThread cannot run here because its Binder transaction scheduler,
+ * ActivityTaskManager, WindowManagerService, and process records are absent.
+ */
+object HostedActivityRuntime {
+    private const val TAG = "HostedActivityRuntime"
+
+    private var host: ActivityThread.HostAdapter? = null
+    private var activities: Map<String, ActivityInfo> = emptyMap()
+    private val backStack = ArrayDeque<Activity>()
+    private var current: Activity? = null
+
+    @JvmStatic
+    fun configure(
+        adapter: ActivityThread.HostAdapter?,
+        activityInfos: Map<String, ActivityInfo>?,
+    ) {
+        check(current == null) { "cannot replace the activity host while an activity is running" }
+        host = adapter
+        activities = activityInfos
+            ?.mapValues { ActivityInfo(it.value) }
+            .orEmpty()
+        backStack.clear()
+    }
+
+    @JvmStatic
+    fun isConfigured(): Boolean = host != null
+
+    @JvmStatic
+    fun currentActivity(): Activity? = current
+
+    @JvmStatic
+    fun manifestOrientation(activityClassName: String?): Int =
+        activityClassName
+            ?.let(activities::get)
+            ?.screenOrientation
+            ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
+    @JvmStatic
+    fun launchMain(activityClassName: String): Activity =
+        launch(activityClassName, Intent().setComponent(component(activityClassName)), null, false)
+
+    @JvmStatic
+    fun startActivity(intent: Intent) {
+        val component = intent.component
+        if (component == null) {
+            Log.w(TAG, "startActivity without component ignored: $intent")
+            return
+        }
+        launch(component.className, intent, null, true)
+    }
+
+    @JvmStatic
+    fun finishActivity(activity: Activity) {
+        if (activity !== current) return
+        destroy(activity, changingConfigurations = false)
+        current = null
+        val previous = backStack.pollFirst()
+        if (previous != null) {
+            previous.performStart()
+            previous.performResume()
+            current = previous
+            requireHost().showActivity(previous)
+            Log.i(TAG, "finished ${activity.javaClass.name}, back to ${previous.javaClass.name}")
+        }
+    }
+
+    @JvmStatic
+    fun recreateActivity(activity: Activity) {
+        if (activity !== current) return
+        val savedState = Bundle()
+        activity.performSaveInstanceState(savedState)
+        val className = activity.javaClass.name
+        val intent = activity.intent?.let(::Intent)
+        destroy(activity, changingConfigurations = true)
+        current = null
+        val replacement = launch(className, intent, savedState, false)
+        Log.i(TAG, "recreated ${replacement.javaClass.name} for configuration change")
+    }
+
+    /**
+     * Applies an already-calculated process configuration. The package manager
+     * side decides which changes an Activity declared as handled; this module
+     * owns the resulting callback or relaunch lifecycle.
+     */
+    @JvmStatic
+    fun applyConfiguration(
+        configuration: Configuration,
+        changes: Int,
+        width: Int,
+        height: Int,
+    ): Boolean {
+        val activity = current ?: return false
+        val handled = activities[activity.javaClass.name]?.configChanges
+            ?: activity.activityInfo.configChanges
+        val unhandled = changes and handled.inv()
+        if (unhandled != 0) {
+            recreateActivity(activity)
+            return true
+        }
+        requireHost().resizeActivityRoot(activity, width, height)
+        if (changes != 0) {
+            ActivityThread.currentApplication()?.onConfigurationChanged(configuration)
+            activity.onConfigurationChanged(configuration)
+        }
+        return false
+    }
+
+    @JvmStatic
+    fun shutdown() {
+        current?.let { destroy(it, changingConfigurations = false) }
+        current = null
+        while (backStack.isNotEmpty()) {
+            destroy(backStack.removeFirst(), changingConfigurations = false)
+        }
+        backStack.clear()
+        host = null
+        activities = emptyMap()
+    }
+
+    @JvmStatic
+    fun shouldRelaunch(handledChanges: Int, changes: Int): Boolean =
+        changes and handledChanges.inv() != 0
+
+    private fun launch(
+        activityClassName: String,
+        intent: Intent?,
+        savedState: Bundle?,
+        addCurrentToBackStack: Boolean,
+    ): Activity {
+        val adapter = requireHost()
+        val previous = current
+        if (addCurrentToBackStack) previous?.performPause()
+
+        try {
+            val requestedInfo = activities[activityClassName]
+            val implementationClassName = requestedInfo?.targetActivity ?: activityClassName
+            val activityClass = Class.forName(
+                implementationClassName,
+                true,
+                adapter.activityClassLoader,
+            )
+            val activity = activityClass.getDeclaredConstructor().newInstance() as Activity
+            val info = requestedInfo ?: ActivityInfo().apply {
+                name = implementationClassName
+                packageName = adapter.activityContext.packageName
+                applicationInfo = adapter.activityContext.applicationInfo
+            }
+            activity.attach(adapter.activityContext, info)
+            activity.setRequestedOrientation(info.screenOrientation)
+            if (intent != null) activity.intent = intent
+            activity.performCreate(savedState)
+            activity.performStart()
+            if (savedState != null) activity.performRestoreInstanceState(savedState)
+            activity.performResume()
+
+            if (addCurrentToBackStack && previous != null) {
+                previous.performStop()
+                backStack.addFirst(previous)
+            }
+            current = activity
+            adapter.showActivity(activity)
+            Log.i(TAG, "started $activityClassName as $implementationClassName")
+            return activity
+        } catch (throwable: Throwable) {
+            if (addCurrentToBackStack) previous?.performResume()
+            throw RuntimeException("Unable to start activity $activityClassName", throwable)
+        }
+    }
+
+    private fun destroy(activity: Activity, changingConfigurations: Boolean) {
+        activity.`setChangingConfigurations$artzig`(changingConfigurations)
+        activity.performPause()
+        activity.performStop()
+        activity.performDestroy()
+        activity.`setChangingConfigurations$artzig`(false)
+        requireHost().clearActivityWindows()
+    }
+
+    private fun component(activityClassName: String): ComponentName {
+        val info = activities[activityClassName]
+        return ComponentName(info?.packageName ?: "", activityClassName)
+    }
+
+    private fun requireHost(): ActivityThread.HostAdapter =
+        checkNotNull(host) { "activity host is not configured" }
+}

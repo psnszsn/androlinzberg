@@ -286,6 +286,24 @@ pub fn build(b: *std.Build) void {
     jvm_test_run.step.dependOn(b.getInstallStep());
     const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
     jvm_test_step.dependOn(&jvm_test_run.step);
+    const framework_module_smoke = std.Build.Step.Run.create(b, "run hosted framework module tests");
+    framework_module_smoke.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    framework_module_smoke.addArg("--javatest");
+    framework_module_smoke.setEnvironmentVariable(
+        "AZK_TEST_CLASS",
+        "dev.artzig.FrameworkModuleSmoke",
+    );
+    framework_module_smoke.step.dependOn(b.getInstallStep());
+    jvm_test_step.dependOn(&framework_module_smoke.step);
+    const framework_compat_smoke = std.Build.Step.Run.create(b, "run framework compatibility smoke");
+    framework_compat_smoke.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    framework_compat_smoke.addArg("--javatest");
+    framework_compat_smoke.setEnvironmentVariable(
+        "AZK_TEST_CLASS",
+        "dev.artzig.FrameworkCompatSmoke",
+    );
+    framework_compat_smoke.step.dependOn(b.getInstallStep());
+    jvm_test_step.dependOn(&framework_compat_smoke.step);
 
     // run the *installed* launcher: it resolves the island/dex/res relative to
     // its own install tree (zig-out/), which the cache-dir copy does not have.

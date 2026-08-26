@@ -22,8 +22,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
         KeyEvent.Callback, android.view.LayoutInflater.Factory2 {
     public static final int RESULT_OK = -1, RESULT_CANCELED = 0, RESULT_FIRST_USER = 1;
     private Window mWindow;
-    private final ActivityInfo mActivityInfo = new ActivityInfo();
+    private ActivityInfo mActivityInfo = new ActivityInfo();
     private int mRequestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+    private boolean mChangingConfigurations;
     public Activity() { super(null); }
     public void attach(Context base) {
         attachBaseContext(base);
@@ -37,6 +38,11 @@ public class Activity extends ContextWrapper implements Window.Callback,
         mWindow.setWindowManager((WindowManager) base.getSystemService(Context.WINDOW_SERVICE),
                 null, getClass().getName(), false);
     }
+    public void attach(Context base, ActivityInfo activityInfo) {
+        attach(base);
+        mActivityInfo = activityInfo != null ? new ActivityInfo(activityInfo) : new ActivityInfo();
+        mRequestedOrientation = mActivityInfo.screenOrientation;
+    }
     public Application getApplication() {
         return ActivityThread.currentApplication();
     }
@@ -44,7 +50,10 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public android.view.LayoutInflater getLayoutInflater() { return mWindow.getLayoutInflater(); }
     public Object getLastNonConfigurationInstance() { return null; }
     public Object onRetainNonConfigurationInstance() { return null; }
-    public boolean isChangingConfigurations() { return false; }
+    public boolean isChangingConfigurations() { return mChangingConfigurations; }
+    public void setChangingConfigurations$artzig(boolean changing) {
+        mChangingConfigurations = changing;
+    }
     public boolean isInMultiWindowMode() { return false; }
     public boolean isInPictureInPictureMode() { return false; }
     public boolean isTaskRoot() { return true; }
@@ -276,6 +285,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
             cb.onActivitySaveInstanceState(this, outState);
             cb.onActivityPostSaveInstanceState(this, outState);
         }
+    }
+    public final void performRestoreInstanceState(Bundle savedInstanceState) {
+        onRestoreInstanceState(savedInstanceState);
     }
     // ---- Window.Callback ----
     @Override public boolean dispatchKeyEvent(KeyEvent event) { return mWindow.superDispatchKeyEvent(event); }

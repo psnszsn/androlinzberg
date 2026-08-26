@@ -2,8 +2,10 @@
 package dev.artzig;
 
 import android.app.AlarmManager;
+import android.app.Application;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.job.JobScheduler;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -74,6 +76,40 @@ public final class FrameworkCompatSmoke {
 
         require(new NotificationManager().getActiveNotifications().length == 0,
                 "host notification list");
+        JobScheduler defaultScheduler = new JobScheduler();
+        require(defaultScheduler.getNamespace() == null,
+                "default job scheduler namespace");
+        JobScheduler workScheduler = defaultScheduler.forNamespace("  androidx.work  ");
+        require("androidx.work".equals(workScheduler.getNamespace()),
+                "job scheduler namespace is trimmed");
+        boolean rejectedEmptyNamespace = false;
+        try {
+            defaultScheduler.forNamespace("   ");
+        } catch (IllegalArgumentException expected) {
+            rejectedEmptyNamespace = true;
+        }
+        require(rejectedEmptyNamespace, "empty job scheduler namespace is rejected");
+        boolean rejectedNullNamespace = false;
+        try {
+            defaultScheduler.forNamespace(null);
+        } catch (NullPointerException expected) {
+            rejectedNullNamespace = true;
+        }
+        require(rejectedNullNamespace, "null job scheduler namespace is rejected");
+        require(Application.class.getMethod("getProcessName").getReturnType() == String.class,
+                "Application.getProcessName API");
+        require(new android.app.ActivityManager()
+                        .getHistoricalProcessExitReasons(null, 0, 0).isEmpty(),
+                "host has no historical process exits");
+        require("org.example".equals(
+                        packageManager.getApplicationInfo("org.example", 0).processName),
+                "hosted application process name");
+        android.app.Notification.Action authenticatedAction =
+                new android.app.Notification.Action.Builder(0, "unlock", null)
+                        .setAuthenticationRequired(true)
+                        .build();
+        require(authenticatedAction.isAuthenticationRequired(),
+                "notification action authentication requirement");
         NotificationManager notificationManager = new NotificationManager();
         android.app.NotificationChannel conversationChannel = new android.app.NotificationChannel(
                 "conversation", "Conversation", NotificationManager.IMPORTANCE_DEFAULT);
@@ -114,36 +150,25 @@ public final class FrameworkCompatSmoke {
                         && resizedMetrics.getBounds().height() == 731
                         && resizedMetrics.getDensity() == 1.5f,
                 "current window metrics follow host resize");
-        require(ApkHost.resolveLandscapeConfiguration(
+        require(android.content.res.HostedConfigurationController.resolveLandscape(
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
                         1280, 720),
                 "unspecified orientation follows a wide desktop window");
-        require(!ApkHost.resolveLandscapeConfiguration(
+        require(!android.content.res.HostedConfigurationController.resolveLandscape(
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
                         420, 800),
                 "unspecified orientation follows a tall phone window");
-        require(!ApkHost.resolveLandscapeConfiguration(
+        require(!android.content.res.HostedConfigurationController.resolveLandscape(
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
                         1280, 720),
                 "fixed portrait orientation overrides window geometry");
-        require(ApkHost.resolveLandscapeConfiguration(
+        require(android.content.res.HostedConfigurationController.resolveLandscape(
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
                         420, 800),
                 "fixed landscape orientation overrides window geometry");
         require(android.content.pm.ActivityInfo.activityInfoConfigNativeToJava(0x0200)
                         == android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE,
                 "manifest screenSize config change uses Java ActivityInfo bit");
-        boolean[] recreationRequested = { false };
-        android.app.ActivityThread.setLauncher(new android.app.ActivityThread.Launcher() {
-            @Override public void startActivity(Intent intent) {}
-            @Override public void finishActivity(android.app.Activity activity) {}
-            @Override public void recreateActivity(android.app.Activity activity) {
-                recreationRequested[0] = true;
-            }
-        });
-        new android.app.Activity().recreate();
-        android.app.ActivityThread.setLauncher(null);
-        require(recreationRequested[0], "Activity.recreate reaches the process activity host");
         boolean[] alarmFired = { false };
         AlarmManager alarmManager = new AlarmManager();
         alarmManager.setExact(AlarmManager.ELAPSED_REALTIME,

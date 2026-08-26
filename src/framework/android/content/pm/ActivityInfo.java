@@ -1,6 +1,30 @@
 /* artzig shim: android.content.pm.ActivityInfo — CONFIG_* constants + @Config only. */
 package android.content.pm;
 public class ActivityInfo extends ComponentInfo implements android.os.Parcelable {
+    public ActivityInfo() {}
+    public ActivityInfo(ActivityInfo orig) {
+        super(orig);
+        theme = orig.theme;
+        flags = orig.flags;
+        launchMode = orig.launchMode;
+        screenOrientation = orig.screenOrientation;
+        configChanges = orig.configChanges;
+        softInputMode = orig.softInputMode;
+        colorMode = orig.colorMode;
+        targetActivity = orig.targetActivity;
+        permission = orig.permission;
+        parentActivityName = orig.parentActivityName;
+        taskAffinity = orig.taskAffinity;
+        documentLaunchMode = orig.documentLaunchMode;
+        persistableMode = orig.persistableMode;
+        maxRecents = orig.maxRecents;
+        uiOptions = orig.uiOptions;
+        rotationAnimation = orig.rotationAnimation;
+        lockTaskLaunchMode = orig.lockTaskLaunchMode;
+        windowLayout = orig.windowLayout;
+        requestedVrComponent = orig.requestedVrComponent;
+        requiredDisplayCategory = orig.requiredDisplayCategory;
+    }
     public static final int CONFIG_MCC = 0x0001, CONFIG_MNC = 0x0002, CONFIG_LOCALE = 0x0004,
             CONFIG_TOUCHSCREEN = 0x0008, CONFIG_KEYBOARD = 0x0010, CONFIG_KEYBOARD_HIDDEN = 0x0020,
             CONFIG_NAVIGATION = 0x0040, CONFIG_ORIENTATION = 0x0080, CONFIG_SCREEN_LAYOUT = 0x0100,

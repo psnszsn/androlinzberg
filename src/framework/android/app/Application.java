@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.res.Configuration;
 public class Application extends android.content.ContextWrapper {
     public Application() { super(null); }
+    /** AOSP API 28: return the name assigned while ActivityThread binds this process. */
+    public static String getProcessName() { return ActivityThread.currentProcessName(); }
     public void attach(Context base) { attachBaseContext(base); }
     public void onCreate() {}
     public void onTerminate() {}

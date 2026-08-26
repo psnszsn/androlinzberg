@@ -125,6 +125,7 @@ public class Notification implements Parcelable {
         public int icon;
         public CharSequence title;
         public PendingIntent actionIntent;
+        private boolean mAuthenticationRequired;
         public Action(int icon, CharSequence title, PendingIntent intent) {
             this.icon = icon; this.title = title; this.actionIntent = intent;
         }
@@ -133,9 +134,11 @@ public class Notification implements Parcelable {
         public Action(android.graphics.drawable.Icon icon, CharSequence title, PendingIntent intent) {
             this(0, title, intent);
         }
+        public boolean isAuthenticationRequired() { return mAuthenticationRequired; }
         public static final class Builder {
             private final CharSequence mTitle;
             private final PendingIntent mIntent;
+            private boolean mAuthenticationRequired;
             public Builder(int icon, CharSequence title, PendingIntent intent) { mTitle = title; mIntent = intent; }
             public Builder(android.graphics.drawable.Icon icon, CharSequence title, PendingIntent intent) { mTitle = title; mIntent = intent; }
             public Builder addExtras(android.os.Bundle extras) { return this; }
@@ -143,7 +146,15 @@ public class Notification implements Parcelable {
             public Builder setAllowGeneratedReplies(boolean allow) { return this; }
             public Builder setSemanticAction(int semanticAction) { return this; }
             public Builder setContextual(boolean isContextual) { return this; }
-            public Action build() { return new Action(0, mTitle, mIntent); }
+            public Builder setAuthenticationRequired(boolean authenticationRequired) {
+                mAuthenticationRequired = authenticationRequired;
+                return this;
+            }
+            public Action build() {
+                Action action = new Action(0, mTitle, mIntent);
+                action.mAuthenticationRequired = mAuthenticationRequired;
+                return action;
+            }
         }
         public static final Parcelable.Creator<Action> CREATOR = new Parcelable.Creator<Action>() {
             @Override public Action createFromParcel(Parcel in) { return new Action(0, null, null); }

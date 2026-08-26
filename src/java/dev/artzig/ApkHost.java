@@ -2,13 +2,11 @@
 package dev.artzig;
 
 import android.app.Activity;
-import android.app.Application;
 import android.app.ContextImpl;
 import android.content.res.ApkAssets;
 import android.content.res.AssetManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
-import android.content.res.XmlResourceParser;
 import android.graphics.RecordingCanvas;
 import android.graphics.RenderNode;
 import android.os.Looper;
@@ -31,18 +29,8 @@ public final class ApkHost {
     private static android.view.ViewRootImpl sRoot;
     private static long sDownTime;
     private static HostedApkClassLoader sClassLoader;
-    private static final java.util.ArrayList<android.content.ContentProvider> sProviders =
-            new java.util.ArrayList<>();
     private static int sWidth, sHeight, sScale120;
-    private static int sPendingNewPipeOrientation = -1;
-    private static int sNewPipeRelayoutOrientation = -1;
-    private static boolean sPendingNewPipeRelayout;
     private static boolean sHostFullscreenSuppressed;
-    private static final java.util.ArrayDeque<Activity> sBackStack = new java.util.ArrayDeque<>();
-    private static final java.util.HashMap<String, Integer> sActivityConfigChanges =
-            new java.util.HashMap<>();
-    private static final java.util.HashMap<String, Integer> sActivityOrientations =
-            new java.util.HashMap<>();
     private ApkHost() {}
 
     /** Extract the host ABI from the APK because the desktop/bionic bridge
@@ -276,25 +264,22 @@ public final class ApkHost {
         AssetManager am = b.build();
         DisplayMetrics dm = new DisplayMetrics();
         dm.setToDefaults();
-        float density = scale120 / 120f;
-        int densityDpi = Math.round(160f * density);
-        android.view.ArtzigDisplay.configure(width, height, densityDpi);
-        dm.widthPixels = dm.noncompatWidthPixels = width;
-        dm.heightPixels = dm.noncompatHeightPixels = height;
-        dm.densityDpi = dm.noncompatDensityDpi = densityDpi;
-        dm.density = dm.noncompatDensity = density;
+        Configuration base = new Configuration();
+        base.setToDefaults();
+        android.content.res.HostedWindowConfiguration windowConfig =
+                android.content.res.HostedConfigurationController.calculate(
+                        base, android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
+                        width, height, scale120);
+        android.view.ArtzigDisplay.configure(windowConfig.getDisplayWidth(),
+                windowConfig.getDisplayHeight(), windowConfig.getDensityDpi());
+        dm.widthPixels = dm.noncompatWidthPixels = windowConfig.getDisplayWidth();
+        dm.heightPixels = dm.noncompatHeightPixels = windowConfig.getDisplayHeight();
+        dm.densityDpi = dm.noncompatDensityDpi = windowConfig.getDensityDpi();
+        dm.density = dm.noncompatDensity = windowConfig.getDensity();
         dm.scaledDensity = dm.noncompatScaledDensity = dm.density;
-        dm.xdpi = dm.noncompatXdpi = densityDpi;
-        dm.ydpi = dm.noncompatYdpi = densityDpi;
-        Configuration config = new Configuration();
-        config.setToDefaults();
-        config.densityDpi = densityDpi;
-        config.screenWidthDp = (int) (width / dm.density);
-        config.screenHeightDp = (int) (height / dm.density);
-        config.smallestScreenWidthDp = Math.min(config.screenWidthDp, config.screenHeightDp);
-        config.orientation = width >= height
-                ? Configuration.ORIENTATION_LANDSCAPE : Configuration.ORIENTATION_PORTRAIT;
-        Resources res = new Resources(am, dm, config);
+        dm.xdpi = dm.noncompatXdpi = windowConfig.getDensityDpi();
+        dm.ydpi = dm.noncompatYdpi = windowConfig.getDensityDpi();
+        Resources res = new Resources(am, dm, windowConfig.getConfiguration());
         return new ContextImpl(res, packageName, themeResId);
     }
 
@@ -311,212 +296,27 @@ public final class ApkHost {
         String apkPath = System.getenv("ARTZIG_APK");
         AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes);
 
-        // --- manifest: package, application class, launcher activity
+        // Package parsing and Android component normalization live in the
+        // framework package module, following AOSP PackageParser behavior.
         AssetManager mam = new AssetManager.Builder()
                 .addApkAssets(ApkAssets.loadFromPath(apkPath)).build();
-        String pkg = null, appClass = null, mainActivity = null, theme = null;
-        int versionCode = 0;
-        String versionName = null;
-        java.util.ArrayList<android.content.pm.ProviderInfo> providers = new java.util.ArrayList<>();
-        android.content.pm.ProviderInfo currentProvider = null;
-        java.util.ArrayList<android.content.pm.ServiceInfo> services = new java.util.ArrayList<>();
-        java.util.HashMap<String, java.util.Set<String>> serviceActions = new java.util.HashMap<>();
-        android.content.pm.ServiceInfo currentService = null;
-        java.util.HashSet<String> currentServiceActions = null;
-        XmlResourceParser p = mam.openXmlResourceParser("AndroidManifest.xml");
-        String currentActivity = null;
-        String currentActivityTag = null;
-        boolean currentActivityEnabled = true;
-        int currentActivityConfigChanges = 0;
-        int currentActivityOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-        java.util.HashMap<String, Integer> activityConfigChanges = new java.util.HashMap<>();
-        java.util.HashMap<String, Integer> activityOrientations = new java.util.HashMap<>();
-        boolean isMain = false, isLauncher = false;
-        int appThemeRes = 0;
-        for (int ev = p.next(); ev != XmlResourceParser.END_DOCUMENT; ev = p.next()) {
-            if (ev != XmlResourceParser.START_TAG) {
-                if (ev == XmlResourceParser.END_TAG && currentActivityTag != null
-                        && p.getName().equals(currentActivityTag)) {
-                    if ("activity".equals(currentActivityTag) && currentActivity != null) {
-                        activityConfigChanges.put(currentActivity, currentActivityConfigChanges);
-                        activityOrientations.put(currentActivity, currentActivityOrientation);
-                    }
-                    if (currentActivityEnabled && isMain && isLauncher && mainActivity == null) {
-                        mainActivity = currentActivity;
-                    }
-                    currentActivity = null;
-                    currentActivityTag = null;
-                    currentActivityEnabled = true;
-                    currentActivityConfigChanges = 0;
-                    currentActivityOrientation =
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-                    isMain = false;
-                    isLauncher = false;
-                } else if (ev == XmlResourceParser.END_TAG && p.getName().equals("provider")) {
-                    if (currentProvider != null) providers.add(currentProvider);
-                    currentProvider = null;
-                } else if (ev == XmlResourceParser.END_TAG && p.getName().equals("service")) {
-                    if (currentService != null) {
-                        services.add(currentService);
-                        serviceActions.put(currentService.name, currentServiceActions);
-                    }
-                    currentService = null;
-                    currentServiceActions = null;
-                }
-                continue;
-            }
-            switch (p.getName()) {
-                case "manifest":
-                    pkg = p.getAttributeValue(null, "package");
-                    versionCode = p.getAttributeIntValue(
-                            "http://schemas.android.com/apk/res/android", "versionCode", 0);
-                    versionName = attr(p, "versionName");
-                    break;
-                case "application":
-                    appClass = attr(p, "name");
-                    appThemeRes = p.getAttributeResourceValue(
-                            "http://schemas.android.com/apk/res/android", "theme", 0);
-                    break;
-                case "activity":
-                    currentActivity = attr(p, "name");
-                    currentActivityTag = "activity";
-                    currentActivityEnabled = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "enabled", true);
-                    currentActivityConfigChanges = android.content.pm.ActivityInfo
-                            .activityInfoConfigNativeToJava(p.getAttributeIntValue(
-                                    "http://schemas.android.com/apk/res/android",
-                                    "configChanges", 0));
-                    currentActivityOrientation = p.getAttributeIntValue(
-                            "http://schemas.android.com/apk/res/android", "screenOrientation",
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-                    break;
-                case "activity-alias":
-                    currentActivity = attr(p, "targetActivity");
-                    currentActivityTag = "activity-alias";
-                    currentActivityEnabled = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "enabled", true);
-                    break;
-                case "provider":
-                    currentProvider = new android.content.pm.ProviderInfo();
-                    currentProvider.name = attr(p, "name");
-                    currentProvider.authority = attr(p, "authorities");
-                    currentProvider.processName = attr(p, "process");
-                    currentProvider.readPermission = attr(p, "readPermission");
-                    currentProvider.writePermission = attr(p, "writePermission");
-                    currentProvider.enabled = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "enabled", true);
-                    currentProvider.exported = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "exported", false);
-                    currentProvider.grantUriPermissions = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "grantUriPermissions", false);
-                    currentProvider.multiprocess = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "multiprocess", false);
-                    currentProvider.directBootAware = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "directBootAware", false);
-                    currentProvider.initOrder = p.getAttributeIntValue(
-                            "http://schemas.android.com/apk/res/android", "initOrder", 0);
-                    currentProvider.metaData = new android.os.Bundle();
-                    break;
-                case "service":
-                    currentService = new android.content.pm.ServiceInfo();
-                    currentService.name = attr(p, "name");
-                    currentService.processName = attr(p, "process");
-                    currentService.permission = attr(p, "permission");
-                    currentService.enabled = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "enabled", true);
-                    currentService.exported = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "exported", false);
-                    currentService.directBootAware = p.getAttributeBooleanValue(
-                            "http://schemas.android.com/apk/res/android", "directBootAware", false);
-                    currentService.foregroundServiceType = p.getAttributeIntValue(
-                            "http://schemas.android.com/apk/res/android", "foregroundServiceType", 0);
-                    currentService.metaData = new android.os.Bundle();
-                    currentServiceActions = new java.util.HashSet<>();
-                    break;
-                case "meta-data":
-                    android.os.Bundle componentMetaData = currentProvider != null
-                            ? currentProvider.metaData
-                            : currentService != null ? currentService.metaData : null;
-                    if (componentMetaData != null) {
-                        String name = attr(p, "name");
-                        String value = attr(p, "value");
-                        int resource = p.getAttributeResourceValue(
-                                "http://schemas.android.com/apk/res/android", "resource", 0);
-                        if (name != null && resource != 0) {
-                            componentMetaData.putInt(name, resource);
-                        } else if (name != null && value != null) {
-                            if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
-                                componentMetaData.putBoolean(name, Boolean.parseBoolean(value));
-                            } else {
-                                componentMetaData.putString(name, value);
-                            }
-                        }
-                    }
-                    break;
-                case "action":
-                    String action = attr(p, "name");
-                    if (currentService != null) {
-                        if (action != null) currentServiceActions.add(action);
-                    } else if ("android.intent.action.MAIN".equals(action)) {
-                        isMain = true;
-                    }
-                    break;
-                case "category":
-                    if ("android.intent.category.LAUNCHER".equals(attr(p, "name"))) isLauncher = true;
-                    break;
-            }
+        android.content.pm.HostedPackage hostedPackage;
+        try {
+            hostedPackage = android.content.pm.HostedPackageParser.parse(mam);
+        } finally {
+            mam.close();
         }
-        p.close();
-        mam.close();
+        String pkg = hostedPackage.getPackageName();
+        String appClass = hostedPackage.getApplicationClassName();
+        String mainActivity = hostedPackage.getLauncherActivityName();
+        int appThemeRes = hostedPackage.getApplicationTheme();
+        java.util.List<android.content.pm.ProviderInfo> providers =
+                hostedPackage.providersForProcess(pkg);
         Log.i(TAG, "pkg=" + pkg + " app=" + appClass + " main=" + mainActivity + " theme=0x"
                 + Integer.toHexString(appThemeRes));
-        if (pkg == null) throw new IllegalStateException("no package in manifest");
         android.content.pm.PackageManager.configureHostedPackage(
-                pkg, versionCode, versionName, apkPath,
+                hostedPackage, apkPath,
                 android.os.Environment.getDataDirectory().getAbsolutePath());
-        for (java.util.Iterator<android.content.pm.ProviderInfo> it = providers.iterator();
-                it.hasNext();) {
-            android.content.pm.ProviderInfo provider = it.next();
-            if (provider.name != null && provider.name.startsWith(".")) provider.name = pkg + provider.name;
-            provider.packageName = pkg;
-            if (provider.processName == null || provider.processName.isEmpty()) provider.processName = pkg;
-            if (provider.processName.startsWith(":")) provider.processName = pkg + provider.processName;
-            provider.applicationInfo = new android.content.pm.ApplicationInfo();
-            provider.applicationInfo.packageName = pkg;
-            if (!provider.enabled || !pkg.equals(provider.processName)) it.remove();
-        }
-        providers.sort((left, right) -> Integer.compare(right.initOrder, left.initOrder));
-        android.content.pm.PackageManager.configureHostedProviders(providers);
-        if (mainActivity != null && mainActivity.startsWith(".")) mainActivity = pkg + mainActivity;
-        android.content.pm.PackageManager.configureHostedLauncher(mainActivity);
-        sActivityConfigChanges.clear();
-        sActivityOrientations.clear();
-        for (java.util.Map.Entry<String, Integer> entry : activityConfigChanges.entrySet()) {
-            String name = entry.getKey();
-            if (name.startsWith(".")) name = pkg + name;
-            sActivityConfigChanges.put(name, entry.getValue());
-        }
-        for (java.util.Map.Entry<String, Integer> entry : activityOrientations.entrySet()) {
-            String name = entry.getKey();
-            if (name.startsWith(".")) name = pkg + name;
-            sActivityOrientations.put(name, entry.getValue());
-        }
-        java.util.HashMap<String, java.util.Set<String>> normalizedServiceActions =
-                new java.util.HashMap<>();
-        for (android.content.pm.ServiceInfo service : services) {
-            String manifestName = service.name;
-            if (service.name != null && service.name.startsWith(".")) service.name = pkg + service.name;
-            service.packageName = pkg;
-            if (service.processName == null || service.processName.isEmpty()) service.processName = pkg;
-            if (service.processName.startsWith(":")) service.processName = pkg + service.processName;
-            service.applicationInfo = new android.content.pm.ApplicationInfo();
-            service.applicationInfo.packageName = pkg;
-            java.util.Set<String> actions = serviceActions.get(manifestName);
-            normalizedServiceActions.put(service.name,
-                    actions != null ? actions : java.util.Collections.emptySet());
-        }
-        android.content.pm.PackageManager.configureHostedServices(services, normalizedServiceActions);
-        if (appClass != null && appClass.startsWith(".")) appClass = pkg + appClass;
 
         // --- classloader over the apk (+ bundled native libs)
         String libPath = extractNativeLibraries(apkPath);
@@ -559,11 +359,11 @@ public final class ApkHost {
         }
         // A resizable Activity starts with the current window bounds; a fixed
         // manifest orientation constrains those bounds before onCreate.
-        Integer manifestOrientation = sActivityOrientations.get(mainActivity);
-        int initialOrientation = manifestOrientation != null ? manifestOrientation
+        android.content.pm.ActivityInfo mainInfo = hostedPackage.getActivities().get(mainActivity);
+        int initialOrientation = mainInfo != null ? mainInfo.screenOrientation
                 : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-        boolean initialLandscape = resolveLandscapeConfiguration(
-                initialOrientation, width, height);
+        boolean initialLandscape = android.content.res.HostedConfigurationController
+                .resolveLandscape(initialOrientation, width, height);
         int displayWidth = initialLandscape ? Math.max(width, height) : Math.min(width, height);
         int displayHeight = initialLandscape ? Math.min(width, height) : Math.max(width, height);
         sContext = makeContext(frameworkRes, apkPath, displayWidth, displayHeight,
@@ -573,8 +373,8 @@ public final class ApkHost {
             Thread.setDefaultUncaughtExceptionHandler((thread, throwable) ->
                     Log.e(TAG, "uncaught exception on " + thread.getName(), throwable));
         }
-        installServiceManager();
-        installActivityLauncher();
+        android.app.ActivityThread.configureServiceHost(sContext, cl);
+        installActivityHost(hostedPackage);
 
         // A hosted process has no keystore daemon. Install the compatible,
         // persistent provider before Application.onCreate initializes its
@@ -583,192 +383,39 @@ public final class ApkHost {
             java.security.Security.insertProviderAt(new ArtzigKeyStoreProvider(), 1);
         }
 
-        // --- Application
-        Application app;
-        if (appClass != null) {
-            app = (Application) cl.loadClass(appClass).getDeclaredConstructor().newInstance();
-        } else {
-            app = new Application();
-        }
-        android.app.ActivityThread.setApplication(app);
-        app.attach(sContext);
-        sProviders.clear();
-        for (android.content.pm.ProviderInfo info : providers) {
-            Log.i(TAG, "installing provider " + info.name + " authority=" + info.authority);
-            android.content.ContentProvider provider = (android.content.ContentProvider)
-                    cl.loadClass(info.name).getDeclaredConstructor().newInstance();
-            provider.attachInfo(sContext, info);
-            sProviders.add(provider);
-        }
-        Log.i(TAG, "Application.onCreate: " + app.getClass().getName());
-        app.onCreate();
+        android.app.ActivityThread.bindApplicationInProcess(
+                sContext, cl, appClass, providers);
 
         // --- MainActivity
         Log.i(TAG, "starting " + mainActivity);
-        Activity initialActivity = (Activity) cl.loadClass(mainActivity)
-                .getDeclaredConstructor().newInstance();
-        sActivity = initialActivity;
-        initialActivity.attach(sContext);
-        applyActivityManifestInfo(initialActivity);
-        initialActivity.performCreate(null);
-        if (sActivity == initialActivity) {
-            initialActivity.performStart();
-            initialActivity.performResume();
-            show(initialActivity);
-        }
+        if (mainActivity == null) throw new IllegalStateException("manifest has no launcher activity");
+        android.app.ActivityThread.launchMainActivity(mainActivity);
         Log.i(TAG, "activity up");
     }
 
-    private static void installActivityLauncher() {
-        // in-process activity stack for Context.startActivity / Activity.finish
-        android.app.ActivityThread.setLauncher(new android.app.ActivityThread.Launcher() {
-            @Override public void startActivity(android.content.Intent intent) {
-                android.content.ComponentName cn = intent.getComponent();
-                if (cn == null) {
-                    Log.w(TAG, "startActivity without component ignored: " + intent);
-                    return;
-                }
-                try {
-                    Class<?> c = Class.forName(cn.getClassName(), true, sClassLoader);
-                    Activity a = (Activity) c.getDeclaredConstructor().newInstance();
-                    a.setIntent(intent);
-                    a.attach(sContext);
-                    applyActivityManifestInfo(a);
-                    a.performCreate(null);
-                    a.performStart();
-                    a.performResume();
-                    sBackStack.push(sActivity);
-                    sActivity = a;
-                    show(a);
-                    Log.i(TAG, "started " + cn.getClassName());
-                } catch (Throwable t) {
-                    Log.w(TAG, "startActivity failed: " + cn, t);
-                }
-            }
-            @Override public void finishActivity(Activity a) {
-                if (a != sActivity || sBackStack.isEmpty()) return;
-                sActivity = sBackStack.pop();
-                show(sActivity);
-                Log.i(TAG, "finished " + a.getClass().getName()
-                        + ", back to " + sActivity.getClass().getName());
-            }
-            @Override public void recreateActivity(Activity a) {
-                if (a == sActivity) recreateCurrentActivity();
-            }
-        });
-    }
-
-    private static void applyActivityManifestInfo(Activity activity) {
-        String name = activity.getClass().getName();
-        android.content.pm.ActivityInfo info = activity.getActivityInfo();
-        info.name = name;
-        info.packageName = sContext.getPackageName();
-        Integer changes = sActivityConfigChanges.get(name);
-        info.configChanges = changes != null ? changes : 0;
-        Integer orientation = sActivityOrientations.get(name);
-        info.screenOrientation = orientation != null ? orientation
-                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-        activity.setRequestedOrientation(info.screenOrientation);
-    }
-
-    private static void recreateCurrentActivity() {
-        Activity old = sActivity;
-        if (old == null) return;
-        try {
-            android.os.Bundle state = new android.os.Bundle();
-            old.performSaveInstanceState(state);
-            android.content.Intent intent = old.getIntent();
-            Class<?> activityClass = old.getClass();
-            old.performPause();
-            old.performStop();
-            old.performDestroy();
-            android.view.ArtzigWindowStack.clear();
-
-            Activity replacement = (Activity) activityClass.getDeclaredConstructor().newInstance();
-            if (intent != null) replacement.setIntent(intent);
-            replacement.attach(sContext);
-            applyActivityManifestInfo(replacement);
-            sActivity = replacement;
-            replacement.performCreate(state);
-            if (sActivity == replacement) {
-                replacement.performStart();
-                replacement.performResume();
-                show(replacement);
-            }
-            Log.i(TAG, "recreated " + activityClass.getName() + " for configuration change");
-        } catch (Throwable t) {
-            Log.e(TAG, "activity recreation failed", t);
-        }
-    }
-
-    // ---- in-process services
-    private static final class ServiceRecord {
-        android.app.Service service;
-        android.os.IBinder binder;
-        boolean bound;
-        final java.util.ArrayList<android.content.ServiceConnection> conns = new java.util.ArrayList<>();
-    }
-    private static final java.util.HashMap<String, ServiceRecord> sServices = new java.util.HashMap<>();
-
-    private static ServiceRecord serviceFor(android.content.ComponentName cn) throws Exception {
-        ServiceRecord r = sServices.get(cn.getClassName());
-        if (r == null) {
-            Class<?> c = Class.forName(cn.getClassName(), true, sClassLoader);
-            r = new ServiceRecord();
-            r.service = (android.app.Service) c.getDeclaredConstructor().newInstance();
-            r.service.attach$artzig(sContext, cn.getClassName());
-            sServices.put(cn.getClassName(), r);
-            r.service.onCreate();
-            Log.i(TAG, "service created: " + cn.getClassName());
-        }
-        return r;
-    }
-
-    private static void installServiceManager() {
-        android.app.ActivityThread.setServiceManager(new android.app.ActivityThread.ServiceManagerHook() {
-            @Override public android.content.ComponentName startService(android.content.Intent intent) {
-                android.content.ComponentName cn = intent.getComponent();
-                if (cn == null) { Log.w(TAG, "startService without component: " + intent); return null; }
-                try {
-                    ServiceRecord r = serviceFor(cn);
-                    r.service.onStartCommand(intent, 0, 1);
-                    return cn;
-                } catch (Throwable t) {
-                    Log.w(TAG, "startService failed: " + cn, t);
-                    return null;
-                }
-            }
-            @Override public boolean stopService(android.content.Intent intent) {
-                android.content.ComponentName cn = intent.getComponent();
-                if (cn == null) return false;
-                ServiceRecord r = sServices.remove(cn.getClassName());
-                if (r == null) return false;
-                try { r.service.onDestroy(); } catch (Throwable t) { Log.w(TAG, "onDestroy failed", t); }
-                Log.i(TAG, "service stopped: " + cn.getClassName());
-                return true;
-            }
-            @Override public boolean bindService(android.content.Intent intent,
-                    android.content.ServiceConnection conn, int flags) {
-                android.content.ComponentName cn = intent.getComponent();
-                if (cn == null) { Log.w(TAG, "bindService without component: " + intent); return false; }
-                try {
-                    ServiceRecord r = serviceFor(cn);
-                    if (!r.bound) { r.binder = r.service.onBind(intent); r.bound = true; }
-                    r.conns.add(conn);
-                    final android.os.IBinder b = r.binder;
-                    final android.content.ComponentName fcn = cn;
-                    new android.os.Handler(android.os.Looper.getMainLooper()).post(
-                            () -> conn.onServiceConnected(fcn, b));
-                    return true;
-                } catch (Throwable t) {
-                    Log.w(TAG, "bindService failed: " + cn, t);
-                    return false;
-                }
-            }
-            @Override public void unbindService(android.content.ServiceConnection conn) {
-                for (ServiceRecord r : sServices.values()) r.conns.remove(conn);
-            }
-        });
+    private static void installActivityHost(android.content.pm.HostedPackage hostedPackage) {
+        android.app.ActivityThread.configureActivityHost(
+                new android.app.ActivityThread.HostAdapter() {
+                    @Override public android.content.Context getActivityContext() {
+                        return sContext;
+                    }
+                    @Override public ClassLoader getActivityClassLoader() {
+                        return sClassLoader;
+                    }
+                    @Override public void showActivity(Activity activity) {
+                        sActivity = activity;
+                        show(activity);
+                    }
+                    @Override public void clearActivityWindows() {
+                        sActivity = null;
+                        android.view.ArtzigWindowStack.clear();
+                    }
+                    @Override public void resizeActivityRoot(Activity activity,
+                            int width, int height) {
+                        if (activity == sActivity && sRoot != null) sRoot.setSize(width, height);
+                    }
+                },
+                hostedPackage.getActivities());
     }
 
     private static void show(Activity a) {
@@ -820,34 +467,14 @@ public final class ApkHost {
     public static void shutdown() {
         Log.i(TAG, "shutdown");
 
-        // Services first: media services own decoder/audio worker threads and
-        // native video layers which must stop producing frames before teardown.
-        java.util.ArrayList<ServiceRecord> services =
-                new java.util.ArrayList<>(sServices.values());
-        sServices.clear();
-        for (ServiceRecord record : services) {
-            try {
-                record.service.onDestroy();
-            } catch (Throwable t) {
-                Log.w(TAG, "service shutdown failed: " + record.service.getClass().getName(), t);
-            }
-            record.conns.clear();
-            record.binder = null;
-        }
+        // Services first: they may own decoder/audio workers and native layers.
+        android.app.ActivityThread.shutdownServicesInProcess();
         Log.i(TAG, "services stopped");
 
-        java.util.ArrayList<Activity> activities = new java.util.ArrayList<>();
-        if (sActivity != null) activities.add(sActivity);
-        activities.addAll(sBackStack);
-        sBackStack.clear();
-        for (Activity activity : activities) {
-            try {
-                activity.performPause();
-                activity.performStop();
-                activity.performDestroy();
-            } catch (Throwable t) {
-                Log.w(TAG, "activity shutdown failed: " + activity.getClass().getName(), t);
-            }
+        try {
+            android.app.ActivityThread.shutdownActivitiesInProcess();
+        } catch (Throwable t) {
+            Log.w(TAG, "activity shutdown failed", t);
         }
         Log.i(TAG, "activities destroyed");
 
@@ -865,54 +492,27 @@ public final class ApkHost {
         Log.i(TAG, "renderer destroyed");
         sComposite.discardDisplayList();
 
-        Application application = android.app.ActivityThread.currentApplication();
-        if (application != null) {
-            try { application.onTerminate(); }
-            catch (Throwable t) { Log.w(TAG, "application shutdown failed", t); }
+        try {
+            android.app.ActivityThread.shutdownApplicationInProcess();
+        } catch (Throwable t) {
+            Log.w(TAG, "application shutdown failed", t);
         }
-        android.app.ActivityThread.setLauncher(null);
-        android.app.ActivityThread.setServiceManager(null);
-        android.app.ActivityThread.setApplication(null);
         sActivity = null;
         sContext = null;
         sClassLoader = null;
-        sProviders.clear();
         sGestureWin = null;
         sGestureWinValid = false;
         Log.i(TAG, "shutdown complete");
-    }
-
-    private static String attr(XmlResourceParser p, String name) {
-        String v = p.getAttributeValue("http://schemas.android.com/apk/res/android", name);
-        return v != null ? v : p.getAttributeValue(null, name);
     }
 
     private static final RenderNode sComposite = new RenderNode("artzig-window-composite");
 
     private static boolean appRequestsFullscreen() {
         if (sActivity == null) return false;
-        Boolean newPipeFullscreen = newPipePlayerFullscreen();
-        if (newPipeFullscreen != null) return newPipeFullscreen;
         int visibility = sActivity.getWindow().getDecorView().getSystemUiVisibility();
         int flags = sActivity.getWindow().getAttributes().flags;
         return (visibility & android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) != 0
                 || (flags & android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
-    }
-
-    /** NewPipe temporarily reveals Android's system UI whenever playback
-     * controls are visible. That must not become an xdg fullscreen toggle; its
-     * player UI owns the persistent presentation state. */
-    private static Boolean newPipePlayerFullscreen() {
-        if (sContext == null || !"org.schabi.newpipe".equals(sContext.getPackageName())) {
-            return null;
-        }
-        try {
-            NewPipeUiState state = findNewPipeUi();
-            return state == null ? null : (Boolean) state.uiClass
-                    .getMethod("isFullscreen").invoke(state.ui);
-        } catch (Throwable ignored) {
-            return null;
-        }
     }
 
     /** Whether Android has entered its fullscreen/immersive presentation.
@@ -923,20 +523,12 @@ public final class ApkHost {
         return requested && !sHostFullscreenSuppressed;
     }
 
-    static boolean resolveLandscapeConfiguration(int orientation, int width, int height) {
-        if (android.content.pm.ActivityInfo.isFixedOrientationLandscape(orientation)) return true;
-        if (android.content.pm.ActivityInfo.isFixedOrientationPortrait(orientation)) return false;
-        // Unspecified, sensor, and user-controlled orientations follow the
-        // actual resizable desktop window. Treating every non-fixed request as
-        // portrait made wide windows publish portrait Configuration dimensions.
-        return width >= height;
-    }
-
     private static boolean wantsLandscapeConfiguration(int width, int height) {
         int orientation = sActivity == null
                 ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 : sActivity.getRequestedOrientation();
-        return resolveLandscapeConfiguration(orientation, width, height);
+        return android.content.res.HostedConfigurationController.resolveLandscape(
+                orientation, width, height);
     }
 
     /** Prevent an app's unchanged immersive flags from immediately undoing a
@@ -972,18 +564,6 @@ public final class ApkHost {
         // visible to the traversal in this same compositor frame.
         drainLooper();
         RenderNode base = sRoot.doTraversal();
-        if (sPendingNewPipeOrientation >= 0) {
-            boolean landscape = sPendingNewPipeOrientation == 1;
-            boolean relayout = sPendingNewPipeRelayout;
-            sPendingNewPipeOrientation = -1;
-            sPendingNewPipeRelayout = false;
-            notifyNewPipeOrientationChanged(landscape, relayout);
-            // NewPipe posts its video reparent/height update. Run it after the
-            // decor has the compositor's new dimensions, then record the
-            // resulting layout in this same frame.
-            drainLooper();
-            base = sRoot.doTraversal();
-        }
         java.util.List<android.view.ArtzigWindowStack.Entry> wins =
                 android.view.ArtzigWindowStack.entries();
         if (wins.isEmpty()) {
@@ -1035,7 +615,6 @@ public final class ApkHost {
 
     /** Window resized: update metrics/config and relayout. */
     private static void resize(int width, int height, int scale120) {
-        boolean sizeChanged = width != sWidth || height != sHeight;
         sWidth = width;
         sHeight = height;
         sScale120 = scale120;
@@ -1043,194 +622,30 @@ public final class ApkHost {
             Resources res = sContext.getResources();
             DisplayMetrics dm = res.getDisplayMetrics();
             Configuration oldConfig = new Configuration(res.getConfiguration());
-            int oldOrientation = oldConfig.orientation;
-            int oldDensityDpi = dm.densityDpi;
-            float density = scale120 / 120f;
-            int densityDpi = Math.round(160f * density);
-            android.view.WindowManagerImpl.configureWindowMetrics(width, height, density);
-            boolean landscape = wantsLandscapeConfiguration(width, height);
-            int displayWidth = landscape ? Math.max(width, height) : Math.min(width, height);
-            int displayHeight = landscape ? Math.min(width, height) : Math.max(width, height);
-            android.view.ArtzigDisplay.configure(displayWidth, displayHeight, densityDpi);
-            dm.widthPixels = dm.noncompatWidthPixels = displayWidth;
-            dm.heightPixels = dm.noncompatHeightPixels = displayHeight;
-            dm.densityDpi = dm.noncompatDensityDpi = densityDpi;
-            dm.density = dm.noncompatDensity = density;
-            dm.scaledDensity = dm.noncompatScaledDensity = density;
-            dm.xdpi = dm.noncompatXdpi = densityDpi;
-            dm.ydpi = dm.noncompatYdpi = densityDpi;
-            Configuration config = new Configuration(res.getConfiguration());
-            config.densityDpi = densityDpi;
-            config.screenWidthDp = (int) (displayWidth / dm.density);
-            config.screenHeightDp = (int) (displayHeight / dm.density);
-            config.smallestScreenWidthDp = Math.min(config.screenWidthDp, config.screenHeightDp);
-            config.orientation = landscape ? Configuration.ORIENTATION_LANDSCAPE
-                    : Configuration.ORIENTATION_PORTRAIT;
+            int requestedOrientation = sActivity != null ? sActivity.getRequestedOrientation()
+                    : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+            android.content.res.HostedWindowConfiguration windowConfig =
+                    android.content.res.HostedConfigurationController.calculate(
+                            oldConfig, requestedOrientation, width, height, scale120);
+            android.view.WindowManagerImpl.configureWindowMetrics(
+                    width, height, windowConfig.getDensity());
+            android.view.ArtzigDisplay.configure(windowConfig.getDisplayWidth(),
+                    windowConfig.getDisplayHeight(), windowConfig.getDensityDpi());
+            dm.widthPixels = dm.noncompatWidthPixels = windowConfig.getDisplayWidth();
+            dm.heightPixels = dm.noncompatHeightPixels = windowConfig.getDisplayHeight();
+            dm.densityDpi = dm.noncompatDensityDpi = windowConfig.getDensityDpi();
+            dm.density = dm.noncompatDensity = windowConfig.getDensity();
+            dm.scaledDensity = dm.noncompatScaledDensity = windowConfig.getDensity();
+            dm.xdpi = dm.noncompatXdpi = windowConfig.getDensityDpi();
+            dm.ydpi = dm.noncompatYdpi = windowConfig.getDensityDpi();
+            Configuration config = windowConfig.getConfiguration();
             res.updateConfiguration(config, dm);
-            int changes = 0;
-            if (oldConfig.orientation != config.orientation) {
-                changes |= android.content.pm.ActivityInfo.CONFIG_ORIENTATION;
-            }
-            if (oldConfig.screenWidthDp != config.screenWidthDp
-                    || oldConfig.screenHeightDp != config.screenHeightDp) {
-                changes |= android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE;
-            }
-            if (oldConfig.smallestScreenWidthDp != config.smallestScreenWidthDp) {
-                changes |= android.content.pm.ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE;
-            }
-            if (oldDensityDpi != densityDpi) {
-                changes |= android.content.pm.ActivityInfo.CONFIG_DENSITY;
-            }
-            int unhandledChanges = changes & ~sActivity.getActivityInfo().configChanges;
-            if (unhandledChanges != 0) {
-                recreateCurrentActivity();
-            } else {
-                sRoot.setSize(width, height);
-                sActivity.onConfigurationChanged(config);
-            }
-            if (oldOrientation != Configuration.ORIENTATION_UNDEFINED
-                    && oldOrientation != config.orientation) {
-                sPendingNewPipeOrientation = landscape ? 1 : 0;
-                sPendingNewPipeRelayout = false;
-                // The orientation callback runs before xdg-shell can configure
-                // the requested fullscreen/windowed size. Repeat it after that
-                // resize so NewPipe calculates its player bounds from the final
-                // decor dimensions as well.
-                sNewPipeRelayoutOrientation = sPendingNewPipeOrientation;
-            } else if (sizeChanged && sNewPipeRelayoutOrientation >= 0) {
-                sPendingNewPipeOrientation = sNewPipeRelayoutOrientation;
-                sPendingNewPipeRelayout = true;
-                sNewPipeRelayoutOrientation = -1;
-            }
+            android.app.ActivityThread.applyConfigurationInProcess(
+                    config, windowConfig.getChanges(), width, height);
         } catch (Throwable t) {
             Log.w(TAG, "resize failed", t);
         }
         Log.i(TAG, "resized to " + width + "x" + height);
-    }
-
-    /** NewPipe normally reconnects its retained PlayerService after an Activity
-     * recreation and synchronizes the player UI with the new orientation. Keep
-     * the live Activity and surface, and synchronize that UI state in place. */
-    private static void notifyNewPipeOrientationChanged(boolean landscape, boolean relayout) {
-        try {
-            NewPipeUiState state = findNewPipeUi();
-            if (state == null) {
-                Log.w(TAG, "NewPipe orientation changed without MainPlayerUi");
-                return;
-            }
-            Object ui = state.ui;
-            Class<?> mainPlayerUi = state.uiClass;
-
-            boolean fullscreen = (Boolean) mainPlayerUi.getMethod("isFullscreen").invoke(ui);
-            if (fullscreen != landscape) {
-                mainPlayerUi.getMethod("toggleFullscreen").invoke(ui);
-            }
-            boolean updated = (Boolean) mainPlayerUi.getMethod("isFullscreen").invoke(ui);
-            if (relayout && updated == landscape) {
-                // NewPipe's fullscreen fragment callback sizes the player placeholder,
-                // not just its SurfaceView. Run it again after xdg-shell delivers
-                // the final fullscreen/windowed dimensions so the detail content
-                // starts below the final player bounds.
-                Class<?> listenerClass = sClassLoader.loadClass(
-                        "org.schabi.newpipe.player.event.PlayerServiceEventListener");
-                Object listener = fieldValueOfType(state.player, listenerClass);
-                if (listener != null) {
-                    listenerClass.getMethod("onFullscreenStateChanged", boolean.class)
-                            .invoke(listener, landscape);
-                } else {
-                    Log.w(TAG, "NewPipe relayout has no fragment listener");
-                }
-            }
-            if (landscape) {
-                Class<?> surfaceClass = sClassLoader.loadClass(
-                        "org.schabi.newpipe.views.ExpandableSurfaceView");
-                View surface = viewOfType(
-                        sActivity.getWindow().getDecorView(), surfaceClass);
-                if (surface != null) {
-                    surfaceClass.getMethod("setHeights", int.class, int.class)
-                            .invoke(surface, sHeight, sHeight);
-                }
-            }
-            updated = (Boolean) mainPlayerUi.getMethod("isFullscreen").invoke(ui);
-            if (updated == landscape) {
-                Log.i(TAG, "set NewPipe player fullscreen=" + landscape);
-            } else {
-                Log.w(TAG, "NewPipe rejected fullscreen=" + landscape);
-            }
-        } catch (ClassNotFoundException e) {
-            // This compatibility callback only applies to NewPipe.
-        } catch (Throwable t) {
-            Log.w(TAG, "NewPipe orientation callback failed", t);
-        }
-    }
-
-    private static final class NewPipeUiState {
-        final Object player;
-        final Object ui;
-        final Class<?> uiClass;
-
-        NewPipeUiState(Object player, Object ui, Class<?> uiClass) {
-            this.player = player;
-            this.ui = ui;
-            this.uiClass = uiClass;
-        }
-    }
-
-    private static NewPipeUiState findNewPipeUi() throws Exception {
-        if (sClassLoader == null) return null;
-        Class<?> playerClass = sClassLoader.loadClass("org.schabi.newpipe.player.Player");
-        Class<?> playerUiListClass = sClassLoader.loadClass(
-                "org.schabi.newpipe.player.ui.PlayerUiList");
-        Class<?> mainPlayerUi = sClassLoader.loadClass(
-                "org.schabi.newpipe.player.ui.MainPlayerUi");
-        ServiceRecord record = sServices.get("org.schabi.newpipe.player.PlayerService");
-        if (record == null) return null;
-        Object player = fieldValueOfType(record.service, playerClass);
-        if (player == null) return null;
-        Object playerUis = fieldValueOfType(player, playerUiListClass);
-        if (playerUis == null) return null;
-        Object optionalUi = playerUiListClass.getMethod("get", Class.class)
-                .invoke(playerUis, mainPlayerUi);
-        Object ui = unwrapOptional(optionalUi);
-        return ui == null ? null : new NewPipeUiState(player, ui, mainPlayerUi);
-    }
-
-    /** Find an instance field by assignable runtime type. This deliberately
-     * avoids field and accessor names, which may differ between APK builds. */
-    private static Object fieldValueOfType(Object owner, Class<?> type)
-            throws IllegalAccessException {
-        for (Class<?> c = owner.getClass(); c != null; c = c.getSuperclass()) {
-            for (java.lang.reflect.Field field : c.getDeclaredFields()) {
-                if (!type.isAssignableFrom(field.getType())) continue;
-                field.setAccessible(true);
-                Object value = field.get(owner);
-                if (value != null && type.isInstance(value)) return value;
-            }
-        }
-        return null;
-    }
-
-    private static View viewOfType(View view, Class<?> type) {
-        if (type.isInstance(view)) return view;
-        if (view instanceof android.view.ViewGroup) {
-            android.view.ViewGroup group = (android.view.ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); ++i) {
-                View found = viewOfType(group.getChildAt(i), type);
-                if (found != null) return found;
-            }
-        }
-        return null;
-    }
-
-    /** Android desugaring may expose either java.util.Optional or
-     * j$.util.Optional to reflection, depending on how the APK was built. */
-    private static Object unwrapOptional(Object optional) throws Exception {
-        if (optional == null) return null;
-        if (optional instanceof java.util.Optional<?>) {
-            return ((java.util.Optional<?>) optional).orElse(null);
-        }
-        return optional.getClass().getMethod("orElse", Object.class)
-                .invoke(optional, new Object[] { null });
     }
 
     private static void drainLooper() {

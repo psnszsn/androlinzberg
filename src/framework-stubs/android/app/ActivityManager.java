@@ -44,10 +44,15 @@ public class ActivityManager {
     }
     public java.util.List<RunningAppProcessInfo> getRunningAppProcesses() {
         RunningAppProcessInfo info = new RunningAppProcessInfo(
-                "org.schabi.newpipe", android.os.Process.myPid(), null);
+                ActivityThread.currentProcessName(), android.os.Process.myPid(), null);
         java.util.ArrayList<RunningAppProcessInfo> l = new java.util.ArrayList<>();
         l.add(info);
         return l;
+    }
+    /** AOSP API 30; the host has no system_server exit-history store. */
+    public java.util.List getHistoricalProcessExitReasons(
+            String packageName, int pid, int maxNum) {
+        return new java.util.ArrayList();
     }
     public static class MemoryInfo {
         public long availMem, totalMem, threshold;
