@@ -167,7 +167,8 @@ public abstract class Context {
     }
     public void startActivityAsUser(Intent intent, android.os.UserHandle user) {}
     public void startActivityForResult(String who, Intent intent, int requestCode, android.os.Bundle options) {
-        throw new UnsupportedOperationException();
+        throw android.util.ArtzigTestDiagnostics.unsupported(
+                "android.content.Context", "startActivityForResult", null);
     }
     public Intent registerReceiverAsUser(BroadcastReceiver receiver, android.os.UserHandle user,
             IntentFilter filter, String broadcastPermission, android.os.Handler scheduler) {

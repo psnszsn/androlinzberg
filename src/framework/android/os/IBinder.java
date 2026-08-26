@@ -22,7 +22,8 @@ public interface IBinder {
     }
     default void addFrozenStateChangeCallback(java.util.concurrent.Executor executor,
             FrozenStateChangeCallback callback) throws UnsupportedOperationException {
-        throw new UnsupportedOperationException();
+        throw android.util.ArtzigTestDiagnostics.unsupported(
+                "android.os.IBinder", "addFrozenStateChangeCallback", null);
     }
     default boolean removeFrozenStateChangeCallback(FrozenStateChangeCallback callback) {
         return false;

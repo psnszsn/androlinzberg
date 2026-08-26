@@ -106,7 +106,8 @@ public final class Parcel {
         if (l == null) { writeInt(-1); return; }
         writeInt(l.size()); for (String s : l) writeString(s);
     }
-    public void writeValue(Object v) { throw new UnsupportedOperationException("Parcel.writeValue"); }
+    public void writeValue(Object v) { throw android.util.ArtzigTestDiagnostics.unsupported(
+            "android.os.Parcel", "writeValue", "Parcel.writeValue"); }
     public void writeSerializable(java.io.Serializable s) {
         try {
             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
@@ -345,7 +346,8 @@ public final class Parcel {
         return out;
     }
     public IBinder readStrongBinder() { readInt(); return null; }
-    public Object readValue(ClassLoader loader) { throw new UnsupportedOperationException("Parcel.readValue"); }
+    public Object readValue(ClassLoader loader) { throw android.util.ArtzigTestDiagnostics.unsupported(
+            "android.os.Parcel", "readValue", "Parcel.readValue"); }
     public void readBooleanArray(boolean[] out) {
         int n = readInt();
         for (int i = 0; i < n && i < out.length; i++) out[i] = readBoolean();

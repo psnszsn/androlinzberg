@@ -5,15 +5,19 @@ import java.nio.ByteBuffer;
 public final class SharedMemory implements Parcelable, Closeable {
     private SharedMemory() {}
     public static SharedMemory create(String name, int size) {
-        throw new UnsupportedOperationException("SharedMemory not supported");
+        throw android.util.ArtzigTestDiagnostics.unsupported(
+                "android.os.SharedMemory", "create", "SharedMemory not supported");
     }
-    public ByteBuffer mapReadOnly() { throw new UnsupportedOperationException(); }
-    public ByteBuffer mapReadWrite() { throw new UnsupportedOperationException(); }
+    public ByteBuffer mapReadOnly() { throw android.util.ArtzigTestDiagnostics.unsupported(
+            "android.os.SharedMemory", "mapReadOnly", null); }
+    public ByteBuffer mapReadWrite() { throw android.util.ArtzigTestDiagnostics.unsupported(
+            "android.os.SharedMemory", "mapReadWrite", null); }
     public static void unmap(ByteBuffer buffer) {}
     public int getSize() { return 0; }
     public boolean setProtect(int prot) { return true; }
     public static SharedMemory fromFileDescriptor(ParcelFileDescriptor fd) {
-        throw new UnsupportedOperationException("SharedMemory not supported");
+        throw android.util.ArtzigTestDiagnostics.unsupported(
+                "android.os.SharedMemory", "fromFileDescriptor", "SharedMemory not supported");
     }
     @Override public void close() {}
     @Override public int describeContents() { return 0; }

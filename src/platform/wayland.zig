@@ -1,11 +1,13 @@
 //! Wayland client window: xdg_toplevel + direct EGL UI + input + vsync.
 //! Video frames are imported as DMA-BUF-backed subsurfaces.
 const std = @import("std");
+const linux = std.os.linux;
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const xdg = wayland.client.xdg;
 const wp = wayland.client.wp;
 const zwp = wayland.client.zwp;
+const zwlr = wayland.client.zwlr;
 
 const drm_format_nv12: u32 = 0x3231564e;
 const drm_format_p010: u32 = 0x30313050;
@@ -64,6 +66,115 @@ const xkb = struct {
     pub extern fn xkb_state_key_get_one_sym(state: *State, key: u32) u32;
 };
 
+const test_keymap =
+    \\xkb_keymap {
+    \\ xkb_keycodes { include "evdev+aliases(qwerty)" };
+    \\ xkb_types { include "complete" };
+    \\ xkb_compatibility { include "complete" };
+    \\ xkb_symbols { include "pc+us" };
+    \\ xkb_geometry { include "pc(pc105)" };
+    \\};
+    \\
+++ "\x00";
+
+const TestKey = struct { code: u32, shift: bool = false };
+
+fn asciiKey(byte: u8) ?TestKey {
+    return switch (byte) {
+        'a'...'z' => .{ .code = letterKey(byte) },
+        'A'...'Z' => .{ .code = letterKey(byte + ('a' - 'A')), .shift = true },
+        '1'...'9' => .{ .code = byte - '1' + 2 },
+        '0' => .{ .code = 11 },
+        ' ' => .{ .code = 57 },
+        '\n', '\r' => .{ .code = 28 },
+        '\t' => .{ .code = 15 },
+        0x08, 0x7f => .{ .code = 14 },
+        '-' => .{ .code = 12 },
+        '=' => .{ .code = 13 },
+        '[' => .{ .code = 26 },
+        ']' => .{ .code = 27 },
+        '\\' => .{ .code = 43 },
+        ';' => .{ .code = 39 },
+        '\'' => .{ .code = 40 },
+        '`' => .{ .code = 41 },
+        ',' => .{ .code = 51 },
+        '.' => .{ .code = 52 },
+        '/' => .{ .code = 53 },
+        '!' => .{ .code = 2, .shift = true },
+        '@' => .{ .code = 3, .shift = true },
+        '#' => .{ .code = 4, .shift = true },
+        '$' => .{ .code = 5, .shift = true },
+        '%' => .{ .code = 6, .shift = true },
+        '^' => .{ .code = 7, .shift = true },
+        '&' => .{ .code = 8, .shift = true },
+        '*' => .{ .code = 9, .shift = true },
+        '(' => .{ .code = 10, .shift = true },
+        ')' => .{ .code = 11, .shift = true },
+        '_' => .{ .code = 12, .shift = true },
+        '+' => .{ .code = 13, .shift = true },
+        '{' => .{ .code = 26, .shift = true },
+        '}' => .{ .code = 27, .shift = true },
+        '|' => .{ .code = 43, .shift = true },
+        ':' => .{ .code = 39, .shift = true },
+        '"' => .{ .code = 40, .shift = true },
+        '~' => .{ .code = 41, .shift = true },
+        '<' => .{ .code = 51, .shift = true },
+        '>' => .{ .code = 52, .shift = true },
+        '?' => .{ .code = 53, .shift = true },
+        else => null,
+    };
+}
+
+fn letterKey(byte: u8) u32 {
+    return switch (byte) {
+        'a' => 30,
+        'b' => 48,
+        'c' => 46,
+        'd' => 32,
+        'e' => 18,
+        'f' => 33,
+        'g' => 34,
+        'h' => 35,
+        'i' => 23,
+        'j' => 36,
+        'k' => 37,
+        'l' => 38,
+        'm' => 50,
+        'n' => 49,
+        'o' => 24,
+        'p' => 25,
+        'q' => 16,
+        'r' => 19,
+        's' => 31,
+        't' => 20,
+        'u' => 22,
+        'v' => 47,
+        'w' => 17,
+        'x' => 45,
+        'y' => 21,
+        'z' => 44,
+        else => unreachable,
+    };
+}
+
+fn namedKey(name: []const u8) ?u32 {
+    const names = .{
+        .{ "Enter", 28 },   .{ "Backspace", 14 }, .{ "Tab", 15 },
+        .{ "Escape", 1 },   .{ "Left", 105 },     .{ "Right", 106 },
+        .{ "Up", 103 },     .{ "Down", 108 },     .{ "Home", 102 },
+        .{ "End", 107 },    .{ "PageUp", 104 },   .{ "PageDown", 109 },
+        .{ "Delete", 111 },
+    };
+    inline for (names) |entry| if (std.ascii.eqlIgnoreCase(name, entry[0])) return entry[1];
+    return null;
+}
+
+fn inputTimestamp() u32 {
+    var time: linux.timespec = undefined;
+    _ = linux.clock_gettime(.MONOTONIC, &time);
+    return @truncate(@as(u64, @intCast(time.sec)) * 1000 + @as(u64, @intCast(time.nsec)) / 1_000_000);
+}
+
 pub const Event = union(enum) {
     close,
     configure: struct { width: i32, height: i32 },
@@ -89,10 +200,15 @@ pub const Window = struct {
     dmabuf_formats: std.ArrayList(DmabufFormat) = .empty,
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
+    output: ?*wl.Output = null,
     pointer: ?*wl.Pointer = null,
     keyboard: ?*wl.Keyboard = null,
     cursor_shape_manager: ?*wp.CursorShapeManagerV1 = null,
     cursor_device: ?*wp.CursorShapeDeviceV1 = null,
+    virtual_pointer_manager: ?*zwlr.VirtualPointerManagerV1 = null,
+    virtual_pointer: ?*zwlr.VirtualPointerV1 = null,
+    virtual_keyboard_manager: ?*zwp.VirtualKeyboardManagerV1 = null,
+    virtual_keyboard: ?*zwp.VirtualKeyboardV1 = null,
     pointer_enter_serial: u32 = 0,
     cursor_shape: u32 = 0, // last applied wp_cursor_shape_device_v1.shape (0 = none)
 
@@ -188,12 +304,18 @@ pub const Window = struct {
                     }
                 } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
                     self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, zwlr.VirtualPointerManagerV1.interface.name) == .eq) {
+                    self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, 2)) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, zwp.VirtualKeyboardManagerV1.interface.name) == .eq) {
+                    self.virtual_keyboard_manager = registry.bind(g.name, zwp.VirtualKeyboardManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
                     self.wm_base = registry.bind(g.name, xdg.WmBase, 2) catch return;
                     self.wm_base.?.setListener(*Window, wmBaseListener, self);
                 } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq) {
                     self.seat = registry.bind(g.name, wl.Seat, 5) catch return;
                     self.seat.?.setListener(*Window, seatListener, self);
+                } else if (std.mem.orderZ(u8, g.interface, wl.Output.interface.name) == .eq and self.output == null) {
+                    self.output = registry.bind(g.name, wl.Output, 2) catch return;
                 }
             },
             .global_remove => {},
@@ -528,6 +650,107 @@ pub const Window = struct {
         self.setFullscreen(!self.fullscreen_actual);
     }
 
+    /// True when the compositor exposes both wlroots virtual-input protocols.
+    /// The devices themselves are created lazily, only for an enabled test API.
+    pub fn testInputAvailable(self: *const Window) bool {
+        return self.seat != null and self.virtual_pointer_manager != null and
+            self.virtual_keyboard_manager != null;
+    }
+
+    /// Create the test devices and let the compositor advertise the resulting
+    /// seat capabilities before the first injected event. Two roundtrips are
+    /// intentional: the first delivers wl_seat.capabilities, whose listener
+    /// requests wl_pointer/wl_keyboard; the second installs those objects.
+    pub fn prepareTestInput(self: *Window) !void {
+        _ = try self.ensureVirtualPointer();
+        _ = try self.ensureVirtualKeyboard();
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (self.pointer == null or self.keyboard == null) return error.SeatCapabilitiesUnavailable;
+    }
+
+    /// Inject a real compositor-routed pointer click at an Android buffer
+    /// coordinate. Cage sends the resulting wl_pointer events back through the
+    /// normal input path; this does not call the Java host directly.
+    pub fn testTap(self: *Window, buffer_x: i32, buffer_y: i32) !void {
+        const pointer = try self.ensureVirtualPointer();
+        const x: u32 = @intCast(std.math.clamp(self.bufferToSurfaceX(buffer_x), 0, @max(0, self.width - 1)));
+        const y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(buffer_y), 0, @max(0, self.height - 1)));
+        const width: u32 = @intCast(@max(1, self.width));
+        const height: u32 = @intCast(@max(1, self.height));
+        const time = inputTimestamp();
+        pointer.motionAbsolute(time, x, y, width, height);
+        pointer.frame();
+        pointer.button(time, 0x110, .pressed); // BTN_LEFT
+        pointer.frame();
+        pointer.button(time +% 1, 0x110, .released);
+        pointer.frame();
+        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
+    /// Type UTF-8 text through Cage's virtual keyboard. The fixed US keymap
+    /// intentionally accepts printable ASCII plus newline/tab/backspace;
+    /// semantic set_text remains available for arbitrary Unicode input.
+    pub fn testType(self: *Window, text: []const u8) !void {
+        const keyboard = try self.ensureVirtualKeyboard();
+        for (text) |byte| {
+            const key = asciiKey(byte) orelse return error.UnsupportedText;
+            self.sendVirtualKey(keyboard, key.code, key.shift);
+        }
+        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
+    pub fn testKey(self: *Window, name: []const u8) !void {
+        const code = namedKey(name) orelse return error.UnsupportedKey;
+        const keyboard = try self.ensureVirtualKeyboard();
+        self.sendVirtualKey(keyboard, code, false);
+        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
+    fn ensureVirtualPointer(self: *Window) !*zwlr.VirtualPointerV1 {
+        if (self.virtual_pointer) |pointer| return pointer;
+        const manager = self.virtual_pointer_manager orelse return error.VirtualPointerUnavailable;
+        self.virtual_pointer = if (self.output) |output|
+            try manager.createVirtualPointerWithOutput(self.seat, output)
+        else
+            try manager.createVirtualPointer(self.seat);
+        return self.virtual_pointer.?;
+    }
+
+    fn ensureVirtualKeyboard(self: *Window) !*zwp.VirtualKeyboardV1 {
+        if (self.virtual_keyboard) |keyboard| return keyboard;
+        const manager = self.virtual_keyboard_manager orelse return error.VirtualKeyboardUnavailable;
+        const seat = self.seat orelse return error.VirtualKeyboardUnavailable;
+        const keyboard = try manager.createVirtualKeyboard(seat);
+        errdefer keyboard.destroy();
+        const keymap_fd = try std.posix.memfd_create("azk-test-keymap", 0);
+        defer _ = std.c.close(keymap_fd);
+        var remaining: []const u8 = test_keymap;
+        while (remaining.len != 0) {
+            const written = std.c.write(keymap_fd, remaining.ptr, remaining.len);
+            if (written <= 0) return error.KeymapWriteFailed;
+            remaining = remaining[@intCast(written)..];
+        }
+        keyboard.keymap(.xkb_v1, keymap_fd, @intCast(test_keymap.len));
+        self.virtual_keyboard = keyboard;
+        return keyboard;
+    }
+
+    fn sendVirtualKey(self: *Window, keyboard: *zwp.VirtualKeyboardV1, code: u32, shift: bool) void {
+        const time = inputTimestamp();
+        if (shift) {
+            keyboard.key(time, 42, 1); // KEY_LEFTSHIFT
+            keyboard.modifiers(1, 0, 0, 0);
+        }
+        keyboard.key(time, code, 1);
+        keyboard.key(time +% 1, code, 0);
+        if (shift) {
+            keyboard.modifiers(0, 0, 0, 0);
+            keyboard.key(time +% 1, 42, 0);
+        }
+        _ = self;
+    }
+
     /// Testing hook: behave as if the compositor resized us.
     pub fn simulateResize(self: *Window, w: i32, h: i32) void {
         self.width = w;
@@ -570,6 +793,9 @@ pub const Window = struct {
 
         if (self.cursor_device) |device| device.destroy();
         if (self.cursor_shape_manager) |manager| manager.destroy();
+        if (self.virtual_pointer) |pointer| pointer.destroy();
+        if (self.virtual_keyboard) |keyboard| keyboard.destroy();
+        if (self.virtual_pointer_manager) |manager| manager.destroy();
         if (self.pointer) |pointer| pointer.release();
         if (self.keyboard) |keyboard| keyboard.release();
         if (self.seat) |seat| seat.release();
@@ -797,4 +1023,12 @@ test "DMA-BUF import modifier requires an exact advertised layout" {
     try std.testing.expectEqual(linear, selectDmabufImportModifier(&supported, format, linear).?);
     try std.testing.expect(selectDmabufImportModifier(&supported, format, tiled) == null);
     try std.testing.expect(selectDmabufImportModifier(&supported, drm_format_p010, tiled) == null);
+}
+
+test "virtual keyboard uses Linux evdev codes for the fixed US keymap" {
+    try std.testing.expectEqual(TestKey{ .code = 30 }, asciiKey('a').?);
+    try std.testing.expectEqual(TestKey{ .code = 30, .shift = true }, asciiKey('A').?);
+    try std.testing.expectEqual(TestKey{ .code = 3, .shift = true }, asciiKey('@').?);
+    try std.testing.expectEqual(@as(u32, 28), namedKey("enter").?);
+    try std.testing.expect(asciiKey(0xc3) == null);
 }

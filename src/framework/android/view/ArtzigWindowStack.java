@@ -42,6 +42,7 @@ public final class ArtzigWindowStack {
         synchronized (sEntries) {
             sEntries.add(e);
         }
+        ArtzigAccessibilityBridge.markChanged("window-added");
         root.setView(view, 0, 0); // sized by the compositor per-frame
         Log.i(TAG, "addView " + view.getClass().getSimpleName() + " lp=" + lp.width + "x"
                 + lp.height + " g=0x" + Integer.toHexString(lp.gravity) + " at " + lp.x + "," + lp.y);
@@ -59,6 +60,7 @@ public final class ArtzigWindowStack {
                         Log.w(TAG, "detach failed", t);
                     }
                     Log.i(TAG, "removeView " + view.getClass().getSimpleName());
+                    ArtzigAccessibilityBridge.markChanged("window-removed");
                     return;
                 }
             }
@@ -73,6 +75,7 @@ public final class ArtzigWindowStack {
                     e.lp.copyFrom(l);
                     view.setLayoutParams(e.lp);
                     e.root.requestLayout();
+                    ArtzigAccessibilityBridge.markChanged("window-updated");
                     return;
                 }
             }
@@ -119,6 +122,7 @@ public final class ArtzigWindowStack {
             entries = new ArrayList<>(sEntries);
             sEntries.clear();
         }
+        ArtzigAccessibilityBridge.markChanged("windows-cleared");
         for (Entry entry : entries) entry.root.destroy();
     }
 

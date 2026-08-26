@@ -90,21 +90,27 @@ public final class ThreadedRenderer extends HardwareRenderer {
     public static class SimpleRenderer {
         public SimpleRenderer(Context context, String name, Surface surface) {}
         public android.graphics.RecordingCanvas beginRecording(int width, int height) {
-            throw new UnsupportedOperationException("SimpleRenderer is not hosted");
+            throw android.util.ArtzigTestDiagnostics.unsupported(
+                    "android.view.ThreadedRenderer.SimpleRenderer", "beginRecording",
+                    "SimpleRenderer is not hosted");
         }
         public void endRecording() {}
         public void renderFrame(Choreographer choreographer) {}
         public void draw(HardwareRenderer.FrameDrawingCallback callback) {}
         public void destroy() {}
         public HardwareRenderer.FrameRenderRequest createRenderRequest() {
-            throw new UnsupportedOperationException("SimpleRenderer is not hosted");
+            throw android.util.ArtzigTestDiagnostics.unsupported(
+                    "android.view.ThreadedRenderer.SimpleRenderer", "createRenderRequest",
+                    "SimpleRenderer is not hosted");
         }
         public void setLightSourceAlpha(float a, float b) {}
         public void setLightSourceGeometry(float x, float y, float z, float radius) {}
         public void setSurface(Surface surface) {}
         public void setLightCenter(Display display, int windowLeft, int windowTop) {}
         public RenderNode getRootNode() {
-            throw new UnsupportedOperationException("SimpleRenderer is not hosted");
+            throw android.util.ArtzigTestDiagnostics.unsupported(
+                    "android.view.ThreadedRenderer.SimpleRenderer", "getRootNode",
+                    "SimpleRenderer is not hosted");
         }
     }
 
