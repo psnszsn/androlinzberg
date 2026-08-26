@@ -24,7 +24,7 @@ const usage =
     \\androlinzberg — run an Android APK on artzig (ART + Skia + Wayland)
     \\
     \\usage: androlinzberg [options] <app.apk>
-    \\       androlinzberg --java            (AZK_DRAW_CLASS entry, default GraphicsSmoke)
+    \\       androlinzberg --java            (AZK_DRAW_CLASS entry, default ViewHost)
     \\       androlinzberg --codec-selftest | --codec-make-mp3 | --codec-make-m4v | --javatest
     \\
     \\Paths are resolved relative to the executable's install tree (zig-out/):
@@ -169,11 +169,10 @@ pub fn main(init: std.process.Init) !void {
 }
 
 // ---------------------------------------------------------------------------
-// M2a: Java drives the real android.graphics stack. HWUI classes present
-// directly through EGL; simple smoke classes retain the Bitmap adapter.
+// Java drives the real android.graphics stack. HWUI presents directly through
+// EGL; there is deliberately no CPU/Bitmap window-present path.
 
 const RegisterFn = *const fn (env: *anyopaque) callconv(.c) c_int;
-const BitmapReadFn = *const fn (env: *anyopaque, bitmap: art.jni.jobject, dst: ?*anyopaque, w: c_int, h: c_int, row_bytes: usize) callconv(.c) c_int;
 const ConfigureHostFn = *const fn (proxy: *anyopaque, display: ?*anyopaque, surface: ?*anyopaque, width: c_int, height: c_int) callconv(.c) void;
 const DestroyHostFn = *const fn (proxy: *anyopaque) callconv(.c) void;
 
@@ -221,7 +220,6 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         return e;
     };
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
-    const bitmap_read = lib.lookup(BitmapReadFn, "azk_bitmap_read") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
 
     // System fonts: unless the user points ARTZIG_FONT_FALLBACK_XML at a
@@ -259,7 +257,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     const e = art.Env{ .env = env };
     // entry class: AZK_DRAW_CLASS, else ApkHost when an APK was given
     const cls_name = init.minimal.environ.getPosix("AZK_DRAW_CLASS") orelse
-        (if (apk != null) "dev/artzig/ApkHost" else "dev/artzig/GraphicsSmoke");
+        (if (apk != null) "dev/artzig/ApkHost" else "dev/artzig/ViewHost");
     const cls_z = try gpa.dupeSentinel(u8, cls_name, 0);
     defer gpa.free(cls_z);
     const cls = try e.findClass(cls_z);
@@ -283,17 +281,14 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         }
     else
         null;
-    const draw_hardware = draw_hardware_physical orelse draw_hardware_scaled orelse draw_hardware_legacy;
+    const draw_hardware = draw_hardware_physical orelse draw_hardware_scaled orelse
+        draw_hardware_legacy orelse return error.HardwareDrawRequired;
     const draw_hardware_abi: HardwareDrawAbi = if (draw_hardware_physical != null)
         .physical
     else if (draw_hardware_scaled != null)
         .scaled
     else
         .legacy;
-    const draw_bitmap: ?art.jni.jmethodID = if (draw_hardware == null)
-        try e.getStaticMethodID(cls, "draw", "(II)Landroid/graphics/Bitmap;")
-    else
-        null;
     const motion: ?art.jni.jmethodID = e.getStaticMethodID(cls, "motion", "(IFF)V") catch null;
     const scroll: ?art.jni.jmethodID = e.getStaticMethodID(cls, "scroll", "(FFFF)V") catch blk: {
         env.*.*.ExceptionClear.?(env);
@@ -426,9 +421,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     }
     const win = try wayland.Window.initOpts(gpa, init_w, init_h, "androlinzberg", fullscreen);
     defer win.deinit();
-    if (draw_hardware != null) {
-        host_natives.bindWayland(@ptrCast(win.display), @ptrCast(win.surface));
-    }
+    host_natives.bindWayland(@ptrCast(win.display), @ptrCast(win.surface));
     video_layers.register(gpa, init.io, win, @ptrCast(env), draw_hardware_abi == .physical) catch |err| {
         std.debug.print("video layers unavailable: {}\n", .{err});
     };
@@ -441,7 +434,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     var callback_total_ns: i128 = 0;
     var callback_max_ns: i128 = 0;
     var app_fullscreen = false;
-    try javaFrame(win, env, bitmap_read, cls, draw_hardware, draw_hardware_abi, draw_bitmap);
+    try javaFrame(win, env, cls, draw_hardware, draw_hardware_abi);
     try syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen);
     frame_count += 1;
 
@@ -595,7 +588,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             swipe_frame = 0;
         }
         if (need_frame) {
-            javaFrame(win, env, bitmap_read, cls, draw_hardware, draw_hardware_abi, draw_bitmap) catch |err| {
+            javaFrame(win, env, cls, draw_hardware, draw_hardware_abi) catch |err| {
                 // a broken frame (pending Java exception, etc.) must not kill the app
                 std.debug.print("azk: frame error: {} (continuing)\n", .{err});
             };
@@ -612,48 +605,35 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     std.debug.print("androlinzberg: exiting after {d} java frames\n", .{frame_count});
 }
 
-fn javaFrame(win: *wayland.Window, env: anytype, bitmap_read: BitmapReadFn, cls: art.jni.jclass, draw_hardware: ?art.jni.jmethodID, draw_hardware_abi: HardwareDrawAbi, draw_bitmap: ?art.jni.jmethodID) !void {
+fn javaFrame(win: *wayland.Window, env: anytype, cls: art.jni.jclass, draw_hardware: art.jni.jmethodID, draw_hardware_abi: HardwareDrawAbi) !void {
     const e = art.Env{ .env = env };
     const jenv = env.*.*;
-    if (draw_hardware) |draw| {
-        try win.requestFrame();
-        if (draw_hardware_abi == .physical) {
-            jenv.CallStaticVoidMethod.?(
-                env,
-                cls,
-                draw,
-                @as(art.jni.jint, @intCast(win.width)),
-                @as(art.jni.jint, @intCast(win.height)),
-                @as(art.jni.jint, @intCast(win.bufferWidth())),
-                @as(art.jni.jint, @intCast(win.bufferHeight())),
-                @as(art.jni.jint, @intCast(win.scale_120)),
-            );
-        } else if (draw_hardware_abi == .scaled) {
-            jenv.CallStaticVoidMethod.?(
-                env,
-                cls,
-                draw,
-                @as(art.jni.jint, @intCast(win.width)),
-                @as(art.jni.jint, @intCast(win.height)),
-                @as(art.jni.jint, @intCast(win.bufferWidth())),
-                @as(art.jni.jint, @intCast(win.bufferHeight())),
-            );
-        } else {
-            jenv.CallStaticVoidMethod.?(env, cls, draw, @as(art.jni.jint, @intCast(win.width)), @as(art.jni.jint, @intCast(win.height)));
-        }
-        try e.check();
-        return;
+    try win.requestFrame();
+    if (draw_hardware_abi == .physical) {
+        jenv.CallStaticVoidMethod.?(
+            env,
+            cls,
+            draw_hardware,
+            @as(art.jni.jint, @intCast(win.width)),
+            @as(art.jni.jint, @intCast(win.height)),
+            @as(art.jni.jint, @intCast(win.bufferWidth())),
+            @as(art.jni.jint, @intCast(win.bufferHeight())),
+            @as(art.jni.jint, @intCast(win.scale_120)),
+        );
+    } else if (draw_hardware_abi == .scaled) {
+        jenv.CallStaticVoidMethod.?(
+            env,
+            cls,
+            draw_hardware,
+            @as(art.jni.jint, @intCast(win.width)),
+            @as(art.jni.jint, @intCast(win.height)),
+            @as(art.jni.jint, @intCast(win.bufferWidth())),
+            @as(art.jni.jint, @intCast(win.bufferHeight())),
+        );
+    } else {
+        jenv.CallStaticVoidMethod.?(env, cls, draw_hardware, @as(art.jni.jint, @intCast(win.width)), @as(art.jni.jint, @intCast(win.height)));
     }
-
-    const draw = draw_bitmap orelse return error.NoDrawMethod;
-    const buf = try win.acquire();
-    const jbitmap = jenv.CallStaticObjectMethod.?(env, cls, draw, @as(art.jni.jint, @intCast(buf.width)), @as(art.jni.jint, @intCast(buf.height)));
     try e.check();
-    if (jbitmap == null) return error.NoBitmap;
-    defer jenv.DeleteLocalRef.?(env, jbitmap);
-    if (bitmap_read(@ptrCast(env), jbitmap, buf.pixels.ptr, buf.width, buf.height, buf.stride) != 0)
-        return error.BitmapRead;
-    try win.present(buf);
 }
 
 fn syncAppFullscreen(win: *wayland.Window, env: anytype, cls: art.jni.jclass, method: ?art.jni.jmethodID, previous: *bool) !void {

@@ -27,7 +27,6 @@ pub fn build(b: *std.Build) void {
     scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
     scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
     scanner.generate("wl_compositor", 4);
-    scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 5);
     scanner.generate("wl_output", 2);
     scanner.generate("xdg_wm_base", 2);

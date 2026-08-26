@@ -1,6 +1,5 @@
-//! Wayland client window: xdg_toplevel + wl_shm double buffer + input + vsync.
-//! Built on zig-wayland (pinned next-zig revision). The pixel format is
-//! argb8888 (== Skia kBGRA_8888 premul on little-endian).
+//! Wayland client window: xdg_toplevel + direct EGL UI + input + vsync.
+//! Video frames are imported as DMA-BUF-backed subsurfaces.
 const std = @import("std");
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
@@ -65,15 +64,6 @@ const xkb = struct {
     pub extern fn xkb_state_key_get_one_sym(state: *State, key: u32) u32;
 };
 
-pub const Buffer = struct {
-    wl_buffer: *wl.Buffer,
-    pixels: []align(std.heap.page_size_min) u8,
-    width: i32,
-    height: i32,
-    stride: usize,
-    busy: bool = false,
-};
-
 pub const Event = union(enum) {
     close,
     configure: struct { width: i32, height: i32 },
@@ -97,7 +87,6 @@ pub const Window = struct {
     dmabuf_feedback: ?*zwp.LinuxDmabufFeedbackV1 = null,
     dmabuf_table: ?[]align(std.heap.page_size_min) u8 = null,
     dmabuf_formats: std.ArrayList(DmabufFormat) = .empty,
-    shm: ?*wl.Shm = null,
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
     pointer: ?*wl.Pointer = null,
@@ -120,7 +109,6 @@ pub const Window = struct {
     fullscreen_requested: bool = false,
     fullscreen_actual: bool = false,
     configured: bool = false,
-    buffers: [2]?Buffer = .{ null, null },
 
     pointer_x: f64 = 0,
     pointer_y: f64 = 0,
@@ -150,7 +138,7 @@ pub const Window = struct {
         self.registry = try self.display.getRegistry();
         self.registry.setListener(*Window, registryListener, self);
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        if (self.compositor == null or self.shm == null or self.wm_base == null)
+        if (self.compositor == null or self.wm_base == null)
             return error.MissingGlobals;
 
         self.surface = try self.compositor.?.createSurface();
@@ -200,8 +188,6 @@ pub const Window = struct {
                     }
                 } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
                     self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
-                    self.shm = registry.bind(g.name, wl.Shm, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
                     self.wm_base = registry.bind(g.name, xdg.WmBase, 2) catch return;
                     self.wm_base.?.setListener(*Window, wmBaseListener, self);
@@ -304,11 +290,10 @@ pub const Window = struct {
             .preferred_scale => |preferred| {
                 if (preferred.scale == 0 or preferred.scale == self.scale_120) return;
                 self.scale_120 = preferred.scale;
-                self.dropBuffers();
                 self.updateViewport();
                 // A scale transition does not necessarily cause an xdg-shell
-                // size configure. Notify the renderer so it rebuilds its SHM
-                // or EGL target at the new physical pixel size.
+                // size configure. Notify EGL so it rebuilds at the new
+                // physical pixel size.
                 self.push(.{ .configure = .{ .width = self.width, .height = self.height } });
             },
         }
@@ -335,7 +320,6 @@ pub const Window = struct {
                     if (c.width != self.width or c.height != self.height) {
                         self.width = c.width;
                         self.height = c.height;
-                        self.dropBuffers();
                         self.updateViewport();
                         self.push(.{ .configure = .{ .width = c.width, .height = c.height } });
                     }
@@ -445,24 +429,8 @@ pub const Window = struct {
         }
     }
 
-    fn bufferListener(_: *wl.Buffer, event: wl.Buffer.Event, buf: *Buffer) void {
-        switch (event) {
-            .release => buf.busy = false,
-        }
-    }
-
     fn push(self: *Window, e: Event) void {
         self.events.append(self.gpa, e) catch {};
-    }
-
-    fn dropBuffers(self: *Window) void {
-        for (&self.buffers) |*b| {
-            if (b.*) |*buf| {
-                buf.wl_buffer.destroy();
-                std.posix.munmap(buf.pixels);
-                b.* = null;
-            }
-        }
     }
 
     fn scaledDimension(logical: i32, scale_120: u32) i32 {
@@ -518,54 +486,6 @@ pub const Window = struct {
         }
     }
 
-    fn createBuffer(self: *Window) !Buffer {
-        const width = self.bufferWidth();
-        const height = self.bufferHeight();
-        const stride: usize = @intCast(width * 4);
-        const size: usize = stride * @as(usize, @intCast(height));
-        const memfd = try std.posix.memfd_create("artzig-shm", 0);
-        defer _ = std.c.close(memfd);
-        if (std.c.ftruncate(memfd, @intCast(size)) != 0) return error.Truncate;
-        const pixels = try std.posix.mmap(null, size, .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, memfd, 0);
-        const pool = try self.shm.?.createPool(memfd, @intCast(size));
-        defer pool.destroy();
-        const wl_buffer = try pool.createBuffer(0, width, height, @intCast(stride), .argb8888);
-        return .{ .wl_buffer = wl_buffer, .pixels = pixels, .width = width, .height = height, .stride = stride };
-        // NOTE: the release listener is attached in acquire() once the Buffer has
-        // its final address inside self.buffers.
-    }
-
-    /// Get a free buffer to draw into (creates lazily; double-buffered).
-    pub fn acquire(self: *Window) !*Buffer {
-        for (&self.buffers) |*slot| {
-            if (slot.*) |*buf| {
-                if (!buf.busy) return buf;
-            } else {
-                slot.* = try self.createBuffer();
-                const buf = &slot.*.?;
-                buf.wl_buffer.setListener(*Buffer, bufferListener, buf);
-                return buf;
-            }
-        }
-        // both busy: block on events until one is released
-        while (true) {
-            if (self.display.dispatch() != .SUCCESS) return error.DispatchFailed;
-            for (&self.buffers) |*slot| {
-                if (slot.*) |*buf| if (!buf.busy) return buf;
-            }
-        }
-    }
-
-    /// Attach+commit `buf` and request a frame callback (vsync).
-    pub fn present(self: *Window, buf: *Buffer) !void {
-        buf.busy = true;
-        self.surface.attach(buf.wl_buffer, 0, 0);
-        self.surface.damage(0, 0, self.width, self.height);
-        try self.requestFrame();
-        self.surface.commit();
-        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
-    }
-
     /// Register a callback to pace the next commit. The direct EGL presenter
     /// calls this before RenderThread's eglSwapBuffers commits the surface.
     pub fn requestFrame(self: *Window) !void {
@@ -612,7 +532,6 @@ pub const Window = struct {
     pub fn simulateResize(self: *Window, w: i32, h: i32) void {
         self.width = w;
         self.height = h;
-        self.dropBuffers();
         self.updateViewport();
     }
 
@@ -642,8 +561,6 @@ pub const Window = struct {
     pub fn deinit(self: *Window) void {
         if (self.frame_cb) |callback| callback.destroy();
         self.frame_cb = null;
-        self.dropBuffers();
-
         xkb.xkb_state_unref(self.xkb_state);
         xkb.xkb_keymap_unref(self.xkb_keymap);
         xkb.xkb_context_unref(self.xkb_context);

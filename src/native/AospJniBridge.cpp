@@ -3,8 +3,8 @@
 // we don't ship yet (Movie and PDF).
 #include <GraphicsJNI.h>
 #include <SkGraphics.h>
-#include <hwui/Bitmap.h>
 #include <jni.h>
+#include <Properties.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -111,6 +111,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
     // slot here as well for font-data finalizers running on GC threads.
     GraphicsJNI::setJavaVM(g_azk_vm);
     SkGraphics::Init();
+    android::uirenderer::Properties::overrideRenderPipelineType(
+            android::uirenderer::RenderPipelineType::SkiaGL);
     using Reg = int (*)(JNIEnv*);
     struct Entry {
         Reg fn;
@@ -209,20 +211,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
         }
     }
     return 0;
-}
-
-// Copy an android.graphics.Bitmap's pixels into a BGRA8888 premul buffer
-// (the Wayland wl_shm mapping). Returns 0 on success.
-int azk_bitmap_read(JNIEnv* env, jobject jbitmap, void* dst, int width, int height,
-                    size_t dst_row_bytes) {
-    android::Bitmap* nb = GraphicsJNI::getNativeBitmap(env, jbitmap);
-    if (!nb) return -1;
-    SkBitmap src;
-    nb->getSkBitmap(&src);
-    if (src.isNull()) return -1;
-    SkImageInfo dstInfo =
-            SkImageInfo::Make(width, height, kBGRA_8888_SkColorType, kPremul_SkAlphaType);
-    return src.readPixels(dstInfo, dst, dst_row_bytes, 0, 0) ? 0 : -2;
 }
 
 }  // extern "C"
