@@ -80,14 +80,18 @@ fn locateRuntimeRoot(init: std.process.Init, tree: []const u8) !?[]const u8 {
 /// when its constructor runs during Runtime.create.
 fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtime_root: []const u8, apk: []const u8) !void {
     const a = init.arena.allocator();
-    const cache_root = if (init.minimal.environ.getPosix("XDG_CACHE_HOME")) |p|
-        p
-    else if (init.minimal.environ.getPosix("HOME")) |p|
-        try std.fs.path.join(a, &.{ p, ".cache" })
-    else
-        "/tmp";
-    const apk_key = std.hash.Wyhash.hash(0, apk);
-    const native_dir = try std.fmt.allocPrint(a, "{s}/artzig/apk-libs/{x}", .{ cache_root, apk_key });
+    const native_dir = if (init.minimal.environ.getPosix("ARTZIG_NATIVE_LIB_DIR")) |configured|
+        configured
+    else blk: {
+        const cache_root = if (init.minimal.environ.getPosix("XDG_CACHE_HOME")) |p|
+            p
+        else if (init.minimal.environ.getPosix("HOME")) |p|
+            try std.fs.path.join(a, &.{ p, ".cache" })
+        else
+            "/tmp";
+        const apk_key = std.hash.Wyhash.hash(0, apk);
+        break :blk try std.fmt.allocPrint(a, "{s}/artzig/apk-libs/{x}", .{ cache_root, apk_key });
+    };
     try std.Io.Dir.cwd().createDirPath(init.io, native_dir);
 
     _ = setenv("ARTZIG_NATIVE_LIB_DIR", try a.dupeSentinel(u8, native_dir, 0), 1);

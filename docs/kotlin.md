@@ -31,3 +31,11 @@ The hosted APK classloader keeps framework classes parent-first but treats
 host's pinned standard library; missing Kotlin classes fall back to the host.
 Run `zig build -j10 jvm-test` to exercise that rule with a shadow dex through
 the real ART classloader.
+
+Host-side APK integration tests are Kotlin too. `zig build -j10 testkit` uses
+the same pinned AOSP compiler plus vendored `kotlin.test`, JUnit, Hamcrest, and
+Gson jars; it does not use Gradle or resolve network dependencies. The host JDK
+runs the test supervisor so an APK crash or hang cannot take down the runner,
+while the framework and APK continue to execute on ART. See the Kotlin APK
+integration-test section in the repository README for the rule API, registry,
+filters, and artifacts.

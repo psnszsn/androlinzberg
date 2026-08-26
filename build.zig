@@ -95,6 +95,9 @@ pub fn build(b: *std.Build) void {
     // --- framework JVM jar (Java + Kotlin), framework-res.apk, generated Java
     const java = @import("build/java.zig").build(b, .{ .artzig = artzig_dep });
     b.getInstallStep().dependOn(java.java_step);
+    const testkit = @import("build/testkit.zig").build(b, artzig_dep);
+    b.getInstallStep().dependOn(testkit.install_step);
+    b.installBinFile("tools/azk-test", "azk-test");
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
         libart_overlay,
         .{ .custom = "lib/art" },
@@ -304,6 +307,41 @@ pub fn build(b: *std.Build) void {
     );
     framework_compat_smoke.step.dependOn(b.getInstallStep());
     jvm_test_step.dependOn(&framework_compat_smoke.step);
+
+    const testkit_step = b.step("testkit", "Build and install the host Kotlin testkit");
+    testkit_step.dependOn(testkit.install_step);
+
+    const azk_test_run = std.Build.Step.Run.create(b, "run Kotlin azk-test client");
+    azk_test_run.addFileArg(b.path("tools/azk-test"));
+    azk_test_run.addPassthruArgs();
+    azk_test_run.step.dependOn(testkit.install_step);
+    b.step("azk-test", "Run the Kotlin test-control CLI").dependOn(&azk_test_run.step);
+
+    const testkit_unit_run = std.Build.Step.Run.create(b, "run Kotlin testkit unit tests");
+    testkit_unit_run.addFileArg(b.path("tools/azk-test"));
+    testkit_unit_run.addArg("--unit");
+    testkit_unit_run.step.dependOn(testkit.install_step);
+    const testkit_test_step = b.step("testkit-test", "Run host Kotlin testkit unit tests");
+    testkit_test_step.dependOn(&testkit_unit_run.step);
+
+    const integration_run = b.addSystemCommand(&.{
+        "env",
+        "WLR_RENDERER=gles2",
+        "AZK_LAUNCHER=zig-out/bin/androlinzberg",
+        "AZK_APK_REGISTRY=tests/apks.json",
+        "AZK_ARTIFACT_ROOT=zig-out/test-results/integration",
+        "AZK_SHARED_CACHE=zig-out/test-cache/integration",
+        "bash",
+    });
+    integration_run.addFileArg(b.path("tools/shot.sh"));
+    integration_run.addArg("zig-out/test-results/integration/suite.png");
+    integration_run.addArgs(&.{ "--runner", "--" });
+    integration_run.addFileArg(b.path("tools/azk-test"));
+    integration_run.addArg("--junit");
+    integration_run.addPassthruArgs();
+    integration_run.step.dependOn(b.getInstallStep());
+    integration_run.step.dependOn(&testkit_unit_run.step);
+    b.step("integration-test", "Run Kotlin APK integration tests under Cage").dependOn(&integration_run.step);
 
     // run the *installed* launcher: it resolves the island/dex/res relative to
     // its own install tree (zig-out/), which the cache-dir copy does not have.

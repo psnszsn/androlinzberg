@@ -2,6 +2,7 @@
 # Run a Wayland client headless under cage and screenshot it with grim.
 #   tools/shot.sh <out.png> <command> [args...]
 #   tools/shot.sh <out.png> --test <test-executable> -- <command> [args...]
+#   tools/shot.sh <out.png> --runner -- <test-runner> [args...]
 # Uses WLR_BACKENDS=headless and defaults to pixman. Set WLR_RENDERER=gles2
 # when testing clients that present EGL buffers. In --test mode the harness
 # exposes AZK_TEST_SOCKET, runs the test after the socket appears, and writes
@@ -9,18 +10,25 @@
 set -euo pipefail
 OUT=$(realpath -m "$1"); shift
 TEST_EXECUTABLE=
+RUNNER_MODE=
 if [[ ${1:-} == --test ]]; then
   TEST_EXECUTABLE=$(realpath "$2"); shift 2
   [[ ${1:-} == -- ]] || { echo "shot.sh: expected -- after test executable" >&2; exit 2; }
   shift
+elif [[ ${1:-} == --runner ]]; then
+  RUNNER_MODE=1; shift
+  [[ ${1:-} == -- ]] || { echo "shot.sh: expected -- after --runner" >&2; exit 2; }
+  shift
 fi
 [[ $# -gt 0 ]] || { echo "shot.sh: missing application command" >&2; exit 2; }
+mkdir -p "$(dirname "$OUT")"
 export WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1
 export WLR_RENDERER=${WLR_RENDERER:-pixman}
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 unset DISPLAY
 WARMUP=${SHOT_WARMUP:-3}
 CONTROL_DIR=
+export SHOT_RUNNER_MODE=$RUNNER_MODE
 if [[ -n $TEST_EXECUTABLE ]]; then
   CONTROL_DIR=$(mktemp -d "$XDG_RUNTIME_DIR/azk-shot.XXXXXX")
   export AZK_TEST_SOCKET="$CONTROL_DIR/control.sock"
@@ -38,6 +46,10 @@ if [[ -n $TEST_EXECUTABLE ]]; then
 fi
 trap 'if [[ -n $CONTROL_DIR ]]; then rm -rf -- "$CONTROL_DIR"; fi' EXIT
 cage -- sh -c '
+  if [ -n "${SHOT_RUNNER_MODE:-}" ]; then
+    "$@"
+    exit $?
+  fi
   if [ -n "${SHOT_TEST_EXECUTABLE:-}" ]; then
     "$@" >"$SHOT_LOG_OUT" 2>&1 &
   else

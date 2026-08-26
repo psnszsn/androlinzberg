@@ -125,3 +125,40 @@ Selectors are exact and must identify one node before an action is applied.
 They can match resource id, text, content description, Android class, or
 normalized role. `click`, `type`, and `key` use Cage's wlroots virtual-input
 protocols by default; `set-text` uses `AccessibilityNodeInfo.ACTION_SET_TEXT`.
+
+## Kotlin APK integration tests
+
+Repository integration tests use `kotlin.test` assertions with AOSP's vendored
+JUnit 4 runner. Each `@Test` method gets a fresh APK process, app-data directory,
+test-control socket, and extracted-native-library directory. The JUnit process
+runs on the host JDK inside the existing Cage harness, while the APK remains on
+ART.
+
+```kotlin
+class NewPipeTest {
+    @get:Rule
+    val app = ApkRule("newpipe-0.29.1")
+
+    @Test
+    fun opensSearch() = app.run {
+        click(description = "Search")
+        waitFor(className = "android.widget.EditText")
+        setText(className = "android.widget.EditText", value = "kotlin integration")
+        expectVisible(text = "kotlin integration")
+    }
+}
+```
+
+Register pinned APKs in `tests/apks.json`, then provide the selected entry's
+environment variable. The checksum is verified before launch:
+
+```sh
+AZK_APK_NEWPIPE_0_29_1=/path/to/NewPipe_v0.29.1.apk \
+  zig build -j10 integration-test
+```
+
+Pass `--class` and optionally `--method` after `--` to filter discovery. Host
+testkit tests run with `zig build -j10 testkit-test`. Integration artifacts live
+under `zig-out/test-results/integration/<class>.<method>/`: `app.log` and
+`steps.jsonl` are always kept; failures additionally keep `screenshot.png`,
+`a11y.json`, and `failure.json`.
