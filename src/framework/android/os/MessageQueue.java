@@ -3,6 +3,7 @@ package android.os;
 public final class MessageQueue {
     Message mMessages;
     private boolean mQuitting;
+    private int mNextBarrierToken;
     private final java.util.ArrayList<IdleHandler> mIdleHandlers = new java.util.ArrayList<>();
     public interface IdleHandler { boolean queueIdle(); }
     public void addIdleHandler(IdleHandler handler) {
@@ -23,13 +24,74 @@ public final class MessageQueue {
             long now = SystemClock.uptimeMillis();
             Message msg = mMessages;
             Message prev = null;
-            while (msg != null && msg.target == null) { prev = msg; msg = msg.next; }
+            if (msg != null && msg.target == null) {
+                // AOSP MessageQueue.next(): a synchronization barrier stalls every
+                // synchronous message behind it while allowing asynchronous work through.
+                do {
+                    prev = msg;
+                    msg = msg.next;
+                } while (msg != null && !msg.isAsynchronous());
+            }
             if (msg != null && now >= msg.when) {
                 if (prev == null) mMessages = msg.next; else prev.next = msg.next;
                 msg.next = null;
                 return msg;
             }
             return null;
+        }
+    }
+
+    /**
+     * AOSP MessageQueue.postSyncBarrier(), adapted to the Java-only hosted queue because
+     * nativePollOnce/nativeWake are unavailable. The returned token must be removed exactly once.
+     */
+    public int postSyncBarrier() {
+        return postSyncBarrier(SystemClock.uptimeMillis());
+    }
+
+    private int postSyncBarrier(long when) {
+        synchronized (this) {
+            int token = mNextBarrierToken++;
+            Message barrier = Message.obtain();
+            barrier.when = when;
+            barrier.arg1 = token;
+
+            Message previous = null;
+            Message current = mMessages;
+            if (when != 0) {
+                while (current != null && current.when <= when) {
+                    previous = current;
+                    current = current.next;
+                }
+            }
+            if (previous == null) {
+                barrier.next = mMessages;
+                mMessages = barrier;
+            } else {
+                barrier.next = current;
+                previous.next = barrier;
+            }
+            return token;
+        }
+    }
+
+    /** AOSP MessageQueue.removeSyncBarrier(), without the native wake operation. */
+    public void removeSyncBarrier(int token) {
+        synchronized (this) {
+            Message previous = null;
+            Message current = mMessages;
+            while (current != null && (current.target != null || current.arg1 != token)) {
+                previous = current;
+                current = current.next;
+            }
+            if (current == null) {
+                throw new IllegalStateException("The specified message queue synchronization "
+                        + "barrier token has not been posted or has already been removed.");
+            }
+            if (previous == null) mMessages = current.next; else previous.next = current.next;
+            current.next = null;
+            current.recycleUnchecked();
+            notifyAll();
         }
     }
 

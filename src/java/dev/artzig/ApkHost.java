@@ -485,13 +485,16 @@ public final class ApkHost {
             resize(width, height, scale120);
         }
         drainLooper();
-        android.view.Choreographer.getInstance().doFrame$artzig(System.nanoTime());
-        // Animation callbacks may enqueue immediate Handler work that must be
-        // visible to the traversal in this same compositor frame.
-        drainLooper();
-        RenderNode base = sRoot.doTraversal();
         java.util.List<android.view.ArtzigWindowStack.Entry> wins =
                 android.view.ArtzigWindowStack.entries();
+        for (android.view.ArtzigWindowStack.Entry e : wins) {
+            e.root.prepareWindowTraversal$artzig(e.lp, width, height);
+        }
+        android.view.Choreographer.getInstance().doFrame$artzig(System.nanoTime());
+        // The traversal barrier is now released. Synchronous View.post callbacks observe
+        // geometry from this frame and may schedule another traversal for the next frame.
+        drainLooper();
+        RenderNode base = sRoot.getRenderNode$artzig();
         if (wins.isEmpty()) {
             android.view.ThreadedRenderer.getInstance().render(base, width, height);
             return;
@@ -503,7 +506,7 @@ public final class ApkHost {
             if (base != null) c.drawRenderNode(base);
             for (android.view.ArtzigWindowStack.Entry e : wins) {
                 try {
-                    RenderNode wb = e.root.doTraversalWindow(e.lp, width, height);
+                    RenderNode wb = e.root.getRenderNode$artzig();
                     if (wb == null) continue;
                     int windowWidth = e.root.getWidth();
                     int windowHeight = e.root.getHeight();

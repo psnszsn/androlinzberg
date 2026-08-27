@@ -23,8 +23,20 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     int mWidth, mHeight;
     final RenderNode mRenderNode = new RenderNode("artzig-view-root");
     boolean mTraversalScheduled;
+    int mTraversalBarrier = -1;
     boolean mLayoutRequested;
+    boolean mInLayout;
+    boolean mHandlingLayoutInLayoutRequest;
+    private final ArrayList<View> mLayoutRequesters = new ArrayList<>();
     Runnable mFrameListener;
+    private final Runnable mTraversalRunnable = this::doTraversal;
+    private boolean mHasRenderNode;
+    private boolean mHostedWindowLayout;
+    private WindowManager.LayoutParams mHostedWindowParams;
+    private int mHostedWindowMaxWidth;
+    private int mHostedWindowMaxHeight;
+    private int mHostedWindowParamWidth = Integer.MIN_VALUE;
+    private int mHostedWindowParamHeight = Integer.MIN_VALUE;
     private final ArrayList<View> mInvalidateViews = new ArrayList<>();
     private final ArrayList<View.AttachInfo.InvalidateInfo> mInvalidateRects = new ArrayList<>();
     private boolean mInvalidatePosted;
@@ -202,6 +214,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
 
     /** Detach the hosted hierarchy and release references held by this root. */
     public void destroy() {
+        unscheduleTraversals();
         if (mFrameListener != null) mHandler.removeCallbacks(mFrameListener);
         mHandler.removeCallbacks(mInvalidateOnAnimation);
         if (mView != null) {
@@ -215,50 +228,33 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         for (View.AttachInfo.InvalidateInfo info : mInvalidateRects) info.recycle();
         mInvalidateRects.clear();
         mAttachInfo = null;
+        mHasRenderNode = false;
         mRenderNode.discardDisplayList();
         ArtzigAccessibilityBridge.markChanged("root-destroyed");
     }
 
-    /** Overlay-window traversal (artzig): size by LayoutParams within max bounds
-     *  and return a display list that can be composited over the activity. */
+    /**
+     * Supplies the host-owned window constraints before Choreographer's traversal phase.
+     * AOSP obtains these constraints from WMS relayout; the hosted runtime has no WMS.
+     */
+    public void prepareWindowTraversal$artzig(WindowManager.LayoutParams lp, int maxW, int maxH) {
+        if (maxW <= 0 || maxH <= 0) return;
+        boolean changed = !mHostedWindowLayout
+                || mHostedWindowMaxWidth != maxW || mHostedWindowMaxHeight != maxH
+                || mHostedWindowParamWidth != lp.width || mHostedWindowParamHeight != lp.height;
+        mHostedWindowLayout = true;
+        mHostedWindowParams = lp;
+        mHostedWindowMaxWidth = maxW;
+        mHostedWindowMaxHeight = maxH;
+        mHostedWindowParamWidth = lp.width;
+        mHostedWindowParamHeight = lp.height;
+        if (changed) requestLayout();
+    }
+
+    /** Compatibility entry point for non-frame-loop callers. */
     public RenderNode doTraversalWindow(WindowManager.LayoutParams lp, int maxW, int maxH) {
-        if (mView == null) return null;
-        mTraversalScheduled = false;
-        mLayoutRequested = false;
-        collectViewAttributes();
-        computeScrollTree(mView);
-        int ws = lp.width == WindowManager.LayoutParams.MATCH_PARENT
-                ? View.MeasureSpec.makeMeasureSpec(maxW, View.MeasureSpec.EXACTLY)
-                : lp.width > 0
-                        ? View.MeasureSpec.makeMeasureSpec(Math.min(lp.width, maxW),
-                                View.MeasureSpec.EXACTLY)
-                        : View.MeasureSpec.makeMeasureSpec(maxW, View.MeasureSpec.AT_MOST);
-        int hs = lp.height == WindowManager.LayoutParams.MATCH_PARENT
-                ? View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.EXACTLY)
-                : lp.height > 0
-                        ? View.MeasureSpec.makeMeasureSpec(Math.min(lp.height, maxH),
-                                View.MeasureSpec.EXACTLY)
-                        : View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST);
-        mView.measure(ws, hs);
-        int w = Math.max(1, mView.getMeasuredWidth());
-        int h = Math.max(1, mView.getMeasuredHeight());
-        mWidth = w;
-        mHeight = h;
-        mView.layout(0, 0, w, h);
-        dispatchOnPreDraw();
-        updateSurfacePositions(mView);
-        mRenderNode.setPosition(0, 0, w, h);
-        RecordingCanvas canvas = mRenderNode.beginRecording(w, h);
-        try {
-            // The host replays this node directly into the activity composite,
-            // rather than into a separate Android window surface. Recording a
-            // CLEAR here would therefore punch through the already-drawn
-            // activity at transparent popup corners.
-            mView.draw(canvas);
-        } finally {
-            mRenderNode.endRecording();
-        }
-        return mRenderNode;
+        prepareWindowTraversal$artzig(lp, maxW, maxH);
+        return doTraversal();
     }
 
     /** Window resized (artzig). */
@@ -269,27 +265,147 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         if (mView != null) mView.requestLayout();
     }
 
-    /** Runs a full traversal now and records the root display list. */
+    /**
+     * AOSP ViewRootImpl.doTraversal(), adapted to record a host-composited RenderNode instead of
+     * submitting a SurfaceControl transaction. The synchronization barrier is removed before
+     * measure/layout so View.post callbacks resume only after this traversal returns.
+     */
     public RenderNode doTraversal() {
-        if (mView == null) return null;
+        if (!mTraversalScheduled) return getRenderNode$artzig();
         mTraversalScheduled = false;
+        if (mTraversalBarrier >= 0) {
+            mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);
+            mTraversalBarrier = -1;
+        }
+        performTraversal();
+        return getRenderNode$artzig();
+    }
+
+    public RenderNode getRenderNode$artzig() {
+        return mView != null && mHasRenderNode ? mRenderNode : null;
+    }
+
+    private void performTraversal() {
+        if (mView == null) return;
         mLayoutRequested = false;
         collectViewAttributes();
         computeScrollTree(mView);
-        mView.measure(View.MeasureSpec.makeMeasureSpec(mWidth, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(mHeight, View.MeasureSpec.EXACTLY));
-        mView.layout(0, 0, mWidth, mHeight);
+        int widthMeasureSpec;
+        int heightMeasureSpec;
+        if (mHostedWindowLayout && mHostedWindowParams != null) {
+            WindowManager.LayoutParams lp = mHostedWindowParams;
+            widthMeasureSpec = lp.width == WindowManager.LayoutParams.MATCH_PARENT
+                    ? View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxWidth,
+                            View.MeasureSpec.EXACTLY)
+                    : lp.width > 0
+                            ? View.MeasureSpec.makeMeasureSpec(
+                                    Math.min(lp.width, mHostedWindowMaxWidth),
+                                    View.MeasureSpec.EXACTLY)
+                            : View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxWidth,
+                                    View.MeasureSpec.AT_MOST);
+            heightMeasureSpec = lp.height == WindowManager.LayoutParams.MATCH_PARENT
+                    ? View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxHeight,
+                            View.MeasureSpec.EXACTLY)
+                    : lp.height > 0
+                            ? View.MeasureSpec.makeMeasureSpec(
+                                    Math.min(lp.height, mHostedWindowMaxHeight),
+                                    View.MeasureSpec.EXACTLY)
+                            : View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxHeight,
+                                    View.MeasureSpec.AT_MOST);
+        } else {
+            widthMeasureSpec = View.MeasureSpec.makeMeasureSpec(mWidth, View.MeasureSpec.EXACTLY);
+            heightMeasureSpec = View.MeasureSpec.makeMeasureSpec(mHeight, View.MeasureSpec.EXACTLY);
+        }
+        mView.measure(widthMeasureSpec, heightMeasureSpec);
+        int width = mHostedWindowLayout ? Math.max(1, mView.getMeasuredWidth()) : mWidth;
+        int height = mHostedWindowLayout ? Math.max(1, mView.getMeasuredHeight()) : mHeight;
+        mWidth = width;
+        mHeight = height;
+        performLayout(widthMeasureSpec, heightMeasureSpec, width, height);
+        if (mHostedWindowLayout) {
+            width = Math.max(1, mView.getMeasuredWidth());
+            height = Math.max(1, mView.getMeasuredHeight());
+            mWidth = width;
+            mHeight = height;
+        }
         dispatchOnPreDraw();
         updateSurfacePositions(mView);
-        mRenderNode.setPosition(0, 0, mWidth, mHeight);
-        RecordingCanvas canvas = mRenderNode.beginRecording(mWidth, mHeight);
+        mRenderNode.setPosition(0, 0, width, height);
+        RecordingCanvas canvas = mRenderNode.beginRecording(width, height);
         try {
-            canvas.drawColor(0xff000000);
+            // Overlay roots are replayed into the activity composite, so a clear would punch
+            // through transparent popup corners. The activity root remains opaque black.
+            if (!mHostedWindowLayout) canvas.drawColor(0xff000000);
             mView.draw(canvas);
         } finally {
             mRenderNode.endRecording();
         }
-        return mRenderNode;
+        mHasRenderNode = true;
+    }
+
+    /**
+     * AOSP ViewRootImpl.performLayout(): honor first-pass requestLayout() calls with a second
+     * pass now, then move requests from that second pass to the next traversal.
+     */
+    private void performLayout(int widthMeasureSpec, int heightMeasureSpec, int width, int height) {
+        mInLayout = true;
+        try {
+            mView.layout(0, 0, width, height);
+        } finally {
+            mInLayout = false;
+        }
+
+        ArrayList<View> validRequesters = getValidLayoutRequesters(mLayoutRequesters);
+        if (validRequesters == null) return;
+
+        mHandlingLayoutInLayoutRequest = true;
+        try {
+            for (View requester : validRequesters) requester.requestLayout();
+            mView.measure(widthMeasureSpec, heightMeasureSpec);
+            mInLayout = true;
+            try {
+                mView.layout(0, 0, mView.getMeasuredWidth(), mView.getMeasuredHeight());
+            } finally {
+                mInLayout = false;
+            }
+        } finally {
+            mHandlingLayoutInLayoutRequest = false;
+        }
+
+        mLayoutRequesters.clear();
+    }
+
+    private static ArrayList<View> getValidLayoutRequesters(ArrayList<View> requesters) {
+        ArrayList<View> valid = null;
+        for (View requester : requesters) {
+            if (requester == null || requester.mAttachInfo == null || requester.mParent == null
+                    || (requester.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) == 0) {
+                continue;
+            }
+            boolean gone = false;
+            for (View ancestor = requester; ancestor != null;) {
+                if ((ancestor.mViewFlags & View.VISIBILITY_MASK) == View.GONE) {
+                    gone = true;
+                    break;
+                }
+                ancestor = ancestor.mParent instanceof View ? (View) ancestor.mParent : null;
+            }
+            if (!gone) {
+                if (valid == null) valid = new ArrayList<>();
+                valid.add(requester);
+            }
+        }
+        for (View requester : requesters) clearLayoutRequestFlags(requester);
+        requesters.clear();
+        return valid;
+    }
+
+    private static void clearLayoutRequestFlags(View requester) {
+        for (View current = requester; current != null
+                && (current.mPrivateFlags & View.PFLAG_FORCE_LAYOUT) != 0;) {
+            current.mPrivateFlags &= ~View.PFLAG_FORCE_LAYOUT;
+            current = current.mParent instanceof View ? (View) current.mParent : null;
+        }
     }
 
     /** Run callbacks which Android normally dispatches between layout and draw.
@@ -329,13 +445,34 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     void scheduleTraversals() {
         if (!mTraversalScheduled) {
             mTraversalScheduled = true;
+            // AOSP ViewRootImpl.scheduleTraversals(). WMS and DisplayEventReceiver are absent,
+            // but the main-queue barrier and Choreographer phase ordering are process-local.
+            mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
+            mChoreographer.postCallback(Choreographer.CALLBACK_TRAVERSAL,
+                    mTraversalRunnable, null);
             ArtzigAccessibilityBridge.markChanged("traversal");
             if (mFrameListener != null) mHandler.post(mFrameListener);
         }
     }
 
+    private void unscheduleTraversals() {
+        if (!mTraversalScheduled) return;
+        mTraversalScheduled = false;
+        mChoreographer.removeCallbacks(Choreographer.CALLBACK_TRAVERSAL,
+                mTraversalRunnable, null);
+        if (mTraversalBarrier >= 0) {
+            mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);
+            mTraversalBarrier = -1;
+        }
+    }
+
     // ---- ViewParent ----
-    @Override public void requestLayout() { mLayoutRequested = true; scheduleTraversals(); }
+    @Override public void requestLayout() {
+        if (!mHandlingLayoutInLayoutRequest) {
+            mLayoutRequested = true;
+            scheduleTraversals();
+        }
+    }
     @Override public boolean isLayoutRequested() { return mLayoutRequested; }
     @Override public ViewParent getParent() { return null; }
     @Override public void requestTransparentRegion(View child) {}
@@ -650,7 +787,26 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void dispatchCompatFakeFocus() {}
     public boolean probablyHasInput() { return false; }
     public void applyViewLocationSandboxingIfNeeded(int[] outLocation) {}
-    public boolean requestLayoutDuringLayout(View view) { return true; }
+    public boolean requestLayoutDuringLayout(View view) {
+        if (view.mParent == null || view.mAttachInfo == null) return true;
+        if (mHandlingLayoutInLayoutRequest) {
+            if (!mLayoutRequesters.contains(view)) {
+                mLayoutRequesters.add(view);
+                // AOSP queues second-pass requests in getRunQueue(). The hosted root has no
+                // separate RunQueue, so its main Handler provides the same post-traversal order.
+                mHandler.post(() -> {
+                    if (view.mParent == null || view.mAttachInfo == null) return;
+                    clearLayoutRequestFlags(view);
+                    view.requestLayout();
+                });
+            }
+            return false;
+        }
+        if (!mLayoutRequesters.contains(view)) {
+            mLayoutRequesters.add(view);
+        }
+        return true;
+    }
     public void getLastTouchPoint(android.graphics.Point outPoint) {
         outPoint.set((int) mLastTouchPoint.x, (int) mLastTouchPoint.y);
     }
@@ -719,7 +875,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         }
         return mOnBackInvokedDispatcher;
     }
-    public boolean isInLayout() { return false; }
+    public boolean isInLayout() { return mInLayout; }
     public void requestInvalidateRootRenderNode() {}
     public void invalidate() { scheduleTraversals(); }
     public boolean isFrameRatePowerSavingsBalanced() { return false; }

@@ -12,7 +12,9 @@ import android.content.res.Configuration
 import android.content.res.HostedConfigurationController
 import android.graphics.Point
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
+import android.view.Choreographer
 import android.view.HostedSystemUiController
 import android.view.HostedInputDispatcher
 import android.view.HostedWindowPresentation
@@ -35,6 +37,10 @@ internal object FrameworkModuleSmoke {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
         testPackageNames()
         testConfigurationCalculation()
+        testMessageQueueSyncBarrier()
+        testChoreographerPhaseOrder()
+        testPostedCallbackRunsAfterPendingTraversal()
+        testTraversalRescheduleAndSharedQueue()
         testHostedInputEvents()
         testHostedInputDispatch()
         testHostedInputHierarchyDispatch()
@@ -88,6 +94,158 @@ internal object FrameworkModuleSmoke {
         )
         check(!lockedPortrait.landscape)
         check(lockedPortrait.displayWidth == 700 && lockedPortrait.displayHeight == 1000)
+    }
+
+    private fun testPostedCallbackRunsAfterPendingTraversal() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val child = View(context)
+        val parent = DeferredGeometryGroup(context, child)
+        val root = ViewRootImpl(context)
+        root.setView(parent, 200, 200)
+        try {
+            root.doTraversal()
+            drainMainQueue()
+            root.doTraversal()
+            check(child.top == 10)
+
+            parent.childTop = 100
+            parent.requestLayout()
+            var observedTop = -1
+            child.post { observedTop = child.top }
+
+            // Mirror the hosted frame lifecycle. AOSP's traversal sync barrier keeps the
+            // synchronous View.post callback queued until CALLBACK_TRAVERSAL updates bounds.
+            drainMainQueue()
+            Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+            drainMainQueue()
+            root.doTraversal()
+
+            check(observedTop == 100) {
+                "View.post observed stale bounds $observedTop before pending traversal"
+            }
+        } finally {
+            root.destroy()
+            drainMainQueue()
+        }
+    }
+
+    private fun testMessageQueueSyncBarrier() {
+        drainMainQueue()
+        val looper = checkNotNull(Looper.getMainLooper())
+        val queue = looper.queue
+        val observed = mutableListOf<String>()
+        val synchronous = Handler(looper)
+        val asynchronous = Handler.createAsync(looper)
+        val barrier = queue.postSyncBarrier()
+        synchronous.post { observed += "sync" }
+        asynchronous.post { observed += "async" }
+
+        val asyncMessage = checkNotNull(queue.`pollDueMessage$artzig`()) {
+            "barrier blocked asynchronous message"
+        }
+        try {
+            asyncMessage.target.dispatchMessage(asyncMessage)
+        } finally {
+            asyncMessage.recycle()
+        }
+        check(observed == listOf("async")) { "unexpected barrier delivery: $observed" }
+        check(queue.`pollDueMessage$artzig`() == null) {
+            "barrier allowed a synchronous message through"
+        }
+
+        queue.removeSyncBarrier(barrier)
+        drainMainQueue()
+        check(observed == listOf("async", "sync")) { "barrier did not release sync work: $observed" }
+        check(runCatching { queue.removeSyncBarrier(barrier) }.exceptionOrNull()
+            is IllegalStateException) { "removing a barrier twice must fail" }
+    }
+
+    private fun testChoreographerPhaseOrder() {
+        val observed = mutableListOf<String>()
+        val choreographer = Choreographer.getInstance()
+        choreographer.postCallback(Choreographer.CALLBACK_COMMIT, { observed += "commit" }, null)
+        choreographer.postCallback(Choreographer.CALLBACK_TRAVERSAL, { observed += "traversal" }, null)
+        choreographer.postCallback(Choreographer.CALLBACK_INPUT, { observed += "input" }, null)
+        choreographer.postCallback(Choreographer.CALLBACK_ANIMATION, { observed += "animation" }, null)
+        choreographer.`doFrame$artzig`(System.nanoTime())
+        check(observed == listOf("input", "animation", "traversal", "commit")) {
+            "Choreographer callback phase order: $observed"
+        }
+    }
+
+    private fun testTraversalRescheduleAndSharedQueue() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val reschedulingView = ReentrantLayoutGroup(context)
+        val reschedulingRoot = ViewRootImpl(context)
+        reschedulingRoot.setView(reschedulingView, 200, 200)
+        try {
+            runHostedFrame()
+            runHostedFrame()
+            reschedulingView.layoutCount = 0
+            reschedulingView.layoutRequestsRemaining = 1
+            reschedulingView.requestLayout()
+
+            runHostedFrame()
+            check(reschedulingView.layoutCount == 2) {
+                "requestLayout during the first layout pass did not run AOSP's second pass"
+            }
+            runHostedFrame()
+            check(reschedulingView.layoutCount == 2) {
+                "one layout request produced a duplicate traversal"
+            }
+        } finally {
+            reschedulingRoot.destroy()
+        }
+
+        val firstView = View(context)
+        val secondView = View(context)
+        val firstRoot = ViewRootImpl(context)
+        val secondRoot = ViewRootImpl(context)
+        firstRoot.setView(firstView, 80, 90)
+        secondRoot.setView(secondView, 120, 130)
+        val observed = mutableListOf<String>()
+        firstView.post { observed += "first:${firstView.width}x${firstView.height}" }
+        secondView.post { observed += "second:${secondView.width}x${secondView.height}" }
+        try {
+            runHostedFrame()
+            check(observed == listOf("first:80x90", "second:120x130")) {
+                "roots sharing the main queue did not release callbacks after traversal: $observed"
+            }
+        } finally {
+            firstRoot.destroy()
+            secondRoot.destroy()
+            drainMainQueue()
+        }
+    }
+
+    private fun runHostedFrame() {
+        drainMainQueue()
+        Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+        drainMainQueue()
+    }
+
+    private fun drainMainQueue() {
+        val queue = checkNotNull(Looper.getMainLooper()).queue
+        while (true) {
+            val message = queue.`pollDueMessage$artzig`() ?: return
+            try {
+                message.target.dispatchMessage(message)
+            } finally {
+                message.recycle()
+            }
+        }
     }
 
     private fun testHostedInputEvents() {
@@ -511,6 +669,62 @@ internal object FrameworkModuleSmoke {
         override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
             getChildAt(0).layout(0, 10, 80, 90)
             getChildAt(1).layout(10, 10, 90, 90)
+        }
+    }
+
+    private class DeferredGeometryGroup(
+        context: Context,
+        child: View,
+    ) : ViewGroup(context) {
+        var childTop = 10
+
+        init {
+            addView(child)
+        }
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            getChildAt(0).measure(
+                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
+            )
+            setMeasuredDimension(
+                MeasureSpec.getSize(widthMeasureSpec),
+                MeasureSpec.getSize(heightMeasureSpec),
+            )
+        }
+
+        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+            getChildAt(0).layout(0, childTop, 50, childTop + 50)
+        }
+    }
+
+    private class ReentrantLayoutGroup(context: Context) : ViewGroup(context) {
+        private val child = View(context)
+        var layoutCount = 0
+        var layoutRequestsRemaining = 0
+
+        init {
+            addView(child)
+        }
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            child.measure(
+                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(50, MeasureSpec.EXACTLY),
+            )
+            setMeasuredDimension(
+                MeasureSpec.getSize(widthMeasureSpec),
+                MeasureSpec.getSize(heightMeasureSpec),
+            )
+        }
+
+        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+            layoutCount++
+            child.layout(0, 0, 50, 50)
+            if (layoutRequestsRemaining > 0) {
+                layoutRequestsRemaining--
+                child.requestLayout()
+            }
         }
     }
 

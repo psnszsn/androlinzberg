@@ -36,8 +36,12 @@ class NewPipeTest {
         click(text = "Associated Press", index = 0)
         waitFor(description = "Comments")
         click(description = "Play video, duration:")
-        waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
-        click(description = "Play video, duration:")
+        if (!isVisible(description = "Toggle screen orientation")) {
+            waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
+            if (!isVisible(description = "Toggle screen orientation")) {
+                click(description = "Play video, duration:", settle = WaitKind.NOW)
+            }
+        }
         waitFor(description = "Toggle screen orientation")
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
         waitForFullscreen(true)
@@ -59,13 +63,18 @@ class NewPipeTest {
         waitForFullscreen(false)
 
         click(description = "Play video, duration:")
-        waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
-        click(description = "Play video, duration:")
+        if (!isVisible(description = "Toggle screen orientation")) {
+            waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
+            if (!isVisible(description = "Toggle screen orientation")) {
+                click(description = "Play video, duration:", settle = WaitKind.NOW)
+            }
+        }
         waitFor(description = "Toggle screen orientation")
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
 
         waitForFullscreen(true)
         waitFor(text = "Next", absent = true)
+        waitFor(description = "Comments", absent = true)
         if (isVisible(description = "Toggle screen orientation")) {
             click(description = "Play video, duration:", settle = WaitKind.NOW)
         }
@@ -79,6 +88,7 @@ class NewPipeTest {
         waitForFullscreen(false)
         waitFor(description = "Play video, duration:")
         waitFor(text = "Comments are disabled")
+        waitFor(description = "Comments")
         waitFor(text = "Next")
         waitFor(text = "Background")
     }
