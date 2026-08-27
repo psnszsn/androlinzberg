@@ -6,6 +6,7 @@ package android.view;
 
 import android.content.Context;
 import android.graphics.Rect;
+import android.graphics.PointF;
 import android.graphics.RecordingCanvas;
 import android.graphics.RenderNode;
 import android.os.Handler;
@@ -29,6 +30,12 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     private boolean mInvalidatePosted;
     private boolean mApplyInsetsScheduled;
     private int mTypesHiddenByLegacySystemUi;
+    private PointerIcon mResolvedPointerIcon;
+    private final PointF mLastTouchPoint = new PointF();
+    private int mLastTouchSource;
+    private int mLastTouchDeviceId = KeyCharacterMap.VIRTUAL_KEYBOARD;
+    private int mLastTouchPointerId;
+    private int mLastClickToolType = MotionEvent.TOOL_TYPE_UNKNOWN;
     private final WindowInsets mWindowInsets = new WindowInsets.Builder()
             .setInsets(WindowInsets.Type.systemBars(), android.graphics.Insets.NONE)
             .build();
@@ -107,19 +114,89 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public View getView() { return mView; }
 
     /**
-     * Delivers a host pointer event through the same post-IME boundary as AOSP
-     * ViewRootImpl.ViewPostImeInputStage.processPointerEvent(). The full input-stage queue cannot
-     * be used without InputChannel/InputEventReceiver, but View code still relies on the attach
-     * info pointer-dispatch state surrounding dispatchPointerEvent().
+     * AOSP EarlyPostImeInputStage.processPointerEvent() followed by
+     * ViewPostImeInputStage.processPointerEvent(), adapted because InputChannel,
+     * InputEventReceiver, IME input queues, and WindowManagerService are absent.
      */
     public boolean dispatchPointerEvent(MotionEvent event) {
         if (mView == null || mAttachInfo == null) return false;
+
+        // EarlyPostImeInputStage ordering.
+        if (mTranslator != null) mTranslator.translateEventInScreenToAppWindow(event);
+        final int action = event.getAction();
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_SCROLL) {
+            ensureTouchMode(true);
+        }
+        if (action == MotionEvent.ACTION_DOWN) {
+            android.view.autofill.AutofillManager autofill =
+                    mContext.getSystemService(android.view.autofill.AutofillManager.class);
+            if (autofill != null) autofill.requestHideFillUi();
+            if (mAttachInfo.mTooltipHost != null) mAttachInfo.mTooltipHost.hideTooltip();
+        }
+        if (mCurScrollY != 0) event.offsetLocation(0, mCurScrollY);
+        if (event.isTouchEvent()) {
+            // Kept in the same EarlyPostImeInputStage position as AOSP. These values are consumed
+            // by drag initiation and IME-facing ViewRootImpl APIs even though the host has no
+            // system input queue.
+            mLastTouchPoint.x = event.getRawX();
+            mLastTouchPoint.y = event.getRawY();
+            mLastTouchSource = event.getSource();
+            mLastTouchDeviceId = event.getDeviceId();
+            mLastTouchPointerId = event.getPointerId(0);
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                mLastClickToolType = event.getToolType(event.getActionIndex());
+            }
+        }
+
+        // ViewPostImeInputStage ordering. Handwriting is observationally inert in the host, but
+        // remains ahead of view dispatch as it is in AOSP.
+        boolean handled = getHandwritingInitiator().onTouchEvent(event);
+        if (handled) {
+            mLastClickToolType = event.getToolType(event.getActionIndex());
+        }
         mAttachInfo.mUnbufferedDispatchRequested = false;
         mAttachInfo.mHandlingPointerEvent = true;
         try {
-            return mView.dispatchPointerEvent(event);
+            if (!handled) handled = mView.dispatchPointerEvent(event);
+            maybeUpdatePointerIcon(event);
+            maybeUpdateTooltip(event);
+            return handled;
         } finally {
             mAttachInfo.mHandlingPointerEvent = false;
+            // There is no batched InputEventReceiver in the host. A request for unbuffered
+            // dispatch is therefore already satisfied by this immediate synchronous dispatch.
+        }
+    }
+
+    public int getResolvedPointerIconType() {
+        return mResolvedPointerIcon != null
+                ? mResolvedPointerIcon.getType() : PointerIcon.TYPE_ARROW;
+    }
+
+    private void maybeUpdatePointerIcon(MotionEvent event) {
+        if (event.getPointerCount() != 1
+                || !event.isFromSource(InputDevice.SOURCE_MOUSE)) return;
+        final int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_HOVER_ENTER
+                || action == MotionEvent.ACTION_HOVER_EXIT) {
+            mResolvedPointerIcon = null;
+        }
+        if (action == MotionEvent.ACTION_HOVER_EXIT) return;
+        final float x = event.getX();
+        final float y = event.getY();
+        if (x < 0 || x >= mView.getWidth() || y < 0 || y >= mView.getHeight()) return;
+        PointerIcon icon = mView.onResolvePointerIcon(event, 0);
+        mResolvedPointerIcon = icon != null ? icon
+                : PointerIcon.getSystemIcon(mContext, PointerIcon.TYPE_ARROW);
+    }
+
+    private void maybeUpdateTooltip(MotionEvent event) {
+        if (event.getPointerCount() != 1) return;
+        final int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_HOVER_ENTER
+                || action == MotionEvent.ACTION_HOVER_MOVE
+                || action == MotionEvent.ACTION_HOVER_EXIT) {
+            mView.dispatchTooltipHoverEvent(event);
         }
     }
 
@@ -386,10 +463,10 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         @Override public int dipToPx(int dips) { return dips; }
         @Override public android.os.IBinder getWindowToken() { return null; }
     }
-    public int getLastClickToolType() { return 0; }
-    public int getLastTouchSource() { return 0; }
-    public int getLastTouchPointerId() { return 0; }
-    public int getLastTouchDeviceId() { return -1; }
+    public int getLastClickToolType() { return mLastClickToolType; }
+    public int getLastTouchSource() { return mLastTouchSource; }
+    public int getLastTouchPointerId() { return mLastTouchPointerId; }
+    public int getLastTouchDeviceId() { return mLastTouchDeviceId; }
     public static boolean isViewDescendantOf(View child, View parent) {
         if (child == parent) return true;
         Object p = child.getParent();
@@ -432,8 +509,45 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void addThreadedRendererView(View view) {}
     public int getWindowFlags() { return mWindowAttributes.flags; }
     public void getDisplayFrame(android.graphics.Rect outFrame) { outFrame.set(0, 0, mWidth, mHeight); }
-    public boolean isInTouchMode() { return true; }
-    public boolean ensureTouchMode(boolean inTouchMode) { return false; }
+    public boolean isInTouchMode() {
+        return mAttachInfo != null && mAttachInfo.mInTouchMode;
+    }
+    public boolean ensureTouchMode(boolean inTouchMode) {
+        if (mAttachInfo == null || mAttachInfo.mInTouchMode == inTouchMode) return false;
+        mAttachInfo.mInTouchMode = inTouchMode;
+        mAttachInfo.mTreeObserver.dispatchOnTouchModeChanged(inTouchMode);
+        return inTouchMode ? enterTouchMode() : leaveTouchMode();
+    }
+    private boolean enterTouchMode() {
+        if (mView == null || !mView.hasFocus()) return false;
+        final View focused = mView.findFocus();
+        if (focused == null || focused.isFocusableInTouchMode()) return false;
+        final ViewGroup ancestor = findAncestorToTakeFocusInTouchMode(focused);
+        if (ancestor != null) return ancestor.requestFocus();
+        focused.clearFocusInternal(null, true, false);
+        return true;
+    }
+    private static ViewGroup findAncestorToTakeFocusInTouchMode(View focused) {
+        ViewParent parent = focused.getParent();
+        while (parent instanceof ViewGroup) {
+            final ViewGroup group = (ViewGroup) parent;
+            if (group.getDescendantFocusability() == ViewGroup.FOCUS_AFTER_DESCENDANTS
+                    && group.isFocusableInTouchMode()) return group;
+            if (group.isRootNamespace()) return null;
+            parent = group.getParent();
+        }
+        return null;
+    }
+    private boolean leaveTouchMode() {
+        if (mView == null) return false;
+        if (mView.hasFocus()) {
+            final View focused = mView.findFocus();
+            if (!(focused instanceof ViewGroup)) return false;
+            if (((ViewGroup) focused).getDescendantFocusability()
+                    != ViewGroup.FOCUS_AFTER_DESCENDANTS) return false;
+        }
+        return mView.restoreDefaultFocus();
+    }
     public void votePreferredFrameRateCategory(int category, int reason, View view) {}
     public void updateSystemGestureExclusionRectsForView(View view) {}
     public void transformMatrixToLocal(android.graphics.Matrix matrix) {}
@@ -537,7 +651,9 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public boolean probablyHasInput() { return false; }
     public void applyViewLocationSandboxingIfNeeded(int[] outLocation) {}
     public boolean requestLayoutDuringLayout(View view) { return true; }
-    public void getLastTouchPoint(android.graphics.Point outPoint) { outPoint.set(0, 0); }
+    public void getLastTouchPoint(android.graphics.Point outPoint) {
+        outPoint.set((int) mLastTouchPoint.x, (int) mLastTouchPoint.y);
+    }
     public SurfaceControl getSurfaceControl() { return new SurfaceControl(); }
     public void mergeWithNextTransaction(SurfaceControl.Transaction t, long frameNumber) { t.apply(); }
     public void registerAnimatingRenderNode(android.graphics.RenderNode renderNode) {

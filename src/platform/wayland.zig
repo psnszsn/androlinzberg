@@ -180,6 +180,8 @@ pub const Event = union(enum) {
     configure: struct { width: i32, height: i32 },
     fullscreen_changed: bool,
     pointer_motion: struct { x: f64, y: f64 },
+    pointer_enter: struct { x: f64, y: f64 },
+    pointer_leave: struct { x: f64, y: f64 },
     pointer_button: struct { button: u32, pressed: bool, x: f64, y: f64 },
     pointer_axis: struct { horizontal: f64, vertical: f64 },
     key: struct { keycode: u32, pressed: bool, unicode: u32, keysym: u32 },
@@ -525,8 +527,12 @@ pub const Window = struct {
                 const shape = if (self.cursor_shape != 0) self.cursor_shape else 1; // default
                 self.cursor_shape = 0;
                 self.setCursorShape(shape);
-                self.push(.{ .pointer_motion = .{ .x = self.pointer_x, .y = self.pointer_y } });
+                self.push(.{ .pointer_enter = .{ .x = self.pointer_x, .y = self.pointer_y } });
             },
+            .leave => self.push(.{ .pointer_leave = .{
+                .x = self.pointer_x,
+                .y = self.pointer_y,
+            } }),
             else => {},
         }
     }

@@ -296,6 +296,10 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     else
         .legacy;
     const motion: ?art.jni.jmethodID = e.getStaticMethodID(cls, "motion", "(IFF)V") catch null;
+    const mouse: ?art.jni.jmethodID = e.getStaticMethodID(cls, "mouse", "(IIIFF)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
     const scroll: ?art.jni.jmethodID = e.getStaticMethodID(cls, "scroll", "(FFFF)V") catch blk: {
         env.*.*.ExceptionClear.?(env);
         break :blk null;
@@ -309,6 +313,10 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         break :blk null;
     };
     const hover: ?art.jni.jmethodID = e.getStaticMethodID(cls, "hover", "(FF)I") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const hover_action: ?art.jni.jmethodID = e.getStaticMethodID(cls, "hoverAction", "(IFF)I") catch blk: {
         env.*.*.ExceptionClear.?(env);
         break :blk null;
     };
@@ -332,7 +340,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         std.debug.print("azk test control: {s}\n", .{address});
     }
     defer if (control_server) |*server| server.deinit();
-    var button_held = false;
+    var mouse_button_state: i32 = 0;
     // synthetic tap injection for headless testing: AZK_TAP="x,y@frame"
     // AZK_TAP="x,y@frame[;x,y@frame...]": synthetic taps
     const Tap = struct { x: f32, y: f32, frame: u32 };
@@ -517,26 +525,48 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 env.*.*.CallStaticVoidMethod.?(env, cls, mid, @as(art.jni.jboolean, @intFromBool(actual_fullscreen)));
                 try e.check();
             },
-            .pointer_motion => |m| if (button_held) {
+            .pointer_motion => |m| if (mouse_button_state != 0) {
                 if (control_server) |*server| server.noteInput();
-                if (motion) |mid| jenv_call_motion(env, cls, mid, 2, inputX(win, draw_hardware_abi, m.x), inputY(win, draw_hardware_abi, m.y));
-            } else if (hover) |mid| {
+                callMouseEvent(env, cls, mouse, motion, 2, mouse_button_state, 0, inputX(win, draw_hardware_abi, m.x), inputY(win, draw_hardware_abi, m.y));
+            } else if (hover_action != null or hover != null) {
                 if (control_server) |*server| server.noteInput();
-                const icon = jenv_call_hover(env, cls, mid, inputX(win, draw_hardware_abi, m.x), inputY(win, draw_hardware_abi, m.y));
+                const icon = callHoverEvent(env, cls, hover_action, hover, 7, inputX(win, draw_hardware_abi, m.x), inputY(win, draw_hardware_abi, m.y));
                 win.setCursorShape(cursorShapeFromPointerIcon(icon));
             },
-            .pointer_button => |b| switch (b.button) {
-                0x110 => if (motion) |mid| { // BTN_LEFT
+            .pointer_enter => |p| if (hover_action != null or hover != null) {
+                if (control_server) |*server| server.noteInput();
+                const icon = callHoverEvent(env, cls, hover_action, hover, 9, inputX(win, draw_hardware_abi, p.x), inputY(win, draw_hardware_abi, p.y));
+                win.setCursorShape(cursorShapeFromPointerIcon(icon));
+            },
+            .pointer_leave => |p| if (hover_action != null or hover != null) {
+                if (control_server) |*server| server.noteInput();
+                _ = callHoverEvent(env, cls, hover_action, hover, 10, inputX(win, draw_hardware_abi, p.x), inputY(win, draw_hardware_abi, p.y));
+            },
+            .pointer_button => |b| if (b.button == 0x113 or b.button == 0x116) {
+                // Android's default View handling does not turn BUTTON_BACK generic motion into
+                // navigation. Preserve the host's physical mouse back-button policy.
+                if (control_server) |*server| server.noteInput();
+                if (b.pressed) {
+                    if (back) |mid| jenv_call_void(env, cls, mid);
+                }
+            } else if (androidMouseButton(b.button)) |button| {
+                if (mouse != null or motion != null) {
                     if (control_server) |*server| server.noteInput();
-                    button_held = b.pressed;
-                    jenv_call_motion(env, cls, mid, if (b.pressed) 0 else 1, inputX(win, draw_hardware_abi, b.x), inputY(win, draw_hardware_abi, b.y));
+                    const x = inputX(win, draw_hardware_abi, b.x);
+                    const y = inputY(win, draw_hardware_abi, b.y);
+                    if (b.pressed) {
+                        const was = mouse_button_state;
+                        mouse_button_state |= button;
+                        if (was == 0) callMouseEvent(env, cls, mouse, motion, 0, mouse_button_state, 0, x, y);
+                        callMouseEvent(env, cls, mouse, motion, 11, mouse_button_state, button, x, y);
+                    } else {
+                        mouse_button_state &= ~button;
+                        callMouseEvent(env, cls, mouse, motion, 12, mouse_button_state, button, x, y);
+                        if (mouse_button_state == 0) callMouseEvent(env, cls, mouse, motion, 1, mouse_button_state, 0, x, y);
+                    }
                     // A click can change Android window flags without producing a Wayland event.
                     need_frame = true;
-                },
-                0x113, 0x116 => if (b.pressed) { // BTN_SIDE / BTN_BACK
-                    if (back) |mid| jenv_call_void(env, cls, mid);
-                },
-                else => {},
+                }
             },
             .key => |k| {
                 if (control_server) |*server| server.noteInput();
@@ -807,4 +837,43 @@ fn jenv_call_motion(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, a
         env.*.*.ExceptionDescribe.?(env);
         env.*.*.ExceptionClear.?(env);
     }
+}
+
+fn jenv_call_mouse(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, action: i32, button_state: i32, action_button: i32, x: f32, y: f32) void {
+    env.*.*.CallStaticVoidMethod.?(env, cls, mid, @as(art.jni.jint, action), @as(art.jni.jint, button_state), @as(art.jni.jint, action_button), @as(art.jni.jfloat, x), @as(art.jni.jfloat, y));
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+    }
+}
+
+fn callMouseEvent(env: anytype, cls: art.jni.jclass, mouse: ?art.jni.jmethodID, touch_fallback: ?art.jni.jmethodID, action: i32, button_state: i32, action_button: i32, x: f32, y: f32) void {
+    if (mouse) |mid| {
+        jenv_call_mouse(env, cls, mid, action, button_state, action_button, x, y);
+    } else if (touch_fallback) |mid| {
+        if (action == 0 or action == 1 or action == 2) jenv_call_motion(env, cls, mid, action, x, y);
+    }
+}
+
+fn callHoverEvent(env: anytype, cls: art.jni.jclass, hover_action: ?art.jni.jmethodID, hover_fallback: ?art.jni.jmethodID, action: i32, x: f32, y: f32) i32 {
+    if (hover_action) |mid| {
+        const result = env.*.*.CallStaticIntMethod.?(env, cls, mid, @as(art.jni.jint, action), @as(art.jni.jfloat, x), @as(art.jni.jfloat, y));
+        if (env.*.*.ExceptionCheck.?(env) != 0) {
+            env.*.*.ExceptionDescribe.?(env);
+            env.*.*.ExceptionClear.?(env);
+            return 0;
+        }
+        return result;
+    }
+    return if (hover_fallback) |mid| jenv_call_hover(env, cls, mid, x, y) else 0;
+}
+
+fn androidMouseButton(linux_button: u32) ?i32 {
+    return switch (linux_button) {
+        0x110 => 1, // BTN_LEFT -> MotionEvent.BUTTON_PRIMARY
+        0x111 => 2, // BTN_RIGHT -> BUTTON_SECONDARY
+        0x112 => 4, // BTN_MIDDLE -> BUTTON_TERTIARY
+        0x114, 0x115 => 16, // BTN_EXTRA / BTN_FORWARD -> BUTTON_FORWARD
+        else => null,
+    };
 }

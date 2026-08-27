@@ -27,7 +27,6 @@ public final class ApkHost {
     private static Activity sActivity;
     private static ContextImpl sContext;
     private static android.view.ViewRootImpl sRoot;
-    private static long sDownTime;
     private static HostedApkClassLoader sClassLoader;
     private static int sWidth, sHeight, sScale120;
     private static boolean sAppFullscreenRequested;
@@ -77,64 +76,19 @@ public final class ApkHost {
     /** Mouse-wheel scroll: dispatch ACTION_SCROLL at (x,y). ~1.0 per wheel detent. */
     public static void scroll(float x, float y, float hscroll, float vscroll) {
         if (sActivity == null) return;
-        long now = SystemClock.uptimeMillis();
-        MotionEvent.PointerProperties pp = new MotionEvent.PointerProperties();
-        pp.id = 0;
-        pp.toolType = MotionEvent.TOOL_TYPE_MOUSE;
-        MotionEvent.PointerCoords pc = new MotionEvent.PointerCoords();
-        pc.x = x;
-        pc.y = y;
-        pc.setAxisValue(MotionEvent.AXIS_HSCROLL, hscroll);
-        pc.setAxisValue(MotionEvent.AXIS_VSCROLL, vscroll);
-        android.view.ArtzigWindowStack.Entry swin =
-                android.view.ArtzigWindowStack.topTouchable();
-        View decor;
-        if (swin != null && swin.frame.contains((int) x, (int) y)) {
-            pc.x = x - swin.frame.left;
-            pc.y = y - swin.frame.top;
-            decor = swin.view;
-        } else {
-            decor = sActivity.getWindow().getDecorView();
-        }
-        MotionEvent ev = MotionEvent.obtain(now, now, MotionEvent.ACTION_SCROLL, 1,
-                new MotionEvent.PointerProperties[] { pp },
-                new MotionEvent.PointerCoords[] { pc },
-                0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_MOUSE, 0);
-        decor.dispatchGenericMotionEvent(ev);
-        ev.recycle();
+        android.view.HostedInputDispatcher.dispatchScroll(sRoot, x, y, hscroll, vscroll);
     }
 
     /** Unbuttoned pointer motion: dispatch a hover event (hover states, tooltips)
      *  and resolve the pointer icon under (x,y). Returns PointerIcon.TYPE_*. */
     public static int hover(float x, float y) {
+        return hoverAction(MotionEvent.ACTION_HOVER_MOVE, x, y);
+    }
+
+    public static int hoverAction(int action, float x, float y) {
         if (sActivity == null) return 0;
         try {
-            android.view.ArtzigWindowStack.Entry win =
-                    android.view.ArtzigWindowStack.topTouchable();
-            View target;
-            float tx = x, ty = y;
-            if (win != null && win.frame.contains((int) x, (int) y)) {
-                target = win.view;
-                tx -= win.frame.left;
-                ty -= win.frame.top;
-            } else {
-                target = sActivity.getWindow().getDecorView();
-            }
-            long now = SystemClock.uptimeMillis();
-            MotionEvent.PointerProperties pp = new MotionEvent.PointerProperties();
-            pp.id = 0;
-            pp.toolType = MotionEvent.TOOL_TYPE_MOUSE;
-            MotionEvent.PointerCoords pc = new MotionEvent.PointerCoords();
-            pc.x = tx;
-            pc.y = ty;
-            MotionEvent ev = MotionEvent.obtain(now, now, MotionEvent.ACTION_HOVER_MOVE, 1,
-                    new MotionEvent.PointerProperties[] { pp },
-                    new MotionEvent.PointerCoords[] { pc },
-                    0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_MOUSE, 0);
-            target.dispatchGenericMotionEvent(ev);
-            android.view.PointerIcon icon = target.onResolvePointerIcon(ev, 0);
-            ev.recycle();
-            return icon != null ? icon.getType() : android.view.PointerIcon.TYPE_ARROW;
+            return android.view.HostedInputDispatcher.dispatchHover(sRoot, action, x, y);
         } catch (Throwable t) {
             Log.w(TAG, "hover failed", t);
             return 0;
@@ -215,62 +169,17 @@ public final class ApkHost {
         }
     }
 
-    // active touch-gesture target: null = activity decor
-    private static android.view.ArtzigWindowStack.Entry sGestureWin;
-    private static boolean sGestureWinValid;
-    private static View sGestureControl;
-
+    /** Explicit synthetic touchscreen input used by AZK_TAP/PRESS/SWIPE. */
     public static void motion(int action, float x, float y) {
         if (sActivity == null) return;
-        long now = SystemClock.uptimeMillis();
-        if (action == MotionEvent.ACTION_DOWN) {
-            sDownTime = now;
-            sGestureWin = android.view.ArtzigWindowStack.topTouchable();
-            sGestureWinValid = true;
-            sGestureControl = sGestureWin == null
-                    ? android.view.HostedPointerTarget.findDescriptiveControl(
-                            sActivity.getWindow().getDecorView(), x, y)
-                    : null;
-        }
-        android.view.ArtzigWindowStack.Entry win = sGestureWinValid ? sGestureWin : null;
-        View control = sGestureControl;
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-            sGestureWinValid = false;
-            sGestureControl = null;
-        }
-        if (win != null) {
-            // touch belongs to the top overlay window (dialog/popup): modal.
-            int a = action;
-            float wx = x - win.frame.left;
-            float wy = y - win.frame.top;
-            if (action == MotionEvent.ACTION_DOWN && !win.frame.contains((int) x, (int) y)) {
-                a = MotionEvent.ACTION_OUTSIDE;
-                sGestureWinValid = false;
-            }
-            MotionEvent ev = MotionEvent.obtain(sDownTime, now, a, wx, wy, 0);
-            ev.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
-            try {
-                win.root.dispatchPointerEvent(ev);
-            } catch (Throwable t) {
-                Log.w(TAG, "overlay touch failed", t);
-            }
-            ev.recycle();
-            return;
-        }
-        if (control != null) {
-            int[] location = new int[2];
-            control.getLocationOnScreen(location);
-            MotionEvent ev = MotionEvent.obtain(
-                    sDownTime, now, action, x - location[0], y - location[1], 0);
-            ev.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
-            control.dispatchTouchEvent(ev);
-            ev.recycle();
-            return;
-        }
-        MotionEvent ev = MotionEvent.obtain(sDownTime, now, action, x, y, 0);
-        ev.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
-        if (sRoot != null) sRoot.dispatchPointerEvent(ev);
-        ev.recycle();
+        android.view.HostedInputDispatcher.dispatchTouch(sRoot, action, x, y);
+    }
+
+    /** wl_pointer input: Android mouse source/tool type and full button metadata. */
+    public static void mouse(int action, int buttonState, int actionButton, float x, float y) {
+        if (sActivity == null) return;
+        android.view.HostedInputDispatcher.dispatchMouse(
+                sRoot, action, buttonState, actionButton, x, y);
     }
 
     static ContextImpl makeContext(String frameworkRes, String apkPath, int width, int height,
@@ -441,9 +350,7 @@ public final class ApkHost {
         sRoot = new android.view.ViewRootImpl(sContext);
         sRoot.setView(a.getWindow().getDecorView(), sWidth, sHeight);
         android.view.ArtzigAccessibilityBridge.setActivityRoot(sRoot);
-        sGestureWin = null;
-        sGestureWinValid = false;
-        sGestureControl = null;
+        android.view.HostedInputDispatcher.reset();
     }
 
     /** Test-control JNI surface. Android semantics stay in the framework bridge. */
@@ -519,9 +426,7 @@ public final class ApkHost {
         sActivity = null;
         sContext = null;
         sClassLoader = null;
-        sGestureWin = null;
-        sGestureWinValid = false;
-        sGestureControl = null;
+        android.view.HostedInputDispatcher.reset();
         sAppFullscreenRequested = false;
         sHostFullscreenSuppressed = false;
         Log.i(TAG, "shutdown complete");
