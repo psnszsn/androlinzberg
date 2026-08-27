@@ -10,6 +10,13 @@ import kotlin.test.assertTrue
 
 class ModelsTest {
     @Test
+    fun launchSizeUsesLauncherSyntax() {
+        assertEquals("412x915", LaunchSize(412, 915).toString())
+        assertFailsWith<IllegalArgumentException> { LaunchSize(0, 915) }
+        assertFailsWith<IllegalArgumentException> { LaunchSize(412, 0) }
+    }
+
+    @Test
     fun selectorUsesWireFieldNames() {
         val json = Selector(
             resourceId = "org.example:id/save",
@@ -19,11 +26,15 @@ class ModelsTest {
             role = "button",
             index = 2,
             allWindows = true,
+            visible = true,
+            stateDescription = "ready",
         ).toJson()
         assertEquals("org.example:id/save", json["resource_id"].asString)
         assertEquals("Save document", json["content_description"].asString)
         assertEquals("android.widget.Button", json["class_name"].asString)
         assertEquals("all", json["window"].asString)
+        assertEquals(true, json["visible"].asBoolean)
+        assertEquals("ready", json["state_description"].asString)
     }
 
     @Test

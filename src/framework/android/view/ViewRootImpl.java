@@ -28,6 +28,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     private final ArrayList<View.AttachInfo.InvalidateInfo> mInvalidateRects = new ArrayList<>();
     private boolean mInvalidatePosted;
     private boolean mApplyInsetsScheduled;
+    private int mTypesHiddenByLegacySystemUi;
     private final WindowInsets mWindowInsets = new WindowInsets.Builder()
             .setInsets(WindowInsets.Type.systemBars(), android.graphics.Insets.NONE)
             .build();
@@ -98,11 +99,29 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         view.dispatchAttachedToWindow(mAttachInfo, View.VISIBLE);
         view.dispatchWindowVisibilityChanged(View.VISIBLE);
         view.dispatchWindowFocusChanged(true);
+        mAttachInfo.mRecomputeGlobalAttributes = true;
         requestLayout();
         requestFitSystemWindows();
         ArtzigAccessibilityBridge.markChanged("root-attached");
     }
     public View getView() { return mView; }
+
+    /**
+     * Delivers a host pointer event through the same post-IME boundary as AOSP
+     * ViewRootImpl.ViewPostImeInputStage.processPointerEvent(). The full input-stage queue cannot
+     * be used without InputChannel/InputEventReceiver, but View code still relies on the attach
+     * info pointer-dispatch state surrounding dispatchPointerEvent().
+     */
+    public boolean dispatchPointerEvent(MotionEvent event) {
+        if (mView == null || mAttachInfo == null) return false;
+        mAttachInfo.mUnbufferedDispatchRequested = false;
+        mAttachInfo.mHandlingPointerEvent = true;
+        try {
+            return mView.dispatchPointerEvent(event);
+        } finally {
+            mAttachInfo.mHandlingPointerEvent = false;
+        }
+    }
 
     /** Detach the hosted hierarchy and release references held by this root. */
     public void destroy() {
@@ -129,6 +148,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         if (mView == null) return null;
         mTraversalScheduled = false;
         mLayoutRequested = false;
+        collectViewAttributes();
         computeScrollTree(mView);
         int ws = lp.width == WindowManager.LayoutParams.MATCH_PARENT
                 ? View.MeasureSpec.makeMeasureSpec(maxW, View.MeasureSpec.EXACTLY)
@@ -177,6 +197,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         if (mView == null) return null;
         mTraversalScheduled = false;
         mLayoutRequested = false;
+        collectViewAttributes();
         computeScrollTree(mView);
         mView.measure(View.MeasureSpec.makeMeasureSpec(mWidth, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(mHeight, View.MeasureSpec.EXACTLY));
@@ -259,7 +280,12 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     @Override public void childHasTransientStateChanged(View child, boolean hasTransientState) {}
     @Override public void requestDisallowInterceptTouchEvent(boolean disallowIntercept) {}
     @Override public void requestChildFocus(View child, View focused) {}
-    @Override public void recomputeViewAttributes(View child) {}
+    @Override public void recomputeViewAttributes(View child) {
+        if (mView == child && mAttachInfo != null) {
+            mAttachInfo.mRecomputeGlobalAttributes = true;
+            scheduleTraversals();
+        }
+    }
     @Override public void clearChildFocus(View child) {}
     @Override public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) { return false; }
     @Override public boolean requestSendAccessibilityEvent(View child, android.view.accessibility.AccessibilityEvent event) {
@@ -308,6 +334,28 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             }
         }
         return mInsetsController;
+    }
+
+    /**
+     * AOSP ViewRootImpl.collectViewAttributes() followed by
+     * ViewRootImpl.controlInsetsForCompatibility(), adapted at the host seam because this root has
+     * no WindowManagerService or SystemUI process.
+     */
+    private void collectViewAttributes() {
+        if (mView == null || mAttachInfo == null || !mAttachInfo.mRecomputeGlobalAttributes) {
+            return;
+        }
+        mAttachInfo.mRecomputeGlobalAttributes = false;
+        mAttachInfo.mKeepScreenOn = false;
+        mAttachInfo.mSystemUiVisibility = 0;
+        mAttachInfo.mHasSystemUiListeners = false;
+        mView.dispatchCollectViewAttributes(mAttachInfo, 0);
+
+        int visibility = mAttachInfo.mSystemUiVisibility;
+        mWindowAttributes.subtreeSystemUiVisibility = visibility;
+        mTypesHiddenByLegacySystemUi = HostedSystemUiController.reconcileLegacyVisibility(
+                getInsetsController(), mTypesHiddenByLegacySystemUi, visibility);
+        mView.dispatchWindowSystemUiVisiblityChanged(visibility);
     }
 
     private final class ArtzigInsetsHost implements InsetsController.Host {

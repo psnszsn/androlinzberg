@@ -5,6 +5,15 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 
+data class LaunchSize(val width: Int, val height: Int) {
+    init {
+        require(width > 0) { "launch window width must be positive" }
+        require(height > 0) { "launch window height must be positive" }
+    }
+
+    override fun toString(): String = "${width}x$height"
+}
+
 data class Selector(
     val resourceId: String? = null,
     val text: String? = null,
@@ -13,6 +22,8 @@ data class Selector(
     val role: String? = null,
     val index: Int? = null,
     val allWindows: Boolean = false,
+    val visible: Boolean? = null,
+    val stateDescription: String? = null,
 ) {
     fun toJson(): JsonObject = JsonObject().apply {
         resourceId?.let { addProperty("resource_id", it) }
@@ -22,11 +33,14 @@ data class Selector(
         role?.let { addProperty("role", it) }
         index?.let { addProperty("index", it) }
         if (allWindows) addProperty("window", "all")
+        visible?.let { addProperty("visible", it) }
+        stateDescription?.let { addProperty("state_description", it) }
     }
 
     val isEmpty: Boolean
         get() = resourceId == null && text == null && description == null &&
-            className == null && role == null && index == null && !allWindows
+            className == null && role == null && index == null && !allWindows &&
+            stateDescription == null
 }
 
 enum class WaitKind(val wireName: String) {

@@ -4,7 +4,10 @@ import org.junit.rules.TestRule
 import org.junit.runner.Description
 import org.junit.runners.model.Statement
 
-class ApkRule(private val apkKey: String) : TestRule {
+class ApkRule(
+    private val apkKey: String,
+    private val launchSize: LaunchSize? = null,
+) : TestRule {
     private lateinit var session: AppSession
 
     /** Keeps expression-bodied JUnit tests void even when the last action returns a value. */
@@ -14,7 +17,11 @@ class ApkRule(private val apkKey: String) : TestRule {
 
     override fun apply(base: Statement, description: Description): Statement = object : Statement() {
         override fun evaluate() {
-            session = AppSession.start(apkKey, "${description.className}.${description.methodName}")
+            session = AppSession.start(
+                apkKey,
+                "${description.className}.${description.methodName}",
+                launchSize = launchSize,
+            )
             try {
                 base.evaluate()
                 session.finishSuccessfully()
@@ -33,8 +40,13 @@ class ApkRule(private val apkKey: String) : TestRule {
         description: String? = null,
         className: String? = null,
         role: String? = null,
+        index: Int? = null,
         absent: Boolean = false,
-    ) = session.waitFor(resourceId, text, description, className, role, absent)
+        visible: Boolean = true,
+        stateDescription: String? = null,
+    ) = session.waitFor(
+        resourceId, text, description, className, role, index, absent, visible, stateDescription,
+    )
 
     fun expectVisible(
         resourceId: String? = null,
@@ -42,7 +54,16 @@ class ApkRule(private val apkKey: String) : TestRule {
         description: String? = null,
         className: String? = null,
         role: String? = null,
-    ) = session.expectVisible(resourceId, text, description, className, role)
+        index: Int? = null,
+    ) = session.expectVisible(resourceId, text, description, className, role, index)
+
+    fun isVisible(
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+    ) = session.isVisible(resourceId, text, description, className, role)
 
     fun click(
         resourceId: String? = null,
@@ -50,9 +71,10 @@ class ApkRule(private val apkKey: String) : TestRule {
         description: String? = null,
         className: String? = null,
         role: String? = null,
+        index: Int? = null,
         via: InputVia = InputVia.WAYLAND,
         settle: WaitKind = WaitKind.IDLE,
-    ) = session.click(resourceId, text, description, className, role, via, settle)
+    ) = session.click(resourceId, text, description, className, role, index, via, settle)
 
     fun setText(
         value: String,
@@ -85,6 +107,12 @@ class ApkRule(private val apkKey: String) : TestRule {
     ) = session.key(value, resourceId, text, description, className, role, settle)
 
     fun assertLog(tag: String, containing: String) = session.assertLog(tag, containing)
+
+    fun waitForFullscreen(expected: Boolean, timeoutMillis: Long = 5_000) =
+        session.waitForFullscreen(expected, timeoutMillis)
+
+    fun assertFullscreenRemains(expected: Boolean, durationMillis: Long = 1_500) =
+        session.assertFullscreenRemains(expected, durationMillis)
 
     fun expectIssue(
         kind: String,

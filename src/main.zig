@@ -449,6 +449,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                     .tap_fn = controlTap,
                     .type_fn = controlType,
                     .key_fn = controlKey,
+                    .fullscreen_fn = controlFullscreen,
                 });
             } else |err| {
                 std.debug.print("azk test input unavailable: {}\n", .{err});
@@ -529,6 +530,8 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                     if (control_server) |*server| server.noteInput();
                     button_held = b.pressed;
                     jenv_call_motion(env, cls, mid, if (b.pressed) 0 else 1, inputX(win, draw_hardware_abi, b.x), inputY(win, draw_hardware_abi, b.y));
+                    // A click can change Android window flags without producing a Wayland event.
+                    need_frame = true;
                 },
                 0x113, 0x116 => if (b.pressed) { // BTN_SIDE / BTN_BACK
                     if (back) |mid| jenv_call_void(env, cls, mid);
@@ -712,6 +715,10 @@ fn controlType(context: *anyopaque, text: []const u8) !void {
 
 fn controlKey(context: *anyopaque, key: []const u8) !void {
     try @as(*wayland.Window, @ptrCast(@alignCast(context))).testKey(key);
+}
+
+fn controlFullscreen(context: *anyopaque) bool {
+    return @as(*wayland.Window, @ptrCast(@alignCast(context))).isFullscreen();
 }
 
 /// android.view.PointerIcon.TYPE_* -> wp_cursor_shape_device_v1.shape

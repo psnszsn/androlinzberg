@@ -43,11 +43,18 @@ class AppSession internal constructor(
         description: String? = null,
         className: String? = null,
         role: String? = null,
+        index: Int? = null,
         absent: Boolean = false,
+        visible: Boolean = true,
+        stateDescription: String? = null,
     ): JsonObject {
         requireAlive("while waiting for accessibility state")
         val result = client.observe(
-            Selector(resourceId, text, description, className, role),
+            Selector(
+                resourceId, text, description, className, role, index,
+                visible = visible,
+                stateDescription = stateDescription,
+            ),
             wait = if (absent) WaitKind.ABSENT else WaitKind.EXISTS,
         )
         checkPendingDiagnostics()
@@ -60,7 +67,22 @@ class AppSession internal constructor(
         description: String? = null,
         className: String? = null,
         role: String? = null,
-    ): JsonObject = waitFor(resourceId, text, description, className, role)
+        index: Int? = null,
+    ): JsonObject = waitFor(resourceId, text, description, className, role, index, visible = true)
+
+    fun isVisible(
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+    ): Boolean {
+        requireAlive("while observing accessibility visibility")
+        val observation = client.observe(
+            Selector(resourceId, text, description, className, role, visible = true),
+        ).objectOrEmpty("observation")
+        return observation["matches"]?.takeIf { it.isJsonArray }?.asJsonArray?.size() != 0
+    }
 
     fun click(
         resourceId: String? = null,
@@ -68,10 +90,11 @@ class AppSession internal constructor(
         description: String? = null,
         className: String? = null,
         role: String? = null,
+        index: Int? = null,
         via: InputVia = InputVia.WAYLAND,
         settle: WaitKind = WaitKind.IDLE,
     ): StepResult = action(
-        Selector(resourceId, text, description, className, role),
+        Selector(resourceId, text, description, className, role, index, visible = true),
         Action(ActionKind.CLICK, via),
         settle,
     )
@@ -85,7 +108,7 @@ class AppSession internal constructor(
         role: String? = null,
         settle: WaitKind = WaitKind.IDLE,
     ): StepResult = action(
-        Selector(resourceId, text, description, className, role),
+        Selector(resourceId, text, description, className, role, visible = true),
         Action(ActionKind.SET_TEXT, InputVia.SEMANTIC, text = value),
         settle,
     )
@@ -99,7 +122,7 @@ class AppSession internal constructor(
         role: String? = null,
         settle: WaitKind = WaitKind.IDLE,
     ): StepResult = action(
-        Selector(resourceId, text, description, className, role),
+        Selector(resourceId, text, description, className, role, visible = true),
         Action(ActionKind.TYPE_KEYS, InputVia.WAYLAND, text = value),
         settle,
     )
@@ -113,7 +136,7 @@ class AppSession internal constructor(
         role: String? = null,
         settle: WaitKind = WaitKind.IDLE,
     ): StepResult = action(
-        Selector(resourceId, text, description, className, role),
+        Selector(resourceId, text, description, className, role, visible = true),
         Action(ActionKind.KEY, InputVia.WAYLAND, key = value),
         settle,
     )
@@ -141,6 +164,33 @@ class AppSession internal constructor(
         if (diagnostics.logs.none { it.tag == tag && containing in it.message }) {
             throw AssertionError("no Android log from '$tag' contains '$containing'; log: $appLog")
         }
+    }
+
+    fun waitForFullscreen(expected: Boolean, timeoutMillis: Long = 5_000) {
+        val deadline = System.nanoTime() + timeoutMillis * 1_000_000
+        while (fullscreen() != expected) {
+            requireAlive("while waiting for compositor fullscreen=$expected")
+            if (System.nanoTime() >= deadline) {
+                throw AssertionError("timed out waiting for compositor fullscreen=$expected; log: $appLog")
+            }
+            Thread.sleep(10)
+        }
+        checkPendingDiagnostics()
+    }
+
+    fun assertFullscreenRemains(expected: Boolean, durationMillis: Long = 1_500) {
+        val deadline = System.nanoTime() + durationMillis * 1_000_000
+        while (System.nanoTime() < deadline) {
+            requireAlive("while observing compositor fullscreen stability")
+            val actual = fullscreen()
+            if (actual != expected) {
+                throw AssertionError(
+                    "compositor fullscreen changed to $actual while it should remain $expected; log: $appLog",
+                )
+            }
+            Thread.sleep(10)
+        }
+        checkPendingDiagnostics()
     }
 
     internal fun finishSuccessfully() {
@@ -190,6 +240,9 @@ class AppSession internal constructor(
         return result
     }
 
+    private fun fullscreen(): Boolean = client.observe()
+        .objectOrEmpty("observation")["fullscreen"]?.asBoolean ?: false
+
     private fun checkPendingDiagnostics() {
         val response = client.diagnose(diagnosticCursor)
         val diagnostics = Diagnostics.fromJson(response.objectOrEmpty("diagnostics"))
@@ -228,6 +281,7 @@ class AppSession internal constructor(
             testId: String,
             environment: Map<String, String> = System.getenv(),
             processAdapter: ProcessAdapter = SystemProcessAdapter,
+            launchSize: LaunchSize? = null,
         ): AppSession {
             val registryPath = Path.of(environment["AZK_APK_REGISTRY"] ?: "tests/apks.json")
                 .toAbsolutePath().normalize()
@@ -257,7 +311,7 @@ class AppSession internal constructor(
                 .toAbsolutePath().normalize()
             val inheritedLibraryPath = environment["LD_LIBRARY_PATH"]
             val artLibraryPath = launcher.parent.resolve("art/lib64").toString()
-            val childEnvironment = mapOf(
+            val childEnvironment = mutableMapOf(
                 "AZK_TEST_SOCKET" to socket.toString(),
                 "ARTZIG_DATA_DIR" to data.toString(),
                 "ARTZIG_NATIVE_LIB_DIR" to nativeLibraries.toString(),
@@ -265,6 +319,7 @@ class AppSession internal constructor(
                 "LD_LIBRARY_PATH" to listOfNotNull(artLibraryPath, inheritedLibraryPath)
                     .joinToString(java.io.File.pathSeparator),
             )
+            launchSize?.let { childEnvironment["AZK_SIZE"] = it.toString() }
             val process = try {
                 processAdapter.start(
                     listOf(launcher.toString(), apk.path.toString()),

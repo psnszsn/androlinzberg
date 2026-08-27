@@ -156,6 +156,7 @@ pub const Input = struct {
     tap_fn: *const fn (*anyopaque, i32, i32) anyerror!void,
     type_fn: *const fn (*anyopaque, []const u8) anyerror!void,
     key_fn: *const fn (*anyopaque, []const u8) anyerror!void,
+    fullscreen_fn: *const fn (*anyopaque) bool,
 
     pub fn tap(self: Input, x: i32, y: i32) !void {
         try self.tap_fn(self.context, x, y);
@@ -167,6 +168,10 @@ pub const Input = struct {
 
     pub fn key(self: Input, value: []const u8) !void {
         try self.key_fn(self.context, value);
+    }
+
+    pub fn fullscreen(self: Input) bool {
+        return self.fullscreen_fn(self.context);
     }
 };
 
@@ -670,6 +675,8 @@ pub const Server = struct {
         try json.write(self.presented_frame_seq != 0);
         try json.objectField("idle");
         try json.write(try android.idle());
+        try json.objectField("fullscreen");
+        try json.write(if (self.ui_input) |input| input.fullscreen() else false);
         try json.objectField("matches");
         try json.beginArray();
         for (matches.items) |node| try json.write(node);
@@ -908,6 +915,7 @@ fn selectNodes(
         if (!matchesString(selector, node, "content_description")) continue;
         if (!matchesString(selector, node, "class_name")) continue;
         if (!matchesString(selector, node, "role")) continue;
+        if (!matchesString(selector, node, "state_description")) continue;
         if (!matchesBool(selector, node, "visible")) continue;
         if (!matchesBool(selector, node, "enabled")) continue;
         if (!matchesBool(selector, node, "focused")) continue;

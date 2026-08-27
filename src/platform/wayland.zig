@@ -186,6 +186,40 @@ pub const Event = union(enum) {
     frame_done: struct { time_ms: u32 },
 };
 
+const FullscreenState = struct {
+    requested: bool = false,
+    actual: bool = false,
+    pending: bool = false,
+
+    fn init(requested: bool) FullscreenState {
+        return .{ .requested = requested, .pending = requested };
+    }
+
+    /// Returns true when an xdg-shell request must be sent.
+    fn request(self: *FullscreenState, requested: bool) bool {
+        if (requested == self.requested) return false;
+        self.requested = requested;
+        self.pending = true;
+        return true;
+    }
+
+    /// Returns true when the compositor's effective state changed.
+    fn configure(self: *FullscreenState, actual: bool) bool {
+        const changed = actual != self.actual;
+        self.actual = actual;
+        if (self.pending) {
+            // A configure for the old state may already be in flight when a request is sent.
+            // Keep the requested state until the compositor acknowledges that transition.
+            if (actual == self.requested) self.pending = false;
+        } else {
+            // With no client transition pending, the configure represents a compositor/F11
+            // transition and becomes the new requested baseline.
+            self.requested = actual;
+        }
+        return changed;
+    }
+};
+
 pub const Window = struct {
     gpa: std.mem.Allocator,
     display: *wl.Display,
@@ -222,8 +256,7 @@ pub const Window = struct {
     height: i32,
     /// Preferred surface scale in 120ths, as defined by fractional-scale-v1.
     scale_120: u32 = 120,
-    fullscreen_requested: bool = false,
-    fullscreen_actual: bool = false,
+    fullscreen: FullscreenState = .{},
     configured: bool = false,
 
     pointer_x: f64 = 0,
@@ -249,7 +282,7 @@ pub const Window = struct {
             .registry = undefined,
             .width = width,
             .height = height,
-            .fullscreen_requested = fullscreen,
+            .fullscreen = FullscreenState.init(fullscreen),
         };
         self.registry = try self.display.getRegistry();
         self.registry.setListener(*Window, registryListener, self);
@@ -431,13 +464,9 @@ pub const Window = struct {
                         break;
                     }
                 }
-                if (fullscreen != self.fullscreen_actual) {
-                    self.fullscreen_actual = fullscreen;
+                if (self.fullscreen.configure(fullscreen)) {
                     self.push(.{ .fullscreen_changed = fullscreen });
                 }
-                // Configure states are authoritative. This also reconciles a
-                // compositor-side fullscreen toggle with the client request.
-                self.fullscreen_requested = fullscreen;
                 if (c.width > 0 and c.height > 0) {
                     if (c.width != self.width or c.height != self.height) {
                         self.width = c.width;
@@ -635,8 +664,7 @@ pub const Window = struct {
     /// Ask the compositor to enter or leave xdg-shell fullscreen mode. The
     /// actual size arrives asynchronously in the following configure event.
     pub fn setFullscreen(self: *Window, fullscreen: bool) void {
-        if (fullscreen == self.fullscreen_requested) return;
-        self.fullscreen_requested = fullscreen;
+        if (!self.fullscreen.request(fullscreen)) return;
         if (fullscreen) {
             self.toplevel.setFullscreen(null);
         } else {
@@ -647,7 +675,11 @@ pub const Window = struct {
     }
 
     pub fn toggleFullscreen(self: *Window) void {
-        self.setFullscreen(!self.fullscreen_actual);
+        self.setFullscreen(!self.fullscreen.actual);
+    }
+
+    pub fn isFullscreen(self: *const Window) bool {
+        return self.fullscreen.actual;
     }
 
     /// True when the compositor exposes both wlroots virtual-input protocols.
@@ -1023,6 +1055,46 @@ test "DMA-BUF import modifier requires an exact advertised layout" {
     try std.testing.expectEqual(linear, selectDmabufImportModifier(&supported, format, linear).?);
     try std.testing.expect(selectDmabufImportModifier(&supported, format, tiled) == null);
     try std.testing.expect(selectDmabufImportModifier(&supported, drm_format_p010, tiled) == null);
+}
+
+test "fullscreen request survives a stale compositor configure" {
+    var state = FullscreenState.init(false);
+
+    try std.testing.expect(state.request(true));
+    try std.testing.expect(!state.configure(false));
+    try std.testing.expect(state.requested);
+    try std.testing.expect(state.pending);
+
+    try std.testing.expect(state.configure(true));
+    try std.testing.expect(state.actual);
+    try std.testing.expect(state.requested);
+    try std.testing.expect(!state.pending);
+}
+
+test "fullscreen exit survives a stale fullscreen configure" {
+    var state = FullscreenState.init(false);
+    try std.testing.expect(state.request(true));
+    _ = state.configure(true);
+
+    try std.testing.expect(state.request(false));
+    try std.testing.expect(!state.configure(true));
+    try std.testing.expect(!state.requested);
+    try std.testing.expect(state.pending);
+
+    try std.testing.expect(state.configure(false));
+    try std.testing.expect(!state.actual);
+    try std.testing.expect(!state.requested);
+    try std.testing.expect(!state.pending);
+}
+
+test "compositor fullscreen change becomes the requested baseline" {
+    var state = FullscreenState.init(false);
+
+    try std.testing.expect(state.configure(true));
+    try std.testing.expect(state.actual);
+    try std.testing.expect(state.requested);
+    try std.testing.expect(!state.pending);
+    try std.testing.expect(!state.request(true));
 }
 
 test "virtual keyboard uses Linux evdev codes for the fixed US keymap" {

@@ -131,6 +131,8 @@ object AzkTestCli {
         var role: String? = null
         var selectorIndex: Int? = null
         var allWindows = false
+        var visible: Boolean? = null
+        var stateDescription: String? = null
         var wait = if (command == "observe") WaitKind.NOW else WaitKind.IDLE
         var settle = WaitKind.IDLE
         var stableFrames = 2
@@ -156,8 +158,11 @@ object AzkTestCli {
                 "--description" -> description = value()
                 "--class" -> className = value()
                 "--role" -> role = value()
+                "--state-description" -> stateDescription = value()
                 "--index" -> selectorIndex = value().toIntOrNull()
                     ?: throw UsageException("--index requires an integer")
+                "--visible" -> visible = value().toBooleanStrictOrNull()
+                    ?: throw UsageException("--visible requires true or false")
                 "--all-windows" -> { flag(); allWindows = true }
                 "--wait" -> wait = parseWait(value(), observeOnly = true)
                 "--settle" -> settle = parseWait(value(), observeOnly = false)
@@ -185,7 +190,10 @@ object AzkTestCli {
                 if (it == WaitKind.NOW) throw UsageException("wait does not accept now")
             }
         }
-        val selector = Selector(resourceId, text, description, className, role, selectorIndex, allWindows)
+        val selector = Selector(
+            resourceId, text, description, className, role, selectorIndex, allWindows, visible,
+            stateDescription,
+        )
         val action = when (actualCommand) {
             "click" -> {
                 if (positional.isNotEmpty()) throw UsageException("click does not take a value")
@@ -270,6 +278,6 @@ Commands:
   step click|type|set-text|key [selector] [value] [settle options]
 
 Selectors: --id ID --text TEXT --description TEXT --class CLASS --role ROLE
-           --index N --all-windows
+           --state-description TEXT --index N --visible true|false --all-windows
 """
 }

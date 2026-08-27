@@ -10,6 +10,11 @@ import android.content.pm.HostedPackageParser
 import android.content.res.Configuration
 import android.content.res.HostedConfigurationController
 import android.os.Bundle
+import android.view.HostedSystemUiController
+import android.view.HostedWindowPresentation
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowManager
 
 /** Behavioral smoke tests whose surface is the hosted framework modules. */
 internal object FrameworkModuleSmoke {
@@ -19,6 +24,7 @@ internal object FrameworkModuleSmoke {
     fun main(args: Array<String>) {
         testPackageNames()
         testConfigurationCalculation()
+        testWindowPresentation()
         testActivityLifecycle()
         println("hosted framework module smoke: PASS")
     }
@@ -66,6 +72,55 @@ internal object FrameworkModuleSmoke {
         )
         check(!lockedPortrait.landscape)
         check(lockedPortrait.displayWidth == 700 && lockedPortrait.displayHeight == 1000)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun testWindowPresentation() {
+        val defaultVisible = WindowInsets.Type.defaultVisible()
+        val legacySystemBars = WindowInsets.Type.statusBars() or
+            WindowInsets.Type.navigationBars()
+        check(HostedSystemUiController.hiddenTypesForLegacyVisibility(0) == 0)
+        check(HostedSystemUiController.hiddenTypesForLegacyVisibility(
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION,
+        ) == legacySystemBars)
+        check(!HostedWindowPresentation.requestsFullscreen(0, 0, defaultVisible, false))
+        check(HostedWindowPresentation.requestsFullscreen(
+            View.SYSTEM_UI_FLAG_FULLSCREEN,
+            0,
+            defaultVisible,
+            false,
+        ))
+        check(HostedWindowPresentation.requestsFullscreen(
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION,
+            0,
+            defaultVisible,
+            false,
+        ))
+        check(HostedWindowPresentation.requestsFullscreen(
+            0,
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            defaultVisible,
+            false,
+        ))
+
+        val transientControls = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        check(!HostedWindowPresentation.requestsFullscreen(
+            transientControls,
+            0,
+            defaultVisible,
+            false,
+        )) { "immersive layout alone must not enter host fullscreen" }
+        check(HostedWindowPresentation.requestsFullscreen(
+            transientControls,
+            0,
+            defaultVisible,
+            true,
+        )) { "temporarily visible system bars must not exit host fullscreen" }
+
+        val modernImmersive = defaultVisible and WindowInsets.Type.systemBars().inv()
+        check(HostedWindowPresentation.requestsFullscreen(0, 0, modernImmersive, false))
     }
 
     private fun testActivityLifecycle() {
@@ -123,6 +178,7 @@ internal object FrameworkModuleSmoke {
                 "handled configuration ordering: $events"
             }
 
+            first.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             ActivityThread.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_ORIENTATION,
@@ -138,6 +194,10 @@ internal object FrameworkModuleSmoke {
                 "first:resume",
                 "show:first",
             )) { "relaunch restore ordering: $events" }
+            check(ActivityThread.currentActivity()?.requestedOrientation ==
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
+                "configuration relaunch lost the activity's requested orientation"
+            }
         } finally {
             ActivityThread.shutdownActivitiesInProcess()
         }

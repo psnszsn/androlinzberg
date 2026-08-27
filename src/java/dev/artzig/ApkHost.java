@@ -30,6 +30,7 @@ public final class ApkHost {
     private static long sDownTime;
     private static HostedApkClassLoader sClassLoader;
     private static int sWidth, sHeight, sScale120;
+    private static boolean sAppFullscreenRequested;
     private static boolean sHostFullscreenSuppressed;
     private ApkHost() {}
 
@@ -217,6 +218,7 @@ public final class ApkHost {
     // active touch-gesture target: null = activity decor
     private static android.view.ArtzigWindowStack.Entry sGestureWin;
     private static boolean sGestureWinValid;
+    private static View sGestureControl;
 
     public static void motion(int action, float x, float y) {
         if (sActivity == null) return;
@@ -225,10 +227,16 @@ public final class ApkHost {
             sDownTime = now;
             sGestureWin = android.view.ArtzigWindowStack.topTouchable();
             sGestureWinValid = true;
+            sGestureControl = sGestureWin == null
+                    ? android.view.HostedPointerTarget.findDescriptiveControl(
+                            sActivity.getWindow().getDecorView(), x, y)
+                    : null;
         }
         android.view.ArtzigWindowStack.Entry win = sGestureWinValid ? sGestureWin : null;
+        View control = sGestureControl;
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
             sGestureWinValid = false;
+            sGestureControl = null;
         }
         if (win != null) {
             // touch belongs to the top overlay window (dialog/popup): modal.
@@ -242,16 +250,26 @@ public final class ApkHost {
             MotionEvent ev = MotionEvent.obtain(sDownTime, now, a, wx, wy, 0);
             ev.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
             try {
-                win.view.dispatchTouchEvent(ev);
+                win.root.dispatchPointerEvent(ev);
             } catch (Throwable t) {
                 Log.w(TAG, "overlay touch failed", t);
             }
             ev.recycle();
             return;
         }
+        if (control != null) {
+            int[] location = new int[2];
+            control.getLocationOnScreen(location);
+            MotionEvent ev = MotionEvent.obtain(
+                    sDownTime, now, action, x - location[0], y - location[1], 0);
+            ev.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+            control.dispatchTouchEvent(ev);
+            ev.recycle();
+            return;
+        }
         MotionEvent ev = MotionEvent.obtain(sDownTime, now, action, x, y, 0);
         ev.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
-        sActivity.getWindow().getDecorView().dispatchTouchEvent(ev);
+        if (sRoot != null) sRoot.dispatchPointerEvent(ev);
         ev.recycle();
     }
 
@@ -425,6 +443,7 @@ public final class ApkHost {
         android.view.ArtzigAccessibilityBridge.setActivityRoot(sRoot);
         sGestureWin = null;
         sGestureWinValid = false;
+        sGestureControl = null;
     }
 
     /** Test-control JNI surface. Android semantics stay in the framework bridge. */
@@ -502,6 +521,9 @@ public final class ApkHost {
         sClassLoader = null;
         sGestureWin = null;
         sGestureWinValid = false;
+        sGestureControl = null;
+        sAppFullscreenRequested = false;
+        sHostFullscreenSuppressed = false;
         Log.i(TAG, "shutdown complete");
     }
 
@@ -509,10 +531,9 @@ public final class ApkHost {
 
     private static boolean appRequestsFullscreen() {
         if (sActivity == null) return false;
-        int visibility = sActivity.getWindow().getDecorView().getSystemUiVisibility();
-        int flags = sActivity.getWindow().getAttributes().flags;
-        return (visibility & android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) != 0
-                || (flags & android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+        sAppFullscreenRequested = android.view.HostedWindowPresentation.requestsFullscreen(
+                sActivity.getWindow(), sAppFullscreenRequested);
+        return sAppFullscreenRequested;
     }
 
     /** Whether Android has entered its fullscreen/immersive presentation.

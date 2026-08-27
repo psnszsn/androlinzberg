@@ -86,9 +86,16 @@ object HostedActivityRuntime {
         activity.performSaveInstanceState(savedState)
         val className = activity.javaClass.name
         val intent = activity.intent?.let(::Intent)
+        val requestedOrientation = activity.requestedOrientation
         destroy(activity, changingConfigurations = true)
         current = null
-        val replacement = launch(className, intent, savedState, false)
+        val replacement = launch(
+            activityClassName = className,
+            intent = intent,
+            savedState = savedState,
+            addCurrentToBackStack = false,
+            requestedOrientation = requestedOrientation,
+        )
         Log.i(TAG, "recreated ${replacement.javaClass.name} for configuration change")
     }
 
@@ -141,6 +148,7 @@ object HostedActivityRuntime {
         intent: Intent?,
         savedState: Bundle?,
         addCurrentToBackStack: Boolean,
+        requestedOrientation: Int? = null,
     ): Activity {
         val adapter = requireHost()
         val previous = current
@@ -161,7 +169,9 @@ object HostedActivityRuntime {
                 applicationInfo = adapter.activityContext.applicationInfo
             }
             activity.attach(adapter.activityContext, info)
-            activity.setRequestedOrientation(info.screenOrientation)
+            // AOSP ActivityRecord owns requested orientation across an ActivityThread relaunch.
+            // system_server is absent, so the in-process lifecycle seam carries that state.
+            activity.setRequestedOrientation(requestedOrientation ?: info.screenOrientation)
             if (intent != null) activity.intent = intent
             activity.performCreate(savedState)
             activity.performStart()
