@@ -464,7 +464,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             }
         }
     }
-    host_natives.bindWayland(@ptrCast(win.display), @ptrCast(win.surface));
+    host_natives.bindWayland(@ptrCast(win.display), @ptrCast(win.renderSurface()));
     video_layers.register(gpa, init.io, win, @ptrCast(env), draw_hardware_abi == .physical) catch |err| {
         std.debug.print("video layers unavailable: {}\n", .{err});
     };

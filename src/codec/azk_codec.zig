@@ -38,8 +38,8 @@ pub const Dec = struct {
     is_video: bool = false,
     queue: std.ArrayList(Frame) = .empty,
     vqueue: std.ArrayList(VFrame) = .empty,
-    target_w: c_int = 0,
-    target_h: c_int = 0,
+    surface_w: c_int = 0,
+    surface_h: c_int = 0,
     hw_device: ?*c.AVBufferRef = null,
     vaapi_vpp: ?*c.AzkVaapiVpp = null,
     eof_sent: bool = false,
@@ -59,11 +59,11 @@ pub const Dec = struct {
             if (self.is_video) {
                 if (self.frame.format != c.AV_PIX_FMT_VAAPI)
                     return error.HardwareVideoRequired;
-                const output = fitVideoTarget(
+                const output = videoPresentationSize(
                     self.frame.width,
                     self.frame.height,
-                    self.target_w,
-                    self.target_h,
+                    self.surface_w,
+                    self.surface_h,
                 );
                 const hardware = c.azk_vaapi_export(
                     self.frame,
@@ -87,27 +87,12 @@ pub const Dec = struct {
 
 const VideoSize = struct { width: c_int, height: c_int };
 
-/// Fit GPU VPP output to the visible layer without upscaling or changing the
-/// decoded aspect ratio. Wayland performs the final fractional scaling.
-fn fitVideoTarget(width: c_int, height: c_int, target_width: c_int, target_height: c_int) VideoSize {
-    if (width <= 0 or height <= 0 or target_width <= 0 or target_height <= 0 or
-        (width <= target_width and height <= target_height))
-        return .{ .width = width, .height = height };
-
-    const source_w: i64 = width;
-    const source_h: i64 = height;
-    const target_w: i64 = target_width;
-    const target_h: i64 = target_height;
-    if (source_w * target_h >= source_h * target_w) {
-        return .{
-            .width = target_width,
-            .height = @intCast(@max(1, @divTrunc(source_h * target_w, source_w))),
-        };
-    }
-    return .{
-        .width = @intCast(@max(1, @divTrunc(source_w * target_h, source_h))),
-        .height = target_height,
-    };
+/// Keep codec buffers at the decoded stream size across SurfaceView resizes.
+/// AOSP SurfaceView.performSurfaceTransaction() applies the destination frame
+/// and position scale in the composition transaction; it does not resize
+/// MediaCodec output buffers to the view. Wayland's viewport is that host seam.
+fn videoPresentationSize(width: c_int, height: c_int, _: c_int, _: c_int) VideoSize {
+    return .{ .width = width, .height = height };
 }
 
 fn avError(e: c_int) c_int {
@@ -210,8 +195,10 @@ pub export fn azk_codec_configure(d: *Dec, extradata: ?[*]const u8, len: c_int, 
 }
 
 pub export fn azk_codec_set_video_target(d: *Dec, width: c_int, height: c_int) void {
-    d.target_w = @max(0, width);
-    d.target_h = @max(0, height);
+    // Retain the current SurfaceView dimensions at the JNI seam, but do not
+    // use them to rebuild the decoder/VPP pipeline.
+    d.surface_w = @max(0, width);
+    d.surface_h = @max(0, height);
 }
 
 /// Send one encoded packet (or EOF). Always accepts: pending frames are
@@ -295,10 +282,10 @@ pub fn releaseHardwareFrame(frame: *HardwareFrame) void {
     c.azk_hardware_frame_release(frame);
 }
 
-test "video conversion target preserves aspect ratio and never upscales" {
-    try std.testing.expectEqual(VideoSize{ .width = 774, .height = 588 }, fitVideoTarget(2842, 2160, 774, 589));
-    try std.testing.expectEqual(VideoSize{ .width = 1920, .height = 1080 }, fitVideoTarget(3840, 2160, 1920, 1080));
-    try std.testing.expectEqual(VideoSize{ .width = 426, .height = 240 }, fitVideoTarget(426, 240, 1920, 1080));
+test "surface resize keeps codec presentation at decoded dimensions" {
+    try std.testing.expectEqual(VideoSize{ .width = 2842, .height = 2160 }, videoPresentationSize(2842, 2160, 774, 589));
+    try std.testing.expectEqual(VideoSize{ .width = 3840, .height = 2160 }, videoPresentationSize(3840, 2160, 1920, 1080));
+    try std.testing.expectEqual(VideoSize{ .width = 426, .height = 240 }, videoPresentationSize(426, 240, 1920, 1080));
 }
 
 pub export fn azk_codec_flush(d: *Dec) void {

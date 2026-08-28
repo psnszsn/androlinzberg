@@ -228,6 +228,7 @@ pub const Window = struct {
     registry: *wl.Registry,
     compositor: ?*wl.Compositor = null,
     subcompositor: ?*wl.Subcompositor = null,
+    shm: ?*wl.Shm = null,
     viewporter: ?*wp.Viewporter = null,
     fractional_scale_manager: ?*wp.FractionalScaleManagerV1 = null,
     dmabuf: ?*zwp.LinuxDmabufV1 = null,
@@ -253,6 +254,10 @@ pub const Window = struct {
     fractional_scale: ?*wp.FractionalScaleV1 = null,
     xdg_surface: *xdg.Surface = undefined,
     toplevel: *xdg.Toplevel = undefined,
+    base_buffer: *wl.Buffer = undefined,
+    ui_surface: *wl.Surface = undefined,
+    ui_subsurface: *wl.Subsurface = undefined,
+    ui_viewport: ?*wp.Viewport = null,
 
     width: i32,
     height: i32,
@@ -260,6 +265,7 @@ pub const Window = struct {
     scale_120: u32 = 120,
     fullscreen: FullscreenState = .{},
     configured: bool = false,
+    base_attached: bool = false,
 
     pointer_x: f64 = 0,
     pointer_y: f64 = 0,
@@ -289,7 +295,8 @@ pub const Window = struct {
         self.registry = try self.display.getRegistry();
         self.registry.setListener(*Window, registryListener, self);
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        if (self.compositor == null or self.wm_base == null)
+        if (self.compositor == null or self.subcompositor == null or self.shm == null or
+            self.wm_base == null)
             return error.MissingGlobals;
 
         self.surface = try self.compositor.?.createSurface();
@@ -309,11 +316,33 @@ pub const Window = struct {
         self.toplevel.setTitle(title);
         self.toplevel.setAppId("org.androlinzberg");
         if (fullscreen) self.toplevel.setFullscreen(null);
+
+        // xdg-shell requires the initial configure to be acknowledged before
+        // the first buffer is attached.
         self.surface.commit();
-        // wait for the first configure
         while (!self.configured) {
             if (self.display.dispatch() != .SUCCESS) return error.DispatchFailed;
         }
+
+        // Host adaptation of AOSP SurfaceView.performSurfaceTransaction():
+        // SurfaceFlinger/SurfaceControl are unavailable here, so represent
+        // their application-window and SurfaceView sibling layers with Wayland
+        // subsurfaces. Keep the xdg_toplevel surface as an opaque base and
+        // render Android's alpha-capable window above the video layers. Some
+        // compositors flatten a fullscreen toplevel as opaque before
+        // considering a child below it, which turns the valid SurfaceView hole
+        // black.
+        self.base_buffer = try self.createBaseBuffer();
+        self.surface.attach(self.base_buffer, 0, 0);
+        self.surface.damageBuffer(0, 0, 1, 1);
+        self.base_attached = true;
+        self.ui_surface = try self.compositor.?.createSurface();
+        self.ui_subsurface = try self.subcompositor.?.getSubsurface(self.ui_surface, self.surface);
+        self.ui_subsurface.setDesync();
+        self.ui_subsurface.placeAbove(self.surface);
+        self.ui_viewport = if (self.viewporter) |v| try v.getViewport(self.ui_surface) else null;
+        self.updateViewport();
+        self.surface.commit();
         return self;
     }
 
@@ -324,6 +353,8 @@ pub const Window = struct {
                     self.compositor = registry.bind(g.name, wl.Compositor, 4) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wl.Subcompositor.interface.name) == .eq) {
                     self.subcompositor = registry.bind(g.name, wl.Subcompositor, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
+                    self.shm = registry.bind(g.name, wl.Shm, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wp.Viewporter.interface.name) == .eq) {
                     self.viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wp.FractionalScaleManagerV1.interface.name) == .eq) {
@@ -438,6 +469,9 @@ pub const Window = struct {
             .configure => |c| {
                 s.ackConfigure(c.serial);
                 self.configured = true;
+                // Apply parent viewport and sibling stacking changes only
+                // after acknowledging the configure that supplied them.
+                if (self.base_attached) self.surface.commit();
             },
         }
     }
@@ -448,6 +482,7 @@ pub const Window = struct {
                 if (preferred.scale == 0 or preferred.scale == self.scale_120) return;
                 self.scale_120 = preferred.scale;
                 self.updateViewport();
+                self.surface.commit();
                 // A scale transition does not necessarily cause an xdg-shell
                 // size configure. Notify EGL so it rebuilds at the new
                 // physical pixel size.
@@ -641,13 +676,37 @@ pub const Window = struct {
                 viewport.setDestination(self.width, self.height);
             }
         }
+        if (self.ui_viewport) |viewport| {
+            if (self.width > 0 and self.height > 0) {
+                viewport.setDestination(self.width, self.height);
+            }
+        }
+    }
+
+    fn createBaseBuffer(self: *Window) !*wl.Buffer {
+        const base_fd = try std.posix.memfd_create("azk-window-base", 0);
+        defer _ = std.c.close(base_fd);
+        const pixel = [_]u8{ 0, 0, 0, 0 };
+        var written: usize = 0;
+        while (written < pixel.len) {
+            const count = std.c.write(base_fd, pixel[written..].ptr, pixel.len - written);
+            if (count <= 0) return error.BaseBufferWriteFailed;
+            written += @intCast(count);
+        }
+        const pool = try self.shm.?.createPool(base_fd, @intCast(pixel.len));
+        defer pool.destroy();
+        return pool.createBuffer(0, 1, 1, 4, .xrgb8888);
+    }
+
+    pub fn renderSurface(self: *Window) *wl.Surface {
+        return self.ui_surface;
     }
 
     /// Register a callback to pace the next commit. The direct EGL presenter
     /// calls this before RenderThread's eglSwapBuffers commits the surface.
     pub fn requestFrame(self: *Window) !void {
         if (self.frame_cb == null) {
-            self.frame_cb = try self.surface.frame();
+            self.frame_cb = try self.ui_surface.frame();
             self.frame_cb.?.setListener(*Window, frameListener, self);
         }
     }
@@ -837,10 +896,15 @@ pub const Window = struct {
         if (self.pointer) |pointer| pointer.release();
         if (self.keyboard) |keyboard| keyboard.release();
         if (self.seat) |seat| seat.release();
-        self.toplevel.destroy();
-        self.xdg_surface.destroy();
+        // Tear down the child surface tree before destroying its xdg parent.
+        if (self.ui_viewport) |viewport| viewport.destroy();
+        self.ui_subsurface.destroy();
+        self.ui_surface.destroy();
+        self.base_buffer.destroy();
         if (self.fractional_scale) |fractional_scale| fractional_scale.destroy();
         if (self.viewport) |viewport| viewport.destroy();
+        self.toplevel.destroy();
+        self.xdg_surface.destroy();
         self.surface.destroy();
         if (self.dmabuf_feedback) |feedback| feedback.destroy();
         if (self.dmabuf_table) |table| std.posix.munmap(table);
@@ -848,6 +912,7 @@ pub const Window = struct {
         if (self.viewporter) |viewporter| viewporter.destroy();
         if (self.fractional_scale_manager) |manager| manager.destroy();
         if (self.subcompositor) |subcompositor| subcompositor.destroy();
+        if (self.shm) |shm| shm.destroy();
         if (self.wm_base) |wm_base| wm_base.destroy();
 
         self.events.deinit(self.gpa);
@@ -857,9 +922,9 @@ pub const Window = struct {
     }
 
     // ---------------------------------------------------------------------
-    // Video layers: a wl_subsurface below the main surface, scaled by the
-    // compositor via wp_viewport. The UI punches a transparent hole where the
-    // SurfaceView sits, so the video shows through.
+    // Video layers: wl_subsurfaces between the toplevel base and Android UI,
+    // scaled by the compositor via wp_viewport. The UI punches a transparent
+    // hole where the SurfaceView sits, so the video shows through.
     pub const VideoLayer = struct {
         const DmabufBuffer = struct {
             layer: *VideoLayer,
@@ -1037,7 +1102,9 @@ pub const Window = struct {
         const vsurf = try self.compositor.?.createSurface();
         const subsurf = try sub.getSubsurface(vsurf, self.surface);
         subsurf.setDesync();
-        subsurf.placeBelow(self.surface);
+        subsurf.placeAbove(self.surface);
+        self.ui_subsurface.placeAbove(vsurf);
+        self.surface.commit();
         // input falls through to the main surface
         const region = try self.compositor.?.createRegion();
         vsurf.setInputRegion(region);

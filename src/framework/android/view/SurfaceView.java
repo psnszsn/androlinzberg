@@ -6,8 +6,6 @@ package android.view;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Rect;
-import android.os.Handler;
-import android.os.Looper;
 import android.util.AttributeSet;
 
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -17,7 +15,6 @@ public class SurfaceView extends View {
             new CopyOnWriteArrayList<>();
     private Surface mSurface;
     private boolean mCreated;
-    private int mLifecycleGeneration;
     private final int[] mLocation = new int[2];
     private final Rect mVisibleRect = new Rect();
     private int mLastX = Integer.MIN_VALUE, mLastY, mLastW, mLastH;
@@ -60,7 +57,6 @@ public class SurfaceView extends View {
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        ++mLifecycleGeneration;
         if (mSurface == null) {
             mSurface = ArtzigVideoLayer.createSurface();
             // The destination cache belongs to the old native video layer.
@@ -76,23 +72,18 @@ public class SurfaceView extends View {
     }
 
     @Override protected void onDetachedFromWindow() {
-        final int detachedGeneration = ++mLifecycleGeneration;
-        // ViewGroup reparenting detaches and attaches the view synchronously.
-        // Keep the video surface alive across that operation so clients do not
-        // block their playback thread detaching a surface that is immediately
-        // reused. A genuinely removed view remains detached through the next
-        // main-loop turn and is destroyed there.
-        new Handler(Looper.getMainLooper()).post(() -> {
-            if (mLifecycleGeneration != detachedGeneration) return;
-            if (mCreated) {
-                mCreated = false;
-                for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceDestroyed(mHolder);
-            }
-            if (mSurface != null) {
-                ArtzigVideoLayer.destroy(mSurface);
-                mSurface = null;
-            }
-        });
+        // Follows AOSP SurfaceView.onDetachedFromWindow(): updateSurface()
+        // makes the surface unavailable and delivers surfaceDestroyed before
+        // releaseSurfaces(). The host has no SurfaceControl, so its Wayland
+        // video layer is the resource released at that seam.
+        if (mCreated) {
+            mCreated = false;
+            for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceDestroyed(mHolder);
+        }
+        if (mSurface != null) {
+            ArtzigVideoLayer.destroy(mSurface);
+            mSurface = null;
+        }
         super.onDetachedFromWindow();
     }
 
