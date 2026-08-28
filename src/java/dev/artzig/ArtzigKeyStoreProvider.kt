@@ -44,7 +44,7 @@ public final class ArtzigKeyStoreProvider : Provider {
         @Throws(UnrecoverableKeyException::class)
         public override fun engineGetKey(
             alias: String,
-            password: CharArray,
+            password: CharArray?,
         ): Key? {
             try {
                 return getKey(alias)
@@ -63,8 +63,8 @@ public final class ArtzigKeyStoreProvider : Provider {
         public override fun engineSetKeyEntry(
             alias: String,
             key: Key,
-            password: CharArray,
-            chain: Array<Certificate>,
+            password: CharArray?,
+            chain: Array<Certificate>?,
         ) {
             if (!(key is SecretKey) || key.getEncoded() == null) throw KeyStoreException("secret keys only")
             try {
@@ -78,7 +78,7 @@ public final class ArtzigKeyStoreProvider : Provider {
         public override fun engineSetKeyEntry(
             alias: String,
             key: ByteArray,
-            chain: Array<Certificate>,
+            chain: Array<Certificate>?,
         ) {
             try {
                 putKey(alias, SecretKeySpec(key, "AES"))
@@ -137,21 +137,21 @@ public final class ArtzigKeyStoreProvider : Provider {
         @Throws(IOException::class, NoSuchAlgorithmException::class, CertificateException::class)
         public override fun engineStore(
             stream: OutputStream,
-            password: CharArray,
+            password: CharArray?,
         ) {
             saveKeys()
         }
 
         @Throws(IOException::class, NoSuchAlgorithmException::class, CertificateException::class)
         public override fun engineLoad(
-            stream: InputStream,
-            password: CharArray,
+            stream: InputStream?,
+            password: CharArray?,
         ) {
             loadKeys()
         }
 
         @Throws(IOException::class, NoSuchAlgorithmException::class, CertificateException::class)
-        public override fun engineLoad(parameter: KeyStore.LoadStoreParameter) {
+        public override fun engineLoad(parameter: KeyStore.LoadStoreParameter?) {
             loadKeys()
         }
     }

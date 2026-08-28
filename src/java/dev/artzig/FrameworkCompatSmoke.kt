@@ -22,9 +22,11 @@ import android.os.SystemClock
 import android.view.ThreadedRenderer
 import android.view.ViewRootImpl
 import android.view.WindowManagerImpl
+import java.security.KeyStore
 import java.util.ArrayList
 import java.util.HashMap
 import java.util.HashSet
+import javax.crypto.spec.SecretKeySpec
 
 public final class FrameworkCompatSmoke {
     companion object {
@@ -158,6 +160,7 @@ public final class FrameworkCompatSmoke {
                 android.hardware.Camera.getNumberOfCameras() == 0,
                 "desktop legacy camera count",
             )
+            verifyAndroidKeyStoreNullParameters()
             require(
                 PendingIntent.getActivities(
                     null,
@@ -268,6 +271,31 @@ public final class FrameworkCompatSmoke {
                 "mutable bitmap icon copy",
             )
             System.out.println("framework compat smoke: PASS")
+        }
+
+        @JvmStatic private fun verifyAndroidKeyStoreNullParameters() {
+            val keyStore: KeyStore =
+                KeyStore.getInstance("AndroidKeyStore", ArtzigKeyStoreProvider())
+            keyStore.load(null as KeyStore.LoadStoreParameter?)
+            keyStore.load(null as java.io.InputStream?, null)
+
+            val alias: String = "artzig-null-parameter-smoke"
+            try {
+                val expected: ByteArray = ByteArray(32) { index: Int -> index.toByte() }
+                keyStore.setEntry(
+                    alias,
+                    KeyStore.SecretKeyEntry(SecretKeySpec(expected, "AES")),
+                    null,
+                )
+                val entry: KeyStore.Entry? = keyStore.getEntry(alias, null)
+                require(entry is KeyStore.SecretKeyEntry, "AndroidKeyStore secret-key entry")
+                require(
+                    expected.contentEquals((entry as KeyStore.SecretKeyEntry).secretKey.encoded),
+                    "AndroidKeyStore null-protected key round trip",
+                )
+            } finally {
+                keyStore.deleteEntry(alias)
+            }
         }
 
         @JvmStatic private fun drainMainLooper() {
