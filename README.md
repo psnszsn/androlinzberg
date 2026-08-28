@@ -113,12 +113,11 @@ tools/shot.sh result.png --test ./tests/login-ui -- \
   ./zig-out/bin/androlinzberg app.apk
 ```
 
-The repository's built-in ViewHost can exercise the complete path without an
-APK:
+The Kotlin integration suite exercises the repository's built-in ViewHost
+without requiring an APK:
 
 ```sh
-tools/shot.sh /tmp/control.png --test tools/test-control-smoke.sh -- \
-  ./zig-out/bin/androlinzberg --java
+zig build -j10 integration-test -- --class ViewHostTest
 ```
 
 Selectors are exact and must identify one node before an action is applied.

@@ -7,7 +7,7 @@ import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 
 class AppSession internal constructor(
-    val apk: ResolvedApk,
+    val apk: ResolvedApk?,
     val artifactDirectory: Path,
     private val runtimeDirectory: Path,
     private val process: ManagedProcess,
@@ -32,7 +32,7 @@ class AppSession internal constructor(
         client.observe(wait = WaitKind.READY)
         val startup = client.diagnose()
         val startupDiagnostics = Diagnostics.fromJson(startup.objectOrEmpty("diagnostics"))
-        requireDiagnosticsClean(startupDiagnostics, "during APK startup")
+        requireDiagnosticsClean(startupDiagnostics, "during hosted process startup")
         requireNoFatalOutput()
         diagnosticCursor = runCatching { client.extractMark(startup) }.getOrElse { client.mark() }
     }
@@ -285,7 +285,7 @@ class AppSession internal constructor(
 
     private fun requireAlive(context: String) {
         if (process.isAlive) return
-        throw AssertionError("APK process exited ${process.exitCode} $context; log: $appLog")
+        throw AssertionError("hosted process exited ${process.exitCode} $context; log: $appLog")
     }
 
     private fun requireNoFatalOutput() {
@@ -310,6 +310,38 @@ class AppSession internal constructor(
             val registryPath = Path.of(environment["AZK_APK_REGISTRY"] ?: "tests/apks.json")
                 .toAbsolutePath().normalize()
             val apk = ApkRegistry.load(registryPath).resolve(apkKey, environment)
+            return startHosted(
+                apk = apk,
+                launcherArguments = listOf(apk.path.toString()),
+                testId = testId,
+                environment = environment,
+                processAdapter = processAdapter,
+                launchSize = launchSize,
+            )
+        }
+
+        internal fun startViewHost(
+            testId: String,
+            environment: Map<String, String> = System.getenv(),
+            processAdapter: ProcessAdapter = SystemProcessAdapter,
+            launchSize: LaunchSize? = null,
+        ): AppSession = startHosted(
+            apk = null,
+            launcherArguments = listOf("--java"),
+            testId = testId,
+            environment = environment,
+            processAdapter = processAdapter,
+            launchSize = launchSize,
+        )
+
+        private fun startHosted(
+            apk: ResolvedApk?,
+            launcherArguments: List<String>,
+            testId: String,
+            environment: Map<String, String>,
+            processAdapter: ProcessAdapter,
+            launchSize: LaunchSize?,
+        ): AppSession {
             val artifactRoot = Path.of(
                 environment["AZK_ARTIFACT_ROOT"] ?: "zig-out/test-results/integration",
             ).toAbsolutePath().normalize()
@@ -347,7 +379,7 @@ class AppSession internal constructor(
             configureHeadlessOutput(environment, launchSize)
             val process = try {
                 processAdapter.start(
-                    listOf(launcher.toString(), apk.path.toString()),
+                    listOf(launcher.toString()) + launcherArguments,
                     childEnvironment,
                     appLog,
                 )
