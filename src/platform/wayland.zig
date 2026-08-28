@@ -163,7 +163,7 @@ fn namedKey(name: []const u8) ?u32 {
         .{ "Escape", 1 },   .{ "Left", 105 },     .{ "Right", 106 },
         .{ "Up", 103 },     .{ "Down", 108 },     .{ "Home", 102 },
         .{ "End", 107 },    .{ "PageUp", 104 },   .{ "PageDown", 109 },
-        .{ "Delete", 111 },
+        .{ "Delete", 111 }, .{ "F11", 87 },
     };
     inline for (names) |entry| if (std.ascii.eqlIgnoreCase(name, entry[0])) return entry[1];
     return null;
@@ -1293,5 +1293,6 @@ test "virtual keyboard uses Linux evdev codes for the fixed US keymap" {
     try std.testing.expectEqual(TestKey{ .code = 30, .shift = true }, asciiKey('A').?);
     try std.testing.expectEqual(TestKey{ .code = 3, .shift = true }, asciiKey('@').?);
     try std.testing.expectEqual(@as(u32, 28), namedKey("enter").?);
+    try std.testing.expectEqual(@as(u32, 87), namedKey("F11").?);
     try std.testing.expect(asciiKey(0xc3) == null);
 }

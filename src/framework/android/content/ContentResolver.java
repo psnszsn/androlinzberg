@@ -1,9 +1,15 @@
 /* artzig shim: android.content.ContentResolver — scheme constants + open stubs. */
 package android.content;
 import android.content.res.AssetFileDescriptor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.CancellationSignal;
+import android.util.Size;
+import java.io.IOException;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
+import java.util.Objects;
 public abstract class ContentResolver {
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface NotifyFlags {}
@@ -40,7 +46,36 @@ public abstract class ContentResolver {
     public AssetFileDescriptor openAssetFileDescriptor(Uri uri, String mode) throws FileNotFoundException {
         throw new FileNotFoundException(String.valueOf(uri));
     }
+    public AssetFileDescriptor openAssetFileDescriptor(Uri uri, String mode,
+            CancellationSignal cancellationSignal) throws FileNotFoundException {
+        Objects.requireNonNull(uri, "uri");
+        Objects.requireNonNull(mode, "mode");
+        if (cancellationSignal != null) cancellationSignal.throwIfCanceled();
+        return openAssetFileDescriptor(uri, mode);
+    }
     public AssetFileDescriptor openTypedAssetFileDescriptor(Uri uri, String mimeType, android.os.Bundle opts) throws FileNotFoundException {
         throw new FileNotFoundException(String.valueOf(uri));
+    }
+    /**
+     * Hosted counterpart of AOSP ContentResolver.loadThumbnail. Provider-backed resolvers can
+     * override this seam; the default implementation supports streams exposed by this resolver.
+     */
+    public Bitmap loadThumbnail(Uri uri, Size size, CancellationSignal cancellationSignal)
+            throws IOException {
+        Objects.requireNonNull(uri, "uri");
+        Objects.requireNonNull(size, "size");
+        if (cancellationSignal != null) cancellationSignal.throwIfCanceled();
+        try (InputStream input = openInputStream(uri)) {
+            Bitmap bitmap = BitmapFactory.decodeStream(input);
+            if (bitmap == null) throw new IOException("Failed to decode thumbnail: " + uri);
+            if (cancellationSignal != null) cancellationSignal.throwIfCanceled();
+            int width = bitmap.getWidth();
+            int height = bitmap.getHeight();
+            if (width <= size.getWidth() && height <= size.getHeight()) return bitmap;
+            float scale = Math.min((float) size.getWidth() / width, (float) size.getHeight() / height);
+            return Bitmap.createScaledBitmap(bitmap,
+                    Math.max(1, Math.round(width * scale)),
+                    Math.max(1, Math.round(height * scale)), true);
+        }
     }
 }

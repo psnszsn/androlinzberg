@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.job.JobScheduler
 import android.content.ComponentName
+import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
@@ -19,6 +20,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
+import android.provider.MediaStore
+import android.util.Size
 import android.view.ThreadedRenderer
 import android.view.ViewRootImpl
 import android.view.WindowManagerImpl
@@ -161,6 +164,8 @@ public final class FrameworkCompatSmoke {
                 "desktop legacy camera count",
             )
             verifyAndroidKeyStoreNullParameters()
+            verifyMediaStoreCompatibility()
+            verifyBoundedHostThrowableDiagnostic()
             require(
                 PendingIntent.getActivities(
                     null,
@@ -296,6 +301,90 @@ public final class FrameworkCompatSmoke {
             } finally {
                 keyStore.deleteEntry(alias)
             }
+        }
+
+        @JvmStatic private fun verifyMediaStoreCompatibility() {
+            require(
+                "content://media/external/video/media".equals(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI.toString(),
+                ),
+                "MediaStore video URI",
+            )
+            require(
+                "content://media/external/images/media".equals(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI.toString(),
+                ) &&
+                    "content://media/external/audio/media".equals(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI.toString(),
+                    ) &&
+                    "content://media/external/downloads".equals(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI.toString(),
+                    ),
+                "MediaStore external collection URIs",
+            )
+            require(MediaStore.getPickImagesMaxLimit() == 100, "photo picker selection limit")
+            require(
+                "1".equals(
+                    MediaStore
+                        .setRequireOriginal(android.net.Uri.parse("content://media/item"))
+                        .getQueryParameter("requireOriginal"),
+                ),
+                "MediaStore original-content query parameter",
+            )
+
+            val thumbnailUri: Array<android.net.Uri?> = arrayOfNulls(1)
+            val thumbnailSize: Array<Size?> = arrayOfNulls(1)
+            val expected: Bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+            val resolver: ContentResolver =
+                object : ContentResolver() {
+                    override fun loadThumbnail(
+                        uri: android.net.Uri,
+                        size: Size,
+                        signal: android.os.CancellationSignal?,
+                    ): Bitmap {
+                        thumbnailUri[0] = uri
+                        thumbnailSize[0] = size
+                        return expected
+                    }
+                }
+            require(
+                MediaStore.Video.Thumbnails.getThumbnail(
+                    resolver,
+                    42,
+                    MediaStore.Video.Thumbnails.MINI_KIND,
+                    null,
+                ) === expected,
+                "MediaStore video thumbnail result",
+            )
+            require(
+                "content://media/external/video/media/42".equals(thumbnailUri[0].toString()) &&
+                    Size(512, 384).equals(thumbnailSize[0]),
+                "MediaStore video thumbnail resolver seam",
+            )
+        }
+
+        @JvmStatic private fun verifyBoundedHostThrowableDiagnostic() {
+            var cause: Throwable = IllegalStateException("leaf")
+            repeat(20) { index: Int ->
+                cause = RuntimeException("cause-" + index, cause)
+            }
+            val hostile: Throwable =
+                object : RuntimeException("printer must not run", cause) {
+                    override fun printStackTrace(writer: java.io.PrintWriter) {
+                        throw AssertionError("bounded logger called Throwable.printStackTrace")
+                    }
+
+                    override fun printStackTrace(stream: java.io.PrintStream) {
+                        throw AssertionError("bounded logger called Throwable.printStackTrace")
+                    }
+                }
+            val diagnostic: String = ApkHost.`formatThrowableForHost$artzig`(hostile)
+            require(diagnostic.length <= 64 * 1024, "host throwable diagnostic is bounded")
+            require(
+                diagnostic.contains(hostile.javaClass.name) &&
+                    diagnostic.contains("[throwable diagnostic truncated]"),
+                "host throwable diagnostic retains type and truncation marker",
+            )
         }
 
         @JvmStatic private fun drainMainLooper() {

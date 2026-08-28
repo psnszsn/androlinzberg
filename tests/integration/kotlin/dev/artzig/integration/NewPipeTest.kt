@@ -23,6 +23,15 @@ class NewPipeTest {
     }
 
     @Test
+    fun hostF11EntersAndExitsFullscreen() = app.run {
+        waitForFullscreen(false)
+        key(value = "F11", description = "Search")
+        waitForFullscreen(true)
+        key(value = "F11", description = "Search")
+        waitForFullscreen(false)
+    }
+
+    @Test
     fun opensAndEditsSearch() = app.run {
         click(description = "Search")
         waitFor(className = "android.widget.EditText")
@@ -126,6 +135,26 @@ class NewPipeDesktopTest {
         val open = screenshot("drawer-open.png")
         waitForPresentedFrames(3)
         assertDrawerOpened(closed, open, screenshot("drawer-settled.png"))
+    }
+
+    @Test
+    fun videoButtonEntersCompositorFullscreen() = app.run {
+        waitFor(text = "LIVE")
+        waitFor(text = "Associated Press")
+        click(text = "Associated Press", index = 0)
+        waitFor(description = "Comments")
+        waitForFullscreen(false)
+
+        click(description = "Play video, duration:")
+        if (!isVisible(description = "Toggle screen orientation")) {
+            waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
+            if (!isVisible(description = "Toggle screen orientation")) {
+                click(description = "Play video, duration:", settle = WaitKind.NOW)
+            }
+        }
+        waitFor(description = "Toggle screen orientation")
+        click(description = "Toggle screen orientation", settle = WaitKind.NOW)
+        waitForFullscreen(true)
     }
 }
 

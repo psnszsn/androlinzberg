@@ -769,13 +769,94 @@ public final class ApkHost {
                 val msg: android.os.Message? = looper.getQueue().`pollDueMessage$artzig`()
                 if (msg == null) break
                 try {
-                    msg.getTarget().dispatchMessage(msg)
-                } catch (t: Throwable) {
-                    // one bad callback must not take the frame loop down
-                    Log.e(TAG, "message dispatch failed on " + msg.getTarget(), t)
+                    try {
+                        msg.getTarget().dispatchMessage(msg)
+                    } catch (t: Throwable) {
+                        // This loop intentionally survives app callbacks. Do not use Log's
+                        // Throwable overload here: custom Throwable printers can expand into
+                        // tens of megabytes and hide the original failure behind another OOM.
+                        val targetName: String = msg.getTarget().javaClass.name
+                        Log.e(
+                            TAG,
+                            "message dispatch failed on " + targetName + "\n" +
+                                `formatThrowableForHost$artzig`(t),
+                        )
+                    }
+                } catch (loggingFailure: Throwable) {
+                    // Keep the recovery path allocation-light even under severe heap pressure.
+                    System.err.print("E/ApkHost: message dispatch and diagnostic failed: ")
+                    System.err.println(loggingFailure.javaClass.name)
+                } finally {
+                    msg.recycle()
                 }
-                msg.recycle()
             }
+        }
+
+        private const val HOST_THROWABLE_CHAR_LIMIT: Int = 64 * 1024
+        private const val HOST_THROWABLE_FRAME_LIMIT: Int = 64
+        private const val HOST_THROWABLE_CAUSE_LIMIT: Int = 16
+
+        /** Bounded diagnostic for the host's catch-and-continue looper seam. */
+        @JvmStatic
+        public fun `formatThrowableForHost$artzig`(throwable: Throwable): String {
+            val out: StringBuilder = StringBuilder(4096)
+            val seen: java.util.IdentityHashMap<Throwable, Boolean> =
+                java.util.IdentityHashMap()
+            var current: Throwable? = throwable
+            var causeCount: Int = 0
+            while (current != null && causeCount++ < HOST_THROWABLE_CAUSE_LIMIT) {
+                if (seen.put(current, true) != null) {
+                    appendHostDiagnostic(out, "[circular cause: ")
+                    appendHostDiagnostic(out, current.javaClass.name)
+                    appendHostDiagnostic(out, "]\n")
+                    break
+                }
+                if (causeCount > 1) appendHostDiagnostic(out, "Caused by: ")
+                appendHostDiagnostic(out, current.javaClass.name)
+                appendHostDiagnostic(out, " [message omitted by bounded host logger]\n")
+
+                val frames: Array<StackTraceElement> = current.stackTrace
+                val frameCount: Int = Math.min(frames.size, HOST_THROWABLE_FRAME_LIMIT)
+                var index: Int = 0
+                while (index < frameCount && out.length < HOST_THROWABLE_CHAR_LIMIT) {
+                    val frame: StackTraceElement = frames[index++]
+                    appendHostDiagnostic(out, "\tat ")
+                    appendHostDiagnostic(out, frame.className)
+                    appendHostDiagnostic(out, ".")
+                    appendHostDiagnostic(out, frame.methodName)
+                    appendHostDiagnostic(out, "(")
+                    if (frame.isNativeMethod) {
+                        appendHostDiagnostic(out, "Native Method")
+                    } else {
+                        appendHostDiagnostic(out, frame.fileName ?: "Unknown Source")
+                        if (frame.lineNumber >= 0) {
+                            appendHostDiagnostic(out, ":")
+                            appendHostDiagnostic(out, frame.lineNumber.toString())
+                        }
+                    }
+                    appendHostDiagnostic(out, ")\n")
+                }
+                if (frames.size > frameCount) {
+                    appendHostDiagnostic(out, "\t... ")
+                    appendHostDiagnostic(out, (frames.size - frameCount).toString())
+                    appendHostDiagnostic(out, " more frames\n")
+                }
+                current = current.cause
+            }
+            if (current != null || out.length >= HOST_THROWABLE_CHAR_LIMIT) {
+                appendHostDiagnostic(out, "[throwable diagnostic truncated]\n")
+            }
+            return out.toString()
+        }
+
+        @JvmStatic
+        private fun appendHostDiagnostic(
+            out: StringBuilder,
+            text: CharSequence,
+        ) {
+            val remaining: Int = HOST_THROWABLE_CHAR_LIMIT - out.length
+            if (remaining <= 0) return
+            out.append(text, 0, Math.min(remaining, text.length))
         }
     }
 }
