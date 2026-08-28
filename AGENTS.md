@@ -63,6 +63,47 @@ than private shim state. For adapted lifecycle code, explicitly test callback
 ordering, handled versus unhandled configuration changes, saved-state restore,
 and the absence of application-specific branches.
 
+## APK integration tests
+
+`zig build -j10 jvm-test` exercises framework and class-loading smokes, but it
+does not launch an APK through `ApkHost`. Changes to `ApkHost`, activity or
+application startup, input services, class loading, resources, windows, HWUI,
+or lifecycle behavior must also run the APK integration tests. Do not treat a
+passing `jvm-test` or built-in `ViewHost` test as a substitute.
+
+The pinned APKs and their environment variables are declared in
+`tests/apks.json`. For NewPipe, provide the APK by absolute path; the testkit
+checks its SHA-256 before launch. From outside the development shell, run the
+complete suite with:
+
+```sh
+nix develop ./artzig -c env \
+  AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
+  zig build -j10 integration-test
+```
+
+During development, run the smallest relevant test first. The launch test is
+the minimum regression for changes that can affect `ApkHost.init`:
+
+```sh
+nix develop ./artzig -c env \
+  AZK_APK_NEWPIPE_0_29_1=/absolute/path/to/NewPipe_v0.29.1.apk \
+  zig build -j10 integration-test -- \
+  --class NewPipeTest --method launchesHomeWithoutRuntimeIssues
+```
+
+Before merging such changes, run the complete suite without `--class` or
+`--method`. The integration target already uses `WLR_RENDERER=gles2` and the
+existing `tools/shot.sh` Cage harness. It also runs the testkit unit tests; run
+them alone with `zig build -j10 testkit-test` when changing the testkit.
+
+Per-test artifacts are retained under
+`zig-out/test-results/integration/<class>.<method>/`. Inspect `steps.jsonl` and
+`app.log` on every failure; `screenshot.png`, `a11y.json`, and `failure.json`
+are additionally retained for failed tests. A regression is fixed only when
+the expected UI state is reached and every step has an empty
+`diagnostics.runtime.issues` list.
+
 ## Headless Wayland UI testing
 
 - Use the existing `tools/shot.sh` headless Cage harness for Wayland UI work.
