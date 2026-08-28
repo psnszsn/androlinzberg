@@ -1,0 +1,281 @@
+// artzig: focused smoke checks for hosted-package framework behavior.
+package dev.artzig
+
+import android.app.AlarmManager
+import android.app.Application
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.job.JobScheduler
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
+import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.RenderNode
+import android.graphics.drawable.Icon
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.Message
+import android.os.SystemClock
+import android.view.ThreadedRenderer
+import android.view.ViewRootImpl
+import android.view.WindowManagerImpl
+import java.util.ArrayList
+import java.util.HashMap
+import java.util.HashSet
+
+public final class FrameworkCompatSmoke {
+    companion object {
+        @JvmStatic private fun require(
+            condition: Boolean,
+            message: String,
+        ) {
+            if (!condition) throw AssertionError(message)
+        }
+
+        @Throws(Exception::class)
+        @JvmStatic
+        public fun main(args: Array<String>) {
+            if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
+            val filtered: Intent =
+                Intent(Intent.ACTION_VIEW)
+                    .setPackage("org.example")
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+            val filteredCopy: Intent = Intent(filtered)
+            require(filtered.filterEquals(filteredCopy), "Intent.filterEquals copy")
+            require(
+                filtered.filterHashCode() == filteredCopy.filterHashCode(),
+                "Intent.filterHashCode copy",
+            )
+
+            PackageManager.configureHostedPackage("org.example", 1, "1", "/tmp/example.apk", "/tmp/example-data")
+            PackageManager.configureHostedLauncher("org.example.MainActivity")
+
+            val service: ServiceInfo = ServiceInfo()
+            service.packageName = "org.example"
+            service.name = "org.example.PlaybackService"
+            service.enabled = true
+            val services: MutableList<ServiceInfo> = ArrayList()
+            services.add(service)
+            val serviceActions: MutableMap<String, MutableSet<String>> = HashMap()
+            val actions: MutableSet<String> = HashSet()
+            actions.add("org.example.PLAYBACK")
+            serviceActions.put(service.name, actions)
+            PackageManager.configureHostedServices(services, serviceActions)
+
+            val packageManager: PackageManager = object : PackageManager() {}
+            val launch: Intent? = packageManager.getLaunchIntentForPackage("org.example")
+            require(launch != null, "hosted launch intent")
+            require(
+                ComponentName("org.example", "org.example.MainActivity")
+                    .equals(launch?.getComponent()),
+                "hosted launcher component",
+            )
+
+            val implicitServices: MutableList<ResolveInfo> =
+                packageManager.queryIntentServices(Intent("org.example.PLAYBACK").setPackage("org.example"), 0)
+            require(implicitServices.size == 1, "implicit hosted service resolution")
+            require(
+                packageManager.resolveService(
+                    Intent().setComponent(ComponentName("org.example", "org.example.PlaybackService")),
+                    0,
+                ) != null,
+                "explicit hosted service resolution",
+            )
+
+            require(
+                NotificationManager().getActiveNotifications().size == 0,
+                "host notification list",
+            )
+            val defaultScheduler: JobScheduler = JobScheduler()
+            require(
+                defaultScheduler.getNamespace() == null,
+                "default job scheduler namespace",
+            )
+            val workScheduler: JobScheduler = defaultScheduler.forNamespace("  androidx.work  ")
+            require(
+                "androidx.work".equals(workScheduler.getNamespace()),
+                "job scheduler namespace is trimmed",
+            )
+            var rejectedEmptyNamespace: Boolean = false
+            try {
+                defaultScheduler.forNamespace("   ")
+            } catch (expected: IllegalArgumentException) {
+                rejectedEmptyNamespace = true
+            }
+            require(rejectedEmptyNamespace, "empty job scheduler namespace is rejected")
+            var rejectedNullNamespace: Boolean = false
+            try {
+                defaultScheduler.forNamespace(null)
+            } catch (expected: NullPointerException) {
+                rejectedNullNamespace = true
+            }
+            require(rejectedNullNamespace, "null job scheduler namespace is rejected")
+            require(
+                Application::class.java.getMethod("getProcessName").getReturnType() === String::class.java,
+                "Application.getProcessName API",
+            )
+            require(
+                android.app
+                    .ActivityManager()
+                    .getHistoricalProcessExitReasons(null, 0, 0)
+                    .isEmpty(),
+                "host has no historical process exits",
+            )
+            require(
+                "org.example".equals(packageManager.getApplicationInfo("org.example", 0).processName),
+                "hosted application process name",
+            )
+            val authenticatedAction: android.app.Notification.Action =
+                android.app.Notification.Action
+                    .Builder(0, "unlock", null)
+                    .setAuthenticationRequired(true)
+                    .build()
+            require(
+                authenticatedAction.isAuthenticationRequired(),
+                "notification action authentication requirement",
+            )
+            val notificationManager: NotificationManager = NotificationManager()
+            val conversationChannel: android.app.NotificationChannel =
+                android.app.NotificationChannel("conversation", "Conversation", NotificationManager.IMPORTANCE_DEFAULT)
+            conversationChannel.setConversationId("messages", "recipient-1")
+            notificationManager.createNotificationChannel(conversationChannel)
+            require(
+                notificationManager.getNotificationChannel("messages", "recipient-1") ===
+                    conversationChannel,
+                "conversation notification channel",
+            )
+            require(
+                !notificationManager.areBubblesEnabled() &&
+                    !notificationManager.areBubblesAllowed() &&
+                    notificationManager.getBubblePreference() ==
+                    NotificationManager.BUBBLE_PREFERENCE_NONE,
+                "desktop notification bubble policy",
+            )
+            require(
+                android.hardware.Camera.getNumberOfCameras() == 0,
+                "desktop legacy camera count",
+            )
+            require(
+                PendingIntent.getActivities(
+                    null,
+                    7,
+                    arrayOf<Intent>(Intent()),
+                    0,
+                    Bundle(),
+                ) != null,
+                "PendingIntent.getActivities options overload",
+            )
+            val accessibilityExtras: Bundle = Bundle()
+            val spanStarts: ArrayList<Int> = ArrayList()
+            spanStarts.add(4)
+            accessibilityExtras.putIntegerArrayList("span-starts", spanStarts)
+            require(
+                accessibilityExtras.getIntegerArrayList("span-starts") === spanStarts,
+                "Bundle integer array list",
+            )
+            val notificationItems: ArrayList<android.os.Parcelable> = ArrayList()
+            notificationItems.add(Intent("notification-item"))
+            val notificationIntent: Intent =
+                Intent().putParcelableArrayListExtra("notification-items", notificationItems)
+            require(
+                notificationIntent.getParcelableArrayListExtra<android.os.Parcelable>("notification-items") ===
+                    notificationItems,
+                "Intent parcelable array list extra",
+            )
+            require(
+                !ViewRootImpl(null).getWindowInsets(false).isConsumed(),
+                "host zero window insets propagate to descendants",
+            )
+            WindowManagerImpl.configureWindowMetrics(411, 731, 1.5f)
+            val resizedMetrics: android.view.WindowMetrics =
+                WindowManagerImpl(null).getCurrentWindowMetrics()
+            require(
+                resizedMetrics.getBounds().width() == 411 &&
+                    resizedMetrics.getBounds().height() == 731 &&
+                    resizedMetrics.getDensity() == 1.5f,
+                "current window metrics follow host resize",
+            )
+            require(
+                android.content.res.HostedConfigurationController.resolveLandscape(
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
+                    1280,
+                    720,
+                ),
+                "unspecified orientation follows a wide desktop window",
+            )
+            require(
+                !android.content.res.HostedConfigurationController.resolveLandscape(
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
+                    420,
+                    800,
+                ),
+                "unspecified orientation follows a tall phone window",
+            )
+            require(
+                !android.content.res.HostedConfigurationController.resolveLandscape(
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
+                    1280,
+                    720,
+                ),
+                "fixed portrait orientation overrides window geometry",
+            )
+            require(
+                android.content.res.HostedConfigurationController.resolveLandscape(
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
+                    420,
+                    800,
+                ),
+                "fixed landscape orientation overrides window geometry",
+            )
+            require(
+                android.content.pm.ActivityInfo
+                    .activityInfoConfigNativeToJava(0x0200) ==
+                    android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE,
+                "manifest screenSize config change uses Java ActivityInfo bit",
+            )
+            val alarmFired: BooleanArray = booleanArrayOf(false)
+            val alarmManager: AlarmManager = AlarmManager()
+            alarmManager.setExact(
+                AlarmManager.ELAPSED_REALTIME,
+                SystemClock.elapsedRealtime() + 30,
+                "compat-alarm",
+                { true.also { alarmFired[0] = it } },
+                Handler(Looper.getMainLooper()),
+            )
+            drainMainLooper()
+            require(!alarmFired[0], "future alarm is not delivered immediately")
+            Thread.sleep(40)
+            drainMainLooper()
+            require(alarmFired[0], "future alarm is delivered when due")
+            val snapshotNode: RenderNode = RenderNode("compat-snapshot")
+            snapshotNode.setPosition(0, 0, 3, 2)
+            val snapshot: Bitmap? = ThreadedRenderer.createHardwareBitmap(snapshotNode, 3, 2)
+            require(
+                snapshot != null && snapshot.getWidth() == 3 && snapshot.getHeight() == 2,
+                "host RenderNode bitmap fallback",
+            )
+            val mutableIconBitmap: Bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+            require(
+                mutableIconBitmap.getConfig() === Bitmap.Config.ARGB_8888,
+                "host 8888 bitmap config",
+            )
+            val icon: Icon = Icon.createWithBitmap(mutableIconBitmap)
+            require(
+                icon.getBitmap() != null && !icon.getBitmap().isMutable(),
+                "mutable bitmap icon copy",
+            )
+            System.out.println("framework compat smoke: PASS")
+        }
+
+        @JvmStatic private fun drainMainLooper() {
+            var message: Message
+            while ((Looper.myQueue().`pollDueMessage$artzig`().also { message = it }) != null) {
+                message.getTarget().dispatchMessage(message)
+                message.recycle()
+            }
+        }
+    }
+}

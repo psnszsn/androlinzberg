@@ -14,12 +14,20 @@ resource, aconfig, and other generated Java also stays Java. Do not translate
 or copy an AOSP class merely to make it Kotlin; the repository's AOSP reuse
 policy still takes precedence.
 
-Existing repository-owned Java should move to Kotlin in focused changes. A
+`src/java` is Kotlin-only. `tools/check-jvm-source-policy.sh` enforces that
+repository-owned Java is limited to generated output, directly reused Android
+examples, Java-compiler test fixtures, and the AOSP-facing compatibility trees
+under `src/framework` and `src/framework-stubs`.
+
+Existing compatibility Java should move to Kotlin only in focused changes. A
 framework or JNI-facing migration must preserve the fully-qualified class
 name, visibility, JVM descriptors, static fields and methods, nested class
-names, declared exceptions, and native registration contract. Compare
-`javap -p -s` output before and after, and use `@JvmStatic`, `@JvmField`,
-`@JvmName`, or `@Throws` when the Java-facing shape requires them.
+names, declared exceptions, Android platform-type behavior, and native
+registration contract. Compare `javap -p -s` output before and after, and use
+`@JvmStatic`, `@JvmField`, `@JvmName`, or `@Throws` when the Java-facing shape
+requires them. Do not bulk-convert the compatibility trees: Kotlin's nullability
+and synthetic-property rules can change source behavior even when a file looks
+mechanically equivalent.
 
 The runtime artifact is `zig-out/framework/framework.jar`. It is a multidex
 container because the framework plus Kotlin standard library exceeds one

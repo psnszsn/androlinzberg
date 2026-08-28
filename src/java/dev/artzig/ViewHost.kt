@@ -1,0 +1,261 @@
+/* artzig M2 gate: a bare Activity with one colored View painting through the
+ * real Canvas/Drawable/Resources and HWUI display-list stack. */
+package dev.artzig
+
+import android.app.Activity
+import android.app.ContextImpl
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.os.Bundle
+import android.os.Looper
+import android.os.SystemClock
+import android.util.TypedValue
+import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+
+public final class ViewHost {
+    private constructor () {}
+
+    internal final class DemoActivity : Activity() {
+        protected override fun onCreate(savedInstanceState: Bundle?) {
+            // theme-resolved window background
+            val tv: TypedValue = TypedValue()
+            getTheme().resolveAttribute(android.R.attr.colorBackground, tv, true)
+            getDecorView().setBackgroundColor(tv.data)
+
+            val content: FrameLayout = FrameLayout(getBaseContext())
+            // one "colored View" that also exercises onDraw through the real Canvas
+            val colored: View =
+                object : View(getBaseContext()) {
+                    private val mPaint: Paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+                    protected override fun onDraw(canvas: Canvas) {
+                        mPaint.setColor(0xff7aa2f7.toInt())
+                        canvas.drawRoundRect(RectF(0f, 0f, getWidth().toFloat(), getHeight().toFloat()), 28f, 28f, mPaint)
+                        mPaint.setColor(Color.argb(255, 158, 206, 106))
+                        canvas.drawCircle(getWidth() * 0.5f, getHeight() * 0.5f, getHeight() * 0.25f, mPaint)
+                    }
+                }
+            val lp: ViewGroup.MarginLayoutParams = ViewGroup.MarginLayoutParams(600, 340)
+            lp.leftMargin = 80
+            lp.topMargin = 90
+            content.addView(colored, lp)
+
+            val text: TextView = TextView(getBaseContext())
+            sStatusText = text
+            text.setText("Hello from the real TextView — Minikin shapes this.")
+            text.setTextSize(24f)
+            text.setTextColor(0xffc0caf5.toInt())
+            val tlp: ViewGroup.MarginLayoutParams =
+                ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            tlp.leftMargin = 80
+            tlp.topMargin = 480
+            content.addView(text, tlp)
+
+            val button: Button = Button(this@DemoActivity)
+            button.setText("Tap me")
+            button.setOnClickListener({ v ->
+                run {
+                    sStatusText.setText("Button clicked! Input dispatch works.")
+                    sStatusText.setTextColor(0xff9ece6a.toInt())
+                }
+            })
+            val blp: ViewGroup.MarginLayoutParams =
+                ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            blp.leftMargin = 80
+            blp.topMargin = 550
+            content.addView(button, blp)
+
+            val inflated: View =
+                LayoutInflater
+                    .from(this@DemoActivity)
+                    .inflate(android.R.layout.simple_list_item_1, null)
+            if (inflated is TextView) {
+                (inflated as TextView).setText("Inflated simple_list_item_1")
+            }
+            val ilp: ViewGroup.MarginLayoutParams =
+                ViewGroup.MarginLayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            ilp.leftMargin = 700
+            ilp.topMargin = 480
+            content.addView(inflated, ilp)
+            setContentView(content)
+        }
+    }
+
+    companion object {
+        private lateinit var sActivity: Activity
+        private lateinit var sContext: ContextImpl
+        private lateinit var sRoot: android.view.ViewRootImpl
+        private lateinit var sStatusText: TextView
+        private var sDownTime: Long = 0L
+        private var sWidth: Int = 0
+        private var sHeight: Int = 0
+        private var sScale120: Int = 0
+
+/** Pointer event from the platform (Wayland). action: 0=down 1=up 2=move. */
+        @JvmStatic public fun motion(
+            action: Int,
+            x: Float,
+            y: Float,
+        ) {
+            if (!::sActivity.isInitialized) return
+            val now: Long = SystemClock.uptimeMillis()
+            if (action == MotionEvent.ACTION_DOWN) sDownTime = now
+            val ev: MotionEvent = MotionEvent.obtain(sDownTime, now, action, x, y, 0)
+            ev.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN)
+            sActivity.getWindow().getDecorView().dispatchTouchEvent(ev)
+            ev.recycle()
+        }
+
+/** Called once from the launcher. */
+        @Throws(Exception::class)
+        @JvmStatic
+        public fun init(
+            width: Int,
+            height: Int,
+            scale120: Int,
+        ) {
+            sWidth = width
+            sHeight = height
+            sScale120 = scale120
+            if (Looper.myLooper() == null) Looper.prepareMainLooper()
+            android.graphics.Typeface.loadPreinstalledSystemFontMap()
+            val resPath: String = System.getenv("ARTZIG_FRAMEWORK_RES")
+            sContext =
+                ContextImpl.createSystemContext(
+                    resPath,
+                    width,
+                    height,
+                    scale120,
+                    android.R.style.Theme_DeviceDefault_NoActionBar,
+                )
+            sActivity = DemoActivity()
+            sActivity.attach(sContext)
+            sActivity.performCreate(null)
+            sActivity.performStart()
+            sActivity.performResume()
+            sRoot = android.view.ViewRootImpl(sContext)
+            val decor: android.view.View = sActivity.getWindow().getDecorView()
+            sRoot.setView(decor, width, height)
+            android.view.ArtzigAccessibilityBridge.setActivityRoot(sRoot)
+        }
+
+        @JvmStatic public fun accessibilitySnapshot(): String = android.view.ArtzigAccessibilityBridge.snapshot()
+
+        @JvmStatic public fun accessibilityDiagnostics(afterRevision: Long): String =
+            android.view.ArtzigAccessibilityBridge.diagnostics(
+                afterRevision,
+            )
+
+        @JvmStatic public fun testDiagnostics(
+            afterLogSequence: Long,
+            afterIssueSequence: Long,
+        ): String = android.util.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence)
+
+        @JvmStatic public fun diagnosticLogSequence(): Long = android.util.ArtzigTestDiagnostics.logSequence()
+
+        @JvmStatic public fun diagnosticIssueSequence(): Long = android.util.ArtzigTestDiagnostics.issueSequence()
+
+        @JvmStatic public fun accessibilityRevision(): Long = android.view.ArtzigAccessibilityBridge.revision()
+
+        @JvmStatic public fun accessibilityIdle(): Boolean = android.view.ArtzigAccessibilityBridge.isIdle()
+
+        @JvmStatic public fun accessibilityPerform(
+            expectedRevision: Long,
+            windowId: Long,
+            viewId: Int,
+            virtualId: Int,
+            action: Int,
+            text: String,
+        ): Boolean =
+            android.view.ArtzigAccessibilityBridge.perform(
+                expectedRevision,
+                windowId,
+                viewId,
+                virtualId,
+                action,
+                text,
+            )
+
+/** Per-frame: record the view tree; RenderThread presents it directly through EGL. */
+        @Throws(Exception::class)
+        @JvmStatic
+        public fun drawHardware(
+            logicalWidth: Int,
+            logicalHeight: Int,
+            bufferWidth: Int,
+            bufferHeight: Int,
+            scale120: Int,
+        ) {
+            if (!::sActivity.isInitialized) init(bufferWidth, bufferHeight, scale120)
+            if (bufferWidth != sWidth || bufferHeight != sHeight || scale120 != sScale120) {
+                resize(bufferWidth, bufferHeight, scale120)
+            }
+            // drain main-looper messages posted by views (clicks, invalidations)
+            drainLooper()
+            android.view.ThreadedRenderer
+                .getInstance()
+                .render(sRoot.doTraversal(), bufferWidth, bufferHeight)
+        }
+
+        @JvmStatic private fun resize(
+            width: Int,
+            height: Int,
+            scale120: Int,
+        ) {
+            sWidth = width
+            sHeight = height
+            sScale120 = scale120
+            val res: android.content.res.Resources = sContext.getResources()
+            val dm: android.util.DisplayMetrics = res.getDisplayMetrics()
+            val density: Float = scale120 / 120f
+            android.view.WindowManagerImpl.configureWindowMetrics(width, height, density)
+            val densityDpi: Int = Math.round(160f * density)
+            android.view.ArtzigDisplay.configure(width, height, densityDpi)
+            dm.widthPixels = width.also { dm.noncompatWidthPixels = it }
+            dm.heightPixels = height.also { dm.noncompatHeightPixels = it }
+            dm.densityDpi = densityDpi.also { dm.noncompatDensityDpi = it }
+            dm.density = density.also { dm.noncompatDensity = it }
+            dm.scaledDensity = density.also { dm.noncompatScaledDensity = it }
+            dm.xdpi = densityDpi.toFloat().also { dm.noncompatXdpi = it }
+            dm.ydpi = densityDpi.toFloat().also { dm.noncompatYdpi = it }
+            val config: android.content.res.Configuration =
+                android.content.res.Configuration(res.getConfiguration())
+            config.densityDpi = densityDpi
+            config.screenWidthDp = (width / density).toInt()
+            config.screenHeightDp = (height / density).toInt()
+            config.smallestScreenWidthDp = Math.min(config.screenWidthDp, config.screenHeightDp)
+            config.orientation =
+                if (width >= height) {
+                    android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                } else {
+                    android.content.res.Configuration.ORIENTATION_PORTRAIT
+                }
+            res.updateConfiguration(config, dm)
+            sRoot.setSize(width, height)
+            sActivity.onConfigurationChanged(config)
+        }
+
+        @JvmStatic private fun drainLooper() {
+            // run pending messages on this thread (we own the main looper)
+            val looper: android.os.Looper? = android.os.Looper.myLooper()
+            if (looper == null) return
+            while (true) {
+                val msg: android.os.Message? = nextMessageNow(looper.getQueue())
+                if (msg == null) break
+                msg.getTarget().dispatchMessage(msg)
+                msg.recycle()
+            }
+        }
+
+        @JvmStatic private fun nextMessageNow(q: android.os.MessageQueue): android.os.Message? = q.`pollDueMessage$artzig`()
+    }
+}

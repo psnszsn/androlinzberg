@@ -52,6 +52,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     const stamp_res = stamp(b, "res.stamp", &.{ fb.path(b, "core/res"), b.path("tools/build-res.sh") });
     const stamp_aidl = stamp(b, "aidl.stamp", &.{ b.path("tools/aidl-list.txt"), b.path("tools/build-aidl.sh"), b.path("aidl-compat") });
 
+    const source_policy = b.addSystemCommand(&.{ "bash", "tools/check-jvm-source-policy.sh" });
+    source_policy.addFileInput(stamp_jvm);
+
     // 1. core-all + annotation classes -> compile-time "JDK" (system modules)
     const plus = b.addSystemCommand(&.{ "bash", "tools/make-core-plus.sh" });
     plus.addFileArg(core_all);
@@ -95,6 +98,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const classes_dir = compile.addOutputDirectoryArg("classes");
     compile.addFileInput(stamp_jvm);
     compile.addFileInput(stamp_kotlinc);
+    compile.step.dependOn(&source_policy.step);
 
     // 5. d8 (via a classes jar; the r8 CLI takes jars, not directories)
     const jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
