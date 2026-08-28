@@ -340,7 +340,7 @@ public final class ApkHost {
 
             // input service: reflective default-answering IInputManager so
             // InputManagerGlobal (VelocityTracker etc.) works without a real service.
-            {
+            run {
                 val virtualKeyboard: android.view.InputDevice =
                     android.view.InputDevice
                         .Builder()
