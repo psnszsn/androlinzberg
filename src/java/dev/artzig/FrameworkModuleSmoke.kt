@@ -19,6 +19,8 @@ import android.view.HostedSystemUiController
 import android.view.HostedInputDispatcher
 import android.view.HostedWindowPresentation
 import android.view.InputDevice
+import android.view.KeyCharacterMap
+import android.view.KeyEvent
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -43,6 +45,7 @@ internal object FrameworkModuleSmoke {
         testTraversalRescheduleAndSharedQueue()
         testHostedInputEvents()
         testHostedInputDispatch()
+        testHostedPhysicalInputLifecycle()
         testHostedInputHierarchyDispatch()
         testHostedInputSiblingDispatch()
         testHostedInputWindowRouting()
@@ -249,6 +252,11 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedInputEvents() {
+        check(HostedInputDispatcher.createHostKeyCharacterMap().keyboardType ==
+            KeyCharacterMap.FULL) {
+            "hosted physical keyboard must select AOSP's full-keyboard text path"
+        }
+
         val mouse = HostedInputDispatcher.createMouseEvent(
             downTime = 10,
             eventTime = 20,
@@ -414,6 +422,126 @@ internal object FrameworkModuleSmoke {
             root.destroy()
         }
     }
+
+    private fun testHostedPhysicalInputLifecycle() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val touchEvents = mutableListOf<String>()
+        val keyEvents = mutableListOf<String>()
+        val captureEvents = mutableListOf<String>()
+        val view = object : View(context) {
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                val pointers = (0 until event.pointerCount).joinToString(",") { index ->
+                    "${event.getPointerId(index)}@${event.getX(index)}:${event.getTouchMajor(index)}"
+                }
+                touchEvents += "${event.actionMasked}:${event.actionIndex}:$pointers"
+                return true
+            }
+
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                keyEvents += listOf(
+                    event.action,
+                    event.keyCode,
+                    event.scanCode,
+                    event.repeatCount,
+                    event.metaState,
+                    event.unicodeChar,
+                    event.flags,
+                ).joinToString(":")
+                return true
+            }
+
+            override fun onPointerCaptureChange(hasCapture: Boolean) {
+                captureEvents += "capture:$hasCapture"
+            }
+
+            override fun onCapturedPointerEvent(event: MotionEvent): Boolean {
+                captureEvents += listOf(
+                    "motion",
+                    event.actionMasked,
+                    event.source,
+                    event.buttonState,
+                    event.actionButton,
+                    event.getAxisValue(MotionEvent.AXIS_RELATIVE_X),
+                    event.getAxisValue(MotionEvent.AXIS_RELATIVE_Y),
+                ).joinToString(":")
+                return true
+            }
+        }
+        val root = ViewRootImpl(context)
+        root.setView(view, 200, 200)
+        view.layout(0, 0, 200, 200)
+        try {
+            HostedInputDispatcher.dispatchTouchContact(root, 0, 7, 10f, 20f, 8f, 4f, 0.25f)
+            HostedInputDispatcher.dispatchTouchContact(root, 0, 3, 30f, 40f, 6f, 3f, -0.5f)
+            HostedInputDispatcher.dispatchTouchContact(root, 2, 7, 11f, 21f, 9f, 4f, 0.25f)
+            HostedInputDispatcher.dispatchTouchContact(root, 1, 7, 11f, 21f, 9f, 4f, 0.25f)
+            HostedInputDispatcher.cancelTouch(root)
+            check(touchEvents == listOf(
+                "${MotionEvent.ACTION_DOWN}:0:0@10.0:8.0",
+                "${MotionEvent.ACTION_POINTER_DOWN}:1:0@10.0:8.0,1@30.0:6.0",
+                "${MotionEvent.ACTION_MOVE}:0:0@11.0:9.0,1@30.0:6.0",
+                "${MotionEvent.ACTION_POINTER_UP}:0:0@11.0:9.0,1@30.0:6.0",
+                "${MotionEvent.ACTION_CANCEL}:0:1@30.0:6.0",
+            )) { "physical touch lifecycle: $touchEvents" }
+
+            HostedInputDispatcher.dispatchPhysicalKey(root, KeyEvent.ACTION_DOWN, 42, 0)
+            HostedInputDispatcher.dispatchPhysicalKey(root, KeyEvent.ACTION_DOWN, 30, 'A'.code)
+            HostedInputDispatcher.dispatchPhysicalKey(root, KeyEvent.ACTION_DOWN, 30, 'A'.code)
+            HostedInputDispatcher.dispatchPhysicalKey(root, KeyEvent.ACTION_UP, 30, 0)
+            HostedInputDispatcher.dispatchPhysicalKey(root, KeyEvent.ACTION_UP, 42, 0)
+            check(keyEvents.size == 5)
+            check(keyEvents[0].startsWith("0:${KeyEvent.KEYCODE_SHIFT_LEFT}:42:0:"))
+            check(keyEvents[1] == "0:${KeyEvent.KEYCODE_A}:30:0:" +
+                "${KeyEvent.normalizeMetaState(KeyEvent.META_SHIFT_LEFT_ON)}:${'A'.code}:0")
+            check(keyEvents[2] == "0:${KeyEvent.KEYCODE_A}:30:1:" +
+                "${KeyEvent.normalizeMetaState(KeyEvent.META_SHIFT_LEFT_ON)}:${'A'.code}:0")
+            check(keyEvents[3].startsWith("1:${KeyEvent.KEYCODE_A}:30:0:"))
+            check(keyEvents[4] == "1:${KeyEvent.KEYCODE_SHIFT_LEFT}:42:0:0:0:0")
+
+            keyEvents.clear()
+            HostedInputDispatcher.dispatchPhysicalKey(root, KeyEvent.ACTION_DOWN, 42, 0)
+            HostedInputDispatcher.dispatchPhysicalKey(root, KeyEvent.ACTION_DOWN, 30, 'A'.code)
+            HostedInputDispatcher.resetKeyboard()
+            check(keyEvents.takeLast(2) == listOf(
+                "1:${KeyEvent.KEYCODE_A}:30:0:" +
+                    "${KeyEvent.normalizeMetaState(KeyEvent.META_SHIFT_LEFT_ON)}:0:${KeyEvent.FLAG_CANCELED}",
+                "1:${KeyEvent.KEYCODE_SHIFT_LEFT}:42:0:0:0:${KeyEvent.FLAG_CANCELED}",
+            )) { "keyboard focus-loss cancellation: $keyEvents" }
+
+            view.requestPointerCapture()
+            check(HostedInputDispatcher.wantsPointerCapture())
+            check(!view.hasPointerCapture())
+            HostedInputDispatcher.onPointerCaptureChanged(true)
+            check(view.hasPointerCapture())
+            check(HostedInputDispatcher.dispatchCapturedPointer(2.5f, -4f, 0))
+            check(HostedInputDispatcher.dispatchCapturedMouse(
+                MotionEvent.ACTION_BUTTON_PRESS,
+                MotionEvent.BUTTON_PRIMARY,
+                MotionEvent.BUTTON_PRIMARY,
+            ))
+            view.releasePointerCapture()
+            check(!HostedInputDispatcher.wantsPointerCapture())
+            HostedInputDispatcher.onPointerCaptureChanged(false)
+            check(!view.hasPointerCapture())
+            check(captureEvents == listOf(
+                "capture:true",
+                "motion:${MotionEvent.ACTION_MOVE}:${InputDevice.SOURCE_MOUSE_RELATIVE}:0:0:2.5:-4.0",
+                "motion:${MotionEvent.ACTION_BUTTON_PRESS}:${InputDevice.SOURCE_MOUSE_RELATIVE}:" +
+                    "${MotionEvent.BUTTON_PRIMARY}:${MotionEvent.BUTTON_PRIMARY}:0.0:0.0",
+                "capture:false",
+            )) { "pointer capture lifecycle: $captureEvents" }
+        } finally {
+            HostedInputDispatcher.reset()
+            root.destroy()
+        }
+    }
+
 
     private fun testHostedInputHierarchyDispatch() {
         val context = ContextImpl.createSystemContext(

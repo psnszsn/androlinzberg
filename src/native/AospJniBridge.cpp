@@ -4,6 +4,7 @@
 #include <GraphicsJNI.h>
 #include <Bitmap.h>
 #include <jni/Bitmap.h>
+#include <input/KeyCharacterMap.h>
 #include <SkGraphics.h>
 #include <jni.h>
 #include <Properties.h>
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 extern int register_android_graphics_Bitmap(JNIEnv*);
 extern int register_android_graphics_BitmapFactory(JNIEnv*);
@@ -55,6 +57,8 @@ extern int register_android_util_PathParser(JNIEnv*);
 }  // namespace android
 
 namespace android {
+extern jobject android_view_KeyCharacterMap_create(JNIEnv*, int32_t,
+                                                   std::unique_ptr<KeyCharacterMap>);
 extern int register_android_content_AssetManager(JNIEnv*);
 extern int register_android_content_res_ApkAssets(JNIEnv*);
 extern int register_android_content_XmlBlock(JNIEnv*);
@@ -113,6 +117,34 @@ static int azk_register_android_graphics_Bitmap(JNIEnv* env) {
             {"nativeConfig", "(J)I", reinterpret_cast<void*>(azk_Bitmap_nativeConfig)},
     };
     return env->RegisterNatives(bitmap_class, methods, 1);
+}
+
+static jobject azk_HostedInputDispatcher_nativeLoadKeyCharacterMap(
+        JNIEnv* env, jclass, jint device_id, jstring contents_object) {
+    const char* contents = env->GetStringUTFChars(contents_object, nullptr);
+    if (contents == nullptr) return nullptr;
+    auto result = android::KeyCharacterMap::loadContents(
+            "artzig-host.kcm", contents, android::KeyCharacterMap::Format::BASE);
+    env->ReleaseStringUTFChars(contents_object, contents);
+    if (!result.ok()) {
+        jclass exception_class = env->FindClass("java/lang/IllegalStateException");
+        if (exception_class != nullptr) {
+            env->ThrowNew(exception_class, "Could not parse the hosted keyboard character map");
+        }
+        return nullptr;
+    }
+    return android::android_view_KeyCharacterMap_create(
+            env, device_id, std::make_unique<android::KeyCharacterMap>(**result));
+}
+
+static int azk_register_android_view_HostedInputDispatcher(JNIEnv* env) {
+    jclass dispatcher_class = env->FindClass("android/view/HostedInputDispatcher");
+    if (dispatcher_class == nullptr) return -1;
+    const JNINativeMethod methods[] = {
+            {"nativeLoadKeyCharacterMap", "(ILjava/lang/String;)Landroid/view/KeyCharacterMap;",
+             reinterpret_cast<void*>(azk_HostedInputDispatcher_nativeLoadKeyCharacterMap)},
+    };
+    return env->RegisterNatives(dispatcher_class, methods, 1);
 }
 
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
@@ -201,6 +233,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_view_InputDevice),
             E(android::register_android_view_VelocityTracker),
             E(android::register_android_view_KeyCharacterMap),
+            E(azk_register_android_view_HostedInputDispatcher),
             E(android::register_android_animation_PropertyValuesHolder),
             E(android::register_android_view_DisplayListCanvas),
             E(android::register_android_view_ThreadedRenderer),

@@ -119,8 +119,7 @@ public final class ApkHost {
             }
         }
 
-/** Keyboard input. action 0=down 1=up; code = Android keycode or 0;
-         *  unicode = codepoint for printable input (delivered on down, code==0). */
+/** Synthetic Android key input used by the test control protocol. */
         @JvmStatic public fun key(
             action: Int,
             code: Int,
@@ -128,62 +127,77 @@ public final class ApkHost {
         ) {
             if (!sActivityActive) return
             try {
-                val win: android.view.ArtzigWindowStack.Entry? = android.view.ArtzigWindowStack.top()
-                val target: View = if (win != null) win.view else sActivity.getWindow().getDecorView()
-                val now: Long = SystemClock.uptimeMillis()
-                if (code != 0) {
-                    val ev: android.view.KeyEvent =
-                        android.view.KeyEvent(
-                            now,
-                            now,
-                            if (action == 0) {
-                                android.view.KeyEvent.ACTION_DOWN
-                            } else {
-                                android.view.KeyEvent.ACTION_UP
-                            },
-                            code,
-                            0,
-                        )
-                    target.dispatchKeyEvent(ev)
-                } else if (action == 0 && unicode >= 32) {
-                    val str: String = String(Character.toChars(unicode))
-                    val f: View? = target.findFocus()
-                    if (f is android.widget.TextView) {
-                        val txt: CharSequence = (f as android.widget.TextView).getText()
-                        if (txt is android.text.Editable) {
-                            // IME-style commit at the cursor
-                            val ed: android.text.Editable = txt as android.text.Editable
-                            var st: Int = android.text.Selection.getSelectionStart(ed)
-                            var en: Int = android.text.Selection.getSelectionEnd(ed)
-                            if (st < 0) {
-                                st = ed.length
-                                en = st
-                            }
-                            ed.replace(Math.min(st, en), Math.max(st, en), str)
-                            return
-                        }
-                    }
-                    if (f != null) {
-                        val info: android.view.inputmethod.EditorInfo =
-                            android.view.inputmethod.EditorInfo()
-                        val connection: android.view.inputmethod.InputConnection? =
-                            f.onCreateInputConnection(info)
-                        if (connection != null && connection.commitText(str, 1)) return
-                    }
-                    if (f == null) Log.i(TAG, "key: no focused view for text input")
-                    // legacy string-injection event: TextView commits getCharacters()
-                    val ev: android.view.KeyEvent =
-                        android.view.KeyEvent(
-                            now,
-                            str,
-                            android.view.KeyCharacterMap.VIRTUAL_KEYBOARD,
-                            0,
-                        )
-                    target.dispatchKeyEvent(ev)
-                }
+                android.view.HostedInputDispatcher.dispatchSyntheticKey(
+                    sRoot,
+                    if (action == 0) android.view.KeyEvent.ACTION_DOWN else android.view.KeyEvent.ACTION_UP,
+                    code,
+                    unicode,
+                )
             } catch (t: Throwable) {
                 Log.w(TAG, "key failed", t)
             }
+        }
+
+/** Physical Wayland keyboard input. scanCode is the evdev code; XKB supplies unicode. */
+        @JvmStatic public fun physicalKey(
+            action: Int,
+            scanCode: Int,
+            unicode: Int,
+            _keysym: Int,
+        ) {
+            if (!sActivityActive) return
+            android.view.HostedInputDispatcher.dispatchPhysicalKey(
+                sRoot,
+                if (action == 0) android.view.KeyEvent.ACTION_DOWN else android.view.KeyEvent.ACTION_UP,
+                scanCode,
+                unicode,
+            )
+        }
+
+/** Physical wl_touch contact input. */
+        @JvmStatic public fun touchContact(
+            action: Int,
+            id: Int,
+            x: Float,
+            y: Float,
+            major: Float,
+            minor: Float,
+            orientation: Float,
+        ) {
+            if (!sActivityActive) return
+            android.view.HostedInputDispatcher.dispatchTouchContact(
+                sRoot, action, id, x, y, major, minor, orientation,
+            )
+        }
+
+/** Wayland seat capability/focus loss must cancel Android's active input streams. */
+        @JvmStatic public fun inputReset(kind: Int) {
+            when (kind) {
+                0 -> android.view.HostedInputDispatcher.cancelMouse(if (sRootActive) sRoot else null)
+                1 -> android.view.HostedInputDispatcher.resetKeyboard()
+                2 -> android.view.HostedInputDispatcher.cancelTouch(if (sRootActive) sRoot else null)
+            }
+        }
+
+        @JvmStatic public fun wantsPointerCapture(): Boolean =
+            android.view.HostedInputDispatcher.wantsPointerCapture()
+
+        @JvmStatic public fun onHostPointerCaptureChanged(hasCapture: Boolean) {
+            android.view.HostedInputDispatcher.onPointerCaptureChanged(hasCapture)
+        }
+
+        @JvmStatic public fun capturedPointer(dx: Float, dy: Float, buttonState: Int) {
+            android.view.HostedInputDispatcher.dispatchCapturedPointer(dx, dy, buttonState)
+        }
+
+        @JvmStatic public fun capturedMouse(
+            action: Int,
+            buttonState: Int,
+            actionButton: Int,
+        ) {
+            android.view.HostedInputDispatcher.dispatchCapturedMouse(
+                action, buttonState, actionButton,
+            )
         }
 
 /** Mouse back button / BTN_SIDE. */
@@ -356,7 +370,7 @@ public final class ApkHost {
                         .setSources(android.view.InputDevice.SOURCE_KEYBOARD)
                         .setKeyboardType(android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC)
                         .setKeyCharacterMap(
-                            android.view.KeyCharacterMap.obtainEmptyMap(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD),
+                            android.view.HostedInputDispatcher.createHostKeyCharacterMap(),
                         ).build()
                 val iim: Class<*> = android.hardware.input.IInputManager::class.java
                 val im: Any =

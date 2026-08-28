@@ -35,7 +35,7 @@ class NewPipeTest {
     fun opensAndEditsSearch() = app.run {
         click(description = "Search")
         waitFor(className = "android.widget.EditText")
-        setText(value = "kotlin integration", className = "android.widget.EditText")
+        type(value = "kotlin integration", className = "android.widget.EditText")
         expectVisible(text = "kotlin integration")
         key(value = "Escape", className = "android.widget.EditText")
         click(description = "Navigate up")

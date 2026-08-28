@@ -48,6 +48,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     private int mLastTouchDeviceId = KeyCharacterMap.VIRTUAL_KEYBOARD;
     private int mLastTouchPointerId;
     private int mLastClickToolType = MotionEvent.TOOL_TYPE_UNKNOWN;
+    private boolean mPointerCapture;
     private final WindowInsets mWindowInsets = new WindowInsets.Builder()
             .setInsets(WindowInsets.Type.systemBars(), android.graphics.Insets.NONE)
             .build();
@@ -180,6 +181,69 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         }
     }
 
+    /**
+     * AOSP ViewPreImeInputStage, EarlyPostImeInputStage, and ViewPostImeInputStage key ordering,
+     * adapted because this host has no InputChannel or system IME input queue.
+     */
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (mView == null || mAttachInfo == null) return false;
+        if (mView.dispatchKeyEventPreIme(event)) return true;
+        if (mAttachInfo.mTooltipHost != null) {
+            mAttachInfo.mTooltipHost.handleTooltipKey(event);
+        }
+        if (checkForLeavingTouchModeAndConsume(event)) return true;
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            mLastClickToolType = MotionEvent.TOOL_TYPE_UNKNOWN;
+        }
+        if (mView.dispatchKeyEvent(event)) return true;
+        if (event.getAction() == KeyEvent.ACTION_DOWN
+                && !KeyEvent.metaStateHasNoModifiers(event.getMetaState())
+                && event.getRepeatCount() == 0
+                && !KeyEvent.isModifierKey(event.getKeyCode())) {
+            return mView.dispatchKeyShortcutEvent(event);
+        }
+        return false;
+    }
+
+    private boolean checkForLeavingTouchModeAndConsume(KeyEvent event) {
+        if (!mAttachInfo.mInTouchMode) return false;
+        final int action = event.getAction();
+        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_MULTIPLE) return false;
+        if ((event.getFlags() & KeyEvent.FLAG_KEEP_TOUCH_MODE) != 0) return false;
+        if (event.hasNoModifiers() && isNavigationKey(event)) return ensureTouchMode(false);
+        if (event.getUnicodeChar() > 0) ensureTouchMode(false);
+        return false;
+    }
+
+    private static boolean isNavigationKey(KeyEvent event) {
+        switch (event.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+            case KeyEvent.KEYCODE_DPAD_UP:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_PAGE_UP:
+            case KeyEvent.KEYCODE_PAGE_DOWN:
+            case KeyEvent.KEYCODE_MOVE_HOME:
+            case KeyEvent.KEYCODE_MOVE_END:
+            case KeyEvent.KEYCODE_TAB:
+            case KeyEvent.KEYCODE_SPACE:
+            case KeyEvent.KEYCODE_ENTER:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** AOSP ViewPostImeInputStage.processTrackballEvent() host adaptation. */
+    public boolean dispatchCapturedPointerEvent(MotionEvent event) {
+        if (mView == null || mAttachInfo == null) return false;
+        if (event.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
+            if (!hasPointerCapture() || mView.dispatchCapturedPointerEvent(event)) return true;
+        }
+        return mView.dispatchTrackballEvent(event);
+    }
+
     public int getResolvedPointerIconType() {
         return mResolvedPointerIcon != null
                 ? mResolvedPointerIcon.getType() : PointerIcon.TYPE_ARROW;
@@ -217,6 +281,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         unscheduleTraversals();
         if (mFrameListener != null) mHandler.removeCallbacks(mFrameListener);
         mHandler.removeCallbacks(mInvalidateOnAnimation);
+        HostedInputDispatcher.onRootDestroyed(this);
         if (mView != null) {
             mView.dispatchWindowFocusChanged(false);
             mView.dispatchWindowVisibilityChanged(View.GONE);
@@ -645,8 +710,19 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void dispatchKeyFromIme(KeyEvent event) {}
     public void dispatchKeyFromAutofill(KeyEvent event) {}
     public boolean mWindowAttributesChanged;
-    public void requestPointerCapture(boolean enabled) {}
-    public boolean hasPointerCapture() { return false; }
+    /**
+     * AOSP ViewRootImpl.requestPointerCapture()/handlePointerCaptureChanged() adapted at the
+     * Wayland host seam because InputManagerGlobal and WindowManagerService are absent.
+     */
+    public void requestPointerCapture(boolean enabled) {
+        HostedInputDispatcher.requestPointerCapture(this, enabled);
+    }
+    public boolean hasPointerCapture() { return mPointerCapture; }
+    void handleHostedPointerCaptureChanged(boolean hasCapture) {
+        if (mPointerCapture == hasCapture) return;
+        mPointerCapture = hasCapture;
+        if (mView != null) mView.dispatchPointerCaptureChanged(hasCapture);
+    }
     public void notifyRendererOfExpensiveFrame() {}
     public void notifyRendererOfFramePause() {}
     public void setDragStartedViewForAccessibility(View view) {}

@@ -312,6 +312,34 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         env.*.*.ExceptionClear.?(env);
         break :blk null;
     };
+    const physical_key: ?art.jni.jmethodID = e.getStaticMethodID(cls, "physicalKey", "(IIII)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const touch_contact: ?art.jni.jmethodID = e.getStaticMethodID(cls, "touchContact", "(IIFFFFF)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const input_reset: ?art.jni.jmethodID = e.getStaticMethodID(cls, "inputReset", "(I)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const captured_pointer: ?art.jni.jmethodID = e.getStaticMethodID(cls, "capturedPointer", "(FFI)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const captured_mouse: ?art.jni.jmethodID = e.getStaticMethodID(cls, "capturedMouse", "(III)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const wants_pointer_capture: ?art.jni.jmethodID = e.getStaticMethodID(cls, "wantsPointerCapture", "()Z") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const host_pointer_capture_changed: ?art.jni.jmethodID = e.getStaticMethodID(cls, "onHostPointerCaptureChanged", "(Z)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
     const hover: ?art.jni.jmethodID = e.getStaticMethodID(cls, "hover", "(FF)I") catch blk: {
         env.*.*.ExceptionClear.?(env);
         break :blk null;
@@ -478,8 +506,10 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     var callback_total_ns: i128 = 0;
     var callback_max_ns: i128 = 0;
     var app_fullscreen = false;
+    var app_pointer_capture = false;
     try javaFrame(win, env, cls, draw_hardware, draw_hardware_abi);
     try syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen);
+    try syncAppPointerCapture(win, env, cls, wants_pointer_capture, &app_pointer_capture);
     try win.present();
     frame_count += 1;
     if (control_server) |*server| if (control_android) |*android| {
@@ -543,7 +573,45 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 if (control_server) |*server| server.noteInput();
                 _ = callHoverEvent(env, cls, hover_action, hover, 10, inputX(win, draw_hardware_abi, p.x), inputY(win, draw_hardware_abi, p.y));
             },
-            .pointer_button => |b| if (b.button == 0x113 or b.button == 0x116) {
+            .pointer_cancel => {
+                mouse_button_state = 0;
+                if (input_reset) |mid| jenv_call_int(env, cls, mid, 0);
+            },
+            .pointer_relative => |motion_event| if (captured_pointer) |mid| {
+                jenv_call_captured_pointer(
+                    env,
+                    cls,
+                    mid,
+                    inputDeltaX(win, draw_hardware_abi, motion_event.dx),
+                    inputDeltaY(win, draw_hardware_abi, motion_event.dy),
+                    mouse_button_state,
+                );
+            },
+            .pointer_capture_changed => |has_capture| if (host_pointer_capture_changed) |mid| {
+                env.*.*.CallStaticVoidMethod.?(
+                    env,
+                    cls,
+                    mid,
+                    @as(art.jni.jboolean, @intFromBool(has_capture)),
+                );
+                try e.check();
+            },
+            .pointer_button => |b| if (win.hasPointerCapture()) {
+                if (androidMouseButton(b.button)) |button| if (captured_mouse) |mid| {
+                    if (control_server) |*server| server.noteInput();
+                    if (b.pressed) {
+                        const was = mouse_button_state;
+                        mouse_button_state |= button;
+                        if (was == 0) jenv_call_captured_mouse(env, cls, mid, 0, mouse_button_state, 0);
+                        jenv_call_captured_mouse(env, cls, mid, 11, mouse_button_state, button);
+                    } else {
+                        mouse_button_state &= ~button;
+                        jenv_call_captured_mouse(env, cls, mid, 12, mouse_button_state, button);
+                        if (mouse_button_state == 0) jenv_call_captured_mouse(env, cls, mid, 1, 0, 0);
+                    }
+                    need_frame = true;
+                };
+            } else if (b.button == 0x113 or b.button == 0x116) {
                 // Android's default View handling does not turn BUTTON_BACK generic motion into
                 // navigation. Preserve the host's physical mouse back-button policy.
                 if (control_server) |*server| server.noteInput();
@@ -573,18 +641,47 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 if (control_server) |*server| server.noteInput();
                 if (k.pressed and k.keysym == 0xffc8) {
                     win.toggleFullscreen(); // XKB_KEY_F11
+                } else if (physical_key) |mid| {
+                    jenv_call_physical_key(
+                        env,
+                        cls,
+                        mid,
+                        if (k.pressed) 0 else 1,
+                        @intCast(k.keycode),
+                        @intCast(k.unicode),
+                        @intCast(k.keysym),
+                    );
                 } else if (key) |mid| {
                     const android_code = androidKeyFromKeysym(k.keysym);
-                    if (android_code != 0 or k.unicode >= 32) {
-                        jenv_call_key(env, cls, mid, if (k.pressed) 0 else 1, android_code, @intCast(k.unicode));
-                    }
+                    if (android_code != 0 or k.unicode >= 32) jenv_call_key(
+                        env,
+                        cls,
+                        mid,
+                        if (k.pressed) 0 else 1,
+                        android_code,
+                        @intCast(k.unicode),
+                    );
                 }
             },
+            .keyboard_reset => if (input_reset) |mid| jenv_call_int(env, cls, mid, 1),
+            .touch => |touch_event| if (touch_contact) |mid| {
+                jenv_call_touch_contact(
+                    env,
+                    cls,
+                    mid,
+                    @backingInt(touch_event.action),
+                    touch_event.id,
+                    inputX(win, draw_hardware_abi, touch_event.x),
+                    inputY(win, draw_hardware_abi, touch_event.y),
+                    inputDeltaX(win, draw_hardware_abi, touch_event.major),
+                    inputDeltaY(win, draw_hardware_abi, touch_event.minor),
+                    @floatCast(touch_event.orientation),
+                );
+            },
+            .touch_cancel => if (input_reset) |mid| jenv_call_int(env, cls, mid, 2),
             .pointer_axis => |a| if (scroll) |mid| {
                 if (control_server) |*server| server.noteInput();
-                // wayland: ~15 units per wheel detent, positive = content down.
-                // android: AXIS_VSCROLL positive = scroll up, 1.0 per detent.
-                jenv_call_scroll(env, cls, mid, inputX(win, draw_hardware_abi, win.pointer_x), inputY(win, draw_hardware_abi, win.pointer_y), @floatCast(-a.horizontal / 15.0), @floatCast(-a.vertical / 15.0));
+                jenv_call_scroll(env, cls, mid, inputX(win, draw_hardware_abi, win.pointer_x), inputY(win, draw_hardware_abi, win.pointer_y), @floatCast(a.horizontal), @floatCast(a.vertical));
             },
             else => {},
         };
@@ -681,6 +778,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 reached_frame_limit = frame_count >= lim;
             }
         }
+        syncAppPointerCapture(win, env, cls, wants_pointer_capture, &app_pointer_capture) catch |err| {
+            std.debug.print("azk: pointer capture state error: {} (continuing)\n", .{err});
+        };
         // Codec threads and SurfaceView traversal only update stable mailbox
         // slots. Drain them after the Java frame so its latest geometry and
         // the UI buffer are published by the same parent transaction.
@@ -735,12 +835,29 @@ fn syncAppFullscreen(win: *wayland.Window, env: anytype, cls: art.jni.jclass, me
     win.setFullscreen(fullscreen);
 }
 
+fn syncAppPointerCapture(win: *wayland.Window, env: anytype, cls: art.jni.jclass, method: ?art.jni.jmethodID, previous: *bool) !void {
+    const mid = method orelse return;
+    const capture = env.*.*.CallStaticBooleanMethod.?(env, cls, mid) != 0;
+    try (art.Env{ .env = env }).check();
+    if (capture == previous.*) return;
+    previous.* = capture;
+    win.setPointerCapture(capture);
+}
+
 fn inputX(win: *const wayland.Window, abi: HardwareDrawAbi, x: f64) f32 {
     return @floatCast(if (abi == .physical) win.surfaceToBufferX(x) else x);
 }
 
 fn inputY(win: *const wayland.Window, abi: HardwareDrawAbi, y: f64) f32 {
     return @floatCast(if (abi == .physical) win.surfaceToBufferY(y) else y);
+}
+
+fn inputDeltaX(win: *const wayland.Window, abi: HardwareDrawAbi, dx: f64) f32 {
+    return @floatCast(if (abi == .physical) win.surfaceToBufferX(dx) else dx);
+}
+
+fn inputDeltaY(win: *const wayland.Window, abi: HardwareDrawAbi, dy: f64) f32 {
+    return @floatCast(if (abi == .physical) win.surfaceToBufferY(dy) else dy);
 }
 
 fn controlTap(context: *anyopaque, x: i32, y: i32) !void {
@@ -823,6 +940,79 @@ fn jenv_call_key(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, acti
     }
 }
 
+fn jenv_call_physical_key(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, action: i32, scan_code: i32, unicode: i32, keysym: i32) void {
+    env.*.*.CallStaticVoidMethod.?(
+        env,
+        cls,
+        mid,
+        @as(art.jni.jint, action),
+        @as(art.jni.jint, scan_code),
+        @as(art.jni.jint, unicode),
+        @as(art.jni.jint, keysym),
+    );
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+    }
+}
+
+fn jenv_call_touch_contact(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, action: i32, id: i32, x: f32, y: f32, major: f32, minor: f32, orientation: f32) void {
+    env.*.*.CallStaticVoidMethod.?(
+        env,
+        cls,
+        mid,
+        @as(art.jni.jint, action),
+        @as(art.jni.jint, id),
+        @as(art.jni.jfloat, x),
+        @as(art.jni.jfloat, y),
+        @as(art.jni.jfloat, major),
+        @as(art.jni.jfloat, minor),
+        @as(art.jni.jfloat, orientation),
+    );
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+    }
+}
+
+fn jenv_call_captured_pointer(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, dx: f32, dy: f32, button_state: i32) void {
+    env.*.*.CallStaticVoidMethod.?(
+        env,
+        cls,
+        mid,
+        @as(art.jni.jfloat, dx),
+        @as(art.jni.jfloat, dy),
+        @as(art.jni.jint, button_state),
+    );
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+    }
+}
+
+fn jenv_call_captured_mouse(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, action: i32, button_state: i32, action_button: i32) void {
+    env.*.*.CallStaticVoidMethod.?(
+        env,
+        cls,
+        mid,
+        @as(art.jni.jint, action),
+        @as(art.jni.jint, button_state),
+        @as(art.jni.jint, action_button),
+    );
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+    }
+}
+
+fn jenv_call_int(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID, value: i32) void {
+    env.*.*.CallStaticVoidMethod.?(env, cls, mid, @as(art.jni.jint, value));
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+    }
+}
+
 fn jenv_call_void(env: anytype, cls: art.jni.jclass, mid: art.jni.jmethodID) void {
     env.*.*.CallStaticVoidMethod.?(env, cls, mid);
     if (env.*.*.ExceptionCheck.?(env) != 0) {
@@ -881,6 +1071,7 @@ fn androidMouseButton(linux_button: u32) ?i32 {
         0x110 => 1, // BTN_LEFT -> MotionEvent.BUTTON_PRIMARY
         0x111 => 2, // BTN_RIGHT -> BUTTON_SECONDARY
         0x112 => 4, // BTN_MIDDLE -> BUTTON_TERTIARY
+        0x113, 0x116 => 8, // BTN_SIDE / BTN_BACK -> BUTTON_BACK
         0x114, 0x115 => 16, // BTN_EXTRA / BTN_FORWARD -> BUTTON_FORWARD
         else => null,
     };

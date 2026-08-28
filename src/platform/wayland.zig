@@ -64,6 +64,7 @@ const xkb = struct {
     pub extern fn xkb_state_update_mask(state: *State, depressed: u32, latched: u32, locked: u32, layout_depressed: u32, layout_latched: u32, layout_locked: u32) c_int;
     pub extern fn xkb_state_key_get_utf32(state: *State, key: u32) u32;
     pub extern fn xkb_state_key_get_one_sym(state: *State, key: u32) u32;
+    pub extern fn xkb_keymap_key_repeats(keymap: *Keymap, key: u32) c_int;
 };
 
 const test_keymap =
@@ -175,6 +176,12 @@ fn inputTimestamp() u32 {
     return @truncate(@as(u64, @intCast(time.sec)) * 1000 + @as(u64, @intCast(time.nsec)) / 1_000_000);
 }
 
+fn monotonicNs() u64 {
+    var time: linux.timespec = undefined;
+    _ = linux.clock_gettime(.MONOTONIC, &time);
+    return @as(u64, @intCast(time.sec)) * std.time.ns_per_s + @as(u64, @intCast(time.nsec));
+}
+
 pub const Event = union(enum) {
     close,
     configure: struct { width: i32, height: i32 },
@@ -184,8 +191,64 @@ pub const Event = union(enum) {
     pointer_leave: struct { x: f64, y: f64 },
     pointer_button: struct { button: u32, pressed: bool, x: f64, y: f64 },
     pointer_axis: struct { horizontal: f64, vertical: f64 },
+    pointer_cancel,
+    pointer_relative: struct { dx: f64, dy: f64 },
+    pointer_capture_changed: bool,
     key: struct { keycode: u32, pressed: bool, unicode: u32, keysym: u32 },
+    keyboard_reset,
+    touch: struct {
+        action: TouchAction,
+        id: i32,
+        x: f64,
+        y: f64,
+        major: f64,
+        minor: f64,
+        orientation: f64,
+    },
+    touch_cancel,
     frame_done: struct { time_ms: u32 },
+};
+
+pub const TouchAction = enum(u8) { down, up, move, update };
+
+const PointerAxisFrame = struct {
+    horizontal: f64 = 0,
+    vertical: f64 = 0,
+    horizontal_discrete: ?i32 = null,
+    vertical_discrete: ?i32 = null,
+    horizontal_value120: ?i32 = null,
+    vertical_value120: ?i32 = null,
+
+    fn reset(self: *PointerAxisFrame) void {
+        self.* = .{};
+    }
+
+    fn androidValue(continuous: f64, discrete: ?i32, value120: ?i32) f64 {
+        if (value120) |value| return @as(f64, @floatFromInt(value)) / -120.0;
+        if (discrete) |value| return -@as(f64, @floatFromInt(value));
+        // Wayland continuous axis values are expressed in surface-coordinate units, while
+        // Android scroll axes are dimensionless. This follows Waydroid's InputReader-facing
+        // normalization but retains fractional deltas until a complete wl_pointer frame.
+        return continuous / -10.0;
+    }
+};
+
+const TouchPoint = struct {
+    active: bool = false,
+    id: i32 = -1,
+    x: f64 = 0,
+    y: f64 = 0,
+    major: f64 = 0,
+    minor: f64 = 0,
+    orientation: f64 = 0,
+};
+
+const KeyRepeat = struct {
+    keycode: u32,
+    unicode: u32,
+    keysym: u32,
+    next_ns: u64,
+    period_ns: u64,
 };
 
 const FullscreenState = struct {
@@ -240,6 +303,16 @@ pub const Window = struct {
     output: ?*wl.Output = null,
     pointer: ?*wl.Pointer = null,
     keyboard: ?*wl.Keyboard = null,
+    touch_device: ?*wl.Touch = null,
+    pointer_constraints: ?*zwp.PointerConstraintsV1 = null,
+    relative_pointer_manager: ?*zwp.RelativePointerManagerV1 = null,
+    seat_global_name: ?u32 = null,
+    pointer_constraints_global_name: ?u32 = null,
+    relative_pointer_global_name: ?u32 = null,
+    relative_pointer: ?*zwp.RelativePointerV1 = null,
+    locked_pointer: ?*zwp.LockedPointerV1 = null,
+    pointer_capture_requested: bool = false,
+    pointer_capture_actual: bool = false,
     cursor_shape_manager: ?*wp.CursorShapeManagerV1 = null,
     cursor_device: ?*wp.CursorShapeDeviceV1 = null,
     virtual_pointer_manager: ?*zwlr.VirtualPointerManagerV1 = null,
@@ -274,10 +347,16 @@ pub const Window = struct {
 
     pointer_x: f64 = 0,
     pointer_y: f64 = 0,
+    pointer_axis_frame: PointerAxisFrame = .{},
+
+    touch_points: [10]TouchPoint = std.mem.zeroes([10]TouchPoint),
 
     xkb_context: ?*xkb.Context = null,
     xkb_keymap: ?*xkb.Keymap = null,
     xkb_state: ?*xkb.State = null,
+    keyboard_repeat_rate: i32 = 0,
+    keyboard_repeat_delay_ms: i32 = 0,
+    key_repeat: ?KeyRepeat = null,
 
     // simple event queue filled by listeners, drained by the caller
     events: std.ArrayList(Event) = .empty,
@@ -379,6 +458,8 @@ pub const Window = struct {
             std.debug.panic("required Wayland protocol wl_shm is unavailable; the opaque application-window background cannot be created", .{});
         if (self.dmabuf == null)
             std.debug.panic("required Wayland protocol zwp_linux_dmabuf_v1 is unavailable; decoded Android video frames cannot be presented", .{});
+        if (self.seat == null)
+            std.debug.panic("required Wayland protocol wl_seat is unavailable; Android input cannot receive keyboard, pointer, or touch devices", .{});
     }
 
     fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Window) void {
@@ -409,17 +490,43 @@ pub const Window = struct {
                     self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, 2)) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.VirtualKeyboardManagerV1.interface.name) == .eq) {
                     self.virtual_keyboard_manager = registry.bind(g.name, zwp.VirtualKeyboardManagerV1, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, zwp.PointerConstraintsV1.interface.name) == .eq and self.pointer_constraints == null) {
+                    self.pointer_constraints = registry.bind(g.name, zwp.PointerConstraintsV1, 1) catch return;
+                    self.pointer_constraints_global_name = g.name;
+                } else if (std.mem.orderZ(u8, g.interface, zwp.RelativePointerManagerV1.interface.name) == .eq and self.relative_pointer_manager == null) {
+                    self.relative_pointer_manager = registry.bind(g.name, zwp.RelativePointerManagerV1, 1) catch return;
+                    self.relative_pointer_global_name = g.name;
                 } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
                     self.wm_base = registry.bind(g.name, xdg.WmBase, 2) catch return;
                     self.wm_base.?.setListener(*Window, wmBaseListener, self);
-                } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq) {
-                    self.seat = registry.bind(g.name, wl.Seat, 5) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq and self.seat == null) {
+                    if (g.version < 8)
+                        std.debug.panic("required wl_seat version 8 is unavailable (compositor advertises version {d}); framed high-resolution scrolling and touch shape require version 8", .{g.version});
+                    self.seat = registry.bind(g.name, wl.Seat, 8) catch return;
+                    self.seat_global_name = g.name;
                     self.seat.?.setListener(*Window, seatListener, self);
                 } else if (std.mem.orderZ(u8, g.interface, wl.Output.interface.name) == .eq and self.output == null) {
                     self.output = registry.bind(g.name, wl.Output, 2) catch return;
                 }
             },
-            .global_remove => {},
+            .global_remove => |removed| {
+                if (self.seat_global_name == removed.name)
+                    std.debug.panic("the compositor removed the required wl_seat global; Android input can no longer preserve device lifecycle", .{});
+                if (self.pointer_constraints_global_name == removed.name) {
+                    if (self.pointer_capture_requested or self.pointer_capture_actual)
+                        std.debug.panic("the compositor removed required zwp_pointer_constraints_v1 while Android pointer capture was active", .{});
+                    if (self.pointer_constraints) |constraints| constraints.destroy();
+                    self.pointer_constraints = null;
+                    self.pointer_constraints_global_name = null;
+                }
+                if (self.relative_pointer_global_name == removed.name) {
+                    if (self.pointer_capture_requested or self.pointer_capture_actual)
+                        std.debug.panic("the compositor removed required zwp_relative_pointer_manager_v1 while Android pointer capture was active", .{});
+                    if (self.relative_pointer_manager) |manager| manager.destroy();
+                    self.relative_pointer_manager = null;
+                    self.relative_pointer_global_name = null;
+                }
+            },
         }
     }
 
@@ -560,10 +667,20 @@ pub const Window = struct {
                 if (c.capabilities.pointer and self.pointer == null) {
                     self.pointer = seat.getPointer() catch null;
                     if (self.pointer) |p| p.setListener(*Window, pointerListener, self);
+                } else if (!c.capabilities.pointer and self.pointer != null) {
+                    self.releasePointer();
                 }
                 if (c.capabilities.keyboard and self.keyboard == null) {
                     self.keyboard = seat.getKeyboard() catch null;
                     if (self.keyboard) |k| k.setListener(*Window, keyboardListener, self);
+                } else if (!c.capabilities.keyboard and self.keyboard != null) {
+                    self.releaseKeyboard();
+                }
+                if (c.capabilities.touch and self.touch_device == null) {
+                    self.touch_device = seat.getTouch() catch null;
+                    if (self.touch_device) |touch| touch.setListener(*Window, touchListener, self);
+                } else if (!c.capabilities.touch and self.touch_device != null) {
+                    self.releaseTouch();
                 }
             },
             .name => {},
@@ -583,14 +700,22 @@ pub const Window = struct {
                 .x = self.pointer_x,
                 .y = self.pointer_y,
             } }),
-            .axis => |a| {
-                const v = a.value.toDouble();
-                self.push(.{ .pointer_axis = switch (a.axis) {
-                    .vertical_scroll => .{ .horizontal = 0, .vertical = v },
-                    .horizontal_scroll => .{ .horizontal = v, .vertical = 0 },
-                    else => return,
-                } });
+            .axis => |a| switch (a.axis) {
+                .vertical_scroll => self.pointer_axis_frame.vertical += a.value.toDouble(),
+                .horizontal_scroll => self.pointer_axis_frame.horizontal += a.value.toDouble(),
+                else => {},
             },
+            .axis_discrete => |a| switch (a.axis) {
+                .vertical_scroll => self.pointer_axis_frame.vertical_discrete = a.discrete,
+                .horizontal_scroll => self.pointer_axis_frame.horizontal_discrete = a.discrete,
+                else => {},
+            },
+            .axis_value120 => |a| switch (a.axis) {
+                .vertical_scroll => self.pointer_axis_frame.vertical_value120 = a.value120,
+                .horizontal_scroll => self.pointer_axis_frame.horizontal_value120 = a.value120,
+                else => {},
+            },
+            .frame => self.flushPointerAxisFrame(),
             .enter => |e| {
                 self.pointer_x = e.surface_x.toDouble();
                 self.pointer_y = e.surface_y.toDouble();
@@ -601,11 +726,29 @@ pub const Window = struct {
                 self.setCursorShape(shape);
                 self.push(.{ .pointer_enter = .{ .x = self.pointer_x, .y = self.pointer_y } });
             },
-            .leave => self.push(.{ .pointer_leave = .{
-                .x = self.pointer_x,
-                .y = self.pointer_y,
-            } }),
+            .leave => {
+                self.flushPointerAxisFrame();
+                self.push(.{ .pointer_leave = .{ .x = self.pointer_x, .y = self.pointer_y } });
+                self.push(.pointer_cancel);
+            },
             else => {},
+        }
+    }
+
+    fn flushPointerAxisFrame(self: *Window) void {
+        const horizontal = PointerAxisFrame.androidValue(
+            self.pointer_axis_frame.horizontal,
+            self.pointer_axis_frame.horizontal_discrete,
+            self.pointer_axis_frame.horizontal_value120,
+        );
+        const vertical = PointerAxisFrame.androidValue(
+            self.pointer_axis_frame.vertical,
+            self.pointer_axis_frame.vertical_discrete,
+            self.pointer_axis_frame.vertical_value120,
+        );
+        self.pointer_axis_frame.reset();
+        if (horizontal != 0 or vertical != 0) {
+            self.push(.{ .pointer_axis = .{ .horizontal = horizontal, .vertical = vertical } });
         }
     }
 
@@ -643,9 +786,223 @@ pub const Window = struct {
                     .unicode = unicode,
                     .keysym = keysym,
                 } });
+                if (k.state == .pressed) {
+                    const repeats = if (self.xkb_keymap) |keymap|
+                        xkb.xkb_keymap_key_repeats(keymap, k.key + 8) != 0
+                    else
+                        false;
+                    if (repeats and self.keyboard_repeat_rate > 0) {
+                        const period_ns = @divTrunc(@as(u64, std.time.ns_per_s), @as(u64, @intCast(self.keyboard_repeat_rate)));
+                        self.key_repeat = .{
+                            .keycode = k.key,
+                            .unicode = unicode,
+                            .keysym = keysym,
+                            .next_ns = monotonicNs() +
+                                @as(u64, @intCast(@max(self.keyboard_repeat_delay_ms, 0))) *
+                                    std.time.ns_per_ms,
+                            .period_ns = period_ns,
+                        };
+                    }
+                } else if (self.key_repeat != null and self.key_repeat.?.keycode == k.key) {
+                    self.key_repeat = null;
+                }
+            },
+            .leave => {
+                self.key_repeat = null;
+                self.push(.keyboard_reset);
+            },
+            .repeat_info => |repeat| {
+                self.keyboard_repeat_rate = repeat.rate;
+                self.keyboard_repeat_delay_ms = repeat.delay;
+                if (repeat.rate == 0) self.key_repeat = null;
             },
             else => {},
         }
+    }
+
+    fn touchListener(_: *wl.Touch, event: wl.Touch.Event, self: *Window) void {
+        switch (event) {
+            .down => |down| {
+                if (down.surface == null) return;
+                const point = self.allocateTouchPoint(down.id) orelse {
+                    std.debug.print("azk: ignoring touch id {d}: Android supports at most 10 hosted contacts\n", .{down.id});
+                    return;
+                };
+                point.x = down.x.toDouble();
+                point.y = down.y.toDouble();
+                self.pushTouch(.down, point.*);
+            },
+            .motion => |motion| if (self.findTouchPoint(motion.id)) |point| {
+                point.x = motion.x.toDouble();
+                point.y = motion.y.toDouble();
+                self.pushTouch(.move, point.*);
+            },
+            .up => |up| if (self.findTouchPoint(up.id)) |point| {
+                self.pushTouch(.up, point.*);
+                point.* = .{};
+            },
+            .shape => |shape| if (self.findTouchPoint(shape.id)) |point| {
+                point.major = shape.major.toDouble();
+                point.minor = shape.minor.toDouble();
+                self.pushTouch(.update, point.*);
+            },
+            .orientation => |orientation| if (self.findTouchPoint(orientation.id)) |point| {
+                point.orientation = orientation.orientation.toDouble() * std.math.pi / 180.0;
+                self.pushTouch(.update, point.*);
+            },
+            .cancel => self.cancelTouches(),
+            .frame => {},
+        }
+    }
+
+    fn allocateTouchPoint(self: *Window, id: i32) ?*TouchPoint {
+        if (self.findTouchPoint(id)) |point| return point;
+        for (&self.touch_points) |*point| {
+            if (!point.active) {
+                point.* = .{ .active = true, .id = id };
+                return point;
+            }
+        }
+        return null;
+    }
+
+    fn findTouchPoint(self: *Window, id: i32) ?*TouchPoint {
+        for (&self.touch_points) |*point| if (point.active and point.id == id) return point;
+        return null;
+    }
+
+    fn pushTouch(self: *Window, action: TouchAction, point: TouchPoint) void {
+        self.push(.{ .touch = .{
+            .action = action,
+            .id = point.id,
+            .x = point.x,
+            .y = point.y,
+            .major = point.major,
+            .minor = point.minor,
+            .orientation = point.orientation,
+        } });
+    }
+
+    fn cancelTouches(self: *Window) void {
+        var had_touch = false;
+        for (&self.touch_points) |*point| {
+            had_touch = had_touch or point.active;
+            point.* = .{};
+        }
+        if (had_touch) self.push(.touch_cancel);
+    }
+
+    fn lockedPointerListener(_: *zwp.LockedPointerV1, event: zwp.LockedPointerV1.Event, self: *Window) void {
+        const actual = switch (event) {
+            .locked => true,
+            .unlocked => false,
+        };
+        if (actual == self.pointer_capture_actual) return;
+        self.pointer_capture_actual = actual;
+        self.push(.{ .pointer_capture_changed = actual });
+    }
+
+    fn relativePointerListener(_: *zwp.RelativePointerV1, event: zwp.RelativePointerV1.Event, self: *Window) void {
+        switch (event) {
+            .relative_motion => |motion| if (self.pointer_capture_actual) {
+                self.push(.{ .pointer_relative = .{
+                    .dx = motion.dx.toDouble(),
+                    .dy = motion.dy.toDouble(),
+                } });
+            },
+        }
+    }
+
+    /// Host adaptation of WaydroidWindow.setPointerCapture(): Android's InputManager/WMS
+    /// handshake is absent, so the hosted ViewRoot request is realized directly with the
+    /// compositor protocols and acknowledged only by the locked/unlocked events.
+    pub fn setPointerCapture(self: *Window, enabled: bool) void {
+        if (enabled == self.pointer_capture_requested) return;
+        self.pointer_capture_requested = enabled;
+        if (!enabled) {
+            if (self.locked_pointer) |locked| locked.destroy();
+            if (self.relative_pointer) |relative| relative.destroy();
+            self.locked_pointer = null;
+            self.relative_pointer = null;
+            if (self.pointer_capture_actual) {
+                self.pointer_capture_actual = false;
+                self.push(.{ .pointer_capture_changed = false });
+            }
+            return;
+        }
+
+        const pointer = self.pointer orelse
+            std.debug.panic("Android requested pointer capture, but the active wl_seat has no pointer capability", .{});
+        const relative_manager = self.relative_pointer_manager orelse
+            std.debug.panic("Android requested pointer capture, but zwp_relative_pointer_manager_v1 is unavailable", .{});
+        const constraints = self.pointer_constraints orelse
+            std.debug.panic("Android requested pointer capture, but zwp_pointer_constraints_v1 is unavailable", .{});
+        self.relative_pointer = relative_manager.getRelativePointer(pointer) catch
+            std.debug.panic("failed to create zwp_relative_pointer_v1 for Android pointer capture", .{});
+        self.relative_pointer.?.setListener(*Window, relativePointerListener, self);
+        self.locked_pointer = constraints.lockPointer(
+            self.ui_surface,
+            pointer,
+            null,
+            .persistent,
+        ) catch std.debug.panic("failed to create zwp_locked_pointer_v1 for Android pointer capture", .{});
+        self.locked_pointer.?.setListener(*Window, lockedPointerListener, self);
+        self.ui_surface.commit();
+    }
+
+    pub fn hasPointerCapture(self: *const Window) bool {
+        return self.pointer_capture_actual;
+    }
+
+    fn releasePointer(self: *Window) void {
+        self.setPointerCapture(false);
+        if (self.cursor_device) |device| device.destroy();
+        self.cursor_device = null;
+        if (self.pointer) |pointer| pointer.release();
+        self.pointer = null;
+        self.pointer_axis_frame.reset();
+        self.push(.pointer_cancel);
+    }
+
+    fn releaseKeyboard(self: *Window) void {
+        self.key_repeat = null;
+        if (self.keyboard) |keyboard| keyboard.release();
+        self.keyboard = null;
+        self.push(.keyboard_reset);
+    }
+
+    fn releaseTouch(self: *Window) void {
+        self.cancelTouches();
+        if (self.touch_device) |touch| touch.release();
+        self.touch_device = null;
+    }
+
+    fn emitKeyRepeatIfDue(self: *Window) bool {
+        var repeat = self.key_repeat orelse return false;
+        const now = monotonicNs();
+        if (now < repeat.next_ns) return false;
+        if (self.xkb_state) |state| {
+            repeat.unicode = xkb.xkb_state_key_get_utf32(state, repeat.keycode + 8);
+            repeat.keysym = xkb.xkb_state_key_get_one_sym(state, repeat.keycode + 8);
+        }
+        self.push(.{ .key = .{
+            .keycode = repeat.keycode,
+            .pressed = true,
+            .unicode = repeat.unicode,
+            .keysym = repeat.keysym,
+        } });
+        repeat.next_ns +%= repeat.period_ns;
+        if (repeat.next_ns <= now) repeat.next_ns = now + repeat.period_ns;
+        self.key_repeat = repeat;
+        return true;
+    }
+
+    fn keyRepeatTimeoutMs(self: *const Window) i32 {
+        const repeat = self.key_repeat orelse return -1;
+        const now = monotonicNs();
+        if (now >= repeat.next_ns) return 0;
+        const remaining = repeat.next_ns - now;
+        return @intCast(@min(@as(u64, std.math.maxInt(i32)), @divTrunc(remaining + std.time.ns_per_ms - 1, std.time.ns_per_ms)));
     }
 
     fn frameListener(cb: *wl.Callback, event: wl.Callback.Event, self: *Window) void {
@@ -935,6 +1292,7 @@ pub const Window = struct {
         self.events.clearRetainingCapacity();
         while (self.events.items.len == 0) {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            _ = self.emitKeyRepeatIfDue();
             if (self.events.items.len != 0) break;
 
             while (!self.display.prepareRead()) {
@@ -966,7 +1324,7 @@ pub const Window = struct {
                 },
                 .{ .fd = wakeup_fd orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
             };
-            _ = try std.posix.poll(&poll_fds, -1);
+            _ = try std.posix.poll(&poll_fds, self.keyRepeatTimeoutMs());
 
             const wayland_readable = poll_fds[0].revents &
                 (std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP) != 0;
@@ -977,6 +1335,7 @@ pub const Window = struct {
             } else {
                 self.display.cancelRead();
             }
+            _ = self.emitKeyRepeatIfDue();
             if (wakeup_ready) break;
         }
         return self.events.items;
@@ -986,6 +1345,7 @@ pub const Window = struct {
     pub fn pollEvents(self: *Window) ![]const Event {
         self.events.clearRetainingCapacity();
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        _ = self.emitKeyRepeatIfDue();
         _ = self.display.flush();
         return self.events.items;
     }
@@ -1006,6 +1366,7 @@ pub const Window = struct {
         self.xkb_keymap = null;
         self.xkb_context = null;
 
+        self.setPointerCapture(false);
         if (self.cursor_device) |device| device.destroy();
         if (self.cursor_shape_manager) |manager| manager.destroy();
         if (self.virtual_pointer) |pointer| pointer.destroy();
@@ -1013,6 +1374,9 @@ pub const Window = struct {
         if (self.virtual_pointer_manager) |manager| manager.destroy();
         if (self.pointer) |pointer| pointer.release();
         if (self.keyboard) |keyboard| keyboard.release();
+        if (self.touch_device) |touch| touch.release();
+        if (self.relative_pointer_manager) |manager| manager.destroy();
+        if (self.pointer_constraints) |constraints| constraints.destroy();
         if (self.seat) |seat| seat.release();
         // Tear down the child surface tree before destroying its xdg parent.
         self.ui_viewport.destroy();
@@ -1295,4 +1659,11 @@ test "virtual keyboard uses Linux evdev codes for the fixed US keymap" {
     try std.testing.expectEqual(@as(u32, 28), namedKey("enter").?);
     try std.testing.expectEqual(@as(u32, 87), namedKey("F11").?);
     try std.testing.expect(asciiKey(0xc3) == null);
+}
+
+test "pointer axis frame prefers high resolution detents and Android direction" {
+    try std.testing.expectEqual(@as(f64, -1), PointerAxisFrame.androidValue(15, null, 120));
+    try std.testing.expectEqual(@as(f64, 0.5), PointerAxisFrame.androidValue(-15, null, -60));
+    try std.testing.expectEqual(@as(f64, -2), PointerAxisFrame.androidValue(30, 2, null));
+    try std.testing.expectEqual(@as(f64, -1.5), PointerAxisFrame.androidValue(15, null, null));
 }

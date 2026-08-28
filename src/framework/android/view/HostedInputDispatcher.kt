@@ -12,21 +12,89 @@ import android.os.SystemClock
  * the host has no InputChannel, InputEventReceiver, or IWindowSession.
  */
 object HostedInputDispatcher {
+    /**
+     * Creates the character map installed on the hosted physical keyboard.
+     *
+     * AOSP TextKeyListener.getKeyListener() selects its editing behavior from the character-map
+     * type. EventHub normally loads a FULL map from the device configuration, but the host has no
+     * EventHub. The native seam uses AOSP KeyCharacterMap::loadContents() to preserve that contract;
+     * characters still come from Wayland/XKB in HostedKeyEvent so the compositor's layout wins.
+     */
+    @JvmStatic
+    fun createHostKeyCharacterMap(): KeyCharacterMap =
+        nativeLoadKeyCharacterMap(KeyCharacterMap.VIRTUAL_KEYBOARD, "type FULL\n")
+
+    @JvmStatic
+    private external fun nativeLoadKeyCharacterMap(
+        deviceId: Int,
+        contents: String,
+    ): KeyCharacterMap
+
     private class GestureState {
         var downTime: Long = 0
         var target: RootTarget? = null
+        var lastX: Float = 0f
+        var lastY: Float = 0f
+        var buttonState: Int = 0
         val outsideWatchers = mutableListOf<ArtzigWindowStack.Entry>()
 
         fun reset() {
             downTime = 0
             target = null
+            lastX = 0f
+            lastY = 0f
+            buttonState = 0
             outsideWatchers.clear()
         }
     }
 
+    private data class TouchContact(
+        val androidId: Int,
+        var x: Float,
+        var y: Float,
+        var major: Float,
+        var minor: Float,
+        var orientation: Float,
+    )
+
+    private data class PressedKey(
+        val root: ViewRootImpl?,
+        val downTime: Long,
+        val keyCode: Int,
+        var repeatCount: Int,
+    )
+
     private val mouseGesture = GestureState()
     private val touchGesture = GestureState()
     private var hoverTarget: RootTarget? = null
+    private val touchContacts = linkedMapOf<Int, TouchContact>()
+    private val pressedKeys = linkedMapOf<Int, PressedKey>()
+    private var requestedCaptureRoot: ViewRootImpl? = null
+    private var capturedRoot: ViewRootImpl? = null
+    private var pointerCaptureActual = false
+    private var lockedMetaState = 0
+    private val digitKeyCodes = intArrayOf(
+        KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_3,
+        KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_6,
+        KeyEvent.KEYCODE_7, KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_9,
+        KeyEvent.KEYCODE_0,
+    )
+    private val qwertyKeyCodes = intArrayOf(
+        KeyEvent.KEYCODE_Q, KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_E,
+        KeyEvent.KEYCODE_R, KeyEvent.KEYCODE_T, KeyEvent.KEYCODE_Y,
+        KeyEvent.KEYCODE_U, KeyEvent.KEYCODE_I, KeyEvent.KEYCODE_O,
+        KeyEvent.KEYCODE_P,
+    )
+    private val homeRowKeyCodes = intArrayOf(
+        KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D,
+        KeyEvent.KEYCODE_F, KeyEvent.KEYCODE_G, KeyEvent.KEYCODE_H,
+        KeyEvent.KEYCODE_J, KeyEvent.KEYCODE_K, KeyEvent.KEYCODE_L,
+    )
+    private val bottomRowKeyCodes = intArrayOf(
+        KeyEvent.KEYCODE_Z, KeyEvent.KEYCODE_X, KeyEvent.KEYCODE_C,
+        KeyEvent.KEYCODE_V, KeyEvent.KEYCODE_B, KeyEvent.KEYCODE_N,
+        KeyEvent.KEYCODE_M,
+    )
 
     @JvmStatic
     fun dispatchMouse(
@@ -43,6 +111,9 @@ object HostedInputDispatcher {
                 mouseGesture, now, activityRoot, screenX, screenY,
             )
         }
+        mouseGesture.lastX = screenX
+        mouseGesture.lastY = screenY
+        mouseGesture.buttonState = buttonState
         val event = createMouseEvent(
             mouseGesture.downTime.takeIf { it != 0L } ?: now,
             now,
@@ -61,6 +132,26 @@ object HostedInputDispatcher {
                 mouseGesture.reset()
             }
         }
+    }
+
+    @JvmStatic
+    fun cancelMouse(activityRoot: ViewRootImpl?) {
+        val lastX = mouseGesture.lastX
+        val lastY = mouseGesture.lastY
+        if (mouseGesture.downTime != 0L) {
+            dispatchMouse(
+                activityRoot,
+                MotionEvent.ACTION_CANCEL,
+                mouseGesture.buttonState,
+                0,
+                lastX,
+                lastY,
+            )
+        }
+        hoverTarget?.let {
+            dispatchHoverTo(it, MotionEvent.ACTION_HOVER_EXIT, lastX, lastY)
+        }
+        hoverTarget = null
     }
 
     @JvmStatic
@@ -94,6 +185,276 @@ object HostedInputDispatcher {
         }
     }
 
+    /**
+     * Translates wl_touch's contact lifecycle into one Android touchscreen gesture. Pointer ids
+     * stay stable for the lifetime of each Wayland contact, and every pointer in the gesture is
+     * delivered to the root selected by the first DOWN.
+     */
+    @JvmStatic
+    fun dispatchTouchContact(
+        activityRoot: ViewRootImpl?,
+        action: Int,
+        waylandId: Int,
+        screenX: Float,
+        screenY: Float,
+        major: Float,
+        minor: Float,
+        orientation: Float,
+    ): Boolean {
+        val now = SystemClock.uptimeMillis()
+        var actionIndex = -1
+        val androidAction = when (action) {
+            TOUCH_DOWN -> {
+                if (touchContacts.containsKey(waylandId)) return false
+                if (touchContacts.isEmpty()) {
+                    beginGesture(touchGesture, now, activityRoot, screenX, screenY)
+                }
+                val androidId = (0 until MAX_TOUCH_CONTACTS).firstOrNull { candidate ->
+                    touchContacts.values.none { it.androidId == candidate }
+                } ?: return false
+                touchContacts[waylandId] = TouchContact(
+                    androidId, screenX, screenY, major, minor, orientation,
+                )
+                actionIndex = touchContacts.keys.indexOf(waylandId)
+                if (touchContacts.size == 1) MotionEvent.ACTION_DOWN else {
+                    MotionEvent.ACTION_POINTER_DOWN or
+                        (actionIndex shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+                }
+            }
+            TOUCH_MOVE, TOUCH_UPDATE -> {
+                val contact = touchContacts[waylandId] ?: return false
+                contact.x = screenX
+                contact.y = screenY
+                contact.major = major
+                contact.minor = minor
+                contact.orientation = orientation
+                MotionEvent.ACTION_MOVE
+            }
+            TOUCH_UP -> {
+                val contact = touchContacts[waylandId] ?: return false
+                contact.x = screenX
+                contact.y = screenY
+                contact.major = major
+                contact.minor = minor
+                contact.orientation = orientation
+                actionIndex = touchContacts.keys.indexOf(waylandId)
+                if (touchContacts.size == 1) MotionEvent.ACTION_UP else {
+                    MotionEvent.ACTION_POINTER_UP or
+                        (actionIndex shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+                }
+            }
+            else -> return false
+        }
+
+        val event = createMultiTouchEvent(
+            touchGesture.downTime.takeIf { it != 0L } ?: now,
+            now,
+            androidAction,
+            touchContacts.values.toList(),
+        )
+        return try {
+            if (androidAction == MotionEvent.ACTION_DOWN) {
+                dispatchOutsideWatchers(touchGesture, event)
+            }
+            dispatchGesture(activityRoot, touchGesture, event)
+        } finally {
+            event.recycle()
+            if (action == TOUCH_UP) touchContacts.remove(waylandId)
+            if (touchContacts.isEmpty()) touchGesture.reset()
+        }
+    }
+
+    @JvmStatic
+    fun cancelTouch(activityRoot: ViewRootImpl?) {
+        if (touchContacts.isNotEmpty()) {
+            val now = SystemClock.uptimeMillis()
+            val event = createMultiTouchEvent(
+                touchGesture.downTime.takeIf { it != 0L } ?: now,
+                now,
+                MotionEvent.ACTION_CANCEL,
+                touchContacts.values.toList(),
+            )
+            try {
+                dispatchGesture(activityRoot, touchGesture, event)
+            } finally {
+                event.recycle()
+            }
+        }
+        touchContacts.clear()
+        touchGesture.reset()
+    }
+
+    /**
+     * AOSP EventHub/KeyboardInputMapper adapted at the host boundary. Wayland already supplies
+     * the evdev scan code and XKB-resolved Unicode value, so this preserves Android KeyEvent
+     * lifecycle and metadata without recreating Waydroid's Linux input FIFOs and InputFlinger.
+     */
+    @JvmStatic
+    fun dispatchPhysicalKey(
+        activityRoot: ViewRootImpl?,
+        action: Int,
+        scanCode: Int,
+        unicode: Int,
+    ): Boolean {
+        val now = SystemClock.uptimeMillis()
+        val keyCode = androidKeyCodeForScanCode(scanCode)
+        val root: ViewRootImpl?
+        val downTime: Long
+        val repeatCount: Int
+        if (action == KeyEvent.ACTION_DOWN) {
+            val existing = pressedKeys[scanCode]
+            if (existing == null) {
+                root = selectKeyRoot(activityRoot)
+                downTime = now
+                repeatCount = 0
+                lockedMetaState = lockedMetaState xor lockMetaStateForKey(keyCode)
+                pressedKeys[scanCode] = PressedKey(root, downTime, keyCode, repeatCount)
+            } else {
+                root = existing.root
+                downTime = existing.downTime
+                existing.repeatCount += 1
+                repeatCount = existing.repeatCount
+            }
+        } else {
+            val existing = pressedKeys.remove(scanCode)
+            root = existing?.root ?: selectKeyRoot(activityRoot)
+            downTime = existing?.downTime ?: now
+            repeatCount = 0
+        }
+        val event = HostedKeyEvent(
+            downTime,
+            now,
+            action,
+            keyCode,
+            repeatCount,
+            currentMetaState(),
+            scanCode,
+            if (action == KeyEvent.ACTION_DOWN) unicode else 0,
+        )
+        return root?.dispatchKeyEvent(event) ?: false
+    }
+
+    @JvmStatic
+    fun dispatchSyntheticKey(
+        activityRoot: ViewRootImpl?,
+        action: Int,
+        keyCode: Int,
+        unicode: Int,
+    ): Boolean {
+        val now = SystemClock.uptimeMillis()
+        val event = HostedKeyEvent(
+            now,
+            now,
+            action,
+            keyCode,
+            0,
+            0,
+            0,
+            if (action == KeyEvent.ACTION_DOWN) unicode else 0,
+        )
+        return selectKeyRoot(activityRoot)?.dispatchKeyEvent(event) ?: false
+    }
+
+    @JvmStatic
+    fun resetKeyboard() {
+        val releases = pressedKeys.toList().asReversed()
+        val now = SystemClock.uptimeMillis()
+        for ((scanCode, pressed) in releases) {
+            pressedKeys.remove(scanCode)
+            val event = HostedKeyEvent(
+                pressed.downTime,
+                now,
+                KeyEvent.ACTION_UP,
+                pressed.keyCode,
+                0,
+                currentMetaState(),
+                scanCode,
+                0,
+                KeyEvent.FLAG_CANCELED,
+            )
+            pressed.root?.dispatchKeyEvent(event)
+        }
+    }
+
+    @JvmStatic
+    fun requestPointerCapture(root: ViewRootImpl, enabled: Boolean) {
+        if (enabled) {
+            requestedCaptureRoot = root
+            if (pointerCaptureActual && capturedRoot !== root) {
+                capturedRoot?.handleHostedPointerCaptureChanged(false)
+                capturedRoot = root
+                root.handleHostedPointerCaptureChanged(true)
+            }
+        } else if (requestedCaptureRoot === root) {
+            requestedCaptureRoot = null
+        }
+    }
+
+    @JvmStatic
+    fun wantsPointerCapture(): Boolean = requestedCaptureRoot != null
+
+    @JvmStatic
+    fun onPointerCaptureChanged(hasCapture: Boolean) {
+        pointerCaptureActual = hasCapture
+        val next = if (hasCapture) requestedCaptureRoot else null
+        if (capturedRoot === next) return
+        capturedRoot?.handleHostedPointerCaptureChanged(false)
+        capturedRoot = next
+        capturedRoot?.handleHostedPointerCaptureChanged(true)
+    }
+
+    @JvmStatic
+    fun onRootDestroyed(root: ViewRootImpl) {
+        if (requestedCaptureRoot === root) requestedCaptureRoot = null
+        if (capturedRoot === root) {
+            root.handleHostedPointerCaptureChanged(false)
+            capturedRoot = null
+        }
+        if (mouseGesture.target?.root === root) cancelMouse(root)
+        if (touchGesture.target?.root === root) cancelTouch(root)
+        if (hoverTarget?.root === root) {
+            dispatchHoverTo(
+                checkNotNull(hoverTarget),
+                MotionEvent.ACTION_HOVER_EXIT,
+                mouseGesture.lastX,
+                mouseGesture.lastY,
+            )
+            hoverTarget = null
+        }
+        pressedKeys.entries.removeAll { it.value.root === root }
+    }
+
+    @JvmStatic
+    fun dispatchCapturedPointer(dx: Float, dy: Float, buttonState: Int): Boolean {
+        val root = capturedRoot ?: return false
+        val now = SystemClock.uptimeMillis()
+        val event = createRelativeMouseEvent(
+            now, MotionEvent.ACTION_MOVE, dx, dy, buttonState, 0,
+        )
+        return try {
+            root.dispatchCapturedPointerEvent(event)
+        } finally {
+            event.recycle()
+        }
+    }
+
+    @JvmStatic
+    fun dispatchCapturedMouse(
+        action: Int,
+        buttonState: Int,
+        actionButton: Int,
+    ): Boolean {
+        val root = capturedRoot ?: return false
+        val event = createRelativeMouseEvent(
+            SystemClock.uptimeMillis(), action, 0f, 0f, buttonState, actionButton,
+        )
+        return try {
+            root.dispatchCapturedPointerEvent(event)
+        } finally {
+            event.recycle()
+        }
+    }
+
     @JvmStatic
     fun dispatchHover(
         activityRoot: ViewRootImpl?,
@@ -101,6 +462,8 @@ object HostedInputDispatcher {
         screenX: Float,
         screenY: Float,
     ): Int {
+        mouseGesture.lastX = screenX
+        mouseGesture.lastY = screenY
         if (action == MotionEvent.ACTION_HOVER_EXIT) {
             hoverTarget?.let {
                 dispatchHoverTo(it, MotionEvent.ACTION_HOVER_EXIT, screenX, screenY)
@@ -154,6 +517,13 @@ object HostedInputDispatcher {
 
     @JvmStatic
     fun reset() {
+        cancelMouse(null)
+        cancelTouch(null)
+        resetKeyboard()
+        capturedRoot?.handleHostedPointerCaptureChanged(false)
+        capturedRoot = null
+        pointerCaptureActual = false
+        requestedCaptureRoot = null
         mouseGesture.reset()
         touchGesture.reset()
         hoverTarget = null
@@ -279,6 +649,15 @@ object HostedInputDispatcher {
         ).target
     }
 
+    private fun selectKeyRoot(activityRoot: ViewRootImpl?): ViewRootImpl? {
+        for (entry in ArtzigWindowStack.entries().asReversed()) {
+            if ((entry.lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0) {
+                return entry.root
+            }
+        }
+        return activityRoot
+    }
+
     internal fun createMouseEvent(
         downTime: Long,
         eventTime: Long,
@@ -322,6 +701,89 @@ object HostedInputDispatcher {
         0f,
         0f,
     )
+
+    private fun createMultiTouchEvent(
+        downTime: Long,
+        eventTime: Long,
+        action: Int,
+        contacts: List<TouchContact>,
+    ): MotionEvent {
+        val properties = Array(contacts.size) { index ->
+            MotionEvent.PointerProperties().apply {
+                id = contacts[index].androidId
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+        }
+        val coordinates = Array(contacts.size) { index ->
+            val contact = contacts[index]
+            MotionEvent.PointerCoords().apply {
+                x = contact.x
+                y = contact.y
+                pressure = 1f
+                touchMajor = contact.major
+                touchMinor = contact.minor
+                orientation = contact.orientation
+            }
+        }
+        return MotionEvent.obtain(
+            downTime,
+            eventTime,
+            action,
+            contacts.size,
+            properties,
+            coordinates,
+            0,
+            0,
+            1f,
+            1f,
+            0,
+            0,
+            InputDevice.SOURCE_TOUCHSCREEN,
+            0,
+        )
+    }
+
+    private fun createRelativeMouseEvent(
+        eventTime: Long,
+        action: Int,
+        dx: Float,
+        dy: Float,
+        buttonState: Int,
+        actionButton: Int,
+    ): MotionEvent {
+        val properties = MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = MotionEvent.TOOL_TYPE_MOUSE
+        }
+        val coordinates = MotionEvent.PointerCoords().apply {
+            x = dx
+            y = dy
+            setAxisValue(MotionEvent.AXIS_RELATIVE_X, dx)
+            setAxisValue(MotionEvent.AXIS_RELATIVE_Y, dy)
+        }
+        return MotionEvent.obtain(
+            eventTime,
+            eventTime,
+            action,
+            1,
+            arrayOf(properties),
+            arrayOf(coordinates),
+            0,
+            buttonState,
+            1f,
+            1f,
+            0,
+            0,
+            InputDevice.SOURCE_MOUSE_RELATIVE,
+            0,
+        ).apply {
+            if (action == MotionEvent.ACTION_BUTTON_PRESS ||
+                action == MotionEvent.ACTION_BUTTON_RELEASE
+            ) {
+                setActionButton(actionButton)
+            }
+        }
+    }
 
     private fun createEvent(
         downTime: Long,
@@ -369,4 +831,150 @@ object HostedInputDispatcher {
             }
         }
     }
+
+    private class HostedKeyEvent(
+        downTime: Long,
+        eventTime: Long,
+        action: Int,
+        keyCode: Int,
+        repeatCount: Int,
+        metaState: Int,
+        scanCode: Int,
+        private val unicode: Int,
+        flags: Int = 0,
+    ) : KeyEvent(
+        downTime,
+        eventTime,
+        action,
+        keyCode,
+        repeatCount,
+        metaState,
+        KeyCharacterMap.VIRTUAL_KEYBOARD,
+        scanCode,
+        flags,
+        InputDevice.SOURCE_KEYBOARD,
+    ) {
+        override fun getUnicodeChar(): Int = unicode
+        override fun getUnicodeChar(metaState: Int): Int = unicode
+    }
+
+    private fun currentMetaState(): Int {
+        var meta = lockedMetaState
+        for (pressed in pressedKeys.values) {
+            meta = meta or when (pressed.keyCode) {
+                KeyEvent.KEYCODE_SHIFT_LEFT -> KeyEvent.META_SHIFT_LEFT_ON
+                KeyEvent.KEYCODE_SHIFT_RIGHT -> KeyEvent.META_SHIFT_RIGHT_ON
+                KeyEvent.KEYCODE_ALT_LEFT -> KeyEvent.META_ALT_LEFT_ON
+                KeyEvent.KEYCODE_ALT_RIGHT -> KeyEvent.META_ALT_RIGHT_ON
+                KeyEvent.KEYCODE_CTRL_LEFT -> KeyEvent.META_CTRL_LEFT_ON
+                KeyEvent.KEYCODE_CTRL_RIGHT -> KeyEvent.META_CTRL_RIGHT_ON
+                KeyEvent.KEYCODE_META_LEFT -> KeyEvent.META_META_LEFT_ON
+                KeyEvent.KEYCODE_META_RIGHT -> KeyEvent.META_META_RIGHT_ON
+                else -> 0
+            }
+        }
+        return KeyEvent.normalizeMetaState(meta)
+    }
+
+    private fun lockMetaStateForKey(keyCode: Int): Int = when (keyCode) {
+        KeyEvent.KEYCODE_CAPS_LOCK -> KeyEvent.META_CAPS_LOCK_ON
+        KeyEvent.KEYCODE_NUM_LOCK -> KeyEvent.META_NUM_LOCK_ON
+        KeyEvent.KEYCODE_SCROLL_LOCK -> KeyEvent.META_SCROLL_LOCK_ON
+        else -> 0
+    }
+
+    /**
+     * Linux evdev to Android keycode mapping from the vendored AOSP Generic.kl. The key layout
+     * parser normally runs under EventHub, which is unavailable without Android's input daemon.
+     */
+    internal fun androidKeyCodeForScanCode(scanCode: Int): Int = when (scanCode) {
+        1 -> KeyEvent.KEYCODE_ESCAPE
+        in 2..11 -> digitKeyCodes[scanCode - 2]
+        12 -> KeyEvent.KEYCODE_MINUS
+        13 -> KeyEvent.KEYCODE_EQUALS
+        14 -> KeyEvent.KEYCODE_DEL
+        15 -> KeyEvent.KEYCODE_TAB
+        in 16..25 -> qwertyKeyCodes[scanCode - 16]
+        26 -> KeyEvent.KEYCODE_LEFT_BRACKET
+        27 -> KeyEvent.KEYCODE_RIGHT_BRACKET
+        28 -> KeyEvent.KEYCODE_ENTER
+        29 -> KeyEvent.KEYCODE_CTRL_LEFT
+        in 30..38 -> homeRowKeyCodes[scanCode - 30]
+        39 -> KeyEvent.KEYCODE_SEMICOLON
+        40 -> KeyEvent.KEYCODE_APOSTROPHE
+        41 -> KeyEvent.KEYCODE_GRAVE
+        42 -> KeyEvent.KEYCODE_SHIFT_LEFT
+        43, 86 -> KeyEvent.KEYCODE_BACKSLASH
+        in 44..50 -> bottomRowKeyCodes[scanCode - 44]
+        51 -> KeyEvent.KEYCODE_COMMA
+        52 -> KeyEvent.KEYCODE_PERIOD
+        53 -> KeyEvent.KEYCODE_SLASH
+        54 -> KeyEvent.KEYCODE_SHIFT_RIGHT
+        55 -> KeyEvent.KEYCODE_NUMPAD_MULTIPLY
+        56 -> KeyEvent.KEYCODE_ALT_LEFT
+        57 -> KeyEvent.KEYCODE_SPACE
+        58 -> KeyEvent.KEYCODE_CAPS_LOCK
+        in 59..68 -> KeyEvent.KEYCODE_F1 + scanCode - 59
+        69 -> KeyEvent.KEYCODE_NUM_LOCK
+        70 -> KeyEvent.KEYCODE_SCROLL_LOCK
+        71 -> KeyEvent.KEYCODE_NUMPAD_7
+        72 -> KeyEvent.KEYCODE_NUMPAD_8
+        73 -> KeyEvent.KEYCODE_NUMPAD_9
+        74 -> KeyEvent.KEYCODE_NUMPAD_SUBTRACT
+        75 -> KeyEvent.KEYCODE_NUMPAD_4
+        76 -> KeyEvent.KEYCODE_NUMPAD_5
+        77 -> KeyEvent.KEYCODE_NUMPAD_6
+        78 -> KeyEvent.KEYCODE_NUMPAD_ADD
+        79 -> KeyEvent.KEYCODE_NUMPAD_1
+        80 -> KeyEvent.KEYCODE_NUMPAD_2
+        81 -> KeyEvent.KEYCODE_NUMPAD_3
+        82 -> KeyEvent.KEYCODE_NUMPAD_0
+        83 -> KeyEvent.KEYCODE_NUMPAD_DOT
+        87 -> KeyEvent.KEYCODE_F11
+        88 -> KeyEvent.KEYCODE_F12
+        95, 121 -> KeyEvent.KEYCODE_NUMPAD_COMMA
+        96 -> KeyEvent.KEYCODE_NUMPAD_ENTER
+        97 -> KeyEvent.KEYCODE_CTRL_RIGHT
+        98 -> KeyEvent.KEYCODE_NUMPAD_DIVIDE
+        99 -> KeyEvent.KEYCODE_SYSRQ
+        100 -> KeyEvent.KEYCODE_ALT_RIGHT
+        102 -> KeyEvent.KEYCODE_MOVE_HOME
+        103 -> KeyEvent.KEYCODE_DPAD_UP
+        104 -> KeyEvent.KEYCODE_PAGE_UP
+        105 -> KeyEvent.KEYCODE_DPAD_LEFT
+        106 -> KeyEvent.KEYCODE_DPAD_RIGHT
+        107 -> KeyEvent.KEYCODE_MOVE_END
+        108 -> KeyEvent.KEYCODE_DPAD_DOWN
+        109 -> KeyEvent.KEYCODE_PAGE_DOWN
+        110 -> KeyEvent.KEYCODE_INSERT
+        111 -> KeyEvent.KEYCODE_FORWARD_DEL
+        113 -> KeyEvent.KEYCODE_VOLUME_MUTE
+        114 -> KeyEvent.KEYCODE_VOLUME_DOWN
+        115 -> KeyEvent.KEYCODE_VOLUME_UP
+        116 -> KeyEvent.KEYCODE_POWER
+        117 -> KeyEvent.KEYCODE_NUMPAD_EQUALS
+        119 -> KeyEvent.KEYCODE_BREAK
+        120 -> KeyEvent.KEYCODE_APP_SWITCH
+        125 -> KeyEvent.KEYCODE_META_LEFT
+        126 -> KeyEvent.KEYCODE_META_RIGHT
+        127, 139 -> KeyEvent.KEYCODE_MENU
+        128, 166 -> KeyEvent.KEYCODE_MEDIA_STOP
+        158 -> KeyEvent.KEYCODE_BACK
+        159 -> KeyEvent.KEYCODE_FORWARD
+        163 -> KeyEvent.KEYCODE_MEDIA_NEXT
+        164 -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+        165 -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+        168 -> KeyEvent.KEYCODE_MEDIA_REWIND
+        172 -> KeyEvent.KEYCODE_HOME
+        200, 207 -> KeyEvent.KEYCODE_MEDIA_PLAY
+        201 -> KeyEvent.KEYCODE_MEDIA_PAUSE
+        208 -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+        else -> KeyEvent.KEYCODE_UNKNOWN
+    }
+
+    private const val TOUCH_DOWN = 0
+    private const val TOUCH_UP = 1
+    private const val TOUCH_MOVE = 2
+    private const val TOUCH_UPDATE = 3
+    private const val MAX_TOUCH_CONTACTS = 10
 }
