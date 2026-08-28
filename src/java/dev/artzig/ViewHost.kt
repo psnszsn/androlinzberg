@@ -206,7 +206,8 @@ public final class ViewHost {
                 .render(sRoot.doTraversal(), bufferWidth, bufferHeight)
         }
 
-        @JvmStatic private fun resize(
+        @JvmStatic
+        private fun resize(
             width: Int,
             height: Int,
             scale120: Int,
@@ -224,7 +225,7 @@ public final class ViewHost {
             dm.heightPixels = height.also { dm.noncompatHeightPixels = it }
             dm.densityDpi = densityDpi.also { dm.noncompatDensityDpi = it }
             dm.density = density.also { dm.noncompatDensity = it }
-            dm.scaledDensity = density.also { dm.noncompatScaledDensity = it }
+            dm.noncompatScaledDensity = density
             dm.xdpi = densityDpi.toFloat().also { dm.noncompatXdpi = it }
             dm.ydpi = densityDpi.toFloat().also { dm.noncompatYdpi = it }
             val config: android.content.res.Configuration =
@@ -239,7 +240,7 @@ public final class ViewHost {
                 } else {
                     android.content.res.Configuration.ORIENTATION_PORTRAIT
                 }
-            res.updateConfiguration(config, dm)
+            android.content.res.HostedResources.update(res, config, dm)
             sRoot.setSize(width, height)
             sActivity.onConfigurationChanged(config)
         }

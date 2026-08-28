@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.res.ApkAssets;
 import android.content.res.AssetManager;
 import android.content.res.Configuration;
+import android.content.res.HostedResources;
 import android.content.res.Resources;
 import android.util.DisplayMetrics;
 public class ContextImpl extends Context {
@@ -32,7 +33,7 @@ public class ContextImpl extends Context {
         dm.heightPixels = dm.noncompatHeightPixels = height;
         dm.densityDpi = dm.noncompatDensityDpi = densityDpi;
         dm.density = dm.noncompatDensity = density;
-        dm.scaledDensity = dm.noncompatScaledDensity = dm.density;
+        dm.noncompatScaledDensity = dm.density;
         dm.xdpi = dm.noncompatXdpi = densityDpi;
         dm.ydpi = dm.noncompatYdpi = densityDpi;
         Configuration config = new Configuration();
@@ -43,7 +44,7 @@ public class ContextImpl extends Context {
         config.smallestScreenWidthDp = Math.min(config.screenWidthDp, config.screenHeightDp);
         config.orientation = width >= height
                 ? Configuration.ORIENTATION_LANDSCAPE : Configuration.ORIENTATION_PORTRAIT;
-        Resources res = new Resources(am, dm, config);
+        Resources res = HostedResources.create(am, dm, config, null);
         return new ContextImpl(res, "android", themeResId);
     }
     @Override public Resources getResources() { return mResources; }

@@ -31,7 +31,7 @@ public final class ResSmoke {
             dm.setToDefaults()
             val config: Configuration = Configuration()
             config.setToDefaults()
-            val res: Resources = Resources(am, dm, config)
+            val res: Resources = android.content.res.HostedResources.create(am, dm, config)
 
             System.out.println("4: getText(android.R.string.ok) = " + res.getText(android.R.string.ok))
             System.out.println("5: getText(android.R.string.cancel) = " + res.getText(android.R.string.cancel))
@@ -50,6 +50,18 @@ public final class ResSmoke {
             System.out.println("9: drawable (ColorDrawable)")
             val d: Drawable = res.getDrawable(android.R.drawable.screen_background_dark, theme)
             System.out.println("10: drawable = " + d)
+
+            System.out.println("11: hosted configuration update")
+            val updatedMetrics: DisplayMetrics = DisplayMetrics()
+            updatedMetrics.setToDefaults()
+            updatedMetrics.densityDpi = 320.also { updatedMetrics.noncompatDensityDpi = it }
+            updatedMetrics.density = 2f.also { updatedMetrics.noncompatDensity = it }
+            updatedMetrics.noncompatScaledDensity = updatedMetrics.density
+            val updatedConfig: Configuration = Configuration(config)
+            updatedConfig.densityDpi = updatedMetrics.densityDpi
+            android.content.res.HostedResources.update(res, updatedConfig, updatedMetrics)
+            check(res.getConfiguration().densityDpi == 320)
+            check(res.getDisplayMetrics().density == 2f)
 
             System.out.println("done")
         }

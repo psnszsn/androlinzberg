@@ -276,10 +276,11 @@ public final class ApkHost {
             dm.heightPixels = windowConfig.displayHeight.also { dm.noncompatHeightPixels = it }
             dm.densityDpi = windowConfig.densityDpi.also { dm.noncompatDensityDpi = it }
             dm.density = windowConfig.density.also { dm.noncompatDensity = it }
-            dm.scaledDensity = dm.density.also { dm.noncompatScaledDensity = it }
+            dm.noncompatScaledDensity = dm.density
             dm.xdpi = windowConfig.densityDpi.toFloat().also { dm.noncompatXdpi = it }
             dm.ydpi = windowConfig.densityDpi.toFloat().also { dm.noncompatYdpi = it }
-            val res: Resources = Resources(am, dm, windowConfig.configuration)
+            val res: Resources =
+                android.content.res.HostedResources.create(am, dm, windowConfig.configuration)
             return ContextImpl(res, packageName, themeResId)
         }
 
@@ -716,7 +717,8 @@ public final class ApkHost {
         }
 
 /** Window resized: update metrics/config and relayout. */
-        @JvmStatic private fun resize(
+        @JvmStatic
+        private fun resize(
             width: Int,
             height: Int,
             scale120: Int,
@@ -747,11 +749,11 @@ public final class ApkHost {
                 dm.heightPixels = windowConfig.displayHeight.also { dm.noncompatHeightPixels = it }
                 dm.densityDpi = windowConfig.densityDpi.also { dm.noncompatDensityDpi = it }
                 dm.density = windowConfig.density.also { dm.noncompatDensity = it }
-                dm.scaledDensity = windowConfig.density.also { dm.noncompatScaledDensity = it }
+                dm.noncompatScaledDensity = windowConfig.density
                 dm.xdpi = windowConfig.densityDpi.toFloat().also { dm.noncompatXdpi = it }
                 dm.ydpi = windowConfig.densityDpi.toFloat().also { dm.noncompatYdpi = it }
                 val config: Configuration = windowConfig.configuration
-                res.updateConfiguration(config, dm)
+                android.content.res.HostedResources.update(res, config, dm)
                 android.app.ActivityThread.applyConfigurationInProcess(config, windowConfig.changes, width, height)
             } catch (t: Throwable) {
                 Log.w(TAG, "resize failed", t)
