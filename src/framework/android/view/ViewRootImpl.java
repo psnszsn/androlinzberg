@@ -475,6 +475,15 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     }
     @Override public boolean isLayoutRequested() { return mLayoutRequested; }
     @Override public ViewParent getParent() { return null; }
+    /** Follows AOSP ViewRootImpl.onDescendantInvalidated(). Hardware-accelerated
+     * ViewGroup invalidation reaches the root through this callback rather
+     * than the deprecated invalidateChild() path. */
+    @Override public void onDescendantInvalidated(View child, View descendant) {
+        if ((descendant.mPrivateFlags & View.PFLAG_DRAW_ANIMATION) != 0) {
+            mIsAnimating = true;
+        }
+        invalidate();
+    }
     @Override public void requestTransparentRegion(View child) {}
     @Override public ViewParent invalidateChildInParent(int[] location, Rect dirty) {
         scheduleTraversals();

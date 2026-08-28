@@ -114,6 +114,10 @@ class ApkRule(
     fun assertFullscreenRemains(expected: Boolean, durationMillis: Long = 1_500) =
         session.assertFullscreenRemains(expected, durationMillis)
 
+    fun waitForPresentedFrames(count: Int) = session.waitForPresentedFrames(count)
+
+    fun screenshot(fileName: String) = session.screenshot(fileName)
+
     fun expectIssue(
         kind: String,
         owner: String,

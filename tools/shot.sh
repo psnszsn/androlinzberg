@@ -24,6 +24,9 @@ fi
 mkdir -p "$(dirname "$OUT")"
 export WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1
 export WLR_RENDERER=${WLR_RENDERER:-pixman}
+# Integration sessions use wlr-output-management to make LaunchSize the
+# compositor's real output size rather than an ignored xdg_toplevel hint.
+export AZK_HEADLESS_OUTPUT=${AZK_HEADLESS_OUTPUT:-HEADLESS-1}
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 unset DISPLAY
 WARMUP=${SHOT_WARMUP:-3}

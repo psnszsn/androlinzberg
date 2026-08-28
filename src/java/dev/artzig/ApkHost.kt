@@ -27,6 +27,11 @@ public final class ApkHost {
 
     companion object {
         private val TAG: String = "ApkHost"
+        /** Process binding and visible-activity state are independent. An
+         * Activity can be absent while the Application and Services remain
+         * alive; that must never cause ActivityThread.bindApplication to run
+         * again on the next frame. */
+        private var sProcessInitialized: Boolean = false
         private lateinit var sActivity: Activity
         private var sActivityActive: Boolean = false
         private lateinit var sContext: ContextImpl
@@ -423,6 +428,7 @@ public final class ApkHost {
             }
 
             android.app.ActivityThread.bindApplicationInProcess(sContext, cl, appClass, providers)
+            sProcessInitialized = true
 
             // --- MainActivity
             Log.i(TAG, "starting " + mainActivity)
@@ -447,6 +453,9 @@ public final class ApkHost {
                     public override fun clearActivityWindows() {
                         sActivityActive = false
                         android.view.ArtzigWindowStack.clear()
+                        if (sRootActive) sRoot.destroy()
+                        sRootActive = false
+                        android.view.ArtzigAccessibilityBridge.setActivityRoot(null)
                     }
 
                     public override fun resizeActivityRoot(
@@ -544,6 +553,7 @@ public final class ApkHost {
                 Log.w(TAG, "application shutdown failed", t)
             }
             sActivityActive = false
+            sProcessInitialized = false
             android.view.HostedInputDispatcher.reset()
             sAppFullscreenRequested = false
             sHostFullscreenSuppressed = false
@@ -602,7 +612,7 @@ public final class ApkHost {
         ) {
             val width: Int = bufferWidth
             val height: Int = bufferHeight
-            if (!sActivityActive) init(width, height, scale120)
+            if (!sProcessInitialized) init(width, height, scale120)
             val desiredOrientation: Int =
                 if (wantsLandscapeConfiguration(width, height)) {
                     Configuration.ORIENTATION_LANDSCAPE
@@ -632,11 +642,24 @@ public final class ApkHost {
             // The traversal barrier is now released. Synchronous View.post callbacks observe
             // geometry from this frame and may schedule another traversal for the next frame.
             drainLooper()
-            val base: RenderNode? = sRoot.`getRenderNode$artzig`()
+            val base: RenderNode? = if (sRootActive) sRoot.`getRenderNode$artzig`() else null
             if (wins.isEmpty()) {
+                if (base == null) {
+                    sComposite.setPosition(0, 0, width, height)
+                    val emptyCanvas: RecordingCanvas = sComposite.beginRecording(width, height)
+                    try {
+                        emptyCanvas.drawColor(0xff000000.toInt())
+                    } finally {
+                        sComposite.endRecording()
+                    }
+                    android.view.ThreadedRenderer
+                        .getInstance()
+                        .render(sComposite, width, height)
+                    return
+                }
                 android.view.ThreadedRenderer
                     .getInstance()
-                    .render(checkNotNull(base), width, height)
+                    .render(base, width, height)
                 return
             }
             sComposite.setPosition(0, 0, width, height)

@@ -250,14 +250,17 @@ pub const Window = struct {
     cursor_shape: u32 = 0, // last applied wp_cursor_shape_device_v1.shape (0 = none)
 
     surface: *wl.Surface = undefined,
-    viewport: ?*wp.Viewport = null,
+    viewport: *wp.Viewport = undefined,
     fractional_scale: ?*wp.FractionalScaleV1 = null,
     xdg_surface: *xdg.Surface = undefined,
     toplevel: *xdg.Toplevel = undefined,
     base_buffer: *wl.Buffer = undefined,
+    opaque_region: *wl.Region = undefined,
+    opaque_width: i32 = 0,
+    opaque_height: i32 = 0,
     ui_surface: *wl.Surface = undefined,
     ui_subsurface: *wl.Subsurface = undefined,
-    ui_viewport: ?*wp.Viewport = null,
+    ui_viewport: *wp.Viewport = undefined,
 
     width: i32,
     height: i32,
@@ -266,6 +269,8 @@ pub const Window = struct {
     fullscreen: FullscreenState = .{},
     configured: bool = false,
     base_attached: bool = false,
+    ui_initialized: bool = false,
+    presentation_dirty: bool = false,
 
     pointer_x: f64 = 0,
     pointer_y: f64 = 0,
@@ -295,20 +300,25 @@ pub const Window = struct {
         self.registry = try self.display.getRegistry();
         self.registry.setListener(*Window, registryListener, self);
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        if (self.compositor == null or self.subcompositor == null or self.shm == null or
-            self.wm_base == null)
-            return error.MissingGlobals;
+        self.requireGlobals();
 
         self.surface = try self.compositor.?.createSurface();
+        // The xdg parent is only the opaque application background. Android
+        // input is delivered through the UI child, so exclude the parent from
+        // compositor hit testing.
+        const empty_input_region = try self.compositor.?.createRegion();
+        self.surface.setInputRegion(empty_input_region);
+        empty_input_region.destroy();
+        self.opaque_region = try self.compositor.?.createRegion();
         // fractional-scale-v1 deliberately leaves wl_surface.buffer_scale at
         // 1. A viewport maps the higher-resolution buffer back to the logical
         // surface size used by xdg-shell and input events.
-        if (self.viewporter != null and self.fractional_scale_manager != null) {
-            self.viewport = try self.viewporter.?.getViewport(self.surface);
+        self.viewport = try self.viewporter.?.getViewport(self.surface);
+        if (self.fractional_scale_manager != null) {
             self.fractional_scale = try self.fractional_scale_manager.?.getFractionalScale(self.surface);
             self.fractional_scale.?.setListener(*Window, fractionalScaleListener, self);
-            self.updateViewport();
         }
+        self.updateViewport();
         self.xdg_surface = try self.wm_base.?.getXdgSurface(self.surface);
         self.toplevel = try self.xdg_surface.getToplevel();
         self.xdg_surface.setListener(*Window, xdgSurfaceListener, self);
@@ -323,6 +333,7 @@ pub const Window = struct {
         while (!self.configured) {
             if (self.display.dispatch() != .SUCCESS) return error.DispatchFailed;
         }
+        self.updateWindowGeometry();
 
         // Host adaptation of AOSP SurfaceView.performSurfaceTransaction():
         // SurfaceFlinger/SurfaceControl are unavailable here, so represent
@@ -336,14 +347,38 @@ pub const Window = struct {
         self.surface.attach(self.base_buffer, 0, 0);
         self.surface.damageBuffer(0, 0, 1, 1);
         self.base_attached = true;
+        self.updateOpaqueRegion();
+        self.surface.commit();
+
+        // Some compositors refine the configured logical size only after a
+        // client attaches its first buffer. A roundtrip observes that optional
+        // second configure before the EGL child is sized.
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+
         self.ui_surface = try self.compositor.?.createSurface();
         self.ui_subsurface = try self.subcompositor.?.getSubsurface(self.ui_surface, self.surface);
-        self.ui_subsurface.setDesync();
         self.ui_subsurface.placeAbove(self.surface);
-        self.ui_viewport = if (self.viewporter) |v| try v.getViewport(self.ui_surface) else null;
+        self.ui_viewport = try self.viewporter.?.getViewport(self.ui_surface);
+        self.ui_initialized = true;
         self.updateViewport();
         self.surface.commit();
+        self.presentation_dirty = false;
         return self;
+    }
+
+    fn requireGlobals(self: *const Window) void {
+        if (self.compositor == null)
+            std.debug.panic("required Wayland protocol wl_compositor is unavailable; Android UI presentation cannot create surfaces", .{});
+        if (self.wm_base == null)
+            std.debug.panic("required Wayland protocol xdg_wm_base is unavailable; Android applications require an xdg_toplevel", .{});
+        if (self.subcompositor == null)
+            std.debug.panic("required Wayland protocol wl_subcompositor is unavailable; Android SurfaceView layers require synchronized subsurfaces", .{});
+        if (self.viewporter == null)
+            std.debug.panic("required Wayland protocol wp_viewporter is unavailable; Android buffers require logical-size and crop mapping", .{});
+        if (self.shm == null)
+            std.debug.panic("required Wayland protocol wl_shm is unavailable; the opaque application-window background cannot be created", .{});
+        if (self.dmabuf == null)
+            std.debug.panic("required Wayland protocol zwp_linux_dmabuf_v1 is unavailable; decoded Android video frames cannot be presented", .{});
     }
 
     fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Window) void {
@@ -471,7 +506,7 @@ pub const Window = struct {
                 self.configured = true;
                 // Apply parent viewport and sibling stacking changes only
                 // after acknowledging the configure that supplied them.
-                if (self.base_attached) self.surface.commit();
+                if (self.base_attached) self.presentation_dirty = true;
             },
         }
     }
@@ -482,7 +517,7 @@ pub const Window = struct {
                 if (preferred.scale == 0 or preferred.scale == self.scale_120) return;
                 self.scale_120 = preferred.scale;
                 self.updateViewport();
-                self.surface.commit();
+                self.presentation_dirty = true;
                 // A scale transition does not necessarily cause an xdg-shell
                 // size configure. Notify EGL so it rebuilds at the new
                 // physical pixel size.
@@ -509,6 +544,8 @@ pub const Window = struct {
                         self.width = c.width;
                         self.height = c.height;
                         self.updateViewport();
+                        self.updateWindowGeometry();
+                        self.updateOpaqueRegion();
                         self.push(.{ .configure = .{ .width = c.width, .height = c.height } });
                     }
                 }
@@ -671,16 +708,30 @@ pub const Window = struct {
     }
 
     fn updateViewport(self: *Window) void {
-        if (self.viewport) |viewport| {
-            if (self.width > 0 and self.height > 0) {
-                viewport.setDestination(self.width, self.height);
-            }
+        if (self.width > 0 and self.height > 0) {
+            self.viewport.setDestination(self.width, self.height);
+            if (self.ui_initialized) self.ui_viewport.setDestination(self.width, self.height);
         }
-        if (self.ui_viewport) |viewport| {
-            if (self.width > 0 and self.height > 0) {
-                viewport.setDestination(self.width, self.height);
-            }
+    }
+
+    fn updateWindowGeometry(self: *Window) void {
+        if (self.width <= 0 or self.height <= 0) return;
+        self.xdg_surface.setWindowGeometry(0, 0, self.width, self.height);
+    }
+
+    fn updateOpaqueRegion(self: *Window) void {
+        if (self.opaque_width > 0 and self.opaque_height > 0) {
+            self.opaque_region.subtract(0, 0, self.opaque_width, self.opaque_height);
         }
+        if (self.width > 0 and self.height > 0) {
+            self.opaque_region.add(0, 0, self.width, self.height);
+            self.opaque_width = self.width;
+            self.opaque_height = self.height;
+        } else {
+            self.opaque_width = 0;
+            self.opaque_height = 0;
+        }
+        self.surface.setOpaqueRegion(self.opaque_region);
     }
 
     fn createBaseBuffer(self: *Window) !*wl.Buffer {
@@ -702,13 +753,33 @@ pub const Window = struct {
         return self.ui_surface;
     }
 
-    /// Register a callback to pace the next commit. The direct EGL presenter
-    /// calls this before RenderThread's eglSwapBuffers commits the surface.
+    /// Register a callback to pace the next application-window transaction.
+    /// The parent commit always carries this callback, including when HWUI
+    /// drops a child frame before producing a buffer.
     pub fn requestFrame(self: *Window) !void {
         if (self.frame_cb == null) {
-            self.frame_cb = try self.ui_surface.frame();
+            self.frame_cb = try self.surface.frame();
             self.frame_cb.?.setListener(*Window, frameListener, self);
         }
+    }
+
+    /// Publish every synchronized Android child update as one Wayland
+    /// application-window transaction. Child surface commits remain cached
+    /// until this parent commit.
+    pub fn present(self: *Window) !void {
+        if (!self.presentation_dirty) return;
+        self.presentation_dirty = false;
+        self.surface.commit();
+        switch (self.display.flush()) {
+            .SUCCESS, .AGAIN => {},
+            else => return error.FlushFailed,
+        }
+    }
+
+    /// Called after EGL has committed a new buffer to the synchronized UI
+    /// child. No Wayland object is allocated on this frame path.
+    pub fn uiFrameReady(self: *Window) void {
+        self.presentation_dirty = true;
     }
 
     /// Set the pointer cursor via cursor-shape-v1 (shape = wp_cursor_shape_device_v1.shape
@@ -735,8 +806,7 @@ pub const Window = struct {
         } else {
             self.toplevel.unsetFullscreen();
         }
-        self.surface.commit();
-        _ = self.display.flush();
+        self.presentation_dirty = true;
     }
 
     pub fn toggleFullscreen(self: *Window) void {
@@ -853,13 +923,61 @@ pub const Window = struct {
         self.width = w;
         self.height = h;
         self.updateViewport();
+        self.updateWindowGeometry();
+        self.updateOpaqueRegion();
+        self.presentation_dirty = true;
     }
 
-    /// Block until at least one event arrives; drain into `out`.
-    pub fn waitEvents(self: *Window) ![]const Event {
+    /// Block until a Wayland event or an optional application wakeup arrives.
+    /// An empty result means the wakeup fd is readable. The prepare/read
+    /// sequence follows libwayland's required ordering when polling another fd.
+    pub fn waitEvents(self: *Window, wakeup_fd: ?std.posix.fd_t) ![]const Event {
         self.events.clearRetainingCapacity();
         while (self.events.items.len == 0) {
-            if (self.display.dispatch() != .SUCCESS) return error.DispatchFailed;
+            if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            if (self.events.items.len != 0) break;
+
+            while (!self.display.prepareRead()) {
+                if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+                if (self.events.items.len != 0) return self.events.items;
+            }
+            var wait_for_write = false;
+            while (true) {
+                switch (self.display.flush()) {
+                    .SUCCESS => break,
+                    .AGAIN => {
+                        wait_for_write = true;
+                        break;
+                    },
+                    .INTR => continue,
+                    else => {
+                        self.display.cancelRead();
+                        return error.FlushFailed;
+                    },
+                }
+            }
+
+            var poll_fds = [_]std.posix.pollfd{
+                .{
+                    .fd = self.display.getFd(),
+                    .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP |
+                        @as(i16, if (wait_for_write) std.posix.POLL.OUT else 0),
+                    .revents = 0,
+                },
+                .{ .fd = wakeup_fd orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
+            };
+            _ = try std.posix.poll(&poll_fds, -1);
+
+            const wayland_readable = poll_fds[0].revents &
+                (std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP) != 0;
+            const wakeup_ready = wakeup_fd != null and poll_fds[1].revents != 0;
+            if (wayland_readable) {
+                if (self.display.readEvents() != .SUCCESS) return error.DispatchFailed;
+                if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            } else {
+                self.display.cancelRead();
+            }
+            if (wakeup_ready) break;
         }
         return self.events.items;
     }
@@ -897,12 +1015,13 @@ pub const Window = struct {
         if (self.keyboard) |keyboard| keyboard.release();
         if (self.seat) |seat| seat.release();
         // Tear down the child surface tree before destroying its xdg parent.
-        if (self.ui_viewport) |viewport| viewport.destroy();
+        self.ui_viewport.destroy();
         self.ui_subsurface.destroy();
         self.ui_surface.destroy();
         self.base_buffer.destroy();
+        self.opaque_region.destroy();
         if (self.fractional_scale) |fractional_scale| fractional_scale.destroy();
-        if (self.viewport) |viewport| viewport.destroy();
+        self.viewport.destroy();
         self.toplevel.destroy();
         self.xdg_surface.destroy();
         self.surface.destroy();
@@ -935,7 +1054,7 @@ pub const Window = struct {
         win: *Window,
         surface: *wl.Surface,
         subsurface: *wl.Subsurface,
-        viewport: ?*wp.Viewport,
+        viewport: *wp.Viewport,
         src_w: i32 = 0,
         src_h: i32 = 0,
         dst_x: i32 = 0,
@@ -949,7 +1068,6 @@ pub const Window = struct {
         full_w: i32 = 0,
         full_h: i32 = 0,
         geometry_visible: bool = false,
-        visible: bool = false,
         dmabuf_buffers: std.ArrayList(*DmabufBuffer) = .empty,
 
         fn dmabufBufferListener(_: *wl.Buffer, event: wl.Buffer.Event, state: *DmabufBuffer) void {
@@ -969,7 +1087,7 @@ pub const Window = struct {
         }
 
         fn configureViewport(self: *VideoLayer) void {
-            const vp = self.viewport orelse return;
+            const vp = self.viewport;
             if (!self.geometry_visible) {
                 if (self.src_w > 0 and self.src_h > 0) {
                     vp.setSource(
@@ -1027,8 +1145,7 @@ pub const Window = struct {
             );
             self.configureViewport();
             self.surface.commit();
-            self.win.surface.commit();
-            _ = self.win.display.flush();
+            self.win.presentation_dirty = true;
         }
 
         fn damageDestination(self: *VideoLayer, fallback_w: i32, fallback_h: i32) void {
@@ -1076,11 +1193,7 @@ pub const Window = struct {
             self.configureViewport();
             self.damageDestination(frame.width, frame.height);
             self.surface.commit();
-            if (!self.visible) {
-                self.visible = true;
-                self.win.surface.commit();
-            }
-            _ = self.win.display.flush();
+            self.win.presentation_dirty = true;
         }
 
         pub fn destroy(self: *VideoLayer) void {
@@ -1090,9 +1203,10 @@ pub const Window = struct {
                 self.win.gpa.destroy(state);
             }
             self.dmabuf_buffers.deinit(self.win.gpa);
-            if (self.viewport) |vp| vp.destroy();
+            self.viewport.destroy();
             self.subsurface.destroy();
             self.surface.destroy();
+            self.win.presentation_dirty = true;
             self.win.gpa.destroy(self);
         }
     };
@@ -1101,15 +1215,19 @@ pub const Window = struct {
         const sub = self.subcompositor orelse return error.NoSubcompositor;
         const vsurf = try self.compositor.?.createSurface();
         const subsurf = try sub.getSubsurface(vsurf, self.surface);
-        subsurf.setDesync();
+        // State the complete parent < video < UI ordering explicitly. This is
+        // the host equivalent of SurfaceView's SurfaceControl relative-layer
+        // transaction. With only place_below(UI), Hyprland rendered a newly
+        // synchronized video child behind the opaque parent after subsequent
+        // invalidation-driven UI commits.
         subsurf.placeAbove(self.surface);
         self.ui_subsurface.placeAbove(vsurf);
-        self.surface.commit();
+        self.presentation_dirty = true;
         // input falls through to the main surface
         const region = try self.compositor.?.createRegion();
         vsurf.setInputRegion(region);
         region.destroy();
-        const vp: ?*wp.Viewport = if (self.viewporter) |v| try v.getViewport(vsurf) else null;
+        const vp = try self.viewporter.?.getViewport(vsurf);
         const layer = try self.gpa.create(VideoLayer);
         layer.* = .{ .win = self, .surface = vsurf, .subsurface = subsurf, .viewport = vp };
         return layer;

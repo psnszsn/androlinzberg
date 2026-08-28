@@ -37,7 +37,7 @@
         default = pkgs.mkShell {
           packages = (with pkgs; [ openjdk21_headless python3 zlib libpng libcap icu pkg-config e2fsprogs unzip libglvnd elfutils libunwind libbsd libmd
             # app subproject: Skia + Wayland platform
-            wayland wayland-protocols wayland-scanner libxkbcommon cage aapt grim freetype harfbuzz fontconfig expat libjpeg_turbo libwebp gn harfbuzzFull vulkan-headers openssl sqlite pipewire
+            wayland wayland-protocols wayland-scanner libxkbcommon cage aapt grim wlr-randr freetype harfbuzz fontconfig expat libjpeg_turbo libwebp gn harfbuzzFull vulkan-headers openssl sqlite pipewire
             # MediaCodec video: system FFmpeg provides VA-API/DRM hwcontexts;
             # libva exports decoded surfaces and libdrm defines DMA-BUF formats.
             ffmpeg-full libva libdrm libgbm ]); # zig: use the one on PATH (0.17-dev per build.zig.zon)

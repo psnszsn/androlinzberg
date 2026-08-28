@@ -73,7 +73,15 @@ public final class ThreadedRenderer extends HardwareRenderer {
         }
         setContentRoot(content);
         forceDrawNextFrame();
-        int result = createRenderRequest().setVsyncTime(System.nanoTime()).syncAndDraw();
+        // The Wayland host publishes synchronized child surfaces with a parent
+        // commit immediately after this method returns. HardwareRenderer's
+        // default sync may release the UI thread before RenderThread submits
+        // the EGL buffer, so use its AOSP wait-for-present contract to make
+        // that parent/child ordering deterministic.
+        int result = createRenderRequest()
+                .setVsyncTime(System.nanoTime())
+                .setWaitForPresent(true)
+                .syncAndDraw();
         if ((result & SYNC_LOST_SURFACE_REWARD_IF_FOUND) != 0) {
             throw new IllegalStateException("HWUI lost the host render surface: " + result);
         }

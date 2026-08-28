@@ -617,7 +617,8 @@ pub const Server = struct {
             .frame_presented => {
                 const wait = requestWaitValue(call, pending.method) orelse return false;
                 const after = valueField(wait, "after") orelse return false;
-                return self.presented_frame_seq > @as(u64, @intCast(intField(after, "presented_frame_seq") orelse 0));
+                const first = @as(u64, @intCast(intField(after, "presented_frame_seq") orelse 0));
+                return self.presented_frame_seq >= first + pending.stable_required;
             },
             .exists, .absent => {
                 const parameters = valueField(call, "parameters") orelse return false;

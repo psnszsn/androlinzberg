@@ -3,6 +3,7 @@
 //! only). All cross-thread state goes through per-layer mailboxes; frames are
 //! latest-wins.
 const std = @import("std");
+const linux = std.os.linux;
 const wayland = @import("wayland.zig");
 const codec = @import("azk_codec");
 const art = @import("art");
@@ -40,6 +41,25 @@ var g_win: ?*wayland.Window = null;
 var g_android_physical_pixels = false;
 var g_dmabuf_rejection_logged = false;
 var g_allow_yuv_dmabuf = false;
+var g_wakeup_fd: std.posix.fd_t = -1;
+
+fn signalMainThread() void {
+    if (g_wakeup_fd < 0) return;
+    var value: u64 = 1;
+    const bytes = std.mem.asBytes(&value);
+    _ = std.c.write(g_wakeup_fd, bytes.ptr, bytes.len);
+}
+
+fn consumeWakeup() void {
+    if (g_wakeup_fd < 0) return;
+    var value: u64 = 0;
+    const bytes = std.mem.asBytes(&value);
+    _ = std.c.read(g_wakeup_fd, bytes.ptr, bytes.len);
+}
+
+pub fn wakeupFd() ?std.posix.fd_t {
+    return if (g_wakeup_fd >= 0) g_wakeup_fd else null;
+}
 
 fn record(id: jni.jint) ?*Record {
     if (id < 1 or id > g_records.items.len) return null;
@@ -75,24 +95,30 @@ fn nativeSetGeometry(
     visible_h: jni.jint,
 ) callconv(.c) void {
     g_mutex.lock();
-    defer g_mutex.unlock();
-    const r = record(id) orelse return;
+    const r = record(id) orelse {
+        g_mutex.unlock();
+        return;
+    };
     r.geometry = .{ x, y, w, h, visible_x, visible_y, visible_w, visible_h };
     r.geometry_dirty = true;
+    g_mutex.unlock();
+    signalMainThread();
 }
 
 fn nativePushHardware(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint, handle: jni.jlong) callconv(.c) void {
     if (handle == 0) return;
     const frame: *codec.HardwareFrame = @ptrFromInt(@as(usize, @intCast(handle)));
     g_mutex.lock();
-    defer g_mutex.unlock();
     const r = record(id) orelse {
+        g_mutex.unlock();
         codec.releaseHardwareFrame(frame);
         return;
     };
     if (r.hardware_frame) |old| codec.releaseHardwareFrame(old);
     r.hardware_frame = frame;
     r.hardware_fresh = true;
+    g_mutex.unlock();
+    signalMainThread();
 }
 
 fn nativeReleaseHardware(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c) void {
@@ -103,9 +129,13 @@ fn nativeReleaseHardware(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) ca
 
 fn nativeDestroy(_: [*c]jni.JNIEnv, _: jni.jclass, id: jni.jint) callconv(.c) void {
     g_mutex.lock();
-    defer g_mutex.unlock();
-    const r = record(id) orelse return;
+    const r = record(id) orelse {
+        g_mutex.unlock();
+        return;
+    };
     r.destroyed = true;
+    g_mutex.unlock();
+    signalMainThread();
 }
 
 pub fn register(gpa: std.mem.Allocator, io: std.Io, win: *wayland.Window, env: [*c]jni.JNIEnv, android_physical_pixels: bool) !void {
@@ -113,6 +143,12 @@ pub fn register(gpa: std.mem.Allocator, io: std.Io, win: *wayland.Window, env: [
     g_io = io;
     g_win = win;
     g_android_physical_pixels = android_physical_pixels;
+    g_wakeup_fd = std.c.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
+    if (g_wakeup_fd < 0) return error.EventFdFailed;
+    errdefer {
+        _ = std.c.close(g_wakeup_fd);
+        g_wakeup_fd = -1;
+    }
     g_allow_yuv_dmabuf = if (getenv("ARTZIG_VIDEO_YUV_DMABUF")) |value|
         std.mem.eql(u8, std.mem.span(value), "1")
     else
@@ -189,6 +225,7 @@ fn retireRecord(r: *Record) void {
 /// Main-thread tick: apply pending rects, frames, and destroys.
 pub fn process() void {
     const win = g_win orelse return;
+    consumeWakeup();
     g_mutex.lock();
     defer g_mutex.unlock();
     for (g_records.items) |r| {
@@ -292,4 +329,8 @@ pub fn deinit() void {
     }
     g_records.deinit(g_gpa);
     g_records = .empty;
+    if (g_wakeup_fd >= 0) {
+        _ = std.c.close(g_wakeup_fd);
+        g_wakeup_fd = -1;
+    }
 }

@@ -146,7 +146,9 @@ class TestControlClient(
         JsonObject().apply {
             addProperty("kind", kind.wireName)
             addProperty("timeout_ms", timeoutMillis.coerceAtLeast(1))
-            if (kind == WaitKind.IDLE) addProperty("stable_frames", stableFrames)
+            if (kind == WaitKind.IDLE || kind == WaitKind.FRAME_PRESENTED) {
+                addProperty("stable_frames", stableFrames)
+            }
             after?.let { add("after", it.toJson()) }
         }
 

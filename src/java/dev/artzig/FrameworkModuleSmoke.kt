@@ -852,6 +852,16 @@ internal object FrameworkModuleSmoke {
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
                 "configuration relaunch lost the activity's requested orientation"
             }
+
+            events.clear()
+            checkNotNull(ActivityThread.currentActivity()).finish()
+            check(ActivityThread.currentActivity() == null)
+            check(events == listOf(
+                "first:pause",
+                "first:stop",
+                "first:destroy",
+                "clear",
+            )) { "last Activity finish ordering: $events" }
         } finally {
             ActivityThread.shutdownActivitiesInProcess()
         }

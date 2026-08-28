@@ -480,13 +480,14 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     var app_fullscreen = false;
     try javaFrame(win, env, cls, draw_hardware, draw_hardware_abi);
     try syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen);
+    try win.present();
     frame_count += 1;
     if (control_server) |*server| if (control_android) |*android| {
         server.tick(android, frame_count, presented_frame_count);
     };
 
     outer: while (true) {
-        const events = try win.waitEvents();
+        const events = try win.waitEvents(video_layers.wakeupFd());
         var need_frame = false;
         for (events) |ev| switch (ev) {
             .close => break :outer,
@@ -595,27 +596,27 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             hover_frame = 0;
         }
         for (type_events.items) |*type_event| {
-        if (type_event.frame != 0 and frame_count == type_event.frame) {
-            if (key) |mid| {
-                var it = (std.unicode.Utf8View.init(type_event.text) catch std.unicode.Utf8View.initUnchecked("")).iterator();
-                var pending_escape = false;
-                while (it.nextCodepoint()) |cp| {
-                    if (!pending_escape and cp == '\\') {
-                        pending_escape = true;
-                        continue;
+            if (type_event.frame != 0 and frame_count == type_event.frame) {
+                if (key) |mid| {
+                    var it = (std.unicode.Utf8View.init(type_event.text) catch std.unicode.Utf8View.initUnchecked("")).iterator();
+                    var pending_escape = false;
+                    while (it.nextCodepoint()) |cp| {
+                        if (!pending_escape and cp == '\\') {
+                            pending_escape = true;
+                            continue;
+                        }
+                        if (pending_escape and cp == 'n') {
+                            jenv_call_key(env, cls, mid, 0, 66, 0); // ENTER
+                            jenv_call_key(env, cls, mid, 1, 66, 0);
+                        } else {
+                            jenv_call_key(env, cls, mid, 0, 0, @intCast(cp));
+                            jenv_call_key(env, cls, mid, 1, 0, 0);
+                        }
+                        pending_escape = false;
                     }
-                    if (pending_escape and cp == 'n') {
-                        jenv_call_key(env, cls, mid, 0, 66, 0); // ENTER
-                        jenv_call_key(env, cls, mid, 1, 66, 0);
-                    } else {
-                        jenv_call_key(env, cls, mid, 0, 0, @intCast(cp));
-                        jenv_call_key(env, cls, mid, 1, 0, 0);
-                    }
-                    pending_escape = false;
                 }
+                type_event.frame = 0;
             }
-            type_event.frame = 0;
-        }
         }
         for (presses.items) |*press| {
             if (press.down != 0 and frame_count == press.down) {
@@ -666,6 +667,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             }
             swipe_frame = 0;
         }
+        var reached_frame_limit = false;
         if (need_frame) {
             javaFrame(win, env, cls, draw_hardware, draw_hardware_abi) catch |err| {
                 // a broken frame (pending Java exception, etc.) must not kill the app
@@ -676,13 +678,18 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             };
             frame_count += 1;
             if (frames_limit) |lim| {
-                if (frame_count >= lim) break;
+                reached_frame_limit = frame_count >= lim;
             }
         }
+        // Codec threads and SurfaceView traversal only update stable mailbox
+        // slots. Drain them after the Java frame so its latest geometry and
+        // the UI buffer are published by the same parent transaction.
+        video_layers.process();
+        try win.present();
         if (control_server) |*server| if (control_android) |*android| {
             server.tick(android, frame_count, presented_frame_count);
         };
-        video_layers.process();
+        if (reached_frame_limit) break;
     }
     std.debug.print("androlinzberg: exiting after {d} java frames\n", .{frame_count});
 }
@@ -716,6 +723,7 @@ fn javaFrame(win: *wayland.Window, env: anytype, cls: art.jni.jclass, draw_hardw
         jenv.CallStaticVoidMethod.?(env, cls, draw_hardware, @as(art.jni.jint, @intCast(win.width)), @as(art.jni.jint, @intCast(win.height)));
     }
     try e.check();
+    win.uiFrameReady();
 }
 
 fn syncAppFullscreen(win: *wayland.Window, env: anytype, cls: art.jni.jclass, method: ?art.jni.jmethodID, previous: *bool) !void {

@@ -193,6 +193,35 @@ class AppSession internal constructor(
         checkPendingDiagnostics()
     }
 
+    /** Wait for real compositor presentation callbacks, without wall-clock sleeps. */
+    fun waitForPresentedFrames(count: Int) {
+        require(count > 0) { "presented frame count must be positive" }
+        requireAlive("while waiting for $count compositor frames")
+        val before = client.mark()
+        client.observe(
+            wait = WaitKind.FRAME_PRESENTED,
+            stableFrames = count,
+            after = before,
+        )
+        checkPendingDiagnostics()
+    }
+
+    fun screenshot(fileName: String): Path {
+        require(fileName.matches(Regex("[A-Za-z0-9._-]+"))) {
+            "screenshot name must be a plain file name"
+        }
+        Files.createDirectories(artifactDirectory)
+        val screenshot = artifactDirectory.resolve(fileName)
+        val status = ProcessBuilder("grim", screenshot.toString())
+            .inheritIO()
+            .start()
+            .waitFor()
+        if (status != 0 || !Files.exists(screenshot) || Files.size(screenshot) == 0L) {
+            throw AssertionError("failed to capture compositor screenshot: $screenshot")
+        }
+        return screenshot
+    }
+
     internal fun finishSuccessfully() {
         checkPendingDiagnostics()
         requireAlive("at successful test completion")
@@ -211,14 +240,9 @@ class AppSession internal constructor(
             add("diagnosis", diagnosis)
         }
         Files.writeString(artifactDirectory.resolve("failure.json"), pretty.toJson(failure))
-        val screenshot = artifactDirectory.resolve("screenshot.png")
-        runCatching {
-            ProcessBuilder("grim", screenshot.toString())
-                .inheritIO()
-                .start()
-                .waitFor()
-        }
-        if (!Files.exists(screenshot)) Files.write(screenshot, byteArrayOf())
+        val screenshotPath = artifactDirectory.resolve("screenshot.png")
+        runCatching { screenshot("screenshot.png") }
+        if (!Files.exists(screenshotPath)) Files.write(screenshotPath, byteArrayOf())
     }
 
     override fun close() {
@@ -320,6 +344,7 @@ class AppSession internal constructor(
                     .joinToString(java.io.File.pathSeparator),
             )
             launchSize?.let { childEnvironment["AZK_SIZE"] = it.toString() }
+            configureHeadlessOutput(environment, launchSize)
             val process = try {
                 processAdapter.start(
                     listOf(launcher.toString(), apk.path.toString()),
@@ -345,6 +370,24 @@ class AppSession internal constructor(
         }
 
         private fun sanitize(value: String): String = value.replace(Regex("[^A-Za-z0-9_.-]+"), "_")
+
+        private fun configureHeadlessOutput(environment: Map<String, String>, size: LaunchSize?) {
+            val output = environment["AZK_HEADLESS_OUTPUT"] ?: return
+            val requestedSize = size ?: return
+            val status = ProcessBuilder(
+                "wlr-randr",
+                "--output",
+                output,
+                "--custom-mode",
+                requestedSize.toString(),
+            )
+                .inheritIO()
+                .start()
+                .waitFor()
+            check(status == 0) {
+                "failed to configure headless Wayland output $output to $requestedSize"
+            }
+        }
 
         private fun deleteTree(path: Path) {
             if (!Files.exists(path)) return
