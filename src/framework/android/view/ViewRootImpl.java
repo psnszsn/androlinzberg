@@ -11,9 +11,13 @@ import android.graphics.RecordingCanvas;
 import android.graphics.RenderNode;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.util.Log;
 import java.util.ArrayList;
 
 public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
+    private static final boolean TRACE_SLOW_FRAMES =
+            System.getenv("ARTZIG_SLOW_FRAME_TRACE") != null;
     private static long sNextArtzigAccessibilityWindowId = 1;
     final long mArtzigAccessibilityWindowId = sNextArtzigAccessibilityWindowId++;
     public final Context mContext;
@@ -116,6 +120,10 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             mAttachInfo.mHasWindowFocus = true;
         }
         view.assignParent(this);
+        // ThreadedRenderer.updateRootDisplayList() records a stable reference to
+        // the view-owned RenderNode. A different decor therefore needs a new
+        // wrapper display list even when this ViewRootImpl is reused.
+        mHasRenderNode = false;
         view.dispatchAttachedToWindow(mAttachInfo, View.VISIBLE);
         view.dispatchWindowVisibilityChanged(View.VISIBLE);
         view.dispatchWindowFocusChanged(true);
@@ -313,7 +321,10 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         mHostedWindowMaxHeight = maxH;
         mHostedWindowParamWidth = lp.width;
         mHostedWindowParamHeight = lp.height;
-        if (changed) requestLayout();
+        if (changed) {
+            mHasRenderNode = false;
+            requestLayout();
+        }
     }
 
     /** Compatibility entry point for non-frame-loop callers. */
@@ -324,6 +335,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
 
     /** Window resized (artzig). */
     public void setSize(int width, int height) {
+        if (mWidth != width || mHeight != height) mHasRenderNode = false;
         mWidth = width;
         mHeight = height;
         requestLayout();
@@ -352,60 +364,103 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
 
     private void performTraversal() {
         if (mView == null) return;
-        mLayoutRequested = false;
+        int previousWidth = mWidth;
+        int previousHeight = mHeight;
+        long traceStart = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
         collectViewAttributes();
+        long traceAttributes = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
         computeScrollTree(mView);
-        int widthMeasureSpec;
-        int heightMeasureSpec;
-        if (mHostedWindowLayout && mHostedWindowParams != null) {
-            WindowManager.LayoutParams lp = mHostedWindowParams;
-            widthMeasureSpec = lp.width == WindowManager.LayoutParams.MATCH_PARENT
-                    ? View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxWidth,
-                            View.MeasureSpec.EXACTLY)
-                    : lp.width > 0
-                            ? View.MeasureSpec.makeMeasureSpec(
-                                    Math.min(lp.width, mHostedWindowMaxWidth),
-                                    View.MeasureSpec.EXACTLY)
-                            : View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxWidth,
-                                    View.MeasureSpec.AT_MOST);
-            heightMeasureSpec = lp.height == WindowManager.LayoutParams.MATCH_PARENT
-                    ? View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxHeight,
-                            View.MeasureSpec.EXACTLY)
-                    : lp.height > 0
-                            ? View.MeasureSpec.makeMeasureSpec(
-                                    Math.min(lp.height, mHostedWindowMaxHeight),
-                                    View.MeasureSpec.EXACTLY)
-                            : View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxHeight,
-                                    View.MeasureSpec.AT_MOST);
-        } else {
-            widthMeasureSpec = View.MeasureSpec.makeMeasureSpec(mWidth, View.MeasureSpec.EXACTLY);
-            heightMeasureSpec = View.MeasureSpec.makeMeasureSpec(mHeight, View.MeasureSpec.EXACTLY);
+        long traceScroll = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
+        // AOSP ViewRootImpl.performTraversals() measures and lays out only when
+        // mLayoutRequested is set. Invalidations and animations still produce a
+        // draw traversal, but must not repeatedly force the whole hierarchy
+        // through measure/layout or fire OnLayoutChangeListener callbacks.
+        if (mLayoutRequested) {
+            int widthMeasureSpec;
+            int heightMeasureSpec;
+            if (mHostedWindowLayout && mHostedWindowParams != null) {
+                WindowManager.LayoutParams lp = mHostedWindowParams;
+                widthMeasureSpec = lp.width == WindowManager.LayoutParams.MATCH_PARENT
+                        ? View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxWidth,
+                                View.MeasureSpec.EXACTLY)
+                        : lp.width > 0
+                                ? View.MeasureSpec.makeMeasureSpec(
+                                        Math.min(lp.width, mHostedWindowMaxWidth),
+                                        View.MeasureSpec.EXACTLY)
+                                : View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxWidth,
+                                        View.MeasureSpec.AT_MOST);
+                heightMeasureSpec = lp.height == WindowManager.LayoutParams.MATCH_PARENT
+                        ? View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxHeight,
+                                View.MeasureSpec.EXACTLY)
+                        : lp.height > 0
+                                ? View.MeasureSpec.makeMeasureSpec(
+                                        Math.min(lp.height, mHostedWindowMaxHeight),
+                                        View.MeasureSpec.EXACTLY)
+                                : View.MeasureSpec.makeMeasureSpec(mHostedWindowMaxHeight,
+                                        View.MeasureSpec.AT_MOST);
+            } else {
+                widthMeasureSpec = View.MeasureSpec.makeMeasureSpec(mWidth,
+                        View.MeasureSpec.EXACTLY);
+                heightMeasureSpec = View.MeasureSpec.makeMeasureSpec(mHeight,
+                        View.MeasureSpec.EXACTLY);
+            }
+            mView.measure(widthMeasureSpec, heightMeasureSpec);
+            int layoutWidth = mHostedWindowLayout
+                    ? Math.max(1, mView.getMeasuredWidth()) : mWidth;
+            int layoutHeight = mHostedWindowLayout
+                    ? Math.max(1, mView.getMeasuredHeight()) : mHeight;
+            // Clear this after measure and before layout, matching AOSP, so a
+            // request made during layout is retained for a subsequent pass.
+            mLayoutRequested = false;
+            mWidth = layoutWidth;
+            mHeight = layoutHeight;
+            performLayout(widthMeasureSpec, heightMeasureSpec, layoutWidth, layoutHeight);
+            if (mHostedWindowLayout) {
+                mWidth = Math.max(1, mView.getMeasuredWidth());
+                mHeight = Math.max(1, mView.getMeasuredHeight());
+            }
+            if (mWidth != previousWidth || mHeight != previousHeight) mHasRenderNode = false;
         }
-        mView.measure(widthMeasureSpec, heightMeasureSpec);
-        int width = mHostedWindowLayout ? Math.max(1, mView.getMeasuredWidth()) : mWidth;
-        int height = mHostedWindowLayout ? Math.max(1, mView.getMeasuredHeight()) : mHeight;
-        mWidth = width;
-        mHeight = height;
-        performLayout(widthMeasureSpec, heightMeasureSpec, width, height);
-        if (mHostedWindowLayout) {
-            width = Math.max(1, mView.getMeasuredWidth());
-            height = Math.max(1, mView.getMeasuredHeight());
-            mWidth = width;
-            mHeight = height;
-        }
+        long traceLayout = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
+        int width = mWidth;
+        int height = mHeight;
         dispatchOnPreDraw();
+        long tracePreDraw = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
         updateSurfacePositions(mView);
+        long traceSurfaces = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
         mRenderNode.setPosition(0, 0, width, height);
-        RecordingCanvas canvas = mRenderNode.beginRecording(width, height);
-        try {
-            // Overlay roots are replayed into the activity composite, so a clear would punch
-            // through transparent popup corners. The activity root remains opaque black.
-            if (!mHostedWindowLayout) canvas.drawColor(0xff000000);
-            mView.draw(canvas);
-        } finally {
-            mRenderNode.endRecording();
+        // Follow AOSP ThreadedRenderer.updateRootDisplayList(): update only dirty
+        // view display lists, then keep a stable root node which references the
+        // decor's RenderNode. Replaying mView.draw() here forced dispatchDraw()
+        // across the complete hierarchy on every animation frame.
+        RenderNode viewNode = mView.updateDisplayListIfDirty();
+        if (!mHasRenderNode) {
+            RecordingCanvas canvas = mRenderNode.beginRecording(width, height);
+            try {
+                // Overlay roots are replayed into the activity composite, so a clear would punch
+                // through transparent popup corners. The activity root remains opaque black.
+                if (!mHostedWindowLayout) canvas.drawColor(0xff000000);
+                canvas.enableZ();
+                canvas.drawRenderNode(viewNode);
+                canvas.disableZ();
+            } finally {
+                mRenderNode.endRecording();
+            }
+            mHasRenderNode = true;
         }
-        mHasRenderNode = true;
+        if (TRACE_SLOW_FRAMES) {
+            long traceDone = SystemClock.uptimeMillis();
+            if (traceDone - traceStart > 8) {
+                Log.d("ViewRootFrame", "slow traversal=" + (traceDone - traceStart)
+                        + "ms attrs=" + (traceAttributes - traceStart)
+                        + " scroll=" + (traceScroll - traceAttributes)
+                        + " layout=" + (traceLayout - traceScroll)
+                        + " predraw=" + (tracePreDraw - traceLayout)
+                        + " surfaces=" + (traceSurfaces - tracePreDraw)
+                        + " draw=" + (traceDone - traceSurfaces)
+                        + " requested=" + mLayoutRequested);
+            }
+        }
     }
 
     /**

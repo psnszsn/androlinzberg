@@ -137,6 +137,16 @@ public final class ViewHost {
                     scale120,
                     android.R.style.Theme_DeviceDefault_NoActionBar,
                 )
+            // AOSP ActivityThread.handleBindApplication installs the process
+            // Application before any Activity creates or lays out views. The
+            // demo host has no manifest/providers, but framework code still
+            // relies on currentApplication() for process configuration.
+            android.app.ActivityThread.bindApplicationInProcess(
+                sContext,
+                sContext.classLoader,
+                null,
+                emptyList(),
+            )
             sActivity = DemoActivity()
             sActivity.attach(sContext)
             sActivity.performCreate(null)
@@ -245,17 +255,31 @@ public final class ViewHost {
             sActivity.onConfigurationChanged(config)
         }
 
-        @JvmStatic private fun drainLooper() {
+        @JvmStatic
+        public fun pumpMainLooper(): Long {
             // run pending messages on this thread (we own the main looper)
             val looper: android.os.Looper? = android.os.Looper.myLooper()
-            if (looper == null) return
-            while (true) {
-                val msg: android.os.Message? = nextMessageNow(looper.getQueue())
+            if (looper == null) return -1
+            val queue = looper.getQueue()
+            var guard = 0
+            while (guard++ < 500) {
+                val msg: android.os.Message? = nextMessageNow(queue)
                 if (msg == null) break
                 msg.getTarget().dispatchMessage(msg)
                 msg.recycle()
             }
+            if (guard > 500 && queue.`nextPollDelayMillis$artzig`() == 0L) {
+                queue.`wakeHost$artzig`()
+                return 0
+            }
+            queue.`runIdleHandlers$artzig`()
+            return queue.`nextPollDelayMillis$artzig`()
         }
+
+        @JvmStatic public fun needsFrame(): Boolean =
+            android.view.Choreographer.getInstance().`hasDueCallbacks$artzig`()
+
+        @JvmStatic private fun drainLooper() { pumpMainLooper() }
 
         @JvmStatic private fun nextMessageNow(q: android.os.MessageQueue): android.os.Message? = q.`pollDueMessage$artzig`()
     }

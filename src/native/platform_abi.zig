@@ -4,17 +4,26 @@ const std = @import("std");
 const art = @import("art");
 const jni = art.jni;
 
-const NativeMutex = struct {
-    raw: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+var g_io: std.Io = undefined;
 
-    fn lock(mutex: *NativeMutex) void {
-        _ = std.c.pthread_mutex_lock(&mutex.raw);
+const NativeMutex = struct {
+    raw: std.Io.Mutex = .init,
+
+    fn lock(self: *NativeMutex) void {
+        self.raw.lockUncancelable(g_io);
     }
 
-    fn unlock(mutex: *NativeMutex) void {
-        _ = std.c.pthread_mutex_unlock(&mutex.raw);
+    fn unlock(self: *NativeMutex) void {
+        self.raw.unlock(g_io);
     }
 };
+
+pub export fn azk_platform_bind_io(
+    userdata: ?*anyopaque,
+    vtable: *const std.Io.VTable,
+) callconv(.c) void {
+    g_io = .{ .userdata = userdata, .vtable = vtable };
+}
 
 const sqlite3 = opaque {};
 const SqliteCollation = *const fn (?*anyopaque, c_int, ?*const anyopaque, c_int, ?*const anyopaque) callconv(.c) c_int;

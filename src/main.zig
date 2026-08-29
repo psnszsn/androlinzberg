@@ -6,7 +6,9 @@ const video_layers = @import("platform/video_layers.zig");
 const fonts = @import("platform/fonts.zig");
 const test_control = @import("test_control.zig");
 const host_natives = @import("host_natives");
+const apk_optimizer = @import("apk_optimizer");
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 extern "c" fn dlopen(path: [*:0]const u8, flags: c_int) ?*anyopaque;
 const Timespec = extern struct { sec: i64, nsec: i64 };
 extern "c" fn clock_gettime(clk: c_int, ts: *Timespec) c_int;
@@ -50,7 +52,14 @@ fn installTree(init: std.process.Init) ![]const u8 {
     const a = init.arena.allocator();
     const exe = try std.process.executablePathAlloc(init.io, a);
     const bin = std.fs.path.dirname(exe) orelse return error.NoInstallTree;
-    const tree = std.fs.path.dirname(bin) orelse return error.NoInstallTree;
+    const discovered_tree = std.fs.path.dirname(bin) orelse return error.NoInstallTree;
+    // ART persists class-loader-context locations verbatim in OAT headers.
+    // Normalize the install tree so launching as ./zig-out/bin/... and by an
+    // absolute path validate against the same framework location.
+    const tree = if (std.fs.path.isAbsolute(discovered_tree))
+        discovered_tree
+    else
+        try std.fs.path.join(a, &.{ init.minimal.environ.getPosix("PWD") orelse ".", discovered_tree });
     const probe = try std.fs.path.join(a, &.{ tree, "lib", "libandroid_platform.so" });
     if (std.Io.Dir.accessAbsolute(init.io, probe, .{})) |_| return tree else |_| {}
     // not an install tree (e.g. run from the zig cache): fall back to ./zig-out
@@ -144,6 +153,7 @@ pub fn main(init: std.process.Init) !void {
             return;
         } else if (std.mem.eql(u8, args[i], "--javatest")) {
             var lib = try std.DynLib.open("zig-out/lib/libandroid_platform.so");
+            try bindPlatformIo(&lib, init.io);
             const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
             const hwui = try lookupHwuiBridges(&lib);
             var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
@@ -153,7 +163,7 @@ pub fn main(init: std.process.Init) !void {
             defer rt.releaseProcessState();
             if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
                 if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-                try host_natives.register(@ptrCast(rt.env), hwui);
+                try host_natives.register(init.io, @ptrCast(rt.env), hwui);
             }
             const cls_name = init.minimal.environ.getPosix("AZK_TEST_CLASS") orelse "dev.artzig.TestMain";
             try rt.runMain(cls_name, args[i + 1 ..]);
@@ -179,6 +189,10 @@ pub fn main(init: std.process.Init) !void {
 // EGL; there is deliberately no CPU/Bitmap window-present path.
 
 const RegisterFn = *const fn (env: *anyopaque) callconv(.c) c_int;
+const BindPlatformIoFn = *const fn (
+    userdata: ?*anyopaque,
+    vtable: *const std.Io.VTable,
+) callconv(.c) void;
 const ConfigureHostFn = *const fn (proxy: *anyopaque, display: ?*anyopaque, surface: ?*anyopaque, width: c_int, height: c_int) callconv(.c) void;
 const DestroyHostFn = *const fn (proxy: *anyopaque) callconv(.c) void;
 
@@ -188,6 +202,12 @@ fn lookupHwuiBridges(lib: *std.DynLib) !host_natives.HwuiBridges {
         .destroy = lib.lookup(DestroyHostFn, "azk_hwui_destroy_host_surface") orelse return error.SymbolNotFound,
     };
 }
+
+fn bindPlatformIo(lib: *std.DynLib, io: std.Io) !void {
+    const bind = lib.lookup(BindPlatformIoFn, "azk_platform_bind_io") orelse
+        return error.SymbolNotFound;
+    bind(io.userdata, io.vtable);
+}
 const HardwareDrawAbi = enum { physical, scaled, legacy };
 
 fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullscreen: bool) !void {
@@ -196,10 +216,14 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     const tree = try installTree(init);
 
     // Running an APK: entry class ApkHost, paths from the install tree.
-    if (apk) |path| {
-        const abs = if (std.fs.path.isAbsolute(path)) path else try std.fs.path.join(arena, &.{ init.minimal.environ.getPosix("PWD") orelse ".", path });
-        _ = setenv("ARTZIG_APK", try arena.dupeSentinel(u8, abs, 0), 1);
-    }
+    const apk_abs: ?[]const u8 = if (apk) |path|
+        (if (std.fs.path.isAbsolute(path)) path else try std.fs.path.join(arena, &.{ init.minimal.environ.getPosix("PWD") orelse ".", path }))
+    else
+        null;
+    if (apk_abs) |path| _ = setenv("ARTZIG_APK", try arena.dupeSentinel(u8, path, 0), 1);
+    const framework_jar = try std.fs.path.join(arena, &.{ tree, "framework", "framework.jar" });
+    const framework_compile_jar = try std.fs.path.join(arena, &.{ tree, "framework", "framework-app-context.jar" });
+    _ = setenv("ARTZIG_FRAMEWORK_JAR", try arena.dupeSentinel(u8, framework_jar, 0), 1);
     if (init.minimal.environ.getPosix("ARTZIG_FRAMEWORK_RES") == null) {
         _ = setenv("ARTZIG_FRAMEWORK_RES", try std.fs.path.joinZ(arena, &.{ tree, "res", "framework-res.apk" }), 1);
     }
@@ -209,7 +233,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     if (runtime_root) |root| std.debug.print("azk: ART runtime: {s}\n", .{root});
     const libart_overlay = try std.fs.path.join(arena, &.{ tree, "lib", "art", "libart.so" });
     const runtime_overlay_dir = try std.fs.path.join(arena, &.{ tree, "lib", "art" });
-    if (apk) |path| {
+    if (apk_abs) |path| {
         const root = runtime_root orelse init.minimal.environ.getPosix("ARTZIG_ROOT") orelse
             return error.RuntimeTreeNotFound;
         try configureNativeLibraries(init, tree, root, path);
@@ -225,6 +249,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         std.debug.print("failed to load {s}: {}\n", .{ island_path, e });
         return e;
     };
+    try bindPlatformIo(&lib, init.io);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
 
@@ -245,20 +270,27 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     }
 
     // Boot ART with the multidex framework jar.
+    const art_extra_options: []const []const u8 =
+        if (init.minimal.environ.getPosix("ARTZIG_VERBOSE_OAT") != null)
+            &.{"-verbose:oat"}
+        else
+            &.{};
     const rt_v = try art.Runtime.create(gpa, init.io, init.minimal.environ, .{
-        .classpath = &.{try std.fs.path.join(arena, &.{ tree, "framework", "framework.jar" })},
+        .classpath = &.{framework_jar},
         .library_path = &.{runtime_overlay_dir},
         .root = runtime_root,
         .libart_path = libart_overlay,
         .bionic_lib_dir = runtime_overlay_dir,
         .use_bionic_loader = apk != null,
+        .extra_options = art_extra_options,
     });
     var rt = rt_v;
     _ = &rt;
     defer rt.releaseProcessState();
     const env = rt.env;
     if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
-    try host_natives.register(@ptrCast(env), hwui);
+    try host_natives.register(init.io, @ptrCast(env), hwui);
+    defer host_natives.deinitWakeups();
 
     const e = art.Env{ .env = env };
     // entry class: AZK_DRAW_CLASS, else ApkHost when an APK was given
@@ -357,6 +389,22 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         break :blk null;
     };
     const host_fullscreen_changed: ?art.jni.jmethodID = e.getStaticMethodID(cls, "onHostFullscreenChanged", "(Z)V") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const pump_main_looper: ?art.jni.jmethodID = e.getStaticMethodID(cls, "pumpMainLooper", "()J") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const needs_frame: ?art.jni.jmethodID = e.getStaticMethodID(cls, "needsFrame", "()Z") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const apk_dexopt_needed: ?art.jni.jmethodID = e.getStaticMethodID(cls, "apkDexoptNeeded", "()Z") catch blk: {
+        env.*.*.ExceptionClear.?(env);
+        break :blk null;
+    };
+    const report_dexopt_failure: ?art.jni.jmethodID = e.getStaticMethodID(cls, "reportDexoptFailure", "()V") catch blk: {
         env.*.*.ExceptionClear.?(env);
         break :blk null;
     };
@@ -467,6 +515,15 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         for (&sw) |*v| v.* = try std.fmt.parseFloat(f32, it.next() orelse "0");
         swipe_frame = try std.fmt.parseInt(u32, it.next() orelse "3", 10);
     }
+    // AZK_MOUSE_SWIPE="x1,y1,x2,y2@frame": primary-button mouse drag across frames.
+    var mouse_sw: [4]f32 = .{ 0, 0, 0, 0 };
+    var mouse_swipe_frame: u32 = 0;
+    var mouse_swipe_step: u32 = 0;
+    if (init.minimal.environ.getPosix("AZK_MOUSE_SWIPE")) |spec| {
+        var it = std.mem.tokenizeAny(u8, spec, ",@");
+        for (&mouse_sw) |*v| v.* = try std.fmt.parseFloat(f32, it.next() orelse "0");
+        mouse_swipe_frame = try std.fmt.parseInt(u32, it.next() orelse "3", 10);
+    }
 
     var init_w: i32 = 800;
     var init_h: i32 = 600;
@@ -475,7 +532,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         init_w = try std.fmt.parseInt(i32, it.next() orelse "800", 10);
         init_h = try std.fmt.parseInt(i32, it.next() orelse "600", 10);
     }
-    const win = try wayland.Window.initOpts(gpa, init_w, init_h, "androlinzberg", fullscreen);
+    const win = try wayland.Window.initOpts(gpa, init.io, init_w, init_h, "androlinzberg", fullscreen);
     defer win.deinit();
     if (control_server) |*server| {
         if (win.testInputAvailable()) {
@@ -501,13 +558,27 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     var frame_count: u32 = 0;
     var presented_frame_count: u64 = 0;
     const trace_frame_pacing = init.minimal.environ.getPosix("ARTZIG_FRAME_PACING_TRACE") != null;
+    const trace_slow_frames = init.minimal.environ.getPosix("ARTZIG_SLOW_FRAME_TRACE") != null;
+    var last_frame_done_ms: i64 = 0;
     var callback_samples: u32 = 0;
     var callback_last_ns: i128 = 0;
     var callback_total_ns: i128 = 0;
     var callback_max_ns: i128 = 0;
     var app_fullscreen = false;
     var app_pointer_capture = false;
+    var first_presented_ms: ?i64 = null;
+    var last_input_ms = monotonicMs();
+    var dexopt_attempted = false;
+    var dexopt_running = false;
     try javaFrame(win, env, cls, draw_hardware, draw_hardware_abi);
+    var render_in_flight = true;
+    var vsync_pending = false;
+    // A Wayland frame callback can either request the next Android traversal or merely observe
+    // that the first committed buffer reached the compositor. Keep those meanings separate so
+    // the first-presentation dexopt clock does not manufacture an otherwise-unneeded frame.
+    var vsync_requires_frame = false;
+    var deferred_frame = false;
+    var looper_timeout_ms = callMainLooperPump(env, cls, pump_main_looper);
     try syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen);
     try syncAppPointerCapture(win, env, cls, wants_pointer_capture, &app_pointer_capture);
     try win.present();
@@ -517,15 +588,90 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     };
 
     outer: while (true) {
-        const events = try win.waitEvents(video_layers.wakeupFd());
+        var wait_timeout_ms = dexoptWaitTimeout(
+            looper_timeout_ms,
+            apk_abs != null and !dexopt_attempted,
+            first_presented_ms,
+            last_input_ms,
+        );
+        if (control_server) |*server| {
+            wait_timeout_ms = minPollTimeout(wait_timeout_ms, server.waitTimeoutMs());
+        }
+        const waited = try win.waitEvents(.{
+            .video = video_layers.wakeupFd(),
+            .looper = host_natives.looperWakeupFd(),
+            .renderer = host_natives.rendererWakeupFd(),
+            .optimizer = apk_optimizer.wakeupFd(),
+            .control_listener = if (control_server) |*server| server.listenerFd() else null,
+            .control_client = if (control_server) |*server| server.clientFd() else null,
+            .control_client_write = if (control_server) |*server| server.clientWantsWrite() else false,
+            .timeout_ms = wait_timeout_ms,
+        });
+        const events = waited.events;
+        if (trace_frame_pacing and (waited.looper_ready or waited.renderer_ready or
+            waited.optimizer_ready or events.len != 0))
+        {
+            std.debug.print(
+                "azk pacing: wake t={d} looper={} renderer={} optimizer={} events={d}\n",
+                .{ monotonicMs(), waited.looper_ready, waited.renderer_ready, waited.optimizer_ready, events.len },
+            );
+        }
+        if (waited.looper_ready) _ = host_natives.consumeLooperWakeup();
+        if (waited.renderer_ready and host_natives.consumeRendererWakeup() != 0) {
+            if (trace_frame_pacing) std.debug.print("azk pacing: renderer ready t={d}, committing parent\n", .{monotonicMs()});
+            render_in_flight = false;
+            const frame_work_pending = deferred_frame or frameLimitPending(frames_limit, frame_count) or
+                callStaticBoolean(env, cls, needs_frame) or
+                (if (control_server) |*server| server.needsFrame() else false);
+            if (first_presented_ms == null or frame_work_pending) {
+                try win.requestFrame();
+                vsync_pending = true;
+                vsync_requires_frame = vsync_requires_frame or frame_work_pending;
+                if (frame_work_pending) deferred_frame = false;
+            }
+            win.uiFrameReady();
+            // A synchronized child commit remains cached until the parent commits. Publish it
+            // before submitting another Java frame or the EGL swapchain eventually fills and
+            // blocks syncAndDraw despite setWaitForPresent(false).
+            video_layers.process();
+            try win.present();
+            if (trace_frame_pacing) std.debug.print("azk pacing: parent committed t={d}\n", .{monotonicMs()});
+            if (frameLimitReached(frames_limit, frame_count)) break :outer;
+        }
+        if (waited.optimizer_ready) {
+            switch (apk_optimizer.consume()) {
+                .success => {
+                    dexopt_running = false;
+                    std.debug.print("azk: background dexopt completed successfully; it will be used next launch\n", .{});
+                },
+                .failure => {
+                    dexopt_running = false;
+                    std.debug.print("azk: background dexopt failed; a later launch will retry\n", .{});
+                    if (report_dexopt_failure) |mid| jenv_call_void(env, cls, mid);
+                },
+                .none => {},
+            }
+        }
         var need_frame = false;
         for (events) |ev| switch (ev) {
             .close => break :outer,
             .configure, .fullscreen_changed => need_frame = true,
             .frame_done => {
+                vsync_pending = false;
+                const frame_work_pending = vsync_requires_frame;
+                vsync_requires_frame = false;
                 presented_frame_count += 1;
-                need_frame = true;
+                if (first_presented_ms == null) first_presented_ms = monotonicMs();
+                need_frame = need_frame or frame_work_pending;
+                if (trace_slow_frames) {
+                    const frame_done_ms = monotonicMs();
+                    if (last_frame_done_ms != 0 and frame_done_ms - last_frame_done_ms > 25) {
+                        std.debug.print("azk slow frame: compositor interval={d}ms t={d}\n", .{ frame_done_ms - last_frame_done_ms, frame_done_ms });
+                    }
+                    last_frame_done_ms = frame_done_ms;
+                }
                 if (trace_frame_pacing) {
+                    std.debug.print("azk pacing: frame done t={d}\n", .{monotonicMs()});
                     const now_ns: i128 = std.Io.Clock.awake.now(init.io).nanoseconds;
                     if (callback_last_ns != 0) {
                         const elapsed_ns = now_ns - callback_last_ns;
@@ -551,6 +697,12 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             },
             else => {},
         };
+        for (events) |ev| if (isInputEvent(ev)) {
+            last_input_ms = monotonicMs();
+        };
+        // Android's MessageQueue wakes independently from vsync. Dispatch ordinary Handler work
+        // immediately; only Choreographer traversal callbacks remain frame-paced.
+        looper_timeout_ms = callMainLooperPump(env, cls, pump_main_looper);
         for (events) |ev| switch (ev) {
             .fullscreen_changed => |actual_fullscreen| if (host_fullscreen_changed) |mid| {
                 env.*.*.CallStaticVoidMethod.?(env, cls, mid, @as(art.jni.jboolean, @intFromBool(actual_fullscreen)));
@@ -609,7 +761,6 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                         jenv_call_captured_mouse(env, cls, mid, 12, mouse_button_state, button);
                         if (mouse_button_state == 0) jenv_call_captured_mouse(env, cls, mid, 1, 0, 0);
                     }
-                    need_frame = true;
                 };
             } else if (b.button == 0x113 or b.button == 0x116) {
                 // Android's default View handling does not turn BUTTON_BACK generic motion into
@@ -633,8 +784,6 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                         callMouseEvent(env, cls, mouse, motion, 12, mouse_button_state, button, x, y);
                         if (mouse_button_state == 0) callMouseEvent(env, cls, mouse, motion, 1, mouse_button_state, 0, x, y);
                     }
-                    // A click can change Android window flags without producing a Wayland event.
-                    need_frame = true;
                 }
             },
             .key => |k| {
@@ -764,19 +913,83 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             }
             swipe_frame = 0;
         }
-        var reached_frame_limit = false;
+        if (mouse_swipe_frame != 0 and frame_count >= mouse_swipe_frame) {
+            last_input_ms = monotonicMs();
+            const start_x = inputX(win, draw_hardware_abi, mouse_sw[0]);
+            const start_y = inputY(win, draw_hardware_abi, mouse_sw[1]);
+            if (mouse_swipe_step == 0) {
+                callMouseEvent(env, cls, mouse, motion, 0, 1, 0, start_x, start_y);
+                callMouseEvent(env, cls, mouse, motion, 11, 1, 1, start_x, start_y);
+            } else if (mouse_swipe_step <= 10) {
+                const t = @as(f32, @floatFromInt(mouse_swipe_step)) / 10.0;
+                callMouseEvent(
+                    env,
+                    cls,
+                    mouse,
+                    motion,
+                    2,
+                    1,
+                    0,
+                    inputX(win, draw_hardware_abi, mouse_sw[0] + (mouse_sw[2] - mouse_sw[0]) * t),
+                    inputY(win, draw_hardware_abi, mouse_sw[1] + (mouse_sw[3] - mouse_sw[1]) * t),
+                );
+            } else {
+                const end_x = inputX(win, draw_hardware_abi, mouse_sw[2]);
+                const end_y = inputY(win, draw_hardware_abi, mouse_sw[3]);
+                callMouseEvent(env, cls, mouse, motion, 12, 0, 1, end_x, end_y);
+                callMouseEvent(env, cls, mouse, motion, 1, 0, 0, end_x, end_y);
+                mouse_swipe_frame = 0;
+            }
+            mouse_swipe_step += 1;
+            need_frame = true;
+        }
+        // Input dispatch can synchronously enqueue Handler/Rx work. Android's
+        // native looper runs that work before the following traversal instead
+        // of deferring it until another Wayland event wakes the outer loop.
+        looper_timeout_ms = callMainLooperPump(env, cls, pump_main_looper);
+        if (need_frame and render_in_flight) {
+            deferred_frame = true;
+            need_frame = false;
+        }
+        if (!need_frame and !render_in_flight and !vsync_pending and
+            callStaticBoolean(env, cls, needs_frame))
+        {
+            if (trace_frame_pacing) std.debug.print("azk pacing: request vsync t={d}\n", .{monotonicMs()});
+            try win.requestVsync();
+            vsync_pending = true;
+            vsync_requires_frame = true;
+        }
         if (need_frame) {
-            javaFrame(win, env, cls, draw_hardware, draw_hardware_abi) catch |err| {
-                // a broken frame (pending Java exception, etc.) must not kill the app
-                std.debug.print("azk: frame error: {} (continuing)\n", .{err});
+            const java_frame_start_ms = if (trace_slow_frames) monotonicMs() else 0;
+            if (trace_frame_pacing) std.debug.print("azk pacing: submit frame {d} t={d}\n", .{ frame_count + 1, monotonicMs() });
+            const submitted = blk: {
+                javaFrame(win, env, cls, draw_hardware, draw_hardware_abi) catch |err| {
+                    // A broken frame must not leave the asynchronous renderer permanently busy.
+                    std.debug.print("azk: frame error: {} (retrying on the next vsync)\n", .{err});
+                    break :blk false;
+                };
+                break :blk true;
             };
+            if (trace_slow_frames) {
+                const java_frame_elapsed_ms = monotonicMs() - java_frame_start_ms;
+                if (java_frame_elapsed_ms > 16) {
+                    std.debug.print("azk slow frame: java frame={d} duration={d}ms t={d}\n", .{ frame_count + 1, java_frame_elapsed_ms, monotonicMs() });
+                }
+            }
+            if (submitted) {
+                render_in_flight = true;
+                frame_count += 1;
+                if (trace_frame_pacing) std.debug.print("azk pacing: submitted frame {d} t={d}\n", .{ frame_count, monotonicMs() });
+            } else if (!vsync_pending) {
+                // Pace repeated Java failures and guarantee another traversal opportunity without
+                // waiting for a RenderThread notification that this failed submission cannot send.
+                try win.requestVsync();
+                vsync_pending = true;
+                vsync_requires_frame = true;
+            }
             syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen) catch |err| {
                 std.debug.print("azk: fullscreen state error: {} (continuing)\n", .{err});
             };
-            frame_count += 1;
-            if (frames_limit) |lim| {
-                reached_frame_limit = frame_count >= lim;
-            }
         }
         syncAppPointerCapture(win, env, cls, wants_pointer_capture, &app_pointer_capture) catch |err| {
             std.debug.print("azk: pointer capture state error: {} (continuing)\n", .{err});
@@ -789,15 +1002,112 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         if (control_server) |*server| if (control_android) |*android| {
             server.tick(android, frame_count, presented_frame_count);
         };
-        if (reached_frame_limit) break;
+        if (!render_in_flight and !vsync_pending and
+            (if (control_server) |*server| server.needsFrame() else false))
+        {
+            try win.requestVsync();
+            vsync_pending = true;
+            vsync_requires_frame = true;
+        }
+        if (apk_abs != null and !dexopt_attempted and !dexopt_running and first_presented_ms != null and
+            monotonicMs() >= @max(first_presented_ms.?, last_input_ms) + 2000)
+        {
+            dexopt_attempted = true;
+            if (callStaticBoolean(env, cls, apk_dexopt_needed)) {
+                const runtime = runtime_root orelse init.minimal.environ.getPosix("ARTZIG_ROOT") orelse {
+                    std.debug.print("azk: cannot start background dexopt without ART runtime root\n", .{});
+                    continue;
+                };
+                const android_data_ptr = getenv("ANDROID_DATA") orelse {
+                    std.debug.print("azk: cannot start background dexopt without ANDROID_DATA\n", .{});
+                    continue;
+                };
+                const script = try std.fs.path.join(arena, &.{ tree, "share", "androlinzberg", "dexopt-apk.sh" });
+                apk_optimizer.launch(
+                    init.io,
+                    gpa,
+                    script,
+                    runtime,
+                    apk_abs.?,
+                    framework_jar,
+                    std.mem.span(android_data_ptr),
+                    framework_compile_jar,
+                ) catch |err| {
+                    std.debug.print("azk: failed to launch background dexopt: {}\n", .{err});
+                    if (report_dexopt_failure) |mid| jenv_call_void(env, cls, mid);
+                    continue;
+                };
+                dexopt_running = true;
+            } else {
+                std.debug.print("azk: APK speed artifacts are current\n", .{});
+            }
+        }
     }
     std.debug.print("androlinzberg: exiting after {d} java frames\n", .{frame_count});
+}
+
+fn dexoptWaitTimeout(looper_timeout_ms: i32, eligible: bool, first_presented_ms: ?i64, last_input_ms: i64) i32 {
+    if (!eligible or first_presented_ms == null) return looper_timeout_ms;
+    const remaining = @max(@max(first_presented_ms.?, last_input_ms) + 2000 - monotonicMs(), 0);
+    const dexopt_timeout: i32 = @intCast(@min(remaining, std.math.maxInt(i32)));
+    if (looper_timeout_ms < 0) return dexopt_timeout;
+    return @min(looper_timeout_ms, dexopt_timeout);
+}
+
+fn minPollTimeout(first: i32, second: i32) i32 {
+    if (first < 0) return second;
+    if (second < 0) return first;
+    return @min(first, second);
+}
+
+fn frameLimitPending(limit: ?u32, frame_count: u32) bool {
+    return if (limit) |value| frame_count < value else false;
+}
+
+fn frameLimitReached(limit: ?u32, frame_count: u32) bool {
+    return if (limit) |value| frame_count >= value else false;
+}
+
+test "frame limit remains pending until the requested submission count" {
+    try std.testing.expect(!frameLimitPending(null, 1));
+    try std.testing.expect(frameLimitPending(5, 4));
+    try std.testing.expect(!frameLimitReached(5, 4));
+    try std.testing.expect(!frameLimitPending(5, 5));
+    try std.testing.expect(frameLimitReached(5, 5));
+}
+
+fn callStaticBoolean(env: anytype, cls: art.jni.jclass, method: ?art.jni.jmethodID) bool {
+    const mid = method orelse return false;
+    const result = env.*.*.CallStaticBooleanMethod.?(env, cls, mid) != 0;
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+        return true;
+    }
+    return result;
+}
+
+fn isInputEvent(event: wayland.Event) bool {
+    return switch (event) {
+        .pointer_motion,
+        .pointer_enter,
+        .pointer_leave,
+        .pointer_cancel,
+        .pointer_relative,
+        .pointer_button,
+        .key,
+        .keyboard_reset,
+        .touch,
+        .touch_cancel,
+        .pointer_axis,
+        => true,
+        else => false,
+    };
 }
 
 fn javaFrame(win: *wayland.Window, env: anytype, cls: art.jni.jclass, draw_hardware: art.jni.jmethodID, draw_hardware_abi: HardwareDrawAbi) !void {
     const e = art.Env{ .env = env };
     const jenv = env.*.*;
-    try win.requestFrame();
     if (draw_hardware_abi == .physical) {
         jenv.CallStaticVoidMethod.?(
             env,
@@ -823,7 +1133,18 @@ fn javaFrame(win: *wayland.Window, env: anytype, cls: art.jni.jclass, draw_hardw
         jenv.CallStaticVoidMethod.?(env, cls, draw_hardware, @as(art.jni.jint, @intCast(win.width)), @as(art.jni.jint, @intCast(win.height)));
     }
     try e.check();
-    win.uiFrameReady();
+}
+
+fn callMainLooperPump(env: anytype, cls: art.jni.jclass, method: ?art.jni.jmethodID) i32 {
+    const mid = method orelse return -1;
+    const delay = env.*.*.CallStaticLongMethod.?(env, cls, mid);
+    if (env.*.*.ExceptionCheck.?(env) != 0) {
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+        return -1;
+    }
+    if (delay < 0) return -1;
+    return @intCast(@min(delay, std.math.maxInt(i32)));
 }
 
 fn syncAppFullscreen(win: *wayland.Window, env: anytype, cls: art.jni.jclass, method: ?art.jni.jmethodID, previous: *bool) !void {

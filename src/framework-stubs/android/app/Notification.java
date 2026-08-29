@@ -38,6 +38,8 @@ public class Notification implements Parcelable {
     public static final String CATEGORY_SERVICE = "service";
     public static final String CATEGORY_TRANSPORT = "transport";
     public static final String CATEGORY_ERROR = "err";
+    public static final String EXTRA_PEOPLE = "android.people";
+    public static final String EXTRA_PEOPLE_LIST = "android.people.list";
 
     public int icon;
     public long when;
@@ -164,6 +166,7 @@ public class Notification implements Parcelable {
 
     public static class Builder {
         private final Notification n = new Notification();
+        private final java.util.ArrayList<Person> mPersonList = new java.util.ArrayList<>();
         public Builder(Context context) {}
         public Builder(Context context, String channelId) {}
         public Builder setSmallIcon(int icon) { n.icon = icon; return this; }
@@ -174,7 +177,15 @@ public class Notification implements Parcelable {
         public Builder setTicker(CharSequence tickerText, android.widget.RemoteViews views) { n.tickerText = tickerText; return this; }
         public Builder setSound(Uri sound, int streamType) { n.sound = sound; return this; }
         public Builder setSound(Uri sound, android.media.AudioAttributes attributes) { n.sound = sound; return this; }
-        public Builder addPerson(String uri) { return this; }
+        // Follows AOSP Notification.Builder.addPerson overload ordering. The full AOSP
+        // Notification cannot be compiled because this host has no notification service/UI.
+        public Builder addPerson(String uri) {
+            return addPerson(new Person.Builder().setUri(uri).build());
+        }
+        public Builder addPerson(Person person) {
+            mPersonList.add(person);
+            return this;
+        }
         public Builder setColorized(boolean colorize) { return this; }
         public Builder setSettingsText(CharSequence text) { return this; }
         public Builder setLocusId(Object locusId) { return this; }
@@ -231,8 +242,13 @@ public class Notification implements Parcelable {
         public Builder addExtras(Bundle extras) { return this; }
         public Builder setExtras(Bundle extras) { return this; }
         public Bundle getExtras() { return n.extras; }
-        public Notification build() { return n; }
-        public Notification getNotification() { return n; }
+        public Notification build() {
+            if (!mPersonList.isEmpty()) {
+                n.extras.putParcelableArrayList(EXTRA_PEOPLE_LIST, mPersonList);
+            }
+            return n;
+        }
+        public Notification getNotification() { return build(); }
     }
 
     @Override public int describeContents() { return 0; }

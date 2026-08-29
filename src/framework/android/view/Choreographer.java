@@ -3,7 +3,9 @@
 package android.view;
 
 import android.os.Looper;
+import android.os.Handler;
 import android.os.SystemClock;
+import android.util.Log;
 import java.util.ArrayList;
 
 public final class Choreographer {
@@ -13,6 +15,8 @@ public final class Choreographer {
     private static final long FRAME_INTERVAL_MS = 16;
     private static final Object FRAME_CALLBACK_TOKEN = new Object();
     private static final ThreadLocal<Choreographer> sThreadInstance = new ThreadLocal<>();
+    private static final boolean TRACE_SLOW_FRAMES =
+            System.getenv("ARTZIG_SLOW_FRAME_TRACE") != null;
 
     public interface FrameCallback { void doFrame(long frameTimeNanos); }
 
@@ -39,10 +43,18 @@ public final class Choreographer {
     }
 
     private final Looper mLooper;
+    private final Handler mHandler;
+    private final Runnable mWakeForFrame = this::onWakeForFrame;
     private final ArrayList<CallbackRecord> mCallbacks = new ArrayList<>();
     private long mLastFrameTimeNanos;
+    private long mWakeTime = Long.MAX_VALUE;
 
-    private Choreographer(Looper looper) { mLooper = looper; }
+    private Choreographer(Looper looper) {
+        mLooper = looper;
+        // DisplayEventReceiver scheduling messages are asynchronous in AOSP so
+        // they can pass ViewRootImpl's traversal synchronization barrier.
+        mHandler = Handler.createAsync(looper);
+    }
 
     public static Choreographer getInstance() {
         Choreographer c = sThreadInstance.get();
@@ -105,6 +117,7 @@ public final class Choreographer {
         long dueTime = SystemClock.uptimeMillis() + Math.max(0, delayMillis);
         synchronized (mCallbacks) {
             mCallbacks.add(new CallbackRecord(type, action, token, dueTime));
+            scheduleWakeLocked();
         }
     }
 
@@ -118,6 +131,48 @@ public final class Choreographer {
                     mCallbacks.remove(i);
                 }
             }
+            // AOSP keeps one scheduled display event for the earliest callback.
+            // Recompute it when cancellation may have removed that callback.
+            mHandler.removeCallbacks(mWakeForFrame);
+            mWakeTime = Long.MAX_VALUE;
+            scheduleWakeLocked();
+        }
+    }
+
+    /**
+     * Host DisplayEventReceiver wake. This message does not execute frame work;
+     * it only makes the native poll loop re-check hasDueCallbacks$artzig().
+     */
+    private void onWakeForFrame() {
+        synchronized (mCallbacks) {
+            mWakeTime = Long.MAX_VALUE;
+            // Do not repost a callback which is already due: the host is awake
+            // and will request compositor vsync. Keep only a future deadline.
+            scheduleFutureWakeLocked(SystemClock.uptimeMillis());
+        }
+    }
+
+    private void scheduleWakeLocked() {
+        long earliest = Long.MAX_VALUE;
+        for (int i = 0; i < mCallbacks.size(); ++i) {
+            earliest = Math.min(earliest, mCallbacks.get(i).dueTime);
+        }
+        if (earliest < mWakeTime) {
+            mHandler.removeCallbacks(mWakeForFrame);
+            mWakeTime = earliest;
+            mHandler.postAtTime(mWakeForFrame, earliest);
+        }
+    }
+
+    private void scheduleFutureWakeLocked(long now) {
+        long earliest = Long.MAX_VALUE;
+        for (int i = 0; i < mCallbacks.size(); ++i) {
+            long dueTime = mCallbacks.get(i).dueTime;
+            if (dueTime > now) earliest = Math.min(earliest, dueTime);
+        }
+        if (earliest != Long.MAX_VALUE) {
+            mWakeTime = earliest;
+            mHandler.postAtTime(mWakeForFrame, earliest);
         }
     }
 
@@ -131,11 +186,44 @@ public final class Choreographer {
     public void doFrame$artzig(long frameTimeNanos) {
         mLastFrameTimeNanos = frameTimeNanos;
         for (int type = CALLBACK_INPUT; type <= CALLBACK_LAST; ++type) {
+            long phaseStart = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
             ArrayList<CallbackRecord> due = takeDue(type, SystemClock.uptimeMillis());
             for (int i = 0; i < due.size(); ++i) {
+                long callbackStart = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
                 due.get(i).run(frameTimeNanos);
+                if (TRACE_SLOW_FRAMES) {
+                    long elapsed = SystemClock.uptimeMillis() - callbackStart;
+                    if (elapsed > 8) {
+                        Log.d("ChoreographerFrame", "slow callback type=" + type
+                                + " duration=" + elapsed + "ms action="
+                                + due.get(i).action.getClass().getName());
+                    }
+                }
+            }
+            if (TRACE_SLOW_FRAMES) {
+                long elapsed = SystemClock.uptimeMillis() - phaseStart;
+                if (elapsed > 8) {
+                    Log.d("ChoreographerFrame", "slow phase type=" + type
+                            + " callbacks=" + due.size() + " duration=" + elapsed + "ms");
+                }
             }
         }
+        synchronized (mCallbacks) {
+            mHandler.removeCallbacks(mWakeForFrame);
+            mWakeTime = Long.MAX_VALUE;
+            scheduleFutureWakeLocked(SystemClock.uptimeMillis());
+        }
+    }
+
+    /** Host DisplayEventReceiver seam: true only when a callback is due now. */
+    public boolean hasDueCallbacks$artzig() {
+        long now = SystemClock.uptimeMillis();
+        synchronized (mCallbacks) {
+            for (int i = 0; i < mCallbacks.size(); ++i) {
+                if (mCallbacks.get(i).dueTime <= now) return true;
+            }
+        }
+        return false;
     }
 
     private ArrayList<CallbackRecord> takeDue(int type, long now) {

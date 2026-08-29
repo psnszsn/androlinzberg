@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+oat=
+vdex=
+for arg in "$@"; do
+  case "$arg" in
+    --oat-file=*) oat=${arg#--oat-file=} ;;
+    --output-vdex=*) vdex=${arg#--output-vdex=} ;;
+  esac
+done
+test -n "$oat"
+test -n "$vdex"
+printf '%s\n' "$*" >>"$AZK_FAKE_DEX2OAT_LOG"
+if test -n "${AZK_FAKE_DEX2OAT_SLEEP:-}"; then
+  sleep "$AZK_FAKE_DEX2OAT_SLEEP"
+fi
+printf 'new-oat\n' >"$oat"
+printf 'new-vdex\n' >"$vdex"
+if test "${AZK_FAKE_DEX2OAT_FAIL:-0}" = 1; then
+  exit 17
+fi

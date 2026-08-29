@@ -17,6 +17,13 @@ public class ActivityManager {
     public int getLargeMemoryClass() { return 512; }
     public static boolean isUserAMonkey() { return false; }
 
+    /**
+     * AOSP ActivityManager.isBackgroundRestricted(). Android asks system_server whether the user
+     * applied a per-application background restriction. The hosted runtime has no system_server or
+     * host-side equivalent policy, so applications are observably unrestricted.
+     */
+    public boolean isBackgroundRestricted() { return false; }
+
     public static boolean isHighEndGfx() { return true; }
     public static boolean isLowRamDeviceStatic() { return false; }
     public static int getCurrentUser() { return 0; }

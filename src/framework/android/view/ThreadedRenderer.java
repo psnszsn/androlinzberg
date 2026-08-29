@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.HardwareRenderer;
 import android.graphics.RecordingCanvas;
 import android.graphics.RenderNode;
+import java.util.concurrent.Executor;
 
 /** Host HWUI renderer backed by Ganesh/OpenGL and a direct Wayland EGL surface. */
 public final class ThreadedRenderer extends HardwareRenderer {
@@ -13,6 +14,7 @@ public final class ThreadedRenderer extends HardwareRenderer {
     private int mWidth;
     private int mHeight;
     private final RenderNode mScaledRoot = new RenderNode("artzig-scaled-root");
+    private static final Executor DIRECT_EXECUTOR = Runnable::run;
 
     private ThreadedRenderer() {
         super();
@@ -73,15 +75,20 @@ public final class ThreadedRenderer extends HardwareRenderer {
         }
         setContentRoot(content);
         forceDrawNextFrame();
-        // The Wayland host publishes synchronized child surfaces with a parent
-        // commit immediately after this method returns. HardwareRenderer's
-        // default sync may release the UI thread before RenderThread submits
-        // the EGL buffer, so use its AOSP wait-for-present contract to make
-        // that parent/child ordering deterministic.
+        // AOSP HardwareRenderer recommends pipelined presentation for normal frames. The frame
+        // commit callback wakes the Wayland owner after RenderThread has submitted the child EGL
+        // buffer; that thread then publishes the synchronized parent transaction.
         int result = createRenderRequest()
                 .setVsyncTime(System.nanoTime())
-                .setWaitForPresent(true)
+                .setFrameCommitCallback(DIRECT_EXECUTOR, ThreadedRenderer::nNotifyHostFrameCommitted)
+                .setWaitForPresent(false)
                 .syncAndDraw();
+        // A dropped request produces no child-surface commit. Release the parent transaction
+        // explicitly so its wl_surface.frame callback can pace a later retry; eventfd coalescing
+        // makes this safe if HWUI also completes the registered callback while dropping.
+        if ((result & SYNC_FRAME_DROPPED) != 0) {
+            nNotifyHostFrameCommitted();
+        }
         if ((result & SYNC_LOST_SURFACE_REWARD_IF_FOUND) != 0) {
             throw new IllegalStateException("HWUI lost the host render surface: " + result);
         }
@@ -137,4 +144,5 @@ public final class ThreadedRenderer extends HardwareRenderer {
 
     private native void nConfigureHostSurface(int width, int height);
     private native void nDestroyHostSurface();
+    private static native void nNotifyHostFrameCommitted();
 }

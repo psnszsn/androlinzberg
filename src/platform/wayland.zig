@@ -209,6 +209,28 @@ pub const Event = union(enum) {
     frame_done: struct { time_ms: u32 },
 };
 
+pub const WakeSources = struct {
+    video: ?std.posix.fd_t = null,
+    looper: ?std.posix.fd_t = null,
+    renderer: ?std.posix.fd_t = null,
+    optimizer: ?std.posix.fd_t = null,
+    control_listener: ?std.posix.fd_t = null,
+    control_client: ?std.posix.fd_t = null,
+    control_client_write: bool = false,
+    /// Delay until the next Android MessageQueue item, or -1 when none is scheduled.
+    timeout_ms: i32 = -1,
+};
+
+pub const WaitResult = struct {
+    events: []const Event,
+    video_ready: bool = false,
+    looper_ready: bool = false,
+    renderer_ready: bool = false,
+    optimizer_ready: bool = false,
+    control_ready: bool = false,
+    timed_out: bool = false,
+};
+
 pub const TouchAction = enum(u8) { down, up, move, update };
 
 const PointerAxisFrame = struct {
@@ -287,6 +309,7 @@ const FullscreenState = struct {
 
 pub const Window = struct {
     gpa: std.mem.Allocator,
+    io: std.Io,
     display: *wl.Display,
     registry: *wl.Registry,
     compositor: ?*wl.Compositor = null,
@@ -362,14 +385,15 @@ pub const Window = struct {
     events: std.ArrayList(Event) = .empty,
     frame_cb: ?*wl.Callback = null,
 
-    pub fn init(gpa: std.mem.Allocator, width: i32, height: i32, title: [:0]const u8) !*Window {
-        return initOpts(gpa, width, height, title, false);
+    pub fn init(gpa: std.mem.Allocator, io: std.Io, width: i32, height: i32, title: [:0]const u8) !*Window {
+        return initOpts(gpa, io, width, height, title, false);
     }
 
-    pub fn initOpts(gpa: std.mem.Allocator, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !*Window {
+    pub fn initOpts(gpa: std.mem.Allocator, io: std.Io, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !*Window {
         const self = try gpa.create(Window);
         self.* = .{
             .gpa = gpa,
+            .io = io,
             .display = try wl.Display.connect(null),
             .registry = undefined,
             .width = width,
@@ -547,7 +571,10 @@ pub const Window = struct {
                 if (self.dmabuf_table) |old| std.posix.munmap(old);
                 self.dmabuf_table = null;
                 self.dmabuf_formats.clearRetainingCapacity();
-                defer _ = std.c.close(table.fd);
+                defer (std.Io.File{
+                    .handle = table.fd,
+                    .flags = .{ .nonblocking = false },
+                }).close(self.io);
                 if (table.size == 0 or table.size % @sizeOf(DmabufTableEntry) != 0) return;
                 self.dmabuf_table = std.posix.mmap(
                     null,
@@ -755,7 +782,10 @@ pub const Window = struct {
     fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Window) void {
         switch (event) {
             .keymap => |k| {
-                defer _ = std.c.close(k.fd);
+                defer (std.Io.File{
+                    .handle = k.fd,
+                    .flags = .{ .nonblocking = false },
+                }).close(self.io);
                 if (k.format != .xkb_v1) return;
                 const data = std.posix.mmap(null, k.size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, k.fd, 0) catch return;
                 defer std.posix.munmap(data);
@@ -1093,14 +1123,13 @@ pub const Window = struct {
 
     fn createBaseBuffer(self: *Window) !*wl.Buffer {
         const base_fd = try std.posix.memfd_create("azk-window-base", 0);
-        defer _ = std.c.close(base_fd);
+        const base_file = std.Io.File{
+            .handle = base_fd,
+            .flags = .{ .nonblocking = false },
+        };
+        defer base_file.close(self.io);
         const pixel = [_]u8{ 0, 0, 0, 0 };
-        var written: usize = 0;
-        while (written < pixel.len) {
-            const count = std.c.write(base_fd, pixel[written..].ptr, pixel.len - written);
-            if (count <= 0) return error.BaseBufferWriteFailed;
-            written += @intCast(count);
-        }
+        base_file.writeStreamingAll(self.io, &pixel) catch return error.BaseBufferWriteFailed;
         const pool = try self.shm.?.createPool(base_fd, @intCast(pixel.len));
         defer pool.destroy();
         return pool.createBuffer(0, 1, 1, 4, .xrgb8888);
@@ -1118,6 +1147,14 @@ pub const Window = struct {
             self.frame_cb = try self.surface.frame();
             self.frame_cb.?.setListener(*Window, frameListener, self);
         }
+    }
+
+    /// Arm the compositor vsync callback without publishing an Android child
+    /// buffer. The empty parent transaction is the hosted DisplayEventReceiver
+    /// request; traversal still runs only after frame_done.
+    pub fn requestVsync(self: *Window) !void {
+        try self.requestFrame();
+        self.presentation_dirty = true;
     }
 
     /// Publish every synchronized Android child update as one Wayland
@@ -1248,13 +1285,12 @@ pub const Window = struct {
         const keyboard = try manager.createVirtualKeyboard(seat);
         errdefer keyboard.destroy();
         const keymap_fd = try std.posix.memfd_create("azk-test-keymap", 0);
-        defer _ = std.c.close(keymap_fd);
-        var remaining: []const u8 = test_keymap;
-        while (remaining.len != 0) {
-            const written = std.c.write(keymap_fd, remaining.ptr, remaining.len);
-            if (written <= 0) return error.KeymapWriteFailed;
-            remaining = remaining[@intCast(written)..];
-        }
+        const keymap_file = std.Io.File{
+            .handle = keymap_fd,
+            .flags = .{ .nonblocking = false },
+        };
+        defer keymap_file.close(self.io);
+        keymap_file.writeStreamingAll(self.io, test_keymap) catch return error.KeymapWriteFailed;
         keyboard.keymap(.xkb_v1, keymap_fd, @intCast(test_keymap.len));
         self.virtual_keyboard = keyboard;
         return keyboard;
@@ -1285,10 +1321,9 @@ pub const Window = struct {
         self.presentation_dirty = true;
     }
 
-    /// Block until a Wayland event or an optional application wakeup arrives.
-    /// An empty result means the wakeup fd is readable. The prepare/read
-    /// sequence follows libwayland's required ordering when polling another fd.
-    pub fn waitEvents(self: *Window, wakeup_fd: ?std.posix.fd_t) ![]const Event {
+    /// Block until Wayland, Android's main queue, RenderThread, or video work is ready. The
+    /// prepare/read sequence follows libwayland's required ordering when polling other fds.
+    pub fn waitEvents(self: *Window, sources: WakeSources) !WaitResult {
         self.events.clearRetainingCapacity();
         while (self.events.items.len == 0) {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
@@ -1297,7 +1332,7 @@ pub const Window = struct {
 
             while (!self.display.prepareRead()) {
                 if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
-                if (self.events.items.len != 0) return self.events.items;
+                if (self.events.items.len != 0) return .{ .events = self.events.items };
             }
             var wait_for_write = false;
             while (true) {
@@ -1322,13 +1357,30 @@ pub const Window = struct {
                         @as(i16, if (wait_for_write) std.posix.POLL.OUT else 0),
                     .revents = 0,
                 },
-                .{ .fd = wakeup_fd orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
+                .{ .fd = sources.video orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
+                .{ .fd = sources.looper orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
+                .{ .fd = sources.renderer orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
+                .{ .fd = sources.optimizer orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
+                .{ .fd = sources.control_listener orelse -1, .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP, .revents = 0 },
+                .{ .fd = sources.control_client orelse -1, .events = controlClientPollEvents(sources.control_client_write), .revents = 0 },
             };
-            _ = try std.posix.poll(&poll_fds, self.keyRepeatTimeoutMs());
+            const key_timeout = self.keyRepeatTimeoutMs();
+            const timeout = if (key_timeout < 0)
+                sources.timeout_ms
+            else if (sources.timeout_ms < 0)
+                key_timeout
+            else
+                @min(key_timeout, sources.timeout_ms);
+            const ready_count = try std.posix.poll(&poll_fds, timeout);
 
             const wayland_readable = poll_fds[0].revents &
                 (std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP) != 0;
-            const wakeup_ready = wakeup_fd != null and poll_fds[1].revents != 0;
+            const video_ready = sources.video != null and poll_fds[1].revents != 0;
+            const looper_ready = sources.looper != null and poll_fds[2].revents != 0;
+            const renderer_ready = sources.renderer != null and poll_fds[3].revents != 0;
+            const optimizer_ready = sources.optimizer != null and poll_fds[4].revents != 0;
+            const control_ready = (sources.control_listener != null and poll_fds[5].revents != 0) or
+                (sources.control_client != null and poll_fds[6].revents != 0);
             if (wayland_readable) {
                 if (self.display.readEvents() != .SUCCESS) return error.DispatchFailed;
                 if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
@@ -1336,9 +1388,24 @@ pub const Window = struct {
                 self.display.cancelRead();
             }
             _ = self.emitKeyRepeatIfDue();
-            if (wakeup_ready) break;
+            if (video_ready or looper_ready or renderer_ready or optimizer_ready or control_ready or ready_count == 0) {
+                return .{
+                    .events = self.events.items,
+                    .video_ready = video_ready,
+                    .looper_ready = looper_ready,
+                    .renderer_ready = renderer_ready,
+                    .optimizer_ready = optimizer_ready,
+                    .control_ready = control_ready,
+                    .timed_out = ready_count == 0,
+                };
+            }
         }
-        return self.events.items;
+        return .{ .events = self.events.items };
+    }
+
+    fn controlClientPollEvents(wants_write: bool) i16 {
+        return std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP |
+            @as(i16, if (wants_write) std.posix.POLL.OUT else 0);
     }
 
     /// Non-blocking drain of pending events.
@@ -1666,4 +1733,12 @@ test "pointer axis frame prefers high resolution detents and Android direction" 
     try std.testing.expectEqual(@as(f64, 0.5), PointerAxisFrame.androidValue(-15, null, -60));
     try std.testing.expectEqual(@as(f64, -2), PointerAxisFrame.androidValue(30, 2, null));
     try std.testing.expectEqual(@as(f64, -1.5), PointerAxisFrame.androidValue(15, null, null));
+}
+
+test "control client polls writable only while output is pending" {
+    const idle = Window.controlClientPollEvents(false);
+    const pending = Window.controlClientPollEvents(true);
+    try std.testing.expect(idle & std.posix.POLL.OUT == 0);
+    try std.testing.expect(pending & std.posix.POLL.OUT != 0);
+    try std.testing.expect(pending & std.posix.POLL.IN != 0);
 }

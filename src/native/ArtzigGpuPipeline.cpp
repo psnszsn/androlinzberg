@@ -70,6 +70,14 @@ bool ArtzigGpuPipeline::ensureContext() {
     void* platformDisplay = mNativeDisplay;
     EGLenum platform = EGL_PLATFORM_WAYLAND_KHR;
     mUsingGbmDisplay = !platformDisplay;
+    if (!mUsingGbmDisplay) {
+        // Host presentation seam: unlike SurfaceFlinger, the synchronized Wayland parent owns
+        // frame pacing. A Mesa swap interval of one throttles the child independently and fills
+        // its buffer queue before the parent transaction can publish it. AOSP EglManager likewise
+        // selects interval zero when HWUI's external pacing disables EGL vsync.
+        gSwapInterval = 0;
+        gOverrideSwapInterval = true;
+    }
     if (mUsingGbmDisplay) {
         platformDisplay = artzig::hardwareBufferGbmDevice();
         platform = EGL_PLATFORM_GBM_KHR;

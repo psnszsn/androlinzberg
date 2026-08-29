@@ -64,6 +64,12 @@ public final class ArtzigTestDiagnostics {
         reportIssueLocked("unimplemented", safe(owner), safe(member), safe(detail));
     }
 
+    /** Host subsystems use this only for bounded, actionable asynchronous failures. */
+    public static synchronized void reportIssue(String kind, String owner, String member,
+            String detail) {
+        reportIssueLocked(safe(kind), safe(owner), safe(member), safe(detail));
+    }
+
     public static UnsupportedOperationException unsupported(String owner, String member,
             String detail) {
         String message = detail == null || detail.isEmpty()

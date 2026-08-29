@@ -265,6 +265,36 @@ pub const Server = struct {
         self.ui_input = input;
     }
 
+    /// File descriptors which must participate in the host event loop. Test control used to
+    /// make progress accidentally because the UI rendered continuously; an on-demand renderer
+    /// must instead wake explicitly when a client connects or sends another request.
+    pub fn listenerFd(self: *const Server) std.posix.fd_t {
+        return self.listener;
+    }
+
+    pub fn clientFd(self: *const Server) ?std.posix.fd_t {
+        return if (self.client >= 0) self.client else null;
+    }
+
+    pub fn clientWantsWrite(self: *const Server) bool {
+        return self.client >= 0 and self.output.items.len != 0;
+    }
+
+    /// Time until a pending request must be evaluated for timeout.
+    pub fn waitTimeoutMs(self: *const Server) i32 {
+        const pending = self.pending orelse return -1;
+        const remaining = pending.deadline_ms - monotonicMs();
+        if (remaining <= 0) return 0;
+        return @intCast(@min(remaining, std.math.maxInt(i32)));
+    }
+
+    /// Idle/frame waits deliberately advance presentation even when the application has no
+    /// dirty UI. This is test-only pacing used to establish consecutive stable frames.
+    pub fn needsFrame(self: *const Server) bool {
+        const pending = self.pending orelse return false;
+        return pending.wait_kind == .idle or pending.wait_kind == .frame_presented;
+    }
+
     pub fn tick(
         self: *Server,
         android: *const Android,
@@ -1007,4 +1037,16 @@ test "structured selectors default to the active window" {
     try selectNodes(std.testing.allocator, snapshot.value, selector.value, &matches);
     try std.testing.expectEqual(@as(usize, 1), matches.items.len);
     try std.testing.expectEqual(@as(i64, 2), intField(matches.items[0], "window_id").?);
+}
+
+test "control server advertises pending nonblocking output" {
+    var server: Server = undefined;
+    server.client = 7;
+    server.output = .empty;
+    defer server.output.deinit(std.testing.allocator);
+    try std.testing.expect(!server.clientWantsWrite());
+    try server.output.append(std.testing.allocator, 1);
+    try std.testing.expect(server.clientWantsWrite());
+    server.client = -1;
+    try std.testing.expect(!server.clientWantsWrite());
 }

@@ -1,8 +1,12 @@
 package dev.artzig
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.ActivityThread
 import android.app.ContextImpl
+import android.app.DownloadManager
+import android.app.Notification
+import android.app.Person
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -14,6 +18,8 @@ import android.graphics.Point
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
+import android.net.Uri
 import android.view.Choreographer
 import android.view.HostedSystemUiController
 import android.view.HostedInputDispatcher
@@ -29,6 +35,12 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.WindowManagerImpl
 import android.view.ViewRootImpl
+import java.io.DataOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Behavioral smoke tests whose surface is the hosted framework modules. */
 internal object FrameworkModuleSmoke {
@@ -40,13 +52,16 @@ internal object FrameworkModuleSmoke {
         testPackageNames()
         testConfigurationCalculation()
         testMessageQueueSyncBarrier()
+        testMessageQueueHostPumpSemantics()
         testChoreographerPhaseOrder()
         testPostedCallbackRunsAfterPendingTraversal()
         testTraversalRescheduleAndSharedQueue()
+        testHostedSystemServices()
         testHostedInputEvents()
         testHostedInputDispatch()
         testHostedPhysicalInputLifecycle()
         testHostedInputHierarchyDispatch()
+        testHostedInputCancelOnInterception()
         testHostedInputSiblingDispatch()
         testHostedInputWindowRouting()
         testWindowPresentation()
@@ -97,6 +112,185 @@ internal object FrameworkModuleSmoke {
         )
         check(!lockedPortrait.landscape)
         check(lockedPortrait.displayWidth == 700 && lockedPortrait.displayHeight == 1000)
+    }
+
+    private fun testHostedSystemServices() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val activityManager = context.getSystemService(ActivityManager::class.java)
+        check(activityManager != null && !activityManager.isBackgroundRestricted)
+
+        val notificationBuilder = Notification.Builder(context, "smoke")
+        check(notificationBuilder.addPerson("name:framework-smoke") === notificationBuilder)
+        check(notificationBuilder.addPerson(
+            Person.Builder().setName("Framework smoke").build(),
+        ) === notificationBuilder)
+        val people = notificationBuilder.build().extras
+            .getParcelableArrayList<Person>(Notification.EXTRA_PEOPLE_LIST)
+        check(people?.map { it.uri ?: it.name?.toString() } == listOf(
+            "name:framework-smoke", "Framework smoke",
+        )) { "Notification.Builder must publish people into notification extras: $people" }
+
+        // The hosted provider table is deliberately kept under filesDir, where the APK can alter
+        // it. Verify that restoring a forged successful record cannot turn provider APIs into a
+        // read/delete primitive for paths outside application-owned storage.
+        val stateDirectory = File(context.filesDir, "hosted-download-manager")
+        check(stateDirectory.isDirectory || stateDirectory.mkdirs())
+        listOf("state.bin", "state.bin.bak", "state.bin.tmp").forEach {
+            File(stateDirectory, it).delete()
+        }
+        val restoredEscape = File("/tmp/hosted-download-manager-restored-escape.bin")
+        restoredEscape.writeText("must survive rejected restored state")
+        restoredEscape.deleteOnExit()
+        fun DataOutputStream.writeStateString(value: String) {
+            val bytes = value.toByteArray(Charsets.UTF_8)
+            writeInt(bytes.size)
+            write(bytes)
+        }
+        DataOutputStream(FileOutputStream(File(stateDirectory, "state.bin"))).use { output ->
+            output.writeInt(1)
+            output.writeLong(2)
+            output.writeInt(1)
+            output.writeLong(1)
+            output.writeStateString("https://example.invalid/forged")
+            output.writeStateString(restoredEscape.absolutePath)
+            repeat(3) { output.writeInt(-1) }
+            output.writeInt(0)
+            output.writeInt(DownloadManager.STATUS_SUCCESSFUL)
+            output.writeInt(0)
+            output.writeLong(restoredEscape.length())
+            output.writeLong(restoredEscape.length())
+            output.writeLong(System.currentTimeMillis())
+            output.writeBoolean(true)
+        }
+
+        val byName = context.getSystemService(Context.DOWNLOAD_SERVICE)
+        val downloadManager = context.getSystemService(DownloadManager::class.java)
+        check(downloadManager != null && downloadManager === byName)
+        downloadManager.query(DownloadManager.Query().setFilterById(1)).use { cursor ->
+            check(!cursor.moveToFirst()) { "unsafe persisted DownloadManager record was restored" }
+        }
+        check(restoredEscape.readText() == "must survive rejected restored state")
+        restoredEscape.delete()
+        check(runCatching {
+            DownloadManager.Request(Uri.parse("file:///tmp/not-a-network-download"))
+        }.exceptionOrNull() is IllegalArgumentException)
+
+        val payload = "hosted DownloadManager smoke".toByteArray()
+        val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val responder = Thread({
+            server.accept().use { socket ->
+                val reader = socket.getInputStream().bufferedReader()
+                while (!reader.readLine().isNullOrEmpty()) {
+                    // Consume request headers.
+                }
+                socket.getOutputStream().apply {
+                    write("HTTP/1.1 200 OK\r\nContent-Length: ${payload.size}\r\n\r\n".toByteArray())
+                    write(payload)
+                    flush()
+                }
+            }
+        }, "DownloadManager-smoke-server").apply {
+            isDaemon = true
+            start()
+        }
+        val destination = File(context.filesDir, "hosted-download-manager-smoke.bin")
+        destination.delete()
+        val unsafeRequest = DownloadManager.Request(
+            Uri.parse("http://127.0.0.1/unsafe"),
+        ).setDestinationUri(Uri.fromFile(File("/tmp/hosted-download-manager-escape.bin")))
+        check(runCatching { downloadManager.enqueue(unsafeRequest) }.exceptionOrNull() is SecurityException) {
+            "hosted DownloadManager must not escape application-owned storage"
+        }
+        val traversalRequest = DownloadManager.Request(
+            Uri.parse("http://127.0.0.1/traversal"),
+        ).setDestinationInExternalFilesDir(context, null, "../../hosted-download-manager-escape.bin")
+        check(runCatching { downloadManager.enqueue(traversalRequest) }.exceptionOrNull() is SecurityException) {
+            "hosted DownloadManager must reject external-files traversal"
+        }
+        val request = DownloadManager.Request(
+            Uri.parse("http://127.0.0.1:${server.localPort}/update.apk"),
+        ).setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI)
+            .setTitle("Framework smoke")
+            .setDescription("DownloadManager contract")
+            .setDestinationUri(Uri.fromFile(destination))
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_HIDDEN)
+        val id = downloadManager.enqueue(request)
+        var collisionId = -1L
+        try {
+            fun awaitTerminal(downloadId: Long): Pair<Int, Int> {
+                val deadline = System.nanoTime() + 5_000_000_000L
+                var status = DownloadManager.STATUS_PENDING
+                var reason = 0
+                while (System.nanoTime() < deadline) {
+                    downloadManager.query(
+                        DownloadManager.Query().setFilterById(downloadId),
+                    ).use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            status = cursor.getInt(
+                                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS),
+                            )
+                            reason = cursor.getInt(
+                                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON),
+                            )
+                        }
+                    }
+                    if (status == DownloadManager.STATUS_SUCCESSFUL ||
+                        status == DownloadManager.STATUS_FAILED
+                    ) break
+                    Thread.sleep(10)
+                }
+                return status to reason
+            }
+
+            val (status, _) = awaitTerminal(id)
+            check(status == DownloadManager.STATUS_SUCCESSFUL) {
+                "hosted download finished with status $status"
+            }
+            val downloaded = ParcelFileDescriptor.AutoCloseInputStream(
+                downloadManager.openDownloadedFile(id),
+            ).use { it.readBytes() }
+            check(downloaded.contentEquals(payload))
+
+            val restoredManager = DownloadManager(context)
+            restoredManager.query(DownloadManager.Query().setFilterById(id)).use { cursor ->
+                check(cursor.moveToFirst())
+                check(cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) ==
+                    DownloadManager.STATUS_SUCCESSFUL)
+            }
+            check(File(context.filesDir, "hosted-download-manager/state.bin").isFile) {
+                "DownloadManager request table was not persisted"
+            }
+
+            check(downloadManager.remove(id) == 1)
+            check(!destination.exists())
+            val existing = "pre-existing destination".toByteArray()
+            destination.writeBytes(existing)
+            collisionId = downloadManager.enqueue(request)
+            val (collisionStatus, collisionReason) = awaitTerminal(collisionId)
+            check(collisionStatus == DownloadManager.STATUS_FAILED)
+            check(collisionReason == DownloadManager.ERROR_FILE_ALREADY_EXISTS)
+            check(destination.readBytes().contentEquals(existing)) {
+                "DownloadManager overwrote an existing destination"
+            }
+            check(downloadManager.remove(collisionId) == 1)
+            collisionId = -1L
+            check(destination.readBytes().contentEquals(existing)) {
+                "removing a failed download deleted a file it did not create"
+            }
+        } finally {
+            downloadManager.remove(id)
+            if (collisionId != -1L) downloadManager.remove(collisionId)
+            server.close()
+            responder.join(1_000)
+            destination.delete()
+        }
+        check(!destination.exists())
     }
 
     private fun testPostedCallbackRunsAfterPendingTraversal() {
@@ -169,9 +363,95 @@ internal object FrameworkModuleSmoke {
             is IllegalStateException) { "removing a barrier twice must fail" }
     }
 
+    private fun testMessageQueueHostPumpSemantics() {
+        drainMainQueue()
+        val looper = checkNotNull(Looper.getMainLooper())
+        val queue = looper.queue
+        val handler = Handler(looper)
+
+        var delayedRan = false
+        handler.postDelayed({ delayedRan = true }, 35)
+        val delay = queue.`nextPollDelayMillis$artzig`()
+        check(delay in 1..35) { "host poll deadline did not track delayed work: $delay" }
+        check(queue.`pollDueMessage$artzig`() == null)
+        Thread.sleep(45)
+        drainMainQueue()
+        check(delayedRan) { "delayed message was not runnable at its deadline" }
+
+        var idleRuns = 0
+        queue.addIdleHandler {
+            idleRuns++
+            idleRuns < 2
+        }
+        queue.`runIdleHandlers$artzig`()
+        queue.`runIdleHandlers$artzig`()
+        check(idleRuns == 1) { "idle handler ran repeatedly without queue activity" }
+        handler.post { }
+        drainMainQueue()
+        queue.`runIdleHandlers$artzig`()
+        check(idleRuns == 2) { "idle handler was not rearmed after work drained" }
+
+        val raced = AtomicInteger()
+        val producer = Thread({
+            repeat(128) { handler.post { raced.incrementAndGet() } }
+        }, "MessageQueue-cross-thread-smoke")
+        producer.start()
+        producer.join()
+        drainMainQueue()
+        check(raced.get() == 128) { "enqueue/drain race lost ${128 - raced.get()} messages" }
+
+        val starved = AtomicInteger()
+        repeat(620) { handler.post { starved.incrementAndGet() } }
+        check(ApkHost.pumpMainLooper() == 0L) {
+            "bounded pump did not request immediate starvation rescheduling"
+        }
+        check(starved.get() == 500) { "starvation guard drained ${starved.get()} messages" }
+        drainMainQueue()
+        check(starved.get() == 620)
+
+        var enqueueAfterQuit = true
+        val quitter = Thread({
+            Looper.prepare()
+            val privateLooper = checkNotNull(Looper.myLooper())
+            privateLooper.quit()
+            enqueueAfterQuit = Handler(privateLooper).post { }
+        }, "MessageQueue-quit-smoke")
+        quitter.start()
+        quitter.join()
+        check(!enqueueAfterQuit) { "MessageQueue accepted work after quit" }
+    }
+
     private fun testChoreographerPhaseOrder() {
-        val observed = mutableListOf<String>()
+        drainMainQueue()
         val choreographer = Choreographer.getInstance()
+        var floodCallbacks = 0
+        repeat(100) {
+            choreographer.postCallback(
+                Choreographer.CALLBACK_ANIMATION,
+                { floodCallbacks++ },
+                null,
+            )
+        }
+        var wakeMessages = 0
+        val queue = checkNotNull(Looper.getMainLooper()).queue
+        while (true) {
+            val message = queue.`pollDueMessage$artzig`() ?: break
+            wakeMessages++
+            try {
+                message.target.dispatchMessage(message)
+            } finally {
+                message.recycle()
+            }
+        }
+        check(wakeMessages <= 1) {
+            "Choreographer produced $wakeMessages host wakes for one callback deadline"
+        }
+        choreographer.`doFrame$artzig`(System.nanoTime())
+        check(floodCallbacks == 100) {
+            "coalescing host wakes lost frame callbacks: $floodCallbacks"
+        }
+
+        val observed = mutableListOf<String>()
         choreographer.postCallback(Choreographer.CALLBACK_COMMIT, { observed += "commit" }, null)
         choreographer.postCallback(Choreographer.CALLBACK_TRAVERSAL, { observed += "traversal" }, null)
         choreographer.postCallback(Choreographer.CALLBACK_INPUT, { observed += "input" }, null)
@@ -196,6 +476,13 @@ internal object FrameworkModuleSmoke {
         try {
             runHostedFrame()
             runHostedFrame()
+            reschedulingView.layoutCount = 0
+            reschedulingView.invalidate()
+            runHostedFrame()
+            check(reschedulingView.layoutCount == 0) {
+                "draw-only invalidation incorrectly forced another layout pass"
+            }
+
             reschedulingView.layoutCount = 0
             reschedulingView.layoutRequestsRemaining = 1
             reschedulingView.requestLayout()
@@ -267,11 +554,20 @@ internal object FrameworkModuleSmoke {
             y = 34f,
         )
         try {
+            check(MotionEvent.FLAG_TARGET_ACCESSIBILITY_FOCUS == 0x40000000) {
+                "MotionEvent flags must come from the matching AOSP input AIDL"
+            }
             check(mouse.isFromSource(InputDevice.SOURCE_MOUSE))
             check(mouse.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE)
             check(mouse.buttonState == MotionEvent.BUTTON_PRIMARY)
             check(mouse.actionButton == MotionEvent.BUTTON_PRIMARY)
+            check(mouse.pressure == 1f)
             check(!mouse.isFromSource(InputDevice.SOURCE_TOUCHSCREEN))
+            check(!mouse.isTargetAccessibilityFocus)
+            mouse.setTargetAccessibilityFocus(true)
+            check(mouse.isTargetAccessibilityFocus)
+            mouse.setTargetAccessibilityFocus(false)
+            check(!mouse.isTargetAccessibilityFocus)
         } finally {
             mouse.recycle()
         }
@@ -398,6 +694,7 @@ internal object FrameworkModuleSmoke {
                 "generic:${MotionEvent.ACTION_BUTTON_RELEASE}:$mousePrefix:0:" +
                     "${MotionEvent.BUTTON_PRIMARY}:0.0:0.0",
                 "touch:${MotionEvent.ACTION_UP}:$mousePrefix:0:0",
+                "generic:${MotionEvent.ACTION_HOVER_ENTER}:$mousePrefix:0:0:0.0:0.0",
                 "touch:${MotionEvent.ACTION_DOWN}:$touchPrefix:0:0",
                 "touch:${MotionEvent.ACTION_UP}:$touchPrefix:0:0",
                 "touch:${MotionEvent.ACTION_DOWN}:$mousePrefix:${MotionEvent.BUTTON_SECONDARY}:0",
@@ -406,6 +703,7 @@ internal object FrameworkModuleSmoke {
                 "generic:${MotionEvent.ACTION_BUTTON_RELEASE}:$mousePrefix:0:" +
                     "${MotionEvent.BUTTON_SECONDARY}:0.0:0.0",
                 "touch:${MotionEvent.ACTION_UP}:$mousePrefix:0:0",
+                "generic:${MotionEvent.ACTION_HOVER_MOVE}:$mousePrefix:0:0:0.0:0.0",
                 "generic:${MotionEvent.ACTION_HOVER_ENTER}:$mousePrefix:0:0:0.0:0.0",
                 "generic:${MotionEvent.ACTION_HOVER_MOVE}:$mousePrefix:0:0:0.0:0.0",
                 "generic:${MotionEvent.ACTION_SCROLL}:$mousePrefix:0:0:2.0:-3.0",
@@ -573,8 +871,50 @@ internal object FrameworkModuleSmoke {
             HostedInputDispatcher.dispatchMouse(
                 root, MotionEvent.ACTION_UP, 0, 0, 50f, 50f,
             )
-            check(observed == listOf("intercept:0", "parent:0", "parent:1")) {
+            check(observed == listOf(
+                "intercept:0", "parent:0", "parent:1", "child:g:9",
+            )) {
                 "root hierarchy must own hit testing and interception: $observed"
+            }
+        } finally {
+            HostedInputDispatcher.reset()
+            root.destroy()
+        }
+    }
+
+    private fun testHostedInputCancelOnInterception() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val observed = mutableListOf<String>()
+        val child = RecordingInputView(context, "child", observed).apply { isClickable = true }
+        val parent = MoveInterceptingInputGroup(context, observed).apply { addView(child) }
+        val root = ViewRootImpl(context)
+        root.setView(parent, 200, 200)
+        parent.measure(
+            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
+        )
+        parent.layout(0, 0, 200, 200)
+        try {
+            HostedInputDispatcher.dispatchMouse(
+                root, MotionEvent.ACTION_DOWN,
+                MotionEvent.BUTTON_PRIMARY, 0, 50f, 50f,
+            )
+            HostedInputDispatcher.dispatchMouse(
+                root, MotionEvent.ACTION_MOVE,
+                MotionEvent.BUTTON_PRIMARY, 0, 50f, 20f,
+            )
+            HostedInputDispatcher.dispatchMouse(
+                root, MotionEvent.ACTION_MOVE,
+                MotionEvent.BUTTON_PRIMARY, 0, 50f, 10f,
+            )
+            check(observed == listOf("child:0", "child:3", "parent:2")) {
+                "interception must cancel the original mouse target before scrolling: $observed"
             }
         } finally {
             HostedInputDispatcher.reset()
@@ -625,7 +965,7 @@ internal object FrameworkModuleSmoke {
             HostedInputDispatcher.dispatchMouse(
                 activityRoot, MotionEvent.ACTION_UP, 0, 0, 50f, 50f,
             )
-            check(observed == listOf("upper:4", "lower:0", "lower:1")) {
+            check(observed == listOf("upper:4", "lower:0", "lower:1", "lower:g:9")) {
                 "non-modal outside routing must preserve one gesture root: $observed"
             }
 
@@ -657,7 +997,7 @@ internal object FrameworkModuleSmoke {
             HostedInputDispatcher.dispatchMouse(
                 activityRoot, MotionEvent.ACTION_UP, 0, 0, 50f, 50f,
             )
-            check(observed == listOf("modal:0", "modal:1")) {
+            check(observed == listOf("modal:0", "modal:1", "modal:g:9")) {
                 "modal window must own an outside gesture: $observed"
             }
             check(lower.root.view == null) { "cleared overlay root remained attached" }
@@ -701,7 +1041,7 @@ internal object FrameworkModuleSmoke {
             HostedInputDispatcher.dispatchMouse(
                 root, MotionEvent.ACTION_UP, 0, 0, 100f, 50f,
             )
-            check(observed == listOf("top:0", "top:1")) {
+            check(observed == listOf("top:0", "top:1", "top:g:9")) {
                 "ViewGroup must resolve transformed overlapping siblings: $observed"
             }
         } finally {
@@ -776,6 +1116,31 @@ internal object FrameworkModuleSmoke {
             if (event.actionMasked == MotionEvent.ACTION_DOWN) observed += "intercept:0"
             return event.actionMasked == MotionEvent.ACTION_DOWN
         }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            observed += "parent:${event.actionMasked}"
+            return true
+        }
+    }
+
+    private class MoveInterceptingInputGroup(
+        context: Context,
+        private val observed: MutableList<String>,
+    ) : ViewGroup(context) {
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            getChildAt(0).measure(widthMeasureSpec, heightMeasureSpec)
+            setMeasuredDimension(
+                MeasureSpec.getSize(widthMeasureSpec),
+                MeasureSpec.getSize(heightMeasureSpec),
+            )
+        }
+
+        override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+            getChildAt(0).layout(0, 0, right - left, bottom - top)
+        }
+
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+            event.actionMasked == MotionEvent.ACTION_MOVE
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             observed += "parent:${event.actionMasked}"

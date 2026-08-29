@@ -123,7 +123,7 @@ object HostedInputDispatcher {
             screenX,
             screenY,
         )
-        return try {
+        val handled = try {
             if (action == MotionEvent.ACTION_DOWN) dispatchOutsideWatchers(mouseGesture, event)
             dispatchGesture(activityRoot, mouseGesture, event)
         } finally {
@@ -132,6 +132,13 @@ object HostedInputDispatcher {
                 mouseGesture.reset()
             }
         }
+        // AOSP CursorInputMapper::sync() follows a mouse ACTION_UP with HOVER_MOVE so the view
+        // hierarchy re-enters hover state at the release location. Without it, the hosted stream
+        // leaves the view hierarchy in a different post-drag state than a physical Android mouse.
+        if (action == MotionEvent.ACTION_UP) {
+            dispatchHover(activityRoot, MotionEvent.ACTION_HOVER_MOVE, screenX, screenY)
+        }
+        return handled
     }
 
     @JvmStatic
@@ -805,6 +812,9 @@ object HostedInputDispatcher {
         val coordinates = MotionEvent.PointerCoords().apply {
             this.x = x
             this.y = y
+            // AOSP CursorInputMapper reports pressure 1 while a primary/secondary/tertiary mouse
+            // button holds the pointer down, and 0 once the pointer returns to hover.
+            pressure = if (buttonState and POINTER_DOWN_BUTTONS != 0) 1f else 0f
             setAxisValue(MotionEvent.AXIS_HSCROLL, horizontalScroll)
             setAxisValue(MotionEvent.AXIS_VSCROLL, verticalScroll)
         }
@@ -977,4 +987,6 @@ object HostedInputDispatcher {
     private const val TOUCH_MOVE = 2
     private const val TOUCH_UPDATE = 3
     private const val MAX_TOUCH_CONTACTS = 10
+    private const val POINTER_DOWN_BUTTONS =
+        MotionEvent.BUTTON_PRIMARY or MotionEvent.BUTTON_SECONDARY or MotionEvent.BUTTON_TERTIARY
 }

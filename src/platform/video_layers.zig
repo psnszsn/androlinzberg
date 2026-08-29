@@ -3,11 +3,11 @@
 //! only). All cross-thread state goes through per-layer mailboxes; frames are
 //! latest-wins.
 const std = @import("std");
-const linux = std.os.linux;
 const wayland = @import("wayland.zig");
 const codec = @import("azk_codec");
 const art = @import("art");
 const jni = art.jni;
+const EventFd = @import("event_fd").EventFd;
 
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 
@@ -41,24 +41,18 @@ var g_win: ?*wayland.Window = null;
 var g_android_physical_pixels = false;
 var g_dmabuf_rejection_logged = false;
 var g_allow_yuv_dmabuf = false;
-var g_wakeup_fd: std.posix.fd_t = -1;
+var g_wakeup: ?EventFd = null;
 
 fn signalMainThread() void {
-    if (g_wakeup_fd < 0) return;
-    var value: u64 = 1;
-    const bytes = std.mem.asBytes(&value);
-    _ = std.c.write(g_wakeup_fd, bytes.ptr, bytes.len);
+    if (g_wakeup) |event| event.signal();
 }
 
 fn consumeWakeup() void {
-    if (g_wakeup_fd < 0) return;
-    var value: u64 = 0;
-    const bytes = std.mem.asBytes(&value);
-    _ = std.c.read(g_wakeup_fd, bytes.ptr, bytes.len);
+    if (g_wakeup) |event| _ = event.consume();
 }
 
 pub fn wakeupFd() ?std.posix.fd_t {
-    return if (g_wakeup_fd >= 0) g_wakeup_fd else null;
+    return if (g_wakeup) |event| event.fd() else null;
 }
 
 fn record(id: jni.jint) ?*Record {
@@ -143,11 +137,10 @@ pub fn register(gpa: std.mem.Allocator, io: std.Io, win: *wayland.Window, env: [
     g_io = io;
     g_win = win;
     g_android_physical_pixels = android_physical_pixels;
-    g_wakeup_fd = std.c.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
-    if (g_wakeup_fd < 0) return error.EventFdFailed;
+    g_wakeup = try EventFd.init(io);
     errdefer {
-        _ = std.c.close(g_wakeup_fd);
-        g_wakeup_fd = -1;
+        g_wakeup.?.close();
+        g_wakeup = null;
     }
     g_allow_yuv_dmabuf = if (getenv("ARTZIG_VIDEO_YUV_DMABUF")) |value|
         std.mem.eql(u8, std.mem.span(value), "1")
@@ -329,8 +322,8 @@ pub fn deinit() void {
     }
     g_records.deinit(g_gpa);
     g_records = .empty;
-    if (g_wakeup_fd >= 0) {
-        _ = std.c.close(g_wakeup_fd);
-        g_wakeup_fd = -1;
+    if (g_wakeup) |event| {
+        event.close();
+        g_wakeup = null;
     }
 }

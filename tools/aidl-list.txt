@@ -26,8 +26,10 @@ android/hardware/input/IKeyGestureHandler.aidl
 android/hardware/input/IStickyModifierStateListener.aidl
 android/hardware/input/ITabletModeChangedListener.aidl
 android/os/ICancellationSignal.aidl
+android/os/IInputConstants.aidl
 android/os/IRemoteCallback.aidl
 android/os/IVibratorStateListener.aidl
+android/os/MotionEventFlag.aidl
 android/service/textclassifier/ITextClassifierCallback.aidl
 android/service/textclassifier/ITextClassifierService.aidl
 android/service/translation/ITranslationCallback.aidl

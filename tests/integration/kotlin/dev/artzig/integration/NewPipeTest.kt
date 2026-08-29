@@ -58,8 +58,9 @@ class NewPipeTest {
     @Test
     fun revealingVideoControlsKeepsCompositorFullscreen() = app.run {
         waitFor(text = "LIVE")
-        waitFor(text = "Associated Press")
-        click(text = "Associated Press", index = 0)
+        // The YouTube live feed is dynamic. Exercise the first live card
+        // instead of pinning the test to a channel that may leave the feed.
+        click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
         click(description = "Play video, duration:")
         if (!isVisible(description = "Toggle screen orientation")) {
@@ -82,8 +83,7 @@ class NewPipeTest {
     @Test
     fun fullscreenButtonExitsAndRestoresVideoDetails() = app.run {
         waitFor(text = "LIVE")
-        waitFor(text = "Associated Press")
-        click(text = "Associated Press", index = 0)
+        click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
         waitFor(text = "Background")
         waitForFullscreen(false)
@@ -140,8 +140,7 @@ class NewPipeDesktopTest {
     @Test
     fun videoButtonEntersCompositorFullscreen() = app.run {
         waitFor(text = "LIVE")
-        waitFor(text = "Associated Press")
-        click(text = "Associated Press", index = 0)
+        click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
         waitForFullscreen(false)
 

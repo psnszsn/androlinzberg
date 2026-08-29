@@ -50,7 +50,12 @@ pub fn build(b: *std.Build, o: Options) Result {
         dep.path("vendor/external/kotlinc/build.txt"),
     });
     const stamp_res = stamp(b, "res.stamp", &.{ fb.path(b, "core/res"), b.path("tools/build-res.sh") });
-    const stamp_aidl = stamp(b, "aidl.stamp", &.{ b.path("tools/aidl-list.txt"), b.path("tools/build-aidl.sh"), b.path("aidl-compat") });
+    const stamp_aidl = stamp(b, "aidl.stamp", &.{
+        b.path("tools/aidl-list.txt"),
+        b.path("tools/build-aidl.sh"),
+        b.path("aidl-compat"),
+        dep.path("extra/frameworks-native/libs/input/android/os"),
+    });
 
     const source_policy = b.addSystemCommand(&.{ "bash", "tools/check-jvm-source-policy.sh" });
     source_policy.addFileInput(stamp_jvm);
@@ -114,6 +119,30 @@ pub fn build(b: *std.Build, o: Options) Result {
     d8.addArg("--output");
     const classpath_jar = d8.addOutputFileArg("framework.jar");
     d8.addFileArg(classes_jar);
+
+    // HostedApkClassLoader keeps framework classes parent-first but lets an
+    // APK's kotlin.* definitions shadow the compiler-pinned host stdlib. Give
+    // dex2oat that same compiler view; the full framework.jar remains the
+    // stored runtime context used for freshness validation.
+    const app_context_d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
+    app_context_d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
+    app_context_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "34", "--lib" });
+    app_context_d8.addFileArg(core_plus);
+    app_context_d8.addArg("--lib");
+    app_context_d8.addFileArg(dep.path("vendor/external/kotlinc/lib/kotlin-stdlib.jar"));
+    app_context_d8.addArg("--output");
+    const app_context_jar = app_context_d8.addOutputFileArg("framework-app-context.jar");
+    app_context_d8.addFileArg(classes_jar);
+
+    // Android's framework jars are dexpreopted into the system image. Build an adjacent hosted
+    // odex/vdex pair against the exact ART boot image and final framework.jar location.
+    const dexopt = b.addSystemCommand(&.{"bash"});
+    dexopt.addFileArg(b.path("tools/dexopt-framework.sh"));
+    dexopt.addDirectoryArg(dep.namedLazyPath("art-runtime"));
+    dexopt.addFileArg(classpath_jar);
+    dexopt.addFileArg(b.graph.path(.install_prefix, "framework/framework.jar"));
+    const framework_oat = dexopt.addOutputDirectoryArg("framework-oat");
+    dexopt.setName("dex2oat framework.jar (speed)");
     d8.addFileArg(dep.path("vendor/external/kotlinc/lib/kotlin-stdlib.jar"));
 
     // A tiny app dex used to verify that APK-bundled kotlin.* classes win over
@@ -141,6 +170,21 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     const java_step = b.step("java", "Build the framework jar (kotlinc + javac + d8), framework-res.apk and generated Java");
     java_step.dependOn(&b.addInstallFileWithDir(classpath_jar, .{ .custom = "framework" }, "framework.jar").step);
+    java_step.dependOn(&b.addInstallFileWithDir(
+        app_context_jar,
+        .{ .custom = "framework" },
+        "framework-app-context.jar",
+    ).step);
+    java_step.dependOn(&b.addInstallFileWithDir(
+        framework_oat.path(b, "framework.odex"),
+        .{ .custom = "framework/oat/x86_64" },
+        "framework.odex",
+    ).step);
+    java_step.dependOn(&b.addInstallFileWithDir(
+        framework_oat.path(b, "framework.vdex"),
+        .{ .custom = "framework/oat/x86_64" },
+        "framework.vdex",
+    ).step);
     java_step.dependOn(&b.addInstallFileWithDir(res_apk, .{ .custom = "res" }, "framework-res.apk").step);
     return .{
         .classpath_jar = classpath_jar,

@@ -85,6 +85,7 @@ public class ContextImpl extends Context {
     private android.content.pm.ShortcutManager mShortcutManager;
     private android.view.inputmethod.InputMethodManager mInputMethodManager;
     private android.view.autofill.AutofillManager mAutofillManager;
+    private android.app.DownloadManager mDownloadManager;
     private Context mOuterContext;
     /** Real Android: ContextImpl.setOuterContext — the Activity/Application facade. */
     public void setOuterContext(Context outer) { mOuterContext = outer; mInflater = null; }
@@ -101,6 +102,11 @@ public class ContextImpl extends Context {
                 return new android.content.ClipboardManager();
             case ACTIVITY_SERVICE:
                 return new android.app.ActivityManager();
+            case DOWNLOAD_SERVICE:
+                if (mDownloadManager == null) {
+                    mDownloadManager = new android.app.DownloadManager(getOuterContext());
+                }
+                return mDownloadManager;
             case AUDIO_SERVICE:
                 return new android.media.AudioManager();
             case NOTIFICATION_SERVICE:
@@ -171,6 +177,7 @@ public class ContextImpl extends Context {
         if (serviceClass == android.media.metrics.MediaMetricsManager.class) return "media_metrics";
         if (serviceClass == android.app.usage.UsageStatsManager.class) return "usagestats";
         if (serviceClass == android.app.ActivityManager.class) return ACTIVITY_SERVICE;
+        if (serviceClass == android.app.DownloadManager.class) return DOWNLOAD_SERVICE;
         if (serviceClass == android.app.NotificationManager.class) return NOTIFICATION_SERVICE;
         if (serviceClass == android.app.AlarmManager.class) return ALARM_SERVICE;
         if (serviceClass == android.media.AudioManager.class) return AUDIO_SERVICE;

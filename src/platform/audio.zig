@@ -5,25 +5,22 @@ const art = @import("art");
 const pw = @import("pipewire");
 const jni = art.jni;
 
-const Timespec = extern struct { sec: i64, nsec: i64 };
-extern "c" fn clock_gettime(clock_id: c_int, time: *Timespec) c_int;
-
 const Mutex = struct {
-    raw: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    raw: std.Io.Mutex = .init,
 
-    fn lock(mutex: *Mutex) void {
-        _ = std.c.pthread_mutex_lock(&mutex.raw);
+    fn lock(self: *Mutex) void {
+        self.raw.lockUncancelable(g_io);
     }
 
-    fn unlock(mutex: *Mutex) void {
-        _ = std.c.pthread_mutex_unlock(&mutex.raw);
+    fn unlock(self: *Mutex) void {
+        self.raw.unlock(g_io);
     }
 };
 
+var g_io: std.Io = undefined;
+
 fn nowNs() u64 {
-    var time: Timespec = undefined;
-    _ = clock_gettime(1, &time); // CLOCK_MONOTONIC
-    return @as(u64, @intCast(time.sec)) * std.time.ns_per_s + @as(u64, @intCast(time.nsec));
+    return @intCast(std.Io.Clock.now(.awake, g_io).nanoseconds);
 }
 
 const Stream = struct {
@@ -231,7 +228,8 @@ fn nativeRelease(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.
     if (fromHandle(handle)) |stream| stream.destroy();
 }
 
-pub fn register(env: [*c]jni.JNIEnv) !void {
+pub fn register(io: std.Io, env: [*c]jni.JNIEnv) !void {
+    g_io = io;
     const cls = env.*.*.FindClass.?(env, "android/media/AudioTrack") orelse return error.NoClass;
     const methods = [_]jni.JNINativeMethod{
         .{ .name = "nativeOpen", .signature = "(II)J", .fnPtr = @ptrCast(@constCast(&nativeOpen)) },
@@ -250,6 +248,7 @@ pub fn register(env: [*c]jni.JNIEnv) !void {
 }
 
 test "ring buffer wraps and flushes" {
+    g_io = std.testing.io;
     var ring: [8]u8 = undefined;
     var stream = Stream{ .ring = &ring, .sample_rate = 4, .frame_bytes = 2 };
     try std.testing.expectEqual(@as(usize, 6), stream.write("abcdef", 6));
@@ -266,6 +265,7 @@ test "ring buffer wraps and flushes" {
 }
 
 test "fallback clock consumes whole frames" {
+    g_io = std.testing.io;
     var ring: [16]u8 = undefined;
     var stream = Stream{ .ring = &ring, .sample_rate = 4, .frame_bytes = 2 };
     try std.testing.expectEqual(@as(usize, 8), stream.write("abcdefgh", 8));

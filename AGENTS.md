@@ -3,6 +3,16 @@
 - Always run Zig build/run commands with `-j10` (for example,
   `zig build -j10 run`) to avoid overwhelming the system.
 
+## Zig I/O policy
+
+Use `std.Io` for Zig I/O and descriptor ownership. Pass or store the active
+`std.Io` explicitly, wrap descriptors in `std.Io.File`, and perform reads,
+writes, process operations, synchronization, and close through `std.Io`. Do
+not use `std.c` in repository-owned Zig code. When `std.Io` lacks a Linux
+object constructor such as `eventfd`, limit `std.os.linux` to creation and
+immediately transfer the descriptor to a `std.Io.File`; all subsequent
+operations and ownership remain in `std.Io`.
+
 ## JVM language policy
 
 Use Kotlin for new repository-owned JVM code. Keep directly reused AOSP and

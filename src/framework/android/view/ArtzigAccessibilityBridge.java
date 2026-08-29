@@ -211,7 +211,7 @@ public final class ArtzigAccessibilityBridge {
     private static ArrayList<WindowRecord> collectWindows() {
         ArrayList<WindowRecord> result = new ArrayList<>();
         List<ArtzigWindowStack.Entry> overlays = ArtzigWindowStack.entries();
-        ArtzigWindowStack.Entry activeOverlay = ArtzigWindowStack.top();
+        ArtzigWindowStack.Entry activeOverlay = ArtzigWindowStack.topFocusable();
         // Frontmost first: selector defaults and diagnostics use visual order.
         for (int i = overlays.size() - 1; i >= 0; --i) {
             ArtzigWindowStack.Entry entry = overlays.get(i);

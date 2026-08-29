@@ -1,0 +1,77 @@
+From: artzig host adaptation
+Subject: [PATCH] ART: support hosted selective APK class-loader contexts
+
+The hosted APK loader subclasses PathClassLoader solely to give APK-bundled
+kotlin.* classes precedence over the host compiler's standard library. ART's
+class-loader-context builder rejects every subclass based on exact class
+identity, so otherwise-current OAT/VDEX files are never mapped.
+
+Keep class resolution in the Java override, but expose the inherited
+BaseDexClassLoader DexPathList to context validation as a PCL. APK dex2oat uses
+a compiler-only framework context without kotlin.* and remaps it to the full
+runtime framework.jar. When that stored path is locally available, retain its
+checksum so freshness validation still covers the real runtime dependency.
+
+These changes are limited to artifact context construction and do not change
+ClassLinker's lookup order for custom loaders.
+---
+ dex2oat/dex2oat.cc              | 10 ++++++++++
+ runtime/class_loader_context.cc | 12 +++++++++++-
+ 2 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/dex2oat/dex2oat.cc b/dex2oat/dex2oat.cc
+index 0000000..0000000 100644
+--- a/dex2oat/dex2oat.cc
++++ b/dex2oat/dex2oat.cc
+@@ -1668,6 +1668,16 @@ class Dex2Oat FINAL {
+         LOG(WARNING) << "Failed to open classpath dex files";
+       }
+ 
++      // artzig host adaptation: APK compilation uses a framework view with
++      // kotlin.* removed so it matches HostedApkClassLoader's selective lookup,
++      // while the stored context names the full runtime framework.jar. Unlike
++      // Android's cross-product dexpreopt target paths, that runtime path exists
++      // while compiling on the host, so record its checksum when available.
++      if (stored_class_loader_context_ != nullptr &&
++          !stored_class_loader_context_->OpenDexFiles(classpath_dir_)) {
++        LOG(WARNING) << "Failed to open stored classpath dex files";
++      }
++
+       // Store the class loader context in the oat header.
+       // TODO: deprecate this since store_class_loader_context should be enough to cover the users
+       // of classpath_dir as well.
+
+diff --git a/runtime/class_loader_context.cc b/runtime/class_loader_context.cc
+index 0000000..0000000 100644
+--- a/runtime/class_loader_context.cc
++++ b/runtime/class_loader_context.cc
+@@ -718,7 +718,12 @@ void ClassLoaderContext::EncodeContextInternal(const ClassLoaderInfo& info,
+ 
+     // dex2oat does not need the checksums.
+     if (!for_dex2oat) {
+-      checksums.push_back(info.checksums[i]);
++      // artzig host adaptation: when dex2oat can open the remapped stored
++      // context, validate the artifact against that runtime file rather than
++      // the compiler-only context used for selective Kotlin resolution.
++      checksums.push_back(stored_info != nullptr && !stored_info->checksums.empty()
++                              ? stored_info->checksums[i]
++                              : info.checksums[i]);
+     }
+   }
+   EncodeClassPath(base_dir, locations, checksums, info.type, out);
+@@ -1118,6 +1118,13 @@ bool ClassLoaderContext::CreateInfoFromClassLoader(
+     type = kDelegateLastClassLoader;
+   } else if (IsInMemoryDexClassLoader(class_loader)) {
+     type = kInMemoryDexClassLoader;
++  } else if (class_loader->GetClass()->DescriptorEquals(
++                 "Ldev/artzig/HostedApkClassLoader;")) {
++    // artzig host adaptation: HostedApkClassLoader subclasses PathClassLoader
++    // only to keep an APK's kotlin.* runtime ahead of the host compiler's
++    // stdlib. Preserve its Java lookup policy, but describe its DexPathList as
++    // a PCL so ART can validate and load the APK's speed artifacts.
++    type = kPathClassLoader;
+   } else {
+     LOG(WARNING) << "Unsupported class loader: "
+                  << mirror::Class::PrettyClass(class_loader->GetClass());
+-- 
+2.51.0

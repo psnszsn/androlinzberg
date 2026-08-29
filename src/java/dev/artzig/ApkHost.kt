@@ -21,6 +21,7 @@ import java.io.InputStream
 import java.util.Enumeration
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import dalvik.system.DexFile
 
 public final class ApkHost {
     private constructor () {}
@@ -43,6 +44,48 @@ public final class ApkHost {
         private var sScale120: Int = 0
         private var sAppFullscreenRequested: Boolean = false
         private var sHostFullscreenSuppressed: Boolean = false
+        private val TRACE_SLOW_FRAMES: Boolean =
+            System.getenv("ARTZIG_SLOW_FRAME_TRACE") != null
+
+        /** AOSP DexFile/OatFileAssistant freshness check for the standard
+         * dalvik-cache artifact that the host background compiler installs. */
+        @JvmStatic public fun apkDexoptNeeded(): Boolean {
+            val apkPath: String = System.getenv("ARTZIG_APK") ?: return false
+            val frameworkJar: String = System.getenv("ARTZIG_FRAMEWORK_JAR") ?: return false
+            val context: String = "PCL[];PCL[" + frameworkJar + "]"
+            return try {
+                DexFile.getDexOptNeeded(
+                    apkPath,
+                    "x86_64",
+                    "speed",
+                    context,
+                    false,
+                    false,
+                ) != DexFile.NO_DEXOPT_NEEDED
+            } catch (t: Throwable) {
+                Log.w(TAG, "dexopt freshness check failed; compilation will be retried", t)
+                true
+            }
+        }
+
+        @JvmStatic public fun apkDexoptStatus(): String {
+            val apkPath: String = System.getenv("ARTZIG_APK") ?: return "unavailable"
+            return try {
+                val info = DexFile.getDexFileOptimizationInfo(apkPath, "x86_64")
+                info.status + "/" + info.reason
+            } catch (t: Throwable) {
+                "unavailable:" + t.javaClass.simpleName
+            }
+        }
+
+        @JvmStatic public fun reportDexoptFailure() {
+            android.util.ArtzigTestDiagnostics.reportIssue(
+                "dexopt_failure",
+                "dev.artzig.ApkHost",
+                "backgroundDexopt",
+                "speed compilation failed; temporary artifacts were removed and a later launch will retry",
+            )
+        }
 
 /** Extract the host ABI from the APK because the desktop/bionic bridge
          * cannot mmap Android's special "apk!/lib/..." classloader paths. */
@@ -357,6 +400,7 @@ public final class ApkHost {
             val cl: HostedApkClassLoader =
                 HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
             sClassLoader = cl;
+            Log.i(TAG, "APK dexopt status: " + apkDexoptStatus())
 
             // input service: reflective default-answering IInputManager so
             // InputManagerGlobal (VelocityTracker etc.) works without a real service.
@@ -645,18 +689,35 @@ public final class ApkHost {
             ) {
                 resize(width, height, scale120)
             }
+            val traceStart: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
             drainLooper()
+            val traceBeforeDrain: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
             val wins: MutableList<android.view.ArtzigWindowStack.Entry> =
                 android.view.ArtzigWindowStack.entries()
             for (e: android.view.ArtzigWindowStack.Entry in wins) {
                 e.root.`prepareWindowTraversal$artzig`(e.lp, width, height)
             }
+            val tracePrepared: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
             android.view.Choreographer
                 .getInstance()
                 .`doFrame$artzig`(System.nanoTime())
+            val traceChoreographer: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
             // The traversal barrier is now released. Synchronous View.post callbacks observe
             // geometry from this frame and may schedule another traversal for the next frame.
             drainLooper()
+            if (TRACE_SLOW_FRAMES) {
+                val traceDone: Long = SystemClock.uptimeMillis()
+                if (traceDone - traceStart > 16L) {
+                    Log.d(
+                        "ApkHostFrame",
+                        "slow main frame=" + (traceDone - traceStart) +
+                            "ms pre-queue=" + (traceBeforeDrain - traceStart) +
+                            " prepare=" + (tracePrepared - traceBeforeDrain) +
+                            " choreographer=" + (traceChoreographer - tracePrepared) +
+                            " post-queue=" + (traceDone - traceChoreographer),
+                    )
+                }
+            }
             val base: RenderNode? = if (sRootActive) sRoot.`getRenderNode$artzig`() else null
             if (wins.isEmpty()) {
                 if (base == null) {
@@ -775,12 +836,14 @@ public final class ApkHost {
             Log.i(TAG, "resized to " + width + "x" + height)
         }
 
-        @JvmStatic private fun drainLooper() {
+        @JvmStatic
+        public fun pumpMainLooper(): Long {
             val looper: Looper? = Looper.myLooper()
-            if (looper == null) return
+            if (looper == null) return -1
+            val queue = looper.getQueue()
             var guard: Int = 0
             while (guard++ < 500) {
-                val msg: android.os.Message? = looper.getQueue().`pollDueMessage$artzig`()
+                val msg: android.os.Message? = queue.`pollDueMessage$artzig`()
                 if (msg == null) break
                 try {
                     try {
@@ -804,7 +867,18 @@ public final class ApkHost {
                     msg.recycle()
                 }
             }
+            if (guard > 500 && queue.`nextPollDelayMillis$artzig`() == 0L) {
+                queue.`wakeHost$artzig`()
+                return 0
+            }
+            queue.`runIdleHandlers$artzig`()
+            return queue.`nextPollDelayMillis$artzig`()
         }
+
+        @JvmStatic public fun needsFrame(): Boolean =
+            android.view.Choreographer.getInstance().`hasDueCallbacks$artzig`()
+
+        @JvmStatic private fun drainLooper() { pumpMainLooper() }
 
         private const val HOST_THROWABLE_CHAR_LIMIT: Int = 64 * 1024
         private const val HOST_THROWABLE_FRAME_LIMIT: Int = 64

@@ -104,6 +104,11 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(testkit.install_step);
     b.installBinFile("tools/azk-test", "azk-test");
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+        b.path("tools/dexopt-apk.sh"),
+        .{ .custom = "share/androlinzberg" },
+        "dexopt-apk.sh",
+    ).step);
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
         libart_overlay,
         .{ .custom = "lib/art" },
         "libart.so",
@@ -220,12 +225,38 @@ pub fn build(b: *std.Build) void {
         audio_mod.addIncludePath(.{ .cwd_relative = b.dupe(flag[2..]) });
     };
     audio_mod.linkSystemLibrary("pipewire-0.3", .{ .needed = true, .use_pkg_config = .no });
+    const event_fd_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/event_fd.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("event_fd", event_fd_mod);
     const host_renderer_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/host_renderer.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
-        .imports = &.{.{ .name = "art", .module = art_mod }},
+        .imports = &.{
+            .{ .name = "art", .module = art_mod },
+            .{ .name = "event_fd", .module = event_fd_mod },
+        },
+    });
+    const looper_wakeup_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/looper_wakeup.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "art", .module = art_mod },
+            .{ .name = "event_fd", .module = event_fd_mod },
+        },
+    });
+    const apk_optimizer_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/apk_optimizer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "event_fd", .module = event_fd_mod }},
     });
     const host_natives_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/host_natives.zig"),
@@ -236,9 +267,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "audio", .module = audio_mod },
             .{ .name = "codec_jni", .module = codec_jni_mod },
             .{ .name = "host_renderer", .module = host_renderer_mod },
+            .{ .name = "looper_wakeup", .module = looper_wakeup_mod },
         },
     });
     exe.root_module.addImport("host_natives", host_natives_mod);
+    exe.root_module.addImport("apk_optimizer", apk_optimizer_mod);
     exe.rdynamic = true;
 
     const audio_tests = b.addTest(.{ .root_module = audio_mod });
@@ -257,6 +290,14 @@ pub fn build(b: *std.Build) void {
     const run_wayland_tests = b.addRunArtifact(wayland_tests);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
+    const looper_wakeup_check = b.addTest(.{ .root_module = looper_wakeup_mod });
+    const run_looper_wakeup_tests = b.addRunArtifact(looper_wakeup_check);
+    const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
+    const run_apk_optimizer_tests = b.addRunArtifact(apk_optimizer_check);
+    const dexopt_transaction_test = b.addSystemCommand(&.{ "bash", "tools/test-dexopt-apk.sh" });
+    dexopt_transaction_test.addFileInput(b.path("tools/test-dexopt-apk.sh"));
+    dexopt_transaction_test.addFileInput(b.path("tools/dexopt-apk.sh"));
+    dexopt_transaction_test.addFileInput(b.path("testdata/dexopt/fake-dex2oat64"));
     const test_control_check = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/test_control.zig"),
@@ -281,6 +322,9 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
     native_test_step.dependOn(&host_renderer_check.step);
+    native_test_step.dependOn(&run_looper_wakeup_tests.step);
+    native_test_step.dependOn(&run_apk_optimizer_tests.step);
+    native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);
     native_test_step.dependOn(&platform_abi_check.step);
     native_test_step.dependOn(&launcher_check.step);

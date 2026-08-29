@@ -7,6 +7,7 @@ ROOT="$APP/artzig"
 OUT=$(realpath -m "${1:-$APP/.cache/aidl-java}")
 LIST="$APP/tools/aidl-list.txt"
 FB="$ROOT/extra/frameworks-base"
+FN_INPUT="$ROOT/extra/frameworks-native/libs/input"
 mkdir -p "$OUT"
 AIDL="$ROOT/vendor/prebuilts/sdk/tools/linux/bin/aidl"
 AIDL_RUN=("$AIDL")
@@ -31,8 +32,11 @@ done < <(find "$APP/aidl-compat" -type f -name '*.aidl' -print)
 while IFS= read -r rel; do
   [ -z "$rel" ] && continue; case "$rel" in \#*) continue;; esac
   src="$FB/core/java/$rel"
+  if [ ! -f "$src" ]; then
+    src="$FN_INPUT/$rel"
+  fi
   [ -f "$src" ] || { echo "missing aidl: $rel" >&2; exit 1; }
   "${AIDL_RUN[@]}" -I"$FB/core/java" -I"$FB/graphics/java" -I"$COMPAT" \
-    -I"$FB/media/java" -o "$OUT" "$src"
+    -I"$FB/media/java" -I"$FN_INPUT" -o "$OUT" "$src"
 done < "$LIST"
 echo "== $OUT"

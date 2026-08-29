@@ -5,6 +5,8 @@ public final class MessageQueue {
     private boolean mQuitting;
     private int mNextBarrierToken;
     private final java.util.ArrayList<IdleHandler> mIdleHandlers = new java.util.ArrayList<>();
+    private boolean mIdleHandlersPending = true;
+    private static native void nativeWakeHost();
     public interface IdleHandler { boolean queueIdle(); }
     public void addIdleHandler(IdleHandler handler) {
         synchronized (this) { mIdleHandlers.add(handler); }
@@ -35,11 +37,51 @@ public final class MessageQueue {
             if (msg != null && now >= msg.when) {
                 if (prev == null) mMessages = msg.next; else prev.next = msg.next;
                 msg.next = null;
+                mIdleHandlersPending = true;
                 return msg;
             }
             return null;
         }
     }
+
+    /**
+     * Host adaptation of AOSP MessageQueue.next()'s poll timeout calculation. The Linux host owns
+     * the blocking poll, so expose the delay until the next deliverable message while retaining
+     * synchronization-barrier ordering here with the queue state.
+     */
+    public long nextPollDelayMillis$artzig() {
+        synchronized (this) {
+            Message msg = mMessages;
+            if (msg != null && msg.target == null) {
+                do { msg = msg.next; } while (msg != null && !msg.isAsynchronous());
+            }
+            if (msg == null) return -1;
+            return Math.max(0, msg.when - SystemClock.uptimeMillis());
+        }
+    }
+
+    /** Run AOSP-style idle handlers once after the queue transitions to idle. */
+    public void runIdleHandlers$artzig() {
+        java.util.ArrayList<IdleHandler> idle;
+        synchronized (this) {
+            if (!mIdleHandlersPending) return;
+            Message next = mMessages;
+            if (next != null && next.target == null) {
+                do { next = next.next; } while (next != null && !next.isAsynchronous());
+            }
+            if (next != null && next.when <= SystemClock.uptimeMillis()) return;
+            mIdleHandlersPending = false;
+            idle = new java.util.ArrayList<>(mIdleHandlers);
+        }
+        for (IdleHandler handler : idle) {
+            boolean keep;
+            try { keep = handler.queueIdle(); } catch (Throwable ignored) { keep = false; }
+            if (!keep) removeIdleHandler(handler);
+        }
+    }
+
+    /** Re-arm the host eventfd after a bounded pump yields to native event processing. */
+    public void wakeHost$artzig() { nativeWakeHost(); }
 
     /**
      * AOSP MessageQueue.postSyncBarrier(), adapted to the Java-only hosted queue because
@@ -93,6 +135,7 @@ public final class MessageQueue {
             current.recycleUnchecked();
             notifyAll();
         }
+        nativeWakeHost();
     }
 
     Message next() {
@@ -149,6 +192,7 @@ public final class MessageQueue {
             }
             notifyAll();
         }
+        nativeWakeHost();
         return true;
     }
     void removeMessages(Handler h, int what, Object object) {
@@ -194,5 +238,6 @@ public final class MessageQueue {
             if (!safe) { while (mMessages != null) { Message n = mMessages.next; mMessages.recycleUnchecked(); mMessages = n; } }
             notifyAll();
         }
+        nativeWakeHost();
     }
 }

@@ -95,6 +95,24 @@ public final class ArtzigWindowStack {
         }
     }
 
+    /**
+     * Topmost overlay that can own Android window focus. AOSP accessibility
+     * tracks the active window from WindowManager focus changes; hosted
+     * tooltips and other FLAG_NOT_FOCUSABLE panels must not hide the active
+     * activity window from accessibility selectors.
+     */
+    public static Entry topFocusable() {
+        synchronized (sEntries) {
+            for (int i = sEntries.size() - 1; i >= 0; --i) {
+                Entry entry = sEntries.get(i);
+                if ((entry.lp.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0) {
+                    return entry;
+                }
+            }
+            return null;
+        }
+    }
+
     /** Topmost overlay eligible for pointer input. Exit transitions mark their
      * window not-touchable before the decor is finally removed. */
     public static Entry topTouchable() {
