@@ -37,9 +37,11 @@ group: Io.Group = .init,
 listener: net.Server,
 socket_path: []const u8,
 cookie: []const u8,
-/// UID reported to peers as the calling identity of every peer (see plan:
-/// all hosted processes in a session share one app uid).
-app_uid: u32,
+/// Presented only by the session's trusted system process.
+system_cookie: []const u8,
+/// Package name -> Android uid for this session; uids are never reused.
+packages: std.StringHashMapUnmanaged(u32) = .empty,
+next_app_uid: u32,
 shutting_down: bool = false,
 peers: std.AutoHashMapUnmanaged(u32, *Peer) = .empty,
 next_peer_id: u32 = 1,
@@ -59,7 +61,8 @@ const write_buffer_len = 64 * 1024;
 pub const Options = struct {
     socket_path: []const u8,
     cookie: []const u8,
-    app_uid: u32 = Client.default_app_uid,
+    system_cookie: []const u8,
+    first_app_uid: u32 = Client.default_app_uid,
     kernel_backlog: u31 = 16,
 };
 
@@ -109,7 +112,12 @@ const Peer = struct {
     broker: *Broker,
     id: u32,
     pid: i32,
+    /// Linux uid from SO_PEERCRED (always the session user).
     uid: u32,
+    /// Android identity assigned at hello.
+    android_uid: u32 = 0,
+    role: Server.Message.Welcome.Role = .app,
+    package: []u8 = &.{},
     conn: Connection,
     read_buffer: []u8,
     write_buffer: []u8,
@@ -163,6 +171,8 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     errdefer gpa.free(socket_path);
     const cookie = try gpa.dupe(u8, options.cookie);
     errdefer gpa.free(cookie);
+    const system_cookie = try gpa.dupe(u8, options.system_cookie);
+    errdefer gpa.free(system_cookie);
     const address = try net.UnixAddress.init(socket_path);
     const listener = try address.listen(io, .{ .kernel_backlog = options.kernel_backlog });
     b.* = .{
@@ -171,7 +181,8 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .listener = listener,
         .socket_path = socket_path,
         .cookie = cookie,
-        .app_uid = options.app_uid,
+        .system_cookie = system_cookie,
+        .next_app_uid = options.first_app_uid,
     };
     return b;
 }
@@ -250,8 +261,12 @@ pub fn deinit(b: *Broker) void {
     b.waiters.deinit(gpa);
     b.calls.deinit(gpa);
     b.peers.deinit(gpa);
+    var packages = b.packages.keyIterator();
+    while (packages.next()) |name| gpa.free(name.*);
+    b.packages.deinit(gpa);
     gpa.free(b.socket_path);
     gpa.free(b.cookie);
+    gpa.free(b.system_cookie);
     gpa.destroy(b);
 }
 
@@ -458,17 +473,68 @@ fn takeStruct(comptime T: type, body: []const u8) error{Malformed}!T {
 
 fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
     _ = header;
+    if (peer.hello_done) return protocolError(peer, "duplicate hello");
     const b = peer.broker;
+    const gpa = b.gpa;
+    const io = b.io;
     const hello = takeStruct(Client.Message.Hello, body) catch return protocolError(peer, "malformed hello");
     const rest = body[@sizeOf(Client.Message.Hello)..];
-    if (hello.cookie_len != rest.len or rest.len > limits.max_name_len) return protocolError(peer, "malformed hello");
-    if (!std.mem.eql(u8, rest, b.cookie)) return protocolError(peer, "bad launch cookie");
+    if (@as(usize, hello.cookie_len) + hello.package_len != rest.len or
+        hello.cookie_len > limits.max_name_len or hello.package_len > limits.max_name_len)
+        return protocolError(peer, "malformed hello");
+    const cookie = rest[0..hello.cookie_len];
+    const package = rest[hello.cookie_len..];
+    if (std.mem.indexOfScalar(u8, package, 0) != null) return protocolError(peer, "malformed hello");
+    b.mutex.lockUncancelable(io);
+    defer b.mutex.unlock(io);
+    if (std.mem.eql(u8, cookie, b.system_cookie)) {
+        peer.role = .system;
+        peer.android_uid = Client.system_uid;
+        peer.package = try gpa.dupe(u8, "android");
+    } else if (std.mem.eql(u8, cookie, b.cookie)) {
+        if (package.len == 0) return protocolError(peer, "app peer without a package name");
+        peer.role = .app;
+        if (b.packages.get(package)) |uid| {
+            peer.android_uid = uid;
+        } else {
+            const owned = try gpa.dupe(u8, package);
+            errdefer gpa.free(owned);
+            try b.packages.put(gpa, owned, b.next_app_uid);
+            peer.android_uid = b.next_app_uid;
+            b.next_app_uid += 1;
+        }
+        peer.package = try gpa.dupe(u8, package);
+    } else {
+        return protocolError(peer, "bad launch cookie");
+    }
     peer.hello_done = true;
     peer.enqueue(try b.encode(Server.serveWelcome, .{Server.Message.Welcome{
         .peer_id = peer.id,
         .pid = peer.pid,
-        .uid = b.app_uid,
+        .uid = peer.android_uid,
+        .role = peer.role,
     }}));
+}
+
+/// Registry policy: the system process may claim any name; an app may only
+/// claim its own package name or names beneath it.
+fn mayRegister(peer: *const Peer, name: []const u8) bool {
+    if (peer.role == .system) return true;
+    if (!namespacePrefix(peer.package, name)) return false;
+    // A dotted-prefix package must not squat inside a longer known package's
+    // namespace: `com.example` may not claim `com.example.app.svc` once
+    // `com.example.app` exists. Requires `b.mutex` (held by handleRegister).
+    var it = peer.broker.packages.iterator();
+    while (it.next()) |entry| {
+        const other = entry.key_ptr.*;
+        if (other.len > peer.package.len and namespacePrefix(other, name)) return false;
+    }
+    return true;
+}
+
+fn namespacePrefix(package: []const u8, name: []const u8) bool {
+    if (!std.mem.startsWith(u8, name, package)) return false;
+    return name.len == package.len or name[package.len] == '.';
 }
 
 /// Resolves a reference the peer sent. Local references intern a new object
@@ -660,7 +726,7 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
         .code = t.code,
         .flags = t.flags,
         .caller_pid = peer.pid,
-        .caller_uid = b.app_uid,
+        .caller_uid = peer.android_uid,
         .routing_id = routing_id,
         .nest_request_id = nest_request,
         .entries = entries,
@@ -812,6 +878,11 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
     const name = try readName(peer, body[@sizeOf(Client.Message.RegisterService)..], reg.name_len);
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
+    if (!mayRegister(peer, name)) {
+        log.warn("peer {d} ({s}) may not register '{s}'", .{ peer.id, peer.package, name });
+        peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .denied, ObjectRef.null_ref, "" }));
+        return;
+    }
     const object = resolveRef(peer, reg.object) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Invalid => return protocolError(peer, "register_service with an object the peer does not hold"),
@@ -965,6 +1036,7 @@ fn removePeer(b: *Broker, peer: *Peer) void {
     }
     for (affected.items) |object| b.maybeReleaseObject(object) catch {};
     peer.holdings.deinit(gpa);
+    gpa.free(peer.package);
     b.mutex.unlock(io);
 
     // Let the writer drain (it closes the socket), then free.

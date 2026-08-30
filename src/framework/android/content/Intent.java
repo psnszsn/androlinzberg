@@ -342,9 +342,64 @@ public class Intent implements Parcelable, Cloneable {
         @Override public int hashCode() { return mIntent.filterHashCode(); }
     }
     @Override public int describeContents() { return 0; }
-    @Override public void writeToParcel(Parcel out, int flags) { out.writeString(mAction); }
+    /** AOSP Intent.writeToParcel field order; absent shim fields write their null markers. */
+    @Override public void writeToParcel(Parcel out, int flags) {
+        out.writeString8(mAction);
+        Uri.writeToParcel(out, mData);
+        out.writeString8(mType);
+        out.writeString8(mIdentifier);
+        out.writeInt(mFlags);
+        out.writeInt(0); // extendedFlags
+        out.writeString8(mPackage);
+        ComponentName.writeToParcel(mComponent, out);
+        out.writeInt(0); // sourceBounds
+        if (mCategories != null) {
+            out.writeInt(mCategories.size());
+            for (String category : mCategories) out.writeString8(category);
+        } else {
+            out.writeInt(0);
+        }
+        out.writeInt(0); // selector
+        if (mClipData != null) {
+            out.writeInt(1);
+            mClipData.writeToParcel(out, flags);
+        } else {
+            out.writeInt(0);
+        }
+        out.writeInt(-2); // contentUserHint = UserHandle.USER_CURRENT
+        out.writeBundle(mExtras);
+        out.writeInt(0); // originalIntent
+    }
+    public void readFromParcel(Parcel in) {
+        mAction = in.readString8();
+        String data = in.readString8();
+        mData = data != null ? Uri.parse(data) : null;
+        mType = in.readString8();
+        mIdentifier = in.readString8();
+        mFlags = in.readInt();
+        in.readInt(); // extendedFlags
+        mPackage = in.readString8();
+        mComponent = ComponentName.readFromParcel(in);
+        if (in.readInt() != 0) android.graphics.Rect.CREATOR.createFromParcel(in); // sourceBounds
+        int categories = in.readInt();
+        if (categories > 0) {
+            mCategories = new HashSet<>();
+            for (int i = 0; i < categories; i++) mCategories.add(in.readString8());
+        } else {
+            mCategories = null;
+        }
+        if (in.readInt() != 0) new Intent(in); // selector (dropped: shim has no field)
+        if (in.readInt() != 0) mClipData = ClipData.CREATOR.createFromParcel(in);
+        in.readInt(); // contentUserHint
+        mExtras = in.readBundle();
+        if (in.readInt() != 0) new Intent(in); // originalIntent (dropped)
+    }
+    protected Intent(Parcel in) { readFromParcel(in); }
+    public void setExtrasClassLoader(ClassLoader loader) {
+        if (mExtras != null) mExtras.setClassLoader(loader);
+    }
     public static final Creator<Intent> CREATOR = new Creator<Intent>() {
-        public Intent createFromParcel(Parcel in) { return new Intent(in.readString()); }
+        public Intent createFromParcel(Parcel in) { return new Intent(in); }
         public Intent[] newArray(int size) { return new Intent[size]; }
     };
 }

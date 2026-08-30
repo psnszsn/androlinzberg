@@ -13,6 +13,10 @@ public class Build {
     public static final String CPU_ABI = "x86_64", CPU_ABI2 = "";
     public static boolean IS_DEBUGGABLE = false;
     public static final boolean IS_ENG = false, IS_USER = true, IS_USERDEBUG = false;
+    /** AOSP: ro.boot.qemu. The system process sets it so the reused ClipboardService
+     * constructs the (hosted, Wayland-backed) EmulatorClipboardMonitor; app processes see false. */
+    public static final boolean IS_EMULATOR = SystemProperties.getBoolean("ro.boot.qemu", false);
+    public static final boolean IS_ARC = false;
     public static final int HW_TIMEOUT_MULTIPLIER = 1;
     public static class VERSION {
         public static final int SDK_INT = 35;

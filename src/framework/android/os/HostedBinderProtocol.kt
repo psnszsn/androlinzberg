@@ -10,7 +10,7 @@ import java.nio.ByteOrder
  */
 internal object HostedBinderProtocol {
     const val MAGIC = 0x424B5A41
-    const val VERSION = 1
+    const val VERSION = 2
     const val HEADER_LEN = 32
 
     // peer -> broker
@@ -52,6 +52,10 @@ internal object HostedBinderProtocol {
     const val SERVICE_NOT_FOUND = 1
     const val SERVICE_ALREADY_REGISTERED = 2
     const val SERVICE_SHUTDOWN = 3
+    const val SERVICE_DENIED = 4
+
+    const val ROLE_APP = 0
+    const val ROLE_SYSTEM = 1
 
     const val MAX_DATA_LEN = 1 shl 20
     const val MAX_OBJECTS = 1024

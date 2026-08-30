@@ -1,6 +1,6 @@
 /* artzig shim: android.content.pm.ApplicationInfo — minimal fields. */
 package android.content.pm;
-public class ApplicationInfo extends PackageItemInfo {
+public class ApplicationInfo extends PackageItemInfo implements android.os.Parcelable {
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface Category {}
     public static final int CATEGORY_UNDEFINED = -1, CATEGORY_GAME = 0, CATEGORY_AUDIO = 1,
@@ -25,7 +25,66 @@ public class ApplicationInfo extends PackageItemInfo {
     public int requiresSmallestWidthDp, compatibleWidthLimitDp, largestWidthLimitDp;
     public int uid;
     public float maxAspectRatio;
+    public ApplicationInfo() {}
+    /** AOSP ApplicationInfo.writeToParcel order for the fields this shim has. */
+    public int describeContents() { return 0; }
+    public void writeToParcel(android.os.Parcel dest, int parcelableFlags) {
+        super.writeToParcel(dest, parcelableFlags);
+        dest.writeInt(theme);
+        dest.writeInt(flags);
+        dest.writeInt(requiresSmallestWidthDp);
+        dest.writeInt(compatibleWidthLimitDp);
+        dest.writeInt(largestWidthLimitDp);
+        dest.writeString8(sourceDir);
+        dest.writeString8(publicSourceDir);
+        dest.writeStringArray(splitNames);
+        dest.writeStringArray(splitSourceDirs);
+        dest.writeStringArray(splitPublicSourceDirs);
+        dest.writeStringArray(resourceDirs);
+        dest.writeStringArray(overlayPaths);
+        dest.writeStringArray(sharedLibraryFiles);
+        dest.writeString8(dataDir);
+        dest.writeString8(nativeLibraryDir);
+        dest.writeString8(processName);
+        dest.writeInt(uid);
+        dest.writeInt(minSdkVersion);
+        dest.writeInt(targetSdkVersion);
+        dest.writeInt(enabled ? 1 : 0);
+        dest.writeInt(category);
+        dest.writeFloat(maxAspectRatio);
+    }
+    protected ApplicationInfo(android.os.Parcel source) {
+        super(source);
+        theme = source.readInt();
+        flags = source.readInt();
+        requiresSmallestWidthDp = source.readInt();
+        compatibleWidthLimitDp = source.readInt();
+        largestWidthLimitDp = source.readInt();
+        sourceDir = source.readString8();
+        publicSourceDir = source.readString8();
+        splitNames = source.createStringArray();
+        splitSourceDirs = source.createStringArray();
+        splitPublicSourceDirs = source.createStringArray();
+        resourceDirs = source.createStringArray();
+        overlayPaths = source.createStringArray();
+        sharedLibraryFiles = source.createStringArray();
+        dataDir = source.readString8();
+        nativeLibraryDir = source.readString8();
+        processName = source.readString8();
+        uid = source.readInt();
+        minSdkVersion = source.readInt();
+        targetSdkVersion = source.readInt();
+        enabled = source.readInt() != 0;
+        category = source.readInt();
+        maxAspectRatio = source.readFloat();
+    }
+    public static final android.os.Parcelable.Creator<ApplicationInfo> CREATOR =
+            new android.os.Parcelable.Creator<ApplicationInfo>() {
+        public ApplicationInfo createFromParcel(android.os.Parcel source) { return new ApplicationInfo(source); }
+        public ApplicationInfo[] newArray(int size) { return new ApplicationInfo[size]; }
+    };
     public static final int FLAG_DEBUGGABLE = 1 << 1;
+    public static final int FLAG_TEST_ONLY = 1 << 8;
     public static final int FLAG_SUPPORTS_SMALL_SCREENS = 1 << 9, FLAG_SUPPORTS_NORMAL_SCREENS = 1 << 10,
             FLAG_SUPPORTS_LARGE_SCREENS = 1 << 11, FLAG_SUPPORTS_XLARGE_SCREENS = 1 << 19,
             FLAG_RESIZEABLE_FOR_SCREENS = 1 << 12, FLAG_SUPPORTS_SCREEN_DENSITIES = 1 << 13,

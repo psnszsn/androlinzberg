@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
  * and exits with status 0 when a client calls `exit()`.
  */
 internal object BinderTestServer {
-    const val SERVICE_NAME = "azk.test.binder.service"
+    const val SERVICE_NAME = "dev.artzig.binder.service"
 
     private val exitLatch = CountDownLatch(1)
 

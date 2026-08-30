@@ -45,6 +45,14 @@ public final class Parcel {
             VAL_CHARSEQUENCEARRAY = 24, VAL_PERSISTABLEBUNDLE = 25, VAL_SIZE = 26, VAL_SIZEF = 27,
             VAL_DOUBLEARRAY = 28, VAL_CHAR = 29, VAL_SHORTARRAY = 30, VAL_CHARARRAY = 31, VAL_FLOATARRAY = 32;
 
+    /** Fallback loader for readParcelable when no explicit loader is given.
+     * ApkHost sets the APK class loader so app-defined Parcelables decode. */
+    private static volatile ClassLoader sDefaultClassLoader;
+    public static void setDefaultClassLoader(ClassLoader loader) { sDefaultClassLoader = loader; }
+    static ClassLoader defaultClassLoader$artzig(Class<?> caller) {
+        ClassLoader loader = sDefaultClassLoader;
+        return loader != null ? loader : caller.getClassLoader();
+    }
     private ByteBuffer buf = ByteBuffer.allocate(256).order(ByteOrder.LITTLE_ENDIAN);
     private int size = 0;
     /** Side table keyed by data offset; kept sorted so wire order is the iteration order. */
@@ -338,11 +346,21 @@ public final class Parcel {
         }
     }
     public java.io.Serializable readSerializable() { return readSerializable(null, java.io.Serializable.class); }
+    /** Resolves classes through the given loader (else the APK default), as AOSP does. */
     public <T> T readSerializable(ClassLoader loader, Class<T> clazz) {
         byte[] data = readByteArray();
         if (data == null) return null;
+        final ClassLoader effective = loader != null ? loader : defaultClassLoader$artzig(getClass());
         try {
-            return (T) new java.io.ObjectInputStream(new java.io.ByteArrayInputStream(data)).readObject();
+            java.io.ObjectInputStream ois = new java.io.ObjectInputStream(new java.io.ByteArrayInputStream(data)) {
+                @Override protected Class<?> resolveClass(java.io.ObjectStreamClass osClass)
+                        throws java.io.IOException, ClassNotFoundException {
+                    Class<?> c = Class.forName(osClass.getName(), false, effective);
+                    if (c != null) return c;
+                    return super.resolveClass(osClass);
+                }
+            };
+            return (T) ois.readObject();
         } catch (Exception e) {
             throw new BadParcelableException(e.toString());
         }
@@ -362,8 +380,8 @@ public final class Parcel {
         for (int i = 0; i < n; i++) m.put(readValue(loader), readValue(loader));
     }
     private void writeBundleContents(BaseBundle b) {
-        writeInt(b.mMap.size());
-        for (Map.Entry<String, Object> e : b.mMap.entrySet()) {
+        writeInt(b.map().size());
+        for (Map.Entry<String, Object> e : b.map().entrySet()) {
             writeString(e.getKey());
             writeValue(e.getValue());
         }
@@ -374,9 +392,31 @@ public final class Parcel {
             b.mMap.put(key, readValue(loader));
         }
     }
+    /** Decodes lazily captured bundle contents (count, then key/value pairs). */
+    void readBundleContentsInto$artzig(BaseBundle b, ClassLoader loader) {
+        int n = readInt();
+        readBundleContents(b, loader, n);
+    }
+    /**
+     * Bundles travel as a byte-length-prefixed envelope so the reader can
+     * capture them without decoding (AOSP writes a length + magic the same
+     * way). A still-parcelled Bundle is copied through raw, so a process that
+     * only forwards it never needs the classes inside.
+     */
     public void writeBundle(Bundle b) {
         if (b == null) { writeInt(-1); return; }
-        writeBundleContents(b);
+        int lengthPos = dataPosition();
+        writeInt(0);
+        int start = dataPosition();
+        if (b.isParcelled()) {
+            appendFrom(b.mParcelledData, 0, b.mParcelledData.dataSize());
+        } else {
+            writeBundleContents(b);
+        }
+        int end = dataPosition();
+        setDataPosition(lengthPos);
+        writeInt(end - start);
+        setDataPosition(end);
     }
     public void writeNoException() { writeInt(0); }
     /** AOSP encoding: exception code, message, then a service-specific error code when applicable. */
@@ -513,7 +553,7 @@ public final class Parcel {
         String name = readString();
         if (name == null) return null;
         try {
-            Class<?> cls = Class.forName(name, true, loader != null ? loader : getClass().getClassLoader());
+            Class<?> cls = Class.forName(name, true, loader != null ? loader : defaultClassLoader$artzig(getClass()));
             return (Parcelable.Creator<?>) cls.getField("CREATOR").get(null);
         } catch (ReflectiveOperationException e) {
             throw new BadParcelableException(e.toString());
@@ -678,7 +718,7 @@ public final class Parcel {
             case VAL_SPARSEBOOLEANARRAY: return readSparseBooleanArray();
             case VAL_SIZE: return new android.util.Size(readInt(), readInt());
             case VAL_SIZEF: return new android.util.SizeF(readFloat(), readFloat());
-            case VAL_SERIALIZABLE: return readSerializable();
+            case VAL_SERIALIZABLE: return readSerializable(loader, java.io.Serializable.class);
             default: throw new BadParcelableException("Parcel " + this + ": Unmarshalling unknown type code " + type + " at offset " + dataPosition());
         }
     }
@@ -730,7 +770,7 @@ public final class Parcel {
         String name = readString();
         if (name == null) return null;
         try {
-            Class<?> cls = Class.forName(name, true, loader != null ? loader : getClass().getClassLoader());
+            Class<?> cls = Class.forName(name, true, loader != null ? loader : defaultClassLoader$artzig(getClass()));
             @SuppressWarnings("unchecked")
             Parcelable.Creator<T> c = (Parcelable.Creator<T>) cls.getField("CREATOR").get(null);
             return c.createFromParcel(this);
@@ -752,10 +792,16 @@ public final class Parcel {
     }
     public Bundle readBundle() { return readBundle(null); }
     public Bundle readBundle(ClassLoader loader) {
-        int n = readInt();
-        if (n < 0) return null;
+        int length = readInt();
+        if (length < 0) return null;
+        int start = dataPosition();
+        Parcel slice = Parcel.obtain();
+        slice.appendFrom(this, start, length);
+        slice.setDataPosition(0);
+        setDataPosition(start + length);
         Bundle b = new Bundle();
-        readBundleContents(b, loader, n);
+        b.mParcelledData = slice;
+        if (loader != null) b.setClassLoader(loader);
         return b;
     }
     public <T> T readParcelable(ClassLoader loader, Class<T> clazz) { return (T) readParcelable(loader); }

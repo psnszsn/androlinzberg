@@ -60,12 +60,16 @@ public class ContextImpl extends Context {
      * is a system_server service and is unavailable here, so PackageManager's
      * in-process installed-package state owns the equivalent decision.
      */
+    /** Follows AOSP PermissionManagerService.checkPermission: root and system are granted everything. */
     @Override public int checkPermission(String permission, int pid, int uid) {
         if (permission == null) throw new IllegalArgumentException("permission is null");
-        if (uid != android.os.Process.myUid()) {
-            return android.content.pm.PackageManager.PERMISSION_DENIED;
+        if (uid == android.os.Process.ROOT_UID || uid == android.os.Process.SYSTEM_UID) {
+            return android.content.pm.PackageManager.PERMISSION_GRANTED;
         }
-        return sPackageManager.checkPermission(permission, mPackageName);
+        if (uid == android.os.Process.myUid()) {
+            return sPackageManager.checkPermission(permission, mPackageName);
+        }
+        return android.content.pm.PackageManager.checkPermissionForUid(permission, uid);
     }
     @Override public int checkPermission(String permission, int pid, int uid, Object callerToken) {
         return checkPermission(permission, pid, uid);
@@ -117,8 +121,14 @@ public class ContextImpl extends Context {
         Application app = ActivityThread.currentApplication();
         return app != null ? app : this;
     }
-    @Override public android.view.Display getDisplay() { return android.view.ArtzigDisplay.get(); }
-    @Override public android.view.Display getDisplayNoVerify() { return android.view.ArtzigDisplay.get(); }
+    /** AOSP ContextImpl.getDisplay: through DisplayManager against the hosted display service. */
+    @Override public android.view.Display getDisplay() {
+        android.hardware.display.DisplayManager dm =
+                (android.hardware.display.DisplayManager) getSystemService(DISPLAY_SERVICE);
+        android.view.Display display = dm != null ? dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) : null;
+        return display != null ? display : android.view.ArtzigDisplay.get();
+    }
+    @Override public android.view.Display getDisplayNoVerify() { return getDisplay(); }
     /**
      * Hosted adaptation of AOSP ContextImpl.createConfigurationContext. ResourcesManager is not
      * available, so the host creates a ResourcesImpl over the same assets and merged configuration.
@@ -145,134 +155,22 @@ public class ContextImpl extends Context {
         if (mContentResolver == null) mContentResolver = new android.content.ContentResolver() {};
         return mContentResolver;
     }
-    private android.view.LayoutInflater mInflater;
-    private android.view.WindowManagerImpl mWindowManager;
-    private android.app.job.JobScheduler mJobScheduler;
-    private android.hardware.input.InputManager mInputManager;
-    private android.hardware.SensorManager mSensorManager;
-    private android.content.pm.ShortcutManager mShortcutManager;
-    private android.view.inputmethod.InputMethodManager mInputMethodManager;
-    private android.view.autofill.AutofillManager mAutofillManager;
-    private android.app.DownloadManager mDownloadManager;
-    private android.app.UiModeManager mUiModeManager;
-    private android.net.nsd.NsdManager mNsdManager;
+    /** Per-context service cache; slots are assigned by HostedSystemServiceRegistry. */
+    private Object[] mServiceCache = new Object[0];
+    private final Object mServiceCacheLock = new Object();
+    Object serviceCacheLock() { return mServiceCacheLock; }
+    Object[] serviceCache(int slots) {
+        if (mServiceCache.length < slots) mServiceCache = java.util.Arrays.copyOf(mServiceCache, slots);
+        return mServiceCache;
+    }
     private Context mOuterContext;
     /** Real Android: ContextImpl.setOuterContext — the Activity/Application facade. */
-    public void setOuterContext(Context outer) { mOuterContext = outer; mInflater = null; }
+    public void setOuterContext(Context outer) { mOuterContext = outer; HostedSystemServiceRegistry.clearInflater(this); }
     public Context getOuterContext() { return mOuterContext != null ? mOuterContext : this; }
     @Override public Object getSystemService(String name) {
-        switch (name) {
-            case LAYOUT_INFLATER_SERVICE:
-                if (mInflater == null) mInflater = new com.android.internal.policy.PhoneLayoutInflater(getOuterContext());
-                return mInflater;
-            case WINDOW_SERVICE:
-                if (mWindowManager == null) mWindowManager = new android.view.WindowManagerImpl(this);
-                return mWindowManager;
-            case CLIPBOARD_SERVICE:
-                return new android.content.ClipboardManager();
-            case ACTIVITY_SERVICE:
-                return new android.app.ActivityManager();
-            case DOWNLOAD_SERVICE:
-                if (mDownloadManager == null) {
-                    mDownloadManager = new android.app.DownloadManager(getOuterContext());
-                }
-                return mDownloadManager;
-            case AUDIO_SERVICE:
-                return new android.media.AudioManager();
-            case NOTIFICATION_SERVICE:
-                return new android.app.NotificationManager();
-            case ALARM_SERVICE:
-                return new android.app.AlarmManager();
-            case CONNECTIVITY_SERVICE:
-                return new android.net.ConnectivityManager();
-            case TELEPHONY_SERVICE:
-                return new android.telephony.TelephonyManager();
-            case INPUT_METHOD_SERVICE:
-                if (mInputMethodManager == null) {
-                    mInputMethodManager = android.view.inputmethod.InputMethodManager
-                            .createStubInstance(getDisplayId(), getMainLooper());
-                }
-                return mInputMethodManager;
-            case POWER_SERVICE:
-                return new android.os.PowerManager();
-            case USER_SERVICE:
-                return new android.os.UserManager();
-            case STORAGE_SERVICE:
-                return new android.os.storage.StorageManager();
-            case STORAGE_STATS_SERVICE:
-                return new android.app.usage.StorageStatsManager();
-            case UI_MODE_SERVICE:
-                if (mUiModeManager == null) {
-                    mUiModeManager = new android.app.UiModeManager(this);
-                }
-                return mUiModeManager;
-            case NSD_SERVICE:
-                if (mNsdManager == null) mNsdManager = new android.net.nsd.NsdManager(this);
-                return mNsdManager;
-            case BATTERY_SERVICE:
-                return new android.os.BatteryManager();
-            case INPUT_SERVICE:
-                if (mInputManager == null) mInputManager = new android.hardware.input.InputManager(this);
-                return mInputManager;
-            case SENSOR_SERVICE:
-                if (mSensorManager == null) mSensorManager = new android.hardware.SensorManager();
-                return mSensorManager;
-            case SHORTCUT_SERVICE:
-                if (mShortcutManager == null) mShortcutManager = new android.content.pm.ShortcutManager();
-                return mShortcutManager;
-            case "media_metrics":
-                return new android.media.metrics.MediaMetricsManager();
-            case "usagestats":
-                return new android.app.usage.UsageStatsManager();
-            case WIFI_SERVICE:
-                return new android.net.wifi.WifiManager();
-            case JOB_SCHEDULER_SERVICE:
-                if (mJobScheduler == null) mJobScheduler = new android.app.job.JobScheduler();
-                return mJobScheduler;
-            case VIBRATOR_SERVICE:
-                return new android.os.Vibrator();
-            case ACCESSIBILITY_SERVICE:
-                return android.view.accessibility.AccessibilityManager.getInstance(this);
-            case AUTOFILL_MANAGER_SERVICE:
-                if (mAutofillManager == null) {
-                    mAutofillManager = new android.view.autofill.AutofillManager(
-                            getOuterContext(), null);
-                }
-                return mAutofillManager;
-            default:
-                return null;
-        }
+        return HostedSystemServiceRegistry.getSystemService(this, name);
     }
     @Override public String getSystemServiceName(Class<?> serviceClass) {
-        if (serviceClass == android.view.LayoutInflater.class) return LAYOUT_INFLATER_SERVICE;
-        if (serviceClass == android.view.WindowManager.class) return WINDOW_SERVICE;
-        if (serviceClass == android.app.UiModeManager.class) return UI_MODE_SERVICE;
-        if (serviceClass == android.net.nsd.NsdManager.class) return NSD_SERVICE;
-        if (serviceClass == android.os.BatteryManager.class) return BATTERY_SERVICE;
-        if (serviceClass == android.app.job.JobScheduler.class) return JOB_SCHEDULER_SERVICE;
-        if (serviceClass == android.net.wifi.WifiManager.class) return WIFI_SERVICE;
-        if (serviceClass == android.media.metrics.MediaMetricsManager.class) return "media_metrics";
-        if (serviceClass == android.app.usage.UsageStatsManager.class) return "usagestats";
-        if (serviceClass == android.app.ActivityManager.class) return ACTIVITY_SERVICE;
-        if (serviceClass == android.app.DownloadManager.class) return DOWNLOAD_SERVICE;
-        if (serviceClass == android.app.NotificationManager.class) return NOTIFICATION_SERVICE;
-        if (serviceClass == android.app.AlarmManager.class) return ALARM_SERVICE;
-        if (serviceClass == android.media.AudioManager.class) return AUDIO_SERVICE;
-        if (serviceClass == android.net.ConnectivityManager.class) return CONNECTIVITY_SERVICE;
-        if (serviceClass == android.telephony.TelephonyManager.class) return TELEPHONY_SERVICE;
-        if (serviceClass == android.os.PowerManager.class) return POWER_SERVICE;
-        if (serviceClass == android.os.UserManager.class) return USER_SERVICE;
-        if (serviceClass == android.os.storage.StorageManager.class) return STORAGE_SERVICE;
-        if (serviceClass == android.app.usage.StorageStatsManager.class) return STORAGE_STATS_SERVICE;
-        if (serviceClass == android.os.Vibrator.class) return VIBRATOR_SERVICE;
-        if (serviceClass == android.view.accessibility.AccessibilityManager.class) return ACCESSIBILITY_SERVICE;
-        if (serviceClass == android.content.ClipboardManager.class) return CLIPBOARD_SERVICE;
-        if (serviceClass == android.hardware.input.InputManager.class) return INPUT_SERVICE;
-        if (serviceClass == android.hardware.SensorManager.class) return SENSOR_SERVICE;
-        if (serviceClass == android.content.pm.ShortcutManager.class) return SHORTCUT_SERVICE;
-        if (serviceClass == android.view.inputmethod.InputMethodManager.class) return INPUT_METHOD_SERVICE;
-        if (serviceClass == android.view.autofill.AutofillManager.class) return AUTOFILL_MANAGER_SERVICE;
-        if (serviceClass == android.hardware.display.DisplayManager.class) return DISPLAY_SERVICE;
-        return null;
+        return HostedSystemServiceRegistry.getSystemServiceName(serviceClass);
     }
 }

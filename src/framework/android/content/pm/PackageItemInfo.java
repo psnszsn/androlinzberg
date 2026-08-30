@@ -16,6 +16,29 @@ public class PackageItemInfo {
         nonLocalizedLabel = orig.nonLocalizedLabel; icon = orig.icon; logo = orig.logo;
         banner = orig.banner; metaData = orig.metaData;
     }
+    /** AOSP PackageItemInfo.writeToParcel field order for the fields this shim has. */
+    protected void writeToParcel(android.os.Parcel dest, int parcelableFlags) {
+        dest.writeString8(name);
+        dest.writeString8(packageName);
+        dest.writeInt(labelRes);
+        dest.writeCharSequence(nonLocalizedLabel);
+        dest.writeInt(icon);
+        dest.writeInt(logo);
+        dest.writeBundle(metaData);
+        dest.writeInt(banner);
+        dest.writeInt(showUserIcon);
+    }
+    protected PackageItemInfo(android.os.Parcel source) {
+        name = source.readString8();
+        packageName = source.readString8();
+        labelRes = source.readInt();
+        nonLocalizedLabel = source.readCharSequence();
+        icon = source.readInt();
+        logo = source.readInt();
+        metaData = source.readBundle();
+        banner = source.readInt();
+        showUserIcon = source.readInt();
+    }
     public CharSequence loadLabel(PackageManager pm) {
         return nonLocalizedLabel != null ? nonLocalizedLabel : String.valueOf(name);
     }

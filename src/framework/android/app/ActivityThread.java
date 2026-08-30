@@ -64,27 +64,31 @@ public final class ActivityThread {
         HostedServiceRuntime.configure(context, classLoader);
     }
     public static void shutdownServicesInProcess() { HostedServiceRuntime.shutdown(); }
+    // Service calls go to the session's activity manager ("activity" in the
+    // broker registry); HostedServiceRuntime only executes its callbacks here.
     public static android.content.ComponentName startServiceInProcess(android.content.Intent intent) {
-        if (HostedServiceRuntime.isConfigured()) return HostedServiceRuntime.startService(intent);
-        android.util.Log.w("ActivityThread", "startService dropped (no manager): " + intent);
-        return null;
+        return HostedServiceClient.startService(intent);
     }
     public static boolean stopServiceInProcess(android.content.Intent intent) {
-        if (HostedServiceRuntime.isConfigured()) return HostedServiceRuntime.stopService(intent);
-        return false;
+        return HostedServiceClient.stopService(intent);
     }
-    public static boolean bindServiceInProcess(android.content.Intent intent,
-            android.content.ServiceConnection conn, int flags) {
-        if (HostedServiceRuntime.isConfigured()) {
-            return HostedServiceRuntime.bindService(intent, conn, flags);
-        }
-        return false;
+    public static boolean bindServiceInProcess(android.content.Context context,
+            android.content.Intent intent, android.content.ServiceConnection conn, int flags) {
+        return HostedServiceClient.bindService(context, intent, conn, flags);
     }
     public static void unbindServiceInProcess(android.content.ServiceConnection conn) {
-        if (HostedServiceRuntime.isConfigured()) HostedServiceRuntime.unbindService(conn);
+        HostedServiceClient.unbindService(conn);
+    }
+    /** Registers this process with the activity manager (AOSP attachApplication). */
+    public static void attachApplicationHosted(dev.artzig.system.HostedProcessManifest manifest) {
+        HostedServiceClient.attachApplication(manifest);
     }
     public static Application currentApplication() { return sApplication; }
-    public static ActivityThread currentActivityThread() { return sThread; }
+    /** Never null: generated AIDL stubs fetch the PermissionEnforcer context through this. */
+    public static synchronized ActivityThread currentActivityThread() {
+        if (sThread == null) sThread = new ActivityThread();
+        return sThread;
+    }
     public Application getApplication() { return sApplication; }
     public android.content.Context getSystemContext() { return sApplication; }
     public android.content.Context getSystemUiContext() { return sApplication; }
@@ -95,6 +99,9 @@ public final class ActivityThread {
     public ActivityClientRecord getActivityClient(android.os.IBinder token) { return null; }
     public static String currentPackageName() { return sPackageName; }
     public static String currentProcessName() { return sProcessName; }
-    public static boolean isSystem() { return false; }
+    private static boolean sSystem;
+    /** Called once by the session's system process before any Context exists. */
+    public static void markSystem() { sSystem = true; sPackageName = "android"; }
+    public static boolean isSystem() { return sSystem; }
     public static void setApplication(Application app) { sApplication = app; }
 }

@@ -271,6 +271,8 @@ public final class Settings {
         private System() {}
     }
     public static final class Secure {
+        public static final String CLIPBOARD_SHOW_ACCESS_NOTIFICATIONS =
+                "clipboard_show_access_notifications";
         public static int getIntForUser(ContentResolver cr, String name, int def, int userHandle) { return def; }
         public static boolean putIntForUser(ContentResolver cr, String name, int value, int userHandle) { return false; }
         public static String getStringForUser(ContentResolver cr, String name, int userHandle) { return null; }

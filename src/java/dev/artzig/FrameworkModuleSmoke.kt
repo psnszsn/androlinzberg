@@ -369,6 +369,32 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedSystemServices() {
+        run {
+            val context = ContextImpl.createSystemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
+            android.os.ServiceManager.addProcessLocalService(
+                Context.DISPLAY_SERVICE,
+                dev.artzig.system.HostedDisplayManagerService(),
+            )
+            android.os.ServiceManager.addProcessLocalService(
+                Context.INPUT_SERVICE,
+                dev.artzig.system.HostedInputManagerService(),
+            )
+            val dm = checkNotNull(context.getSystemService(android.hardware.display.DisplayManager::class.java))
+            check(dm === context.getSystemService(Context.DISPLAY_SERVICE)) { "display manager not cached" }
+            check(dm.displays.size == 1) { "expected one display" }
+            val display = checkNotNull(dm.getDisplay(android.view.Display.DEFAULT_DISPLAY))
+            android.view.ArtzigDisplay.configure(800, 600, 120)
+            val size = android.graphics.Point()
+            checkNotNull(dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)).getRealSize(size)
+            check(size.x == 800 && size.y == 600) { "display size $size after configure" }
+            check(display.displayId == android.view.Display.DEFAULT_DISPLAY)
+            val im = checkNotNull(context.getSystemService(android.hardware.input.InputManager::class.java))
+            check(im.inputDeviceIds.contentEquals(intArrayOf(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))) {
+                "unexpected input devices"
+            }
+            checkNotNull(android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))
+            check(context.getSystemService("no.such.service") == null) { "unknown service must be null" }
+        }
         val context = ContextImpl.createSystemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
@@ -378,6 +404,14 @@ internal object FrameworkModuleSmoke {
         )
         val activityManager = context.getSystemService(ActivityManager::class.java)
         check(activityManager != null && !activityManager.isBackgroundRestricted)
+
+        val clipboardManager =
+            checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
+        check(clipboardManager === context.getSystemService(Context.CLIPBOARD_SERVICE))
+        clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("smoke", "hosted-clip"))
+        check(clipboardManager.hasPrimaryClip())
+        check(clipboardManager.text == "hosted-clip")
+        checkNotNull(clipboardManager.primaryClipDescription)
 
         val uiModeManager = checkNotNull(context.getSystemService(UiModeManager::class.java))
         check(uiModeManager === context.getSystemService(Context.UI_MODE_SERVICE))

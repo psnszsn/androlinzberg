@@ -15,6 +15,7 @@ public final class UserHandle implements Parcelable {
     public static int getCallingUserId() { return 0; }
     public static int getUserId(int uid) { return uid / 100000; }
     public static int getAppId(int uid) { return uid % 100000; }
+    public static int getUid(int userId, int appId) { return userId * 100000 + appId; }
     public static boolean isSameApp(int uid1, int uid2) { return getAppId(uid1) == getAppId(uid2); }
     public static void writeToParcel(UserHandle h, Parcel out) { out.writeInt(h != null ? h.mHandle : USER_NULL); }
     public static UserHandle readFromParcel(Parcel in) {

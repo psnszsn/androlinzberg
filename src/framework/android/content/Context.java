@@ -14,6 +14,11 @@ import android.util.AttributeSet;
 import java.io.File;
 import java.util.concurrent.Executor;
 public abstract class Context {
+    /** AOSP Context.BIND_* flags used by the hosted service path. */
+    public static final int BIND_AUTO_CREATE = 0x0001;
+    public static final int BIND_DEBUG_UNBIND = 0x0002;
+    public static final int BIND_NOT_FOREGROUND = 0x0004;
+    public static final int BIND_IMPORTANT = 0x0040;
     public static final int MODE_PRIVATE = 0, MODE_WORLD_READABLE = 1, MODE_WORLD_WRITEABLE = 2,
             MODE_APPEND = 0x8000, MODE_MULTI_PROCESS = 4, MODE_ENABLE_WRITE_AHEAD_LOGGING = 8,
             MODE_NO_LOCALIZED_COLLATORS = 0x10;
@@ -45,6 +50,8 @@ public abstract class Context {
             VIBRATOR_MANAGER_SERVICE = "vibrator_manager",
             PERFORMANCE_HINT_SERVICE = "performance_hint";
     public static final int DEVICE_ID_DEFAULT = 0, DEVICE_ID_INVALID = -1;
+    public static final int RECEIVER_VISIBLE_TO_INSTANT_APPS = 0x1, RECEIVER_EXPORTED = 0x2,
+            RECEIVER_NOT_EXPORTED = 0x4;
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface ServiceName {}
     public static final String CAPTIONING_SERVICE = "captioning";
@@ -126,18 +133,18 @@ public abstract class Context {
     public android.content.ComponentName startService(Intent service) { return android.app.ActivityThread.startServiceInProcess(service); }
     public boolean stopService(Intent service) { return android.app.ActivityThread.stopServiceInProcess(service); }
     public boolean bindService(Intent service, ServiceConnection conn, int flags) {
-        return android.app.ActivityThread.bindServiceInProcess(service, conn, flags);
+        return android.app.ActivityThread.bindServiceInProcess(this, service, conn, flags);
     }
     public void unbindService(ServiceConnection conn) { android.app.ActivityThread.unbindServiceInProcess(conn); }
     public android.content.ComponentName startForegroundService(Intent service) { return startService(service); }
     public void sendBroadcast(Intent intent, String receiverPermission) {
-        ArtzigBroadcastManager.send(this, intent);
+        ArtzigBroadcastManager.send(this, intent, receiverPermission);
     }
     public void sendOrderedBroadcast(Intent intent, String receiverPermission) {
-        ArtzigBroadcastManager.send(this, intent);
+        ArtzigBroadcastManager.sendOrdered(this, intent, receiverPermission);
     }
-    public void removeStickyBroadcast(Intent intent) {}
-    public void sendStickyBroadcast(Intent intent) {}
+    public void removeStickyBroadcast(Intent intent) { ArtzigBroadcastManager.removeSticky(this, intent); }
+    public void sendStickyBroadcast(Intent intent) { ArtzigBroadcastManager.sendSticky(this, intent); }
     public void startActivity(Intent intent) { android.app.ActivityThread.startActivityInProcess(intent); }
     public void startActivity(Intent intent, android.os.Bundle options) { startActivity(intent); }
     public void startActivities(Intent[] intents) {}
@@ -173,7 +180,7 @@ public abstract class Context {
     }
     public Intent registerReceiverAsUser(BroadcastReceiver receiver, android.os.UserHandle user,
             IntentFilter filter, String broadcastPermission, android.os.Handler scheduler) {
-        return ArtzigBroadcastManager.register(this, receiver, filter, scheduler);
+        return ArtzigBroadcastManager.register(this, receiver, filter, scheduler, broadcastPermission, 0);
     }
     public android.content.AutofillOptions getAutofillOptions() { return null; }
     public android.content.ContentCaptureOptions getContentCaptureOptions() { return null; }
@@ -215,23 +222,23 @@ public abstract class Context {
     public int getDisplayId() { return 0; }
     public void registerComponentCallbacks(ComponentCallbacks callback) {}
     public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) {
-        return ArtzigBroadcastManager.register(this, receiver, filter, null);
+        return ArtzigBroadcastManager.register(this, receiver, filter, null, null, 0);
     }
     public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter, int flags) {
-        return ArtzigBroadcastManager.register(this, receiver, filter, null);
+        return ArtzigBroadcastManager.register(this, receiver, filter, null, null, flags);
     }
     public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter,
             String broadcastPermission, android.os.Handler scheduler) {
-        return ArtzigBroadcastManager.register(this, receiver, filter, scheduler);
+        return ArtzigBroadcastManager.register(this, receiver, filter, scheduler, broadcastPermission, 0);
     }
     public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter,
             String broadcastPermission, android.os.Handler scheduler, int flags) {
-        return ArtzigBroadcastManager.register(this, receiver, filter, scheduler);
+        return ArtzigBroadcastManager.register(this, receiver, filter, scheduler, broadcastPermission, flags);
     }
     public void unregisterReceiver(BroadcastReceiver receiver) {
         ArtzigBroadcastManager.unregister(receiver);
     }
-    public void sendBroadcast(Intent intent) { ArtzigBroadcastManager.send(this, intent); }
+    public void sendBroadcast(Intent intent) { ArtzigBroadcastManager.send(this, intent, null); }
     public void unregisterComponentCallbacks(ComponentCallbacks callback) {}
     public SharedPreferences getSharedPreferences(String name, int mode) {
         java.io.File dir = new java.io.File(android.os.Environment.getDataDirectory(), "shared_prefs");

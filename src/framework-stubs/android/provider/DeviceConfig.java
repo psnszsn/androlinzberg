@@ -9,6 +9,8 @@ public final class DeviceConfig {
     public static final String NAMESPACE_ANDROID = "android";
     public static final String NAMESPACE_TEXTCLASSIFIER = "textclassifier";
     public static final String NAMESPACE_WINDOW_MANAGER = "window_manager";
+    public static final String NAMESPACE_CLIPBOARD = "clipboard";
+    public static final String NAMESPACE_PRIVACY = "privacy";
     private DeviceConfig() {}
     public static String getString(String namespace, String name, String defaultValue) { return defaultValue; }
     public static boolean getBoolean(String namespace, String name, boolean defaultValue) { return defaultValue; }

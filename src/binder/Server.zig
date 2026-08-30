@@ -69,8 +69,15 @@ pub const Message = struct {
     pub const Welcome = extern struct {
         peer_id: u32,
         pid: i32,
+        /// Android uid assigned to this peer for the session.
         uid: u32,
-        _pad: u32 = 0,
+        role: Role,
+
+        pub const Role = enum(u32) {
+            app = 0,
+            system = 1,
+            _,
+        };
     };
 
     /// Trailing:
@@ -111,6 +118,8 @@ pub const Message = struct {
             already_registered = 2,
             /// Broker shutdown interrupted a waiting lookup.
             shutdown = 3,
+            /// The peer may not register that name (registry policy).
+            denied = 4,
             _,
         };
     };

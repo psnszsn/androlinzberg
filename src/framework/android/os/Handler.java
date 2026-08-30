@@ -60,6 +60,8 @@ public class Handler {
     }
     public void removeMessages(int what) { mQueue.removeMessages(this, what, null); }
     public void removeMessages(int what, Object object) { mQueue.removeMessages(this, what, object); }
+    /** AOSP matches obj by equals(); the hosted queue's identity match is close enough here. */
+    public void removeEqualMessages(int what, Object object) { mQueue.removeMessages(this, what, object); }
     public void removeCallbacksAndMessages(Object token) { mQueue.removeCallbacksAndMessages(this, token); }
     public boolean hasMessages(int what) { return mQueue.hasMessages(this, what, null); }
     public boolean hasMessages(int what, Object object) { return mQueue.hasMessages(this, what, object); }

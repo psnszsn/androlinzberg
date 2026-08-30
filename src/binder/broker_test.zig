@@ -12,6 +12,7 @@ const ObjectEntry = Client.ObjectEntry;
 const linux = std.os.linux;
 
 const cookie = "test-cookie";
+const system_cookie = "test-system-cookie";
 
 /// Heap-allocated: tasks keep pointers into `group`.
 const Harness = struct {
@@ -25,7 +26,7 @@ const Harness = struct {
         io.random(&nonce_bytes);
         const nonce = std.mem.readInt(u64, &nonce_bytes, .little);
         const path = try gpa.dupe(u8, try std.fmt.bufPrint(&buf, "/tmp/azk-binder-test-{x}.sock", .{nonce}));
-        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie });
+        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie });
         const h = try gpa.create(Harness);
         h.* = .{ .broker = broker, .path = path };
         try h.group.concurrent(io, runBroker, .{broker});
@@ -55,13 +56,17 @@ const Peer = struct {
     closed: bool = false,
 
     fn connect(peer: *Peer, io: Io, path: []const u8, hello_cookie: []const u8) !void {
+        return peer.connectAs(io, path, hello_cookie, "dev.artzig.test");
+    }
+
+    fn connectAs(peer: *Peer, io: Io, path: []const u8, hello_cookie: []const u8, package: []const u8) !void {
         const address = try net.UnixAddress.init(path);
         const stream = try address.connect(io);
         peer.io = io;
         peer.closed = false;
         peer.conn = .init(io, stream, &peer.read_buffer, &peer.write_buffer);
         peer.client = .{ .in = &peer.conn.reader.interface, .out = &peer.conn.writer.interface };
-        try peer.client.serveHello(hello_cookie);
+        try peer.client.serveHello(hello_cookie, package);
     }
 
     fn expectWelcome(peer: *Peer) !void {
@@ -119,7 +124,7 @@ test "hello with a bad cookie is rejected" {
     const h = try Harness.start(testing.allocator, io);
     defer h.stop(testing.allocator, io);
     var peer: Peer = undefined;
-    try peer.connect(io, h.path, "wrong");
+    try peer.connectAs(io, h.path, "wrong", "dev.artzig.test");
     defer peer.close();
     const msg = try peer.next();
     try testing.expectEqual(Server.Message.Tag.protocol_error, msg.header.tag);
@@ -142,11 +147,14 @@ test "registry, transaction routing, nesting, oneway, release and death" {
     defer client.close();
     try client.expectWelcome();
     try testing.expect(server.welcome.peer_id != client.welcome.peer_id);
+    // Same package -> same uid.
+    try testing.expectEqual(@as(u32, 10001), server.welcome.uid);
     try testing.expectEqual(@as(u32, 10001), client.welcome.uid);
+    try testing.expectEqual(Server.Message.Welcome.Role.app, client.welcome.role);
 
     // Lookup with wait blocks until the service is registered.
-    try client.client.serveLookupService(1, "svc", true);
-    try server.client.serveRegisterService(7, ObjectRef.local(100), "svc");
+    try client.client.serveLookupService(1, "dev.artzig.test.svc", true);
+    try server.client.serveRegisterService(7, ObjectRef.local(100), "dev.artzig.test.svc");
     {
         const msg = try server.next();
         defer gpa.free(msg.fds);
@@ -167,7 +175,7 @@ test "registry, transaction routing, nesting, oneway, release and death" {
     }
 
     // Another peer may not take the name; the owner may re-register.
-    try client.client.serveRegisterService(2, ObjectRef.local(5), "svc");
+    try client.client.serveRegisterService(2, ObjectRef.local(5), "dev.artzig.test.svc");
     {
         const msg = try client.next();
         defer gpa.free(msg.fds);
@@ -334,7 +342,7 @@ test "registry, transaction routing, nesting, oneway, release and death" {
         try testing.expectEqual(Client.Message.Reply.Status.dead_object, r.status);
     }
     // The name is gone.
-    try client.client.serveLookupService(32, "svc", false);
+    try client.client.serveLookupService(32, "dev.artzig.test.svc", false);
     {
         const msg = try client.next();
         defer gpa.free(msg.fds);
@@ -357,9 +365,9 @@ test "descriptors cross the broker and unauthorized use closes only the offender
     defer b.close();
     try b.expectWelcome();
 
-    try a.client.serveRegisterService(1, ObjectRef.local(1), "a");
+    try a.client.serveRegisterService(1, ObjectRef.local(1), "dev.artzig.test.a");
     gpa.free((try a.next()).fds);
-    try b.client.serveLookupService(1, "a", false);
+    try b.client.serveLookupService(1, "dev.artzig.test.a", false);
     const a_gid = blk: {
         const msg = try b.next();
         defer gpa.free(msg.fds);
@@ -427,5 +435,78 @@ test "descriptors cross the broker and unauthorized use closes only the offender
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.reply, msg.header.tag);
         try testing.expectEqual(@as(u64, 5), msg.header.request_id);
+    }
+}
+
+test "per-package uids, system role, and registry policy" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+
+    var a: Peer = undefined;
+    try a.connectAs(io, h.path, cookie, "com.example.a");
+    defer a.close();
+    try a.expectWelcome();
+    var a2: Peer = undefined;
+    try a2.connectAs(io, h.path, cookie, "com.example.a");
+    defer a2.close();
+    try a2.expectWelcome();
+    var b: Peer = undefined;
+    try b.connectAs(io, h.path, cookie, "com.example.b");
+    defer b.close();
+    try b.expectWelcome();
+    var sys: Peer = undefined;
+    try sys.connectAs(io, h.path, system_cookie, "");
+    defer sys.close();
+    try sys.expectWelcome();
+
+    try testing.expectEqual(@as(u32, 10001), a.welcome.uid);
+    try testing.expectEqual(@as(u32, 10001), a2.welcome.uid);
+    try testing.expectEqual(@as(u32, 10002), b.welcome.uid);
+    try testing.expectEqual(@as(u32, 1000), sys.welcome.uid);
+    try testing.expectEqual(Server.Message.Welcome.Role.system, sys.welcome.role);
+
+    // Registry policy.
+    const cases = [_]struct { peer: *Peer, name: []const u8, status: Server.Message.ServiceResult.Status }{
+        .{ .peer = &a, .name = "activity", .status = .denied },
+        .{ .peer = &a, .name = "com.example.b.svc", .status = .denied },
+        .{ .peer = &a, .name = "com.example.abc", .status = .denied },
+        .{ .peer = &a, .name = "com.example.a", .status = .ok },
+        .{ .peer = &a, .name = "com.example.a.svc", .status = .ok },
+        .{ .peer = &sys, .name = "activity", .status = .ok },
+    };
+    for (cases, 0..) |case, i| {
+        try case.peer.client.serveRegisterService(@intCast(i + 1), ObjectRef.local(@intCast(i + 1)), case.name);
+        const msg = try case.peer.next();
+        defer gpa.free(msg.fds);
+        try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
+        try testing.expectEqual(case.status, (try serviceResult(msg.body)).status);
+    }
+
+    // The calling identity seen by a callee is the caller's own uid.
+    try b.client.serveLookupService(50, "com.example.a.svc", false);
+    const svc = blk: {
+        const msg = try b.next();
+        defer gpa.free(msg.fds);
+        break :blk (try serviceResult(msg.body)).object.value;
+    };
+    try b.client.serveTransact(.{ .target = ObjectRef.remote(svc), .code = 1, .request_id = 51 });
+    {
+        const msg = try a.next();
+        defer gpa.free(msg.fds);
+        const t, _ = try transactBody(msg.body);
+        try testing.expectEqual(@as(u32, 10002), t.caller_uid);
+        try a.client.serveReply(.{ .routing_id = msg.header.routing_id });
+    }
+    gpa.free((try b.next()).fds);
+    // An app peer must present a package name.
+    var anon: Peer = undefined;
+    try anon.connectAs(io, h.path, cookie, "");
+    defer anon.close();
+    {
+        const msg = try anon.next();
+        defer gpa.free(msg.fds);
+        try testing.expectEqual(Server.Message.Tag.protocol_error, msg.header.tag);
     }
 }

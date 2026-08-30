@@ -349,6 +349,20 @@ pub fn build(b: *std.Build) void {
     binder_test_run.step.dependOn(b.getInstallStep());
     b.step("binder-test", "Run multi-process hosted Binder tests through the broker").dependOn(&binder_test_run.step);
 
+    const system_test_driver = b.addExecutable(.{
+        .name = "azk-system-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/system_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const system_test_run = b.addRunArtifact(system_test_driver);
+    system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
+    system_test_run.step.dependOn(b.getInstallStep());
+    b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.step);
+
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
     native_test_step.dependOn(&run_audio_tests.step);
     native_test_step.dependOn(&run_wayland_tests.step);

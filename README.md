@@ -88,11 +88,12 @@ fullscreen mode:
 zig build -j10 run -- --fullscreen /absolute/path/to/app.apk
 ```
 
-Start a hosted Binder session so that processes launched from this one share
-Binder objects through the `azk-binder-broker` router:
+Every launch runs inside a hosted Binder session: the launcher starts an
+`azk-binder-broker` router and a headless system process, and prints the
+session directory. Add a second app to the same session with `--join`:
 
 ```sh
-zig build -j10 run -- --socket-binder /absolute/path/to/app.apk
+./zig-out/bin/androlinzberg --join /run/user/1000/androlinzberg/binder-<pid>-<id> /absolute/path/to/other.apk
 ```
 
 Show all launcher options:

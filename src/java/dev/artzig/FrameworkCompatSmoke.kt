@@ -43,6 +43,7 @@ public final class FrameworkCompatSmoke {
         @Throws(Exception::class)
         @JvmStatic
         public fun main(args: Array<String>) {
+        testParcelRoundTrips()
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
             val filtered: Intent =
                 Intent(Intent.ACTION_VIEW)
@@ -393,6 +394,115 @@ public final class FrameworkCompatSmoke {
                 message.getTarget().dispatchMessage(message)
                 message.recycle()
             }
+        }
+
+        /** Cross-process prerequisite: every framework value type must survive a Parcel round trip. */
+        @JvmStatic
+        private fun testParcelRoundTrips() {
+        fun <T> roundTrip(value: android.os.Parcelable, creator: android.os.Parcelable.Creator<T>): T {
+            val parcel = android.os.Parcel.obtain()
+            value.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            val out = creator.createFromParcel(parcel)
+            check(parcel.dataAvail() == 0) { "${'$'}{value.javaClass.simpleName}: ${'$'}{parcel.dataAvail()} bytes unread" }
+            parcel.recycle()
+            return checkNotNull(out)
+        }
+        val intent = android.content.Intent("dev.artzig.ACTION")
+        intent.setDataAndType(android.net.Uri.parse("content://dev.artzig/item/1"), "text/plain")
+        intent.addCategory("android.intent.category.DEFAULT")
+        intent.addCategory("dev.artzig.CATEGORY")
+        intent.setPackage("dev.artzig.pkg")
+        intent.setComponent(android.content.ComponentName("dev.artzig.pkg", "dev.artzig.pkg.Main"))
+        intent.putExtra("i", 7)
+        intent.putExtra("s", "text")
+        val intent2 = roundTrip(intent, android.content.Intent.CREATOR)
+        check(intent.filterEquals(intent2)) { "intent filterEquals after round trip" }
+        check(intent2.getIntExtra("i", 0) == 7 && intent2.getStringExtra("s") == "text") { "intent extras" }
+        check(intent2.flags == intent.flags) { "intent flags" }
+
+        val filter = android.content.IntentFilter("dev.artzig.ACTION")
+        filter.addCategory("dev.artzig.CATEGORY")
+        filter.addDataScheme("content")
+        filter.setPriority(7)
+        val filter2 = roundTrip(filter, android.content.IntentFilter.CREATOR)
+        check(filter2.hasAction("dev.artzig.ACTION") && filter2.hasCategory("dev.artzig.CATEGORY")) { "filter fields" }
+        check(filter2.hasDataScheme("content") && filter2.priority == 7) { "filter scheme/priority" }
+
+        val app = android.content.pm.ApplicationInfo()
+        app.packageName = "dev.artzig.pkg"
+        app.name = "dev.artzig.pkg.App"
+        app.theme = 0x7f010001
+        app.uid = 10001
+        app.sourceDir = "/tmp/app.apk"
+        val app2 = roundTrip(app, android.content.pm.ApplicationInfo.CREATOR)
+        check(app2.packageName == app.packageName && app2.theme == app.theme && app2.uid == app.uid) { "applicationInfo" }
+        check(app2.sourceDir == app.sourceDir) { "applicationInfo sourceDir" }
+
+        val activity = android.content.pm.ActivityInfo()
+        activity.packageName = "dev.artzig.pkg"
+        activity.name = "dev.artzig.pkg.Main"
+        activity.applicationInfo = app
+        activity.theme = 3
+        activity.screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        activity.configChanges = 0x480
+        val activity2 = roundTrip(activity, android.content.pm.ActivityInfo.CREATOR)
+        check(activity2.name == activity.name && activity2.screenOrientation == activity.screenOrientation) { "activityInfo" }
+        check(activity2.configChanges == activity.configChanges && activity2.applicationInfo?.uid == app.uid) { "activityInfo nested app" }
+
+        val service = android.content.pm.ServiceInfo()
+        service.packageName = "dev.artzig.pkg"
+        service.name = "dev.artzig.pkg.Svc"
+        service.permission = "dev.artzig.PERM"
+        service.exported = true
+        val resolve = android.content.pm.ResolveInfo()
+        resolve.serviceInfo = service
+        val resolve2 = roundTrip(resolve, android.content.pm.ResolveInfo.CREATOR)
+        check(resolve2.serviceInfo?.permission == "dev.artzig.PERM" && resolve2.serviceInfo?.exported == true) { "resolveInfo{serviceInfo}" }
+
+        val pkg = android.content.pm.PackageInfo()
+        pkg.packageName = "dev.artzig.pkg"
+        pkg.versionCode = 42
+        pkg.versionName = "4.2"
+        pkg.applicationInfo = app
+        pkg.activities = arrayOf(activity)
+        pkg.services = arrayOf(service)
+        pkg.requestedPermissions = arrayOf("dev.artzig.PERM")
+        val pkg2 = roundTrip(pkg, android.content.pm.PackageInfo.CREATOR)
+        check(pkg2.versionCode == 42 && pkg2.activities?.size == 1 && pkg2.services?.get(0)?.name == service.name) { "packageInfo" }
+
+        val provider = android.content.pm.ProviderInfo()
+        provider.packageName = "dev.artzig.pkg"
+        provider.name = "dev.artzig.pkg.Provider"
+        provider.authority = "dev.artzig"
+        provider.grantUriPermissions = true
+        val provider2 = roundTrip(provider, android.content.pm.ProviderInfo.CREATOR)
+        check(provider2.authority == "dev.artzig" && provider2.grantUriPermissions) { "providerInfo" }
+        // Wire-shaped bundle path: marshalled bytes into a fresh Parcel, lazy decode.
+        run {
+            val src = android.os.Parcel.obtain()
+            val b = android.os.Bundle()
+            b.putInt("i", 7)
+            b.putString("s", "text")
+            val nested2 = android.os.Bundle()
+            nested2.putDouble("d", 2.5)
+            b.putBundle("n", nested2)
+            src.writeBundle(b)
+            val bytes = src.marshall()
+            src.recycle()
+            val dst = android.os.Parcel.obtain()
+            dst.unmarshall(bytes, 0, bytes.size)
+            dst.setDataPosition(0)
+            val back2 = checkNotNull(dst.readBundle())
+            check(back2.isParcelled()) { "wire bundle should stay parcelled until touched" }
+            check(back2.getInt("i") == 7 && back2.getString("s") == "text") { "wire bundle values " + back2.getInt("i") + " " + back2.getString("s") }
+            check(back2.getBundle("n")?.getDouble("d") == 2.5) { "wire nested bundle" }
+            val copy = android.os.Bundle(back2)
+            copy.putString("extra", "x")
+            check(copy.getInt("i") == 7 && copy.getString("extra") == "x") { "bundle copy after unparcel" }
+            dst.recycle()
+        }
+        android.util.Log.i("FrameworkCompatSmoke", "parcel round trips ok")
         }
     }
 }

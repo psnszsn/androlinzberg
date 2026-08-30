@@ -28,7 +28,9 @@ const usage =
     \\androlinzberg — run an Android APK on artzig (ART + Skia + Wayland)
     \\
     \\usage: androlinzberg [options] <app.apk>
-    \\  --socket-binder   start a hosted Binder broker for this launch
+    \\  --join <session-dir>   add this app to a running session (see session.json)
+    \\Every launch runs inside a hosted Binder session (broker + system process);
+    \\`--system-server` is the launcher's own headless system-process entry.
     \\       androlinzberg --java            (AZK_DRAW_CLASS entry, default ViewHost)
     \\       androlinzberg --codec-selftest | --codec-make-mp3 | --codec-make-m4v | --javatest
     \\
@@ -125,8 +127,25 @@ pub fn main(init: std.process.Init) !void {
     var frames_limit: ?u32 = null;
     var use_java = false;
     var fullscreen = false;
-    var socket_binder = false;
+    var join_dir: ?[]const u8 = null;
     var apk: ?[]const u8 = null;
+    // Hosted Binder session: one broker and one system process per launch;
+    // every process started from this one inherits the socket and cookie and
+    // joins the same object graph. Joined launches reuse an existing session.
+    var binder: ?binder_session.Session = null;
+    defer if (binder) |*session| session.stop();
+    // `--join` must take effect regardless of argument order: `--app-process`
+    // and `--javatest` act (and return) from inside the main loop, so a later
+    // `--join` would otherwise be dropped and a second session started.
+    {
+        var j: usize = 1;
+        while (j < args.len) : (j += 1) {
+            if (std.mem.eql(u8, args[j], "--join") and j + 1 < args.len) {
+                join_dir = args[j + 1];
+                j += 1;
+            }
+        }
+    }
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
@@ -142,8 +161,34 @@ pub fn main(init: std.process.Init) !void {
             use_java = true;
         } else if (std.mem.eql(u8, args[i], "--fullscreen")) {
             fullscreen = true;
-        } else if (std.mem.eql(u8, args[i], "--socket-binder")) {
-            socket_binder = true;
+        } else if (std.mem.eql(u8, args[i], "--join") and i + 1 < args.len) {
+            i += 1;
+            join_dir = args[i];
+        } else if (std.mem.eql(u8, args[i], "--app-process") and i + 1 < args.len) {
+            // Headless app process hosting services for one APK; spawned by the
+            // activity manager (or a test driver) inside an existing session.
+            i += 1;
+            const app_apk = args[i];
+            const apk_abs = if (std.fs.path.isAbsolute(app_apk))
+                app_apk
+            else
+                try std.fs.path.join(init.arena.allocator(), &.{ init.minimal.environ.getPosix("PWD") orelse ".", app_apk });
+            _ = setenv("ARTZIG_APK", try init.arena.allocator().dupeSentinel(u8, apk_abs, 0), 1);
+            try ensureSession(init, &binder, join_dir);
+            // Windowless, but with the bionic loader and the APK's native
+            // libraries configured, so an auto-spawned service that loads an
+            // NDK library works exactly as it does in the UI process.
+            var headless = try bootHeadlessApk(init, apk_abs);
+            defer headless.rt.releaseProcessState();
+            if (binder) |*session| try session.awaitSystemReady();
+            try headless.rt.runMain("dev.artzig.AppProcess", &.{});
+            return;
+        } else if (std.mem.eql(u8, args[i], "--system-server")) {
+            // Spawned by session.zig inside a session; never starts one itself.
+            var headless = try bootHeadless(init);
+            defer headless.rt.releaseProcessState();
+            try headless.rt.runMain("dev.artzig.system.SystemServer", &.{});
+            return;
         } else if (std.mem.eql(u8, args[i], "--codec-make-m4v")) {
             const r = @import("azk_codec").azk_codec_write_test_m4v("/tmp/azk-test.m4v");
             std.debug.print("wrote /tmp/azk-test.m4v: {d} frames\n", .{r});
@@ -157,19 +202,11 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("codec selftest: {d} samples decoded ({s})\n", .{ n, if (n > 0) "PASS" else "FAIL" });
             return;
         } else if (std.mem.eql(u8, args[i], "--javatest")) {
-            var lib = try std.DynLib.open("zig-out/lib/libandroid_platform.so");
-            try bindPlatformIo(&lib, init.io);
-            const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
-            const hwui = try lookupHwuiBridges(&lib);
-            var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
-                .classpath = &.{"zig-out/framework/framework.jar"},
-                .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
-            });
-            defer rt.releaseProcessState();
-            if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
-                if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-                try host_natives.register(init.io, @ptrCast(rt.env), hwui);
-            }
+            try ensureSession(init, &binder, join_dir);
+            var headless = try bootHeadless(init);
+            defer headless.rt.releaseProcessState();
+            if (binder) |*session| try session.awaitSystemReady();
+            const rt = &headless.rt;
             const cls_name = init.minimal.environ.getPosix("AZK_TEST_CLASS") orelse "dev.artzig.TestMain";
             try rt.runMain(cls_name, args[i + 1 ..]);
             const e2 = art.Env{ .env = rt.env };
@@ -186,22 +223,128 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print(usage, .{});
         return;
     }
-    // Hosted Binder session: one broker per launch; every process started from
-    // this one inherits the socket and cookie and joins the same object graph.
-    var binder: ?binder_session.Session = null;
-    defer if (binder) |*session| session.stop();
-    if (socket_binder and init.minimal.environ.getPosix(binder_session.socket_env) == null) {
-        const tree = try installTree(init);
-        const broker_exe = try std.fs.path.join(init.arena.allocator(), &.{ tree, "bin", "azk-binder-broker" });
-        binder = try binder_session.Session.start(init.gpa, init.io, .{
-            .broker_exe = broker_exe,
-            .environ = init.minimal.environ,
-        });
-        _ = setenv(binder_session.socket_env, try init.arena.allocator().dupeSentinel(u8, binder.?.socket_path, 0), 1);
-        _ = setenv(binder_session.cookie_env, try init.arena.allocator().dupeSentinel(u8, binder.?.cookie, 0), 1);
-        std.debug.print("azk: binder broker: {s}\n", .{binder.?.socket_path});
+    try ensureSession(init, &binder, join_dir);
+    return javaMain(init, frames_limit, apk, fullscreen, if (binder) |*session| session else null);
+}
+
+/// Starts this launch's session (broker + system process) unless one is
+/// inherited (`AZK_BINDER_SOCKET` set) or joined with `--join`, and exports
+/// the socket and app cookie so every child process joins the same session.
+fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_dir: ?[]const u8) !void {
+    const arena = init.arena.allocator();
+    if (join_dir) |dir| {
+        const info = try joinSession(init, dir);
+        _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, info.socket, 0), 1);
+        _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, info.cookie, 0), 1);
+        std.debug.print("azk: joined binder session: {s}\n", .{dir});
+        return;
     }
-    return javaMain(init, frames_limit, apk, fullscreen);
+    if (init.minimal.environ.getPosix(binder_session.socket_env) != null) return;
+    const tree = try installTree(init);
+    const broker_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-binder-broker" });
+    const launcher_exe = try std.process.executablePathAlloc(init.io, arena);
+    binder.* = try binder_session.Session.start(init.gpa, init.io, .{
+        .broker_exe = broker_exe,
+        .launcher_exe = launcher_exe,
+        .environ = init.minimal.environ,
+    });
+    _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);
+    _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, binder.*.?.cookie, 0), 1);
+    std.debug.print("azk: binder session: {s}\n", .{binder.*.?.dir});
+}
+
+/// Reads `<dir>/session.json` written by the session owner.
+fn joinSession(init: std.process.Init, dir: []const u8) !binder_session.SessionInfo {
+    const arena = init.arena.allocator();
+    const path = try std.fs.path.join(arena, &.{ dir, binder_session.session_file });
+    const file = try std.Io.Dir.cwd().openFile(init.io, path, .{});
+    defer file.close(init.io);
+    var buffer: [4096]u8 = undefined;
+    const n = try file.readStreaming(init.io, &.{&buffer});
+    const parsed = try std.json.parseFromSliceLeaky(binder_session.SessionInfo, arena, buffer[0..n], .{ .ignore_unknown_fields = true });
+    return parsed;
+}
+
+const Headless = struct {
+    rt: art.Runtime,
+    tree: []const u8,
+};
+
+/// Boots ART with the framework jar and the host natives but no window, no
+/// fonts, and no bionic loader: enough for framework Java (Binder, Looper,
+/// AssetManager, PackageParser) in the system process and test peers.
+fn bootHeadless(init: std.process.Init) !Headless {
+    const arena = init.arena.allocator();
+    const tree = try installTree(init);
+    const island_path = try std.fs.path.join(arena, &.{ tree, "lib", "libandroid_platform.so" });
+    var lib = try std.DynLib.open(island_path);
+    try bindPlatformIo(&lib, init.io);
+    const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
+    const hwui = try lookupHwuiBridges(&lib);
+    const framework_jar = try std.fs.path.join(arena, &.{ tree, "framework", "framework.jar" });
+    _ = setenv("ARTZIG_FRAMEWORK_JAR", try arena.dupeSentinel(u8, framework_jar, 0), 1);
+    if (init.minimal.environ.getPosix("ARTZIG_FRAMEWORK_RES") == null) {
+        _ = setenv("ARTZIG_FRAMEWORK_RES", try std.fs.path.joinZ(arena, &.{ tree, "res", "framework-res.apk" }), 1);
+    }
+    // Stock runtime libart and default library search path: the overlay
+    // libart in lib/art has no sibling JNI libraries (libicu_jni.so, ...), and
+    // without the bionic loader there is no <root>/lib64 fallback.
+    var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
+        .classpath = &.{framework_jar},
+        .use_bionic_loader = false,
+        .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
+    });
+    errdefer rt.releaseProcessState();
+    if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
+        if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
+        try host_natives.register(init.io, @ptrCast(rt.env), hwui);
+    }
+    return .{ .rt = rt, .tree = tree };
+}
+
+/// Like `bootHeadless`, but with the bionic loader and the APK's native
+/// libraries configured (the `--app-process` service host): identical runtime
+/// setup to the UI path minus the window, so APK NDK libraries load the same
+/// way. The island is dlopened RTLD_GLOBAL so the bionic linker sees platform
+/// symbols while relocating APK libraries.
+fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
+    const arena = init.arena.allocator();
+    const tree = try installTree(init);
+    const runtime_root = (try locateRuntimeRoot(init, tree)) orelse
+        init.minimal.environ.getPosix("ARTZIG_ROOT") orelse return error.RuntimeTreeNotFound;
+    try configureNativeLibraries(init, tree, runtime_root, apk_abs);
+
+    const framework_jar = try std.fs.path.join(arena, &.{ tree, "framework", "framework.jar" });
+    _ = setenv("ARTZIG_FRAMEWORK_JAR", try arena.dupeSentinel(u8, framework_jar, 0), 1);
+    if (init.minimal.environ.getPosix("ARTZIG_FRAMEWORK_RES") == null) {
+        _ = setenv("ARTZIG_FRAMEWORK_RES", try std.fs.path.joinZ(arena, &.{ tree, "res", "framework-res.apk" }), 1);
+    }
+    const libart_overlay = try std.fs.path.join(arena, &.{ tree, "lib", "art", "libart.so" });
+    const runtime_overlay_dir = try std.fs.path.join(arena, &.{ tree, "lib", "art" });
+
+    const island_path = try std.fs.path.join(arena, &.{ tree, "lib", "libandroid_platform.so" });
+    const island_path_z = try arena.dupeSentinel(u8, island_path, 0);
+    if (dlopen(island_path_z, 2 | 0x100) == null) return error.PlatformLoadFailed; // RTLD_NOW|RTLD_GLOBAL
+    var lib = try std.DynLib.open(island_path);
+    try bindPlatformIo(&lib, init.io);
+    const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
+    const hwui = try lookupHwuiBridges(&lib);
+
+    var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
+        .classpath = &.{framework_jar},
+        .library_path = &.{runtime_overlay_dir},
+        .root = runtime_root,
+        .libart_path = libart_overlay,
+        .bionic_lib_dir = runtime_overlay_dir,
+        .use_bionic_loader = true,
+        .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
+    });
+    errdefer rt.releaseProcessState();
+    if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
+        if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
+        try host_natives.register(init.io, @ptrCast(rt.env), hwui);
+    }
+    return .{ .rt = rt, .tree = tree };
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +373,7 @@ fn bindPlatformIo(lib: *std.DynLib, io: std.Io) !void {
 }
 const HardwareDrawAbi = enum { physical, scaled, legacy };
 
-fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullscreen: bool) !void {
+fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullscreen: bool, session: ?*binder_session.Session) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const tree = try installTree(init);
@@ -308,6 +451,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     _ = &rt;
     defer rt.releaseProcessState();
     const env = rt.env;
+    // ART boot overlapped with the system process boot; services must be
+    // published before any Java runs.
+    if (session) |s| try s.awaitSystemReady();
     if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
     try host_natives.register(init.io, @ptrCast(env), hwui);
     defer host_natives.deinitWakeups();

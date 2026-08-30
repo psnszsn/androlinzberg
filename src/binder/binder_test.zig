@@ -39,6 +39,8 @@ pub fn main(init: std.process.Init) !void {
     defer env.deinit();
     try env.put("AZK_BINDER_SOCKET", socket_path);
     try env.put("AZK_BINDER_COOKIE", cookie);
+    try env.put("AZK_BINDER_SYSTEM_COOKIE", "binder-test-system");
+    try env.put("AZK_BINDER_PACKAGE", "dev.artzig.binder");
 
     var broker = try std.process.spawn(io, .{
         .argv = &.{ broker_exe, "--socket", socket_path },

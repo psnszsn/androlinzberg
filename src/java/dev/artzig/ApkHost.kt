@@ -388,6 +388,9 @@ public final class ApkHost {
                 mam.close()
             }
             val pkg: String = hostedPackage.packageName
+            // Identity first: the broker assigns this process its Android uid,
+            // and Process.myUid() must not be observed before that.
+            android.os.HostedBinderRuntime.bootstrap(pkg, false)
             val appClass: String? = hostedPackage.applicationClassName
             val mainActivity: String? = hostedPackage.launcherActivityName
             val appThemeRes: Int = hostedPackage.applicationTheme
@@ -412,52 +415,20 @@ public final class ApkHost {
             val cl: HostedApkClassLoader =
                 HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
             sClassLoader = cl;
+            android.os.Parcel.setDefaultClassLoader(cl)
             Log.i(TAG, "APK dexopt status: " + apkDexoptStatus())
 
-            // input service: reflective default-answering IInputManager so
-            // InputManagerGlobal (VelocityTracker etc.) works without a real service.
-            run {
-                val virtualKeyboard: android.view.InputDevice =
-                    android.view.InputDevice
-                        .Builder()
-                        .setId(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD)
-                        .setName("artzig virtual keyboard")
-                        .setDescriptor("artzig-virtual-keyboard")
-                        .setSources(android.view.InputDevice.SOURCE_KEYBOARD)
-                        .setKeyboardType(android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC)
-                        .setKeyCharacterMap(
-                            android.view.HostedInputDispatcher.createHostKeyCharacterMap(),
-                        ).build()
-                val iim: Class<*> = android.hardware.input.IInputManager::class.java
-                val im: Any =
-                    java.lang.reflect.Proxy.newProxyInstance(
-                        iim.getClassLoader(),
-                        arrayOf<Class<*>>(iim),
-                        { proxy, method, args ->
-                            run {
-                                if (method.getName().equals("getInputDevice")) return@run virtualKeyboard
-                                if (method.getName().equals("getInputDeviceIds")) {
-                                    return@run intArrayOf(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD)
-                                }
-                                val rt: Class<*> = method.getReturnType()
-                                if (rt === Boolean::class.java) return@run false
-                                if (rt === Int::class.java || rt === Byte::class.java || rt === Short::class.java) return@run 0
-                                if (rt === Long::class.java) return@run 0L
-                                if (rt === Float::class.java) return@run 0f
-                                if (rt === Double::class.java) return@run 0.0
-                                if (rt === Char::class.java) return@run 0.toChar()
-                                if (rt === IntArray::class.java) return@run IntArray(0)
-                                if (rt.isArray()) {
-                                    return@run java.lang.reflect.Array
-                                        .newInstance(rt.getComponentType(), 0)
-                                }
-                                return@run null
-                            }
-                        },
-                    )
-                android.hardware.input.InputManagerGlobal
-                    .createTestSession(im as android.hardware.input.IInputManager)
-            }
+            // Per-process display and input services: real Binder objects the
+            // unchanged AOSP DisplayManagerGlobal / InputManagerGlobal clients
+            // resolve through ServiceManager.
+            android.os.ServiceManager.addProcessLocalService(
+                android.content.Context.INPUT_SERVICE,
+                dev.artzig.system.HostedInputManagerService(),
+            )
+            android.os.ServiceManager.addProcessLocalService(
+                android.content.Context.DISPLAY_SERVICE,
+                dev.artzig.system.HostedDisplayManagerService(),
+            )
             // A resizable Activity starts with the current window bounds; a fixed
             // manifest orientation constrains those bounds before onCreate.
             val mainInfo: android.content.pm.ActivityInfo? = hostedPackage.activities.get(mainActivity)
@@ -499,6 +470,9 @@ public final class ApkHost {
             }
 
             android.app.ActivityThread.bindApplicationInProcess(sContext, cl, appClass, providers)
+            android.app.ActivityThread.attachApplicationHosted(
+                buildManifest(hostedPackage, apkPath, platformPermissionProtectionLevels),
+            )
             sProcessInitialized = true
 
             // --- MainActivity
@@ -506,6 +480,110 @@ public final class ApkHost {
             if (mainActivity == null) throw IllegalStateException("manifest has no launcher activity")
             android.app.ActivityThread.launchMainActivity(mainActivity)
             Log.i(TAG, "activity up")
+        }
+
+        /** The manifest slice the activity manager needs (services, actions, permissions). */
+        @JvmStatic
+        private fun buildManifest(
+            hostedPackage: android.content.pm.HostedPackage,
+            apkPath: String,
+            platformPermissionProtectionLevels: Map<String, Int>,
+        ): dev.artzig.system.HostedProcessManifest {
+            val services =
+                hostedPackage.services.map { info ->
+                    dev.artzig.system.HostedProcessManifest.ServiceEntry(
+                        info.name,
+                        info.permission,
+                        info.exported,
+                        hostedPackage.serviceActions[info.name]?.toList() ?: emptyList(),
+                    )
+                }
+            // Granted, not requested: the activity manager's bind checks trust
+            // this list, and only normal-protection permissions are granted.
+            val granted = android.content.pm.PackageManager.computeGrantedPermissions(
+                hostedPackage.requestedPermissions,
+                hostedPackage.declaredPermissionProtectionLevels,
+                platformPermissionProtectionLevels,
+            )
+            return dev.artzig.system.HostedProcessManifest(
+                hostedPackage.packageName,
+                hostedPackage.packageName,
+                apkPath,
+                services,
+                granted.toList(),
+            )
+        }
+
+        /**
+         * Headless bootstrap for `androlinzberg --app-process <apk>`: the same
+         * process setup as init() minus window metrics, fonts, activity host,
+         * and the launcher activity. The process serves its package's services
+         * through the activity manager until it is told to exit.
+         */
+        @JvmStatic
+        public fun initHeadless() {
+            if (Looper.myLooper() == null) Looper.prepareMainLooper()
+            // A windowless service host has no reason to outlive the session:
+            // exit if the broker connection is lost (parent death, teardown).
+            android.os.HostedBinderRuntime.exitProcessOnDisconnect = true
+            val frameworkRes: String = System.getenv("ARTZIG_FRAMEWORK_RES")
+            val apkPath: String = System.getenv("ARTZIG_APK")
+            AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
+            val platformPermissionProtectionLevels: Map<String, Int> =
+                AssetManager
+                    .Builder()
+                    .addApkAssets(ApkAssets.loadFromPath(frameworkRes, ApkAssets.PROPERTY_SYSTEM))
+                    .build()
+                    .use { platformAssets ->
+                        android.content.pm.HostedPackageParser.parsePermissionDefinitions(platformAssets)
+                    }
+            val mam: AssetManager = AssetManager.Builder().addApkAssets(ApkAssets.loadFromPath(apkPath)).build()
+            val hostedPackage: android.content.pm.HostedPackage =
+                try {
+                    android.content.pm.HostedPackageParser.parse(mam)
+                } finally {
+                    mam.close()
+                }
+            val pkg: String = hostedPackage.packageName
+            android.os.HostedBinderRuntime.bootstrap(pkg, false)
+            android.content.pm.PackageManager.configureHostedPackage(
+                hostedPackage,
+                apkPath,
+                android.os.Environment.getDataDirectory().getAbsolutePath(),
+                platformPermissionProtectionLevels,
+            )
+            val libPath: String = extractNativeLibraries(apkPath)
+            val cl: HostedApkClassLoader = HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
+            sClassLoader = cl
+            android.os.Parcel.setDefaultClassLoader(cl)
+            // Same per-process display/input Binder services as init(): the
+            // AOSP manager clients resolve them through ServiceManager even in
+            // a headless service host.
+            android.os.ServiceManager.addProcessLocalService(
+                android.content.Context.INPUT_SERVICE,
+                dev.artzig.system.HostedInputManagerService(),
+            )
+            android.os.ServiceManager.addProcessLocalService(
+                android.content.Context.DISPLAY_SERVICE,
+                dev.artzig.system.HostedDisplayManagerService(),
+            )
+            sContext =
+                makeContext(frameworkRes, apkPath, 640, 480, 120, hostedPackage.applicationTheme, pkg)
+            sContext.setClassLoaderOverride(cl)
+            android.app.ActivityThread.configureServiceHost(sContext, cl)
+            if (java.security.Security.getProvider("AndroidKeyStore") == null) {
+                java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
+            }
+            android.app.ActivityThread.bindApplicationInProcess(
+                sContext,
+                cl,
+                hostedPackage.applicationClassName,
+                hostedPackage.providersForProcess(pkg),
+            )
+            android.app.ActivityThread.attachApplicationHosted(
+                buildManifest(hostedPackage, apkPath, platformPermissionProtectionLevels),
+            )
+            Log.i(TAG, "headless app process up: " + pkg)
         }
 
         @JvmStatic private fun installActivityHost(hostedPackage: android.content.pm.HostedPackage) {

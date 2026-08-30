@@ -72,10 +72,17 @@ internal object BinderTestClient {
         bundle.putBundle("n", nested)
         bundle.putBinder("callback", Callback())
         val back = server.roundTripBundle(bundle)
-        check(back != null && back.getInt("i") == 7 && back.getString("s") == "text" && back.getLong("l") == (1L shl 40)
-            && back.getBoolean("b") && back.getStringArray("sa")?.toList() == listOf("x", "y")
-            && back.getBundle("n")?.getDouble("d") == 2.5 && back.getString("server") == "seen"
-            && back.getBinder("callback") === bundle.getBinder("callback"), "Bundle round trip with nested values and a binder")
+        check(back != null, "bundle round trip returned")
+        if (back != null) {
+            check(back.getInt("i") == 7, "bundle int (got " + back.getInt("i") + ")")
+            check(back.getString("s") == "text", "bundle string (got " + back.getString("s") + ")")
+            check(back.getLong("l") == (1L shl 40), "bundle long (got " + back.getLong("l") + ")")
+            check(back.getBoolean("b"), "bundle boolean")
+            check(back.getStringArray("sa")?.toList() == listOf("x", "y"), "bundle string array (got " + back.getStringArray("sa")?.toList() + ")")
+            check(back.getBundle("n")?.getDouble("d") == 2.5, "bundle nested (got " + back.getBundle("n")?.getDouble("d") + ")")
+            check(back.getString("server") == "seen", "bundle server marker (got " + back.getString("server") + ")")
+            check(back.getBinder("callback") === bundle.getBinder("callback"), "bundle binder identity")
+        }
         check(server.roundTripBundle(null) == null, "null Bundle round trip")
         var threw = false
         try {
@@ -114,7 +121,15 @@ internal object BinderTestClient {
 
         // Calling identity.
         check(server.callerPid() == Process.myPid(), "callee sees the caller's pid")
-        check(server.callerUid() == Process.myUid(), "callee sees the session app uid")
+        check(server.callerUid() == Process.myUid(), "callee sees the caller's package uid")
+        check(Process.myUid() != Process.SYSTEM_UID && Process.myUid() >= Process.FIRST_APPLICATION_UID, "app peer has an app uid")
+        var denied = false
+        try {
+            ServiceManager.addService("activity", Callback())
+        } catch (e: SecurityException) {
+            denied = true
+        }
+        check(denied, "an app may not register a system service name")
         check(server.selfPid() != Process.myPid(), "server runs in another process")
         check(Binder.getCallingPid() == Process.myPid(), "calling identity is self outside a transaction")
 

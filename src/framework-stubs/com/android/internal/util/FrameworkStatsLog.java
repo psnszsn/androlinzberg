@@ -7,6 +7,8 @@ public final class FrameworkStatsLog {
     public static final int RESOURCE_API_INFO__APIS__RESOURCE_API_GET_VALUE = 2;
     private FrameworkStatsLog() {}
     public static void write(int code, Object... args) {}
+    public static final int CLIPBOARD_CLEARED = 2000;
+    public static final int CLIPBOARD_CLEARED__SOURCE__AUTO_CLEAR = 2001;
     public static final int ACCESSIBILITY_SHORTCUT_REPORTED = 1000;
     public static final int ACCESSIBILITY_SHORTCUT_REPORTED__SERVICE_STATUS__DISABLED = 1001;
     public static final int ACCESSIBILITY_SHORTCUT_REPORTED__SERVICE_STATUS__ENABLED = 1002;

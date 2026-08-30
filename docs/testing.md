@@ -28,6 +28,14 @@ processes that talk through it:
 zig build -j10 binder-test
 ```
 
+Run the system-service tests (broker + system process + two app peers binding a
+service across processes through the activity manager, and resolving each
+other's packages through the session's package manager):
+
+```sh
+zig build -j10 system-test
+```
+
 These tests do not replace an APK integration test.
 
 ## APK integration tests

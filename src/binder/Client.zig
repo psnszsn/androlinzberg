@@ -24,12 +24,13 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 1;
+pub const version: u16 = 2;
 
-/// The one app uid every peer of a session reports as its calling identity in
-/// v1 (all hosted processes run as the same Linux user). The broker's default,
-/// the launcher, and the JVM (`Process.MY_UID`, checked at connect) all derive
-/// from this value.
+/// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
+pub const system_uid: u32 = 1000;
+/// First synthetic app uid; the broker hands one uid per distinct package
+/// name in a session, starting here (`Process.FIRST_APPLICATION_UID` + 1, the
+/// value the JVM falls back to before it has connected).
 pub const default_app_uid: u32 = 10001;
 
 pub const limits = struct {
@@ -144,8 +145,11 @@ pub const Message = struct {
 
     /// Trailing:
     /// * cookie: [cookie_len]u8
+    /// * package: [package_len]u8 — the Android package name the peer runs;
+    ///   empty only for the system process (whose package is "android").
     pub const Hello = extern struct {
         cookie_len: u32,
+        package_len: u32,
     };
 
     /// Trailing:
@@ -233,13 +237,17 @@ pub fn serveBodylessMessage(c: *const Client, tag: OutMessage.Tag, request_id: u
     try c.out.flush();
 }
 
-pub fn serveHello(c: *const Client, cookie: []const u8) Writer.Error!void {
+pub fn serveHello(c: *const Client, cookie: []const u8, package: []const u8) Writer.Error!void {
     try c.serveMessageHeader(.{
         .tag = .hello,
-        .bytes_len = @intCast(@sizeOf(OutMessage.Hello) + cookie.len),
+        .bytes_len = @intCast(@sizeOf(OutMessage.Hello) + cookie.len + package.len),
     });
-    try c.out.writeStruct(OutMessage.Hello{ .cookie_len = @intCast(cookie.len) }, .little);
+    try c.out.writeStruct(OutMessage.Hello{
+        .cookie_len = @intCast(cookie.len),
+        .package_len = @intCast(package.len),
+    }, .little);
     try c.out.writeAll(cookie);
+    try c.out.writeAll(package);
     try c.out.flush();
 }
 

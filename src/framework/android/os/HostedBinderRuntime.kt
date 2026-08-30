@@ -35,12 +35,52 @@ class HostedBinderRuntime private constructor(
     private val channel: Channel,
     val peerId: Int,
     val pid: Int,
+    /** Android uid the broker assigned to this process for the session. */
     val uid: Int,
+    /** [HostedBinderProtocol.ROLE_APP] or [HostedBinderProtocol.ROLE_SYSTEM]. */
+    val role: Int,
+    /** Android package name this process presented at hello. */
+    val packageName: String,
 ) {
     companion object {
         private const val TAG = "HostedBinder"
         const val SOCKET_ENV = "AZK_BINDER_SOCKET"
         const val COOKIE_ENV = "AZK_BINDER_COOKIE"
+        const val SYSTEM_COOKIE_ENV = "AZK_BINDER_SYSTEM_COOKIE"
+        const val PACKAGE_ENV = "AZK_BINDER_PACKAGE"
+
+        @Volatile private var configuredPackage: String? = null
+        @Volatile private var configuredSystem = false
+
+        /** Headless hosts (the `--app-process` service host) have no window and
+         * no reason to live once the broker is gone; losing the connection means
+         * the session is over, so the process exits instead of orphaning. */
+        @Volatile
+        @JvmStatic
+        var exitProcessOnDisconnect = false
+
+        /**
+         * Declares this process's identity and connects. Must run before any
+         * code reads [Process.myUid]; idempotent for the same identity.
+         */
+        @JvmStatic
+        fun bootstrap(packageName: String, system: Boolean): HostedBinderRuntime {
+            synchronized(startLock) {
+                instance?.let {
+                    check(it.packageName == packageName && (it.role == HostedBinderProtocol.ROLE_SYSTEM) == system) {
+                        "hosted Binder runtime already connected as " + it.packageName
+                    }
+                    return it
+                }
+                configuredPackage = packageName
+                configuredSystem = system
+            }
+            return get()
+        }
+
+        /** The broker-assigned uid, or null before [bootstrap]/[get] connected. */
+        @JvmStatic
+        fun assignedUid(): Int? = instance?.uid
 
         private val startLock = Any()
         @Volatile private var instance: HostedBinderRuntime? = null
@@ -81,7 +121,12 @@ class HostedBinderRuntime private constructor(
 
         private fun connect(): HostedBinderRuntime {
             val path = System.getenv(SOCKET_ENV) ?: throw IllegalStateException("$SOCKET_ENV is not set")
-            val cookie = System.getenv(COOKIE_ENV) ?: ""
+            val system = configuredSystem
+            val cookie = (if (system) System.getenv(SYSTEM_COOKIE_ENV) else System.getenv(COOKIE_ENV)) ?: ""
+            val packageName = configuredPackage ?: System.getenv(PACKAGE_ENV) ?: run {
+                Log.w(TAG, "no package identity configured; using an anonymous one")
+                "anonymous." + Os.getpid()
+            }
             val fd = Os.socket(OsConstants.AF_UNIX, OsConstants.SOCK_STREAM or OsConstants.SOCK_CLOEXEC, 0)
             try {
                 Os.connect(fd, UnixSocketAddress.createFileSystem(path))
@@ -92,22 +137,19 @@ class HostedBinderRuntime private constructor(
             val channel = Channel(fd)
             val hello = HostedBinderProtocol.Builder(HostedBinderProtocol.TAG_HELLO, 0, 0, 0)
             val cookieBytes = cookie.toByteArray(Charsets.UTF_8)
-            hello.u32(cookieBytes.size).bytes(cookieBytes)
+            val packageBytes = (if (system) "" else packageName).toByteArray(Charsets.UTF_8)
+            hello.u32(cookieBytes.size).u32(packageBytes.size).bytes(cookieBytes).bytes(packageBytes)
             channel.writeFrame(hello.finish(), emptyList())
             val welcome = channel.readFrame() ?: throw IllegalStateException("binder broker closed during hello")
             if (welcome.header.tag != HostedBinderProtocol.IN_WELCOME) {
                 throw IllegalStateException("binder broker rejected hello (tag " + welcome.header.tag + ")")
             }
             val body = welcome.body
-            val runtime = HostedBinderRuntime(channel, body.getInt(), body.getInt(), body.getInt())
-            // The broker's session uid and Process.myUid() must agree, otherwise
-            // permission checks comparing the two fail silently.
-            if (runtime.uid != Process.myUid()) {
-                channel.close()
-                throw IllegalStateException(
-                    "binder broker reports app uid " + runtime.uid + " but Process.myUid() is " + Process.myUid(),
-                )
-            }
+            val peerId = body.getInt()
+            val pid = body.getInt()
+            val uid = body.getInt()
+            val role = body.getInt()
+            val runtime = HostedBinderRuntime(channel, peerId, pid, uid, role, if (system) "android" else packageName)
             runtime.start()
             return runtime
         }
@@ -490,6 +532,8 @@ class HostedBinderRuntime private constructor(
         return when (result.status) {
             HostedBinderProtocol.SERVICE_OK -> true
             HostedBinderProtocol.SERVICE_ALREADY_REGISTERED -> false
+            HostedBinderProtocol.SERVICE_DENIED ->
+                throw SecurityException("package " + packageName + " may not register service '" + name + "'")
             else -> throw IllegalStateException("service registration failed: " + result.status)
         }
     }
@@ -679,6 +723,10 @@ class HostedBinderRuntime private constructor(
             record.ref.get()?.let { proxy -> executor.execute { proxy.notifyDeath() } }
         }
         channel.close()
+        if (exitProcessOnDisconnect) {
+            Log.i(TAG, "broker connection lost; exiting headless host")
+            Runtime.getRuntime().halt(0)
+        }
     }
 
     // ------------------------------------------------------- oneway ordering

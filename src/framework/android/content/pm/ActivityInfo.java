@@ -109,10 +109,83 @@ public class ActivityInfo extends ComponentInfo implements android.os.Parcelable
     public boolean hasOnBackInvokedCallbackEnabled() { return false; }
     public boolean isOnBackInvokedCallbackEnabled() { return false; }
     public int describeContents() { return 0; }
-    public void writeToParcel(android.os.Parcel dest, int flags) {}
+    /** AOSP ActivityInfo.writeToParcel order for the fields this shim has. */
+    public void writeToParcel(android.os.Parcel dest, int parcelableFlags) {
+        super.writeToParcel(dest, parcelableFlags);
+        dest.writeInt(theme);
+        dest.writeInt(launchMode);
+        dest.writeInt(documentLaunchMode);
+        dest.writeString8(permission);
+        dest.writeString8(taskAffinity);
+        dest.writeString8(targetActivity);
+        dest.writeString8(null); // launchToken
+        dest.writeInt(flags);
+        dest.writeInt(0); // privateFlags
+        dest.writeInt(screenOrientation);
+        dest.writeInt(configChanges);
+        dest.writeInt(softInputMode);
+        dest.writeInt(uiOptions);
+        dest.writeString8(parentActivityName);
+        dest.writeInt(persistableMode);
+        dest.writeInt(maxRecents);
+        dest.writeInt(lockTaskLaunchMode);
+        if (windowLayout != null) {
+            dest.writeInt(1);
+            dest.writeInt(windowLayout.width);
+            dest.writeFloat(windowLayout.widthFraction);
+            dest.writeInt(windowLayout.height);
+            dest.writeFloat(windowLayout.heightFraction);
+            dest.writeInt(windowLayout.gravity);
+            dest.writeInt(windowLayout.minWidth);
+            dest.writeInt(windowLayout.minHeight);
+        } else {
+            dest.writeInt(0);
+        }
+        dest.writeInt(0); // resizeMode
+        dest.writeString8(requestedVrComponent);
+        dest.writeInt(rotationAnimation);
+        dest.writeInt(colorMode);
+        dest.writeString8(requiredDisplayCategory == -1 ? null : Integer.toString(requiredDisplayCategory));
+    }
+    protected ActivityInfo(android.os.Parcel source) {
+        super(source);
+        theme = source.readInt();
+        launchMode = source.readInt();
+        documentLaunchMode = source.readInt();
+        permission = source.readString8();
+        taskAffinity = source.readString8();
+        targetActivity = source.readString8();
+        source.readString8();
+        flags = source.readInt();
+        source.readInt();
+        screenOrientation = source.readInt();
+        configChanges = source.readInt();
+        softInputMode = source.readInt();
+        uiOptions = source.readInt();
+        parentActivityName = source.readString8();
+        persistableMode = source.readInt();
+        maxRecents = source.readInt();
+        lockTaskLaunchMode = source.readInt();
+        if (source.readInt() != 0) {
+            windowLayout = new WindowLayout();
+            windowLayout.width = source.readInt();
+            windowLayout.widthFraction = source.readFloat();
+            windowLayout.height = source.readInt();
+            windowLayout.heightFraction = source.readFloat();
+            windowLayout.gravity = source.readInt();
+            windowLayout.minWidth = source.readInt();
+            windowLayout.minHeight = source.readInt();
+        }
+        source.readInt();
+        requestedVrComponent = source.readString8();
+        rotationAnimation = source.readInt();
+        colorMode = source.readInt();
+        String displayCategory = source.readString8();
+        requiredDisplayCategory = displayCategory != null ? Integer.parseInt(displayCategory) : -1;
+    }
     public static final android.os.Parcelable.Creator<ActivityInfo> CREATOR =
             new android.os.Parcelable.Creator<ActivityInfo>() {
-        public ActivityInfo createFromParcel(android.os.Parcel in) { return new ActivityInfo(); }
+        public ActivityInfo createFromParcel(android.os.Parcel in) { return new ActivityInfo(in); }
         public ActivityInfo[] newArray(int size) { return new ActivityInfo[size]; }
     };
 }

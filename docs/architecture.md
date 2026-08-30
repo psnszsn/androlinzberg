@@ -43,12 +43,14 @@ layer supplies the Android C-library interface and loads these files.
 
 ### Hosted Binder
 
-By default each APK process uses in-process Binder objects: `Binder.transact`
-calls `onTransact` directly, and `ServiceManager` is a process-local map.
-
-With `--socket-binder`, the launcher starts one `azk-binder-broker` process for
-the session. Every ART process launched within that session connects to the
-broker over a private Unix socket and joins one object graph. The broker
+Local `Binder.transact` calls `onTransact` directly, as on Android. Every
+launch is a session: the launcher starts one `azk-binder-broker` process and
+one headless system process (`androlinzberg --system-server`, uid 1000), and
+`ServiceManager` names live in the broker. Every ART process launched within
+that session (or added with `--join <session-dir>`) connects to the broker
+over a private Unix socket and joins one object graph; each package gets its
+own Android uid for the session, and only the system process may register
+system service names. The broker
 assigns global object ids, translates object references between peers, routes
 synchronous and oneway transactions, delivers nested callbacks to the waiting
 thread, tracks remote references and death links, forwards file descriptors,
@@ -56,8 +58,34 @@ and holds the service registry. `HostedBinderRuntime` and `BinderProxy` are the
 JVM side; `Parcel` keeps Binder objects and descriptors in a side table that
 the broker translates. Java `IBinder`, generated AIDL, callbacks, calling
 identity, death notification, and Unix descriptor passing work across
-processes; every peer in a session shares one app uid. See
-`src/binder/` for the Zig broker and protocol.
+processes. The system process runs the AOSP `SystemServiceManager`/`LocalServices`
+lifecycle and hosts the activity manager (`dev.artzig.system.HostedActivityManagerService`,
+following AOSP `ActiveServices`): `Context.bindService`/`startService` work
+across processes with AOSP connection semantics (`onServiceConnected` on the
+main looper, `onServiceDisconnected`/`onBindingDied` on host death), Bundles
+stay lazily parcelled until first access, and `androlinzberg --app-process
+<apk>` runs a headless service host the activity manager can spawn. The system
+process also hosts the session-wide package manager
+(`dev.artzig.system.HostedPackageManagerService`, registered as `package`):
+each process registers the package it parsed, and `PackageManager` is a client
+that answers every query from the service, so package info, intent-service
+resolution, uid↔package mapping, and cross-uid permission checks agree across
+the session. Dynamically registered broadcasts route through the activity
+manager's broadcast queue (`HostedBroadcastQueue`, following AOSP
+`BroadcastQueueImpl` semantics): unordered broadcasts fan out to every
+matching receiver in the session, ordered broadcasts chain result state
+through receivers by descending filter priority, sticky broadcasts are
+retained, and delivery lands on the registering process's chosen `Handler`.
+The clipboard is the real AOSP `ClipboardService` running in the system
+process (with the unchanged `ClipboardManager` client), and its emulator
+clipboard monitor is a hosted replacement that syncs with the Wayland
+clipboard through `wl-copy`/`wl-paste`.
+`ContextImpl.getSystemService` resolves through a
+`SystemServiceRegistry`-shaped table, and the per-process display and input
+services are Binder objects (`IDisplayManager`/`IInputManager`) registered
+under process-local names, so the unchanged AOSP manager clients work. See
+`src/binder/` for the Zig broker and protocol and `src/java/dev/artzig/system/`
+for the system process and its services.
 
 ## Framework seams
 
