@@ -2,7 +2,7 @@
     .name = .androlinzberg,
     .version = "0.0.0",
     .fingerprint = 0x8503f76f1f09d06e,
-    .minimum_zig_version = "0.17.0-dev.1818+7051f8e73",
+    .minimum_zig_version = "0.17.0-dev.1884+841dd0eb8",
     .dependencies = .{
         .artzig = .{ .path = "artzig" },
         .wayland = .{
