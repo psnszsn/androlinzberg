@@ -71,7 +71,7 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
     @Override public int describeContents() { return CONTENTS_FILE_DESCRIPTOR; }
     @Override public void writeToParcel(Parcel out, int flags) { out.writeFileDescriptor(mFd); }
     public static final Creator<ParcelFileDescriptor> CREATOR = new Creator<ParcelFileDescriptor>() {
-        public ParcelFileDescriptor createFromParcel(Parcel in) { in.readInt(); return null; }
+        public ParcelFileDescriptor createFromParcel(Parcel in) { return in.readFileDescriptor(); }
         public ParcelFileDescriptor[] newArray(int size) { return new ParcelFileDescriptor[size]; }
     };
     public static class AutoCloseOutputStream extends java.io.FileOutputStream {

@@ -35,6 +35,10 @@ while IFS= read -r rel; do
   if [ ! -f "$src" ]; then
     src="$FN_INPUT/$rel"
   fi
+  if [ ! -f "$src" ]; then
+    # Repository-owned interfaces (hosted test and host-seam AIDL).
+    src="$COMPAT/$rel"
+  fi
   [ -f "$src" ] || { echo "missing aidl: $rel" >&2; exit 1; }
   "${AIDL_RUN[@]}" -I"$FB/core/java" -I"$FB/graphics/java" -I"$COMPAT" \
     -I"$FB/media/java" -I"$FN_INPUT" -o "$OUT" "$src"

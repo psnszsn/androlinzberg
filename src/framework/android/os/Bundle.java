@@ -74,9 +74,10 @@ public class Bundle extends BaseBundle implements Parcelable, Cloneable {
     public Bundle deepCopy() { return new Bundle(this); }
     public boolean kindofEquals(Bundle other) { return other != null && size() == other.size(); }
     @Override public int describeContents() { return 0; }
-    @Override public void writeToParcel(Parcel out, int flags) { out.writeInt(mMap.size()); /* in-process only */ }
+    @Override public void writeToParcel(Parcel out, int flags) { out.writeBundle(this); }
+    public void readFromParcel(Parcel in) { Bundle b = in.readBundle(); mMap.clear(); if (b != null) mMap.putAll(b.mMap); }
     public static final Creator<Bundle> CREATOR = new Creator<Bundle>() {
-        public Bundle createFromParcel(Parcel in) { in.readInt(); return new Bundle(); }
+        public Bundle createFromParcel(Parcel in) { return in.readBundle(); }
         public Bundle[] newArray(int size) { return new Bundle[size]; }
     };
     @Override public String toString() { return "Bundle" + mMap; }

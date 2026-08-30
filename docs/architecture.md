@@ -41,6 +41,24 @@ suitable device is available. PipeWire implements audio output.
 The launcher extracts `lib/x86_64` files from the APK. The Bionic compatibility
 layer supplies the Android C-library interface and loads these files.
 
+### Hosted Binder
+
+By default each APK process uses in-process Binder objects: `Binder.transact`
+calls `onTransact` directly, and `ServiceManager` is a process-local map.
+
+With `--socket-binder`, the launcher starts one `azk-binder-broker` process for
+the session. Every ART process launched within that session connects to the
+broker over a private Unix socket and joins one object graph. The broker
+assigns global object ids, translates object references between peers, routes
+synchronous and oneway transactions, delivers nested callbacks to the waiting
+thread, tracks remote references and death links, forwards file descriptors,
+and holds the service registry. `HostedBinderRuntime` and `BinderProxy` are the
+JVM side; `Parcel` keeps Binder objects and descriptors in a side table that
+the broker translates. Java `IBinder`, generated AIDL, callbacks, calling
+identity, death notification, and Unix descriptor passing work across
+processes; every peer in a session shares one app uid. See
+`src/binder/` for the Zig broker and protocol.
+
 ## Framework seams
 
 The host does not implement every Android service. A framework seam has two

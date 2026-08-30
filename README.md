@@ -88,6 +88,13 @@ fullscreen mode:
 zig build -j10 run -- --fullscreen /absolute/path/to/app.apk
 ```
 
+Start a hosted Binder session so that processes launched from this one share
+Binder objects through the `azk-binder-broker` router:
+
+```sh
+zig build -j10 run -- --socket-binder /absolute/path/to/app.apk
+```
+
 Show all launcher options:
 
 ```sh

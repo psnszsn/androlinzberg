@@ -17,6 +17,8 @@ zig build -j10 cpp-audit
 - `src/native/platform_abi.zig` supplies HardwareBuffer, GBM, SQLite, and POSIX
   compatibility interfaces.
 - `src/main.zig` starts ART and registers native interfaces.
+- `src/binder/` implements the hosted Binder wire protocol, the
+  `azk-binder-broker` router, and the launcher's broker session.
 
 `src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C
 macros and callback code that Zig cannot import directly.

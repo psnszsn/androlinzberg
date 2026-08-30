@@ -100,3 +100,5 @@ com/android/internal/view/IInputMethodManager.aidl
 com/android/internal/view/inline/IInlineContentCallback.aidl
 com/android/internal/view/inline/IInlineContentProvider.aidl
 com/android/internal/widget/IRemoteViewsFactory.aidl
+dev/artzig/binder/IBinderTestCallback.aidl
+dev/artzig/binder/IBinderTestService.aidl

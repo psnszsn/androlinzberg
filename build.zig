@@ -317,6 +317,38 @@ pub fn build(b: *std.Build) void {
     });
     const platform_abi_check = b.addObject(.{ .name = "platform-abi-check", .root_module = platform_abi_test_mod });
     const launcher_check = b.addObject(.{ .name = "launcher-check", .root_module = exe.root_module });
+    // --- hosted Binder broker + protocol tests
+    const binder_broker = b.addExecutable(.{
+        .name = "azk-binder-broker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/broker_main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(binder_broker);
+    const binder_broker_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/broker_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_binder_broker_tests = b.addRunArtifact(binder_broker_tests);
+    const binder_test_driver = b.addExecutable(.{
+        .name = "azk-binder-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/binder_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const binder_test_run = b.addRunArtifact(binder_test_driver);
+    binder_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    binder_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
+    binder_test_run.step.dependOn(b.getInstallStep());
+    b.step("binder-test", "Run multi-process hosted Binder tests through the broker").dependOn(&binder_test_run.step);
+
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
     native_test_step.dependOn(&run_audio_tests.step);
     native_test_step.dependOn(&run_wayland_tests.step);
@@ -326,6 +358,7 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);
+    native_test_step.dependOn(&run_binder_broker_tests.step);
     native_test_step.dependOn(&platform_abi_check.step);
     native_test_step.dependOn(&launcher_check.step);
     native_test_step.dependOn(&cpp_audit.step);

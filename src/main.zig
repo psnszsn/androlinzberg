@@ -1,6 +1,7 @@
 //! androlinzberg launcher: boot ART, register the Android platform natives,
 //! and present Android framework rendering on Wayland.
 const std = @import("std");
+const binder_session = @import("binder/session.zig");
 const wayland = @import("platform/wayland.zig");
 const video_layers = @import("platform/video_layers.zig");
 const fonts = @import("platform/fonts.zig");
@@ -27,6 +28,7 @@ const usage =
     \\androlinzberg — run an Android APK on artzig (ART + Skia + Wayland)
     \\
     \\usage: androlinzberg [options] <app.apk>
+    \\  --socket-binder   start a hosted Binder broker for this launch
     \\       androlinzberg --java            (AZK_DRAW_CLASS entry, default ViewHost)
     \\       androlinzberg --codec-selftest | --codec-make-mp3 | --codec-make-m4v | --javatest
     \\
@@ -123,6 +125,7 @@ pub fn main(init: std.process.Init) !void {
     var frames_limit: ?u32 = null;
     var use_java = false;
     var fullscreen = false;
+    var socket_binder = false;
     var apk: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -139,6 +142,8 @@ pub fn main(init: std.process.Init) !void {
             use_java = true;
         } else if (std.mem.eql(u8, args[i], "--fullscreen")) {
             fullscreen = true;
+        } else if (std.mem.eql(u8, args[i], "--socket-binder")) {
+            socket_binder = true;
         } else if (std.mem.eql(u8, args[i], "--codec-make-m4v")) {
             const r = @import("azk_codec").azk_codec_write_test_m4v("/tmp/azk-test.m4v");
             std.debug.print("wrote /tmp/azk-test.m4v: {d} frames\n", .{r});
@@ -180,6 +185,21 @@ pub fn main(init: std.process.Init) !void {
     if (!use_java) {
         std.debug.print(usage, .{});
         return;
+    }
+    // Hosted Binder session: one broker per launch; every process started from
+    // this one inherits the socket and cookie and joins the same object graph.
+    var binder: ?binder_session.Session = null;
+    defer if (binder) |*session| session.stop();
+    if (socket_binder and init.minimal.environ.getPosix(binder_session.socket_env) == null) {
+        const tree = try installTree(init);
+        const broker_exe = try std.fs.path.join(init.arena.allocator(), &.{ tree, "bin", "azk-binder-broker" });
+        binder = try binder_session.Session.start(init.gpa, init.io, .{
+            .broker_exe = broker_exe,
+            .environ = init.minimal.environ,
+        });
+        _ = setenv(binder_session.socket_env, try init.arena.allocator().dupeSentinel(u8, binder.?.socket_path, 0), 1);
+        _ = setenv(binder_session.cookie_env, try init.arena.allocator().dupeSentinel(u8, binder.?.cookie, 0), 1);
+        std.debug.print("azk: binder broker: {s}\n", .{binder.?.socket_path});
     }
     return javaMain(init, frames_limit, apk, fullscreen);
 }

@@ -6,9 +6,9 @@ public final class PersistableBundle extends BaseBundle implements Parcelable {
     public PersistableBundle(Bundle b) { super(); }
     public PersistableBundle(PersistableBundle b) { super(b); }
     @Override public int describeContents() { return 0; }
-    @Override public void writeToParcel(Parcel dest, int flags) { dest.writeInt(0); }
+    @Override public void writeToParcel(Parcel dest, int flags) { dest.writePersistableBundle(this); }
     public static final Creator<PersistableBundle> CREATOR = new Creator<PersistableBundle>() {
-        public PersistableBundle createFromParcel(Parcel in) { in.readInt(); return new PersistableBundle(); }
+        public PersistableBundle createFromParcel(Parcel in) { return in.readPersistableBundle(); }
         public PersistableBundle[] newArray(int size) { return new PersistableBundle[size]; }
     };
     public boolean isParcelled() { return false; }

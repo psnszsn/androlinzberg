@@ -1,6 +1,8 @@
 /* Hosted adaptation of AOSP android.os.Parcel. The platform implementation cannot be reused
- * directly because it owns data through libbinder's native Parcel; this in-process version keeps
- * the same cursor, growth, and Parcelable contracts over a Java ByteBuffer. */
+ * directly because it owns data through libbinder's native Parcel; this version keeps the same
+ * cursor, growth, and Parcelable contracts over a Java ByteBuffer. Binder objects and file
+ * descriptors live in a side table keyed by data offset (the analogue of libbinder's object
+ * array), which the hosted Binder runtime translates when a Parcel crosses processes. */
 package android.os;
 import java.io.FileDescriptor;
 import java.nio.ByteBuffer;
@@ -9,11 +11,97 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 public final class Parcel {
+    /** One side-table entry: a Binder or a descriptor at a data offset. */
+    static final class ObjectEntry {
+        static final int KIND_BINDER = 1;
+        static final int KIND_FILE_DESCRIPTOR = 2;
+        final int offset;
+        final int kind;
+        final IBinder binder;
+        final FileDescriptor fd;
+        /** The Parcel closes this descriptor on recycle. */
+        final boolean ownsFd;
+        ObjectEntry(int offset, int kind, IBinder binder, FileDescriptor fd, boolean ownsFd) {
+            this.offset = offset; this.kind = kind; this.binder = binder; this.fd = fd; this.ownsFd = ownsFd;
+        }
+    }
+
+    private static final int EX_SECURITY = -1;
+    private static final int EX_BAD_PARCELABLE = -2;
+    private static final int EX_ILLEGAL_ARGUMENT = -3;
+    private static final int EX_NULL_POINTER = -4;
+    private static final int EX_ILLEGAL_STATE = -5;
+    private static final int EX_NETWORK_MAIN_THREAD = -6;
+    private static final int EX_UNSUPPORTED_OPERATION = -7;
+    private static final int EX_SERVICE_SPECIFIC = -8;
+    private static final int EX_PARCELABLE = -9;
+    private static final int EX_TRANSACTION_FAILED = -129;
+
+    private static final int VAL_NULL = -1, VAL_STRING = 0, VAL_INTEGER = 1, VAL_MAP = 2, VAL_BUNDLE = 3,
+            VAL_PARCELABLE = 4, VAL_SHORT = 5, VAL_LONG = 6, VAL_FLOAT = 7, VAL_DOUBLE = 8, VAL_BOOLEAN = 9,
+            VAL_CHARSEQUENCE = 10, VAL_LIST = 11, VAL_SPARSEARRAY = 12, VAL_BYTEARRAY = 13, VAL_STRINGARRAY = 14,
+            VAL_IBINDER = 15, VAL_PARCELABLEARRAY = 16, VAL_OBJECTARRAY = 17, VAL_INTARRAY = 18, VAL_LONGARRAY = 19,
+            VAL_BYTE = 20, VAL_SERIALIZABLE = 21, VAL_SPARSEBOOLEANARRAY = 22, VAL_BOOLEANARRAY = 23,
+            VAL_CHARSEQUENCEARRAY = 24, VAL_PERSISTABLEBUNDLE = 25, VAL_SIZE = 26, VAL_SIZEF = 27,
+            VAL_DOUBLEARRAY = 28, VAL_CHAR = 29, VAL_SHORTARRAY = 30, VAL_CHARARRAY = 31, VAL_FLOATARRAY = 32;
+
     private ByteBuffer buf = ByteBuffer.allocate(256).order(ByteOrder.LITTLE_ENDIAN);
     private int size = 0;
+    /** Side table keyed by data offset; kept sorted so wire order is the iteration order. */
+    private java.util.TreeMap<Integer, ObjectEntry> objects;
     private Parcel() {}
     public static Parcel obtain() { return new Parcel(); }
-    public void recycle() { size = 0; buf.position(0); }
+    public static Parcel obtain(IBinder binder) { return new Parcel(); }
+    public void recycle() { clearObjects(); size = 0; buf.position(0); }
+
+    // ---- side table (hosted Binder runtime interface) ----
+    private static void closeEntry(ObjectEntry e) {
+        if (e.ownsFd && e.fd != null) {
+            try { android.system.Os.close(e.fd); } catch (Throwable ignored) {}
+        }
+    }
+    private void clearObjects() {
+        if (objects == null) return;
+        for (ObjectEntry e : objects.values()) closeEntry(e);
+        objects = null;
+    }
+    private void addObject(ObjectEntry entry) {
+        if (objects == null) objects = new java.util.TreeMap<>();
+        ObjectEntry old = objects.put(entry.offset, entry);
+        if (old != null) closeEntry(old);
+    }
+    private ObjectEntry objectAt(int offset) {
+        return objects == null ? null : objects.get(offset);
+    }
+    private void truncateObjects(int newSize) {
+        if (objects == null) return;
+        java.util.SortedMap<Integer, ObjectEntry> tail = objects.tailMap(newSize);
+        for (ObjectEntry e : tail.values()) closeEntry(e);
+        tail.clear();
+        if (objects.isEmpty()) objects = null;
+    }
+    /** Side-table entries in data order; the collection is owned by the Parcel. */
+    java.util.Collection<ObjectEntry> objectEntries() {
+        return objects == null ? java.util.Collections.<ObjectEntry>emptyList() : objects.values();
+    }
+    /** Copy of the committed payload bytes regardless of side-table contents. */
+    byte[] payloadBytes() {
+        byte[] out = new byte[size];
+        int pos = buf.position();
+        buf.position(0); buf.get(out, 0, size); buf.position(pos);
+        return out;
+    }
+    /** Replaces the contents with data received from another process; descriptors become Parcel-owned. */
+    void adoptWire(byte[] data, List<ObjectEntry> entries) {
+        unmarshall(data, 0, data.length);
+        for (ObjectEntry e : entries) addObject(e);
+        setDataPosition(0);
+    }
+    static Parcel fromWire(byte[] data, List<ObjectEntry> entries) {
+        Parcel p = new Parcel();
+        p.adoptWire(data, entries);
+        return p;
+    }
     private void ensure(int n) {
         if (buf.position() + n > buf.capacity()) {
             ByteBuffer nb = ByteBuffer.allocate(Math.max(buf.capacity() * 2, buf.position() + n))
@@ -32,7 +120,7 @@ public final class Parcel {
     public int dataPosition() { return buf.position(); }
     public int dataAvail() { return size - buf.position(); }
     public void setDataPosition(int pos) { buf.position(pos); }
-    public void setDataSize(int s) { ensure(s - buf.position()); size = s; }
+    public void setDataSize(int s) { ensure(s - buf.position()); if (s < size) truncateObjects(s); size = s; }
     public void setDataCapacity(int c) { ensure(c - buf.position()); }
     public void writeInt(int v) { ensure(4); buf.putInt(v); grew(); }
     public void writeLong(long v) { ensure(8); buf.putLong(v); grew(); }
@@ -85,9 +173,57 @@ public final class Parcel {
         if (a == null) { writeInt(-1); return; }
         writeInt(a.length); for (String v : a) writeString(v);
     }
-    public void writeStrongBinder(IBinder b) { writeInt(b == null ? 0 : System.identityHashCode(b)); }
+    public void writeStrongBinder(IBinder b) {
+        int offset = dataPosition();
+        writeInt(b == null ? 0 : 1);
+        addObject(new ObjectEntry(offset, ObjectEntry.KIND_BINDER, b, null, false));
+    }
     public void writeStrongInterface(IInterface i) { writeStrongBinder(i == null ? null : i.asBinder()); }
-    public void writeFileDescriptor(FileDescriptor fd) { writeInt(0); }
+    /** Stores a duplicate that the Parcel owns, as libbinder does. */
+    public void writeFileDescriptor(FileDescriptor fd) {
+        if (fd == null) throw new NullPointerException("fd");
+        FileDescriptor dup;
+        try { dup = android.system.Os.dup(fd); }
+        catch (android.system.ErrnoException e) { throw new RuntimeException("dup failed", e); }
+        int offset = dataPosition();
+        writeInt(1);
+        addObject(new ObjectEntry(offset, ObjectEntry.KIND_FILE_DESCRIPTOR, null, dup, true));
+    }
+    public void writeRawFileDescriptor(int fd) {
+        FileDescriptor f = new FileDescriptor();
+        f.setInt$(fd);
+        writeFileDescriptor(f);
+    }
+    public void writeRawFileDescriptorArray(int[] value) {
+        if (value == null) { writeInt(-1); return; }
+        writeInt(value.length);
+        for (int fd : value) writeRawFileDescriptor(fd);
+    }
+    /** Caller-owned duplicate of the descriptor at the cursor. */
+    public ParcelFileDescriptor readFileDescriptor() {
+        FileDescriptor raw = readRawFileDescriptor();
+        if (raw == null) return null;
+        try { return new ParcelFileDescriptor(android.system.Os.dup(raw)); }
+        catch (android.system.ErrnoException e) { throw new RuntimeException("dup failed", e); }
+    }
+    /** Parcel-owned descriptor at the cursor; valid until recycle. */
+    public FileDescriptor readRawFileDescriptor() {
+        int offset = dataPosition();
+        int marker = readInt();
+        ObjectEntry e = objectAt(offset);
+        if (e == null || e.kind != ObjectEntry.KIND_FILE_DESCRIPTOR) {
+            if (marker == 0) return null;
+            throw new BadParcelableException("no file descriptor at offset " + offset);
+        }
+        return e.fd;
+    }
+    public FileDescriptor[] createRawFileDescriptorArray() {
+        int n = readInt();
+        if (n < 0) return null;
+        FileDescriptor[] out = new FileDescriptor[n];
+        for (int i = 0; i < n; i++) out[i] = readRawFileDescriptor();
+        return out;
+    }
     public void writeParcelable(Parcelable p, int flags) {
         if (p == null) { writeString(null); return; }
         writeString(p.getClass().getName());
@@ -112,8 +248,86 @@ public final class Parcel {
         if (l == null) { writeInt(-1); return; }
         writeInt(l.size()); for (String s : l) writeString(s);
     }
-    public void writeValue(Object v) { throw android.util.ArtzigTestDiagnostics.unsupported(
-            "android.os.Parcel", "writeValue", "Parcel.writeValue"); }
+    public void writeValue(Object v) {
+        if (v == null) { writeInt(VAL_NULL); }
+        else if (v instanceof String) { writeInt(VAL_STRING); writeString((String) v); }
+        else if (v instanceof Integer) { writeInt(VAL_INTEGER); writeInt((Integer) v); }
+        else if (v instanceof Map) { writeInt(VAL_MAP); writeMap((Map) v); }
+        else if (v instanceof Bundle) { writeInt(VAL_BUNDLE); writeBundle((Bundle) v); }
+        else if (v instanceof PersistableBundle) { writeInt(VAL_PERSISTABLEBUNDLE); writePersistableBundle((PersistableBundle) v); }
+        else if (v instanceof Parcelable) { writeInt(VAL_PARCELABLE); writeParcelable((Parcelable) v, 0); }
+        else if (v instanceof Short) { writeInt(VAL_SHORT); writeInt(((Short) v).intValue()); }
+        else if (v instanceof Long) { writeInt(VAL_LONG); writeLong((Long) v); }
+        else if (v instanceof Float) { writeInt(VAL_FLOAT); writeFloat((Float) v); }
+        else if (v instanceof Double) { writeInt(VAL_DOUBLE); writeDouble((Double) v); }
+        else if (v instanceof Boolean) { writeInt(VAL_BOOLEAN); writeInt(((Boolean) v) ? 1 : 0); }
+        else if (v instanceof CharSequence) { writeInt(VAL_CHARSEQUENCE); writeCharSequence((CharSequence) v); }
+        else if (v instanceof List) { writeInt(VAL_LIST); writeList((List) v); }
+        else if (v instanceof android.util.SparseArray) { writeInt(VAL_SPARSEARRAY); writeSparseArray((android.util.SparseArray) v); }
+        else if (v instanceof boolean[]) { writeInt(VAL_BOOLEANARRAY); writeBooleanArray((boolean[]) v); }
+        else if (v instanceof byte[]) { writeInt(VAL_BYTEARRAY); writeByteArray((byte[]) v); }
+        else if (v instanceof String[]) { writeInt(VAL_STRINGARRAY); writeStringArray((String[]) v); }
+        else if (v instanceof CharSequence[]) { writeInt(VAL_CHARSEQUENCEARRAY); writeCharSequenceArray((CharSequence[]) v); }
+        else if (v instanceof IBinder) { writeInt(VAL_IBINDER); writeStrongBinder((IBinder) v); }
+        else if (v instanceof Parcelable[]) { writeInt(VAL_PARCELABLEARRAY); writeParcelableArray((Parcelable[]) v, 0); }
+        else if (v instanceof int[]) { writeInt(VAL_INTARRAY); writeIntArray((int[]) v); }
+        else if (v instanceof short[]) { writeInt(VAL_SHORTARRAY); writeShortArray((short[]) v); }
+        else if (v instanceof char[]) { writeInt(VAL_CHARARRAY); writeCharArray((char[]) v); }
+        else if (v instanceof long[]) { writeInt(VAL_LONGARRAY); writeLongArray((long[]) v); }
+        else if (v instanceof double[]) { writeInt(VAL_DOUBLEARRAY); writeDoubleArray((double[]) v); }
+        else if (v instanceof float[]) { writeInt(VAL_FLOATARRAY); writeFloatArray((float[]) v); }
+        else if (v instanceof Byte) { writeInt(VAL_BYTE); writeInt((Byte) v); }
+        else if (v instanceof Character) { writeInt(VAL_CHAR); writeInt((Character) v); }
+        else if (v instanceof android.util.SparseBooleanArray) { writeInt(VAL_SPARSEBOOLEANARRAY); writeSparseBooleanArray((android.util.SparseBooleanArray) v); }
+        else if (v instanceof android.util.Size) { writeInt(VAL_SIZE); writeInt(((android.util.Size) v).getWidth()); writeInt(((android.util.Size) v).getHeight()); }
+        else if (v instanceof android.util.SizeF) { writeInt(VAL_SIZEF); writeFloat(((android.util.SizeF) v).getWidth()); writeFloat(((android.util.SizeF) v).getHeight()); }
+        else if (v instanceof Object[]) { writeInt(VAL_OBJECTARRAY); writeArray((Object[]) v); }
+        else if (v instanceof java.io.Serializable) { writeInt(VAL_SERIALIZABLE); writeSerializable((java.io.Serializable) v); }
+        else throw new RuntimeException("Parcel: unable to marshal value " + v);
+    }
+    public void writeArray(Object[] val) {
+        if (val == null) { writeInt(-1); return; }
+        writeInt(val.length);
+        for (Object o : val) writeValue(o);
+    }
+    public Object[] readArray(ClassLoader loader) {
+        int n = readInt();
+        if (n < 0) return null;
+        Object[] out = new Object[n];
+        for (int i = 0; i < n; i++) out[i] = readValue(loader);
+        return out;
+    }
+    public <T> T[] readArray(ClassLoader loader, Class<T> clazz) {
+        int n = readInt();
+        if (n < 0) return null;
+        T[] out = (T[]) java.lang.reflect.Array.newInstance(clazz, n);
+        for (int i = 0; i < n; i++) out[i] = (T) readValue(loader);
+        return out;
+    }
+    public void writeShortArray(short[] a) {
+        if (a == null) { writeInt(-1); return; }
+        writeInt(a.length); for (short v : a) writeInt(v);
+    }
+    public short[] createShortArray() {
+        int n = readInt(); if (n < 0) return null;
+        short[] a = new short[n]; for (int i = 0; i < n; i++) a[i] = (short) readInt(); return a;
+    }
+    public void writeCharArray(char[] a) {
+        if (a == null) { writeInt(-1); return; }
+        writeInt(a.length); for (char v : a) writeInt(v);
+    }
+    public char[] createCharArray() {
+        int n = readInt(); if (n < 0) return null;
+        char[] a = new char[n]; for (int i = 0; i < n; i++) a[i] = (char) readInt(); return a;
+    }
+    public void writeDoubleArray(double[] a) {
+        if (a == null) { writeInt(-1); return; }
+        writeInt(a.length); for (double v : a) writeDouble(v);
+    }
+    public double[] createDoubleArray() {
+        int n = readInt(); if (n < 0) return null;
+        double[] a = new double[n]; for (int i = 0; i < n; i++) a[i] = readDouble(); return a;
+    }
     public void writeSerializable(java.io.Serializable s) {
         try {
             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
@@ -133,22 +347,61 @@ public final class Parcel {
             throw new BadParcelableException(e.toString());
         }
     }
+    /** AOSP writeMapInternal: size, then key/value pairs through writeValue. */
     public void writeMap(Map m) {
         if (m == null) { writeInt(-1); return; }
         writeInt(m.size());
         for (Object e : m.entrySet()) {
             Map.Entry<?, ?> en = (Map.Entry<?, ?>) e;
-            writeString(String.valueOf(en.getKey()));
-            writeString(String.valueOf(en.getValue()));
+            writeValue(en.getKey());
+            writeValue(en.getValue());
         }
     }
     public void readMap(Map m, ClassLoader loader) {
         int n = readInt();
-        for (int i = 0; i < n; i++) m.put(readString(), readString());
+        for (int i = 0; i < n; i++) m.put(readValue(loader), readValue(loader));
     }
-    public void writeBundle(Bundle b) { writeInt(b == null ? -1 : 0); }
+    private void writeBundleContents(BaseBundle b) {
+        writeInt(b.mMap.size());
+        for (Map.Entry<String, Object> e : b.mMap.entrySet()) {
+            writeString(e.getKey());
+            writeValue(e.getValue());
+        }
+    }
+    private void readBundleContents(BaseBundle b, ClassLoader loader, int n) {
+        for (int i = 0; i < n; i++) {
+            String key = readString();
+            b.mMap.put(key, readValue(loader));
+        }
+    }
+    public void writeBundle(Bundle b) {
+        if (b == null) { writeInt(-1); return; }
+        writeBundleContents(b);
+    }
     public void writeNoException() { writeInt(0); }
-    public void writeException(Exception e) { throw new RuntimeException(e); }
+    /** AOSP encoding: exception code, message, then a service-specific error code when applicable. */
+    public void writeException(Exception e) {
+        int code = getExceptionCode(e);
+        writeInt(code);
+        if (code == 0) {
+            if (e instanceof RuntimeException) throw (RuntimeException) e;
+            throw new RuntimeException(e);
+        }
+        writeString(e.getMessage());
+        if (code == EX_SERVICE_SPECIFIC) writeInt(((ServiceSpecificException) e).errorCode);
+    }
+    public static int getExceptionCode(Throwable e) {
+        if (e instanceof Parcelable && e.getClass().getClassLoader() == Parcelable.class.getClassLoader()) return EX_PARCELABLE;
+        if (e instanceof SecurityException) return EX_SECURITY;
+        if (e instanceof BadParcelableException) return EX_BAD_PARCELABLE;
+        if (e instanceof IllegalArgumentException) return EX_ILLEGAL_ARGUMENT;
+        if (e instanceof NullPointerException) return EX_NULL_POINTER;
+        if (e instanceof IllegalStateException) return EX_ILLEGAL_STATE;
+        if (e instanceof android.os.NetworkOnMainThreadException) return EX_NETWORK_MAIN_THREAD;
+        if (e instanceof UnsupportedOperationException) return EX_UNSUPPORTED_OPERATION;
+        if (e instanceof ServiceSpecificException) return EX_SERVICE_SPECIFIC;
+        return 0;
+    }
     public int readInt() { return buf.getInt(); }
     public long readLong() { return buf.getLong(); }
     public float readFloat() { return buf.getFloat(); }
@@ -266,15 +519,43 @@ public final class Parcel {
             throw new BadParcelableException(e.toString());
         }
     }
-    public void readException(int code, String msg) {}
+    public void readException(int code, String msg) {
+        Exception e = createExceptionOrNull(code, msg);
+        if (e != null) SneakyThrow.sneakyThrow(e);
+    }
+    public Exception createException(int code, String msg) {
+        Exception e = createExceptionOrNull(code, msg);
+        return e != null ? e : new RuntimeException("Unknown exception code: " + code + " msg " + msg);
+    }
+    private Exception createExceptionOrNull(int code, String msg) {
+        switch (code) {
+            case EX_SECURITY: return new SecurityException(msg);
+            case EX_BAD_PARCELABLE: return new BadParcelableException(msg);
+            case EX_ILLEGAL_ARGUMENT: return new IllegalArgumentException(msg);
+            case EX_NULL_POINTER: return new NullPointerException(msg);
+            case EX_ILLEGAL_STATE: return new IllegalStateException(msg);
+            case EX_NETWORK_MAIN_THREAD: return new android.os.NetworkOnMainThreadException();
+            case EX_UNSUPPORTED_OPERATION: return new UnsupportedOperationException(msg);
+            case EX_SERVICE_SPECIFIC: return new ServiceSpecificException(readInt(), msg);
+            case EX_PARCELABLE: return new BadParcelableException("Parcelable exceptions are not forwarded: " + msg);
+            case EX_TRANSACTION_FAILED: return new RemoteException(msg != null ? msg : "Transaction failed");
+            default: return null;
+        }
+    }
+    /** Rethrows a checked exception without declaring it, as the AOSP reader does for RemoteException. */
+    private static final class SneakyThrow {
+        static void sneakyThrow(Throwable t) { SneakyThrow.<RuntimeException>sneakyThrow0(t); }
+        @SuppressWarnings("unchecked")
+        private static <T extends Throwable> void sneakyThrow0(Throwable t) throws T { throw (T) t; }
+    }
     public void writeArrayMap(android.util.ArrayMap<String, Object> val) {
         if (val == null) { writeInt(-1); return; }
         writeInt(val.size());
-        for (int i = 0; i < val.size(); i++) { writeString(val.keyAt(i)); writeString(String.valueOf(val.valueAt(i))); }
+        for (int i = 0; i < val.size(); i++) { writeString(val.keyAt(i)); writeValue(val.valueAt(i)); }
     }
     public void readArrayMap(android.util.ArrayMap outVal, ClassLoader loader) {
         int n = readInt();
-        for (int i = 0; i < n; i++) outVal.put(readString(), readString());
+        for (int i = 0; i < n; i++) outVal.put(readString(), readValue(loader));
     }
     public <T extends Parcelable> void writeParcelableList(List<T> val, int flags) {
         if (val == null) { writeInt(-1); return; }
@@ -351,17 +632,65 @@ public final class Parcel {
         for (int i = 0; i < n; i++) out.put(readInt(), readInt());
         return out;
     }
-    public IBinder readStrongBinder() { readInt(); return null; }
-    public Object readValue(ClassLoader loader) { throw android.util.ArtzigTestDiagnostics.unsupported(
-            "android.os.Parcel", "readValue", "Parcel.readValue"); }
+    public IBinder readStrongBinder() {
+        int offset = dataPosition();
+        int marker = readInt();
+        ObjectEntry e = objectAt(offset);
+        if (e == null || e.kind != ObjectEntry.KIND_BINDER) {
+            if (marker == 0) return null;
+            throw new BadParcelableException("no binder at offset " + offset);
+        }
+        return e.binder;
+    }
+    public Object readValue(ClassLoader loader) {
+        int type = readInt();
+        switch (type) {
+            case VAL_NULL: return null;
+            case VAL_STRING: return readString();
+            case VAL_INTEGER: return readInt();
+            case VAL_MAP: return readHashMap(loader);
+            case VAL_BUNDLE: return readBundle(loader);
+            case VAL_PERSISTABLEBUNDLE: return readPersistableBundle(loader);
+            case VAL_PARCELABLE: return readParcelable(loader);
+            case VAL_SHORT: return (short) readInt();
+            case VAL_LONG: return readLong();
+            case VAL_FLOAT: return readFloat();
+            case VAL_DOUBLE: return readDouble();
+            case VAL_BOOLEAN: return readInt() == 1;
+            case VAL_CHARSEQUENCE: return readCharSequence();
+            case VAL_LIST: { ArrayList l = new ArrayList(); readList(l, loader); return l; }
+            case VAL_SPARSEARRAY: return readSparseArray(loader);
+            case VAL_BOOLEANARRAY: return createBooleanArray();
+            case VAL_BYTEARRAY: return createByteArray();
+            case VAL_STRINGARRAY: return createStringArray();
+            case VAL_CHARSEQUENCEARRAY: return readCharSequenceArray();
+            case VAL_IBINDER: return readStrongBinder();
+            case VAL_PARCELABLEARRAY: return readParcelableArray(loader);
+            case VAL_OBJECTARRAY: return readArray(loader);
+            case VAL_INTARRAY: return createIntArray();
+            case VAL_SHORTARRAY: return createShortArray();
+            case VAL_CHARARRAY: return createCharArray();
+            case VAL_LONGARRAY: return createLongArray();
+            case VAL_DOUBLEARRAY: return createDoubleArray();
+            case VAL_FLOATARRAY: return createFloatArray();
+            case VAL_BYTE: return (byte) readInt();
+            case VAL_CHAR: return (char) readInt();
+            case VAL_SPARSEBOOLEANARRAY: return readSparseBooleanArray();
+            case VAL_SIZE: return new android.util.Size(readInt(), readInt());
+            case VAL_SIZEF: return new android.util.SizeF(readFloat(), readFloat());
+            case VAL_SERIALIZABLE: return readSerializable();
+            default: throw new BadParcelableException("Parcel " + this + ": Unmarshalling unknown type code " + type + " at offset " + dataPosition());
+        }
+    }
     public void readBooleanArray(boolean[] out) {
         int n = readInt();
         for (int i = 0; i < n && i < out.length; i++) out[i] = readBoolean();
     }
     public java.util.HashMap readHashMap(ClassLoader loader) {
         int n = readInt();
+        if (n < 0) return null;
         java.util.HashMap m = new java.util.HashMap();
-        for (int i = 0; i < n; i++) m.put(readString(), readString());
+        for (int i = 0; i < n; i++) m.put(readValue(loader), readValue(loader));
         return m;
     }
     public <K, V> void readMap(java.util.Map<? super K, ? super V> map, ClassLoader loader,
@@ -412,38 +741,88 @@ public final class Parcel {
     public PersistableBundle readPersistableBundle() { return readPersistableBundle(null); }
     public PersistableBundle readPersistableBundle(ClassLoader loader) {
         int n = readInt();
-        return n < 0 ? null : new PersistableBundle();
+        if (n < 0) return null;
+        PersistableBundle b = new PersistableBundle();
+        readBundleContents(b, loader, n);
+        return b;
     }
-    public void writePersistableBundle(PersistableBundle b) { writeInt(b == null ? -1 : 0); }
+    public void writePersistableBundle(PersistableBundle b) {
+        if (b == null) { writeInt(-1); return; }
+        writeBundleContents(b);
+    }
     public Bundle readBundle() { return readBundle(null); }
     public Bundle readBundle(ClassLoader loader) {
         int n = readInt();
-        return n < 0 ? null : new Bundle();
+        if (n < 0) return null;
+        Bundle b = new Bundle();
+        readBundleContents(b, loader, n);
+        return b;
     }
     public <T> T readParcelable(ClassLoader loader, Class<T> clazz) { return (T) readParcelable(loader); }
-    public void readException() { readInt(); }
-    public int readExceptionCode() { return 0; }
-    public void enforceInterface(String descriptor) {}
-    public void writeInterfaceToken(String descriptor) {}
-    public boolean hasFileDescriptors() { return false; }
-    public void appendFrom(Parcel parcel, int offset, int length) {
-        byte[] all = parcel.marshall();
-        int len = Math.min(length, all.length - offset);
-        if (len > 0) {
-            byte[] sub = new byte[len];
-            System.arraycopy(all, offset, sub, 0, len);
-            ensure(len);
-            buf.put(sub);
-            grew();
+    public void readException() {
+        int code = readExceptionCode();
+        if (code != 0) readException(code, readString());
+    }
+    public int readExceptionCode() { return readInt(); }
+    /** Token layout: strict-mode policy int, then the descriptor (AOSP writes both). */
+    public void writeInterfaceToken(String descriptor) {
+        writeInt(0);
+        writeString(descriptor);
+    }
+    public void enforceInterface(String descriptor) {
+        readInt();
+        String got = readString();
+        if (descriptor != null && !descriptor.equals(got)) {
+            throw new SecurityException("Binder invocation to an incorrect interface: expected "
+                    + descriptor + ", got " + got);
         }
     }
+    public void enforceNoDataAvail() {
+        int avail = dataAvail();
+        if (avail > 0) throw new BadParcelableException("Parcel data not fully consumed, unread size: " + avail);
+    }
+    public boolean hasFileDescriptors() {
+        if (objects == null) return false;
+        for (ObjectEntry e : objects.values()) if (e.kind == ObjectEntry.KIND_FILE_DESCRIPTOR) return true;
+        return false;
+    }
+    public boolean hasBinders() {
+        if (objects == null) return false;
+        for (ObjectEntry e : objects.values()) if (e.kind == ObjectEntry.KIND_BINDER) return true;
+        return false;
+    }
+    /** Copies bytes and rebases the side-table entries of the copied range. */
+    public void appendFrom(Parcel parcel, int offset, int length) {
+        byte[] all = parcel.payloadBytes();
+        int len = Math.min(length, all.length - offset);
+        if (len <= 0) return;
+        int base = dataPosition();
+        ensure(len);
+        buf.put(all, offset, len);
+        grew();
+        if (parcel.objects == null) return;
+        for (ObjectEntry e : parcel.objects.subMap(offset, offset + len).values()) {
+            int rebased = base + (e.offset - offset);
+            if (e.kind == ObjectEntry.KIND_FILE_DESCRIPTOR) {
+                try {
+                    addObject(new ObjectEntry(rebased, e.kind, null, android.system.Os.dup(e.fd), true));
+                } catch (android.system.ErrnoException ex) {
+                    throw new RuntimeException("dup failed", ex);
+                }
+            } else {
+                addObject(new ObjectEntry(rebased, e.kind, e.binder, null, false));
+            }
+        }
+    }
+    /** Like AOSP, only flat data can be marshalled; Binders and descriptors are not portable. */
     public byte[] marshall() {
-        byte[] out = new byte[size];
-        int pos = buf.position();
-        buf.position(0); buf.get(out, 0, size); buf.position(pos);
-        return out;
+        if (objects != null && !objects.isEmpty()) {
+            throw new RuntimeException("Tried to marshall a Parcel that contained Binder objects.");
+        }
+        return payloadBytes();
     }
     public void unmarshall(byte[] data, int offset, int length) {
+        clearObjects();
         buf.position(0); ensure(length);
         buf.put(data, offset, length);
         size = length; buf.position(0);

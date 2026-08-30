@@ -20,6 +20,14 @@ Run the testkit tests:
 zig build -j10 testkit-test
 ```
 
+Run the multi-process hosted Binder tests. `native-test` already covers the
+broker with in-process Zig peers; this target starts the broker and three ART
+processes that talk through it:
+
+```sh
+zig build -j10 binder-test
+```
+
 These tests do not replace an APK integration test.
 
 ## APK integration tests
