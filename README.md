@@ -12,6 +12,28 @@ layer.
 > androlinzberg does not isolate an APK from your Linux user account. Run only
 > APK files that you trust.
 
+## Relationship to ATL and Waydroid
+
+Conceptually, androlinzberg is a hybrid between [Android Translation Layer
+(ATL)](https://gitlab.com/android_translation_layer/android_translation_layer/)
+and [Waydroid](https://github.com/waydroid/waydroid).
+
+androlinzberg is heavily inspired by ATL: an APK runs through a compatibility
+layer directly on the Linux host instead of inside a complete Android system.
+Where the projects differ is how they provide Android behavior. Rather than
+reimplementing the Android API surface wherever possible, androlinzberg builds
+and reuses pinned AOSP code for ART and libcore, selected Android framework
+classes, Android resources, HWUI, and Skia. Small host adapters are used at the
+boundaries that normally depend on unavailable Android services, daemons, or
+hardware.
+
+Waydroid takes the other broad approach: it boots a complete Android system in
+a Linux container and integrates that system with a Wayland desktop.
+androlinzberg shares the direct Wayland presentation goal, but does not start an
+Android system image, `init`, `system_server`, or the rest of Android's service
+stack. Each APK is instead hosted by the compatibility runtime and connected to
+Linux facilities through focused host adapters.
+
 ## Current support
 
 - The host system must use x86_64 Linux and Wayland.
