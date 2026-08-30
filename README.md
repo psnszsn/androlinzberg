@@ -1,163 +1,92 @@
 # androlinzberg
 
-androlinzberg runs an Android APK on a Linux desktop. It uses the artzig ART
-runtime, the Android framework from AOSP, Skia, and Wayland.
+androlinzberg runs Android APK files as Wayland applications on Linux. It uses
+Android Runtime (ART), the Android graphics stack, and a native Linux platform
+layer.
 
-The repository root is the application project. The embedded ART runtime and
-its build tooling live in `artzig/`.
+> [!WARNING]
+> androlinzberg is experimental. Application compatibility is incomplete, and
+> interfaces can change.
 
-## How it is different from ATL
+> [!CAUTION]
+> androlinzberg does not isolate an APK from your Linux user account. Run only
+> APK files that you trust.
 
-ATL (Android Translation Layer) and androlinzberg have the same goal. They use
-different methods.
+## Current support
 
-**The seam.** ATL replaces the Android graphics stack. It converts each Canvas
-operation into a GTK/GSK operation, and it uses Pango for text. androlinzberg
-keeps the Android graphics stack. It runs the real AOSP code below the Canvas
-API: hwui, Skia, and minikin. Text layout, line breaking, and drawing give the
-same result as on a phone.
+- The host system must use x86_64 Linux and Wayland.
+- The APK must contain x86_64 native libraries.
+- The native-library bridge loads compatible Android libraries from the APK.
+- Apps can use mouse, keyboard, touch, tablet, and scroll input.
+- HWUI and Skia render through EGL to a Wayland surface.
+- FFmpeg supplies audio and video codecs.
+- PipeWire supplies audio output.
+- Fontconfig supplies the Android font configuration.
+- Conscrypt uses the host certificate-authority bundle.
 
-**The framework.** ATL writes its own versions of many `android.*` classes.
-androlinzberg compiles the AOSP framework Java without changes. It replaces only
-the classes that need system services: `ViewRootImpl`, `WindowManager`,
-`Activity`, `ContextImpl`, `Dialog`, and a small number of others. Binder
-services run in the process, as in ATL.
+androlinzberg does not provide a complete Android system. An app can fail when
+it needs an Android service that the host does not implement.
 
-**The window.** ATL shows the app in a GTK widget. androlinzberg talks to the
-Wayland compositor directly. It uses an `xdg_toplevel` for the app, a
-subsurface for video, and EGL for hardware rendering.
+## Build
 
-**The runtime.** ATL uses the ART build from nixpkgs, with wolfSSL for TLS.
-androlinzberg uses ART built from AOSP main (the artzig project), with the real
-conscrypt TLS stack. The launcher locates the host CA bundle and conscrypt
-reads it directly; certificates are not copied into the ART runtime.
+The repository supplies a Nix development shell for x86_64 Linux. The shell
+contains Zig, OpenJDK, and the required native libraries.
 
-**Fonts.** ATL redirects `/system/fonts` file names to fontconfig. androlinzberg
-asks fontconfig for the system fonts at start. It writes an Android
-`font_fallback.xml`, and minikin loads it. Emoji and non-Latin scripts work.
+The Git repository does not contain all large source dependencies. Use a
+prepared source tree that contains the required `vendor/` and `artzig/extra/`
+content.
 
-**Media.** androlinzberg implements `MediaCodec` on FFmpeg, with VA-API and
-DMA-BUF when the compositor supports them. It implements `AudioTrack` on
-PipeWire.
-
-**The build.** One command, `zig build`, builds all parts: the launcher, a
-static Skia, the native island (hwui and JNI), the mixed Java/Kotlin framework
-jar, the resources, and the AIDL code. ATL uses meson and the system Skia.
-
-Repository-owned JVM code is Kotlin-first; direct AOSP and generated sources
-remain Java. The compiler, interoperability, and migration rules are documented
-in [`docs/kotlin.md`](docs/kotlin.md).
-
-**The native boundary.** Linux integration and application-owned native logic
-are Zig: MediaCodec JNI, AudioTrack, PipeWire state, Wayland target state,
-HardwareBuffer/GBM, SQLite compatibility, and POSIX shims. C++ remains only
-where the retained HWUI/Skia stack or an AOSP C++ ABI requires it. The exact
-allowlist and ownership rules are documented in
-[`docs/native-boundary.md`](docs/native-boundary.md) and checked by
-`zig build cpp-audit`.
-
-## Run
-
-```
-zig build
-zig build native-test cpp-audit
-zig build run -- path/to/app.apk
-```
-
-Pass `--fullscreen` to request xdg-shell fullscreen at startup, or press F11
-to toggle it while the app is running. Android fullscreen/immersive requests
-from hosted APKs are forwarded to the same Wayland protocol state.
-
-Use `zig build run -- --help` to show the options and the environment
-variables.
-
-For a headless test, use `tools/shot.sh out.png ./zig-out/bin/androlinzberg
-path/to/app.apk`. It runs the app in a headless compositor and makes a
-screenshot.
-
-## Headless accessibility tests
-
-Set `AZK_TEST_SOCKET` to enable the private Varlink accessibility service. The
-`tools/azk-test` client can inspect the active Android accessibility tree and
-perform either semantic actions or real pointer/keyboard input routed through
-the compositor:
+Enter the development shell:
 
 ```sh
-export AZK_TEST_SOCKET="$XDG_RUNTIME_DIR/androlinzberg-test.sock"
-./zig-out/bin/androlinzberg app.apk &
-tools/azk-test wait ready
-tools/azk-test click --text "Sign in"          # virtual pointer via Wayland
-tools/azk-test type --id com.example:id/email me@example.com
-tools/azk-test set-text --id com.example:id/email 'unicode ✓'
-tools/azk-test step click --text "Save"        # action + logs/issues/tree delta
-tools/azk-test observe --tree
+nix develop ./artzig
 ```
 
-`step` takes a cursor immediately before the action, performs it, and returns
-only the Android logs, accessibility events, and structured missing-framework
-issues produced after that cursor, together with the resulting accessibility
-tree. It exits nonzero when the action fails or a new missing-functionality
-issue is reported; pass `--allow-missing` to collect known gaps without failing.
-For manual multi-action analysis, save `azk-test mark` and pass that response to
-`azk-test diagnose --since @mark.json`.
-
-For reproducible Cage runs, pass an executable test program to the existing
-headless harness. The test inherits `AZK_TEST_SOCKET`; the harness waits for
-the service and writes `result.png`, `result.a11y.json`, the complete process
-output in `result.log`, and one compact record per `step` in
-`result.steps.jsonl`. A failed test also gets `result.failure.json` with the
-final tree and diagnostics:
+Build the application:
 
 ```sh
-tools/shot.sh result.png --test ./tests/login-ui -- \
-  ./zig-out/bin/androlinzberg app.apk
+zig build -j10 -Doptimize=fast
 ```
 
-The Kotlin integration suite exercises the repository's built-in ViewHost
-without requiring an APK:
+The first build compiles ART, the Android framework, HWUI, and Skia. It can take
+a long time and use much disk space.
+
+## Run an APK
+
+Use an absolute path for the APK file:
 
 ```sh
-zig build -j10 integration-test -- --class ViewHostTest
+zig build -j10 run -- /absolute/path/to/app.apk
 ```
 
-Selectors are exact and must identify one node before an action is applied.
-They can match resource id, text, content description, Android class, or
-normalized role. `click`, `type`, and `key` use Cage's wlroots virtual-input
-protocols by default; `set-text` uses `AccessibilityNodeInfo.ACTION_SET_TEXT`.
-
-## Kotlin APK integration tests
-
-Repository integration tests use `kotlin.test` assertions with AOSP's vendored
-JUnit 4 runner. Each `@Test` method gets a fresh APK process, app-data directory,
-test-control socket, and extracted-native-library directory. The JUnit process
-runs on the host JDK inside the existing Cage harness, while the APK remains on
-ART.
-
-```kotlin
-class NewPipeTest {
-    @get:Rule
-    val app = ApkRule("newpipe-0.29.1")
-
-    @Test
-    fun opensSearch() = app.run {
-        click(description = "Search")
-        waitFor(className = "android.widget.EditText")
-        setText(className = "android.widget.EditText", value = "kotlin integration")
-        expectVisible(text = "kotlin integration")
-    }
-}
-```
-
-Register pinned APKs in `tests/apks.json`, then provide the selected entry's
-environment variable. The checksum is verified before launch:
+Press `F11` to enter or leave fullscreen mode. Use `--fullscreen` to start in
+fullscreen mode:
 
 ```sh
-AZK_APK_NEWPIPE_0_29_1=/path/to/NewPipe_v0.29.1.apk \
-  zig build -j10 integration-test
+zig build -j10 run -- --fullscreen /absolute/path/to/app.apk
 ```
 
-Pass `--class` and optionally `--method` after `--` to filter discovery. Host
-testkit tests run with `zig build -j10 testkit-test`. Integration artifacts live
-under `zig-out/test-results/integration/<class>.<method>/`: `app.log` and
-`steps.jsonl` are always kept; failures additionally keep `screenshot.png`,
-`a11y.json`, and `failure.json`.
+Show all launcher options:
+
+```sh
+./zig-out/bin/androlinzberg --help
+```
+
+## How it works
+
+- The `artzig` component builds ART and libcore from pinned AOSP sources.
+- Selected AOSP framework code supplies Android behavior.
+- Small host adapters replace Android services that need a full Android system.
+- HWUI and Skia keep Android text layout and drawing behavior.
+- The Zig platform layer connects Android to Wayland, EGL, PipeWire, and FFmpeg.
+- The native-library bridge loads compatible x86_64 Android libraries.
+
+See [Architecture](docs/architecture.md) for more information.
+
+## Development
+
+- [Build and development](docs/development.md)
+- [Testing](docs/testing.md)
+- [Kotlin source policy](docs/kotlin.md)
+- [Native language boundary](docs/native-boundary.md)
+- [artzig build instructions](artzig/README.md)

@@ -1,49 +1,61 @@
 # Kotlin source policy
 
-Kotlin is the default language for new repository-owned JVM code. The root
-framework build accepts Java and Kotlin in the same curated source set and
-compiles them together through `zig build -j10 java`.
+Use Kotlin for new repository-owned JVM code. Keep AOSP and generated sources
+in Java when their source language is Java.
 
-The compiler and standard library come from the pinned AOSP checkout at
-`artzig/vendor/external/kotlinc`. OpenJDK 21 from the Nix development shell
-runs `kotlinc`, `javac`, and D8. Kotlin language and API compatibility are
-pinned to 2.0 and both compilers emit JVM 21 class files.
+## Build configuration
 
-Directly reused AOSP sources stay in their original language. Generated AIDL,
-resource, aconfig, and other generated Java also stays Java. Do not translate
-or copy an AOSP class merely to make it Kotlin; the repository's AOSP reuse
-policy still takes precedence.
+The framework build compiles Java and Kotlin in one curated source set. Run this
+build step:
 
-`src/java` is Kotlin-only. `tools/check-jvm-source-policy.sh` enforces that
-repository-owned Java is limited to generated output, directly reused Android
-examples, Java-compiler test fixtures, and the AOSP-facing compatibility trees
-under `src/framework` and `src/framework-stubs`.
+```sh
+zig build -j10 java
+```
 
-Existing compatibility Java should move to Kotlin only in focused changes. A
-framework or JNI-facing migration must preserve the fully-qualified class
-name, visibility, JVM descriptors, static fields and methods, nested class
-names, declared exceptions, Android platform-type behavior, and native
-registration contract. Compare `javap -p -s` output before and after, and use
-`@JvmStatic`, `@JvmField`, `@JvmName`, or `@Throws` when the Java-facing shape
-requires them. Do not bulk-convert the compatibility trees: Kotlin's nullability
-and synthetic-property rules can change source behavior even when a file looks
-mechanically equivalent.
+The pinned AOSP tree supplies the Kotlin compiler and standard library. OpenJDK
+21 runs Kotlin, `javac`, and D8. The build uses Kotlin language level 2.0 and JVM
+21 class files.
 
-The runtime artifact is `zig-out/framework/framework.jar`. It is a multidex
-container because the framework plus Kotlin standard library exceeds one
-dex file's method-reference limit. Kotlin reflection, coroutines, KAPT,
-scripting, and compiler plugins are not part of the base runtime.
+The output is `zig-out/framework/framework.jar`. This file is a multidex
+container. The base runtime does not include reflection, coroutines, KAPT,
+scripting, or compiler plug-ins.
 
-The hosted APK classloader keeps framework classes parent-first but treats
-`kotlin.*` as app-owned. An APK-bundled Kotlin runtime therefore wins over the
-host's pinned standard library; missing Kotlin classes fall back to the host.
-Run `zig build -j10 jvm-test` to exercise that rule with a shadow dex through
-the real ART classloader.
+## Source rules
 
-Host-side APK integration tests are Kotlin too. `zig build -j10 testkit` uses
-the same pinned AOSP compiler plus vendored `kotlin.test`, JUnit, Hamcrest, and
-Gson jars; it does not use Gradle or resolve network dependencies. The host JDK
-runs the test supervisor so an APK crash or hang cannot take down the runner,
-while the framework and APK continue to execute on ART. See the Kotlin APK
-integration-test section in the repository README for the rule API, registry,
-filters, and artifacts.
+- Put new repository-owned JVM code in `src/java` as Kotlin.
+- Keep reused AOSP source in its original language.
+- Keep generated AIDL, resource, and aconfig source in Java.
+- Do not copy an AOSP class only to change its language.
+- Make focused changes to existing compatibility Java.
+
+`tools/check-jvm-source-policy.sh` checks these rules.
+
+## Java compatibility
+
+A Kotlin replacement must keep the existing Java interface. Check these items:
+
+- fully qualified class name
+- visibility
+- JVM method and field descriptors
+- static fields and methods
+- nested class names
+- declared exceptions
+- native registration interface
+
+Compare `javap -p -s` output before and after the change. Use `@JvmStatic`,
+`@JvmField`, `@JvmName`, or `@Throws` when the Java interface needs them.
+
+Do not make a bulk conversion. Kotlin null types and synthetic properties can
+change source behavior.
+
+## APK class loading
+
+The hosted APK class loader loads framework classes from the parent first. The
+loader treats `kotlin.*` as app-owned. An APK can therefore use its own Kotlin
+runtime. Missing Kotlin classes can come from the host runtime.
+
+Run this test after a class-loading or JVM-interface change:
+
+```sh
+zig build -j10 jvm-test
+```

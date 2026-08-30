@@ -1,33 +1,34 @@
 # Native language boundary
 
-Application and Linux platform logic is implemented in Zig. C++ is restricted
-to the real AOSP HWUI/Skia implementation and ABI calls that cannot be
-expressed with a C ABI at their source. `zig build cpp-audit` enforces the
-application-owned C++ allowlist and deliberately ignores dependencies such as
-`zig-pkg`, `extra`, `vendor`, Skia, and AOSP.
+Use Zig for application logic and Linux platform logic. Use C++ only where the
+AOSP graphics stack or an AOSP C++ interface requires it.
 
-## Zig-owned platform code
+Run the boundary check after a native change:
 
-- `src/platform/audio.zig`: AudioTrack JNI, buffering, playback state, volume,
-  and the headless clock. `azk_pipewire.c` is a mechanical adapter containing
-  only PipeWire object/callback plumbing and SPA macros that Zig's C translator
-  cannot consume.
-- `src/codec/jni.zig` and `azk_codec.zig`: MediaCodec JNI and FFmpeg decoder.
-- `src/platform/host_renderer.zig`: Wayland render-target state and renderer
-  JNI.
-- `src/native/platform_abi.zig`: AHardwareBuffer/GBM, HardwareBuffer JNI,
-  SQLite Android collators, and the POSIX strerror compatibility export.
-- `src/main.zig`: ART and native registration orchestration.
+```sh
+zig build -j10 cpp-audit
+```
 
-## Residual C++ island
+## Zig-owned code
 
-- `ArtzigGpuPipeline.cpp`: HWUI render pipeline and EGL/Wayland presentation.
-- `HardwareBufferRender.cpp`: DMA-BUF import into EGL and Skia Ganesh.
-- `HwuiRenderProxyBridge.cpp`: two C ABI calls into HWUI `RenderProxy`.
-- `AospJniBridge.cpp`: registration of AOSP C++ JNI functions, GraphicsJNI VM
-  state, and Skia bitmap pixel access.
-- `AospParcelAbi.cpp`: link-time C++ member stubs required by AOSP input JNI.
+- `src/platform/audio.zig` implements AudioTrack behavior and PipeWire state.
+- `src/codec/jni.zig` connects MediaCodec JNI to the FFmpeg decoder.
+- `src/platform/host_renderer.zig` manages the Wayland render target.
+- `src/native/platform_abi.zig` supplies HardwareBuffer, GBM, SQLite, and POSIX
+  compatibility interfaces.
+- `src/main.zig` starts ART and registers native interfaces.
 
-These files may depend on HWUI, Skia, or AOSP C++ types. New platform features
-belong in Zig behind a narrow C ABI; adding another application C++ file
-requires updating both this decision record and the build audit.
+`src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C
+macros and callback code that Zig cannot import directly.
+
+## C++ boundary
+
+- `ArtzigGpuPipeline.cpp` connects HWUI to EGL and Wayland.
+- `HardwareBufferRender.cpp` imports DMA-BUF buffers into EGL and Skia.
+- `HwuiRenderProxyBridge.cpp` supplies two C calls for HWUI `RenderProxy`.
+- `AospJniBridge.cpp` registers AOSP JNI code and manages Skia bitmap access.
+- `AospParcelAbi.cpp` supplies required AOSP input symbols.
+
+These files can use HWUI, Skia, and AOSP C++ types. Put new platform behavior in
+Zig behind a small C interface. Update this document and the build audit when
+you add an application-owned C++ file.
