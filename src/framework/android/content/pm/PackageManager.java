@@ -6,6 +6,7 @@ public abstract class PackageManager {
     private static String sHostedVersionName;
     private static String sHostedSourceDir;
     private static String sHostedDataDir;
+    private static int sHostedApplicationTheme;
     private static String sHostedLauncherActivity;
     private static java.util.Map<String, ActivityInfo> sHostedActivities =
             new java.util.HashMap<>();
@@ -24,6 +25,7 @@ public abstract class PackageManager {
         sHostedVersionName = versionName;
         sHostedSourceDir = sourceDir;
         sHostedDataDir = dataDir;
+        sHostedApplicationTheme = 0;
         sHostedRequestedPermissions = java.util.Collections.emptySet();
         sHostedGrantedPermissions = java.util.Collections.emptySet();
     }
@@ -46,6 +48,7 @@ public abstract class PackageManager {
             java.util.Map<String, Integer> platformPermissionProtectionLevels) {
         configureHostedPackage(hostedPackage.getPackageName(), hostedPackage.getVersionCode(),
                 hostedPackage.getVersionName(), sourceDir, dataDir);
+        sHostedApplicationTheme = hostedPackage.getApplicationTheme();
         configureHostedLauncher(hostedPackage.getLauncherActivityName());
         configureHostedProviders(hostedPackage.getProviders());
         configureHostedServices(hostedPackage.getServices(), hostedPackage.getServiceActions());
@@ -135,7 +138,7 @@ public abstract class PackageManager {
         public long getValue() { return mValue; }
     }
     public java.util.List<ResolveInfo> queryIntentActivities(android.content.Intent intent, ResolveInfoFlags flags) {
-        return new java.util.ArrayList<>();
+        return queryIntentActivities(intent, (int) flags.getValue());
     }
     public java.util.List<ResolveInfo> queryIntentServices(android.content.Intent intent, ResolveInfoFlags flags) {
         return queryIntentServices(intent, (int) flags.getValue());
@@ -162,21 +165,51 @@ public abstract class PackageManager {
         java.util.List<ResolveInfo> matches = queryIntentServices(intent, flags);
         return matches.isEmpty() ? null : matches.get(0);
     }
-    public ResolveInfo resolveActivity(android.content.Intent intent, int flags) { return null; }
+    /**
+     * Hosted adaptation of PackageManagerService intent resolution. Manifest activities are
+     * resolved locally; implicit desktop operations cross the ActivityThread host seam, whose
+     * production adapter and in-memory test adapter provide the two resolver implementations.
+     */
+    public ResolveInfo resolveActivity(android.content.Intent intent, int flags) {
+        if (intent == null) return null;
+        android.content.ComponentName component = intent.getComponent();
+        if (component == null) {
+            component = android.app.ActivityThread.resolveActivityInProcess(intent);
+        }
+        if (component == null) return null;
+
+        ActivityInfo activity = sHostedActivities.get(component.getClassName());
+        if (activity != null) {
+            if (!component.getPackageName().equals(activity.packageName)
+                    || (!activity.enabled && (flags & MATCH_DISABLED_COMPONENTS) == 0)) return null;
+            activity = new ActivityInfo(activity);
+        } else {
+            activity = new ActivityInfo();
+            activity.name = component.getClassName();
+            activity.packageName = component.getPackageName();
+            activity.applicationInfo = hostedApplicationInfo(component.getPackageName());
+        }
+        ResolveInfo result = new ResolveInfo();
+        result.activityInfo = activity;
+        return result;
+    }
     public ActivityInfo getReceiverInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {
         throw new NameNotFoundException(String.valueOf(component));
     }
     public java.util.List<ResolveInfo> queryIntentActivitiesAsUser(android.content.Intent intent,
             int flags, int userId) {
-        return new java.util.ArrayList<>();
+        return queryIntentActivities(intent, flags);
     }
     public java.util.List<ResolveInfo> queryIntentActivityOptions(android.content.ComponentName caller,
             android.content.Intent[] specifics, android.content.Intent intent, int flags) {
         return new java.util.ArrayList<>();
     }
     public java.util.List<ResolveInfo> queryIntentActivities(android.content.Intent intent, int flags) {
-        return new java.util.ArrayList<>();
+        java.util.ArrayList<ResolveInfo> result = new java.util.ArrayList<>();
+        ResolveInfo resolved = resolveActivity(intent, flags);
+        if (resolved != null) result.add(resolved);
+        return result;
     }
     public java.util.List<ResolveInfo> queryIntentServices(android.content.Intent intent, int flags) {
         java.util.ArrayList<ResolveInfo> result = new java.util.ArrayList<>();
@@ -237,6 +270,15 @@ public abstract class PackageManager {
         }
         throw new NameNotFoundException(component.flattenToString());
     }
+    private static ApplicationInfo hostedApplicationInfo(String packageName) {
+        ApplicationInfo result = new ApplicationInfo();
+        result.packageName = packageName;
+        result.theme = sHostedApplicationTheme;
+        result.sourceDir = sHostedSourceDir;
+        result.publicSourceDir = sHostedSourceDir;
+        result.dataDir = sHostedDataDir;
+        return result;
+    }
     public ProviderInfo getProviderInfo(android.content.ComponentName component, int flags)
             throws NameNotFoundException {
         for (ProviderInfo provider : sHostedProviders) {
@@ -272,6 +314,9 @@ public abstract class PackageManager {
         pi.applicationInfo = new ApplicationInfo();
         pi.applicationInfo.packageName = packageName;
         pi.applicationInfo.processName = packageName;
+        if (packageName != null && packageName.equals(sHostedPackageName)) {
+            pi.applicationInfo.theme = sHostedApplicationTheme;
+        }
         return pi;
     }
     public PackageInfo getPackageInfo(String packageName, PackageInfoFlags flags)
@@ -335,6 +380,7 @@ public abstract class PackageManager {
             info.sourceDir = sHostedSourceDir;
             info.publicSourceDir = sHostedSourceDir;
             info.dataDir = sHostedDataDir;
+            info.theme = sHostedApplicationTheme;
         }
         return info;
     }

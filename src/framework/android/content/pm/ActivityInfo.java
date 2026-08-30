@@ -83,6 +83,10 @@ public class ActivityInfo extends ComponentInfo implements android.os.Parcelable
                 || orientation == SCREEN_ORIENTATION_REVERSE_PORTRAIT || orientation == SCREEN_ORIENTATION_USER_PORTRAIT;
     }
     public int theme, flags, launchMode, screenOrientation = SCREEN_ORIENTATION_UNSPECIFIED;
+    /** AOSP ActivityInfo.getThemeResource(): activity theme overrides the application theme. */
+    public final int getThemeResource() {
+        return theme != 0 ? theme : applicationInfo.theme;
+    }
     public int configChanges, softInputMode, colorMode = COLOR_MODE_DEFAULT;
     public String targetActivity, permission;
     public String parentActivityName;

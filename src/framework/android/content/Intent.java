@@ -1,7 +1,7 @@
-/* artzig shim: android.content.Intent — minimal (real intent routing is single-activity in-process).
- * Typed-extra methods follow AOSP Intent's get*Extra/putExtra implementations. The AOSP class
- * cannot be compiled directly because its system-service and platform-internal dependency closure
- * is unavailable in the hosted runtime. */
+/* artzig shim: android.content.Intent — hosted in-process intent routing.
+ * Typed-extra methods and createChooser follow AOSP Intent. The AOSP class cannot be compiled
+ * directly because its system-service and platform-internal dependency closure is unavailable in
+ * the hosted runtime. */
 package android.content;
 import android.net.Uri;
 import android.os.Bundle;
@@ -24,8 +24,16 @@ public class Intent implements Parcelable, Cloneable {
     public static final String ACTION_TIME_CHANGED = "android.intent.action.TIME_SET";
     public static final String ACTION_DATE_CHANGED = "android.intent.action.DATE_CHANGED";
     public static final String ACTION_CONFIGURATION_CHANGED = "android.intent.action.CONFIGURATION_CHANGED";
+    public static final String ACTION_CHOOSER = "android.intent.action.CHOOSER";
     public static final String EXTRA_TEXT = "android.intent.extra.TEXT";
+    public static final String EXTRA_STREAM = "android.intent.extra.STREAM";
+    public static final String EXTRA_SUBJECT = "android.intent.extra.SUBJECT";
+    public static final String EXTRA_TITLE = "android.intent.extra.TITLE";
+    public static final String EXTRA_INTENT = "android.intent.extra.INTENT";
+    public static final String EXTRA_CHOOSER_RESULT_INTENT_SENDER =
+            "android.intent.extra.CHOOSER_RESULT_INTENT_SENDER";
     public static final String ACTION_SEND = "android.intent.action.SEND";
+    public static final String ACTION_SEND_MULTIPLE = "android.intent.action.SEND_MULTIPLE";
     public static final String CATEGORY_APP_BROWSER = "android.intent.category.APP_BROWSER";
     public static final String CATEGORY_APP_EMAIL = "android.intent.category.APP_EMAIL";
     public static final String CATEGORY_APP_CONTACTS = "android.intent.category.APP_CONTACTS";
@@ -75,11 +83,42 @@ public class Intent implements Parcelable, Cloneable {
     public Intent setType(String type) { mType = type; return this; }
     public String getType() { return mType; }
     public static final int URI_INTENT_SCHEME = 1, URI_ANDROID_APP_SCHEME = 2, URI_ALLOW_UNSAFE = 4;
-    public android.content.ClipData getClipData() { return null; }
-    public void setClipData(android.content.ClipData clip) {}
+    public android.content.ClipData getClipData() { return mClipData; }
+    public void setClipData(android.content.ClipData clip) { mClipData = clip; }
     public String toUri(int flags) { return String.valueOf(mData); }
     public static Intent parseUri(String uri, int flags) throws java.net.URISyntaxException { return new Intent(); }
-    public static Intent createChooser(Intent target, CharSequence title) { return target; }
+    /**
+     * Follows AOSP Intent.createChooser: the chooser is a distinct intent which owns the target
+     * intent and optional title. ResolverActivity itself is supplied by the desktop host adapter.
+     */
+    public static Intent createChooser(Intent target, CharSequence title) {
+        return createChooser(target, title, null);
+    }
+    public static Intent createChooser(Intent target, CharSequence title,
+            android.content.IntentSender sender) {
+        Intent chooser = new Intent(ACTION_CHOOSER);
+        chooser.putExtra(EXTRA_INTENT, target);
+        if (title != null) chooser.putExtra(EXTRA_TITLE, title);
+        if (sender != null) chooser.putExtra(EXTRA_CHOOSER_RESULT_INTENT_SENDER, sender);
+
+        int permissionFlags = target.getFlags() & (FLAG_GRANT_READ_URI_PERMISSION
+                | FLAG_GRANT_WRITE_URI_PERMISSION | FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                | FLAG_GRANT_PREFIX_URI_PERMISSION);
+        if (permissionFlags != 0) {
+            ClipData targetClipData = target.getClipData();
+            if (targetClipData == null && target.getData() != null) {
+                String[] mimeTypes = target.getType() != null
+                        ? new String[] { target.getType() } : new String[0];
+                targetClipData = new ClipData(null, mimeTypes,
+                        new ClipData.Item(target.getData()));
+            }
+            if (targetClipData != null) {
+                chooser.setClipData(targetClipData);
+                chooser.addFlags(permissionFlags);
+            }
+        }
+        return chooser;
+    }
     public static final int FLAG_ACTIVITY_NEW_TASK = 0x10000000;
     public static final int FLAG_GRANT_READ_URI_PERMISSION = 0x00000001;
     public static final int FLAG_GRANT_WRITE_URI_PERMISSION = 0x00000002;
@@ -91,6 +130,7 @@ public class Intent implements Parcelable, Cloneable {
     private String mIdentifier;
     private String mPackage;
     private HashSet<String> mCategories;
+    private ClipData mClipData;
     private Bundle mExtras;
     private int mFlags;
     public Intent() {}
@@ -100,6 +140,7 @@ public class Intent implements Parcelable, Cloneable {
         mAction = o.mAction; mData = o.mData; mType = o.mType;
         mIdentifier = o.mIdentifier; mPackage = o.mPackage; mFlags = o.mFlags;
         mCategories = o.mCategories != null ? new HashSet<>(o.mCategories) : null;
+        mClipData = o.mClipData;
         mExtras = o.mExtras != null ? new android.os.Bundle(o.mExtras) : null;
     }
     public Intent(String action, Uri uri) { mAction = action; mData = uri; }
@@ -213,6 +254,14 @@ public class Intent implements Parcelable, Cloneable {
         mComponent = new ComponentName(packageName, className);
         return this;
     }
+    public ComponentName resolveActivity(android.content.pm.PackageManager packageManager) {
+        if (mComponent != null) return mComponent;
+        android.content.pm.ResolveInfo resolved = packageManager.resolveActivity(
+                this, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+        return resolved != null && resolved.activityInfo != null
+                ? new ComponentName(resolved.activityInfo.packageName, resolved.activityInfo.name)
+                : null;
+    }
     public Intent putExtra(String name, android.os.Parcelable value) { extras().putParcelable(name, value); return this; }
     public Intent putExtra(String name, java.io.Serializable value) { extras().putSerializable(name, value); return this; }
     public Intent putExtra(String name, long value) { extras().putLong(name, value); return this; }
@@ -270,6 +319,17 @@ public class Intent implements Parcelable, Cloneable {
         if (mComponent != null) code += mComponent.hashCode();
         if (mCategories != null) code += mCategories.hashCode();
         return code;
+    }
+    @Override public String toString() {
+        StringBuilder out = new StringBuilder("Intent{");
+        if (mAction != null) out.append(" act=").append(mAction);
+        if (mData != null) out.append(" dat=").append(mData);
+        if (mType != null) out.append(" typ=").append(mType);
+        if (mPackage != null) out.append(" pkg=").append(mPackage);
+        if (mComponent != null) out.append(" cmp=").append(mComponent.flattenToShortString());
+        if (mFlags != 0) out.append(" flg=0x").append(Integer.toHexString(mFlags));
+        if (mExtras != null) out.append(" extras");
+        return out.append(" }").toString();
     }
     public static final class FilterComparison {
         private final Intent mIntent;

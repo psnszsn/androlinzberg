@@ -12,6 +12,7 @@ public final class ActivityThread {
         void showActivity(Activity activity);
         void clearActivityWindows();
         void resizeActivityRoot(Activity activity, int width, int height);
+        android.content.ComponentName resolveActivity(android.content.Intent intent);
     }
     public static void configureActivityHost(HostAdapter adapter,
             java.util.Map<String, android.content.pm.ActivityInfo> activities) {
@@ -46,6 +47,11 @@ public final class ActivityThread {
     public static void startActivityInProcess(android.content.Intent intent) {
         if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.startActivity(intent);
         else android.util.Log.w("ActivityThread", "startActivity dropped (no launcher): " + intent);
+    }
+    public static android.content.ComponentName resolveActivityInProcess(
+            android.content.Intent intent) {
+        return HostedActivityRuntime.isConfigured()
+                ? HostedActivityRuntime.resolveActivity(intent) : null;
     }
     public static void finishActivityInProcess(Activity activity) {
         if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.finishActivity(activity);

@@ -11,6 +11,8 @@ public class ApplicationInfo extends PackageItemInfo {
     public boolean enabled = true;
     public int minSdkVersion = 23;
     public int flags;
+    /** Application-level fallback consumed by AOSP ActivityInfo.getThemeResource(). */
+    public int theme;
     public String processName;
     public String sourceDir, dataDir, nativeLibraryDir, publicSourceDir;
     public String[] splitSourceDirs, splitPublicSourceDirs, resourceDirs, overlayPaths, sharedLibraryFiles;

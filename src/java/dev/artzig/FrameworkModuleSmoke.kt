@@ -17,6 +17,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.HostedPackageParser
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
@@ -84,6 +85,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Behavioral smoke tests whose surface is the hosted framework modules. */
 internal object FrameworkModuleSmoke {
     private val events = mutableListOf<String>()
+    private val createdThemeResIds = mutableMapOf<String, Int>()
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -208,6 +210,21 @@ internal object FrameworkModuleSmoke {
         check(!Uri.parse("./YoutubeScript.js").isAbsolute)
         check(Uri.parse("https://plugins.grayjay.app/Youtube/YoutubeScript.js").isAbsolute)
         check(!Uri.parse("https://plugins.grayjay.app/Youtube/YoutubeScript.js").isRelative)
+
+        val shareTarget = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, "https://example.com/watch?v=42")
+        val chooser = Intent.createChooser(shareTarget, "Share video")
+        check(chooser !== shareTarget)
+        check(chooser.action == Intent.ACTION_CHOOSER)
+        check(chooser.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java) === shareTarget)
+        check(chooser.getCharSequenceExtra(Intent.EXTRA_TITLE) == "Share video")
+        val payload = checkNotNull(HostedDesktopIntents.sharePayload(chooser))
+        check(payload.title == "Share video")
+        check(payload.text == "https://example.com/watch?v=42")
+        check(payload.url == "https://example.com/watch?v=42")
+        check(payload.mimeType == "text/plain")
+        check(HostedDesktopIntents.sharePayload(Intent(Intent.ACTION_VIEW)) == null)
     }
 
     private fun testRemoteActionContract() {
@@ -1997,12 +2014,16 @@ internal object FrameworkModuleSmoke {
 
     private fun testActivityLifecycle() {
         events.clear()
+        createdThemeResIds.clear()
         val firstName = FirstActivity::class.java.name
         val secondName = SecondActivity::class.java.name
         val firstInfo = activityInfo(firstName).apply {
             configChanges = ActivityInfo.CONFIG_SCREEN_SIZE
+            theme = 0x7f012345
         }
-        val secondInfo = activityInfo(secondName)
+        val secondInfo = activityInfo(secondName).apply {
+            applicationInfo.theme = 0x7f012346
+        }
         val adapter = RecordingHostAdapter()
 
         ActivityThread.configureActivityHost(
@@ -2013,6 +2034,9 @@ internal object FrameworkModuleSmoke {
             val first = ActivityThread.launchMainActivity(firstName)
             check(events == listOf("first:create", "first:start", "first:resume", "show:first")) {
                 "main launch ordering: $events"
+            }
+            check(createdThemeResIds["first"] == firstInfo.getThemeResource()) {
+                "activity theme must be applied before onCreate"
             }
 
             ActivityThread.startActivityInProcess(
@@ -2026,6 +2050,9 @@ internal object FrameworkModuleSmoke {
                 "first:stop",
                 "show:second",
             )) { "second launch ordering: $events" }
+            check(createdThemeResIds["second"] == secondInfo.getThemeResource()) {
+                "application theme fallback must be applied before onCreate"
+            }
 
             checkNotNull(ActivityThread.currentActivity()).finish()
             check(ActivityThread.currentActivity() === first)
@@ -2038,6 +2065,27 @@ internal object FrameworkModuleSmoke {
                 "first:resume",
                 "show:first",
             )) { "finish ordering: $events" }
+
+            val shareTarget = Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_TEXT, "https://example.com/shared")
+            val chooser = Intent.createChooser(shareTarget, "Share")
+            adapter.implicitActivity = ComponentName("org.example", secondName)
+            ActivityThread.startActivityInProcess(chooser)
+            val resolvedShare = checkNotNull(ActivityThread.currentActivity())
+            check(resolvedShare is SecondActivity)
+            check(resolvedShare.intent.action == Intent.ACTION_CHOOSER)
+            check(resolvedShare.intent.component == adapter.implicitActivity)
+            check(resolvedShare.intent.getParcelableExtra(
+                Intent.EXTRA_INTENT,
+                Intent::class.java,
+            )?.getCharSequenceExtra(Intent.EXTRA_TEXT) == "https://example.com/shared")
+            check(adapter.lastImplicitIntent?.component == null) {
+                "resolver must observe the original implicit intent"
+            }
+            resolvedShare.finish()
+            check(ActivityThread.currentActivity() === first)
+            adapter.implicitActivity = null
 
             val handledConfiguration = Configuration().apply { setToDefaults() }
             ActivityThread.applyConfigurationInProcess(
@@ -2088,10 +2136,16 @@ internal object FrameworkModuleSmoke {
     private fun activityInfo(className: String) = ActivityInfo().apply {
         name = className
         packageName = "org.example"
+        applicationInfo = ApplicationInfo().apply {
+            packageName = "org.example"
+        }
         screenOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     private class RecordingHostAdapter : ActivityThread.HostAdapter {
+        var implicitActivity: ComponentName? = null
+        var lastImplicitIntent: Intent? = null
+
         override fun getActivityContext(): Context? = null
 
         override fun getActivityClassLoader(): ClassLoader =
@@ -2108,6 +2162,11 @@ internal object FrameworkModuleSmoke {
         override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) {
             events += "resize:${(activity as RecordingActivity).label}:${width}x$height"
         }
+
+        override fun resolveActivity(intent: Intent): ComponentName? {
+            lastImplicitIntent = Intent(intent)
+            return implicitActivity
+        }
     }
 
     open class RecordingActivity(private val activityLabel: String) : Activity() {
@@ -2120,6 +2179,7 @@ internal object FrameworkModuleSmoke {
         }
 
         override fun onCreate(savedInstanceState: Bundle?) {
+            createdThemeResIds[activityLabel] = themeResId
             events += if (savedInstanceState?.getString("state") == "saved") {
                 "$activityLabel:create:saved"
             } else {

@@ -536,6 +536,11 @@ public final class ApkHost {
                     ) {
                         if (activity === sActivity && sRootActive) sRoot.setSize(width, height)
                     }
+
+                    public override fun resolveActivity(
+                        intent: android.content.Intent,
+                    ): android.content.ComponentName? =
+                        HostedDesktopIntents.resolve(sContext, intent)
                 },
                 hostedPackage.activities,
             )

@@ -216,7 +216,7 @@ object HostedPackageParser {
                             "screenOrientation",
                             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
                         )
-                        applicationInfo = applicationInfo(pkg)
+                        applicationInfo = applicationInfo(pkg, applicationTheme)
                     }
                     currentActivityTag = "activity"
                 }
@@ -232,7 +232,7 @@ object HostedPackageParser {
                         processName = pkg
                         enabled = parser.getAttributeBooleanValue(ANDROID_NS, "enabled", true)
                         exported = parser.getAttributeBooleanValue(ANDROID_NS, "exported", false)
-                        applicationInfo = applicationInfo(pkg)
+                        applicationInfo = applicationInfo(pkg, applicationTheme)
                     }
                     currentActivityTag = "activity-alias"
                 }
@@ -266,7 +266,7 @@ object HostedPackageParser {
                         )
                         initOrder = parser.getAttributeIntValue(ANDROID_NS, "initOrder", 0)
                         metaData = Bundle()
-                        applicationInfo = applicationInfo(pkg)
+                        applicationInfo = applicationInfo(pkg, applicationTheme)
                     }
                 }
                 "service" -> {
@@ -291,7 +291,7 @@ object HostedPackageParser {
                             0,
                         )
                         metaData = Bundle()
-                        applicationInfo = applicationInfo(pkg)
+                        applicationInfo = applicationInfo(pkg, applicationTheme)
                     }
                     currentServiceActions = linkedSetOf()
                 }
@@ -362,8 +362,9 @@ object HostedPackageParser {
         }
     }
 
-    private fun applicationInfo(packageName: String) = ApplicationInfo().apply {
+    private fun applicationInfo(packageName: String, applicationTheme: Int) = ApplicationInfo().apply {
         this.packageName = packageName
+        theme = applicationTheme
     }
 
     private fun normalizeProcessName(packageName: String, processName: String?): String = when {

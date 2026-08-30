@@ -151,6 +151,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
     private android.content.res.Resources.Theme mTheme;
     @Override public void setTheme(int resid) {
         if (mThemeRes != resid) { mThemeRes = resid; mTheme = null; }
+        // AOSP Activity.setTheme() also updates PhoneWindow so decor features such as
+        // windowNoTitle and windowActionBar are resolved from the Activity theme.
+        if (mWindow != null) mWindow.setTheme(resid);
     }
     @Override public int getThemeResId() { return mThemeRes; }
     @Override public android.content.res.Resources.Theme getTheme() {

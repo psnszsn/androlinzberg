@@ -56,13 +56,19 @@ object HostedActivityRuntime {
 
     @JvmStatic
     fun startActivity(intent: Intent) {
-        val component = intent.component
-        if (component == null) {
-            Log.w(TAG, "startActivity without component ignored: $intent")
-            return
-        }
-        launch(component.className, intent, null, true)
+        // AOSP Instrumentation.execStartActivity() hands implicit intents to ActivityTaskManager,
+        // which resolves them through PackageManager and may launch the system ResolverActivity.
+        // system_server and the system resolver package are absent here, so the host adapter owns
+        // that resolution seam and can return a synthetic desktop-backed Activity.
+        val component = resolveActivity(intent)
+            ?: throw android.content.ActivityNotFoundException("No Activity found to handle $intent")
+        val resolvedIntent = if (intent.component == component) intent else Intent(intent).setComponent(component)
+        launch(component.className, resolvedIntent, null, true)
     }
+
+    @JvmStatic
+    fun resolveActivity(intent: Intent): ComponentName? =
+        intent.component ?: requireHost().resolveActivity(Intent(intent))
 
     @JvmStatic
     fun finishActivity(activity: Activity) {
@@ -173,6 +179,11 @@ object HostedActivityRuntime {
             // system_server is absent, so the in-process lifecycle seam carries that state.
             activity.setRequestedOrientation(requestedOrientation ?: info.screenOrientation)
             if (intent != null) activity.intent = intent
+            // AOSP ActivityThread.performLaunchActivity() applies the resolved ActivityInfo theme
+            // after Activity.attach() and before onCreate(). The complete ActivityThread cannot run
+            // without system_server, so preserve that ordering in the in-process lifecycle seam.
+            val theme = info.getThemeResource()
+            if (theme != 0) activity.setTheme(theme)
             activity.performCreate(savedState)
             activity.performStart()
             if (savedState != null) activity.performRestoreInstanceState(savedState)
