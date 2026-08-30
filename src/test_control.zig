@@ -154,12 +154,17 @@ pub const Android = struct {
 pub const Input = struct {
     context: *anyopaque,
     tap_fn: *const fn (*anyopaque, i32, i32) anyerror!void,
+    drag_fn: *const fn (*anyopaque, i32, i32, i32, i32) anyerror!void,
     type_fn: *const fn (*anyopaque, []const u8) anyerror!void,
     key_fn: *const fn (*anyopaque, []const u8) anyerror!void,
     fullscreen_fn: *const fn (*anyopaque) bool,
 
     pub fn tap(self: Input, x: i32, y: i32) !void {
         try self.tap_fn(self.context, x, y);
+    }
+
+    pub fn drag(self: Input, from_x: i32, from_y: i32, to_x: i32, to_y: i32) !void {
+        try self.drag_fn(self.context, from_x, from_y, to_x, to_y);
     }
 
     pub fn typeText(self: Input, value: []const u8) !void {
@@ -543,6 +548,27 @@ pub const Server = struct {
             const y: i32 = @intCast(top + @divTrunc(bottom - top, 2));
             if (std.mem.eql(u8, kind, "click") or std.mem.eql(u8, kind, "tap")) {
                 input.tap(x, y) catch |err| {
+                    if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
+                    return;
+                };
+            } else if (std.mem.eql(u8, kind, "drag")) {
+                const from_x = fractionCoordinate(action, "from_x_fraction", left, right) orelse {
+                    if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
+                    return;
+                };
+                const from_y = fractionCoordinate(action, "from_y_fraction", top, bottom) orelse {
+                    if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
+                    return;
+                };
+                const to_x = fractionCoordinate(action, "to_x_fraction", left, right) orelse {
+                    if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
+                    return;
+                };
+                const to_y = fractionCoordinate(action, "to_y_fraction", top, bottom) orelse {
+                    if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
+                    return;
+                };
+                input.drag(from_x, from_y, to_x, to_y) catch |err| {
                     if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
                     return;
                 };
@@ -1000,6 +1026,23 @@ fn intField(value: std.json.Value, name: []const u8) ?i64 {
     };
 }
 
+fn floatField(value: std.json.Value, name: []const u8) ?f64 {
+    const field = valueField(value, name) orelse return null;
+    return switch (field) {
+        .float => |number| number,
+        .integer => |integer| @floatFromInt(integer),
+        else => null,
+    };
+}
+
+fn fractionCoordinate(value: std.json.Value, name: []const u8, start: i64, end: i64) ?i32 {
+    const fraction = floatField(value, name) orelse return null;
+    if (!std.math.isFinite(fraction) or fraction < 0 or fraction > 1 or end <= start) return null;
+    const span: f64 = @floatFromInt(end - start - 1);
+    const offset: i64 = @intFromFloat(@round(span * fraction));
+    return @intCast(start + offset);
+}
+
 fn boolField(value: std.json.Value, name: []const u8) ?bool {
     const field = valueField(value, name) orelse return null;
     return switch (field) {
@@ -1049,4 +1092,16 @@ test "control server advertises pending nonblocking output" {
     try std.testing.expect(server.clientWantsWrite());
     server.client = -1;
     try std.testing.expect(!server.clientWantsWrite());
+}
+
+test "pointer fractions map within selected bounds" {
+    var action = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "{\"from_x_fraction\":0.25,\"to_x_fraction\":1}",
+        .{},
+    );
+    defer action.deinit();
+    try std.testing.expectEqual(@as(i32, 125), fractionCoordinate(action.value, "from_x_fraction", 100, 201).?);
+    try std.testing.expectEqual(@as(i32, 200), fractionCoordinate(action.value, "to_x_fraction", 100, 201).?);
 }

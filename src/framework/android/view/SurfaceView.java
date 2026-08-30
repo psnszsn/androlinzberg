@@ -11,10 +11,16 @@ import android.util.AttributeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class SurfaceView extends View {
+    public static final int SURFACE_LIFECYCLE_DEFAULT = 0;
+    public static final int SURFACE_LIFECYCLE_FOLLOWS_VISIBILITY = 1;
+    public static final int SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT = 2;
+
     private final CopyOnWriteArrayList<SurfaceHolder.Callback> mCallbacks =
             new CopyOnWriteArrayList<>();
     private Surface mSurface;
     private boolean mCreated;
+    private boolean mAttachedToWindow;
+    private int mRequestedSurfaceLifecycleStrategy = SURFACE_LIFECYCLE_DEFAULT;
     private final int[] mLocation = new int[2];
     private final Rect mVisibleRect = new Rect();
     private int mLastX = Integer.MIN_VALUE, mLastY, mLastW, mLastH;
@@ -55,20 +61,30 @@ public class SurfaceView extends View {
 
     public SurfaceHolder getHolder() { return mHolder; }
 
+    /**
+     * Follows AOSP SurfaceView.setSurfaceLifecycle/updateSurface. SurfaceControl is unavailable
+     * on the host, so creation and destruction are applied to the Wayland video-layer seam.
+     */
+    public void setSurfaceLifecycle(int lifecycleStrategy) {
+        mRequestedSurfaceLifecycleStrategy = lifecycleStrategy;
+        updateSurfaceLifecycle();
+    }
+
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (mSurface == null) {
-            mSurface = ArtzigVideoLayer.createSurface();
-            // The destination cache belongs to the old native video layer.
-            // A replacement surface must receive its rectangle even when the
-            // Java view was reattached at exactly the same bounds.
-            mLastX = Integer.MIN_VALUE;
-        }
-        if (!mCreated) {
-            mCreated = true;
-            for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceCreated(mHolder);
-        }
+        mAttachedToWindow = true;
+        updateSurfaceLifecycle();
         updateRect();
+    }
+
+    @Override public void setVisibility(int visibility) {
+        super.setVisibility(visibility);
+        updateSurfaceLifecycle();
+    }
+
+    @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        updateSurfaceLifecycle();
     }
 
     @Override protected void onDetachedFromWindow() {
@@ -76,14 +92,8 @@ public class SurfaceView extends View {
         // makes the surface unavailable and delivers surfaceDestroyed before
         // releaseSurfaces(). The host has no SurfaceControl, so its Wayland
         // video layer is the resource released at that seam.
-        if (mCreated) {
-            mCreated = false;
-            for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceDestroyed(mHolder);
-        }
-        if (mSurface != null) {
-            ArtzigVideoLayer.destroy(mSurface);
-            mSurface = null;
-        }
+        mAttachedToWindow = false;
+        updateSurfaceLifecycle();
         super.onDetachedFromWindow();
     }
 
@@ -126,6 +136,42 @@ public class SurfaceView extends View {
             ArtzigVideoLayer.setGeometry(mSurface,
                     mLastX, mLastY, mLastW, mLastH,
                     visibleX, visibleY, visibleW, visibleH);
+        }
+    }
+
+    private void updateSurfaceLifecycle() {
+        boolean followsAttachment = mRequestedSurfaceLifecycleStrategy
+                == SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT;
+        boolean shouldExist = mAttachedToWindow && (followsAttachment
+                || (getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE));
+        if (shouldExist) {
+            if (mSurface == null) {
+                mSurface = ArtzigVideoLayer.createSurface();
+                // The destination cache belongs to the old native video layer.
+                // A replacement surface must receive its rectangle even when the
+                // Java view was reattached at exactly the same bounds.
+                mLastX = Integer.MIN_VALUE;
+            }
+            if (!mCreated) {
+                mCreated = true;
+                for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceCreated(mHolder);
+                if (getWidth() > 0 && getHeight() > 0) {
+                    for (SurfaceHolder.Callback cb : mCallbacks) {
+                        cb.surfaceChanged(mHolder, android.graphics.PixelFormat.RGBX_8888,
+                                getWidth(), getHeight());
+                    }
+                }
+            }
+            updateRect();
+        } else {
+            if (mCreated) {
+                mCreated = false;
+                for (SurfaceHolder.Callback cb : mCallbacks) cb.surfaceDestroyed(mHolder);
+            }
+            if (mSurface != null) {
+                ArtzigVideoLayer.destroy(mSurface);
+                mSurface = null;
+            }
         }
     }
 

@@ -1,5 +1,8 @@
-/* artzig shim: synchronous MediaCodec over ffmpeg (azk_codec). Audio only for
- * now; video decoders will grow a Surface path. */
+/* artzig host adapter for AOSP android.media.MediaCodec. The platform class cannot be
+ * compiled directly because its native codec service, BufferQueue, and resource-manager
+ * collaborators are unavailable. This follows AOSP MediaCodec.start()/flush(): an asynchronous
+ * codec must be started again after flush, and callbacks from the pre-flush execution become
+ * invalid rather than creating another callback producer. */
 package android.media;
 
 import android.view.Surface;
@@ -47,10 +50,15 @@ public final class MediaCodec {
     private Surface mSurface;
     private Callback mCallback;
     private android.os.Handler mCallbackHandler;
-    private boolean mAsyncRunning;
+    private volatile boolean mAsyncRunning;
     private final boolean[] mInAnnounced = new boolean[NUM_INPUT];
-    private final Runnable mPump = this::pump;
+    private volatile Pump mActivePump;
     private final long[] mOutHardware = new long[NUM_OUTPUT];
+
+    /** One self-scheduling callback producer for a single start-to-flush execution. */
+    private final class Pump implements Runnable {
+        @Override public void run() { pump(this); }
+    }
 
     private static native long nativeOpen(String codecName);
     private static native int nativeConfigure(long h, byte[] csd, int sampleRate, int channels);
@@ -191,22 +199,43 @@ public final class MediaCodec {
             }
             java.util.Arrays.fill(mInAnnounced, false);
             mAsyncRunning = true;
-            mCallbackHandler.post(mPump);
+            // AOSP invalidates callbacks produced before an asynchronous flush. Give each start
+            // its own producer identity so a pump already running during flush cannot reschedule
+            // itself into the new execution and multiply the callback loop after every seek.
+            Pump pump = new Pump();
+            Pump previous = mActivePump;
+            mActivePump = pump;
+            if (previous != null) mCallbackHandler.removeCallbacks(previous);
+            mCallbackHandler.post(pump);
         }
     }
 
     public void stop() {
-        mAsyncRunning = false;
+        stopAsyncPump();
         releaseHeldFrames();
     }
 
-    private void pump() {
-        if (!mAsyncRunning || mCallback == null || mHandle == 0) return;
+    private boolean isCurrentPump(Pump pump) {
+        return mAsyncRunning && mActivePump == pump;
+    }
+
+    private void stopAsyncPump() {
+        mAsyncRunning = false;
+        Pump pump = mActivePump;
+        mActivePump = null;
+        if (pump != null && mCallbackHandler != null) {
+            mCallbackHandler.removeCallbacks(pump);
+        }
+    }
+
+    private void pump(Pump pump) {
+        if (!isCurrentPump(pump) || mCallback == null || mHandle == 0) return;
         try {
             // deliver at most a few output buffers per tick
             for (int n = 0; n < 3; n++) {
                 BufferInfo info = new BufferInfo();
                 int idx = dequeueOutputBuffer(info, 0);
+                if (!isCurrentPump(pump)) return;
                 if (idx == INFO_OUTPUT_FORMAT_CHANGED) {
                     mCallback.onOutputFormatChanged(this, mOutputFormat);
                 } else if (idx >= 0) {
@@ -215,7 +244,7 @@ public final class MediaCodec {
                 } else {
                     break;
                 }
-                if (!mAsyncRunning) return;
+                if (!isCurrentPump(pump)) return;
             }
             // Do not let asynchronous video input run arbitrarily far ahead
             // of the three output slots. Decoded RGB frames are large, and the
@@ -229,21 +258,23 @@ public final class MediaCodec {
             }
             for (int i = 0; i < NUM_INPUT && inputBudget > 0; i++) {
                 if (!mInBusy[i] && !mInAnnounced[i]) {
+                    if (!isCurrentPump(pump)) return;
                     mInBusy[i] = true;
                     mInAnnounced[i] = true;
                     mIn[i].clear();
                     mCallback.onInputBufferAvailable(this, i);
                     inputBudget--;
-                    if (!mAsyncRunning) return;
+                    if (!isCurrentPump(pump)) return;
                 }
             }
         } catch (CodecException e) {
-            mCallback.onError(this, e);
+            if (isCurrentPump(pump)) mCallback.onError(this, e);
         }
-        if (mAsyncRunning) mCallbackHandler.postDelayed(mPump, 4);
+        if (isCurrentPump(pump)) mCallbackHandler.postDelayed(pump, 4);
     }
 
     public void flush() {
+        stopAsyncPump(); // resumed by the next start()
         releaseHeldFrames();
         synchronized (mNativeLock) { if (mHandle != 0) nativeFlush(mHandle); }
         java.util.Arrays.fill(mInBusy, false);
@@ -252,11 +283,10 @@ public final class MediaCodec {
         mPendingSlot = -1;
         mSawInputEos = false;
         mSawOutputEos = false;
-        mAsyncRunning = false; // resumed by the next start()
     }
 
     public void release() {
-        mAsyncRunning = false;
+        stopAsyncPump();
         releaseHeldFrames();
         synchronized (mNativeLock) {
             if (mHandle != 0) { nativeClose(mHandle); mHandle = 0; }

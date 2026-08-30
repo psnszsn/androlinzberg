@@ -27,10 +27,14 @@ type Selector (
 
 type Action (
   kind: (click, long_click, focus, set_text, scroll_forward, scroll_backward,
-         tap, type_keys, key),
+         tap, drag, type_keys, key),
   via: (semantic, wayland),
   text: ?string,
-  key: ?string
+  key: ?string,
+  from_x_fraction: ?float,
+  from_y_fraction: ?float,
+  to_x_fraction: ?float,
+  to_y_fraction: ?float
 )
 
 type Wait (

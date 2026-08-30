@@ -1,4 +1,7 @@
-/* artzig shim: android.content.Intent — minimal (real intent routing is single-activity in-process). */
+/* artzig shim: android.content.Intent — minimal (real intent routing is single-activity in-process).
+ * Typed-extra methods follow AOSP Intent's get*Extra/putExtra implementations. The AOSP class
+ * cannot be compiled directly because its system-service and platform-internal dependency closure
+ * is unavailable in the hosted runtime. */
 package android.content;
 import android.net.Uri;
 import android.os.Bundle;
@@ -116,6 +119,9 @@ public class Intent implements Parcelable, Cloneable {
     public Intent setIdentifier(String identifier) { mIdentifier = identifier; return this; }
     public String getIdentifier() { return mIdentifier; }
     public Intent putExtra(String name, String value) { extras().putString(name, value); return this; }
+    public Intent putExtra(String name, byte value) { extras().putByte(name, value); return this; }
+    public Intent putExtra(String name, short value) { extras().putShort(name, value); return this; }
+    public Intent putExtra(String name, char value) { extras().putChar(name, value); return this; }
     public Intent putExtra(String name, int value) { extras().putInt(name, value); return this; }
     public Intent putExtra(String name, boolean value) { extras().putBoolean(name, value); return this; }
     public Intent putExtras(Bundle src) { extras().putAll(src); return this; }
@@ -144,7 +150,13 @@ public class Intent implements Parcelable, Cloneable {
             boolean secure, boolean comp, boolean extras, boolean clip) {}
     public void dumpDebug(android.util.proto.ProtoOutputStream proto, long fieldId) {}
     public boolean getBooleanExtra(String name, boolean def) { return mExtras != null ? mExtras.getBoolean(name, def) : def; }
+    public byte getByteExtra(String name, byte def) { return mExtras != null ? mExtras.getByte(name, def) : def; }
+    public short getShortExtra(String name, short def) { return mExtras != null ? mExtras.getShort(name, def) : def; }
+    public char getCharExtra(String name, char def) { return mExtras != null ? mExtras.getChar(name, def) : def; }
     public int getIntExtra(String name, int def) { return mExtras != null ? mExtras.getInt(name, def) : def; }
+    public long getLongExtra(String name, long def) { return mExtras != null ? mExtras.getLong(name, def) : def; }
+    public float getFloatExtra(String name, float def) { return mExtras != null ? mExtras.getFloat(name, def) : def; }
+    public double getDoubleExtra(String name, double def) { return mExtras != null ? mExtras.getDouble(name, def) : def; }
     public <T extends android.os.Parcelable> T getParcelableExtra(String name) {
         return mExtras != null ? mExtras.<T>getParcelable(name) : null;
     }
@@ -158,6 +170,33 @@ public class Intent implements Parcelable, Cloneable {
     public <T> java.util.ArrayList<T> getParcelableArrayListExtra(
             String name, Class<? extends T> clazz) {
         return mExtras != null ? mExtras.getParcelableArrayList(name, clazz) : null;
+    }
+    public android.os.Parcelable[] getParcelableArrayExtra(String name) {
+        return mExtras != null ? mExtras.getParcelableArray(name) : null;
+    }
+    public <T> T[] getParcelableArrayExtra(String name, Class<T> clazz) {
+        return mExtras != null ? mExtras.getParcelableArray(name, clazz) : null;
+    }
+    public java.util.ArrayList<Integer> getIntegerArrayListExtra(String name) {
+        return mExtras != null ? mExtras.getIntegerArrayList(name) : null;
+    }
+    public java.util.ArrayList<String> getStringArrayListExtra(String name) {
+        return mExtras != null ? mExtras.getStringArrayList(name) : null;
+    }
+    public java.util.ArrayList<CharSequence> getCharSequenceArrayListExtra(String name) {
+        return mExtras != null ? mExtras.getCharSequenceArrayList(name) : null;
+    }
+    public boolean[] getBooleanArrayExtra(String name) { return mExtras != null ? mExtras.getBooleanArray(name) : null; }
+    public byte[] getByteArrayExtra(String name) { return mExtras != null ? mExtras.getByteArray(name) : null; }
+    public short[] getShortArrayExtra(String name) { return mExtras != null ? mExtras.getShortArray(name) : null; }
+    public char[] getCharArrayExtra(String name) { return mExtras != null ? mExtras.getCharArray(name) : null; }
+    public int[] getIntArrayExtra(String name) { return mExtras != null ? mExtras.getIntArray(name) : null; }
+    public long[] getLongArrayExtra(String name) { return mExtras != null ? mExtras.getLongArray(name) : null; }
+    public float[] getFloatArrayExtra(String name) { return mExtras != null ? mExtras.getFloatArray(name) : null; }
+    public double[] getDoubleArrayExtra(String name) { return mExtras != null ? mExtras.getDoubleArray(name) : null; }
+    public String[] getStringArrayExtra(String name) { return mExtras != null ? mExtras.getStringArray(name) : null; }
+    public CharSequence[] getCharSequenceArrayExtra(String name) {
+        return mExtras != null ? mExtras.getCharSequenceArray(name) : null;
     }
     public Intent setComponent(ComponentName component) { mComponent = component; return this; }
     public ComponentName getComponent() { return mComponent; }
@@ -181,15 +220,33 @@ public class Intent implements Parcelable, Cloneable {
     public Intent putExtra(String name, double value) { extras().putDouble(name, value); return this; }
     public Intent putExtra(String name, CharSequence value) { extras().putCharSequence(name, value); return this; }
     public Intent putExtra(String name, String[] value) { extras().putStringArray(name, value); return this; }
+    public Intent putExtra(String name, short[] value) { extras().putShortArray(name, value); return this; }
+    public Intent putExtra(String name, char[] value) { extras().putCharArray(name, value); return this; }
     public Intent putExtra(String name, int[] value) { extras().putIntArray(name, value); return this; }
     public Intent putExtra(String name, long[] value) { extras().putLongArray(name, value); return this; }
+    public Intent putExtra(String name, float[] value) { extras().putFloatArray(name, value); return this; }
+    public Intent putExtra(String name, double[] value) { extras().putDoubleArray(name, value); return this; }
     public Intent putExtra(String name, byte[] value) { extras().putByteArray(name, value); return this; }
     public Intent putExtra(String name, boolean[] value) { extras().putBooleanArray(name, value); return this; }
+    public Intent putExtra(String name, CharSequence[] value) { extras().putCharSequenceArray(name, value); return this; }
     public Intent putExtra(String name, android.os.Parcelable[] value) { extras().putParcelableArray(name, value); return this; }
     public Intent putExtra(String name, android.os.Bundle value) { extras().putBundle(name, value); return this; }
     public Intent putParcelableArrayListExtra(String name,
             java.util.ArrayList<? extends android.os.Parcelable> value) {
         extras().putParcelableArrayList(name, value);
+        return this;
+    }
+    public Intent putIntegerArrayListExtra(String name, java.util.ArrayList<Integer> value) {
+        extras().putIntegerArrayList(name, value);
+        return this;
+    }
+    public Intent putStringArrayListExtra(String name, java.util.ArrayList<String> value) {
+        extras().putStringArrayList(name, value);
+        return this;
+    }
+    public Intent putCharSequenceArrayListExtra(String name,
+            java.util.ArrayList<CharSequence> value) {
+        extras().putCharSequenceArrayList(name, value);
         return this;
     }
     private Bundle extras() { if (mExtras == null) mExtras = new Bundle(); return mExtras; }

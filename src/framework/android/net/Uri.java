@@ -4,6 +4,13 @@ import android.os.Parcel;
 import android.os.Parcelable;
 public abstract class Uri implements Parcelable, Comparable<Uri> {
     public static final Uri EMPTY = Uri.parse("");
+    /**
+     * Hosted adaptation of AOSP Uri.isRelative()/isAbsolute(). The complete AOSP Uri depends on
+     * internal encoded-part and Parcel machinery outside the host's source closure; this shim
+     * preserves the observable scheme-presence contract used by its StringUri implementation.
+     */
+    public abstract boolean isRelative();
+    public boolean isAbsolute() { return !isRelative(); }
     public abstract String getScheme();
     public abstract String getPath();
     public abstract String getAuthority();
@@ -46,9 +53,42 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         return new StringUri(base + (base.endsWith("/") ? "" : "/") + encode(pathSegment));
     }
     public static String encode(String value) {
+        return encode(value, null);
+    }
+    /** Follows AOSP Uri.encode(String, String), including its URI-unreserved set. */
+    public static String encode(String value, String allow) {
         if (value == null) return null;
-        try { return java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20"); }
-        catch (java.io.UnsupportedEncodingException impossible) { return value; }
+        StringBuilder encoded = null;
+        int current = 0;
+        while (current < value.length()) {
+            int nextToEncode = current;
+            while (nextToEncode < value.length()
+                    && isAllowed(value.charAt(nextToEncode), allow)) {
+                nextToEncode++;
+            }
+            if (nextToEncode == value.length()) {
+                if (current == 0) return value;
+                encoded.append(value, current, value.length());
+                return encoded.toString();
+            }
+            if (encoded == null) encoded = new StringBuilder();
+            if (nextToEncode > current) encoded.append(value, current, nextToEncode);
+            current = nextToEncode;
+            int nextAllowed = current + 1;
+            while (nextAllowed < value.length()
+                    && !isAllowed(value.charAt(nextAllowed), allow)) {
+                nextAllowed++;
+            }
+            byte[] bytes = value.substring(current, nextAllowed)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            for (byte item : bytes) {
+                encoded.append('%');
+                encoded.append(HEX_DIGITS[(item & 0xf0) >> 4]);
+                encoded.append(HEX_DIGITS[item & 0x0f]);
+            }
+            current = nextAllowed;
+        }
+        return encoded == null ? value : encoded.toString();
     }
     public static String decode(String value) {
         if (value == null) return null;
@@ -57,6 +97,14 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     }
     public static void writeToParcel(Parcel out, Uri uri) {
         out.writeString(uri != null ? uri.toString() : null);
+    }
+    private static final char[] HEX_DIGITS = "0123456789ABCDEF".toCharArray();
+    private static boolean isAllowed(char value, String allow) {
+        return (value >= 'A' && value <= 'Z')
+                || (value >= 'a' && value <= 'z')
+                || (value >= '0' && value <= '9')
+                || "_-!.~'()*".indexOf(value) >= 0
+                || (allow != null && allow.indexOf(value) >= 0);
     }
     @Override public int describeContents() { return 0; }
     @Override public void writeToParcel(Parcel dest, int flags) { dest.writeString(toString()); }
@@ -134,6 +182,8 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         private final String mStr;
         StringUri(String s) { mStr = s; }
         private java.net.URI uri() { try { return new java.net.URI(mStr); } catch (Exception e) { return null; } }
+        /** Follows AOSP Uri.StringUri.isRelative(), which tests for a scheme separator. */
+        @Override public boolean isRelative() { return mStr.indexOf(':') == -1; }
         @Override public String getScheme() { java.net.URI u = uri(); return u != null ? u.getScheme() : null; }
         @Override public String getPath() { java.net.URI u = uri(); return u != null ? u.getPath() : null; }
         @Override public String getAuthority() { java.net.URI u = uri(); return u != null ? u.getAuthority() : null; }

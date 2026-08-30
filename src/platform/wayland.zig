@@ -176,6 +176,12 @@ fn inputTimestamp() u32 {
     return @truncate(@as(u64, @intCast(time.sec)) * 1000 + @as(u64, @intCast(time.nsec)) / 1_000_000);
 }
 
+fn interpolateCoordinate(from: u32, to: u32, step: usize, steps: usize) u32 {
+    const start: i64 = from;
+    const delta: i64 = @as(i64, to) - start;
+    return @intCast(start + @divTrunc(delta * @as(i64, @intCast(step)), @as(i64, @intCast(steps))));
+}
+
 fn monotonicNs() u64 {
     var time: linux.timespec = undefined;
     _ = linux.clock_gettime(.MONOTONIC, &time);
@@ -1245,6 +1251,34 @@ pub const Window = struct {
         pointer.button(time, 0x110, .pressed); // BTN_LEFT
         pointer.frame();
         pointer.button(time +% 1, 0x110, .released);
+        pointer.frame();
+        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
+    /// Inject a compositor-routed primary-button drag between Android buffer
+    /// coordinates. Each motion gets its own pointer frame so the client sees
+    /// the same ordered gesture stream as it would from a physical mouse.
+    pub fn testDrag(self: *Window, from_buffer_x: i32, from_buffer_y: i32,
+            to_buffer_x: i32, to_buffer_y: i32) !void {
+        const pointer = try self.ensureVirtualPointer();
+        const from_x: u32 = @intCast(std.math.clamp(self.bufferToSurfaceX(from_buffer_x), 0, @max(0, self.width - 1)));
+        const from_y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(from_buffer_y), 0, @max(0, self.height - 1)));
+        const to_x: u32 = @intCast(std.math.clamp(self.bufferToSurfaceX(to_buffer_x), 0, @max(0, self.width - 1)));
+        const to_y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(to_buffer_y), 0, @max(0, self.height - 1)));
+        const width: u32 = @intCast(@max(1, self.width));
+        const height: u32 = @intCast(@max(1, self.height));
+        const time = inputTimestamp();
+        pointer.motionAbsolute(time, from_x, from_y, width, height);
+        pointer.frame();
+        pointer.button(time, 0x110, .pressed); // BTN_LEFT
+        pointer.frame();
+        for (1..11) |step| {
+            const x = interpolateCoordinate(from_x, to_x, step, 10);
+            const y = interpolateCoordinate(from_y, to_y, step, 10);
+            pointer.motionAbsolute(time +% @as(u32, @intCast(step)), x, y, width, height);
+            pointer.frame();
+        }
+        pointer.button(time +% 11, 0x110, .released);
         pointer.frame();
         if (self.display.flush() != .SUCCESS) return error.FlushFailed;
     }

@@ -49,7 +49,8 @@ enum class WaitKind(val wireName: String) {
 }
 
 enum class ActionKind(val wireName: String) {
-    CLICK("click"), TYPE_KEYS("type_keys"), SET_TEXT("set_text"), KEY("key");
+    CLICK("click"), DRAG("drag"), SCROLL_FORWARD("scroll_forward"),
+    SCROLL_BACKWARD("scroll_backward"), TYPE_KEYS("type_keys"), SET_TEXT("set_text"), KEY("key");
 }
 
 enum class InputVia(val wireName: String) {
@@ -61,12 +62,28 @@ data class Action(
     val via: InputVia,
     val text: String? = null,
     val key: String? = null,
+    val fromXFraction: Double? = null,
+    val fromYFraction: Double? = null,
+    val toXFraction: Double? = null,
+    val toYFraction: Double? = null,
 ) {
+    init {
+        listOf(fromXFraction, fromYFraction, toXFraction, toYFraction).forEach { fraction ->
+            require(fraction == null || fraction in 0.0..1.0) {
+                "pointer fractions must be between 0 and 1"
+            }
+        }
+    }
+
     fun toJson(): JsonObject = JsonObject().apply {
         addProperty("kind", kind.wireName)
         addProperty("via", via.wireName)
         add("text", text?.let(::stringJson) ?: JsonNull.INSTANCE)
         add("key", key?.let(::stringJson) ?: JsonNull.INSTANCE)
+        fromXFraction?.let { addProperty("from_x_fraction", it) }
+        fromYFraction?.let { addProperty("from_y_fraction", it) }
+        toXFraction?.let { addProperty("to_x_fraction", it) }
+        toYFraction?.let { addProperty("to_y_fraction", it) }
     }
 }
 

@@ -29,6 +29,25 @@ class AzkTestCliCompatibilityTest {
                 assertEquals("click", it.actionKind)
                 assertEquals("semantic", it.actionVia)
             },
+            Case(
+                arrayOf(
+                    "drag", "--role", "slider", "--from-x", "0.1", "--from-y", "0.5",
+                    "--to-x", "0.8", "--to-y", "0.5",
+                ),
+                "Perform",
+            ) {
+                assertEquals("drag", it.actionKind)
+                assertEquals("wayland", it.actionVia)
+                assertEquals(0.1, it.action["from_x_fraction"].asDouble)
+                assertEquals(0.8, it.action["to_x_fraction"].asDouble)
+            },
+            Case(
+                arrayOf("scroll-forward", "--role", "slider", "--via", "semantic"),
+                "Perform",
+            ) {
+                assertEquals("scroll_forward", it.actionKind)
+                assertEquals("semantic", it.actionVia)
+            },
             Case(arrayOf("type", "hello", "--id", "field", "--via", "semantic"), "Perform") {
                 assertEquals("set_text", it.actionKind)
                 assertEquals("hello", it.action["text"].asString)

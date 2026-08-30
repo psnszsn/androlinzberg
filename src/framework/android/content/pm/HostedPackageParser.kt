@@ -20,6 +20,8 @@ class HostedPackage internal constructor(
     val providers: List<ProviderInfo>,
     val services: List<ServiceInfo>,
     val serviceActions: Map<String, Set<String>>,
+    val requestedPermissions: Set<String>,
+    val declaredPermissionProtectionLevels: Map<String, Int>,
 ) {
     fun providersForProcess(processName: String): List<ProviderInfo> =
         providers
@@ -34,10 +36,11 @@ class HostedPackage internal constructor(
  * In-process adaptation of AOSP PackageParser component parsing.
  *
  * Source: PackageParser.parseBaseApk(), parseBaseApplication(),
- * parseActivity(), parseProvider(), and buildClassName() in the vendored AOSP
- * tree. The complete PackageParser cannot be compiled here because it depends
- * on PackageManagerService parsing state, split/package caches, and platform
- * certificate infrastructure that do not exist in the hosted process.
+ * parseUsesPermission(), parsePermission(), parseActivity(), parseProvider(),
+ * and buildClassName() in the vendored AOSP tree. The complete PackageParser
+ * cannot be compiled here because it depends on PackageManagerService parsing
+ * state, split/package caches, and platform certificate infrastructure that do
+ * not exist in the hosted process.
  */
 object HostedPackageParser {
     private const val ANDROID_NS = "http://schemas.android.com/apk/res/android"
@@ -47,6 +50,35 @@ object HostedPackageParser {
         val parser = assets.openXmlResourceParser("AndroidManifest.xml")
         try {
             return parseManifest(parser)
+        } finally {
+            parser.close()
+        }
+    }
+
+    /**
+     * Parses the permission declarations from a package manifest.
+     *
+     * The host uses this with framework-res.apk to obtain the protection level
+     * of platform permissions instead of maintaining a second permission table.
+     */
+    @JvmStatic
+    fun parsePermissionDefinitions(assets: AssetManager): Map<String, Int> {
+        val parser = assets.openXmlResourceParser("AndroidManifest.xml")
+        try {
+            val permissions = linkedMapOf<String, Int>()
+            while (true) {
+                when (parser.next()) {
+                    XmlResourceParser.END_DOCUMENT -> return permissions
+                    XmlResourceParser.START_TAG -> if (parser.name == "permission") {
+                        val name = attribute(parser, "name") ?: continue
+                        permissions[name] = parser.getAttributeIntValue(
+                            ANDROID_NS,
+                            "protectionLevel",
+                            PROTECTION_NORMAL,
+                        )
+                    }
+                }
+            }
         } finally {
             parser.close()
         }
@@ -75,6 +107,8 @@ object HostedPackageParser {
         val providers = mutableListOf<ProviderInfo>()
         val services = mutableListOf<ServiceInfo>()
         val serviceActions = linkedMapOf<String, Set<String>>()
+        val requestedPermissions = linkedSetOf<String>()
+        val declaredPermissionProtectionLevels = linkedMapOf<String, Int>()
 
         var currentActivity: ActivityInfo? = null
         var currentActivityTag: String? = null
@@ -134,6 +168,29 @@ object HostedPackageParser {
                     val pkg = requirePackageName(packageName)
                     applicationClass = buildClassName(pkg, attribute(parser, "name"))
                     applicationTheme = parser.getAttributeResourceValue(ANDROID_NS, "theme", 0)
+                }
+                "uses-permission", "uses-permission-sdk-23", "uses-permission-sdk-m" -> {
+                    val name = attribute(parser, "name")
+                    val maxSdkVersion = parser.getAttributeIntValue(
+                        ANDROID_NS,
+                        "maxSdkVersion",
+                        0,
+                    )
+                    if (name != null &&
+                        (maxSdkVersion == 0 || maxSdkVersion >= android.os.Build.VERSION.RESOURCES_SDK_INT)
+                    ) {
+                        requestedPermissions += name
+                    }
+                }
+                "permission" -> {
+                    val name = attribute(parser, "name")
+                    if (name != null) {
+                        declaredPermissionProtectionLevels[name] = parser.getAttributeIntValue(
+                            ANDROID_NS,
+                            "protectionLevel",
+                            PROTECTION_NORMAL,
+                        )
+                    }
                 }
                 "activity" -> {
                     val pkg = requirePackageName(packageName)
@@ -285,6 +342,8 @@ object HostedPackageParser {
             providers = providers.toList(),
             services = services.toList(),
             serviceActions = serviceActions.toMap(),
+            requestedPermissions = requestedPermissions.toSet(),
+            declaredPermissionProtectionLevels = declaredPermissionProtectionLevels.toMap(),
         )
     }
 
@@ -318,4 +377,9 @@ object HostedPackageParser {
 
     private fun attribute(parser: XmlResourceParser, name: String): String? =
         parser.getAttributeValue(ANDROID_NS, name) ?: parser.getAttributeValue(null, name)
+
+    // PermissionInfo is not in the hosted source closure yet. These are the
+    // stable AOSP PermissionInfo protection-level values used by the manifest.
+    internal const val PROTECTION_NORMAL: Int = 0
+    internal const val PROTECTION_MASK_BASE: Int = 0x0f
 }

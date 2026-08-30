@@ -4,7 +4,7 @@ package android.media;
 
 import java.nio.ByteBuffer;
 
-public class AudioTrack {
+public class AudioTrack implements AudioRouting {
     public static final int STATE_UNINITIALIZED = 0;
     public static final int STATE_INITIALIZED = 1;
     public static final int STATE_NO_STATIC_DATA = 2;
@@ -29,6 +29,7 @@ public class AudioTrack {
     private final int mSessionId;
     private int mPlayState = PLAYSTATE_STOPPED;
     private long mFlushedFrames;
+    private AudioDeviceInfo mPreferredDevice;
 
     private static native long nativeOpen(int sampleRate, int channels);
     private static native int nativeWrite(long h, ByteBuffer buf, int offset, int size);
@@ -159,7 +160,37 @@ public class AudioTrack {
     public int setPlaybackRate(int sampleRateInHz) { return SUCCESS; }
     public int attachAuxEffect(int effectId) { return SUCCESS; }
     public int setAuxEffectSendLevel(float level) { return SUCCESS; }
-    public void setPreferredDevice(Object deviceInfo) {}
+    /**
+     * Hosted adaptation of AOSP AudioTrack's AudioRouting implementation. The host exposes one
+     * fixed PipeWire-backed sink, so preference changes are retained but cannot cause rerouting.
+     */
+    @Override
+    public synchronized boolean setPreferredDevice(AudioDeviceInfo deviceInfo) {
+        if (deviceInfo != null && !deviceInfo.isSink()) return false;
+        mPreferredDevice = deviceInfo;
+        return true;
+    }
+    @Override
+    public synchronized AudioDeviceInfo getPreferredDevice() { return mPreferredDevice; }
+    @Override
+    public AudioDeviceInfo getRoutedDevice() {
+        if (mPlayState != PLAYSTATE_PLAYING) return null;
+        AudioDeviceInfo[] outputs = new AudioManager().getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+        return outputs.length == 0 ? null : outputs[0];
+    }
+    @Override
+    public java.util.List<AudioDeviceInfo> getRoutedDevices() {
+        AudioDeviceInfo routed = getRoutedDevice();
+        return routed == null ? java.util.Collections.emptyList()
+                : java.util.Collections.singletonList(routed);
+    }
+    @Override
+    public void addOnRoutingChangedListener(
+            AudioRouting.OnRoutingChangedListener listener, android.os.Handler handler) {
+        // AOSP only dispatches when the native route changes. The hosted route is fixed.
+    }
+    @Override
+    public void removeOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener listener) {}
     public boolean isOffloadedPlayback() { return false; }
     public void setLogSessionId(android.media.metrics.LogSessionId id) {}
     public android.media.metrics.LogSessionId getLogSessionId() {
@@ -168,4 +199,5 @@ public class AudioTrack {
     public static boolean isDirectPlaybackSupported(AudioFormat format, AudioAttributes attributes) {
         return false;
     }
+
 }

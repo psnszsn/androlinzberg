@@ -56,6 +56,21 @@ public class Activity extends ContextWrapper implements Window.Callback,
     }
     public boolean isInMultiWindowMode() { return false; }
     public boolean isInPictureInPictureMode() { return false; }
+    public boolean enterPictureInPictureMode(PictureInPictureParams params) {
+        // AOSP Activity.enterPictureInPictureMode returns false before validating params when the
+        // device has no FEATURE_PICTURE_IN_PICTURE. The desktop host does not advertise that
+        // feature, so there is no ActivityTaskManager interaction to adapt here.
+        return false;
+    }
+    @Deprecated public void enterPictureInPictureMode() {
+        enterPictureInPictureMode(new PictureInPictureParams.Builder().build());
+    }
+    public void setPictureInPictureParams(PictureInPictureParams params) {
+        // AOSP Activity.setPictureInPictureParams is likewise observationally irrelevant when the
+        // device lacks picture-in-picture support.
+    }
+    public int getMaxNumPictureInPictureActions() { return 3; }
+    public boolean onPictureInPictureRequested() { return false; }
     public boolean isTaskRoot() { return true; }
     public void applyOverrideConfiguration(Configuration overrideConfiguration) {}
     public void overridePendingTransition(int enterAnim, int exitAnim) {}

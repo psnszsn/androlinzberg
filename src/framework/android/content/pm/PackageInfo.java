@@ -3,6 +3,8 @@ package android.content.pm;
 import android.os.Parcel;
 import android.os.Parcelable;
 public class PackageInfo implements Parcelable {
+    public static final int REQUESTED_PERMISSION_REQUIRED = 0x00000001;
+    public static final int REQUESTED_PERMISSION_GRANTED = 0x00000002;
     public String packageName;
     public String[] splitNames;
     public int versionCode;

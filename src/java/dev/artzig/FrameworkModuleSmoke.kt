@@ -7,20 +7,50 @@ import android.app.ContextImpl
 import android.app.DownloadManager
 import android.app.Notification
 import android.app.Person
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.app.HostedUiModeController
+import android.app.UiModeManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.HostedPackageParser
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.content.res.ApkAssets
+import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.HostedConfigurationController
 import android.graphics.Point
+import android.graphics.Rect
+import android.graphics.drawable.Icon
+import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRouting
+import android.media.AudioTrack
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.Parcel
 import android.os.ParcelFileDescriptor
+import android.os.Parcelable
 import android.net.Uri
+import android.net.nsd.HostedNsdBackends
+import android.net.nsd.InMemoryHostedNsdBackend
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import android.opengl.GLSurfaceView
+import android.util.Rational
+import android.util.SparseArray
 import android.view.Choreographer
+import android.view.ArtzigVideoLayer
 import android.view.HostedSystemUiController
 import android.view.HostedInputDispatcher
 import android.view.HostedWindowPresentation
@@ -29,12 +59,21 @@ import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.WindowManagerImpl
 import android.view.ViewRootImpl
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.EditText
+import android.widget.SeekBar
+import java.io.ByteArrayInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -50,22 +89,35 @@ internal object FrameworkModuleSmoke {
     fun main(args: Array<String>) {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
         testPackageNames()
+        testIntentTypedExtras()
+        testRemoteActionContract()
+        testPictureInPictureContracts()
         testConfigurationCalculation()
+        testConfigurationContexts()
         testMessageQueueSyncBarrier()
         testMessageQueueHostPumpSemantics()
         testChoreographerPhaseOrder()
         testPostedCallbackRunsAfterPendingTraversal()
         testTraversalRescheduleAndSharedQueue()
         testHostedSystemServices()
+        testHostedAudioCapabilities()
+        testAsyncMediaCodecFlushRestartsOnePump()
+        testMediaMetricsContracts()
+        testWebViewCallbackContracts()
+        testSurfaceViewLifecycle()
+        testNetworkServiceDiscovery()
         testHostedInputEvents()
+        testEditableTextSavedStateRoundTrips()
         testHostedInputDispatch()
         testHostedPhysicalInputLifecycle()
         testHostedInputHierarchyDispatch()
+        testHostedMouseSeekBarDrag()
         testHostedInputCancelOnInterception()
         testHostedInputSiblingDispatch()
         testHostedInputWindowRouting()
         testWindowPresentation()
         testActivityLifecycle()
+        testHostedPermissionGrants()
         println("hosted framework module smoke: PASS")
     }
 
@@ -76,6 +128,191 @@ internal object FrameworkModuleSmoke {
             "org.example.MainActivity")
         check(HostedPackageParser.buildClassName("org.example", "other.MainActivity") ==
             "other.MainActivity")
+    }
+
+    private fun testHostedPermissionGrants() {
+        val frameworkResources =
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk"
+        val platformPermissionProtectionLevels =
+            AssetManager.Builder()
+                .addApkAssets(
+                    ApkAssets.loadFromPath(frameworkResources, ApkAssets.PROPERTY_SYSTEM),
+                ).build()
+                .use { HostedPackageParser.parsePermissionDefinitions(it) }
+
+        val wakeLock = "android.permission.WAKE_LOCK"
+        val camera = "android.permission.CAMERA"
+        check((platformPermissionProtectionLevels[wakeLock] ?: -1).and(0x0f) == 0) {
+            "framework WAKE_LOCK permission must have normal protection"
+        }
+        check((platformPermissionProtectionLevels[camera] ?: -1).and(0x0f) == 1) {
+            "framework CAMERA permission must have dangerous protection"
+        }
+
+        PackageManager.configureHostedPackage(
+            "org.example.permissions",
+            1,
+            "1",
+            "/tmp/example-permissions.apk",
+            "/tmp/example-permissions-data",
+        )
+        PackageManager.configureHostedPermissions(
+            linkedSetOf(wakeLock, camera),
+            emptyMap(),
+            platformPermissionProtectionLevels,
+        )
+        val base = ContextImpl(
+            ContextImpl.createSystemContext(frameworkResources, 200, 200, 120, 0).resources,
+            "org.example.permissions",
+            0,
+        )
+        val wrapped = ContextWrapper(base)
+        check(base.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)
+        check(wrapped.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)
+        check(base.checkSelfPermission(camera) == PackageManager.PERMISSION_DENIED)
+        check(base.checkSelfPermission("android.permission.NOT_DECLARED") ==
+            PackageManager.PERMISSION_DENIED)
+        check(runCatching { base.checkSelfPermission(null) }.exceptionOrNull() is
+            IllegalArgumentException)
+
+        val packageInfo = base.packageManager.getPackageInfo(
+            "org.example.permissions",
+            PackageManager.GET_PERMISSIONS,
+        )
+        val grants = packageInfo.requestedPermissions
+            .zip(packageInfo.requestedPermissionsFlags.toTypedArray())
+            .toMap()
+        check(grants.getValue(wakeLock) and PackageInfo.REQUESTED_PERMISSION_GRANTED != 0)
+        check(grants.getValue(camera) and PackageInfo.REQUESTED_PERMISSION_GRANTED == 0)
+    }
+
+    private fun testIntentTypedExtras() {
+        val strings = arrayOf("camera", "microphone")
+        val numbers = intArrayOf(3, 5, 8)
+        val labels = arrayListOf<CharSequence>("first", "second")
+        val intent = Intent()
+            .putExtra("strings", strings)
+            .putExtra("numbers", numbers)
+            .putExtra("letter", 'g')
+            .putCharSequenceArrayListExtra("labels", labels)
+
+        check(intent.getStringArrayExtra("strings") === strings)
+        check(intent.getIntArrayExtra("numbers") === numbers)
+        check(intent.getCharExtra("letter", '?') == 'g')
+        check(intent.getCharSequenceArrayListExtra("labels") === labels)
+        check(intent.getStringArrayExtra("missing") == null)
+        check(intent.getIntExtra("strings", 41) == 41)
+        check(Uri.encode("a b/c", "/") == "a%20b/c")
+        check(Uri.encode("café") == "caf%C3%A9")
+        check(Uri.parse("./YoutubeScript.js").isRelative)
+        check(!Uri.parse("./YoutubeScript.js").isAbsolute)
+        check(Uri.parse("https://plugins.grayjay.app/Youtube/YoutubeScript.js").isAbsolute)
+        check(!Uri.parse("https://plugins.grayjay.app/Youtube/YoutubeScript.js").isRelative)
+    }
+
+    private fun testRemoteActionContract() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val icon = Icon.createWithData(byteArrayOf(1, 2, 3), 0, 3)
+        val intent = Intent("dev.artzig.REMOTE_ACTION")
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            42,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val action = RemoteAction(icon, "Play", "Play video", pendingIntent)
+        check(action.icon === icon)
+        check(action.title == "Play")
+        check(action.contentDescription == "Play video")
+        check(action.actionIntent === pendingIntent)
+        check(action.isEnabled)
+        check(action.shouldShowIcon())
+
+        action.isEnabled = false
+        action.setShouldShowIcon(false)
+        val clone = action.clone()
+        check(clone !== action)
+        check(!clone.isEnabled)
+        check(!clone.shouldShowIcon())
+        check(clone == action)
+
+        val nullArgumentFailure = runCatching {
+            RemoteAction::class.java.getConstructor(
+                Icon::class.java,
+                CharSequence::class.java,
+                CharSequence::class.java,
+                PendingIntent::class.java,
+            ).newInstance(icon, "Play", "Play video", null)
+        }.exceptionOrNull()
+        check(nullArgumentFailure?.cause is IllegalArgumentException)
+    }
+
+    private fun testPictureInPictureContracts() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val action = RemoteAction(
+            Icon.createWithData(byteArrayOf(1), 0, 1),
+            "Pause",
+            "Pause video",
+            PendingIntent.getActivity(context, 7, Intent("pause"), PendingIntent.FLAG_IMMUTABLE),
+        )
+        val source = Rect(10, 20, 170, 110)
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .setSourceRectHint(source)
+            .setActions(listOf(action))
+            .setAutoEnterEnabled(true)
+            .build()
+        source.setEmpty()
+
+        check(params.aspectRatio == Rational(16, 9))
+        check(params.sourceRectHint == Rect(10, 20, 170, 110))
+        check(params.actions == listOf(action))
+        check(params.isAutoEnterEnabled)
+        check(params.isSeamlessResizeEnabled)
+
+        val activity = Activity().apply { attach(context) }
+        activity.setPictureInPictureParams(params)
+        check(!activity.enterPictureInPictureMode(params))
+        check(!activity.isInPictureInPictureMode)
+        check(activity.maxNumPictureInPictureActions >= 3)
+    }
+
+    private fun testConfigurationContexts() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val originalUiMode = context.resources.configuration.uiMode
+        val override = Configuration().apply {
+            uiMode = Configuration.UI_MODE_NIGHT_YES
+        }
+        val configured = context.createConfigurationContext(override)
+        check(configured !== context)
+        check(configured.isConfigurationContext)
+        check(configured.resources !== context.resources)
+        check(configured.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES)
+        check(context.resources.configuration.uiMode == originalUiMode)
+
+        val themed = android.view.ContextThemeWrapper(context, 0)
+        themed.applyOverrideConfiguration(override)
+        check(themed.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES)
     }
 
     private fun testConfigurationCalculation() {
@@ -124,6 +361,24 @@ internal object FrameworkModuleSmoke {
         )
         val activityManager = context.getSystemService(ActivityManager::class.java)
         check(activityManager != null && !activityManager.isBackgroundRestricted)
+
+        val uiModeManager = checkNotNull(context.getSystemService(UiModeManager::class.java))
+        check(uiModeManager === context.getSystemService(Context.UI_MODE_SERVICE))
+        val previousApplicationNightMode =
+            HostedUiModeController.getApplicationNightMode(context)
+        try {
+            uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_NO)
+            check(context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+                Configuration.UI_MODE_NIGHT_NO)
+            uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_YES)
+            check(context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+                Configuration.UI_MODE_NIGHT_YES)
+            check(runCatching {
+                uiModeManager.setApplicationNightMode(Int.MIN_VALUE)
+            }.exceptionOrNull() is IllegalArgumentException)
+        } finally {
+            uiModeManager.setApplicationNightMode(previousApplicationNightMode)
+        }
 
         val notificationBuilder = Notification.Builder(context, "smoke")
         check(notificationBuilder.addPerson("name:framework-smoke") === notificationBuilder)
@@ -291,6 +546,427 @@ internal object FrameworkModuleSmoke {
             destination.delete()
         }
         check(!destination.exists())
+    }
+
+    private fun testHostedAudioCapabilities() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val audioManager = checkNotNull(context.getSystemService(AudioManager::class.java))
+        val attributes = AudioAttributes.Builder().build()
+        val format = AudioFormat.Builder()
+            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+            .setSampleRate(48_000)
+            .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+            .build()
+
+        val routedDevices = audioManager.getAudioDevicesForAttributes(attributes)
+        check(routedDevices.size == 1)
+        check(routedDevices.single().type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+        check(audioManager.getDirectProfilesForAttributes(attributes).isEmpty())
+        check(!AudioManager.isOffloadedPlaybackSupported(format, attributes))
+        check(AudioManager.getPlaybackOffloadSupport(format, attributes) ==
+            AudioManager.PLAYBACK_OFFLOAD_NOT_SUPPORTED)
+        check(audioManager.getParameters("offloadVariableRateSupported").isEmpty())
+        check(AudioRouting::class.java.isAssignableFrom(AudioTrack::class.java))
+        AudioTrack::class.java.getMethod(
+            "addOnRoutingChangedListener",
+            AudioRouting.OnRoutingChangedListener::class.java,
+            Handler::class.java,
+        )
+    }
+
+    private fun testAsyncMediaCodecFlushRestartsOnePump() {
+        drainMainQueue()
+        val callbackHandler = Handler(checkNotNull(Looper.getMainLooper()))
+        val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_MPEG)
+        codec.setCallback(object : MediaCodec.Callback() {
+            override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
+            override fun onOutputBufferAvailable(
+                codec: MediaCodec,
+                index: Int,
+                info: MediaCodec.BufferInfo,
+            ) = Unit
+            override fun onError(codec: MediaCodec, error: MediaCodec.CodecException) {
+                throw error
+            }
+            override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) = Unit
+        }, callbackHandler)
+        codec.configure(
+            MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_MPEG, 44_100, 2),
+            null,
+            null,
+            0,
+        )
+        try {
+            // Each pair is the asynchronous lifecycle used by Media3 during a seek. There must
+            // be only one runnable producer left for the final execution, not one per flush.
+            repeat(20) {
+                codec.start()
+                codec.flush()
+            }
+            codec.start()
+            val dispatched = drainMainQueueCounting()
+            check(dispatched == 1) {
+                "asynchronous MediaCodec accumulated $dispatched callback pumps across flushes"
+            }
+        } finally {
+            codec.release()
+            drainMainQueue()
+        }
+    }
+
+    private fun testEditableTextSavedStateRoundTrips() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            180,
+            120,
+            0,
+        )
+        val viewId = 0x00f0_0101
+        var expectedText = "Grayjay query"
+        var current = EditText(context).apply {
+            id = viewId
+            setFreezesText(true)
+            text.append(expectedText)
+        }
+        check(current.canUndo()) { "editable input must create an Editor undo operation" }
+
+        repeat(4) { cycle ->
+            val hierarchy = SparseArray<Parcelable>()
+            current.saveHierarchyState(hierarchy)
+            val saved = checkNotNull(hierarchy[viewId])
+
+            val parcel = Parcel.obtain()
+            val restoredState = try {
+                parcel.writeParcelable(saved, 0)
+                parcel.setDataPosition(0)
+                checkNotNull(parcel.readParcelable<Parcelable>(EditText::class.java.classLoader))
+            } finally {
+                parcel.recycle()
+            }
+
+            val restoredHierarchy = SparseArray<Parcelable>().apply {
+                put(viewId, restoredState)
+            }
+            val restored = EditText(context).apply {
+                id = viewId
+                setFreezesText(true)
+                try {
+                    restoreHierarchyState(restoredHierarchy)
+                } catch (failure: Throwable) {
+                    throw IllegalStateException(
+                        "editable saved state restore failed on cycle $cycle",
+                        failure,
+                    )
+                }
+            }
+            check(restored.text.toString() == expectedText) {
+                "editable saved state lost text on cycle $cycle: ${restored.text}"
+            }
+            check(restored.canUndo()) {
+                "editable saved state lost its undo operation on cycle $cycle"
+            }
+
+            val suffix = ('a'.code + cycle).toChar().toString()
+            restored.text.append(suffix)
+            expectedText += suffix
+            current = restored
+        }
+    }
+
+    private fun testWebViewCallbackContracts() {
+        val cookies = android.webkit.CookieManager.getInstance()
+        cookies.removeAllCookies(null)
+        var cookieAccepted: Boolean? = null
+        cookies.setCookie(
+            "https://video.example/path/page",
+            "session=abc; Domain=video.example; Path=/path; Secure",
+        ) { cookieAccepted = it }
+        check(cookieAccepted == true)
+        check(cookies.getCookie("https://video.example/path/next") == "session=abc")
+        check(cookies.getCookie("http://video.example/path/next") == null)
+        cookies.removeSessionCookies(null)
+        check(!cookies.hasCookies())
+
+        val response = WebResourceResponse(
+            "text/plain",
+            "utf-8",
+            200,
+            "OK",
+            mapOf("X-Hosted" to "true"),
+            ByteArrayInputStream("body".toByteArray()),
+        )
+        check(response.getMimeType() == "text/plain")
+        check(response.getEncoding() == "utf-8")
+        check(response.getStatusCode() == 200 && response.getReasonPhrase() == "OK")
+        check(response.getResponseHeaders() == mapOf("X-Hosted" to "true"))
+        check(runCatching {
+            WebResourceResponse("text/plain", "utf-8", 302, "Found", null, null)
+        }.exceptionOrNull() is IllegalArgumentException)
+
+        val request = object : WebResourceRequest {
+            override fun getUrl(): Uri = Uri.parse("https://example.invalid/resource")
+            override fun isForMainFrame(): Boolean = true
+            override fun isRedirect(): Boolean = false
+            override fun hasGesture(): Boolean = false
+            override fun getMethod(): String = "GET"
+            override fun getRequestHeaders(): Map<String, String> = emptyMap()
+        }
+        val client = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView?,
+                url: String?,
+            ): Boolean = url == request.getUrl().toString()
+
+            override fun shouldInterceptRequest(
+                view: android.webkit.WebView?,
+                url: String?,
+            ): WebResourceResponse? = response.takeIf { url == request.getUrl().toString() }
+        }
+        check(client.shouldOverrideUrlLoading(null, request))
+        check(client.shouldInterceptRequest(null, request) === response)
+
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        android.webkit.HostedWebViewProviders.installForTests {
+            android.webkit.InMemoryHostedWebViewProvider(it)
+        }
+        try {
+            val navigation = mutableListOf<String>()
+            val webView = android.webkit.WebView(context, null).apply {
+                settings.setJavaScriptEnabled(true)
+                settings.setDomStorageEnabled(true)
+                settings.setUserAgentString("framework-smoke")
+                webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(
+                        view: android.webkit.WebView?,
+                        url: String?,
+                        favicon: android.graphics.Bitmap?,
+                    ) { navigation += "started:$url" }
+                    override fun onPageCommitVisible(view: android.webkit.WebView?, url: String?) {
+                        navigation += "committed:$url"
+                    }
+                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                        navigation += "finished:$url"
+                    }
+                }
+                webChromeClient = object : android.webkit.WebChromeClient() {
+                    override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
+                        navigation += "progress:$newProgress"
+                    }
+                }
+            }
+            check(webView.settings.getJavaScriptEnabled())
+            check(webView.settings.getDomStorageEnabled())
+            check(webView.settings.getUserAgentString() == "framework-smoke")
+            webView.loadUrl("https://example.invalid/page")
+            check(navigation == listOf(
+                "started:https://example.invalid/page",
+                "progress:100",
+                "committed:https://example.invalid/page",
+                "finished:https://example.invalid/page",
+            )) { "hosted WebView callback ordering: $navigation" }
+            var evaluation: String? = null
+            webView.evaluateJavascript("1 + 1") { evaluation = it }
+            check(evaluation == "null")
+            webView.destroy()
+        } finally {
+            android.webkit.HostedWebViewProviders.installForTests(null)
+        }
+    }
+
+    private fun testMediaMetricsContracts() {
+        val metrics = android.media.metrics.PlaybackMetrics.Builder()
+            .setPlayerName("framework-smoke")
+            .setPlayerVersion("1")
+            .setStreamSource(android.media.metrics.PlaybackMetrics.STREAM_SOURCE_NETWORK)
+            .setStreamType(android.media.metrics.PlaybackMetrics.STREAM_TYPE_DASH)
+            .setVideoFramesPlayed(17)
+            .build()
+        check(metrics.getPlayerName() == "framework-smoke")
+        check(metrics.getStreamSource() ==
+            android.media.metrics.PlaybackMetrics.STREAM_SOURCE_NETWORK)
+        check(metrics.getStreamType() == android.media.metrics.PlaybackMetrics.STREAM_TYPE_DASH)
+        check(metrics.getVideoFramesPlayed() == 17)
+
+        val state = android.media.metrics.PlaybackStateEvent.Builder()
+            .setState(android.media.metrics.PlaybackStateEvent.STATE_PLAYING)
+            .setTimeSinceCreatedMillis(42)
+            .build()
+        check(state.getState() == android.media.metrics.PlaybackStateEvent.STATE_PLAYING)
+        check(state.getTimeSinceCreatedMillis() == 42L)
+
+        val session = android.media.metrics.MediaMetricsManager().createPlaybackSession()
+        session.reportPlaybackMetrics(metrics)
+        session.reportPlaybackStateEvent(state)
+        check(session.sessionId === android.media.metrics.LogSessionId.LOG_SESSION_ID_NONE ||
+            session.sessionId.stringId.isEmpty())
+        session.close()
+    }
+
+    private fun testNetworkServiceDiscovery() {
+        val backend = InMemoryHostedNsdBackend()
+        HostedNsdBackends.installForTests(backend)
+        try {
+            val context = ContextImpl.createSystemContext(
+                System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+                200,
+                200,
+                120,
+                0,
+            )
+            val manager = checkNotNull(context.getSystemService(NsdManager::class.java))
+            check(manager === context.getSystemService(Context.NSD_SERVICE))
+
+            val service = NsdServiceInfo().apply {
+                setServiceName("Living Room")
+                setServiceType("_fcast._tcp")
+                setHostAddresses(listOf(InetAddress.getByName("127.0.0.1")))
+                setPort(46899)
+                setAttribute("id", "framework-smoke")
+            }
+            backend.publish(service)
+
+            val callbacks = mutableListOf<String>()
+            var found: NsdServiceInfo? = null
+            val listener = object : NsdManager.DiscoveryListener {
+                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    error("discovery failed: $serviceType/$errorCode")
+                }
+                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                    error("stop failed: $serviceType/$errorCode")
+                }
+                override fun onDiscoveryStarted(serviceType: String) {
+                    callbacks += "started:$serviceType"
+                }
+                override fun onDiscoveryStopped(serviceType: String) {
+                    callbacks += "stopped:$serviceType"
+                }
+                override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                    found = serviceInfo
+                    callbacks += "found:${serviceInfo.getServiceName()}"
+                }
+                override fun onServiceLost(serviceInfo: NsdServiceInfo) {
+                    callbacks += "lost:${serviceInfo.getServiceName()}"
+                }
+            }
+            manager.discoverServices("_fcast._tcp", NsdManager.PROTOCOL_DNS_SD, listener)
+            drainMainQueue()
+            check(callbacks == listOf("started:_fcast._tcp", "found:Living Room")) {
+                "NSD discovery callback ordering: $callbacks"
+            }
+            val discovered = checkNotNull(found)
+            check(discovered.getHostAddresses().single().hostAddress == "127.0.0.1")
+            check(discovered.getPort() == 46899)
+            check(String(checkNotNull(discovered.getAttributes()["id"])) == "framework-smoke")
+
+            val serviceInfoCallbacks = mutableListOf<String>()
+            val serviceInfoCallback = object : NsdManager.ServiceInfoCallback {
+                override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) {
+                    error("service info registration failed: $errorCode")
+                }
+                override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
+                    serviceInfoCallbacks += "updated:${serviceInfo.getPort()}"
+                }
+                override fun onServiceLost() { serviceInfoCallbacks += "lost" }
+                override fun onServiceInfoCallbackUnregistered() {
+                    serviceInfoCallbacks += "unregistered"
+                }
+            }
+            val directExecutor = java.util.concurrent.Executor(Runnable::run)
+            manager.registerServiceInfoCallback(discovered, directExecutor, serviceInfoCallback)
+            manager.unregisterServiceInfoCallback(serviceInfoCallback)
+            check(serviceInfoCallbacks == listOf("updated:46899", "unregistered"))
+
+            manager.stopServiceDiscovery(listener)
+            drainMainQueue()
+            check(callbacks.last() == "stopped:_fcast._tcp")
+        } finally {
+            HostedNsdBackends.installForTests(null)
+        }
+    }
+
+    private fun testSurfaceViewLifecycle() {
+        ArtzigVideoLayer.setNativeCallsEnabledForTests(false)
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            200,
+            120,
+            0,
+        )
+        val glView = GLSurfaceView(context, null)
+        glView.setRenderer(object : GLSurfaceView.Renderer {
+            override fun onSurfaceCreated(
+                gl: javax.microedition.khronos.opengles.GL10?,
+                config: javax.microedition.khronos.egl.EGLConfig?,
+            ) = Unit
+            override fun onSurfaceChanged(
+                gl: javax.microedition.khronos.opengles.GL10?,
+                width: Int,
+                height: Int,
+            ) = Unit
+            override fun onDrawFrame(gl: javax.microedition.khronos.opengles.GL10?) = Unit
+        })
+        glView.setEGLContextClientVersion(2)
+        glView.setPreserveEGLContextOnPause(true)
+        glView.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY)
+        check(glView.getRenderMode() == GLSurfaceView.RENDERMODE_WHEN_DIRTY)
+        check(glView.getPreserveEGLContextOnPause())
+        val callbacks = mutableListOf<String>()
+        val surfaceView = SurfaceView(context).apply {
+            visibility = View.INVISIBLE
+            holder.addCallback(object : SurfaceHolder.Callback {
+                override fun surfaceCreated(holder: SurfaceHolder) { callbacks += "created" }
+                override fun surfaceChanged(
+                    holder: SurfaceHolder,
+                    format: Int,
+                    width: Int,
+                    height: Int,
+                ) = Unit
+                override fun surfaceDestroyed(holder: SurfaceHolder) { callbacks += "destroyed" }
+            })
+            setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT)
+        }
+        try {
+            val root = ViewRootImpl(context)
+            root.setView(surfaceView, 200, 200)
+            try {
+                root.doTraversal()
+                check(callbacks == listOf("created")) { "attachment lifecycle: $callbacks" }
+
+                surfaceView.visibility = View.VISIBLE
+                surfaceView.visibility = View.INVISIBLE
+                check(callbacks == listOf("created")) {
+                    "surface destroyed while attached: $callbacks"
+                }
+
+                surfaceView.setSurfaceLifecycle(SurfaceView.SURFACE_LIFECYCLE_FOLLOWS_VISIBILITY)
+                check(callbacks == listOf("created", "destroyed")) {
+                    "visibility lifecycle: $callbacks"
+                }
+                surfaceView.visibility = View.VISIBLE
+                check(callbacks == listOf("created", "destroyed", "created")) {
+                    "visible surface recreation: $callbacks"
+                }
+            } finally {
+                root.destroy()
+            }
+        } finally {
+            ArtzigVideoLayer.setNativeCallsEnabledForTests(true)
+        }
+        check(callbacks.last() == "destroyed") { "surface not destroyed on detach: $callbacks" }
     }
 
     private fun testPostedCallbackRunsAfterPendingTraversal() {
@@ -527,11 +1203,17 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun drainMainQueue() {
+        drainMainQueueCounting()
+    }
+
+    private fun drainMainQueueCounting(): Int {
         val queue = checkNotNull(Looper.getMainLooper()).queue
+        var count = 0
         while (true) {
-            val message = queue.`pollDueMessage$artzig`() ?: return
+            val message = queue.`pollDueMessage$artzig`() ?: return count
             try {
                 message.target.dispatchMessage(message)
+                count++
             } finally {
                 message.recycle()
             }
@@ -875,6 +1557,49 @@ internal object FrameworkModuleSmoke {
                 "intercept:0", "parent:0", "parent:1", "child:g:9",
             )) {
                 "root hierarchy must own hit testing and interception: $observed"
+            }
+        } finally {
+            HostedInputDispatcher.reset()
+            root.destroy()
+        }
+    }
+
+    private fun testHostedMouseSeekBarDrag() {
+        val context = ContextImpl.createSystemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            200,
+            100,
+            120,
+            0,
+        )
+        val seekBar = SeekBar(context).apply {
+            max = 1_000
+            progress = 0
+        }
+        val parent = FrameLayout(context).apply {
+            addView(seekBar, FrameLayout.LayoutParams(200, 30))
+        }
+        val root = ViewRootImpl(context)
+        root.setView(parent, 200, 100)
+        parent.measure(
+            View.MeasureSpec.makeMeasureSpec(200, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+        )
+        parent.layout(0, 0, 200, 100)
+        try {
+            HostedInputDispatcher.dispatchMouse(
+                root, MotionEvent.ACTION_DOWN,
+                MotionEvent.BUTTON_PRIMARY, 0, 10f, 15f,
+            )
+            HostedInputDispatcher.dispatchMouse(
+                root, MotionEvent.ACTION_MOVE,
+                MotionEvent.BUTTON_PRIMARY, 0, 150f, 15f,
+            )
+            HostedInputDispatcher.dispatchMouse(
+                root, MotionEvent.ACTION_UP, 0, 0, 150f, 15f,
+            )
+            check(seekBar.progress > 600) {
+                "mouse drag must update SeekBar progress: ${seekBar.progress}"
             }
         } finally {
             HostedInputDispatcher.reset()

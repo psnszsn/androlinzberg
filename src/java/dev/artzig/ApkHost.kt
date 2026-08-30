@@ -361,6 +361,17 @@ public final class ApkHost {
             val apkPath: String = System.getenv("ARTZIG_APK")
             AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
 
+            val platformPermissionProtectionLevels: Map<String, Int> =
+                AssetManager
+                    .Builder()
+                    .addApkAssets(
+                        ApkAssets.loadFromPath(frameworkRes, ApkAssets.PROPERTY_SYSTEM),
+                    ).build()
+                    .use { platformAssets ->
+                        android.content.pm.HostedPackageParser
+                            .parsePermissionDefinitions(platformAssets)
+                    }
+
             // Package parsing and Android component normalization live in the
             // framework package module, following AOSP PackageParser behavior.
             val mam: AssetManager =
@@ -393,6 +404,7 @@ public final class ApkHost {
                 android.os.Environment
                     .getDataDirectory()
                     .getAbsolutePath(),
+                platformPermissionProtectionLevels,
             )
 
             // --- classloader over the apk (+ bundled native libs)
@@ -565,7 +577,7 @@ public final class ApkHost {
             viewId: Int,
             virtualId: Int,
             action: Int,
-            text: String,
+            text: String?,
         ): Boolean =
             android.view.ArtzigAccessibilityBridge.perform(
                 expectedRevision,

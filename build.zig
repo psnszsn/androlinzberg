@@ -356,6 +356,13 @@ pub fn build(b: *std.Build) void {
     );
     framework_compat_smoke.step.dependOn(b.getInstallStep());
     jvm_test_step.dependOn(&framework_compat_smoke.step);
+    const jvm_exit_smoke = std.Build.Step.Run.create(b, "run hosted JVM exit smoke");
+    jvm_exit_smoke.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    jvm_exit_smoke.addArg("--javatest");
+    jvm_exit_smoke.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.JvmExitSmoke");
+    jvm_exit_smoke.expectExitCode(23);
+    jvm_exit_smoke.step.dependOn(b.getInstallStep());
+    jvm_test_step.dependOn(&jvm_exit_smoke.step);
 
     const testkit_step = b.step("testkit", "Build and install the host Kotlin testkit");
     testkit_step.dependOn(testkit.install_step);

@@ -1,6 +1,10 @@
 /* artzig stub (auto-generated placeholder; members added on demand). */
 package android.media;
 public class AudioManager {
+    public static final int PLAYBACK_OFFLOAD_NOT_SUPPORTED = 0;
+    public static final int PLAYBACK_OFFLOAD_SUPPORTED = 1;
+    public static final int PLAYBACK_OFFLOAD_GAPLESS_SUPPORTED = 2;
+
     public Spatializer getSpatializer() { return new Spatializer(); }
     private static int sNextAudioSession = 1000;
     public int generateAudioSessionId() { synchronized (AudioManager.class) { return sNextAudioSession++; } }
@@ -49,6 +53,49 @@ public class AudioManager {
     }
     public void registerAudioDeviceCallback(AudioDeviceCallback callback, android.os.Handler handler) {}
     public void unregisterAudioDeviceCallback(AudioDeviceCallback callback) {}
+
+    /**
+     * Hosted adaptation of AOSP AudioManager.getAudioDevicesForAttributes. Android obtains the
+     * routed devices from AudioService; the host has no AudioService and exposes its single
+     * PipeWire-backed output as the routed device instead.
+     */
+    public java.util.List<AudioDeviceInfo> getAudioDevicesForAttributes(
+            AudioAttributes attributes) {
+        java.util.Objects.requireNonNull(attributes);
+        AudioDeviceInfo[] outputs = getDevices(GET_DEVICES_OUTPUTS);
+        if (outputs.length == 0) return java.util.Collections.emptyList();
+        return java.util.Collections.unmodifiableList(java.util.Arrays.asList(outputs));
+    }
+
+    /**
+     * AOSP AudioManager.getDirectProfilesForAttributes delegates to AudioSystem. Artzig's host
+     * audio seam accepts decoded PCM and provides no hardware/direct compressed-audio path.
+     */
+    public java.util.List getDirectProfilesForAttributes(AudioAttributes attributes) {
+        java.util.Objects.requireNonNull(attributes);
+        return java.util.Collections.emptyList();
+    }
+
+    /** Follow AOSP's offload query contract; the host has no hardware offload path. */
+    public static boolean isOffloadedPlaybackSupported(
+            AudioFormat format, AudioAttributes attributes) {
+        if (format == null) throw new NullPointerException("Illegal null AudioFormat");
+        if (attributes == null) throw new NullPointerException("Illegal null AudioAttributes");
+        return false;
+    }
+
+    /** Follow AOSP's offload query contract; the host has no hardware offload path. */
+    public static int getPlaybackOffloadSupport(
+            AudioFormat format, AudioAttributes attributes) {
+        if (format == null) throw new NullPointerException("Illegal null AudioFormat");
+        if (attributes == null) throw new NullPointerException("Illegal null AudioAttributes");
+        return PLAYBACK_OFFLOAD_NOT_SUPPORTED;
+    }
+
+    /** The host does not expose vendor AudioSystem key/value parameters. */
+    public String getParameters(String keys) {
+        return "";
+    }
     public static final int FX_KEY_CLICK = 0, FX_FOCUS_NAVIGATION_UP = 1, FX_FOCUS_NAVIGATION_DOWN = 2,
             FX_FOCUS_NAVIGATION_LEFT = 3, FX_FOCUS_NAVIGATION_RIGHT = 4, FX_KEYPRESS_STANDARD = 5,
             FX_KEYPRESS_SPACEBAR = 6, FX_KEYPRESS_DELETE = 7, FX_KEYPRESS_RETURN = 8,

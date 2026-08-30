@@ -8,6 +8,7 @@ runtime_root=$1
 input_jar=$2
 dex_location=$(realpath -m "$3")
 output_dir=$4
+dex2oat_jobs=${ARTZIG_DEX2OAT_JOBS:-10}
 
 mkdir -p "$output_dir"
 bcp="$runtime_root/apex/com.android.art/javalib/core-oj.jar:$runtime_root/apex/com.android.art/javalib/core-libart.jar:$runtime_root/apex/com.android.art/javalib/okhttp.jar:$runtime_root/apex/com.android.art/javalib/bouncycastle.jar:$runtime_root/apex/com.android.art/javalib/apache-xml.jar:$runtime_root/apex/com.android.i18n/javalib/core-icu4j.jar:$runtime_root/apex/com.android.conscrypt/javalib/conscrypt.jar"
@@ -32,4 +33,4 @@ env \
   --runtime-arg "-Xbootclasspath:$bcp" \
   --runtime-arg "-Xbootclasspath-locations:$bcpl" \
   --no-generate-mini-debug-info \
-  -j10
+  "-j$dex2oat_jobs"

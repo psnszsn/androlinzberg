@@ -38,6 +38,24 @@ class ModelsTest {
     }
 
     @Test
+    fun dragActionUsesNormalizedWireCoordinates() {
+        val json = Action(
+            ActionKind.DRAG,
+            InputVia.WAYLAND,
+            fromXFraction = 0.1,
+            fromYFraction = 0.5,
+            toXFraction = 0.8,
+            toYFraction = 0.5,
+        ).toJson()
+        assertEquals("drag", json["kind"].asString)
+        assertEquals(0.1, json["from_x_fraction"].asDouble)
+        assertEquals(0.8, json["to_x_fraction"].asDouble)
+        assertFailsWith<IllegalArgumentException> {
+            Action(ActionKind.DRAG, InputVia.WAYLAND, fromXFraction = 1.1)
+        }
+    }
+
+    @Test
     fun markCanBeExtractedFromNestedResponse() {
         val mark = JsonObject().apply {
             addProperty("epoch", "epoch-1")

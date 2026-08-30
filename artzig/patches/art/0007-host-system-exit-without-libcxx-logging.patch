@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Sat, 29 Aug 2026 16:10:00 +0200
+Subject: [PATCH] host: avoid libc++ logging from JVM_Exit
+
+Hosted APKs can load their own libc++_shared.so. Its symbols may interpose on
+the host libc++ used by android-base, making a late LOG stream unsafe. Grayjay
+calls Runtime.exit from its uncaught-exception handler and reliably crashed in
+std::__put_character_sequence before ART could invoke the exit hook.
+
+Keep the informational message, but write it through the C stdio ABI so
+JVM_Exit reaches CallExitHook and FastExit even after an APK loads libc++.
+---
+ openjdkjvm/OpenjdkJvm.cc | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/openjdkjvm/OpenjdkJvm.cc b/openjdkjvm/OpenjdkJvm.cc
+index c0f874f..e113063 100644
+--- a/openjdkjvm/OpenjdkJvm.cc
++++ b/openjdkjvm/OpenjdkJvm.cc
+@@ -340,7 +340,10 @@ JNIEXPORT void JVM_GC(void) {
+ }
+ 
+ JNIEXPORT __attribute__((noreturn)) void JVM_Exit(jint status) {
+-  LOG(INFO) << "System.exit called, status: " << status;
++  // App-bundled libc++_shared libraries can interpose on the host libc++ used by
++  // android-base logging. Do not enter a C++ iostream while terminating a hosted
++  // application; that can crash before the ART exit hook gets a chance to run.
++  fprintf(stderr, "I/artopenjdk: System.exit called, status: %d\n", status);
+   art::Runtime::Current()->CallExitHook(status);
+   // Unsafe to call exit() while threads may still be running. They would race
+   // with static destructors.
+-- 
+2.51.0

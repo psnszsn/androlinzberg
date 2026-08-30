@@ -27,6 +27,7 @@ public abstract class Context {
             NOTIFICATION_SERVICE = "notification", POWER_SERVICE = "power",
             SEARCH_SERVICE = "search", SENSOR_SERVICE = "sensor", STORAGE_SERVICE = "storage",
             SHORTCUT_SERVICE = "shortcut",
+            NSD_SERVICE = "servicediscovery",
             STORAGE_STATS_SERVICE = "storagestats",
             TELEPHONY_SERVICE = "phone", UI_MODE_SERVICE = "uimode", USER_SERVICE = "user",
             VIBRATOR_SERVICE = "vibrator", WALLPAPER_SERVICE = "wallpaper",

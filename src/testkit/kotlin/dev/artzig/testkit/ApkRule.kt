@@ -76,6 +76,47 @@ class ApkRule(
         settle: WaitKind = WaitKind.IDLE,
     ) = session.click(resourceId, text, description, className, role, index, via, settle)
 
+    fun drag(
+        fromXFraction: Double,
+        fromYFraction: Double,
+        toXFraction: Double,
+        toYFraction: Double,
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+        index: Int? = null,
+        settle: WaitKind = WaitKind.IDLE,
+    ) = session.drag(
+        fromXFraction, fromYFraction, toXFraction, toYFraction,
+        resourceId, text, description, className, role, index, settle,
+    )
+
+    fun scrollForward(
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+        index: Int? = null,
+        settle: WaitKind = WaitKind.IDLE,
+    ) = session.scrollForward(
+        resourceId, text, description, className, role, index, settle,
+    )
+
+    fun scrollBackward(
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+        index: Int? = null,
+        settle: WaitKind = WaitKind.IDLE,
+    ) = session.scrollBackward(
+        resourceId, text, description, className, role, index, settle,
+    )
+
     fun setText(
         value: String,
         resourceId: String? = null,

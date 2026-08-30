@@ -184,7 +184,7 @@ public final class ViewHost {
             viewId: Int,
             virtualId: Int,
             action: Int,
-            text: String,
+            text: String?,
         ): Boolean =
             android.view.ArtzigAccessibilityBridge.perform(
                 expectedRevision,

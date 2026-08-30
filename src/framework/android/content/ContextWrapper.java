@@ -21,7 +21,34 @@ public class ContextWrapper extends Context {
     @Override public android.content.pm.ApplicationInfo getApplicationInfo() { return mBase.getApplicationInfo(); }
     @Override public android.content.pm.PackageManager getPackageManager() { return mBase.getPackageManager(); }
     @Override public ContentResolver getContentResolver() { return mBase.getContentResolver(); }
+    // AOSP ContextWrapper delegates permission checks to its base context; Activity and
+    // Application would otherwise observe Context's default denial instead of package state.
+    @Override public int checkPermission(String permission, int pid, int uid) {
+        return mBase.checkPermission(permission, pid, uid);
+    }
+    @Override public int checkPermission(String permission, int pid, int uid, Object callerToken) {
+        return mBase.checkPermission(permission, pid, uid, callerToken);
+    }
+    @Override public int checkCallingPermission(String permission) {
+        return mBase.checkCallingPermission(permission);
+    }
+    @Override public int checkCallingOrSelfPermission(String permission) {
+        return mBase.checkCallingOrSelfPermission(permission);
+    }
+    @Override public int checkSelfPermission(String permission) {
+        return mBase.checkSelfPermission(permission);
+    }
+    @Override public void enforcePermission(String permission, int pid, int uid, String message) {
+        mBase.enforcePermission(permission, pid, uid, message);
+    }
+    @Override public void enforceCallingOrSelfPermission(String permission, String message) {
+        mBase.enforceCallingOrSelfPermission(permission, message);
+    }
     @Override public boolean canLoadUnsafeResources() { return mBase.canLoadUnsafeResources(); }
+    @Override public Context createConfigurationContext(
+            android.content.res.Configuration overrideConfiguration) {
+        return mBase.createConfigurationContext(overrideConfiguration);
+    }
     public void setTheme(int resid) { mBase.setTheme(resid); }
     public int getThemeResId() { return 0; }
 }

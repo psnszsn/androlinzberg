@@ -12,6 +12,7 @@ public class ContextImpl extends Context {
     private final Resources mResources;
     private final Resources.Theme mTheme;
     private final String mPackageName;
+    private boolean mIsConfigurationBasedContext;
     public ContextImpl(Resources resources, String packageName, int themeResId) {
         mResources = resources;
         mPackageName = packageName;
@@ -54,6 +55,52 @@ public class ContextImpl extends Context {
     private static final android.content.pm.PackageManager sPackageManager =
             new android.content.pm.PackageManager() {};
     @Override public android.content.pm.PackageManager getPackageManager() { return sPackageManager; }
+    /**
+     * Hosted adaptation of AOSP ContextImpl permission checks. PermissionManager
+     * is a system_server service and is unavailable here, so PackageManager's
+     * in-process installed-package state owns the equivalent decision.
+     */
+    @Override public int checkPermission(String permission, int pid, int uid) {
+        if (permission == null) throw new IllegalArgumentException("permission is null");
+        if (uid != android.os.Process.myUid()) {
+            return android.content.pm.PackageManager.PERMISSION_DENIED;
+        }
+        return sPackageManager.checkPermission(permission, mPackageName);
+    }
+    @Override public int checkPermission(String permission, int pid, int uid, Object callerToken) {
+        return checkPermission(permission, pid, uid);
+    }
+    @Override public int checkCallingPermission(String permission) {
+        if (permission == null) throw new IllegalArgumentException("permission is null");
+        if (android.os.Binder.getCallingPid() == android.os.Process.myPid()) {
+            return android.content.pm.PackageManager.PERMISSION_DENIED;
+        }
+        return checkPermission(permission, android.os.Binder.getCallingPid(),
+                android.os.Binder.getCallingUid());
+    }
+    @Override public int checkCallingOrSelfPermission(String permission) {
+        if (permission == null) throw new IllegalArgumentException("permission is null");
+        return checkPermission(permission, android.os.Binder.getCallingPid(),
+                android.os.Binder.getCallingUid());
+    }
+    @Override public int checkSelfPermission(String permission) {
+        if (permission == null) throw new IllegalArgumentException("permission is null");
+        return checkPermission(permission, android.os.Process.myPid(), android.os.Process.myUid());
+    }
+    @Override public void enforcePermission(String permission, int pid, int uid, String message) {
+        if (checkPermission(permission, pid, uid)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException((message != null ? message + ": " : "")
+                    + "uid " + uid + " does not have " + permission);
+        }
+    }
+    @Override public void enforceCallingOrSelfPermission(String permission, String message) {
+        if (checkCallingOrSelfPermission(permission)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException((message != null ? message + ": " : "")
+                    + "permission " + permission + " denied");
+        }
+    }
     @Override public android.content.pm.ApplicationInfo getApplicationInfo() {
         try {
             return sPackageManager.getApplicationInfo(mPackageName, 0);
@@ -72,6 +119,27 @@ public class ContextImpl extends Context {
     }
     @Override public android.view.Display getDisplay() { return android.view.ArtzigDisplay.get(); }
     @Override public android.view.Display getDisplayNoVerify() { return android.view.ArtzigDisplay.get(); }
+    /**
+     * Hosted adaptation of AOSP ContextImpl.createConfigurationContext. ResourcesManager is not
+     * available, so the host creates a ResourcesImpl over the same assets and merged configuration.
+     */
+    @Override public Context createConfigurationContext(Configuration overrideConfiguration) {
+        if (overrideConfiguration == null) {
+            throw new IllegalArgumentException("overrideConfiguration must not be null");
+        }
+        Configuration merged = new Configuration(mResources.getConfiguration());
+        merged.updateFrom(overrideConfiguration);
+        DisplayMetrics metrics = new DisplayMetrics();
+        metrics.setTo(mResources.getDisplayMetrics());
+        Resources configuredResources = HostedResources.create(
+                mResources.getAssets(), metrics, merged, getClassLoader());
+        ContextImpl configured = new ContextImpl(configuredResources, mPackageName, 0);
+        configured.mTheme.setTo(mTheme);
+        configured.mClassLoader = mClassLoader;
+        configured.mIsConfigurationBasedContext = true;
+        return configured;
+    }
+    @Override public boolean isConfigurationContext() { return mIsConfigurationBasedContext; }
     private android.content.ContentResolver mContentResolver;
     @Override public android.content.ContentResolver getContentResolver() {
         if (mContentResolver == null) mContentResolver = new android.content.ContentResolver() {};
@@ -86,6 +154,8 @@ public class ContextImpl extends Context {
     private android.view.inputmethod.InputMethodManager mInputMethodManager;
     private android.view.autofill.AutofillManager mAutofillManager;
     private android.app.DownloadManager mDownloadManager;
+    private android.app.UiModeManager mUiModeManager;
+    private android.net.nsd.NsdManager mNsdManager;
     private Context mOuterContext;
     /** Real Android: ContextImpl.setOuterContext — the Activity/Application facade. */
     public void setOuterContext(Context outer) { mOuterContext = outer; mInflater = null; }
@@ -132,7 +202,13 @@ public class ContextImpl extends Context {
             case STORAGE_STATS_SERVICE:
                 return new android.app.usage.StorageStatsManager();
             case UI_MODE_SERVICE:
-                return new android.app.UiModeManager();
+                if (mUiModeManager == null) {
+                    mUiModeManager = new android.app.UiModeManager(this);
+                }
+                return mUiModeManager;
+            case NSD_SERVICE:
+                if (mNsdManager == null) mNsdManager = new android.net.nsd.NsdManager(this);
+                return mNsdManager;
             case BATTERY_SERVICE:
                 return new android.os.BatteryManager();
             case INPUT_SERVICE:
@@ -171,6 +247,7 @@ public class ContextImpl extends Context {
         if (serviceClass == android.view.LayoutInflater.class) return LAYOUT_INFLATER_SERVICE;
         if (serviceClass == android.view.WindowManager.class) return WINDOW_SERVICE;
         if (serviceClass == android.app.UiModeManager.class) return UI_MODE_SERVICE;
+        if (serviceClass == android.net.nsd.NsdManager.class) return NSD_SERVICE;
         if (serviceClass == android.os.BatteryManager.class) return BATTERY_SERVICE;
         if (serviceClass == android.app.job.JobScheduler.class) return JOB_SCHEDULER_SERVICE;
         if (serviceClass == android.net.wifi.WifiManager.class) return WIFI_SERVICE;

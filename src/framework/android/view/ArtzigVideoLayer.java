@@ -14,6 +14,7 @@ public final class ArtzigVideoLayer {
     }
 
     private static final WeakHashMap<Surface, Layer> sBySurface = new WeakHashMap<>();
+    private static volatile boolean sNativeCallsEnabled = true;
 
     private ArtzigVideoLayer() {}
 
@@ -27,7 +28,7 @@ public final class ArtzigVideoLayer {
 
     /** Creates a layer and a Surface bound to it. */
     public static Surface createSurface() {
-        int id = nativeCreate();
+        int id = sNativeCallsEnabled ? nativeCreate() : 0;
         Surface s = new ArtzigSurface();
         if (id > 0) {
             synchronized (sBySurface) { sBySurface.put(s, new Layer(id)); }
@@ -97,5 +98,10 @@ public final class ArtzigVideoLayer {
             nativeDestroy(id);
             synchronized (sBySurface) { sBySurface.remove(s); }
         }
+    }
+
+    /** Installs the in-memory/no-native adapter used by hosted framework lifecycle tests. */
+    public static void setNativeCallsEnabledForTests(boolean enabled) {
+        sNativeCallsEnabled = enabled;
     }
 }

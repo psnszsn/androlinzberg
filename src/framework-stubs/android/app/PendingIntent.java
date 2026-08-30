@@ -1,6 +1,6 @@
 /* artzig stub (auto-generated placeholder; members added on demand). */
 package android.app;
-public class PendingIntent {
+public class PendingIntent implements android.os.Parcelable {
     private static final int KIND_NONE = 0;
     private static final int KIND_ACTIVITY = 1;
     private static final int KIND_SERVICE = 2;
@@ -9,12 +9,14 @@ public class PendingIntent {
     private final android.content.Intent intent;
     private final int requestCode;
     private final int kind;
+    private final String creatorPackage;
     private boolean canceled;
     public PendingIntent() {
         context = null;
         intent = null;
         requestCode = 0;
         kind = KIND_NONE;
+        creatorPackage = null;
     }
     public PendingIntent(android.os.IBinder target) { this(); }
     public PendingIntent(android.content.IntentSender sender) { this(); }
@@ -24,6 +26,16 @@ public class PendingIntent {
         this.requestCode = requestCode;
         this.intent = intent != null ? new android.content.Intent(intent) : null;
         this.kind = kind;
+        this.creatorPackage = context != null ? context.getPackageName() : null;
+    }
+    private PendingIntent(android.os.Parcel source) {
+        kind = source.readInt();
+        requestCode = source.readInt();
+        creatorPackage = source.readString();
+        intent = source.readParcelable(PendingIntent.class.getClassLoader(),
+                android.content.Intent.class);
+        context = null;
+        canceled = source.readBoolean();
     }
     public static final int FLAG_ONE_SHOT = 1 << 30, FLAG_NO_CREATE = 1 << 29,
             FLAG_CANCEL_CURRENT = 1 << 28, FLAG_UPDATE_CURRENT = 1 << 27,
@@ -59,7 +71,10 @@ public class PendingIntent {
         return getActivities(context, requestCode, intents, flags);
     }
     public boolean isImmutable() { return true; }
-    public String getCreatorPackage() { return context != null ? context.getPackageName() : null; }
+    public String getCreatorPackage() { return creatorPackage; }
+    public android.content.Intent getIntent() {
+        return intent != null ? new android.content.Intent(intent) : null;
+    }
     public android.content.IntentSender getIntentSender() { return new android.content.IntentSender(); }
     public static class CanceledException extends android.util.AndroidException {
         public CanceledException() {}
@@ -97,4 +112,21 @@ public class PendingIntent {
                 intent != null ? intent.filterHashCode() : 0);
     }
     public android.os.IBinder getTarget$stub() { return null; }
+    @Override public int describeContents() { return 0; }
+    @Override public void writeToParcel(android.os.Parcel out, int flags) {
+        out.writeInt(kind);
+        out.writeInt(requestCode);
+        out.writeString(creatorPackage);
+        out.writeParcelable(intent, flags);
+        out.writeBoolean(canceled);
+    }
+    public static final android.os.Parcelable.Creator<PendingIntent> CREATOR =
+            new android.os.Parcelable.Creator<PendingIntent>() {
+        @Override public PendingIntent createFromParcel(android.os.Parcel source) {
+            return new PendingIntent(source);
+        }
+        @Override public PendingIntent[] newArray(int size) {
+            return new PendingIntent[size];
+        }
+    };
 }

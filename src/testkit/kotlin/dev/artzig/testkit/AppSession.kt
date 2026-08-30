@@ -99,6 +99,59 @@ class AppSession internal constructor(
         settle,
     )
 
+    fun drag(
+        fromXFraction: Double,
+        fromYFraction: Double,
+        toXFraction: Double,
+        toYFraction: Double,
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+        index: Int? = null,
+        settle: WaitKind = WaitKind.IDLE,
+    ): StepResult = action(
+        Selector(resourceId, text, description, className, role, index, visible = true),
+        Action(
+            ActionKind.DRAG,
+            InputVia.WAYLAND,
+            fromXFraction = fromXFraction,
+            fromYFraction = fromYFraction,
+            toXFraction = toXFraction,
+            toYFraction = toYFraction,
+        ),
+        settle,
+    )
+
+    fun scrollForward(
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+        index: Int? = null,
+        settle: WaitKind = WaitKind.IDLE,
+    ): StepResult = action(
+        Selector(resourceId, text, description, className, role, index, visible = true),
+        Action(ActionKind.SCROLL_FORWARD, InputVia.SEMANTIC),
+        settle,
+    )
+
+    fun scrollBackward(
+        resourceId: String? = null,
+        text: String? = null,
+        description: String? = null,
+        className: String? = null,
+        role: String? = null,
+        index: Int? = null,
+        settle: WaitKind = WaitKind.IDLE,
+    ): StepResult = action(
+        Selector(resourceId, text, description, className, role, index, visible = true),
+        Action(ActionKind.SCROLL_BACKWARD, InputVia.SEMANTIC),
+        settle,
+    )
+
     fun setText(
         value: String,
         resourceId: String? = null,

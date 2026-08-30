@@ -540,6 +540,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 server.setInput(.{
                     .context = win,
                     .tap_fn = controlTap,
+                    .drag_fn = controlDrag,
                     .type_fn = controlType,
                     .key_fn = controlKey,
                     .fullscreen_fn = controlFullscreen,
@@ -1183,6 +1184,10 @@ fn inputDeltaY(win: *const wayland.Window, abi: HardwareDrawAbi, dy: f64) f32 {
 
 fn controlTap(context: *anyopaque, x: i32, y: i32) !void {
     try @as(*wayland.Window, @ptrCast(@alignCast(context))).testTap(x, y);
+}
+
+fn controlDrag(context: *anyopaque, from_x: i32, from_y: i32, to_x: i32, to_y: i32) !void {
+    try @as(*wayland.Window, @ptrCast(@alignCast(context))).testDrag(from_x, from_y, to_x, to_y);
 }
 
 fn controlType(context: *anyopaque, text: []const u8) !void {

@@ -1,4 +1,6 @@
-/* artzig shim: android.os.Parcel — pure-Java, in-process only. */
+/* Hosted adaptation of AOSP android.os.Parcel. The platform implementation cannot be reused
+ * directly because it owns data through libbinder's native Parcel; this in-process version keeps
+ * the same cursor, growth, and Parcelable contracts over a Java ByteBuffer. */
 package android.os;
 import java.io.FileDescriptor;
 import java.nio.ByteBuffer;
@@ -17,7 +19,11 @@ public final class Parcel {
             ByteBuffer nb = ByteBuffer.allocate(Math.max(buf.capacity() * 2, buf.position() + n))
                     .order(ByteOrder.LITTLE_ENDIAN);
             int pos = buf.position();
-            buf.position(0); buf.limit(size); nb.put(buf);
+            // A write may reserve and fill several bytes before grew() commits the new dataSize
+            // (writeString() does this one UTF-16 code unit at a time). Preserve both committed
+            // data and every byte already written up to the cursor when growth happens mid-write.
+            int used = Math.max(size, pos);
+            buf.position(0); buf.limit(used); nb.put(buf);
             nb.position(pos); buf = nb;
         }
     }

@@ -75,7 +75,7 @@ object AzkTestCli {
                 )
                 step.json to if (step.ok) 0 else 3
             }
-            "click", "type", "set-text", "key" -> client.perform(
+            "click", "drag", "scroll-forward", "scroll-backward", "type", "set-text", "key" -> client.perform(
                 args.selector,
                 args.action ?: throw UsageException("${args.command} requires an action"),
                 args.settle,
@@ -120,7 +120,9 @@ object AzkTestCli {
         var command = args[cursor++]
         if (command == "--help" || command == "help") return Parsed(help = true)
         if (command == "step") {
-            if (cursor >= args.size) throw UsageException("step requires click, type, set-text, or key")
+            if (cursor >= args.size) throw UsageException(
+                "step requires click, drag, scroll-forward, scroll-backward, type, set-text, or key",
+            )
             command = "step:${args[cursor++]}"
         }
 
@@ -140,6 +142,10 @@ object AzkTestCli {
         var includeTree = false
         var allowMissing = false
         var since: String? = null
+        var fromXFraction: Double? = null
+        var fromYFraction: Double? = null
+        var toXFraction: Double? = null
+        var toYFraction: Double? = null
         val positional = mutableListOf<String>()
 
         while (cursor < args.size) {
@@ -176,6 +182,10 @@ object AzkTestCli {
                 "--tree" -> { flag(); includeTree = true }
                 "--allow-missing" -> { flag(); allowMissing = true }
                 "--since" -> since = value()
+                "--from-x" -> fromXFraction = parseFraction(value(), "--from-x")
+                "--from-y" -> fromYFraction = parseFraction(value(), "--from-y")
+                "--to-x" -> toXFraction = parseFraction(value(), "--to-x")
+                "--to-y" -> toYFraction = parseFraction(value(), "--to-y")
                 "--help" -> { flag(); return Parsed(help = true) }
                 else -> if (argument.startsWith("--")) {
                     throw UsageException("unknown option $argument")
@@ -184,6 +194,11 @@ object AzkTestCli {
         }
 
         val actualCommand = command.substringAfter("step:", command)
+        if (actualCommand != "drag" &&
+            listOf(fromXFraction, fromYFraction, toXFraction, toYFraction).any { it != null }
+        ) {
+            throw UsageException("drag coordinate options require the drag command")
+        }
         if (command == "wait") {
             if (positional.size != 1) throw UsageException("wait requires ready, idle, exists, or absent")
             wait = parseWait(positional.removeAt(0), observeOnly = true).also {
@@ -198,6 +213,28 @@ object AzkTestCli {
             "click" -> {
                 if (positional.isNotEmpty()) throw UsageException("click does not take a value")
                 Action(ActionKind.CLICK, via)
+            }
+            "drag" -> {
+                if (positional.isNotEmpty()) throw UsageException("drag does not take a value")
+                if (via != InputVia.WAYLAND) throw UsageException("drag only supports --via wayland")
+                Action(
+                    ActionKind.DRAG,
+                    InputVia.WAYLAND,
+                    fromXFraction = fromXFraction ?: 0.25,
+                    fromYFraction = fromYFraction ?: 0.5,
+                    toXFraction = toXFraction ?: 0.75,
+                    toYFraction = toYFraction ?: 0.5,
+                )
+            }
+            "scroll-forward", "scroll-backward" -> {
+                if (positional.isNotEmpty()) throw UsageException("$actualCommand does not take a value")
+                if (via != InputVia.SEMANTIC) {
+                    throw UsageException("$actualCommand requires --via semantic")
+                }
+                Action(
+                    if (actualCommand == "scroll-forward") ActionKind.SCROLL_FORWARD else ActionKind.SCROLL_BACKWARD,
+                    InputVia.SEMANTIC,
+                )
             }
             "type" -> {
                 if (positional.size != 1) throw UsageException("type requires a value")
@@ -245,6 +282,10 @@ object AzkTestCli {
         return result
     }
 
+    private fun parseFraction(value: String, option: String): Double =
+        value.toDoubleOrNull()?.takeIf { it in 0.0..1.0 }
+            ?: throw UsageException("$option requires a number between 0 and 1")
+
     private fun Array<String>.valueAfter(index: Int, option: String): String =
         getOrNull(index + 1) ?: throw UsageException("$option requires a value")
 
@@ -265,19 +306,23 @@ object AzkTestCli {
 
     private class UsageException(message: String) : IllegalArgumentException(message)
 
-    private val COMMANDS = setOf("observe", "wait", "click", "type", "set-text", "key", "mark", "diagnose")
+    private val COMMANDS = setOf(
+        "observe", "wait", "click", "drag", "scroll-forward", "scroll-backward",
+        "type", "set-text", "key", "mark", "diagnose",
+    )
 
     private const val USAGE = """usage: azk-test [--socket PATH] [--timeout SECONDS] COMMAND ...
 
 Commands:
   observe [selector] [--tree] [--wait now|ready|idle|exists|absent]
   wait ready|idle|exists|absent [selector]
-  click|type|set-text|key [selector] [value] [settle options]
+  click|drag|scroll-forward|scroll-backward|type|set-text|key [selector] [value] [settle options]
   mark
   diagnose [--since JSON|@PATH]
-  step click|type|set-text|key [selector] [value] [settle options]
+  step click|drag|scroll-forward|scroll-backward|type|set-text|key [selector] [value] [settle options]
 
 Selectors: --id ID --text TEXT --description TEXT --class CLASS --role ROLE
            --state-description TEXT --index N --visible true|false --all-windows
+Drag: --from-x FRACTION --from-y FRACTION --to-x FRACTION --to-y FRACTION
 """
 }
