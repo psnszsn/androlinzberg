@@ -112,3 +112,12 @@ See [Architecture](docs/architecture.md) for more information.
 - [Kotlin source policy](docs/kotlin.md)
 - [Native language boundary](docs/native-boundary.md)
 - [artzig build instructions](artzig/README.md)
+
+## License
+
+Copyright © 2026 Androlinzberg contributors.
+
+Unless a file states otherwise, original Androlinzberg code and documentation
+are licensed under the [GNU General Public License version 3 or
+later](LICENSE) (`GPL-3.0-or-later`). Third-party material keeps its original
+license and copyright notices.
