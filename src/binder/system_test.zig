@@ -18,13 +18,14 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 4) {
-        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <fixture-apk-dir>\n", .{});
+    if (args.len < 5) {
+        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <fixture-apk-dir> <ndk-system-client>\n", .{});
         return error.InvalidArguments;
     }
     const launcher = args[1];
     const broker_exe = args[2];
     const fixture_apks = args[3];
+    const ndk_client = args[4];
 
     var random: [8]u8 = undefined;
     io.random(&random);
@@ -87,8 +88,22 @@ pub fn main(init: std.process.Init) !void {
     var client = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.SystemTestClientA", "dev.artzig.test.a");
     peer_pids[1].store(client.id.?, .release);
 
+    // Cross-language native peer: a standalone libbinder_ndk process (its own
+    // package/uid) that connects to this broker via the inherited env and calls
+    // the Java service host B registers. Not a launcher --javatest peer.
+    try env.put("AZK_BINDER_PACKAGE", "dev.artzig.ndkclient");
+    var ndkc = try std.process.spawn(io, .{
+        .argv = &.{ndk_client},
+        .environ_map = &env,
+        .stdin = .ignore,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    peer_pids[2].store(ndkc.id.?, .release);
+
     var failed = false;
     failed = !expectExit(io, &client, "client") or failed;
+    failed = !expectExit(io, &ndkc, "ndk system client") or failed;
     failed = !expectExit(io, &host, "service host") or failed;
     if (expired.load(.acquire)) {
         std.debug.print("system-test: timed out after {d}s\n", .{timeout_seconds});

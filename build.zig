@@ -175,6 +175,21 @@ pub fn build(b: *std.Build) void {
     ndk_test_run.step.dependOn(b.getInstallStep());
     b.step("ndk-test", "Run the native binder ABI self-test").dependOn(&ndk_test_run.step);
 
+    // Cross-language system-test client: links the ABI and, connecting to the
+    // shared session broker via inherited env, calls a Java-registered service.
+    // Installed to bin so the system-test driver can spawn it as a peer.
+    const ndk_system_client = b.addExecutable(.{
+        .name = "azk-ndk-system-client",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/ndk_system_client.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    ndk_system_client.root_module.linkLibrary(binder_ndk);
+    b.getInstallStep().dependOn(&b.addInstallArtifact(ndk_system_client, .{}).step);
+
     // --- artzig runtime (ART) module
 
     // --- launcher exe
@@ -405,6 +420,7 @@ pub fn build(b: *std.Build) void {
     system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
     system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
     system_test_run.addDirectoryArg(java.fixture_apks_dir);
+    system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-ndk-system-client"));
     system_test_run.step.dependOn(b.getInstallStep());
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.step);
 

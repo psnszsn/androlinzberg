@@ -2,9 +2,12 @@ package dev.artzig.systemtest
 
 import android.app.ActivityThread
 import android.app.ContextImpl
+import android.os.Binder
 import android.os.HostedBinderRuntime
 import android.os.Looper
+import android.os.Parcel
 import android.os.Process
+import android.os.ServiceManager
 
 /**
  * system-test peer: package `dev.artzig.test.b`. Its manifest is the
@@ -32,6 +35,10 @@ internal object SystemTestHostB {
         val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
         check(am.installPackage("$fixtures/dev.artzig.test.b.apk") == "dev.artzig.test.b")
         ActivityThread.attachApplicationHosted("dev.artzig.test.b")
+        // A plain Binder service the cross-language native client (libbinder_ndk)
+        // looks up and calls remotely; onTransact enforces the same interface
+        // descriptor the native side's prepareTransaction writes as a token.
+        ServiceManager.addService("dev.artzig.test.b.ndkprobe", NdkProbeService())
         // Publish the test providers under their parsed ProviderInfos (client
         // A queries them cross-process; the non-exported one asserts the
         // acquisition gate).
@@ -63,5 +70,41 @@ internal object SystemTestHostB {
             Runtime.getRuntime().exit(if (exited && EchoService.unbound.get()) 0 else 3)
         }.apply { isDaemon = true }.start()
         Looper.loop()
+    }
+
+    /** Serves `dev.artzig.test.b.INdkProbe`: add(a,b) and echo(String). */
+    private class NdkProbeService : Binder() {
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            when (code) {
+                1 -> { // add(a, b) -> a + b
+                    data.enforceInterface("dev.artzig.test.b.INdkProbe")
+                    val a = data.readInt()
+                    val b = data.readInt()
+                    reply?.writeInt(a + b)
+                    return true
+                }
+                2 -> { // echo(String) -> String
+                    data.enforceInterface("dev.artzig.test.b.INdkProbe")
+                    reply?.writeString(data.readString())
+                    return true
+                }
+                3 -> { // fireOneway(n): send n ordered oneway calls to the native sink
+                    data.enforceInterface("dev.artzig.test.b.INdkProbe")
+                    val n = data.readInt()
+                    val sink = ServiceManager.waitForService("dev.artzig.ndkclient.sink")
+                    for (i in 1..n) {
+                        val d = Parcel.obtain()
+                        try {
+                            sink.transact(i, d, null, android.os.IBinder.FLAG_ONEWAY)
+                        } finally {
+                            d.recycle()
+                        }
+                    }
+                    reply?.writeInt(n)
+                    return true
+                }
+            }
+            return super.onTransact(code, data, reply, flags)
+        }
     }
 }
