@@ -436,6 +436,25 @@ const Incoming = struct {
     parcel: *AParcel,
 };
 
+/// Per-local-target FIFO for oneway transactions. AOSP delivers oneway calls to
+/// a given binder in submission order and never concurrently, so each target
+/// gets one drain worker that runs its queue in order; a new submission starts
+/// a worker only when none is running. All fields are guarded by Runtime.mu.
+/// One persistent worker thread drains a target's queue in order for the whole
+/// time the target receives oneway calls. It holds a strong ref to the target,
+/// so a call queued before the object's export is released is still delivered
+/// before the object goes away; the worker exits (and frees the queue, dropping
+/// that ref) only once the queue is empty *and* retired. All fields are guarded
+/// by Runtime.mu; the worker parks on `cv` while idle rather than on the reader
+/// thread, so a callback can make synchronous binder calls without deadlock.
+const SerialQueue = struct {
+    target_id: u64,
+    target: *AIBinder,
+    items: std.ArrayListUnmanaged(*Incoming) = .empty,
+    cv: Io.Condition = .init,
+    retired: bool = false,
+};
+
 const Runtime = struct {
     io: Io,
     conn: Connection,
@@ -451,6 +470,8 @@ const Runtime = struct {
     export_uses: std.AutoHashMapUnmanaged(u64, u64) = .empty,
     proxies: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
     death_links: std.ArrayListUnmanaged(DeathLink) = .empty,
+    /// Per-local-target FIFO queues serializing incoming oneway transactions.
+    oneway_queues: std.AutoHashMapUnmanaged(u64, *SerialQueue) = .empty,
     disconnected: std.atomic.Value(bool) = .init(false),
     /// The routing id of the call each thread is currently servicing, for
     /// nested-transaction parent tracking.
@@ -596,6 +617,13 @@ const Runtime = struct {
                         return true;
                     }
                 }
+                // Oneway calls (request_id 0) to a local target run on that
+                // target's serial queue so their delivery order is preserved;
+                // two-way calls each get their own worker.
+                if (in.flags & FLAG_ONEWAY != 0 and in.target.kind == .local) {
+                    r.serialSubmit(in.target.value, in);
+                    return true;
+                }
                 const th = std.Thread.spawn(.{}, dispatch, .{ r, in }) catch {
                     in.parcel.destroy();
                     alloc.destroy(in);
@@ -658,14 +686,21 @@ const Runtime = struct {
     }
 
     fn dispatch(r: *Runtime, in: *Incoming) void {
+        r.mu.lockUncancelable(g_io);
+        const target = if (in.target.kind == .local) r.locals.get(in.target.value) else null;
+        r.mu.unlock(g_io);
+        r.dispatchTo(target, in);
+    }
+
+    /// Runs a received transaction against a resolved target (null = gone). The
+    /// oneway serial worker passes the target it holds a ref to, so a call
+    /// queued before the object's export was released still reaches it.
+    fn dispatchTo(r: *Runtime, target: ?*AIBinder, in: *Incoming) void {
         defer {
             in.parcel.destroy();
             alloc.destroy(in);
         }
         const oneway = in.flags & FLAG_ONEWAY != 0;
-        r.mu.lockUncancelable(g_io);
-        const target = if (in.target.kind == .local) r.locals.get(in.target.value) else null;
-        r.mu.unlock(g_io);
         var out = AParcel.create();
         defer out.destroy();
         var status = Client.Message.Reply.Status.ok;
@@ -805,6 +840,76 @@ const Runtime = struct {
         decWeak(b);
     }
 
+    /// Enqueues a oneway transaction on its target's serial queue, creating the
+    /// queue (and its persistent worker) on first use. The queue holds a strong
+    /// ref to the target for its whole lifetime so queued calls stay deliverable.
+    fn serialSubmit(r: *Runtime, target_id: u64, in: *Incoming) void {
+        r.mu.lockUncancelable(g_io);
+        var created = false;
+        const q = r.oneway_queues.get(target_id) orelse blk: {
+            const tgt = r.locals.get(target_id) orelse {
+                // Target already gone: drop this best-effort oneway call.
+                r.mu.unlock(g_io);
+                in.parcel.destroy();
+                alloc.destroy(in);
+                return;
+            };
+            _ = tgt.strong.fetchAdd(1, .monotonic);
+            const nq = alloc.create(SerialQueue) catch @panic("oom");
+            nq.* = .{ .target_id = target_id, .target = tgt };
+            r.oneway_queues.put(alloc, target_id, nq) catch @panic("oom");
+            created = true;
+            break :blk nq;
+        };
+        q.items.append(alloc, in) catch @panic("oom");
+        q.cv.signal(g_io);
+        r.mu.unlock(g_io);
+        if (created) {
+            const th = std.Thread.spawn(.{}, serialWorker, .{ r, q }) catch {
+                // No worker could start (resource exhaustion): drop this queue's
+                // best-effort oneway calls and release its target ref. Never
+                // drain inline — that would run callbacks on the reader thread.
+                r.mu.lockUncancelable(g_io);
+                _ = r.oneway_queues.remove(target_id);
+                var items = q.items;
+                q.items = .empty;
+                r.mu.unlock(g_io);
+                for (items.items) |it| {
+                    it.parcel.destroy();
+                    alloc.destroy(it);
+                }
+                items.deinit(alloc);
+                AIBinder_decStrong(q.target);
+                alloc.destroy(q);
+                return;
+            };
+            th.detach();
+        }
+    }
+
+    /// The per-target oneway drain loop: process items in order, park on the
+    /// queue's condition when idle, and exit once empty and retired.
+    fn serialWorker(r: *Runtime, q: *SerialQueue) void {
+        while (true) {
+            r.mu.lockUncancelable(g_io);
+            while (q.items.items.len == 0 and !q.retired) q.cv.waitUncancelable(g_io, &r.mu);
+            if (q.items.items.len == 0 and q.retired) {
+                _ = r.oneway_queues.remove(q.target_id);
+                r.mu.unlock(g_io);
+                break;
+            }
+            const in = q.items.orderedRemove(0);
+            r.mu.unlock(g_io);
+            // Dispatch against the ref the queue holds, so a call queued before
+            // the export was released still reaches the (still-alive) object.
+            r.dispatchTo(q.target, in);
+        }
+        // Empty and retired: drop the queue's target ref and free it.
+        AIBinder_decStrong(q.target);
+        q.items.deinit(alloc);
+        alloc.destroy(q);
+    }
+
     fn maybeRelease(r: *Runtime, id: u64, uses: u64) void {
         r.mu.lockUncancelable(g_io);
         const drop = (r.export_uses.get(id) orelse 0) == uses;
@@ -812,6 +917,13 @@ const Runtime = struct {
         if (drop) {
             _ = r.export_uses.remove(id);
             if (r.locals.fetchRemove(id)) |kv| released = kv.value;
+            // Signal the oneway worker (if any) to finish draining then exit;
+            // it holds its own ref, so the object outlives this export drop
+            // until every queued oneway call has been delivered.
+            if (r.oneway_queues.get(id)) |q| {
+                q.retired = true;
+                q.cv.signal(g_io);
+            }
         }
         r.mu.unlock(g_io);
         if (drop) {
