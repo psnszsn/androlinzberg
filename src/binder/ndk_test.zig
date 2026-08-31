@@ -1,10 +1,10 @@
 //! Native binder self-test: links `libbinder_ndk` (the NDK C ABI) and drives
 //! it against a real `azk-binder-broker`, exercising the whole peer path in
-//! one process — register a service, look it up (a remote handle to our own
-//! object, routed by the broker), transact to it, and verify the reply the
+//! one process — register a service, look it up (a local handle: the broker
+//! short-circuits ownership), transact to it, and verify the reply the
 //! `onTransact` callback wrote. This validates connect/hello, the service
-//! registry round-trip, transact framing, incoming dispatch, and reply
-//! marshalling end to end.
+//! registry round-trip, parcel marshalling, and in-process dispatch. (The
+//! remote transact path is covered by the cross-language system-test.)
 //!
 //! Usage: azk-ndk-test <azk-binder-broker>
 const std = @import("std");
@@ -65,7 +65,8 @@ var echo_buf: ?[*]u8 = null;
 var echo_len: usize = 0;
 fn echoAlloc(_: ?*anyopaque, length: i32, buffer: ?*?[*]u8) callconv(.c) bool {
     if (length < 0) return true;
-    echo_len = @intCast(length);
+    // NDK length includes the NUL terminator; the content is length - 1.
+    echo_len = @intCast(@max(length - 1, 0));
     if (buffer) |b| b.* = echo_buf;
     return true;
 }
@@ -74,7 +75,7 @@ var read_buf: [256]u8 = undefined;
 var read_len: usize = 0;
 fn readAlloc(_: ?*anyopaque, length: i32, buffer: ?*?[*]u8) callconv(.c) bool {
     if (length < 0) return true;
-    read_len = @intCast(length);
+    read_len = @intCast(@max(length - 1, 0));
     if (buffer) |b| b.* = &read_buf;
     return true;
 }
@@ -159,9 +160,11 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("azk-ndk-test: FAIL: waitForService returned null\n", .{});
         return error.NdkTestFailed;
     };
-    check(AIBinder_isRemote(remote), "looked-up handle is remote", &failures);
+    // The peer registered this service itself, so the broker returns a local
+    // ref (an in-process handle), not a remote proxy.
+    check(!AIBinder_isRemote(remote), "self-registered service resolves to a local handle", &failures);
 
-    // add(20, 22) -> 42, routed broker -> our own onTransact -> reply.
+    // add(20, 22) -> 42 through in-process local dispatch.
     {
         var in: ?*AParcel = null;
         _ = AIBinder_prepareTransaction(remote, &in);
@@ -172,7 +175,7 @@ pub fn main(init: std.process.Init) !void {
         check(rc == 0, "transact add succeeded", &failures);
         var result: i32 = 0;
         _ = AParcel_readInt32(out.?, &result);
-        check(result == 42, "add returned 42 across the broker", &failures);
+        check(result == 42, "add returned 42 via local dispatch", &failures);
     }
     // echo("héllo") round-trips a UTF-8/UTF-16 string.
     {
@@ -185,7 +188,7 @@ pub fn main(init: std.process.Init) !void {
         check(rc == 0, "transact echo succeeded", &failures);
         read_len = 0;
         _ = AParcel_readString(out.?, null, readAlloc);
-        check(std.mem.eql(u8, read_buf[0..read_len], s), "string round trip through the broker", &failures);
+        check(std.mem.eql(u8, read_buf[0..read_len], s), "string round trip via local dispatch", &failures);
     }
 
     AIBinder_decStrong(remote);

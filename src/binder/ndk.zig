@@ -29,6 +29,13 @@ const OutHeader = Client.Message.Header;
 
 const alloc = std.heap.c_allocator;
 
+/// NUL-terminated dup (this Zig's Allocator has no dupeZ); null on OOM.
+fn dupz(bytes: []const u8) ?[:0]u8 {
+    const buf = alloc.allocSentinel(u8, bytes.len, 0) catch return null;
+    @memcpy(buf[0..bytes.len], bytes);
+    return buf;
+}
+
 // ------------------------------------------------------------------- C ABI types
 
 /// STATUS_* (binder_status.h). Negative values are -errno on Android; only the
@@ -52,7 +59,10 @@ const AStatus = struct {
     exception: i32 = EX_NONE,
     service_specific: i32 = 0,
     status: i32 = STATUS_OK,
-    message: ?[]u8 = null,
+    /// Created by AStatus_fromStatus: a low-level transport status, written to
+    /// a parcel as the status alone (no exception header).
+    low_level: bool = false,
+    message: ?[:0]u8 = null,
 
     fn create(exception: i32) *AStatus {
         const s = alloc.create(AStatus) catch @panic("oom");
@@ -190,11 +200,26 @@ const AParcel = struct {
         while (read < n) : (read += 1) {
             const s = p.readSlice(2) orelse return error.Malformed;
             const unit = std.mem.readInt(u16, s[0..2], .little);
+            var cp: u21 = unit;
+            // Combine a high/low surrogate pair into one supplementary code
+            // point (non-BMP characters such as emoji arrive as two units).
+            if (unit >= 0xD800 and unit <= 0xDBFF and read + 1 < n) {
+                const s2 = p.readSlice(2) orelse return error.Malformed;
+                const low = std.mem.readInt(u16, s2[0..2], .little);
+                if (low >= 0xDC00 and low <= 0xDFFF) {
+                    cp = 0x10000 + ((@as(u21, unit) - 0xD800) << 10) + (@as(u21, low) - 0xDC00);
+                    read += 1;
+                } else {
+                    // Not a valid pair; rewind the second unit.
+                    p.pos -= 2;
+                    cp = 0xFFFD;
+                }
+            } else if (unit >= 0xD800 and unit <= 0xDFFF) {
+                cp = 0xFFFD; // lone surrogate
+            }
             var buf: [4]u8 = undefined;
-            const len = std.unicode.utf8Encode(unit, &buf) catch blk: {
-                // A lone surrogate: emit the replacement character.
-                break :blk std.unicode.utf8Encode(0xFFFD, &buf) catch unreachable;
-            };
+            const len = std.unicode.utf8Encode(cp, &buf) catch
+                std.unicode.utf8Encode(0xFFFD, &buf) catch unreachable;
             out.appendSlice(alloc, buf[0..len]) catch @panic("oom");
         }
         _ = p.readSlice(2); // NUL unit
@@ -223,6 +248,9 @@ const AIBinder = struct {
     id: u64,
     /// remote: set when the broker reports the object dead.
     dead: std.atomic.Value(bool),
+    /// remote: number of times the broker has delivered this object to this
+    /// peer (one per proxyFor). Released in full when the last NDK ref drops.
+    deliveries: u32 = 0,
 
     fn createLocal(class: *AIBinder_Class, user_data: ?*anyopaque) *AIBinder {
         const b = alloc.create(AIBinder) catch @panic("oom");
@@ -231,7 +259,9 @@ const AIBinder = struct {
         const id = rt.next_local_id;
         rt.next_local_id += 1;
         b.* = .{ .strong = .init(1), .kind = .local, .class = class, .user_data = user_data, .id = id, .dead = .init(false) };
-        rt.locals.put(alloc, id, b) catch @panic("oom");
+        // Not registered in `locals` until exported: the broker only routes
+        // incoming transactions to objects this peer has sent or registered,
+        // and `exportLocal` both records it and holds a ref for that lifetime.
         rt.mu.unlock();
         return b;
     }
@@ -287,6 +317,7 @@ const Runtime = struct {
     export_uses: std.AutoHashMapUnmanaged(u64, u64) = .empty,
     proxies: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
     death_links: std.ArrayListUnmanaged(DeathLink) = .empty,
+    disconnected: std.atomic.Value(bool) = .init(false),
     /// The routing id of the call each thread is currently servicing, for
     /// nested-transaction parent tracking.
     servicing: Mutex = .{},
@@ -296,6 +327,10 @@ const Runtime = struct {
     var instance: ?*Runtime = null;
     var connect_mu: Mutex = .{};
     threadlocal var current_routing: u64 = 0;
+    /// Caller identity of the transaction the current thread is servicing
+    /// (AIBinder_getCallingUid/Pid), valid only inside an onTransact callback.
+    threadlocal var current_caller_uid: u32 = 0;
+    threadlocal var current_caller_pid: i32 = 0;
 
     fn get() *Runtime {
         if (instance) |r| return r;
@@ -552,10 +587,17 @@ const Runtime = struct {
         if (target == null or target.?.class == null or target.?.class.?.on_transact == null) {
             status = .failed;
         } else {
-            const prev = current_routing;
+            const prev_routing = current_routing;
+            const prev_uid = current_caller_uid;
+            const prev_pid = current_caller_pid;
             current_routing = in.routing_id;
+            current_caller_uid = in.caller_uid;
+            // Oneway transactions have no waiting caller; AOSP reports pid 0.
+            current_caller_pid = if (oneway) 0 else in.caller_pid;
             const rc = target.?.class.?.on_transact.?(target.?, in.code, in.parcel, out);
-            current_routing = prev;
+            current_routing = prev_routing;
+            current_caller_uid = prev_uid;
+            current_caller_pid = prev_pid;
             if (rc != STATUS_OK) status = .failed;
         }
         if (!oneway) r.sendReply(in.routing_id, status, out);
@@ -624,8 +666,16 @@ const Runtime = struct {
     fn exportLocal(r: *Runtime, b: *AIBinder) u64 {
         r.mu.lock();
         defer r.mu.unlock();
-        const uses = (r.export_uses.get(b.id) orelse 0) + 1;
-        r.export_uses.put(alloc, b.id, uses) catch @panic("oom");
+        const prev = r.export_uses.get(b.id) orelse 0;
+        if (prev == 0) {
+            // The first export holds one strong ref for the whole export
+            // lifetime, so the object cannot be freed by the NDK caller's
+            // decStrong while the broker (registry or a remote peer) can still
+            // route to it. maybeRelease drops this ref when the export ends.
+            _ = b.strong.fetchAdd(1, .monotonic);
+            r.locals.put(alloc, b.id, b) catch @panic("oom");
+        }
+        r.export_uses.put(alloc, b.id, prev + 1) catch @panic("oom");
         return b.id;
     }
 
@@ -634,10 +684,11 @@ const Runtime = struct {
         defer r.mu.unlock();
         if (r.proxies.get(global_id)) |b| {
             _ = b.strong.fetchAdd(1, .monotonic);
+            b.deliveries += 1;
             return b;
         }
         const b = alloc.create(AIBinder) catch @panic("oom");
-        b.* = .{ .strong = .init(1), .kind = .remote, .id = global_id, .dead = .init(false) };
+        b.* = .{ .strong = .init(1), .kind = .remote, .id = global_id, .dead = .init(false), .deliveries = 1 };
         r.proxies.put(alloc, global_id, b) catch @panic("oom");
         return b;
     }
@@ -645,27 +696,43 @@ const Runtime = struct {
     fn releaseProxy(r: *Runtime, b: *AIBinder) void {
         r.mu.lock();
         if (r.proxies.get(b.id) == b) _ = r.proxies.remove(b.id);
+        const count = b.deliveries;
         r.mu.unlock();
-        var body: [@sizeOf(Client.Message.Release)]u8 = undefined;
-        const rel = Client.Message.Release{ .object = ObjectRef.remote(b.id), .count = 1 };
-        @memcpy(&body, std.mem.asBytes(&rel));
-        r.sendFrame(.{ .tag = Client.Message.Tag.release, .bytes_len = body.len }, &body, &.{}) catch {};
+        if (count > 0) {
+            var body: [@sizeOf(Client.Message.Release)]u8 = undefined;
+            const rel = Client.Message.Release{ .object = ObjectRef.remote(b.id), .count = count };
+            @memcpy(&body, std.mem.asBytes(&rel));
+            r.sendFrame(.{ .tag = Client.Message.Tag.release, .bytes_len = body.len }, &body, &.{}) catch {};
+        }
         alloc.destroy(b);
     }
 
     fn maybeRelease(r: *Runtime, id: u64, uses: u64) void {
         r.mu.lock();
         const drop = (r.export_uses.get(id) orelse 0) == uses;
+        var released: ?*AIBinder = null;
         if (drop) {
             _ = r.export_uses.remove(id);
-            _ = r.locals.remove(id);
+            if (r.locals.fetchRemove(id)) |kv| released = kv.value;
         }
         r.mu.unlock();
         if (drop) {
             var body: [@sizeOf(ObjectRef)]u8 = undefined;
             @memcpy(&body, std.mem.asBytes(&ObjectRef.local(id)));
             r.sendFrame(.{ .tag = Client.Message.Tag.release_ack, .bytes_len = body.len }, &body, &.{}) catch {};
+            // Drop the export's strong ref (exportLocal's first-export incStrong).
+            if (released) |b| dropLocal(b);
         }
+    }
+
+    /// Releases one strong ref to a local object, running its onDestroy and
+    /// freeing it when the last ref goes. Shared by AIBinder_decStrong and the
+    /// export-release path.
+    fn dropLocal(b: *AIBinder) void {
+        const prev = b.strong.fetchSub(1, .acq_rel);
+        if (prev != 1) return;
+        if (b.class) |c| if (c.on_destroy) |cb| cb(b.user_data);
+        alloc.destroy(b);
     }
 
     fn notifyDeath(r: *Runtime, global_id: u64) void {
@@ -681,6 +748,9 @@ const Runtime = struct {
     }
 
     fn onDisconnected(r: *Runtime) void {
+        r.disconnected.store(true, .monotonic);
+        var links = std.ArrayListUnmanaged(DeathLink).empty;
+        defer links.deinit(alloc);
         r.mu.lock();
         var it = r.pending.valueIterator();
         while (it.next()) |cp| {
@@ -691,14 +761,23 @@ const Runtime = struct {
             c.cv.signal();
             c.mu.unlock();
         }
+        // Every remote object is now unreachable: mark proxies dead so
+        // AIBinder_isAlive reports false, and deliver each registered death
+        // notification (the broker will send no more object_dead frames).
+        var pit = r.proxies.valueIterator();
+        while (pit.next()) |bp| bp.*.dead.store(true, .monotonic);
+        for (r.death_links.items) |l| links.append(alloc, l) catch @panic("oom");
         r.mu.unlock();
+        for (links.items) |l| if (l.recipient.on_died) |cb| cb(l.cookie);
     }
 
     // ---------------------------------------------------------- transact
 
     fn transact(r: *Runtime, target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel, flags: u32) i32 {
-        if (target.kind != .remote) return STATUS_BAD_VALUE;
-        if (target.dead.load(.monotonic)) return STATUS_DEAD_OBJECT;
+        // A local target is an in-process object (AOSP short-circuits these to
+        // a direct call rather than a kernel/broker round-trip).
+        if (target.kind == .local) return r.localTransact(target, code, in, out);
+        if (target.dead.load(.monotonic) or r.disconnected.load(.monotonic)) return STATUS_DEAD_OBJECT;
         const oneway = flags & FLAG_ONEWAY != 0;
         const request_id: u64 = if (oneway) 0 else r.next_request_id.fetchAdd(1, .monotonic);
 
@@ -746,8 +825,35 @@ const Runtime = struct {
         return r.awaitReply(call.?, out);
     }
 
+    /// In-process dispatch to a local object (self-call short-circuit). The
+    /// caller identity is this process; the reply parcel is left positioned at
+    /// the start for the caller to read.
+    fn localTransact(r: *Runtime, target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel) i32 {
+        const class = target.class orelse return STATUS_UNEXPECTED_NULL;
+        const on_transact = class.on_transact orelse return STATUS_UNEXPECTED_NULL;
+        in.pos = 0;
+        var scratch = AParcel.create();
+        defer scratch.destroy();
+        const reply = out orelse scratch;
+        const prev_routing = current_routing;
+        const prev_uid = current_caller_uid;
+        const prev_pid = current_caller_pid;
+        current_routing = std.math.maxInt(u64); // nonzero: "handling a transaction"
+        current_caller_uid = r.uid;
+        current_caller_pid = r.pid;
+        const rc = on_transact(target, code, in, reply);
+        current_routing = prev_routing;
+        current_caller_uid = prev_uid;
+        current_caller_pid = prev_pid;
+        if (out) |o| o.pos = 0;
+        return rc;
+    }
+
     fn awaitReply(r: *Runtime, call: *PendingCall, out: ?*AParcel) i32 {
-        defer alloc.destroy(call);
+        defer {
+            call.nested.deinit(alloc);
+            alloc.destroy(call);
+        }
         while (true) {
             call.mu.lock();
             while (!call.done and call.nested.items.len == 0) call.cv.wait(&call.mu);
@@ -787,6 +893,11 @@ const Runtime = struct {
         const request_id = r.next_request_id.fetchAdd(1, .monotonic);
         const call = alloc.create(PendingCall) catch @panic("oom");
         call.* = .{ .kind = .service };
+        if (r.disconnected.load(.monotonic)) {
+            call.failed = true;
+            call.done = true;
+            return call;
+        }
         r.mu.lock();
         r.pending.put(alloc, request_id, call) catch @panic("oom");
         r.mu.unlock();
@@ -937,7 +1048,7 @@ export fn AStatus_fromExceptionCode(exception: i32) callconv(.c) *AStatus {
 }
 export fn AStatus_fromExceptionCodeWithMessage(exception: i32, message: ?[*:0]const u8) callconv(.c) *AStatus {
     const s = AStatus.create(exception);
-    if (message) |m| s.message = alloc.dupe(u8, std.mem.span(m)) catch null;
+    if (message) |m| s.message = dupz(std.mem.span(m));
     return s;
 }
 export fn AStatus_fromServiceSpecificError(err: i32) callconv(.c) *AStatus {
@@ -948,12 +1059,13 @@ export fn AStatus_fromServiceSpecificError(err: i32) callconv(.c) *AStatus {
 export fn AStatus_fromServiceSpecificErrorWithMessage(err: i32, message: ?[*:0]const u8) callconv(.c) *AStatus {
     const s = AStatus.create(-8);
     s.service_specific = err;
-    if (message) |m| s.message = alloc.dupe(u8, std.mem.span(m)) catch null;
+    if (message) |m| s.message = dupz(std.mem.span(m));
     return s;
 }
 export fn AStatus_fromStatus(status: i32) callconv(.c) *AStatus {
     const s = AStatus.create(if (status == STATUS_OK) EX_NONE else EX_TRANSACTION_FAILED);
     s.status = status;
+    s.low_level = true;
     return s;
 }
 export fn AStatus_isOk(status: *const AStatus) callconv(.c) bool {
@@ -1090,8 +1202,13 @@ export fn AParcel_readString(parcel: *const AParcel, string_data: ?*anyopaque, a
     };
     defer alloc.free(utf8);
     var buffer: ?[*]u8 = null;
-    if (!allocator(string_data, @intCast(utf8.len), &buffer)) return STATUS_NO_MEMORY;
-    if (buffer) |b| @memcpy(b[0..utf8.len], utf8);
+    // The NDK contract: `length` includes the NUL terminator, and the standard
+    // std::string allocator resizes to length-1. Pass len+1 and write the NUL.
+    if (!allocator(string_data, @intCast(utf8.len + 1), &buffer)) return STATUS_NO_MEMORY;
+    if (buffer) |b| {
+        @memcpy(b[0..utf8.len], utf8);
+        b[utf8.len] = 0;
+    }
     return STATUS_OK;
 }
 const STATUS_NO_MEMORY: i32 = -@as(i32, @intCast(@intFromEnum(E.NOMEM)));
@@ -1173,6 +1290,9 @@ export fn AParcel_readParcelFileDescriptor(parcel: *const AParcel, fd: *i32) cal
 }
 
 export fn AParcel_writeStatusHeader(parcel: *AParcel, status: *const AStatus) callconv(.c) i32 {
+    // A low-level status (AStatus_fromStatus) is reported to the caller and
+    // written as nothing (AOSP AParcel_writeStatusHeader contract).
+    if (status.low_level and status.status != STATUS_OK) return status.status;
     // AOSP status-header layout: exception code, then (for non-EX_NONE) a
     // message string and, for service-specific, the error code.
     parcel.writeI32(status.exception);
@@ -1187,7 +1307,10 @@ export fn AParcel_readStatusHeader(parcel: *const AParcel, status: *?*AStatus) c
     const ex = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
     const s = AStatus.create(ex);
     if (ex != EX_NONE) {
-        if (p.readString()) |m| alloc.free(m) else |_| {}
+        if (p.readString()) |m| {
+            defer alloc.free(m);
+            s.message = dupz(m);
+        } else |_| {}
         if (ex == -8) s.service_specific = p.readI32() orelse 0;
     }
     status.* = s;
@@ -1272,9 +1395,13 @@ export fn AIBinder_ping(binder: *AIBinder) callconv(.c) i32 {
     return STATUS_OK;
 }
 export fn AIBinder_getCallingUid() callconv(.c) i32 {
+    // Inside an onTransact callback, the incoming caller's uid; otherwise this
+    // process's own (routing==0 means not servicing a transaction).
+    if (Runtime.current_routing != 0) return @intCast(Runtime.current_caller_uid);
     return @intCast(Runtime.get().uid);
 }
 export fn AIBinder_getCallingPid() callconv(.c) i32 {
+    if (Runtime.current_routing != 0) return Runtime.current_caller_pid;
     return Runtime.get().pid;
 }
 export fn AIBinder_isHandlingTransaction() callconv(.c) bool {
@@ -1290,6 +1417,23 @@ export fn AIBinder_DeathRecipient_setOnUnlinked(recipient: *AIBinder_DeathRecipi
     recipient.on_unlinked = onUnlinked;
 }
 export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) callconv(.c) void {
+    // Remove every link this recipient still holds so a later object_dead
+    // notification cannot dereference it, and run onUnlinked per removed link.
+    const r = Runtime.get();
+    var unlinked: usize = 0;
+    r.mu.lock();
+    var i: usize = 0;
+    while (i < r.death_links.items.len) {
+        if (r.death_links.items[i].recipient == recipient) {
+            _ = r.death_links.orderedRemove(i);
+            unlinked += 1;
+        } else i += 1;
+    }
+    r.mu.unlock();
+    if (recipient.on_unlinked) |cb| {
+        var k: usize = 0;
+        while (k < unlinked) : (k += 1) cb(null);
+    }
     alloc.destroy(recipient);
 }
 export fn AIBinder_linkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque) callconv(.c) i32 {
@@ -1341,8 +1485,10 @@ export fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8)
     const call = r.serviceRequest(.register_service, body.items);
     defer {
         if (call.svc_names.len > 0) alloc.free(call.svc_names);
+        call.nested.deinit(alloc);
         alloc.destroy(call);
     }
+    if (call.failed) return EX_TRANSACTION_FAILED;
     return switch (call.svc_status) {
         .ok => EX_NONE,
         .denied => -1, // EX_SECURITY
@@ -1362,16 +1508,30 @@ fn lookup(instance: [*:0]const u8, wait: bool) ?*AIBinder {
     const call = r.serviceRequest(.lookup_service, body.items);
     defer {
         if (call.svc_names.len > 0) alloc.free(call.svc_names);
+        call.nested.deinit(alloc);
         alloc.destroy(call);
     }
-    if (call.svc_status != .ok or call.svc_ref.kind == .null) return null;
+    if (call.failed or call.svc_status != .ok or call.svc_ref.kind == .null) return null;
+    // A service this peer registered itself resolves to a local ref (the broker
+    // short-circuits ownership); returning a remote proxy would later send a
+    // release for an object we never held remotely and trip a protocol error.
+    if (call.svc_ref.kind == .local) {
+        r.mu.lock();
+        const local = r.locals.get(call.svc_ref.value);
+        if (local) |b| _ = b.strong.fetchAdd(1, .monotonic);
+        r.mu.unlock();
+        return local;
+    }
     return r.proxyFor(call.svc_ref.value);
 }
 export fn AServiceManager_checkService(instance: [*:0]const u8) callconv(.c) ?*AIBinder {
     return lookup(instance, false);
 }
 export fn AServiceManager_getService(instance: [*:0]const u8) callconv(.c) ?*AIBinder {
-    return lookup(instance, true);
+    // Deprecated poll-and-return API: a single non-blocking lookup rather than
+    // the broker's indefinite waiter, so an absent service cannot hang startup
+    // forever (use AServiceManager_waitForService when a wait is intended).
+    return lookup(instance, false);
 }
 export fn AServiceManager_waitForService(instance: [*:0]const u8) callconv(.c) ?*AIBinder {
     return lookup(instance, true);
