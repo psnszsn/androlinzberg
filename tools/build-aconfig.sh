@@ -9,7 +9,10 @@ set -euo pipefail
 APP=$(cd "$(dirname "$0")/.." && pwd)
 ROOT="$APP/artzig"
 OUT=$(realpath -m "${1:-$APP/.cache/aconfig-java}")
-FB="$ROOT/extra/frameworks-base"
+# Vendored trees searched for .aconfig declarations. frameworks-base holds the
+# platform packages; frameworks-native holds a few (input); imported module
+# trees are added here as they land.
+ACONFIG_ROOTS=("$ROOT/extra/frameworks-base" "$ROOT/extra/frameworks-native")
 ACONFIG="$ROOT/out/host/linux-x86/bin/aconfig"
 LIST="$APP/tools/aconfig-packages.txt"
 
@@ -21,7 +24,7 @@ while IFS= read -r pkg; do
     [ -z "$pkg" ] && continue
     case "$pkg" in \#*) continue ;; esac
     # Every .aconfig file declaring this exact package (a package may span files).
-    mapfile -t files < <(grep -rl "package: \"$pkg\"" "$FB" --include='*.aconfig' 2>/dev/null | sort)
+    mapfile -t files < <(grep -rl "package: \"$pkg\"" "${ACONFIG_ROOTS[@]}" --include='*.aconfig' 2>/dev/null | sort)
     [ "${#files[@]}" -gt 0 ] || { echo "no .aconfig for package $pkg" >&2; exit 1; }
     container=$(sed -n 's/^container: "\([^"]*\)".*/\1/p' "${files[0]}" | head -1)
     container="${container:-system}"

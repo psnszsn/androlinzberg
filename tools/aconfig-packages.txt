@@ -32,3 +32,4 @@ com.android.net.thread.platform.flags
 com.android.server.display.feature.flags
 com.android.text.flags
 com.android.window.flags
+com.android.input.flags
