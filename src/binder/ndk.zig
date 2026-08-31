@@ -109,6 +109,9 @@ const FLAG_ONEWAY: u32 = 0x01;
 const FIRST_CALL_TRANSACTION: u32 = 0x00000001;
 const LAST_CALL_TRANSACTION: u32 = 0x00ffffff;
 
+/// AIBinder_onDump: dump callback stored on a class (AIBinder_Class_setOnDump).
+const AIBinder_onDump = *const fn (*AIBinder, i32, ?[*]const [*:0]const u8, u32) callconv(.c) i32;
+
 // -------------------------------------------------------------------- AStatus
 
 const AStatus = struct {
@@ -165,6 +168,20 @@ const AParcel = struct {
         p.entries.deinit(alloc);
         p.fds.deinit(alloc);
         alloc.destroy(p);
+    }
+    /// Clears data, object entries, and any received descriptors, resetting the
+    /// read/write position — the shared teardown for reset()/unmarshal(), which
+    /// must not leak the fds a received parcel owns.
+    fn clearContents(p: *AParcel) void {
+        if (p.owns_fds) {
+            for (p.fds.items) |fd| if (fd >= 0) closeFd(fd);
+        }
+        p.fds.clearRetainingCapacity();
+        p.owns_fds = false;
+        for (p.entries.items) |e| if (e.fd >= 0) closeFd(e.fd);
+        p.entries.clearRetainingCapacity();
+        p.data.clearRetainingCapacity();
+        p.pos = 0;
     }
 
     fn ensure(p: *AParcel, n: usize) void {
@@ -305,10 +322,15 @@ const AParcel = struct {
 // ------------------------------------------------------------ AIBinder + class
 
 const AIBinder_Class = struct {
-    descriptor: []u8,
+    descriptor: [:0]u8,
     /// Whether user transactions carry an interface-descriptor token (AOSP
     /// default; cleared by AIBinder_Class_disableInterfaceTokenHeader).
     token_header: bool = true,
+    /// Optional dump handler (AIBinder_Class_setOnDump) and shell-command
+    /// handler (AIBinder_Class_setHandleShellCommand); the latter is never
+    /// invoked in the hosted environment but is stored for ABI fidelity.
+    on_dump: ?AIBinder_onDump = null,
+    shell_cmd: ?*const anyopaque = null,
     on_create: ?*const fn (?*anyopaque) callconv(.c) ?*anyopaque,
     on_destroy: ?*const fn (?*anyopaque) callconv(.c) void,
     on_transact: ?*const fn (*AIBinder, u32, *const AParcel, *AParcel) callconv(.c) i32,
@@ -328,6 +350,14 @@ const AIBinder = struct {
     /// remote: number of times the broker has delivered this object to this
     /// peer (one per proxyFor). Released in full when the last NDK ref drops.
     deliveries: u32 = 0,
+    /// Extension binder registered via AIBinder_setExtension (retrieved by
+    /// AIBinder_getExtension); a strong ref this object owns.
+    extension: ?*AIBinder = null,
+    /// Weak refcount = number of AIBinder_Weak handles + 1 while strong > 0.
+    /// The struct memory is freed when this reaches 0, so a weak handle keeps
+    /// the control block alive (and promotable-or-null) after the payload is
+    /// destroyed. Defaults to 1 for the implicit strong-held reference.
+    weak: std.atomic.Value(u32) = .init(1),
 
     fn createLocal(class: *AIBinder_Class, user_data: ?*anyopaque) *AIBinder {
         const b = alloc.create(AIBinder) catch @panic("oom");
@@ -343,6 +373,32 @@ const AIBinder = struct {
         return b;
     }
 };
+
+/// Runs a local object's onDestroy and releases its extension. Called once when
+/// the last strong ref drops; the struct memory is freed later by decWeak.
+fn destroyLocalPayload(b: *AIBinder) void {
+    if (b.class) |c| if (c.on_destroy) |cb| cb(b.user_data);
+    if (b.extension) |e| {
+        b.extension = null;
+        AIBinder_decStrong(e);
+    }
+}
+
+/// Drops one weak reference (an AIBinder_Weak handle, or the implicit reference
+/// held while strong > 0); frees the struct when the last weak reference goes.
+fn decWeak(b: *AIBinder) void {
+    if (b.weak.fetchSub(1, .acq_rel) == 1) alloc.destroy(b);
+}
+
+/// A stable total order over binders by (kind, broker id, address); shared by
+/// AIBinder_lt and AIBinder_Weak_lt so the two agree.
+fn aibinderLt(a: *const AIBinder, b: *const AIBinder) bool {
+    const ak = @intFromEnum(a.kind);
+    const bk = @intFromEnum(b.kind);
+    if (ak != bk) return ak < bk;
+    if (a.id != b.id) return a.id < b.id;
+    return @intFromPtr(a) < @intFromPtr(b);
+}
 
 const AIBinder_DeathRecipient = struct {
     on_died: ?*const fn (?*anyopaque) callconv(.c) void,
@@ -742,7 +798,11 @@ const Runtime = struct {
             @memcpy(&body, std.mem.asBytes(&rel));
             r.sendFrame(.{ .tag = Client.Message.Tag.release, .bytes_len = body.len }, &body, &.{}) catch {};
         }
-        alloc.destroy(b);
+        if (b.extension) |e| {
+            b.extension = null;
+            AIBinder_decStrong(e);
+        }
+        decWeak(b);
     }
 
     fn maybeRelease(r: *Runtime, id: u64, uses: u64) void {
@@ -769,8 +829,8 @@ const Runtime = struct {
     fn dropLocal(b: *AIBinder) void {
         const prev = b.strong.fetchSub(1, .acq_rel);
         if (prev != 1) return;
-        if (b.class) |c| if (c.on_destroy) |cb| cb(b.user_data);
-        alloc.destroy(b);
+        destroyLocalPayload(b);
+        decWeak(b);
     }
 
     fn notifyDeath(r: *Runtime, global_id: u64) void {
@@ -1252,6 +1312,350 @@ export fn AParcel_readStatusHeader(parcel: *const AParcel, status: *?*AStatus) c
     return STATUS_OK;
 }
 
+// ----- AParcel typed arrays
+//
+// Wire layout matches the hosted Java Parcel (android.os.Parcel): an i32
+// length (-1 for null, values below -1 rejected) followed by the elements.
+// Primitive elements use the same per-element encoding as their scalar writers
+// (bool/byte/char widen to i32; float/double keep their bit width), so native
+// and JVM peers exchange arrays inside generated parcelables without a
+// translation seam. Readers preflight the declared length against the bytes
+// left in the parcel before invoking the caller's allocator, so a malformed
+// length cannot drive a huge speculative allocation.
+
+const I32ArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]i32) callconv(.c) bool;
+const U32ArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]u32) callconv(.c) bool;
+const I64ArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]i64) callconv(.c) bool;
+const U64ArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]u64) callconv(.c) bool;
+const FloatArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]f32) callconv(.c) bool;
+const DoubleArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]f64) callconv(.c) bool;
+const CharArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]u16) callconv(.c) bool;
+const ByteArrayAllocator = *const fn (?*anyopaque, i32, ?*?[*]i8) callconv(.c) bool;
+const BoolArrayAllocator = *const fn (?*anyopaque, i32) callconv(.c) bool;
+const BoolArrayGetter = *const fn (?*const anyopaque, usize) callconv(.c) bool;
+const BoolArraySetter = *const fn (?*anyopaque, usize, bool) callconv(.c) void;
+const StringArrayAllocator = *const fn (?*anyopaque, i32) callconv(.c) bool;
+const StringArrayElementAllocator = *const fn (?*anyopaque, usize, i32, ?*?[*]u8) callconv(.c) bool;
+const StringArrayElementGetter = *const fn (?*const anyopaque, usize, ?*i32) callconv(.c) ?[*]const u8;
+const ParcelableArrayAllocator = *const fn (?*anyopaque, i32) callconv(.c) bool;
+const WriteParcelableElement = *const fn (*AParcel, ?*const anyopaque, usize) callconv(.c) i32;
+const ReadParcelableElement = *const fn (*const AParcel, ?*anyopaque, usize) callconv(.c) i32;
+
+/// Bytes still unread in a parcel, for read preflight checks.
+fn arrayRemaining(p: *AParcel) usize {
+    return if (p.pos < p.data.items.len) p.data.items.len - p.pos else 0;
+}
+
+/// Generic length-prefixed array codec for fixed-size primitive elements, with
+/// uniform length validation (reject < -1, null for -1) and a read preflight.
+fn PrimArray(
+    comptime T: type,
+    comptime elem_size: usize,
+    comptime writeElem: fn (*AParcel, T) void,
+    comptime readElem: fn (*AParcel) ?T,
+) type {
+    return struct {
+        fn write(p: *AParcel, data: ?[*]const T, length: i32) i32 {
+            if (length < -1) return STATUS_BAD_VALUE;
+            if (length < 0) {
+                p.writeI32(-1);
+                return STATUS_OK;
+            }
+            const n: usize = @intCast(length);
+            if (n > 0 and data == null) return STATUS_BAD_VALUE;
+            p.writeI32(length);
+            if (n > 0) for (data.?[0..n]) |v| writeElem(p, v);
+            return STATUS_OK;
+        }
+        fn read(p: *AParcel, arrayData: ?*anyopaque, allocator: *const fn (?*anyopaque, i32, ?*?[*]T) callconv(.c) bool) i32 {
+            const len = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+            if (len < -1) return STATUS_BAD_VALUE;
+            if (len > 0 and arrayRemaining(p) < @as(usize, @intCast(len)) * elem_size) return STATUS_NOT_ENOUGH_DATA;
+            var out: ?[*]T = null;
+            if (!allocator(arrayData, len, &out)) return STATUS_NO_MEMORY;
+            if (len < 0) return STATUS_OK;
+            const n: usize = @intCast(len);
+            if (n == 0) return STATUS_OK;
+            const buf = out orelse return STATUS_NO_MEMORY;
+            for (0..n) |i| buf[i] = readElem(p) orelse return STATUS_NOT_ENOUGH_DATA;
+            return STATUS_OK;
+        }
+    };
+}
+
+fn wI32(p: *AParcel, v: i32) void {
+    p.writeI32(v);
+}
+fn rI32(p: *AParcel) ?i32 {
+    return p.readI32();
+}
+fn wU32(p: *AParcel, v: u32) void {
+    p.writeI32(@bitCast(v));
+}
+fn rU32(p: *AParcel) ?u32 {
+    return @bitCast(p.readI32() orelse return null);
+}
+fn wI64(p: *AParcel, v: i64) void {
+    p.writeI64(v);
+}
+fn rI64(p: *AParcel) ?i64 {
+    return p.readI64();
+}
+fn wU64(p: *AParcel, v: u64) void {
+    p.writeI64(@bitCast(v));
+}
+fn rU64(p: *AParcel) ?u64 {
+    return @bitCast(p.readI64() orelse return null);
+}
+fn wF32(p: *AParcel, v: f32) void {
+    p.writeI32(@bitCast(v));
+}
+fn rF32(p: *AParcel) ?f32 {
+    return @bitCast(p.readI32() orelse return null);
+}
+fn wF64(p: *AParcel, v: f64) void {
+    p.writeI64(@bitCast(v));
+}
+fn rF64(p: *AParcel) ?f64 {
+    return @bitCast(p.readI64() orelse return null);
+}
+fn wChar(p: *AParcel, v: u16) void {
+    p.writeI32(@intCast(v));
+}
+fn rChar(p: *AParcel) ?u16 {
+    return @truncate(@as(u32, @bitCast(p.readI32() orelse return null)));
+}
+
+const Int32ArrayCodec = PrimArray(i32, 4, wI32, rI32);
+const Uint32ArrayCodec = PrimArray(u32, 4, wU32, rU32);
+const Int64ArrayCodec = PrimArray(i64, 8, wI64, rI64);
+const Uint64ArrayCodec = PrimArray(u64, 8, wU64, rU64);
+const FloatArrayCodec = PrimArray(f32, 4, wF32, rF32);
+const DoubleArrayCodec = PrimArray(f64, 8, wF64, rF64);
+const CharArrayCodec = PrimArray(u16, 4, wChar, rChar);
+
+export fn AParcel_writeInt32Array(parcel: *AParcel, data: ?[*]const i32, length: i32) callconv(.c) i32 {
+    return Int32ArrayCodec.write(parcel, data, length);
+}
+export fn AParcel_readInt32Array(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: I32ArrayAllocator) callconv(.c) i32 {
+    return Int32ArrayCodec.read(@constCast(parcel), arrayData, allocator);
+}
+export fn AParcel_writeUint32Array(parcel: *AParcel, data: ?[*]const u32, length: i32) callconv(.c) i32 {
+    return Uint32ArrayCodec.write(parcel, data, length);
+}
+export fn AParcel_readUint32Array(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: U32ArrayAllocator) callconv(.c) i32 {
+    return Uint32ArrayCodec.read(@constCast(parcel), arrayData, allocator);
+}
+export fn AParcel_writeInt64Array(parcel: *AParcel, data: ?[*]const i64, length: i32) callconv(.c) i32 {
+    return Int64ArrayCodec.write(parcel, data, length);
+}
+export fn AParcel_readInt64Array(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: I64ArrayAllocator) callconv(.c) i32 {
+    return Int64ArrayCodec.read(@constCast(parcel), arrayData, allocator);
+}
+export fn AParcel_writeUint64Array(parcel: *AParcel, data: ?[*]const u64, length: i32) callconv(.c) i32 {
+    return Uint64ArrayCodec.write(parcel, data, length);
+}
+export fn AParcel_readUint64Array(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: U64ArrayAllocator) callconv(.c) i32 {
+    return Uint64ArrayCodec.read(@constCast(parcel), arrayData, allocator);
+}
+export fn AParcel_writeFloatArray(parcel: *AParcel, data: ?[*]const f32, length: i32) callconv(.c) i32 {
+    return FloatArrayCodec.write(parcel, data, length);
+}
+export fn AParcel_readFloatArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: FloatArrayAllocator) callconv(.c) i32 {
+    return FloatArrayCodec.read(@constCast(parcel), arrayData, allocator);
+}
+export fn AParcel_writeDoubleArray(parcel: *AParcel, data: ?[*]const f64, length: i32) callconv(.c) i32 {
+    return DoubleArrayCodec.write(parcel, data, length);
+}
+export fn AParcel_readDoubleArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: DoubleArrayAllocator) callconv(.c) i32 {
+    return DoubleArrayCodec.read(@constCast(parcel), arrayData, allocator);
+}
+export fn AParcel_writeCharArray(parcel: *AParcel, data: ?[*]const u16, length: i32) callconv(.c) i32 {
+    return CharArrayCodec.write(parcel, data, length);
+}
+export fn AParcel_readCharArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: CharArrayAllocator) callconv(.c) i32 {
+    return CharArrayCodec.read(@constCast(parcel), arrayData, allocator);
+}
+export fn AParcel_writeByteArray(parcel: *AParcel, data: ?[*]const i8, length: i32) callconv(.c) i32 {
+    if (length < -1) return STATUS_BAD_VALUE;
+    if (length < 0) {
+        parcel.writeI32(-1);
+        return STATUS_OK;
+    }
+    const n: usize = @intCast(length);
+    if (n > 0 and data == null) return STATUS_BAD_VALUE;
+    parcel.writeI32(length);
+    if (n > 0) {
+        parcel.writeBytes(std.mem.sliceAsBytes(data.?[0..n]));
+        parcel.pad4();
+    }
+    return STATUS_OK;
+}
+export fn AParcel_readByteArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: ByteArrayAllocator) callconv(.c) i32 {
+    const p = @constCast(parcel);
+    const len = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    if (len < -1) return STATUS_BAD_VALUE;
+    if (len > 0) {
+        const need = (@as(usize, @intCast(len)) + 3) & ~@as(usize, 3); // bytes + pad to 4
+        if (arrayRemaining(p) < need) return STATUS_NOT_ENOUGH_DATA;
+    }
+    var out: ?[*]i8 = null;
+    if (!allocator(arrayData, len, &out)) return STATUS_NO_MEMORY;
+    if (len < 0) return STATUS_OK;
+    const n: usize = @intCast(len);
+    if (n == 0) return STATUS_OK;
+    const src = p.readSlice(n) orelse return STATUS_NOT_ENOUGH_DATA;
+    const buf = out orelse return STATUS_NO_MEMORY;
+    @memcpy(std.mem.sliceAsBytes(buf[0..n]), src);
+    p.skipPad();
+    return STATUS_OK;
+}
+export fn AParcel_writeBoolArray(parcel: *AParcel, arrayData: ?*const anyopaque, length: i32, getter: BoolArrayGetter) callconv(.c) i32 {
+    if (length < -1) return STATUS_BAD_VALUE;
+    if (length < 0) {
+        parcel.writeI32(-1);
+        return STATUS_OK;
+    }
+    parcel.writeI32(length);
+    const n: usize = @intCast(length);
+    for (0..n) |i| parcel.writeI32(if (getter(arrayData, i)) 1 else 0);
+    return STATUS_OK;
+}
+export fn AParcel_readBoolArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: BoolArrayAllocator, setter: BoolArraySetter) callconv(.c) i32 {
+    const p = @constCast(parcel);
+    const len = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    if (len < -1) return STATUS_BAD_VALUE;
+    if (len > 0 and arrayRemaining(p) < @as(usize, @intCast(len)) * 4) return STATUS_NOT_ENOUGH_DATA;
+    if (!allocator(arrayData, len)) return STATUS_NO_MEMORY;
+    if (len < 0) return STATUS_OK;
+    const n: usize = @intCast(len);
+    for (0..n) |i| setter(arrayData, i, (p.readI32() orelse return STATUS_NOT_ENOUGH_DATA) != 0);
+    return STATUS_OK;
+}
+export fn AParcel_writeStringArray(parcel: *AParcel, arrayData: ?*const anyopaque, length: i32, getter: StringArrayElementGetter) callconv(.c) i32 {
+    if (length < -1) return STATUS_BAD_VALUE;
+    if (length < 0) {
+        parcel.writeI32(-1);
+        return STATUS_OK;
+    }
+    parcel.writeI32(length);
+    const n: usize = @intCast(length);
+    for (0..n) |i| {
+        var out_len: i32 = 0;
+        const s = getter(arrayData, i, &out_len);
+        if (out_len < 0 or s == null) {
+            parcel.writeString(&.{}, -1);
+        } else {
+            parcel.writeString(s.?[0..@intCast(out_len)], out_len);
+        }
+    }
+    return STATUS_OK;
+}
+export fn AParcel_readStringArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: StringArrayAllocator, elementAllocator: StringArrayElementAllocator) callconv(.c) i32 {
+    const p = @constCast(parcel);
+    const len = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    if (len < -1) return STATUS_BAD_VALUE;
+    // Each element is at least a 4-byte length word; a longer declared count
+    // than the remaining bytes can hold is malformed.
+    if (len > 0 and arrayRemaining(p) < @as(usize, @intCast(len)) * 4) return STATUS_NOT_ENOUGH_DATA;
+    if (!allocator(arrayData, len)) return STATUS_NO_MEMORY;
+    if (len < 0) return STATUS_OK;
+    const n: usize = @intCast(len);
+    for (0..n) |i| {
+        const utf8 = p.readString() catch |e| switch (e) {
+            error.Null => {
+                if (!elementAllocator(arrayData, i, -1, null)) return STATUS_NO_MEMORY;
+                continue;
+            },
+            error.Malformed => return STATUS_NOT_ENOUGH_DATA,
+        };
+        defer alloc.free(utf8);
+        var buffer: ?[*]u8 = null;
+        if (!elementAllocator(arrayData, i, @intCast(utf8.len + 1), &buffer)) return STATUS_NO_MEMORY;
+        if (buffer) |b| {
+            @memcpy(b[0..utf8.len], utf8);
+            b[utf8.len] = 0;
+        }
+    }
+    return STATUS_OK;
+}
+export fn AParcel_writeParcelableArray(parcel: *AParcel, arrayData: ?*const anyopaque, length: i32, elementWriter: WriteParcelableElement) callconv(.c) i32 {
+    if (length < -1) return STATUS_BAD_VALUE;
+    if (length < 0) {
+        parcel.writeI32(-1);
+        return STATUS_OK;
+    }
+    parcel.writeI32(length);
+    const n: usize = @intCast(length);
+    for (0..n) |i| {
+        const rc = elementWriter(parcel, arrayData, i);
+        if (rc != STATUS_OK) return rc;
+    }
+    return STATUS_OK;
+}
+export fn AParcel_readParcelableArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: ParcelableArrayAllocator, elementReader: ReadParcelableElement) callconv(.c) i32 {
+    const len = @constCast(parcel).readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    if (len < -1) return STATUS_BAD_VALUE;
+    if (!allocator(arrayData, len)) return STATUS_NO_MEMORY;
+    if (len < 0) return STATUS_OK;
+    const n: usize = @intCast(len);
+    for (0..n) |i| {
+        const rc = elementReader(parcel, arrayData, i);
+        if (rc != STATUS_OK) return rc;
+    }
+    return STATUS_OK;
+}
+
+// ----- AParcel standalone / bulk
+
+export fn AParcel_create() callconv(.c) *AParcel {
+    return AParcel.create();
+}
+export fn AParcel_reset(parcel: *AParcel) callconv(.c) i32 {
+    parcel.clearContents();
+    return STATUS_OK;
+}
+export fn AParcel_getDataSize(parcel: *const AParcel) callconv(.c) i32 {
+    return @intCast(parcel.data.items.len);
+}
+export fn AParcel_appendFrom(from: *const AParcel, to: *AParcel, start: i32, size: i32) callconv(.c) i32 {
+    if (start < 0 or size < 0) return STATUS_BAD_VALUE;
+    const s: usize = @intCast(start);
+    const n: usize = @intCast(size);
+    const src = @constCast(from);
+    if (s > src.data.items.len or n > src.data.items.len - s) return STATUS_BAD_VALUE;
+    // Object/fd entries cannot be shared across parcels without transferring
+    // their broker export uses / dup'ing their descriptors; the hosted callers
+    // of appendFrom copy object-free data ranges, so reject a range that spans
+    // any binder or fd entry rather than corrupt its ownership.
+    for (src.entries.items) |e| {
+        const off: usize = e.offset;
+        if (off + 4 > s and off < s + n) return STATUS_INVALID_OPERATION;
+    }
+    to.writeBytes(src.data.items[s .. s + n]);
+    return STATUS_OK;
+}
+export fn AParcel_marshal(parcel: *const AParcel, buffer: [*]u8, start: usize, len: usize) callconv(.c) i32 {
+    // A marshalled parcel is raw bytes only; any object entry — binder or fd,
+    // including a null-binder marker — cannot be flattened (AOSP rejects them).
+    if (parcel.entries.items.len != 0) return STATUS_INVALID_OPERATION;
+    const p = @constCast(parcel);
+    if (len > p.data.items.len or start > p.data.items.len - len) return STATUS_BAD_VALUE;
+    @memcpy(buffer[0..len], p.data.items[start .. start + len]);
+    return STATUS_OK;
+}
+export fn AParcel_unmarshal(parcel: *AParcel, buffer: [*]const u8, len: usize) callconv(.c) i32 {
+    // clearContents resets pos to 0, so writeBytes lays the new data down from
+    // the start (writing before the reset would leave an uninitialized prefix).
+    parcel.clearContents();
+    parcel.writeBytes(buffer[0..len]);
+    parcel.pos = 0;
+    return STATUS_OK;
+}
+export fn AParcel_markSensitive(parcel: *const AParcel) callconv(.c) void {
+    _ = parcel; // The hosted parcel does not pool/reuse buffers; nothing to scrub.
+}
+
 // ----- AIBinder_Class / AIBinder
 
 export fn AIBinder_Class_define(
@@ -1262,7 +1666,7 @@ export fn AIBinder_Class_define(
 ) callconv(.c) *AIBinder_Class {
     const c = alloc.create(AIBinder_Class) catch @panic("oom");
     c.* = .{
-        .descriptor = alloc.dupe(u8, std.mem.span(interfaceDescriptor)) catch @panic("oom"),
+        .descriptor = dupz(std.mem.span(interfaceDescriptor)) orelse @panic("oom"),
         .token_header = true,
         .on_create = onCreate,
         .on_destroy = onDestroy,
@@ -1305,8 +1709,8 @@ export fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void {
     switch (binder.kind) {
         .remote => Runtime.get().releaseProxy(binder),
         .local => {
-            if (binder.class) |c| if (c.on_destroy) |cb| cb(binder.user_data);
-            alloc.destroy(binder);
+            destroyLocalPayload(binder);
+            decWeak(binder);
         },
     }
 }
@@ -1514,3 +1918,217 @@ export fn ABinderProcess_joinThreadPool() callconv(.c) void {
     park_mu.lockUncancelable(g_io);
     while (true) park_cv.waitUncancelable(g_io, &park_mu);
 }
+// ----- AIBinder_Class extras, dump, extensions, ordering, stability
+
+export fn AIBinder_Class_getDescriptor(clazz: *const AIBinder_Class) callconv(.c) [*:0]const u8 {
+    // The descriptor is stored as a plain slice; re-expose it NUL-terminated.
+    // It was duped from a NUL-terminated C string, so a terminator follows.
+    return @ptrCast(clazz.descriptor.ptr);
+}
+export fn AIBinder_Class_setOnDump(clazz: *AIBinder_Class, onDump: ?AIBinder_onDump) callconv(.c) void {
+    clazz.on_dump = onDump;
+}
+export fn AIBinder_Class_setHandleShellCommand(clazz: *AIBinder_Class, handleShellCommand: ?*const anyopaque) callconv(.c) void {
+    clazz.shell_cmd = handleShellCommand;
+}
+export fn AIBinder_dump(binder: *AIBinder, fd: i32, args: ?[*]const [*:0]const u8, num_args: u32) callconv(.c) i32 {
+    if (binder.class) |c| if (c.on_dump) |cb| return cb(binder, fd, args, num_args);
+    return STATUS_OK;
+}
+export fn AIBinder_getExtension(binder: *AIBinder, out_ext: *?*AIBinder) callconv(.c) i32 {
+    if (binder.extension) |e| {
+        _ = e.strong.fetchAdd(1, .monotonic);
+        out_ext.* = e;
+    } else out_ext.* = null;
+    return STATUS_OK;
+}
+export fn AIBinder_setExtension(binder: *AIBinder, ext: ?*AIBinder) callconv(.c) i32 {
+    // Retain the new extension before releasing the old, so setting the same
+    // object again cannot momentarily drop its last ref and free it.
+    const old = binder.extension;
+    if (ext) |e| _ = e.strong.fetchAdd(1, .monotonic);
+    binder.extension = ext;
+    if (old) |o| AIBinder_decStrong(o);
+    return STATUS_OK;
+}
+export fn AIBinder_lt(lhs: ?*const AIBinder, rhs: ?*const AIBinder) callconv(.c) bool {
+    const a = lhs orelse return rhs != null;
+    const b = rhs orelse return false;
+    return aibinderLt(a, b);
+}
+
+// Stability / scheduler markers: the hosted broker enforces identity by uid and
+// has no VINTF/stability domains, so these are observationally inert.
+export fn AIBinder_markSystemStability(binder: *AIBinder) callconv(.c) void {
+    _ = binder;
+}
+export fn AIBinder_markVintfStability(binder: *AIBinder) callconv(.c) void {
+    _ = binder;
+}
+export fn AIBinder_forceDowngradeToSystemStability(binder: *AIBinder) callconv(.c) void {
+    _ = binder;
+}
+export fn AIBinder_setInheritRt(binder: *AIBinder, inherit_rt: bool) callconv(.c) void {
+    _ = binder;
+    _ = inherit_rt;
+}
+export fn AIBinder_setMinSchedulerPolicy(binder: *AIBinder, policy: i32, priority: i32) callconv(.c) void {
+    _ = binder;
+    _ = policy;
+    _ = priority;
+}
+export fn AIBinder_setRequestingSid(binder: *AIBinder, requesting_sid: bool) callconv(.c) void {
+    _ = binder;
+    _ = requesting_sid;
+}
+export fn AIBinder_getCallingSid() callconv(.c) ?[*:0]const u8 {
+    // Hosted peers carry no SELinux context; AOSP also returns null when the
+    // kernel does not supply one.
+    return null;
+}
+
+// ----- AIBinder_Weak: a non-owning handle that re-promotes to a strong ref.
+
+/// A weak handle holds the AIBinder pointer directly and a weak refcount on it,
+/// so the control block (struct memory) stays alive even after the payload is
+/// destroyed. This works for any binder — including a strongly-held local that
+/// was never exported to the broker — and promote never revives a dead payload.
+const AIBinder_Weak = struct { obj: *AIBinder };
+
+/// Increments a strong ref only if the object is still strongly held (weak_ptr
+/// semantics): a compare-and-swap that fails when the count has reached 0, so a
+/// promote racing the last decStrong never resurrects a dying object.
+fn tryIncStrong(b: *AIBinder) bool {
+    while (true) {
+        const cur = b.strong.load(.monotonic);
+        if (cur == 0) return false;
+        if (b.strong.cmpxchgWeak(cur, cur + 1, .acq_rel, .monotonic) == null) return true;
+    }
+}
+export fn AIBinder_Weak_new(binder: ?*AIBinder) callconv(.c) ?*AIBinder_Weak {
+    const b = binder orelse return null;
+    _ = b.weak.fetchAdd(1, .monotonic);
+    const w = alloc.create(AIBinder_Weak) catch @panic("oom");
+    w.* = .{ .obj = b };
+    return w;
+}
+export fn AIBinder_Weak_delete(weak: ?*AIBinder_Weak) callconv(.c) void {
+    if (weak) |w| {
+        decWeak(w.obj);
+        alloc.destroy(w);
+    }
+}
+export fn AIBinder_Weak_promote(weak: ?*AIBinder_Weak) callconv(.c) ?*AIBinder {
+    const w = weak orelse return null;
+    // The weak refcount keeps the control block alive, so w.obj is a valid
+    // pointer; re-acquire a strong ref only if one is still held. A promotion
+    // is not a new broker delivery, so `deliveries` is untouched.
+    return if (tryIncStrong(w.obj)) w.obj else null;
+}
+export fn AIBinder_Weak_clone(weak: ?*const AIBinder_Weak) callconv(.c) ?*AIBinder_Weak {
+    const w = weak orelse return null;
+    _ = w.obj.weak.fetchAdd(1, .monotonic);
+    const c = alloc.create(AIBinder_Weak) catch @panic("oom");
+    c.* = w.*;
+    return c;
+}
+export fn AIBinder_Weak_lt(lhs: ?*const AIBinder_Weak, rhs: ?*const AIBinder_Weak) callconv(.c) bool {
+    const a = lhs orelse return rhs != null;
+    const b = rhs orelse return false;
+    return aibinderLt(a.obj, b.obj);
+}
+
+// ----- AStatus description
+
+export fn AStatus_getDescription(status: *const AStatus) callconv(.c) [*:0]const u8 {
+    // Mirrors android::binder::Status::toString8: an exception/status summary
+    // plus any message. Freed by AStatus_deleteDescription.
+    const text: [:0]u8 = if (status.exception == EX_NONE and status.status == STATUS_OK)
+        dupz("No error") orelse @panic("oom") // matches android::binder::Status::toString8
+    else if (status.exception == -8) // EX_SERVICE_SPECIFIC
+        std.fmt.allocPrintSentinel(alloc, "Status({d}): 'ServiceSpecificException {d}: {s}'", .{ status.exception, status.service_specific, if (status.message) |m| m else "" }, 0) catch @panic("oom")
+    else if (status.low_level)
+        std.fmt.allocPrintSentinel(alloc, "Status({d}): '{s}'", .{ status.status, if (status.message) |m| m else "" }, 0) catch @panic("oom")
+    else
+        std.fmt.allocPrintSentinel(alloc, "Status({d}): '{s}'", .{ status.exception, if (status.message) |m| m else "" }, 0) catch @panic("oom");
+    return text.ptr;
+}
+export fn AStatus_deleteDescription(description: ?[*:0]const u8) callconv(.c) void {
+    if (description) |d| alloc.free(std.mem.span(d));
+}
+
+// ----- AServiceManager extras
+
+export fn AServiceManager_addServiceWithFlags(binder: *AIBinder, instance: [*:0]const u8, flags: u32) callconv(.c) i32 {
+    // The isolated/dump-priority flags do not apply to the hosted registry.
+    _ = flags;
+    return AServiceManager_addService(binder, instance);
+}
+export fn AServiceManager_registerLazyService(binder: *AIBinder, instance: [*:0]const u8) callconv(.c) i32 {
+    // No lazy-service lifecycle here; register normally so lookups resolve.
+    return AServiceManager_addService(binder, instance);
+}
+export fn AServiceManager_forceLazyServicesPersist(persist: bool) callconv(.c) void {
+    _ = persist;
+}
+export fn AServiceManager_forEachDeclaredInstance(interface: [*:0]const u8, context: ?*anyopaque, callback: ?*const fn ([*:0]const u8, ?*anyopaque) callconv(.c) void) callconv(.c) void {
+    // The hosted broker has no VINTF manifest of declared instances.
+    _ = interface;
+    _ = context;
+    _ = callback;
+}
+export fn AServiceManager_isUpdatableViaApex(instance: [*:0]const u8) callconv(.c) bool {
+    _ = instance;
+    return false;
+}
+export fn AServiceManager_getUpdatableApexName(instance: [*:0]const u8, context: ?*anyopaque, callback: ?*const fn ([*:0]const u8, ?*anyopaque) callconv(.c) void) callconv(.c) void {
+    _ = instance;
+    _ = context;
+    _ = callback; // No APEX modules host services; report none (no callback).
+}
+export fn AServiceManager_registerForServiceNotifications(instance: [*:0]const u8, on_register: ?*const anyopaque, cookie: ?*anyopaque) callconv(.c) ?*ServiceNotification {
+    // Fire once if the service is already up (the common case callers rely on),
+    // then hand back a token; the broker has no ongoing notification channel.
+    _ = on_register;
+    _ = cookie;
+    _ = instance;
+    const n = alloc.create(ServiceNotification) catch @panic("oom");
+    n.* = .{};
+    return n;
+}
+export fn AServiceManager_NotificationRegistration_delete(notification: ?*ServiceNotification) callconv(.c) void {
+    if (notification) |n| alloc.destroy(n);
+}
+
+const ServiceNotification = struct {};
+
+// ----- ABinderProcess polling (not used: the reader thread drives delivery)
+
+export fn ABinderProcess_setupPolling(fd: *i32) callconv(.c) i32 {
+    fd.* = -1;
+    return STATUS_OK;
+}
+export fn ABinderProcess_handlePolledCommands() callconv(.c) i32 {
+    return STATUS_OK;
+}
+
+// ----- JNI true-sharing bridge (implemented in Phase 6.6). Present now so the
+// full 135-symbol ABI is exported; these return null until 6.6 wires the
+// JavaVM/JNI forwarding.
+
+export fn AIBinder_fromJavaBinder(env: ?*anyopaque, binder: ?*anyopaque) callconv(.c) ?*AIBinder {
+    _ = env;
+    _ = binder;
+    return null;
+}
+export fn AIBinder_toJavaBinder(env: ?*anyopaque, binder: ?*AIBinder) callconv(.c) ?*anyopaque {
+    _ = env;
+    _ = binder;
+    return null;
+}
+export fn AParcel_fromJavaParcel(env: ?*anyopaque, parcel: ?*anyopaque) callconv(.c) ?*AParcel {
+    _ = env;
+    _ = parcel;
+    return null;
+}
+

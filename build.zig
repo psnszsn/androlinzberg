@@ -152,6 +152,13 @@ pub fn build(b: *std.Build) void {
     b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
         .dependOn(&b.addInstallFileWithDir(binder_ndk.getEmittedBin(), .{ .custom = "lib/art" }, "libbinder_ndk.so").step);
 
+    // ABI-conformance check: the installed .so must export every A* symbol the
+    // prebuilt libbinder_ndk.so does, so unmodified NDK/AIDL clients resolve.
+    const ndk_abi_check = b.addSystemCommand(&.{ "bash", "tools/check-ndk-abi.sh" });
+    ndk_abi_check.addFileArg(b.graph.path(.install_prefix, "lib/art/libbinder_ndk.so"));
+    ndk_abi_check.step.dependOn(b.getInstallStep());
+    b.step("ndk-abi", "Check libbinder_ndk exports the full prebuilt ABI").dependOn(&ndk_abi_check.step);
+
     // Native binder self-test: links the ABI and drives it against a broker.
     const ndk_test = b.addExecutable(.{
         .name = "azk-ndk-test",
@@ -411,6 +418,7 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);
     native_test_step.dependOn(&run_binder_broker_tests.step);
+    native_test_step.dependOn(&ndk_abi_check.step);
     native_test_step.dependOn(&platform_abi_check.step);
     native_test_step.dependOn(&launcher_check.step);
     native_test_step.dependOn(&cpp_audit.step);

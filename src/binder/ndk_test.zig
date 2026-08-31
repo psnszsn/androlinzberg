@@ -13,8 +13,12 @@ const Io = std.Io;
 // The NDK C ABI (subset under test), resolved from the linked libbinder_ndk.
 const AIBinder = opaque {};
 const AIBinder_Class = opaque {};
+const AIBinder_Weak = opaque {};
 const AParcel = opaque {};
 const AStatus = opaque {};
+extern fn AIBinder_Weak_new(binder: *AIBinder) callconv(.c) ?*AIBinder_Weak;
+extern fn AIBinder_Weak_promote(weak: *AIBinder_Weak) callconv(.c) ?*AIBinder;
+extern fn AIBinder_Weak_delete(weak: *AIBinder_Weak) callconv(.c) void;
 extern fn AIBinder_Class_define(
     desc: [*:0]const u8,
     onCreate: ?*const fn (?*anyopaque) callconv(.c) ?*anyopaque,
@@ -33,10 +37,13 @@ extern fn AParcel_readInt32(parcel: *const AParcel, value: *i32) callconv(.c) i3
 extern fn AParcel_writeString(parcel: *AParcel, string: ?[*]const u8, length: i32) callconv(.c) i32;
 extern fn AParcel_readString(parcel: *const AParcel, data: ?*anyopaque, allocator: *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool) callconv(.c) i32;
 extern fn AParcel_delete(parcel: *AParcel) callconv(.c) void;
+extern fn AParcel_writeInt32Array(parcel: *AParcel, data: ?[*]const i32, length: i32) callconv(.c) i32;
+extern fn AParcel_readInt32Array(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: *const fn (?*anyopaque, i32, ?*?[*]i32) callconv(.c) bool) callconv(.c) i32;
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 const TRANSACT_ADD: u32 = 1;
 const TRANSACT_ECHO: u32 = 2;
+const TRANSACT_ARR: u32 = 3;
 
 /// The service under test: `add(a, b) -> a+b` and `echo(str) -> str`.
 fn onTransact(binder: *AIBinder, code: u32, in: *const AParcel, out: *AParcel) callconv(.c) i32 {
@@ -58,8 +65,33 @@ fn onTransact(binder: *AIBinder, code: u32, in: *const AParcel, out: *AParcel) c
             _ = AParcel_writeString(out, &buf, @intCast(echo_len));
             return 0;
         },
+        TRANSACT_ARR => {
+            // Read an int32 array and write each element doubled back.
+            srv_arr_len = 0;
+            _ = AParcel_readInt32Array(in, null, srvArrAlloc);
+            for (srv_arr[0..srv_arr_len]) |*v| v.* *= 2;
+            _ = AParcel_writeInt32Array(out, &srv_arr, @intCast(srv_arr_len));
+            return 0;
+        },
         else => return -1,
     }
+}
+
+var srv_arr: [16]i32 = undefined;
+var srv_arr_len: usize = 0;
+fn srvArrAlloc(_: ?*anyopaque, length: i32, buffer: ?*?[*]i32) callconv(.c) bool {
+    if (length < 0) return true;
+    srv_arr_len = @intCast(length);
+    if (buffer) |b| b.* = &srv_arr;
+    return true;
+}
+var cli_arr: [16]i32 = undefined;
+var cli_arr_len: usize = 0;
+fn cliArrAlloc(_: ?*anyopaque, length: i32, buffer: ?*?[*]i32) callconv(.c) bool {
+    if (length < 0) return true;
+    cli_arr_len = @intCast(length);
+    if (buffer) |b| b.* = &cli_arr;
+    return true;
 }
 
 var echo_buf: ?[*]u8 = null;
@@ -195,6 +227,21 @@ pub fn main(init: std.process.Init) !void {
         if (out) |o| AParcel_delete(o);
     }
 
+    // An int32 array round-trips through the typed AParcel array codecs.
+    {
+        var in: ?*AParcel = null;
+        _ = AIBinder_prepareTransaction(remote, &in);
+        const vals = [_]i32{ 1, 2, 3 };
+        _ = AParcel_writeInt32Array(in.?, &vals, vals.len);
+        var out: ?*AParcel = null;
+        const rc = AIBinder_transact(remote, TRANSACT_ARR, &in, &out, 0);
+        check(rc == 0, "transact array succeeded", &failures);
+        cli_arr_len = 0;
+        _ = AParcel_readInt32Array(out.?, null, cliArrAlloc);
+        check(cli_arr_len == 3 and cli_arr[0] == 2 and cli_arr[1] == 4 and cli_arr[2] == 6, "int32 array round trip doubled", &failures);
+        if (out) |o| AParcel_delete(o);
+    }
+
     // A transaction whose parcel carries a different interface descriptor is
     // refused before reaching onTransact. Prepare the parcel from a binder of
     // another class so its token names the wrong interface.
@@ -210,6 +257,21 @@ pub fn main(init: std.process.Init) !void {
         check(rc != 0, "mismatched interface token rejected", &failures);
         if (out) |o| AParcel_delete(o);
         AIBinder_decStrong(other);
+    }
+
+    // Weak-reference lifecycle: promote succeeds while strongly held, the
+    // control block survives the last strong drop, and promote then returns
+    // null instead of resurrecting the destroyed object.
+    {
+        const b = AIBinder_new(class, null); // strong=1 (never exported)
+        const w = AIBinder_Weak_new(b).?;
+        const p1 = AIBinder_Weak_promote(w);
+        check(p1 == b, "weak promote returns the live object", &failures);
+        if (p1) |p| AIBinder_decStrong(p); // drop the promote's ref
+        AIBinder_decStrong(b); // last strong ref: payload destroyed
+        const p2 = AIBinder_Weak_promote(w);
+        check(p2 == null, "weak promote is null after the object dies", &failures);
+        AIBinder_Weak_delete(w); // frees the control block
     }
 
     AIBinder_decStrong(remote);
