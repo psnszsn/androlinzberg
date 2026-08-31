@@ -18,6 +18,10 @@
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
+/// JNI type bindings (translated jni.h) for the true-sharing bridge. Used only
+/// when the library is loaded into an ART process; a standalone native client
+/// never calls the JNI functions.
+const jni = @import("art").jni;
 const Connection = @import("Connection.zig");
 const Client = @import("Client.zig");
 const Server = @import("Server.zig");
@@ -359,17 +363,18 @@ const AIBinder = struct {
     /// destroyed. Defaults to 1 for the implicit strong-held reference.
     weak: std.atomic.Value(u32) = .init(1),
 
+    /// Process-local object ids, assigned without connecting to the broker: a
+    /// local object needs no broker involvement until it is exported (sent or
+    /// registered), and a JNI-bridge object never is. Keeps AIBinder_new /
+    /// fromJavaBinder usable in a process that never opens a broker connection.
+    var next_local_id = std.atomic.Value(u64).init(1);
+
     fn createLocal(class: *AIBinder_Class, user_data: ?*anyopaque) *AIBinder {
         const b = alloc.create(AIBinder) catch @panic("oom");
-        const rt = Runtime.get();
-        rt.mu.lockUncancelable(g_io);
-        const id = rt.next_local_id;
-        rt.next_local_id += 1;
-        b.* = .{ .strong = .init(1), .kind = .local, .class = class, .user_data = user_data, .id = id, .dead = .init(false) };
+        b.* = .{ .strong = .init(1), .kind = .local, .class = class, .user_data = user_data, .id = next_local_id.fetchAdd(1, .monotonic), .dead = .init(false) };
         // Not registered in `locals` until exported: the broker only routes
         // incoming transactions to objects this peer has sent or registered,
         // and `exportLocal` both records it and holds a ref for that lifetime.
-        rt.mu.unlock(g_io);
         return b;
     }
 };
@@ -465,7 +470,6 @@ const Runtime = struct {
     write_mu: Io.Mutex = .init,
     mu: Io.Mutex = .init,
     next_request_id: std.atomic.Value(u64) = .init(1),
-    next_local_id: u64 = 1,
     pending: std.AutoHashMapUnmanaged(u64, *PendingCall) = .empty,
     locals: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
     export_uses: std.AutoHashMapUnmanaged(u64, u64) = .empty,
@@ -829,6 +833,24 @@ const Runtime = struct {
         return b;
     }
 
+    /// A proxy for a global id this peer did NOT receive a broker delivery for
+    /// (the JNI bridge translating a global id owned by the other same-process
+    /// peer). Routing is by global id, so the proxy transacts fine; but it must
+    /// not count a delivery, or releasing it would send a `release` the broker
+    /// never handed out. Only the strong count moves.
+    fn proxyForBorrowed(r: *Runtime, global_id: u64) *AIBinder {
+        r.mu.lockUncancelable(g_io);
+        defer r.mu.unlock(g_io);
+        if (r.proxies.get(global_id)) |b| {
+            _ = b.strong.fetchAdd(1, .monotonic);
+            return b; // no deliveries bump
+        }
+        const b = alloc.create(AIBinder) catch @panic("oom");
+        b.* = .{ .strong = .init(1), .kind = .remote, .id = global_id, .dead = .init(false), .deliveries = 0 };
+        r.proxies.put(alloc, global_id, b) catch @panic("oom");
+        return b;
+    }
+
     fn releaseProxy(r: *Runtime, b: *AIBinder) void {
         r.mu.lockUncancelable(g_io);
         if (r.proxies.get(b.id) == b) _ = r.proxies.remove(b.id);
@@ -993,7 +1015,7 @@ const Runtime = struct {
     fn transact(r: *Runtime, target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel, flags: u32) i32 {
         // A local target is an in-process object (AOSP short-circuits these to
         // a direct call rather than a kernel/broker round-trip).
-        if (target.kind == .local) return r.localTransact(target, code, in, out);
+        if (target.kind == .local) return localTransact(target, code, in, out);
         if (target.dead.load(.monotonic) or r.disconnected.load(.monotonic)) return STATUS_DEAD_OBJECT;
         const oneway = flags & FLAG_ONEWAY != 0;
         const request_id: u64 = if (oneway) 0 else r.next_request_id.fetchAdd(1, .monotonic);
@@ -1045,7 +1067,11 @@ const Runtime = struct {
     /// In-process dispatch to a local object (self-call short-circuit). The
     /// caller identity is this process; the reply parcel is left positioned at
     /// the start for the caller to read.
-    fn localTransact(r: *Runtime, target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel) i32 {
+    /// In-process dispatch to a local object (self-call short-circuit). Needs no
+    /// broker connection — a local object is serviced entirely in this process —
+    /// so a JNI-bridge or unexported local binder is transactable even before
+    /// (or without) the library ever connects.
+    fn localTransact(target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel) i32 {
         const class = target.class orelse return STATUS_UNEXPECTED_NULL;
         const on_transact = class.on_transact orelse return STATUS_UNEXPECTED_NULL;
         in.pos = 0;
@@ -1062,8 +1088,13 @@ const Runtime = struct {
         const prev_uid = current_caller_uid;
         const prev_pid = current_caller_pid;
         current_routing = std.math.maxInt(u64); // nonzero: "handling a transaction"
-        current_caller_uid = r.uid;
-        current_caller_pid = r.pid;
+        // Self identity: the connected runtime's uid if there is one, else this
+        // process's own (a bridge-only process may never connect). v1 limitation:
+        // when only the Java runtime is connected, the native side cannot see its
+        // broker-assigned Android uid and falls back to the host uid — observable
+        // only via AIBinder_getCallingUid inside a self-call.
+        current_caller_uid = if (Runtime.instance) |r| r.uid else std.os.linux.getuid();
+        current_caller_pid = if (Runtime.instance) |r| r.pid else @intCast(std.os.linux.getpid());
         const rc = on_transact(target, code, in, reply);
         current_routing = prev_routing;
         current_caller_uid = prev_uid;
@@ -1862,7 +1893,12 @@ export fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *
         return STATUS_UNKNOWN_TRANSACTION;
     }
     const reply = if (flags & FLAG_ONEWAY == 0) AParcel.create() else null;
-    const rc = Runtime.get().transact(binder, code, in_parcel, reply, flags);
+    // A local target is serviced in-process (no broker); only a remote target
+    // needs the connection, so don't force one for a purely local call.
+    const rc = if (binder.kind == .local)
+        Runtime.localTransact(binder, code, in_parcel, reply)
+    else
+        Runtime.get().transact(binder, code, in_parcel, reply, flags);
     out.* = reply;
     return rc;
 }
@@ -2233,23 +2269,349 @@ export fn ABinderProcess_handlePolledCommands() callconv(.c) i32 {
     return STATUS_OK;
 }
 
-// ----- JNI true-sharing bridge (implemented in Phase 6.6). Present now so the
-// full 135-symbol ABI is exported; these return null until 6.6 wires the
-// JavaVM/JNI forwarding.
+// ----- JNI true-sharing bridge
+//
+// When libbinder_ndk is loaded into an ART process (System.load), native code
+// and the JVM HostedBinderRuntime are two peers of the same broker. This bridge
+// converts binders across the language boundary in-process:
+//   * a remote handle translates by broker global id (no forwarding);
+//   * a local handle is wrapped so a call on one side is forwarded, via JNI, to
+//     the object on the other side.
+// Parcel conversion is object-free in v1 (raw marshalled bytes; the Java Parcel
+// rejects marshalling binder objects), which covers callbacks passing data.
 
-export fn AIBinder_fromJavaBinder(env: ?*anyopaque, binder: ?*anyopaque) callconv(.c) ?*AIBinder {
-    _ = env;
-    _ = binder;
-    return null;
-}
-export fn AIBinder_toJavaBinder(env: ?*anyopaque, binder: ?*AIBinder) callconv(.c) ?*anyopaque {
-    _ = env;
-    _ = binder;
-    return null;
-}
-export fn AParcel_fromJavaParcel(env: ?*anyopaque, parcel: ?*anyopaque) callconv(.c) ?*AParcel {
-    _ = env;
-    _ = parcel;
-    return null;
+/// The process JavaVM, captured by JNI_OnLoad when libbinder_ndk is loaded into
+/// an ART process. Null in a standalone native process (bridge unused).
+var g_jvm: ?*anyopaque = null;
+
+export fn JNI_OnLoad(vm: ?*anyopaque, reserved: ?*anyopaque) callconv(.c) i32 {
+    _ = reserved;
+    ensureIo(); // the bridge uses g_io (its mutex) without a broker connection
+    g_jvm = vm;
+    return jni.JNI_VERSION_1_6;
 }
 
+
+/// Cached JNI ids for the bridge, resolved once against the loaded classes.
+const Bridge = struct {
+    binderproxy_class: jni.jclass,
+    binderproxy_globalid: jni.jfieldID, // BinderProxy.globalId : J
+    parcel_class: jni.jclass,
+    parcel_obtain: jni.jmethodID, // static obtain()Landroid/os/Parcel;
+    parcel_marshall: jni.jmethodID, // marshall()[B
+    parcel_unmarshall: jni.jmethodID, // unmarshall([BII)V
+    parcel_recycle: jni.jmethodID, // recycle()V
+    binder_transact: jni.jmethodID, // Binder.transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
+    hbr_class: jni.jclass,
+    proxy_for_global: jni.jmethodID, // static (J)Landroid/os/BinderProxy;
+    native_forwarding: jni.jmethodID, // static (J)Landroid/os/Binder;
+};
+var g_bridge: ?Bridge = null;
+var g_bridge_mu: Io.Mutex = .init;
+
+const JNIEnvPtr = [*c]jni.JNIEnv;
+
+/// A JNIEnv for the calling thread, attaching it to the VM if necessary (e.g. a
+/// broker reader/dispatch thread that never entered the JVM on its own).
+/// A JNIEnv for the calling thread ([*c], null on failure), attaching it to the
+/// VM if necessary (e.g. a broker reader/dispatch thread that never entered the
+/// JVM on its own). v1 limitation: an attached library thread is not detached
+/// (no DetachCurrentThread) — harmless for the tested path, where the bridge
+/// runs on already-attached JVM threads; the remote-forward path (a library
+/// worker forwarding to Java) would want a pthread-key detach on thread exit.
+fn jniEnv() JNIEnvPtr {
+    const vm: [*c]jni.JavaVM = @ptrCast(@alignCast(g_jvm orelse return null));
+    var env: ?*anyopaque = null;
+    if (vm.*.*.GetEnv.?(vm, &env, jni.JNI_VERSION_1_6) != jni.JNI_OK) {
+        if (vm.*.*.AttachCurrentThread.?(vm, @ptrCast(&env), null) != jni.JNI_OK) return null;
+    }
+    return @ptrCast(@alignCast(env));
+}
+
+fn findGlobalClass(env: JNIEnvPtr, name: [*:0]const u8) ?jni.jclass {
+    const local = env.*.*.FindClass.?(env, name) orelse return null;
+    const global: jni.jclass = @ptrCast(env.*.*.NewGlobalRef.?(env, local));
+    env.*.*.DeleteLocalRef.?(env, local);
+    return global;
+}
+
+fn ensureBridge(env: JNIEnvPtr) ?*Bridge {
+    // Resolves the JVM classes/methods once and caches them. v1 note: a partial
+    // failure here (a class or member not found — a fatal misconfiguration that
+    // does not occur with the hosted framework) leaks the global refs created
+    // so far; it is not retried in practice because the members always exist.
+    g_bridge_mu.lockUncancelable(g_io);
+    defer g_bridge_mu.unlock(g_io);
+    if (g_bridge) |*b| return b;
+    const bp = findGlobalClass(env, "android/os/BinderProxy") orelse return null;
+    const pc = findGlobalClass(env, "android/os/Parcel") orelse return null;
+    const binder_class = env.*.*.FindClass.?(env, "android/os/Binder") orelse return null;
+    const hbr = findGlobalClass(env, "android/os/HostedBinderRuntime") orelse return null;
+    const b = Bridge{
+        .binderproxy_class = bp,
+        .binderproxy_globalid = env.*.*.GetFieldID.?(env, bp, "globalId", "J") orelse return null,
+        .parcel_class = pc,
+        .parcel_obtain = env.*.*.GetStaticMethodID.?(env, pc, "obtain", "()Landroid/os/Parcel;") orelse return null,
+        .parcel_marshall = env.*.*.GetMethodID.?(env, pc, "marshall", "()[B") orelse return null,
+        .parcel_unmarshall = env.*.*.GetMethodID.?(env, pc, "unmarshall", "([BII)V") orelse return null,
+        .parcel_recycle = env.*.*.GetMethodID.?(env, pc, "recycle", "()V") orelse return null,
+        .binder_transact = env.*.*.GetMethodID.?(env, binder_class, "transact", "(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z") orelse return null,
+        .hbr_class = hbr,
+        .proxy_for_global = env.*.*.GetStaticMethodID.?(env, hbr, "proxyForGlobalId", "(J)Landroid/os/BinderProxy;") orelse return null,
+        .native_forwarding = env.*.*.GetStaticMethodID.?(env, hbr, "nativeForwardingBinder", "(J)Landroid/os/Binder;") orelse return null,
+    };
+    env.*.*.DeleteLocalRef.?(env, binder_class);
+    g_bridge = b;
+    return &g_bridge.?;
+}
+
+fn clearException(env: JNIEnvPtr) bool {
+    if (env.*.*.ExceptionCheck.?(env) == jni.JNI_TRUE) {
+        env.*.*.ExceptionClear.?(env);
+        return true;
+    }
+    return false;
+}
+
+/// Marshals a Java Parcel's raw bytes (object-free) into an allocated slice.
+fn javaMarshall(env: JNIEnvPtr, b: *Bridge, java: jni.jobject) ?[]u8 {
+    const arr: jni.jbyteArray = @ptrCast(env.*.*.CallObjectMethodA.?(env, java, b.parcel_marshall, null));
+    if (clearException(env)) return null;
+    if (arr == null) return alloc.alloc(u8, 0) catch @panic("oom");
+    const len: usize = @intCast(env.*.*.GetArrayLength.?(env, arr));
+    const buf = alloc.alloc(u8, len) catch @panic("oom");
+    if (len > 0) env.*.*.GetByteArrayRegion.?(env, arr, 0, @intCast(len), @ptrCast(buf.ptr));
+    env.*.*.DeleteLocalRef.?(env, arr);
+    return buf;
+}
+
+/// Replaces a Java Parcel's contents with raw bytes (object-free).
+fn javaUnmarshall(env: JNIEnvPtr, b: *Bridge, java: jni.jobject, bytes: []const u8) void {
+    const arr = env.*.*.NewByteArray.?(env, @intCast(bytes.len)) orelse return;
+    if (bytes.len > 0) env.*.*.SetByteArrayRegion.?(env, arr, 0, @intCast(bytes.len), @ptrCast(@constCast(bytes.ptr)));
+    var args: [3]jni.jvalue = undefined;
+    args[0].l = arr;
+    args[1].i = 0;
+    args[2].i = @intCast(bytes.len);
+    env.*.*.CallVoidMethodA.?(env, java, b.parcel_unmarshall, &args);
+    _ = clearException(env);
+    env.*.*.DeleteLocalRef.?(env, arr);
+}
+
+/// on_transact for a native AIBinder that wraps a local Java Binder: forward the
+/// call to the Java object via JNI (fromJavaBinder's forward direction). v1
+/// limitation: the calling identity (uid/pid) is not installed on the Java
+/// Binder thread-local, so a remotely-originated call would appear to Java as
+/// self-originated (correct for the tested in-process case, where it is self).
+fn javaForwardTransact(binder: *AIBinder, code: u32, in: *const AParcel, out: *AParcel) callconv(.c) i32 {
+    const env = jniEnv();
+    if (env == null) return STATUS_FAILED_TRANSACTION;
+    const b = ensureBridge(env) orelse return STATUS_FAILED_TRANSACTION;
+    const java_binder: jni.jobject = @ptrCast(binder.user_data);
+
+    const data = env.*.*.CallStaticObjectMethodA.?(env, b.parcel_class, b.parcel_obtain, null) orelse return STATUS_FAILED_TRANSACTION;
+    const reply = env.*.*.CallStaticObjectMethodA.?(env, b.parcel_class, b.parcel_obtain, null) orelse {
+        _ = clearException(env);
+        env.*.*.CallVoidMethodA.?(env, data, b.parcel_recycle, null);
+        env.*.*.DeleteLocalRef.?(env, data);
+        return STATUS_FAILED_TRANSACTION;
+    };
+    javaUnmarshall(env, b, data, @constCast(in).data.items);
+
+    var args: [4]jni.jvalue = undefined;
+    args[0].i = @bitCast(code);
+    args[1].l = data;
+    args[2].l = reply;
+    args[3].i = 0;
+    const handled = env.*.*.CallBooleanMethodA.?(env, java_binder, b.binder_transact, &args);
+    const threw = clearException(env);
+
+    if (!threw and handled == jni.JNI_TRUE) {
+        if (javaMarshall(env, b, reply)) |bytes| {
+            defer alloc.free(bytes);
+            out.writeBytes(bytes);
+        }
+    }
+    env.*.*.CallVoidMethodA.?(env, data, b.parcel_recycle, null);
+    env.*.*.CallVoidMethodA.?(env, reply, b.parcel_recycle, null);
+    env.*.*.DeleteLocalRef.?(env, data);
+    env.*.*.DeleteLocalRef.?(env, reply);
+    if (threw) return STATUS_FAILED_TRANSACTION;
+    return if (handled == jni.JNI_TRUE) STATUS_OK else STATUS_UNKNOWN_TRANSACTION;
+}
+
+/// The bridge class for Java-forwarding native binders (no interface token; the
+/// forwarded Java Parcel already carries whatever the caller wrote).
+var g_java_forward_class = AIBinder_Class{
+    .descriptor = @constCast("azk.JavaForward"),
+    .token_header = false,
+    .on_create = null,
+    .on_destroy = javaForwardDestroy,
+    .on_transact = javaForwardTransact,
+};
+
+fn javaForwardDestroy(user_data: ?*anyopaque) callconv(.c) void {
+    // Release the global ref to the wrapped Java Binder when the native handle
+    // is freed.
+    if (user_data == null) return;
+    const env = jniEnv();
+    if (env == null) return;
+    env.*.*.DeleteGlobalRef.?(env, @ptrCast(user_data));
+}
+
+export fn AIBinder_fromJavaBinder(env_opaque: ?*anyopaque, binder: ?*anyopaque) callconv(.c) ?*AIBinder {
+    const obj: jni.jobject = @ptrCast(binder orelse return null);
+    const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return null));
+    const b = ensureBridge(env) orelse return null;
+    if (env.*.*.IsInstanceOf.?(env, obj, b.binderproxy_class) == jni.JNI_TRUE) {
+        // Remote: a native proxy for the same broker object. Borrowed — the
+        // JVM peer received this global id, this native peer did not, so it must
+        // not count a delivery it never got.
+        const gid = env.*.*.GetLongField.?(env, obj, b.binderproxy_globalid);
+        return Runtime.get().proxyForBorrowed(@bitCast(gid));
+    }
+    // Local Java Binder: a native handle that forwards transactions to it.
+    const global = env.*.*.NewGlobalRef.?(env, obj) orelse return null;
+    return AIBinder.createLocal(&g_java_forward_class, global);
+}
+
+export fn AIBinder_toJavaBinder(env_opaque: ?*anyopaque, binder: ?*AIBinder) callconv(.c) ?*anyopaque {
+    const bnd = binder orelse return null;
+    const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return null));
+    const b = ensureBridge(env) orelse return null;
+    if (bnd.kind == .remote) {
+        // Remote: a BinderProxy for the same broker object.
+        var args: [1]jni.jvalue = undefined;
+        args[0].j = @bitCast(bnd.id);
+        return env.*.*.CallStaticObjectMethodA.?(env, b.hbr_class, b.proxy_for_global, &args);
+    }
+    if (bnd.class == &g_java_forward_class) {
+        // Already a wrapped Java Binder: hand back the original object.
+        return env.*.*.NewLocalRef.?(env, @ptrCast(bnd.user_data));
+    }
+    // Local native AIBinder: a Java Binder that forwards to it. The Java wrapper
+    // holds a strong ref, released when the wrapper is finalized.
+    AIBinder_incStrong(bnd);
+    var args: [1]jni.jvalue = undefined;
+    args[0].j = @intCast(@intFromPtr(bnd));
+    const wrapper = env.*.*.CallStaticObjectMethodA.?(env, b.hbr_class, b.native_forwarding, &args);
+    if (wrapper == null or clearException(env)) {
+        // The wrapper never took the ref; roll it back so the object is not leaked.
+        AIBinder_decStrong(bnd);
+        return null;
+    }
+    return wrapper;
+}
+
+export fn AParcel_fromJavaParcel(env_opaque: ?*anyopaque, parcel: ?*anyopaque) callconv(.c) ?*AParcel {
+    // v1 limitation: a read-only byte snapshot of the Java Parcel (object-free),
+    // not a live wrapper of its buffer as AOSP provides. Native writes do not
+    // flow back to the Java Parcel, and later Java-side changes are not seen.
+    const obj: jni.jobject = @ptrCast(parcel orelse return null);
+    const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return null));
+    const b = ensureBridge(env) orelse return null;
+    const bytes = javaMarshall(env, b, obj) orelse return null;
+    defer alloc.free(bytes);
+    const p = AParcel.create();
+    p.writeBytes(bytes);
+    p.pos = 0;
+    return p;
+}
+
+/// Native method for android.os.HostedBinderRuntime.NativeForwardingBinder: a
+/// Java transaction on a native-backed binder, forwarded to the native
+/// AIBinder's on_transact (toJavaBinder's reverse direction).
+export fn Java_dev_artzig_NativeForwardingBinder_nativeTransact(
+    env_opaque: ?*anyopaque,
+    thiz: ?*anyopaque,
+    native_ptr: i64,
+    code: i32,
+    data: ?*anyopaque,
+    reply: ?*anyopaque,
+    flags: i32,
+) callconv(.c) i32 {
+    _ = thiz;
+    _ = flags;
+    const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return jni.JNI_FALSE));
+    const b = ensureBridge(env) orelse return jni.JNI_FALSE;
+    const bnd: *AIBinder = @ptrFromInt(@as(usize, @intCast(native_ptr)));
+
+    const in = AParcel.create();
+    defer in.destroy();
+    if (data) |d| {
+        const bytes = javaMarshall(env, b, @ptrCast(d)) orelse return jni.JNI_FALSE;
+        defer alloc.free(bytes);
+        in.writeBytes(bytes);
+        in.pos = 0;
+    }
+    var out = AParcel.create();
+    defer out.destroy();
+    // Route through localTransact so the interface-token header is consumed and
+    // the transaction identity (isHandlingTransaction, calling uid/pid) is
+    // installed, exactly as an incoming transaction would be.
+    const rc = Runtime.localTransact(bnd, @bitCast(code), in, out);
+    if (rc == STATUS_OK and reply != null) {
+        javaUnmarshall(env, b, @ptrCast(reply.?), out.data.items);
+    }
+    return if (rc == STATUS_OK) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+
+/// Releases the native AIBinder ref held by a NativeForwardingBinder (called
+/// from its finalizer / an explicit release).
+export fn Java_dev_artzig_NativeForwardingBinder_nativeRelease(
+    env_opaque: ?*anyopaque,
+    thiz: ?*anyopaque,
+    native_ptr: i64,
+) callconv(.c) void {
+    _ = env_opaque;
+    _ = thiz;
+    const bnd: *AIBinder = @ptrFromInt(@as(usize, @intCast(native_ptr)));
+    AIBinder_decStrong(bnd);
+}
+
+// ----- JNI bridge self-test entries (dev.artzig.NdkBridgeTest). Exercised only
+// by the in-process bridge test; inert otherwise.
+
+/// Native transacts a Java Binder passed in (fromJavaBinder forward direction):
+/// wraps it, calls add(a, b), returns the sum the Java onTransact wrote.
+export fn Java_dev_artzig_NdkBridgeTest_forwardAdd(env: ?*anyopaque, clazz: ?*anyopaque, java_binder: ?*anyopaque, a: i32, b: i32) callconv(.c) i32 {
+    _ = clazz;
+    const native = AIBinder_fromJavaBinder(env, java_binder) orelse return -1;
+    defer AIBinder_decStrong(native);
+    var in: ?*AParcel = null;
+    _ = AIBinder_prepareTransaction(native, &in);
+    _ = AParcel_writeInt32(in.?, a);
+    _ = AParcel_writeInt32(in.?, b);
+    var out: ?*AParcel = null;
+    const rc = AIBinder_transact(native, 1, &in, &out, 0);
+    var result: i32 = -2;
+    if (out) |o| {
+        if (rc == STATUS_OK) _ = AParcel_readInt32(o, &result);
+        o.destroy();
+    }
+    return if (rc == STATUS_OK) result else -3;
+}
+
+fn nativeAdderTransact(binder: *AIBinder, code: u32, in: *const AParcel, out: *AParcel) callconv(.c) i32 {
+    _ = binder;
+    if (code != 1) return STATUS_UNKNOWN_TRANSACTION;
+    var a: i32 = 0;
+    var b: i32 = 0;
+    _ = AParcel_readInt32(in, &a);
+    _ = AParcel_readInt32(in, &b);
+    _ = AParcel_writeInt32(out, a + b);
+    return STATUS_OK;
+}
+
+/// Creates a native AIBinder (add service) and returns it wrapped as a Java
+/// Binder (toJavaBinder reverse direction): the Java caller transacts it and the
+/// call is forwarded back to nativeAdderTransact.
+export fn Java_dev_artzig_NdkBridgeTest_makeNativeAdder(env: ?*anyopaque, clazz: ?*anyopaque) callconv(.c) ?*anyopaque {
+    _ = clazz;
+    const class = AIBinder_Class_define("azk.NativeAdder", null, null, nativeAdderTransact);
+    AIBinder_Class_disableInterfaceTokenHeader(class); // the Java caller sends raw args, no token
+    const binder = AIBinder_new(class, null);
+    const java = AIBinder_toJavaBinder(env, binder);
+    AIBinder_decStrong(binder); // the Java wrapper now holds the ref
+    return java;
+}

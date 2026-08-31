@@ -28,7 +28,14 @@ zig build -j10 cpp-audit
   native caller resolves both route through the broker. Installed as
   `lib/art/libbinder_ndk.so` (the NDK surface is a C ABI, so it stays in Zig
   and never touches the C++ allowlist); `src/bionic_translation.cfg` maps the
-  soname to it.
+  soname to it. When loaded into an ART process (`System.load` of its absolute
+  path; `JNI_OnLoad` captures the `JavaVM`), the `AIBinder_fromJavaBinder` /
+  `AIBinder_toJavaBinder` / `AParcel_fromJavaParcel` bridge converts binders
+  across the language boundary in-process — a remote handle by broker global
+  id, a local handle by a JNI-forwarding wrapper (native→Java via
+  `Binder.transact`, Java→native via the `NativeForwardingBinder` native
+  method). Local `AIBinder` operations need no broker connection, so the
+  library is usable purely for the bridge in a process that never connects.
 
 `src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C
 macros and callback code that Zig cannot import directly.

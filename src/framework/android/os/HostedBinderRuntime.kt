@@ -82,6 +82,19 @@ class HostedBinderRuntime private constructor(
         @JvmStatic
         fun assignedUid(): Int? = instance?.uid
 
+        // ---- JNI true-sharing bridge shims (called from libbinder_ndk) ----
+
+        /** A BinderProxy for a broker global id (native AIBinder_toJavaBinder,
+         *  remote case). Borrowed: this JVM peer did not receive the id (the
+         *  native peer did), so it must not count a broker delivery. */
+        @JvmStatic
+        fun proxyForGlobalId(globalId: Long): BinderProxy = get().proxyForBorrowed(globalId)
+
+        /** A Java Binder backed by a native AIBinder (native
+         *  AIBinder_toJavaBinder, local case). */
+        @JvmStatic
+        fun nativeForwardingBinder(nativePtr: Long): Binder = dev.artzig.NativeForwardingBinder(nativePtr)
+
         private val startLock = Any()
         @Volatile private var instance: HostedBinderRuntime? = null
 
@@ -244,6 +257,23 @@ class HostedBinderRuntime private constructor(
         }
         val state = ProxyState(globalId)
         state.deliveries = 1
+        val proxy = BinderProxy(this, globalId, state)
+        proxies[globalId] = ProxyRecord(WeakReference(proxy), state)
+        cleaner.register(proxy, ReleaseAction(this, state))
+        proxy
+    }
+
+    /**
+     * A proxy for a global id this peer did NOT receive a broker delivery for
+     * (the JNI bridge translating an id owned by the other same-process peer).
+     * Routing is by global id, so it transacts fine, but it must not count a
+     * delivery — releasing it would return one the broker never handed out.
+     */
+    private fun proxyForBorrowed(globalId: Long): BinderProxy = synchronized(lock) {
+        proxies[globalId]?.let { record ->
+            record.ref.get()?.let { return it } // reuse; no delivery bump
+        }
+        val state = ProxyState(globalId) // deliveries stays 0: releaseProxy sends nothing
         val proxy = BinderProxy(this, globalId, state)
         proxies[globalId] = ProxyRecord(WeakReference(proxy), state)
         cleaner.register(proxy, ReleaseAction(this, state))

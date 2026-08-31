@@ -142,6 +142,9 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            // JNI type bindings for the true-sharing bridge (compile-time only;
+            // no runtime dependency in a standalone, non-JVM process).
+            .imports = &.{.{ .name = "art", .module = art_mod }},
         }),
     });
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
@@ -485,6 +488,17 @@ pub fn build(b: *std.Build) void {
     framework_compat_smoke.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_compat_smoke.step.dependOn(b.getInstallStep());
     jvm_test_step.dependOn(&framework_compat_smoke.step);
+    // JNI true-sharing bridge: loads libbinder_ndk into the ART process and
+    // round-trips a binder across the language boundary in both directions.
+    const ndk_bridge_test = std.Build.Step.Run.create(b, "run libbinder_ndk JNI bridge test");
+    ndk_bridge_test.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    ndk_bridge_test.addArg("--javatest");
+    // The absolute path of the installed library, loaded via System.load.
+    ndk_bridge_test.addFileArg(b.graph.path(.install_prefix, "lib/art/libbinder_ndk.so"));
+    ndk_bridge_test.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.NdkBridgeTest");
+    ndk_bridge_test.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    ndk_bridge_test.step.dependOn(b.getInstallStep());
+    jvm_test_step.dependOn(&ndk_bridge_test.step);
     const jvm_exit_smoke = std.Build.Step.Run.create(b, "run hosted JVM exit smoke");
     jvm_exit_smoke.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
     jvm_exit_smoke.addArg("--javatest");
