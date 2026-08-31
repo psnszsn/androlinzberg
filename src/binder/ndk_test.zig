@@ -32,6 +32,7 @@ extern fn AParcel_writeInt32(parcel: *AParcel, value: i32) callconv(.c) i32;
 extern fn AParcel_readInt32(parcel: *const AParcel, value: *i32) callconv(.c) i32;
 extern fn AParcel_writeString(parcel: *AParcel, string: ?[*]const u8, length: i32) callconv(.c) i32;
 extern fn AParcel_readString(parcel: *const AParcel, data: ?*anyopaque, allocator: *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool) callconv(.c) i32;
+extern fn AParcel_delete(parcel: *AParcel) callconv(.c) void;
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 const TRANSACT_ADD: u32 = 1;
@@ -177,6 +178,7 @@ pub fn main(init: std.process.Init) !void {
         var result: i32 = 0;
         _ = AParcel_readInt32(out.?, &result);
         check(result == 42, "add returned 42 via local dispatch", &failures);
+        if (out) |o| AParcel_delete(o);
     }
     // echo("héllo") round-trips a UTF-8/UTF-16 string.
     {
@@ -190,6 +192,24 @@ pub fn main(init: std.process.Init) !void {
         read_len = 0;
         _ = AParcel_readString(out.?, null, readAlloc);
         check(std.mem.eql(u8, read_buf[0..read_len], s), "string round trip via local dispatch", &failures);
+        if (out) |o| AParcel_delete(o);
+    }
+
+    // A transaction whose parcel carries a different interface descriptor is
+    // refused before reaching onTransact. Prepare the parcel from a binder of
+    // another class so its token names the wrong interface.
+    {
+        const other_class = AIBinder_Class_define("dev.artzig.ndk.IOther", null, null, onTransact);
+        const other = AIBinder_new(other_class, null);
+        var in: ?*AParcel = null;
+        _ = AIBinder_prepareTransaction(other, &in); // token = IOther
+        _ = AParcel_writeInt32(in.?, 1);
+        _ = AParcel_writeInt32(in.?, 2);
+        var out: ?*AParcel = null;
+        const rc = AIBinder_transact(remote, TRANSACT_ADD, &in, &out, 0);
+        check(rc != 0, "mismatched interface token rejected", &failures);
+        if (out) |o| AParcel_delete(o);
+        AIBinder_decStrong(other);
     }
 
     AIBinder_decStrong(remote);

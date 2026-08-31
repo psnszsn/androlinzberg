@@ -97,11 +97,17 @@ const STATUS_NAME_NOT_FOUND: i32 = -@as(i32, @intCast(@intFromEnum(E.NOENT)));
 const STATUS_DEAD_OBJECT: i32 = -@as(i32, @intCast(@intFromEnum(E.PIPE)));
 const STATUS_FAILED_TRANSACTION: i32 = STATUS_UNKNOWN_ERROR + 2;
 const STATUS_UNEXPECTED_NULL: i32 = STATUS_UNKNOWN_ERROR + 8;
+const STATUS_BAD_TYPE: i32 = -@as(i32, @intCast(@intFromEnum(E.ISDIR)));
+const STATUS_UNKNOWN_TRANSACTION: i32 = -@as(i32, @intCast(@intFromEnum(E.BADMSG)));
 
 const EX_NONE: i32 = 0;
 const EX_TRANSACTION_FAILED: i32 = -129;
 
 const FLAG_ONEWAY: u32 = 0x01;
+/// User transaction codes carry an interface-descriptor token; the framework
+/// codes below FIRST_CALL_TRANSACTION (PING/DUMP/INTERFACE/...) do not.
+const FIRST_CALL_TRANSACTION: u32 = 0x00000001;
+const LAST_CALL_TRANSACTION: u32 = 0x00ffffff;
 
 // -------------------------------------------------------------------- AStatus
 
@@ -276,12 +282,33 @@ const AParcel = struct {
         p.skipPad();
         return out.toOwnedSlice(alloc) catch @panic("oom");
     }
+
+    /// Interface-descriptor token, in the hosted layout the JVM Parcel's
+    /// writeInterfaceToken uses: a single strict-mode policy int (0) followed
+    /// by writeString(descriptor). libbinder_ndk writes it in
+    /// prepareTransaction and checks it before dispatch (mirroring ABBinder).
+    fn writeInterfaceToken(p: *AParcel, descriptor: []const u8) void {
+        p.writeI32(0);
+        p.writeString(descriptor, @intCast(descriptor.len));
+    }
+    /// Consumes a token and reports whether it names `descriptor`. Leaves the
+    /// parcel positioned just after the token; a short/malformed token counts
+    /// as a mismatch.
+    fn enforceInterfaceToken(p: *AParcel, descriptor: []const u8) bool {
+        _ = p.readI32() orelse return false;
+        const s = p.readString() catch return false;
+        defer alloc.free(s);
+        return std.mem.eql(u8, s, descriptor);
+    }
 };
 
 // ------------------------------------------------------------ AIBinder + class
 
 const AIBinder_Class = struct {
     descriptor: []u8,
+    /// Whether user transactions carry an interface-descriptor token (AOSP
+    /// default; cleared by AIBinder_Class_disableInterfaceTokenHeader).
+    token_header: bool = true,
     on_create: ?*const fn (?*anyopaque) callconv(.c) ?*anyopaque,
     on_destroy: ?*const fn (?*anyopaque) callconv(.c) void,
     on_transact: ?*const fn (*AIBinder, u32, *const AParcel, *AParcel) callconv(.c) i32,
@@ -586,7 +613,16 @@ const Runtime = struct {
         var out = AParcel.create();
         defer out.destroy();
         var status = Client.Message.Reply.Status.ok;
+        const token_ok = target != null and target.?.class != null and
+            (!target.?.class.?.token_header or
+                in.code < FIRST_CALL_TRANSACTION or in.code > LAST_CALL_TRANSACTION or
+                in.parcel.enforceInterfaceToken(target.?.class.?.descriptor));
         if (target == null or target.?.class == null or target.?.class.?.on_transact == null) {
+            status = .failed;
+        } else if (!token_ok) {
+            // Wrong interface descriptor: refuse the call (AOSP returns
+            // STATUS_BAD_TYPE). The v3 reply enum collapses this to `failed`;
+            // 6.5 carries the exact status.
             status = .failed;
         } else {
             const prev_routing = current_routing;
@@ -834,6 +870,12 @@ const Runtime = struct {
         const class = target.class orelse return STATUS_UNEXPECTED_NULL;
         const on_transact = class.on_transact orelse return STATUS_UNEXPECTED_NULL;
         in.pos = 0;
+        // Consume the interface-descriptor token prepareTransaction wrote, so
+        // the direct on_transact sees its first argument (as the remote path's
+        // dispatch does before invoking on_transact).
+        if (class.token_header and code >= FIRST_CALL_TRANSACTION and code <= LAST_CALL_TRANSACTION) {
+            if (!in.enforceInterfaceToken(class.descriptor)) return STATUS_BAD_TYPE;
+        }
         var scratch = AParcel.create();
         defer scratch.destroy();
         const reply = out orelse scratch;
@@ -1221,6 +1263,7 @@ export fn AIBinder_Class_define(
     const c = alloc.create(AIBinder_Class) catch @panic("oom");
     c.* = .{
         .descriptor = alloc.dupe(u8, std.mem.span(interfaceDescriptor)) catch @panic("oom"),
+        .token_header = true,
         .on_create = onCreate,
         .on_destroy = onDestroy,
         .on_transact = onTransact,
@@ -1233,6 +1276,9 @@ export fn AIBinder_new(clazz: *const AIBinder_Class, args: ?*anyopaque) callconv
 }
 export fn AIBinder_getClass(binder: *AIBinder) callconv(.c) ?*AIBinder_Class {
     return binder.class;
+}
+export fn AIBinder_Class_disableInterfaceTokenHeader(clazz: *AIBinder_Class) callconv(.c) void {
+    clazz.token_header = false;
 }
 export fn AIBinder_associateClass(binder: *AIBinder, clazz: *const AIBinder_Class) callconv(.c) bool {
     if (binder.class == null) {
@@ -1268,8 +1314,13 @@ export fn AIBinder_debugGetRefCount(binder: *AIBinder) callconv(.c) i32 {
     return @intCast(binder.strong.load(.monotonic));
 }
 export fn AIBinder_prepareTransaction(binder: *AIBinder, in: *?*AParcel) callconv(.c) i32 {
-    _ = binder;
-    in.* = AParcel.create();
+    const p = AParcel.create();
+    // Prepend the interface-descriptor token (as AOSP's ABBinder does) so a
+    // generated stub's onTransact — which does not read the token itself —
+    // sees the parcel positioned at its first argument. dispatch/localTransact
+    // consume and verify the token symmetrically before invoking on_transact.
+    if (binder.class) |c| if (c.token_header) p.writeInterfaceToken(c.descriptor);
+    in.* = p;
     return STATUS_OK;
 }
 export fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *?*AParcel, flags: u32) callconv(.c) i32 {
@@ -1277,6 +1328,13 @@ export fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *
     defer {
         in_parcel.destroy();
         in.* = null;
+    }
+    // Only user transaction codes are valid here (AOSP rejects the rest); this
+    // also keeps the token symmetric — prepareTransaction always writes it and
+    // dispatch always consumes it for the codes that reach this path.
+    if (code < FIRST_CALL_TRANSACTION or code > LAST_CALL_TRANSACTION) {
+        out.* = null;
+        return STATUS_UNKNOWN_TRANSACTION;
     }
     const reply = if (flags & FLAG_ONEWAY == 0) AParcel.create() else null;
     const rc = Runtime.get().transact(binder, code, in_parcel, reply, flags);
