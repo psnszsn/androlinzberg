@@ -72,6 +72,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("tools/logtags-list.txt"),
         b.path("tools/build-logtags.sh"),
     });
+    const stamp_aconfig = stamp(b, "aconfig.stamp", &.{
+        b.path("tools/aconfig-packages.txt"),
+        b.path("tools/build-aconfig.sh"),
+    });
 
     const source_policy = b.addSystemCommand(&.{ "bash", "tools/check-jvm-source-policy.sh" });
     source_policy.addFileInput(stamp_jvm);
@@ -98,6 +102,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     const logtags_dir = logtags.addOutputDirectoryArg("logtags-java");
     logtags.addFileInput(stamp_logtags);
 
+    // aconfig flag classes (Flags/FeatureFlags/…) from the AOSP aconfig tool.
+    const aconfig = b.addSystemCommand(&.{ "bash", "tools/build-aconfig.sh" });
+    const aconfig_dir = aconfig.addOutputDirectoryArg("aconfig-java");
+    aconfig.addFileInput(stamp_aconfig);
+
     const res = b.addSystemCommand(&.{ "bash", "tools/build-res.sh" });
     const res_dir = res.addOutputDirectoryArg("res");
     res.addFileInput(stamp_res);
@@ -118,6 +127,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("APP=", b.path("."));
     srcs.addPrefixedDirectoryArg("AIDL=", aidl_dir);
     srcs.addPrefixedDirectoryArg("LOGTAGS=", logtags_dir);
+    srcs.addPrefixedDirectoryArg("ACONFIG=", aconfig_dir);
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);
 
