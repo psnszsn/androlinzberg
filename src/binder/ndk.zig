@@ -33,19 +33,50 @@ const fd_t = std.posix.fd_t;
 
 const alloc = std.heap.c_allocator;
 
-// The host-init seam: a dlopen'd library has no process `Init`, so the active
-// `std.Io` and the broker connection parameters are injected by the host
-// (`azk_binder_ndk_host_init`) before any NDK call. `std.Io` operations run
-// blocking-inline on the calling thread, so ART threads may call in directly.
+// A dlopen'd library gets no process `Init`, and unmodified NDK clients call
+// no init hook, so the library provides its own `std.Io`: one `Io.Threaded`
+// created lazily on first use (the process already has one from the Zig
+// runtime, so this second instance only re-chains the identical SIGIO/SIGPIPE
+// handlers). `std.Io` operations run blocking-inline on the calling thread, so
+// ART threads may call in directly. Connection parameters come from the live
+// environment the client already carries (AZK_BINDER_SOCKET etc., which the
+// JVM runtime reads the same way).
+var g_threaded: Io.Threaded = undefined;
 var g_io: Io = undefined;
-var g_io_set: bool = false;
-var g_socket: []const u8 = "";
-var g_cookie: []const u8 = "";
-var g_package: []const u8 = "";
+/// 0 = uninitialized, 1 = initializing, 2 = ready.
+var g_io_state: std.atomic.Value(u8) = .init(0);
+
+fn ensureIo() void {
+    if (g_io_state.load(.acquire) == 2) return;
+    if (g_io_state.cmpxchgStrong(0, 1, .acq_rel, .acquire) == null) {
+        g_threaded = Io.Threaded.init(alloc, .{});
+        g_io = g_threaded.io();
+        g_io_state.store(2, .release);
+        return;
+    }
+    while (g_io_state.load(.acquire) != 2) std.atomic.spinLoopHint();
+}
+
+/// The POSIX environment (reflects runtime `setenv`, unlike a captured
+/// snapshot or /proc/self/environ). A direct extern, not the std.c namespace.
+extern var environ: [*c]?[*:0]u8;
+
+fn getenv(name: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    while (environ[i]) |entry| : (i += 1) {
+        const e = std.mem.span(entry);
+        if (e.len > name.len and e[name.len] == '=' and std.mem.startsWith(u8, e, name)) {
+            return e[name.len + 1 ..];
+        }
+    }
+    return null;
+}
 
 /// Closes a raw descriptor through std.Io (descriptor ownership stays in Io).
 fn closeFd(fd: fd_t) void {
-    if (fd >= 0) (Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(g_io);
+    if (fd < 0) return;
+    ensureIo();
+    (Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(g_io);
 }
 
 /// NUL-terminated dup (this Zig's Allocator has no dupeZ); null on OOM.
@@ -354,6 +385,7 @@ const Runtime = struct {
 
     fn get() *Runtime {
         if (instance) |r| return r;
+        ensureIo();
         connect_mu.lockUncancelable(g_io);
         defer connect_mu.unlock(g_io);
         if (instance) |r| return r;
@@ -363,9 +395,11 @@ const Runtime = struct {
     }
 
     fn connect() !*Runtime {
-        if (!g_io_set) return error.NotInitialized;
         const io = g_io;
-        const addr = try net.UnixAddress.init(g_socket);
+        const socket = getenv("AZK_BINDER_SOCKET") orelse return error.NoSocket;
+        const cookie = getenv("AZK_BINDER_COOKIE") orelse "";
+        const package = getenv("AZK_BINDER_PACKAGE") orelse "";
+        const addr = try net.UnixAddress.init(socket);
         const stream = try addr.connect(io);
         errdefer stream.close(io);
 
@@ -380,10 +414,10 @@ const Runtime = struct {
         // hello
         var hb = std.ArrayListUnmanaged(u8).empty;
         defer hb.deinit(alloc);
-        const hello = Client.Message.Hello{ .cookie_len = @intCast(g_cookie.len), .package_len = @intCast(g_package.len) };
+        const hello = Client.Message.Hello{ .cookie_len = @intCast(cookie.len), .package_len = @intCast(package.len) };
         hb.appendSlice(alloc, std.mem.asBytes(&hello)) catch @panic("oom");
-        hb.appendSlice(alloc, g_cookie) catch @panic("oom");
-        hb.appendSlice(alloc, g_package) catch @panic("oom");
+        hb.appendSlice(alloc, cookie) catch @panic("oom");
+        hb.appendSlice(alloc, package) catch @panic("oom");
         try r.sendFrame(.{ .tag = Client.Message.Tag.hello, .bytes_len = @intCast(hb.items.len) }, hb.items, &.{});
 
         // welcome (synchronous, before the reader thread starts)
@@ -896,23 +930,6 @@ const Runtime = struct {
 
 // ================================================================= C exports
 
-/// Host-init seam: inject the process's active `std.Io` and the broker
-/// connection parameters before any NDK binder call. `io_ptr` points to the
-/// caller's `std.Io` value (a 16-byte {userdata, vtable} POD, shared layout);
-/// the strings are copied. Must be called once, on the host thread, before
-/// the library connects.
-export fn azk_binder_ndk_host_init(
-    io_ptr: *const anyopaque,
-    socket: [*:0]const u8,
-    cookie: [*:0]const u8,
-    package: [*:0]const u8,
-) callconv(.c) void {
-    g_io = @as(*const Io, @ptrCast(@alignCast(io_ptr))).*;
-    g_socket = alloc.dupe(u8, std.mem.span(socket)) catch @panic("oom");
-    g_cookie = alloc.dupe(u8, std.mem.span(cookie)) catch @panic("oom");
-    g_package = alloc.dupe(u8, std.mem.span(package)) catch @panic("oom");
-    g_io_set = true;
-}
 
 export fn AStatus_newOk() callconv(.c) *AStatus {
     return AStatus.create(EX_NONE);

@@ -32,12 +32,7 @@ extern fn AParcel_writeInt32(parcel: *AParcel, value: i32) callconv(.c) i32;
 extern fn AParcel_readInt32(parcel: *const AParcel, value: *i32) callconv(.c) i32;
 extern fn AParcel_writeString(parcel: *AParcel, string: ?[*]const u8, length: i32) callconv(.c) i32;
 extern fn AParcel_readString(parcel: *const AParcel, data: ?*anyopaque, allocator: *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool) callconv(.c) i32;
-extern fn azk_binder_ndk_host_init(
-    io_ptr: *const anyopaque,
-    socket: [*:0]const u8,
-    cookie: [*:0]const u8,
-    package: [*:0]const u8,
-) callconv(.c) void;
+extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 const TRANSACT_ADD: u32 = 1;
 const TRANSACT_ECHO: u32 = 2;
@@ -134,9 +129,11 @@ pub fn main(init: std.process.Init) !void {
     }
     if (!std.mem.startsWith(u8, line[0..got], "ready")) return error.BrokerNotReady;
 
-    // Inject the active std.Io and the connection parameters into the library
-    // (a dlopen'd lib has no process Init; the host provides these).
-    azk_binder_ndk_host_init(&io, socket_path.ptr, "ndk-test", "dev.artzig.ndk");
+    // The library reads its connection parameters from the live environment
+    // (as a spawned client would inherit them); set them in this process.
+    _ = setenv("AZK_BINDER_SOCKET", socket_path, 1);
+    _ = setenv("AZK_BINDER_COOKIE", "ndk-test", 1);
+    _ = setenv("AZK_BINDER_PACKAGE", "dev.artzig.ndk", 1);
 
     var failures: u32 = 0;
     const check = struct {
