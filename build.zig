@@ -68,6 +68,15 @@ pub fn build(b: *std.Build) void {
     });
     b.step("skia", "Build static Skia").dependOn(&b.addInstallArtifact(skia_lib, .{}).step);
 
+    // --- protobuf: static, built with zig c++ from the vendored source, so the
+    // host codegen tools (sysprop_java/javastream) link it with one C++ stdlib.
+    const protobuf_lib = @import("build/protobuf.zig").build(b, .{
+        .root = b.path("artzig/vendor/external/protobuf"),
+        .target = target,
+    });
+    b.step("protobuf", "Build static protobuf (vendored source)")
+        .dependOn(&b.addInstallArtifact(protobuf_lib, .{}).step);
+
     const wayland_mod = b.createModule(.{
         .root_source_file = scanner.result,
         .target = target,
