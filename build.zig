@@ -77,6 +77,16 @@ pub fn build(b: *std.Build) void {
     b.step("protobuf", "Build static protobuf (vendored source)")
         .dependOn(&b.addInstallArtifact(protobuf_lib, .{}).step);
 
+    // --- sysprop_java: the AOSP sysprop host generator, built from vendored
+    // source against libprotobuf (no prebuilt exists). Generates android.sysprop.*.
+    const sysprop_tool = @import("build/sysprop.zig").build(b, .{
+        .vendor = b.path("artzig/vendor"),
+        .target = target,
+        .protobuf = protobuf_lib,
+    });
+    b.step("sysprop-tool", "Build the sysprop_java host generator")
+        .dependOn(&b.addInstallArtifact(sysprop_tool, .{}).step);
+
     const wayland_mod = b.createModule(.{
         .root_source_file = scanner.result,
         .target = target,
@@ -107,7 +117,7 @@ pub fn build(b: *std.Build) void {
     b.step("island", "Build libandroid_platform.so").dependOn(&b.addInstallArtifact(island, .{}).step);
 
     // --- framework JVM jar (Java + Kotlin), framework-res.apk, generated Java
-    const java = @import("build/java.zig").build(b, .{ .artzig = artzig_dep });
+    const java = @import("build/java.zig").build(b, .{ .artzig = artzig_dep, .sysprop_tool = sysprop_tool });
     b.getInstallStep().dependOn(java.java_step);
     const testkit = @import("build/testkit.zig").build(b, artzig_dep);
     b.getInstallStep().dependOn(testkit.install_step);

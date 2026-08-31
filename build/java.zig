@@ -10,6 +10,8 @@ const LazyPath = std.Build.LazyPath;
 
 pub const Options = struct {
     artzig: *std.Build.Dependency,
+    /// The sysprop_java host generator (build/sysprop.zig).
+    sysprop_tool: *std.Build.Step.Compile,
 };
 
 pub const Result = struct {
@@ -72,6 +74,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("tools/logtags-list.txt"),
         b.path("tools/build-logtags.sh"),
     });
+    const stamp_sysprop = stamp(b, "sysprop.stamp", &.{
+        b.path("tools/sysprop-list.txt"),
+        b.path("tools/build-sysprop.sh"),
+    });
     const stamp_aconfig = stamp(b, "aconfig.stamp", &.{
         b.path("tools/aconfig-packages.txt"),
         b.path("tools/build-aconfig.sh"),
@@ -107,6 +113,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aconfig_dir = aconfig.addOutputDirectoryArg("aconfig-java");
     aconfig.addFileInput(stamp_aconfig);
 
+    // sysprop accessor classes (android.sysprop.*) from the sysprop_java host tool.
+    const sysprop = b.addSystemCommand(&.{ "bash", "tools/build-sysprop.sh" });
+    sysprop.addFileArg(o.sysprop_tool.getEmittedBin());
+    const sysprop_dir = sysprop.addOutputDirectoryArg("sysprop-java");
+    sysprop.addFileInput(stamp_sysprop);
+
     const res = b.addSystemCommand(&.{ "bash", "tools/build-res.sh" });
     const res_dir = res.addOutputDirectoryArg("res");
     res.addFileInput(stamp_res);
@@ -128,6 +140,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("AIDL=", aidl_dir);
     srcs.addPrefixedDirectoryArg("LOGTAGS=", logtags_dir);
     srcs.addPrefixedDirectoryArg("ACONFIG=", aconfig_dir);
+    srcs.addPrefixedDirectoryArg("SYSPROP=", sysprop_dir);
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);
 

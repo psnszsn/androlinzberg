@@ -56,6 +56,14 @@ while IFS= read -r rel; do
     [ -n "$pkg" ] && printf '%s/%s.java\n%s/%s.kt\n' "${pkg//.//}" "$base" "${pkg//.//}" "$base" >> "$forbidden"
 done < tools/logtags-list.txt
 
+# sysprop: the accessor class named by each declaration's `module` (its FQN).
+while IFS='|' read -r scope rel; do
+    case "$scope" in \#*|'') continue ;; esac
+    [ -f "$rel" ] || continue
+    fqn=$(sed -n 's/^module:[[:space:]]*"\([A-Za-z0-9_.]*\)".*/\1/p' "$rel" | head -1)
+    [ -n "$fqn" ] && printf '%s.java\n%s.kt\n' "${fqn//.//}" "${fqn//.//}" >> "$forbidden"
+done < tools/sysprop-list.txt
+
 for root in src/framework-stubs src/framework; do
     while IFS= read -r rel; do
         if grep -qxF "$rel" "$forbidden"; then
