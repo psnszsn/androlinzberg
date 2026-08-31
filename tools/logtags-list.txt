@@ -1,0 +1,5 @@
+# EventLogTags sources (relative to artzig/extra/frameworks-base) that the hosted
+# framework references. Generated to Java by tools/build-logtags.sh via the AOSP
+# java-event-log-tags.py tool. One .logtags per line.
+core/java/android/view/EventLogTags.logtags
+services/core/java/com/android/server/am/EventLogTags.logtags

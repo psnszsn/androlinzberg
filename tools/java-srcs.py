@@ -59,6 +59,7 @@ add('$FB/core/java/android/view/textservice', maxdepth=1)
 add('$FB/core/java/android/hardware/input', maxdepth=1, not_name=['Virtual*.java', 'InputDeviceSensorManager.java', 'InputDeviceLights.java', 'InputDeviceLightsManager.java', 'InputDeviceVibrator.java', 'InputDeviceVibratorManager.java', 'InputDeviceBatteryState.java'])
 add('$FB/core/java/android/hardware/display', maxdepth=1, not_name=['ColorDisplayManager.java'])
 add('$AIDL')
+add('$LOGTAGS')
 add('$APP/src/framework-stubs')
 # AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
 file('$FB/services/core/java/com/android/server/SystemService.java')

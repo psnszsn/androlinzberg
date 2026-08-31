@@ -10,15 +10,7 @@ FB="$ROOT/extra/frameworks-base"
 FN_INPUT="$ROOT/extra/frameworks-native/libs/input"
 mkdir -p "$OUT"
 AIDL="$ROOT/vendor/prebuilts/sdk/tools/linux/bin/aidl"
-AIDL_RUN=("$AIDL")
-if ! "$AIDL" --help >/dev/null 2>&1; then
-  HOST_LOADER=$(cc -print-file-name=ld-linux-x86-64.so.2)
-  [ -x "$HOST_LOADER" ] || {
-    echo "cannot run AOSP aidl and no host ELF loader was found" >&2
-    exit 1
-  }
-  AIDL_RUN=("$HOST_LOADER" "$AIDL")
-fi
+mapfile -t AIDL_RUN < <(bash "$APP/tools/aosp-run.sh" "$AIDL")
 COMPAT="$OUT/compat"
 rm -rf "$COMPAT"
 while IFS= read -r compat; do

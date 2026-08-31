@@ -68,6 +68,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("aidl-compat"),
         dep.path("extra/frameworks-native/libs/input/android/os"),
     });
+    const stamp_logtags = stamp(b, "logtags.stamp", &.{
+        b.path("tools/logtags-list.txt"),
+        b.path("tools/build-logtags.sh"),
+    });
 
     const source_policy = b.addSystemCommand(&.{ "bash", "tools/check-jvm-source-policy.sh" });
     source_policy.addFileInput(stamp_jvm);
@@ -89,6 +93,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aidl_dir = aidl.addOutputDirectoryArg("aidl-java");
     aidl.addFileInput(stamp_aidl);
 
+    // EventLogTags Java from the AOSP java-event-log-tags.py tool.
+    const logtags = b.addSystemCommand(&.{ "bash", "tools/build-logtags.sh" });
+    const logtags_dir = logtags.addOutputDirectoryArg("logtags-java");
+    logtags.addFileInput(stamp_logtags);
+
     const res = b.addSystemCommand(&.{ "bash", "tools/build-res.sh" });
     const res_dir = res.addOutputDirectoryArg("res");
     res.addFileInput(stamp_res);
@@ -108,6 +117,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("MU=", dep.path("extra/modules-utils"));
     srcs.addPrefixedDirectoryArg("APP=", b.path("."));
     srcs.addPrefixedDirectoryArg("AIDL=", aidl_dir);
+    srcs.addPrefixedDirectoryArg("LOGTAGS=", logtags_dir);
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);
 
