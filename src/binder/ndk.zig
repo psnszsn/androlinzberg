@@ -16,18 +16,37 @@
 //! on the thread parked on the originating request, and per-local oneway
 //! serialization. The wire structs come from `Client.zig`/`Server.zig`.
 const std = @import("std");
-const builtin = @import("builtin");
-const linux = std.os.linux;
-const E = linux.E;
-const fd_t = linux.fd_t;
+const Io = std.Io;
+const net = Io.net;
+const Connection = @import("Connection.zig");
 const Client = @import("Client.zig");
 const Server = @import("Server.zig");
 const ObjectRef = Client.ObjectRef;
 const ObjectEntry = Client.ObjectEntry;
 const InHeader = Server.Message.Header;
 const OutHeader = Client.Message.Header;
+/// errno enum, used only for STATUS_* constant values (not for I/O calls).
+const E = std.os.linux.E;
+/// A raw descriptor as stored in a parcel's side table; all descriptor I/O
+/// (attach/take/close/dup) goes through `std.Io.File`.
+const fd_t = std.posix.fd_t;
 
 const alloc = std.heap.c_allocator;
+
+// The host-init seam: a dlopen'd library has no process `Init`, so the active
+// `std.Io` and the broker connection parameters are injected by the host
+// (`azk_binder_ndk_host_init`) before any NDK call. `std.Io` operations run
+// blocking-inline on the calling thread, so ART threads may call in directly.
+var g_io: Io = undefined;
+var g_io_set: bool = false;
+var g_socket: []const u8 = "";
+var g_cookie: []const u8 = "";
+var g_package: []const u8 = "";
+
+/// Closes a raw descriptor through std.Io (descriptor ownership stays in Io).
+fn closeFd(fd: fd_t) void {
+    if (fd >= 0) (Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(g_io);
+}
 
 /// NUL-terminated dup (this Zig's Allocator has no dupeZ); null on OOM.
 fn dupz(bytes: []const u8) ?[:0]u8 {
@@ -102,9 +121,9 @@ const AParcel = struct {
     }
     fn destroy(p: *AParcel) void {
         if (p.owns_fds) {
-            for (p.fds.items) |fd| if (fd >= 0) sysClose(fd);
+            for (p.fds.items) |fd| if (fd >= 0) closeFd(fd);
         }
-        for (p.entries.items) |e| if (e.fd >= 0) sysClose(e.fd);
+        for (p.entries.items) |e| if (e.fd >= 0) closeFd(e.fd);
         p.data.deinit(alloc);
         p.entries.deinit(alloc);
         p.fds.deinit(alloc);
@@ -255,14 +274,14 @@ const AIBinder = struct {
     fn createLocal(class: *AIBinder_Class, user_data: ?*anyopaque) *AIBinder {
         const b = alloc.create(AIBinder) catch @panic("oom");
         const rt = Runtime.get();
-        rt.mu.lock();
+        rt.mu.lockUncancelable(g_io);
         const id = rt.next_local_id;
         rt.next_local_id += 1;
         b.* = .{ .strong = .init(1), .kind = .local, .class = class, .user_data = user_data, .id = id, .dead = .init(false) };
         // Not registered in `locals` until exported: the broker only routes
         // incoming transactions to objects this peer has sent or registered,
         // and `exportLocal` both records it and holds a ref for that lifetime.
-        rt.mu.unlock();
+        rt.mu.unlock(g_io);
         return b;
     }
 };
@@ -277,8 +296,8 @@ const AIBinder_DeathRecipient = struct {
 const PendingKind = enum { reply, service };
 
 const PendingCall = struct {
-    mu: Mutex = .{},
-    cv: Condition = .{},
+    mu: Io.Mutex = .init,
+    cv: Io.Condition = .init,
     kind: PendingKind,
     done: bool = false,
     failed: bool = false,
@@ -304,12 +323,13 @@ const Incoming = struct {
 };
 
 const Runtime = struct {
-    fd: fd_t,
+    io: Io,
+    conn: Connection,
     peer_id: u32 = 0,
     pid: i32 = 0,
     uid: u32 = 0,
-    write_mu: Mutex = .{},
-    mu: Mutex = .{},
+    write_mu: Io.Mutex = .init,
+    mu: Io.Mutex = .init,
     next_request_id: std.atomic.Value(u64) = .init(1),
     next_local_id: u64 = 1,
     pending: std.AutoHashMapUnmanaged(u64, *PendingCall) = .empty,
@@ -320,12 +340,12 @@ const Runtime = struct {
     disconnected: std.atomic.Value(bool) = .init(false),
     /// The routing id of the call each thread is currently servicing, for
     /// nested-transaction parent tracking.
-    servicing: Mutex = .{},
+    servicing: Io.Mutex = .init,
 
     const DeathLink = struct { global_id: u64, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque };
 
     var instance: ?*Runtime = null;
-    var connect_mu: Mutex = .{};
+    var connect_mu: Io.Mutex = .init;
     threadlocal var current_routing: u64 = 0;
     /// Caller identity of the transaction the current thread is servicing
     /// (AIBinder_getCallingUid/Pid), valid only inside an onTransact callback.
@@ -334,8 +354,8 @@ const Runtime = struct {
 
     fn get() *Runtime {
         if (instance) |r| return r;
-        connect_mu.lock();
-        defer connect_mu.unlock();
+        connect_mu.lockUncancelable(g_io);
+        defer connect_mu.unlock(g_io);
         if (instance) |r| return r;
         const r = connect() catch |e| std.debug.panic("libbinder_ndk: cannot connect to broker: {s}", .{@errorName(e)});
         instance = r;
@@ -343,37 +363,35 @@ const Runtime = struct {
     }
 
     fn connect() !*Runtime {
-        const path = getenvSlice("AZK_BINDER_SOCKET") orelse return error.NoSocket;
-        const cookie = getenvSlice("AZK_BINDER_COOKIE") orelse "";
-        const pkg = getenvSlice("AZK_BINDER_PACKAGE") orelse "";
-        const fd = try sysSocket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-        errdefer sysClose(fd);
-        var addr = SunAddr{};
-        if (path.len >= addr.path.len) return error.NameTooLong;
-        @memcpy(addr.path[0..path.len], path);
-        addr.path[path.len] = 0;
-        try sysConnect(fd, @ptrCast(&addr), @sizeOf(SunAddr));
+        if (!g_io_set) return error.NotInitialized;
+        const io = g_io;
+        const addr = try net.UnixAddress.init(g_socket);
+        const stream = try addr.connect(io);
+        errdefer stream.close(io);
+
+        const read_buf = try alloc.alloc(u8, buffer_len);
+        errdefer alloc.free(read_buf);
+        const write_buf = try alloc.alloc(u8, buffer_len);
+        errdefer alloc.free(write_buf);
 
         const r = try alloc.create(Runtime);
-        r.* = .{ .fd = fd };
+        r.* = .{ .io = io, .conn = Connection.init(io, stream, read_buf, write_buf) };
 
         // hello
         var hb = std.ArrayListUnmanaged(u8).empty;
         defer hb.deinit(alloc);
-        const hello = Client.Message.Hello{ .cookie_len = @intCast(cookie.len), .package_len = @intCast(pkg.len) };
+        const hello = Client.Message.Hello{ .cookie_len = @intCast(g_cookie.len), .package_len = @intCast(g_package.len) };
         hb.appendSlice(alloc, std.mem.asBytes(&hello)) catch @panic("oom");
-        hb.appendSlice(alloc, cookie) catch @panic("oom");
-        hb.appendSlice(alloc, pkg) catch @panic("oom");
+        hb.appendSlice(alloc, g_cookie) catch @panic("oom");
+        hb.appendSlice(alloc, g_package) catch @panic("oom");
         try r.sendFrame(.{ .tag = Client.Message.Tag.hello, .bytes_len = @intCast(hb.items.len) }, hb.items, &.{});
 
         // welcome (synchronous, before the reader thread starts)
-        var wh: InHeader = undefined;
-        var wfds: [0]fd_t = undefined;
-        _ = try r.recvHeader(&wh, &wfds);
+        const client: Client = .{ .in = &r.conn.reader.interface, .out = &r.conn.writer.interface };
+        const wh = client.receiveMessage() catch return error.BadHello;
         if (wh.tag != .welcome) return error.BadHello;
-        const wbody = try alloc.alloc(u8, wh.bytes_len);
+        const wbody = r.conn.reader.interface.readAlloc(alloc, wh.bytes_len) catch return error.BadHello;
         defer alloc.free(wbody);
-        try r.recvExact(wbody);
         const welcome = std.mem.bytesToValue(Server.Message.Welcome, wbody[0..@sizeOf(Server.Message.Welcome)]);
         r.peer_id = welcome.peer_id;
         r.pid = welcome.pid;
@@ -384,105 +402,55 @@ const Runtime = struct {
         return r;
     }
 
-    // ----- framing (blocking sockets; fds via SCM_RIGHTS on the first byte) ---
+    const buffer_len = 128 * 1024;
+
+    // ----- framing: header + body through the std.Io Connection reader/writer;
+    // descriptors ride via Connection.attachFds/takeFds (SCM_RIGHTS).
 
     fn sendFrame(r: *Runtime, header_partial: OutHeader, body: []const u8, fds: []const fd_t) !void {
         var header = header_partial;
         header.fd_count = @intCast(fds.len);
-        var frame = std.ArrayListUnmanaged(u8).empty;
-        defer frame.deinit(alloc);
-        frame.appendSlice(alloc, std.mem.asBytes(&header)) catch @panic("oom");
-        frame.appendSlice(alloc, body) catch @panic("oom");
-
-        r.write_mu.lock();
-        defer r.write_mu.unlock();
-
-        var iov = [_]std.posix.iovec_const{.{ .base = frame.items.ptr, .len = frame.items.len }};
-        var cmsg_buf: [256]u8 align(@alignOf(usize)) = undefined;
-        var msg = std.mem.zeroes(linux.msghdr_const);
-        msg.iov = &iov;
-        msg.iovlen = 1;
+        r.write_mu.lockUncancelable(g_io);
+        defer r.write_mu.unlock(g_io);
+        const w = &r.conn.writer.interface;
         if (fds.len > 0) {
-            const space = cmsgSpace(fds.len * @sizeOf(fd_t));
-            @memset(cmsg_buf[0..space], 0);
-            const cmsg: *cmsghdr = @ptrCast(@alignCast(&cmsg_buf));
-            cmsg.len = cmsgLen(fds.len * @sizeOf(fd_t));
-            cmsg.level = linux.SOL.SOCKET;
-            cmsg.type = 0x01; // SCM_RIGHTS
-            const data: [*]fd_t = @ptrCast(@alignCast(cmsgData(cmsg)));
-            for (fds, 0..) |fd, i| data[i] = fd;
-            msg.control = &cmsg_buf;
-            msg.controllen = @intCast(space);
+            var files: [Client.limits.max_fds]Io.File = undefined;
+            for (fds, 0..) |fd, i| files[i] = .{ .handle = fd, .flags = .{ .nonblocking = false } };
+            // attachFds requires an empty buffer; the header is the first byte
+            // drained, so the descriptors land on the frame header.
+            try r.conn.writer.attachFds(files[0..fds.len]);
         }
-        var sent = try sysSendmsg(r.fd, &msg);
-        // Remaining bytes (fds already attached to the first byte) go plain.
-        while (sent < frame.items.len) {
-            sent += try sysWrite(r.fd, frame.items[sent..]);
-        }
-    }
-
-    fn recvExact(r: *Runtime, buf: []u8) !void {
-        var got: usize = 0;
-        while (got < buf.len) {
-            const n = try sysRead(r.fd, buf[got..]);
-            if (n == 0) return error.Closed;
-            got += n;
-        }
-    }
-
-    /// Reads a 32-byte header, capturing any SCM_RIGHTS fds into `out_fds`
-    /// (up to its length). Returns the number of fds received.
-    fn recvHeader(r: *Runtime, header: *InHeader, out_fds: []fd_t) !usize {
-        var iov = [_]std.posix.iovec{.{ .base = @ptrCast(header), .len = @sizeOf(InHeader) }};
-        var cmsg_buf: [256]u8 align(@alignOf(usize)) = undefined;
-        var msg = std.mem.zeroes(linux.msghdr);
-        msg.iov = &iov;
-        msg.iovlen = 1;
-        msg.control = &cmsg_buf;
-        msg.controllen = cmsg_buf.len;
-        var got: usize = 0;
-        var fd_count: usize = 0;
-        while (got < @sizeOf(InHeader)) {
-            iov[0] = .{ .base = @ptrCast(@as([*]u8, @ptrCast(header)) + got), .len = @sizeOf(InHeader) - got };
-            const n = try recvmsg(r.fd, &msg, 0);
-            if (n == 0) return error.Closed;
-            // Harvest fds from the control buffer on the recv that carried them.
-            var cmsg: ?*cmsghdr = firstCmsg(&msg);
-            while (cmsg) |c| : (cmsg = nextCmsg(&msg, c)) {
-                if (c.level == linux.SOL.SOCKET and c.type == 0x01) {
-                    const bytes = c.len - cmsgLen(0);
-                    const count = bytes / @sizeOf(fd_t);
-                    const data: [*]fd_t = @ptrCast(@alignCast(cmsgData(c)));
-                    var i: usize = 0;
-                    while (i < count) : (i += 1) {
-                        if (fd_count < out_fds.len) {
-                            out_fds[fd_count] = data[i];
-                            fd_count += 1;
-                        } else {
-                            sysClose(data[i]);
-                        }
-                    }
-                }
-            }
-            msg.controllen = 0; // fds only arrive with the first byte
-            got += n;
-        }
-        return fd_count;
+        try w.writeStruct(header, .little);
+        try w.writeAll(body);
+        try w.flush();
     }
 
     // -------------------------------------------------------------- reader
 
     fn readLoop(r: *Runtime) void {
+        const client: Client = .{ .in = &r.conn.reader.interface, .out = undefined };
         while (true) {
-            var header: InHeader = undefined;
+            const header = client.receiveMessage() catch break;
+            const body = r.conn.reader.interface.readAlloc(alloc, header.bytes_len) catch break;
+            // Descriptors that arrived with this frame (the Connection queues
+            // them in arrival order; a frame takes the count it announces).
             var fdbuf: [Client.limits.max_fds]fd_t = undefined;
-            const fd_count = r.recvHeader(&header, &fdbuf) catch break;
-            if (header.magic != Client.magic or header.version != Client.version) break;
-            const body = alloc.alloc(u8, header.bytes_len) catch @panic("oom");
-            r.recvExact(body) catch {
-                alloc.free(body);
-                break;
-            };
+            var fd_count: usize = 0;
+            if (header.fd_count > 0) {
+                if (r.conn.reader.queuedFdCount() < header.fd_count) {
+                    alloc.free(body);
+                    break;
+                }
+                var files: [Client.limits.max_fds]Io.File = undefined;
+                r.conn.reader.takeFds(files[0..header.fd_count]) catch {
+                    alloc.free(body);
+                    break;
+                };
+                for (files[0..header.fd_count], 0..) |f, i| {
+                    fdbuf[i] = f.handle;
+                    fd_count += 1;
+                }
+            }
             const keep = r.handle(header, body, fdbuf[0..fd_count]);
             alloc.free(body);
             if (!keep) break;
@@ -500,14 +468,14 @@ const Runtime = struct {
                 in.* = .{ .target = t.target, .code = t.code, .flags = t.flags, .caller_pid = t.caller_pid, .caller_uid = t.caller_uid, .routing_id = header.routing_id, .parcel = parcel };
                 if (header.request_id != 0) {
                     // Nested call: hand to the thread parked on that request.
-                    r.mu.lock();
+                    r.mu.lockUncancelable(g_io);
                     const call = r.pending.get(header.request_id);
-                    r.mu.unlock();
+                    r.mu.unlock(g_io);
                     if (call) |c| {
-                        c.mu.lock();
+                        c.mu.lockUncancelable(g_io);
                         c.nested.append(alloc, in) catch @panic("oom");
-                        c.cv.signal();
-                        c.mu.unlock();
+                        c.cv.signal(g_io);
+                        c.mu.unlock(g_io);
                         return true;
                     }
                 }
@@ -521,37 +489,37 @@ const Runtime = struct {
             .reply => {
                 const rep = std.mem.bytesToValue(Client.Message.Reply, body[0..@sizeOf(Client.Message.Reply)]);
                 const rest = body[@sizeOf(Client.Message.Reply)..];
-                r.mu.lock();
+                r.mu.lockUncancelable(g_io);
                 const call = r.pending.fetchRemove(header.request_id);
-                r.mu.unlock();
+                r.mu.unlock(g_io);
                 if (call) |kv| {
                     const c = kv.value;
                     const parcel = r.inflate(rest, rep.object_count, rep.data_len, fds) catch AParcel.create();
-                    c.mu.lock();
+                    c.mu.lockUncancelable(g_io);
                     c.reply = parcel;
                     c.reply_status = rep.status;
                     c.done = true;
-                    c.cv.signal();
-                    c.mu.unlock();
+                    c.cv.signal(g_io);
+                    c.mu.unlock(g_io);
                 } else {
-                    for (fds) |fd| if (fd >= 0) sysClose(fd);
+                    for (fds) |fd| if (fd >= 0) closeFd(fd);
                 }
             },
             .service_result => {
                 const sr = std.mem.bytesToValue(Server.Message.ServiceResult, body[0..@sizeOf(Server.Message.ServiceResult)]);
                 const names = body[@sizeOf(Server.Message.ServiceResult)..];
-                r.mu.lock();
+                r.mu.lockUncancelable(g_io);
                 const call = r.pending.fetchRemove(header.request_id);
-                r.mu.unlock();
+                r.mu.unlock(g_io);
                 if (call) |kv| {
                     const c = kv.value;
-                    c.mu.lock();
+                    c.mu.lockUncancelable(g_io);
                     c.svc_status = sr.status;
                     c.svc_ref = sr.object;
                     c.svc_names = alloc.dupe(u8, names) catch @panic("oom");
                     c.done = true;
-                    c.cv.signal();
-                    c.mu.unlock();
+                    c.cv.signal(g_io);
+                    c.mu.unlock(g_io);
                 }
             },
             .object_dead => {
@@ -566,7 +534,7 @@ const Runtime = struct {
             .protocol_error => return false,
             .shutdown => return false,
             else => {
-                for (fds) |fd| if (fd >= 0) sysClose(fd);
+                for (fds) |fd| if (fd >= 0) closeFd(fd);
             },
         }
         return true;
@@ -578,9 +546,9 @@ const Runtime = struct {
             alloc.destroy(in);
         }
         const oneway = in.flags & FLAG_ONEWAY != 0;
-        r.mu.lock();
+        r.mu.lockUncancelable(g_io);
         const target = if (in.target.kind == .local) r.locals.get(in.target.value) else null;
-        r.mu.unlock();
+        r.mu.unlock(g_io);
         var out = AParcel.create();
         defer out.destroy();
         var status = Client.Message.Reply.Status.ok;
@@ -664,8 +632,8 @@ const Runtime = struct {
     // ------------------------------------------------------- refcounting
 
     fn exportLocal(r: *Runtime, b: *AIBinder) u64 {
-        r.mu.lock();
-        defer r.mu.unlock();
+        r.mu.lockUncancelable(g_io);
+        defer r.mu.unlock(g_io);
         const prev = r.export_uses.get(b.id) orelse 0;
         if (prev == 0) {
             // The first export holds one strong ref for the whole export
@@ -680,8 +648,8 @@ const Runtime = struct {
     }
 
     fn proxyFor(r: *Runtime, global_id: u64) *AIBinder {
-        r.mu.lock();
-        defer r.mu.unlock();
+        r.mu.lockUncancelable(g_io);
+        defer r.mu.unlock(g_io);
         if (r.proxies.get(global_id)) |b| {
             _ = b.strong.fetchAdd(1, .monotonic);
             b.deliveries += 1;
@@ -694,10 +662,10 @@ const Runtime = struct {
     }
 
     fn releaseProxy(r: *Runtime, b: *AIBinder) void {
-        r.mu.lock();
+        r.mu.lockUncancelable(g_io);
         if (r.proxies.get(b.id) == b) _ = r.proxies.remove(b.id);
         const count = b.deliveries;
-        r.mu.unlock();
+        r.mu.unlock(g_io);
         if (count > 0) {
             var body: [@sizeOf(Client.Message.Release)]u8 = undefined;
             const rel = Client.Message.Release{ .object = ObjectRef.remote(b.id), .count = count };
@@ -708,14 +676,14 @@ const Runtime = struct {
     }
 
     fn maybeRelease(r: *Runtime, id: u64, uses: u64) void {
-        r.mu.lock();
+        r.mu.lockUncancelable(g_io);
         const drop = (r.export_uses.get(id) orelse 0) == uses;
         var released: ?*AIBinder = null;
         if (drop) {
             _ = r.export_uses.remove(id);
             if (r.locals.fetchRemove(id)) |kv| released = kv.value;
         }
-        r.mu.unlock();
+        r.mu.unlock(g_io);
         if (drop) {
             var body: [@sizeOf(ObjectRef)]u8 = undefined;
             @memcpy(&body, std.mem.asBytes(&ObjectRef.local(id)));
@@ -736,14 +704,14 @@ const Runtime = struct {
     }
 
     fn notifyDeath(r: *Runtime, global_id: u64) void {
-        r.mu.lock();
+        r.mu.lockUncancelable(g_io);
         if (r.proxies.get(global_id)) |b| b.dead.store(true, .monotonic);
         var links = std.ArrayListUnmanaged(DeathLink).empty;
         defer links.deinit(alloc);
         for (r.death_links.items) |l| {
             if (l.global_id == global_id) links.append(alloc, l) catch @panic("oom");
         }
-        r.mu.unlock();
+        r.mu.unlock(g_io);
         for (links.items) |l| if (l.recipient.on_died) |cb| cb(l.cookie);
     }
 
@@ -751,15 +719,15 @@ const Runtime = struct {
         r.disconnected.store(true, .monotonic);
         var links = std.ArrayListUnmanaged(DeathLink).empty;
         defer links.deinit(alloc);
-        r.mu.lock();
+        r.mu.lockUncancelable(g_io);
         var it = r.pending.valueIterator();
         while (it.next()) |cp| {
             const c = cp.*;
-            c.mu.lock();
+            c.mu.lockUncancelable(g_io);
             c.failed = true;
             c.done = true;
-            c.cv.signal();
-            c.mu.unlock();
+            c.cv.signal(g_io);
+            c.mu.unlock(g_io);
         }
         // Every remote object is now unreachable: mark proxies dead so
         // AIBinder_isAlive reports false, and deliver each registered death
@@ -767,7 +735,7 @@ const Runtime = struct {
         var pit = r.proxies.valueIterator();
         while (pit.next()) |bp| bp.*.dead.store(true, .monotonic);
         for (r.death_links.items) |l| links.append(alloc, l) catch @panic("oom");
-        r.mu.unlock();
+        r.mu.unlock(g_io);
         for (links.items) |l| if (l.recipient.on_died) |cb| cb(l.cookie);
     }
 
@@ -803,9 +771,9 @@ const Runtime = struct {
         if (!oneway) {
             call = alloc.create(PendingCall) catch @panic("oom");
             call.?.* = .{ .kind = .reply };
-            r.mu.lock();
+            r.mu.lockUncancelable(g_io);
             r.pending.put(alloc, request_id, call.?) catch @panic("oom");
-            r.mu.unlock();
+            r.mu.unlock(g_io);
         }
         r.sendFrame(.{
             .tag = Client.Message.Tag.transact,
@@ -814,9 +782,9 @@ const Runtime = struct {
             .routing_id = current_routing,
         }, body.items, fds.items) catch {
             if (call) |c| {
-                r.mu.lock();
+                r.mu.lockUncancelable(g_io);
                 _ = r.pending.remove(request_id);
-                r.mu.unlock();
+                r.mu.unlock(g_io);
                 alloc.destroy(c);
             }
             return STATUS_DEAD_OBJECT;
@@ -855,11 +823,11 @@ const Runtime = struct {
             alloc.destroy(call);
         }
         while (true) {
-            call.mu.lock();
-            while (!call.done and call.nested.items.len == 0) call.cv.wait(&call.mu);
+            call.mu.lockUncancelable(g_io);
+            while (!call.done and call.nested.items.len == 0) call.cv.waitUncancelable(g_io, &call.mu);
             const nested: ?*Incoming = if (call.nested.items.len > 0) call.nested.orderedRemove(0) else null;
             const done = call.done and nested == null;
-            call.mu.unlock();
+            call.mu.unlock(g_io);
             if (nested) |n| {
                 r.dispatch(n);
                 continue;
@@ -898,24 +866,24 @@ const Runtime = struct {
             call.done = true;
             return call;
         }
-        r.mu.lock();
+        r.mu.lockUncancelable(g_io);
         r.pending.put(alloc, request_id, call) catch @panic("oom");
-        r.mu.unlock();
+        r.mu.unlock(g_io);
         r.sendFrame(.{ .tag = tag, .bytes_len = @intCast(body_extra.len), .request_id = request_id }, body_extra, &.{}) catch {
-            r.mu.lock();
+            r.mu.lockUncancelable(g_io);
             _ = r.pending.remove(request_id);
-            r.mu.unlock();
+            r.mu.unlock(g_io);
             call.failed = true;
             call.done = true;
             return call;
         };
         // Wait, servicing nested transactions like awaitReply.
         while (true) {
-            call.mu.lock();
-            while (!call.done and call.nested.items.len == 0) call.cv.wait(&call.mu);
+            call.mu.lockUncancelable(g_io);
+            while (!call.done and call.nested.items.len == 0) call.cv.waitUncancelable(g_io, &call.mu);
             const nested: ?*Incoming = if (call.nested.items.len > 0) call.nested.orderedRemove(0) else null;
             const done = call.done and nested == null;
-            call.mu.unlock();
+            call.mu.unlock(g_io);
             if (nested) |n| {
                 r.dispatch(n);
                 continue;
@@ -925,120 +893,26 @@ const Runtime = struct {
     }
 };
 
-// -------------------------------- cmsg helpers (portable across libc layout)
-
-const cmsghdr = extern struct { len: usize, level: i32, type: i32 };
-fn cmsgAlign(n: usize) usize {
-    return (n + @sizeOf(usize) - 1) & ~@as(usize, @sizeOf(usize) - 1);
-}
-fn cmsgLen(n: usize) usize {
-    return cmsgAlign(@sizeOf(cmsghdr)) + n;
-}
-fn cmsgSpace(n: usize) usize {
-    return cmsgAlign(@sizeOf(cmsghdr)) + cmsgAlign(n);
-}
-fn cmsgData(c: *cmsghdr) [*]u8 {
-    return @as([*]u8, @ptrCast(c)) + cmsgAlign(@sizeOf(cmsghdr));
-}
-fn firstCmsg(msg: *linux.msghdr) ?*cmsghdr {
-    if (msg.controllen < @sizeOf(cmsghdr)) return null;
-    return @ptrCast(@alignCast(msg.control));
-}
-fn nextCmsg(msg: *linux.msghdr, c: *cmsghdr) ?*cmsghdr {
-    const next = @as([*]u8, @ptrCast(c)) + cmsgAlign(c.len);
-    const base = @as([*]u8, @ptrCast(msg.control));
-    const used = @intFromPtr(next) - @intFromPtr(base);
-    if (used + @sizeOf(cmsghdr) > msg.controllen) return null;
-    return @ptrCast(@alignCast(next));
-}
-
-// ----- raw syscall + pthread wrappers (a dlopen'd library has no std.Io loop)
-
-const SunAddr = extern struct { family: u16 = linux.AF.UNIX, path: [108]u8 = undefined };
-
-fn getenvSlice(name: [*:0]const u8) ?[]const u8 {
-    const v = std.c.getenv(name) orelse return null;
-    return std.mem.span(v);
-}
-fn sysClose(fd: fd_t) void {
-    _ = linux.close(fd);
-}
-fn sysDup(fd: fd_t) !fd_t {
-    const rc = linux.dup(fd);
-    if (linux.errno(rc) != .SUCCESS) return error.Dup;
-    return @intCast(rc);
-}
-fn sysSocket(domain: u32, ty: u32, proto: u32) !fd_t {
-    const rc = linux.socket(domain, ty, proto);
-    if (linux.errno(rc) != .SUCCESS) return error.Socket;
-    return @intCast(rc);
-}
-fn sysConnect(fd: fd_t, addr: *const anyopaque, len: u32) !void {
-    const rc = linux.connect(fd, addr, len);
-    if (linux.errno(rc) != .SUCCESS) return error.Connect;
-}
-fn sysRead(fd: fd_t, buf: []u8) !usize {
-    while (true) {
-        const rc = linux.read(fd, buf.ptr, buf.len);
-        switch (linux.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .INTR => continue,
-            else => return error.Read,
-        }
-    }
-}
-fn sysWrite(fd: fd_t, buf: []const u8) !usize {
-    while (true) {
-        const rc = linux.write(fd, buf.ptr, buf.len);
-        switch (linux.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .INTR => continue,
-            else => return error.Write,
-        }
-    }
-}
-fn sysSendmsg(fd: fd_t, msg: *const linux.msghdr_const) !usize {
-    while (true) {
-        const rc = linux.sendmsg(fd, msg, 0);
-        switch (linux.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .INTR => continue,
-            else => return error.Send,
-        }
-    }
-}
-fn recvmsg(fd: fd_t, msg: *linux.msghdr, flags: u32) !usize {
-    while (true) {
-        const rc = linux.recvmsg(fd, msg, flags);
-        switch (linux.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .INTR => continue,
-            else => return error.Recv,
-        }
-    }
-}
-
-/// pthread mutex/condition (libc is linked; all-zero is the static initializer).
-const Mutex = struct {
-    inner: std.c.pthread_mutex_t = std.mem.zeroes(std.c.pthread_mutex_t),
-    fn lock(m: *Mutex) void {
-        _ = std.c.pthread_mutex_lock(&m.inner);
-    }
-    fn unlock(m: *Mutex) void {
-        _ = std.c.pthread_mutex_unlock(&m.inner);
-    }
-};
-const Condition = struct {
-    inner: std.c.pthread_cond_t = std.mem.zeroes(std.c.pthread_cond_t),
-    fn wait(c: *Condition, m: *Mutex) void {
-        _ = std.c.pthread_cond_wait(&c.inner, &m.inner);
-    }
-    fn signal(c: *Condition) void {
-        _ = std.c.pthread_cond_signal(&c.inner);
-    }
-};
 
 // ================================================================= C exports
+
+/// Host-init seam: inject the process's active `std.Io` and the broker
+/// connection parameters before any NDK binder call. `io_ptr` points to the
+/// caller's `std.Io` value (a 16-byte {userdata, vtable} POD, shared layout);
+/// the strings are copied. Must be called once, on the host thread, before
+/// the library connects.
+export fn azk_binder_ndk_host_init(
+    io_ptr: *const anyopaque,
+    socket: [*:0]const u8,
+    cookie: [*:0]const u8,
+    package: [*:0]const u8,
+) callconv(.c) void {
+    g_io = @as(*const Io, @ptrCast(@alignCast(io_ptr))).*;
+    g_socket = alloc.dupe(u8, std.mem.span(socket)) catch @panic("oom");
+    g_cookie = alloc.dupe(u8, std.mem.span(cookie)) catch @panic("oom");
+    g_package = alloc.dupe(u8, std.mem.span(package)) catch @panic("oom");
+    g_io_set = true;
+}
 
 export fn AStatus_newOk() callconv(.c) *AStatus {
     return AStatus.create(EX_NONE);
@@ -1240,9 +1114,9 @@ export fn AParcel_readStrongBinder(parcel: *const AParcel, binder: *?*AIBinder) 
             .binder_null => binder.* = null,
             .binder_remote => binder.* = Runtime.get().proxyFor(e.value),
             .binder_local => {
-                Runtime.get().mu.lock();
+                Runtime.get().mu.lockUncancelable(g_io);
                 const local = Runtime.get().locals.get(e.value);
-                Runtime.get().mu.unlock();
+                Runtime.get().mu.unlock(g_io);
                 if (local) |l| {
                     _ = l.strong.fetchAdd(1, .monotonic);
                     binder.* = l;
@@ -1262,7 +1136,9 @@ export fn AParcel_writeParcelFileDescriptor(parcel: *AParcel, fd: i32) callconv(
         parcel.writeI32(0);
         return STATUS_OK;
     }
-    const dup = sysDup(fd) catch return STATUS_BAD_VALUE;
+    const dup_rc = std.os.linux.dup(fd);
+    if (std.os.linux.errno(dup_rc) != .SUCCESS) return STATUS_BAD_VALUE;
+    const dup: fd_t = @intCast(dup_rc);
     parcel.writeI32(1);
     parcel.entries.append(alloc, .{ .offset = off, .kind = .file_descriptor, .value = 0, .fd = dup }) catch @panic("oom");
     return STATUS_OK;
@@ -1421,7 +1297,7 @@ export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) ca
     // notification cannot dereference it, and run onUnlinked per removed link.
     const r = Runtime.get();
     var unlinked: usize = 0;
-    r.mu.lock();
+    r.mu.lockUncancelable(g_io);
     var i: usize = 0;
     while (i < r.death_links.items.len) {
         if (r.death_links.items[i].recipient == recipient) {
@@ -1429,7 +1305,7 @@ export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) ca
             unlinked += 1;
         } else i += 1;
     }
-    r.mu.unlock();
+    r.mu.unlock(g_io);
     if (recipient.on_unlinked) |cb| {
         var k: usize = 0;
         while (k < unlinked) : (k += 1) cb(null);
@@ -1439,9 +1315,9 @@ export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) ca
 export fn AIBinder_linkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque) callconv(.c) i32 {
     if (binder.kind != .remote) return STATUS_INVALID_OPERATION;
     const r = Runtime.get();
-    r.mu.lock();
+    r.mu.lockUncancelable(g_io);
     r.death_links.append(alloc, .{ .global_id = binder.id, .recipient = recipient, .cookie = cookie }) catch @panic("oom");
-    r.mu.unlock();
+    r.mu.unlock(g_io);
     var body: [@sizeOf(ObjectRef)]u8 = undefined;
     @memcpy(&body, std.mem.asBytes(&ObjectRef.remote(binder.id)));
     r.sendFrame(.{ .tag = Client.Message.Tag.link_death, .bytes_len = body.len }, &body, &.{}) catch {};
@@ -1450,7 +1326,7 @@ export fn AIBinder_linkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathReci
 const STATUS_INVALID_OPERATION: i32 = -@as(i32, @intCast(@intFromEnum(E.NOSYS)));
 export fn AIBinder_unlinkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque) callconv(.c) i32 {
     const r = Runtime.get();
-    r.mu.lock();
+    r.mu.lockUncancelable(g_io);
     var i: usize = 0;
     var found = false;
     while (i < r.death_links.items.len) {
@@ -1462,7 +1338,7 @@ export fn AIBinder_unlinkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRe
         }
         i += 1;
     }
-    r.mu.unlock();
+    r.mu.unlock(g_io);
     if (!found) return STATUS_NAME_NOT_FOUND;
     var body: [@sizeOf(ObjectRef)]u8 = undefined;
     @memcpy(&body, std.mem.asBytes(&ObjectRef.remote(binder.id)));
@@ -1516,10 +1392,10 @@ fn lookup(instance: [*:0]const u8, wait: bool) ?*AIBinder {
     // short-circuits ownership); returning a remote proxy would later send a
     // release for an object we never held remotely and trip a protocol error.
     if (call.svc_ref.kind == .local) {
-        r.mu.lock();
+        r.mu.lockUncancelable(g_io);
         const local = r.locals.get(call.svc_ref.value);
         if (local) |b| _ = b.strong.fetchAdd(1, .monotonic);
-        r.mu.unlock();
+        r.mu.unlock(g_io);
         return local;
     }
     return r.proxyFor(call.svc_ref.value);
@@ -1555,11 +1431,11 @@ export fn ABinderProcess_setThreadPoolMaxThreadCount(count: u32) callconv(.c) bo
 export fn ABinderProcess_isThreadPoolStarted() callconv(.c) bool {
     return Runtime.instance != null;
 }
-var park_mu: Mutex = .{};
-var park_cv: Condition = .{};
+var park_mu: Io.Mutex = .init;
+var park_cv: Io.Condition = .init;
 export fn ABinderProcess_joinThreadPool() callconv(.c) void {
     // The reader thread services incoming calls; a joiner parks forever.
     _ = Runtime.get();
-    park_mu.lock();
-    while (true) park_cv.wait(&park_mu);
+    park_mu.lockUncancelable(g_io);
+    while (true) park_cv.waitUncancelable(g_io, &park_mu);
 }
