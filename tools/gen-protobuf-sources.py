@@ -15,7 +15,7 @@ cmake_dir, out = sys.argv[1], sys.argv[2]
 def files(name):
     """Relative google/protobuf/*.cc paths from a set(<name> ...) block."""
     text = open(f"{cmake_dir}/{name}").read()
-    return sorted(set(re.findall(r"google/protobuf/[A-Za-z0-9_/]+\.cc", text)))
+    return sorted(set(re.findall(r"google/protobuf/[A-Za-z0-9_./]+\.cc", text)))
 
 
 # The full library links the lite sources plus the full-only sources.
