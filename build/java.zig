@@ -12,6 +12,8 @@ pub const Options = struct {
     artzig: *std.Build.Dependency,
     /// The sysprop_java host generator (build/sysprop.zig).
     sysprop_tool: *std.Build.Step.Compile,
+    /// The protoc-gen-javastream plugin (build/javastream.zig).
+    javastream_tool: *std.Build.Step.Compile,
 };
 
 pub const Result = struct {
@@ -78,6 +80,11 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("tools/sysprop-list.txt"),
         b.path("tools/build-sysprop.sh"),
     });
+    const stamp_proto = stamp(b, "proto.stamp", &.{
+        b.path("tools/proto-list.txt"),
+        b.path("tools/build-proto.sh"),
+        dep.path("extra/frameworks-base/core/proto"),
+    });
     const stamp_aconfig = stamp(b, "aconfig.stamp", &.{
         b.path("tools/aconfig-packages.txt"),
         b.path("tools/build-aconfig.sh"),
@@ -119,6 +126,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     const sysprop_dir = sysprop.addOutputDirectoryArg("sysprop-java");
     sysprop.addFileInput(stamp_sysprop);
 
+    // *Proto stream constant classes from the protoc-gen-javastream plugin.
+    const proto = b.addSystemCommand(&.{ "bash", "tools/build-proto.sh" });
+    proto.addFileArg(o.javastream_tool.getEmittedBin());
+    const proto_dir = proto.addOutputDirectoryArg("proto-java");
+    proto.addFileInput(stamp_proto);
+
     const res = b.addSystemCommand(&.{ "bash", "tools/build-res.sh" });
     const res_dir = res.addOutputDirectoryArg("res");
     res.addFileInput(stamp_res);
@@ -141,6 +154,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("LOGTAGS=", logtags_dir);
     srcs.addPrefixedDirectoryArg("ACONFIG=", aconfig_dir);
     srcs.addPrefixedDirectoryArg("SYSPROP=", sysprop_dir);
+    srcs.addPrefixedDirectoryArg("PROTO=", proto_dir);
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);
 

@@ -62,6 +62,7 @@ add('$AIDL')
 add('$LOGTAGS')
 add('$ACONFIG')
 add('$SYSPROP')
+add('$PROTO')
 add('$APP/src/framework-stubs')
 # AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
 file('$FB/services/core/java/com/android/server/SystemService.java')

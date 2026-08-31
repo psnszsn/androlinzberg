@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) void {
     const protobuf_lib = @import("build/protobuf.zig").build(b, .{
         .root = b.path("artzig/vendor/external/protobuf"),
         .target = target,
+        .with_protoc = true, // libprotoc: needed by the protoc-gen-javastream plugin.
     });
     b.step("protobuf", "Build static protobuf (vendored source)")
         .dependOn(&b.addInstallArtifact(protobuf_lib, .{}).step);
@@ -86,6 +87,17 @@ pub fn build(b: *std.Build) void {
     });
     b.step("sysprop-tool", "Build the sysprop_java host generator")
         .dependOn(&b.addInstallArtifact(sysprop_tool, .{}).step);
+
+    // --- protoc-gen-javastream: the AOSP protoc plugin that emits the framework
+    // *Proto stream classes, built from vendored source against libprotoc.
+    const javastream_tool = @import("build/javastream.zig").build(b, .{
+        .root = b.path("artzig/extra/frameworks-base/tools/streaming_proto"),
+        .protobuf_src = b.path("artzig/vendor/external/protobuf"),
+        .target = target,
+        .protobuf = protobuf_lib,
+    });
+    b.step("javastream-tool", "Build the protoc-gen-javastream plugin")
+        .dependOn(&b.addInstallArtifact(javastream_tool, .{}).step);
 
     const wayland_mod = b.createModule(.{
         .root_source_file = scanner.result,
@@ -117,7 +129,11 @@ pub fn build(b: *std.Build) void {
     b.step("island", "Build libandroid_platform.so").dependOn(&b.addInstallArtifact(island, .{}).step);
 
     // --- framework JVM jar (Java + Kotlin), framework-res.apk, generated Java
-    const java = @import("build/java.zig").build(b, .{ .artzig = artzig_dep, .sysprop_tool = sysprop_tool });
+    const java = @import("build/java.zig").build(b, .{
+        .artzig = artzig_dep,
+        .sysprop_tool = sysprop_tool,
+        .javastream_tool = javastream_tool,
+    });
     b.getInstallStep().dependOn(java.java_step);
     const testkit = @import("build/testkit.zig").build(b, artzig_dep);
     b.getInstallStep().dependOn(testkit.install_step);
