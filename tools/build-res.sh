@@ -27,6 +27,17 @@ aapt2 link -o "$OUT/framework-res.apk" \
   --no-auto-version --auto-add-overlay --no-compress \
   --enable-sparse-encoding -x \
   "$OUT/compiled.zip"
+# Sign as the platform: the hosted package manager installs framework-res.apk
+# as package "android" through the real parser, and signature-protected
+# permission grants compare against its SigningDetails. The azk-platform test
+# key also signs the build-time fixture APKs.
+echo "== apksigner"
+java -jar "$ROOT/vendor/prebuilts/sdk/tools/linux/lib/apksigner.jar" sign \
+  --key "$APP/tools/signing/azk-platform.pk8" \
+  --cert "$APP/tools/signing/azk-platform.x509.pem" \
+  --v1-signing-enabled false --v2-signing-enabled true \
+  "$OUT/framework-res.apk"
+rm -f "$OUT/framework-res.apk.idsig"
 # strip @FlaggedApi metadata: it references dozens of aconfig flag packages we don't ship
 sed -i -E 's/@android\.annotation\.FlaggedApi\([^)]*\)//g' \
   "$OUT/java/android/R.java" "$OUT/java/android/Manifest.java" "$OUT/java/com/android/internal/R.java"

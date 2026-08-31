@@ -1,6 +1,7 @@
 /* artzig stub: no fs-verity on this host. */
 package com.android.internal.security;
 public abstract class VerityUtils {
+    public static boolean isFsVeritySupported() { return false; }
     public static byte[] getFsverityDigest(String filePath) { return null; }
     public static byte[] generateFsVerityDigest(long fileSize, android.os.incremental.V4Signature.HashingInfo hashingInfo)
             throws java.security.DigestException, java.security.NoSuchAlgorithmException {

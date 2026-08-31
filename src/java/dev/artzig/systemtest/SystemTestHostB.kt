@@ -5,12 +5,12 @@ import android.app.ContextImpl
 import android.os.HostedBinderRuntime
 import android.os.Looper
 import android.os.Process
-import dev.artzig.system.HostedProcessManifest
 
 /**
- * system-test peer: package `dev.artzig.test.b`. Hosts [EchoService] through
- * the session's activity manager and exits 0 when a client calls `exit()` on
- * the service.
+ * system-test peer: package `dev.artzig.test.b`. Its manifest is the
+ * `dev.artzig.test.b` fixture APK (installed server-side; the classes live in
+ * framework.jar). Hosts [EchoService] through the session's activity manager
+ * and exits 0 when a client calls `exit()` on the service.
  */
 internal object SystemTestHostB {
     @JvmStatic
@@ -18,58 +18,33 @@ internal object SystemTestHostB {
         Looper.prepareMainLooper()
         HostedBinderRuntime.bootstrap("dev.artzig.test.b", false)
         val frameworkRes = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
-        val context = ContextImpl.createSystemContext(frameworkRes, 640, 480, 120, 0)
+        // Own package identity (the clipboard's AppOps checkPackage verifies
+        // the calling package against this process's uid).
+        val context = ContextImpl(
+            ContextImpl.createSystemContext(frameworkRes, 640, 480, 120, 0).resources,
+            "dev.artzig.test.b",
+            0,
+        )
         ActivityThread.configureServiceHost(context, SystemTestHostB::class.java.classLoader)
-        // Register this package with the session's package manager so peers can
-        // resolve it cross-process (client A asserts these values).
-        val echoInfo = android.content.pm.ServiceInfo()
-        echoInfo.packageName = "dev.artzig.test.b"
-        echoInfo.name = EchoService::class.java.name
-        echoInfo.enabled = true
-        android.content.pm.PackageManager.configureHostedPackage(
-            "dev.artzig.test.b", 7, "7.0", "/nonexistent/b.apk", "/tmp/b-data",
+        // Install this package's fixture APK: the session's package manager
+        // parses the real manifest (client A asserts the parsed values).
+        val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
+        val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
+        check(am.installPackage("$fixtures/dev.artzig.test.b.apk") == "dev.artzig.test.b")
+        ActivityThread.attachApplicationHosted("dev.artzig.test.b")
+        // Publish the test providers under their parsed ProviderInfos (client
+        // A queries them cross-process; the non-exported one asserts the
+        // acquisition gate).
+        val pm = context.packageManager
+        val providerInfo = pm.getProviderInfo(
+            android.content.ComponentName("dev.artzig.test.b", TestProvider::class.java.name), 0,
         )
-        android.content.pm.PackageManager.configureHostedServices(
-            listOf(echoInfo),
-            mapOf(echoInfo.name to setOf("dev.artzig.test.ECHO")),
+        val secretInfo = pm.getProviderInfo(
+            android.content.ComponentName("dev.artzig.test.b", SecretProvider::class.java.name), 0,
         )
-        val hostAppInfo = android.content.pm.ApplicationInfo().apply {
-            packageName = "dev.artzig.test.b"
-            processName = "dev.artzig.test.b"
-        }
-        val providerInfo = android.content.pm.ProviderInfo()
-        providerInfo.packageName = "dev.artzig.test.b"
-        providerInfo.name = TestProvider::class.java.name
-        providerInfo.authority = "dev.artzig.test.b.provider"
-        providerInfo.exported = true
-        providerInfo.applicationInfo = hostAppInfo
-        val secretInfo = android.content.pm.ProviderInfo()
-        secretInfo.packageName = "dev.artzig.test.b"
-        secretInfo.name = TestProvider::class.java.name
-        secretInfo.authority = "dev.artzig.test.b.secret"
-        secretInfo.exported = false
-        secretInfo.applicationInfo = hostAppInfo
-        android.content.pm.PackageManager.configureHostedProviders(listOf(providerInfo, secretInfo))
-        val manifest = HostedProcessManifest(
-            "dev.artzig.test.b",
-            "dev.artzig.test.b",
-            null,
-            listOf(
-                HostedProcessManifest.ServiceEntry(
-                    EchoService::class.java.name,
-                    null,
-                    true,
-                    listOf("dev.artzig.test.ECHO"),
-                ),
-            ),
-            emptyList(),
-        )
-        ActivityThread.attachApplicationHosted(manifest)
-        // Publish the test providers (client A queries them cross-process; the
-        // non-exported one asserts the acquisition gate).
         val provider = TestProvider().also { it.attachInfo(context, providerInfo) }
-        val secret = TestProvider().also { it.attachInfo(context, secretInfo) }
-        android.app.HostedServiceClient.activityManagerOrNull()!!.publishContentProviders(
+        val secret = SecretProvider().also { it.attachInfo(context, secretInfo) }
+        am.publishContentProviders(
             listOf(
                 dev.artzig.system.HostedContentProviderHolder(
                     providerInfo,

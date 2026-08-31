@@ -79,15 +79,51 @@ public final class ActivityThread {
     public static void unbindServiceInProcess(android.content.ServiceConnection conn) {
         HostedServiceClient.unbindService(conn);
     }
-    /** AOSP static; the real service arrives with the IPackageManager client
-     * swap — until then this resolves to null and callers' dead paths stay dead. */
+    /** The session's package manager binder (AOSP static of the same name). */
+    private static volatile android.content.pm.IPackageManager sPackageManager;
     public static android.content.pm.IPackageManager getPackageManager() {
-        return android.content.pm.IPackageManager.Stub.asInterface(null);
+        android.content.pm.IPackageManager pm = sPackageManager;
+        if (pm != null) return pm;
+        android.os.IBinder binder = android.os.ServiceManager.waitForService("package");
+        if (binder == null) {
+            throw new IllegalStateException("no hosted package manager in this session");
+        }
+        pm = android.content.pm.IPackageManager.Stub.asInterface(binder);
+        sPackageManager = pm;
+        return pm;
+    }
+
+    /** ApplicationPackageManager.getResourcesForApplication comes through
+     * here (AOSP builds via ResourcesManager); the hosted build loads the
+     * target APK next to the framework resources. */
+    public android.content.res.Resources getTopLevelResources(String resDir,
+            String[] splitResDirs, String[] legacyOverlayDirs, String[] overlayPaths,
+            String[] libDirs, LoadedApk pkgInfo, android.content.res.Configuration overrideConfig) {
+        try {
+            android.content.res.AssetManager.Builder builder =
+                    new android.content.res.AssetManager.Builder();
+            String frameworkRes = System.getenv("ARTZIG_FRAMEWORK_RES");
+            if (frameworkRes != null) {
+                builder.addApkAssets(android.content.res.ApkAssets.loadFromPath(
+                        frameworkRes, android.content.res.ApkAssets.PROPERTY_SYSTEM));
+            }
+            builder.addApkAssets(android.content.res.ApkAssets.loadFromPath(resDir));
+            android.content.res.AssetManager assets = builder.build();
+            android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+            metrics.setToDefaults();
+            android.content.res.Configuration config = new android.content.res.Configuration();
+            config.setToDefaults();
+            if (overrideConfig != null) config.updateFrom(overrideConfig);
+            return android.content.res.HostedResources.create(assets, metrics, config, null);
+        } catch (java.io.IOException e) {
+            android.util.Log.w("ActivityThread", "cannot load resources of " + resDir, e);
+            return null;
+        }
     }
 
     /** Registers this process with the activity manager (AOSP attachApplication). */
-    public static void attachApplicationHosted(dev.artzig.system.HostedProcessManifest manifest) {
-        HostedServiceClient.attachApplication(manifest);
+    public static void attachApplicationHosted(String packageName) {
+        HostedServiceClient.attachApplication(packageName);
     }
     public static Application currentApplication() { return sApplication; }
     /** Never null: generated AIDL stubs fetch the PermissionEnforcer context through this. */
@@ -96,6 +132,8 @@ public final class ActivityThread {
         return sThread;
     }
     public Application getApplication() { return sApplication; }
+    /** AOSP schedules a GC after freeStorage; nothing to schedule here. */
+    public void scheduleGcIdler() {}
     public android.content.Context getSystemContext() { return sApplication; }
     public android.content.Context getSystemUiContext() { return sApplication; }
     public static class ActivityClientRecord {

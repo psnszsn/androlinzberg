@@ -7,7 +7,6 @@ import android.content.ServiceConnection
 import android.os.RemoteException
 import android.os.ServiceManager
 import android.util.Log
-import dev.artzig.system.HostedProcessManifest
 import dev.artzig.system.IHostedActivityManager
 
 /**
@@ -40,13 +39,15 @@ object HostedServiceClient {
         }
     }
 
-    /** Registers this process and its manifest with the activity manager. */
+    /** Registers this process with the activity manager as a running process
+     * of the given (already installed) package. */
     @JvmStatic
-    fun attachApplication(manifest: HostedProcessManifest) {
+    @JvmOverloads
+    fun attachApplication(packageName: String, processName: String = packageName) {
         if (attached) return
         val am = activityManagerOrNull() ?: return
         try {
-            am.attachApplication(thread, manifest)
+            am.attachApplication(thread, packageName, processName)
             attached = true
         } catch (e: RemoteException) {
             Log.w(TAG, "attachApplication failed", e)
@@ -66,6 +67,16 @@ object HostedServiceClient {
         } catch (e: RemoteException) {
             Log.w(TAG, "publishContentProviders failed", e)
         }
+    }
+
+    /** Cross-uid permission state, answered by the session's package manager
+     * (AOSP shape: PermissionManager.checkUidPermission). */
+    @JvmStatic
+    fun checkUidPermission(permission: String, uid: Int): Int = try {
+        ActivityThread.getPackageManager().checkUidPermission(permission, uid)
+    } catch (e: RemoteException) {
+        Log.w(TAG, "checkUidPermission unreachable for " + permission, e)
+        android.content.pm.PackageManager.PERMISSION_DENIED
     }
 
     private val providerLock = Any()

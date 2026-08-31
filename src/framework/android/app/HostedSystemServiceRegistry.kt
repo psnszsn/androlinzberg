@@ -141,5 +141,15 @@ object HostedSystemServiceRegistry {
         cached(Context.AUTOFILL_MANAGER_SERVICE, android.view.autofill.AutofillManager::class.java) { ctx ->
             android.view.autofill.AutofillManager(ctx.outerContext, null)
         }
+        // ApplicationPackageManager delegates (permission APIs, badging).
+        fresh("permission", android.permission.PermissionManager::class.java) {
+            android.permission.PermissionManager()
+        }
+        fresh("permission_controller", android.permission.PermissionControllerManager::class.java) {
+            android.permission.PermissionControllerManager()
+        }
+        fresh("device_policy", android.app.admin.DevicePolicyManager::class.java) {
+            android.app.admin.DevicePolicyManager()
+        }
     }
 }

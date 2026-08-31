@@ -66,6 +66,13 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_ASSIST_INPUT_DEVICE_ID = "android.intent.extra.ASSIST_INPUT_DEVICE_ID";
     public static final String EXTRA_ASSIST_PACKAGE = "android.intent.extra.ASSIST_PACKAGE";
     public static final int FLAG_RECEIVER_FOREGROUND = 0x10000000;
+    public static final int FLAG_DEBUG_LOG_RESOLUTION = 0x00000008;
+    public static final int FLAG_EXCLUDE_STOPPED_PACKAGES = 0x00000010;
+    public static final int FLAG_DIRECT_BOOT_AUTO = 0x00000100;
+    public static final String CATEGORY_INFO = "android.intent.category.INFO";
+    public static final String CATEGORY_LEANBACK_LAUNCHER = "android.intent.category.LEANBACK_LAUNCHER";
+    public static final String CATEGORY_CAR_LAUNCHER = "android.intent.category.CAR_LAUNCHER";
+    public static final int FLAG_INCLUDE_STOPPED_PACKAGES = 0x00000020;
     public Intent addCategory(String category) {
         if (mCategories == null) mCategories = new HashSet<>();
         mCategories.add(category);
@@ -158,6 +165,11 @@ public class Intent implements Parcelable, Cloneable {
     public Intent setDataAndType(Uri data, String type) { mData = data; mType = type; return this; }
     public Intent setFlags(int flags) { mFlags = flags; return this; }
     public int getFlags() { return mFlags; }
+    /** AOSP: stopped-package filtering marker read by IntentResolver. */
+    public boolean isExcludingStopped() {
+        return (mFlags & (FLAG_EXCLUDE_STOPPED_PACKAGES | FLAG_INCLUDE_STOPPED_PACKAGES))
+                == FLAG_EXCLUDE_STOPPED_PACKAGES;
+    }
     public Intent addFlags(int flags) { mFlags |= flags; return this; }
     public Intent setPackage(String packageName) { mPackage = packageName; return this; }
     public String getPackage() { return mPackage; }

@@ -361,53 +361,25 @@ public final class ApkHost {
             val apkPath: String = System.getenv("ARTZIG_APK")
             AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
 
-            val platformPermissionProtectionLevels: Map<String, Int> =
-                AssetManager
-                    .Builder()
-                    .addApkAssets(
-                        ApkAssets.loadFromPath(frameworkRes, ApkAssets.PROPERTY_SYSTEM),
-                    ).build()
-                    .use { platformAssets ->
-                        android.content.pm.HostedPackageParser
-                            .parsePermissionDefinitions(platformAssets)
-                    }
-
-            // Package parsing and Android component normalization live in the
-            // framework package module, following AOSP PackageParser behavior.
-            val mam: AssetManager =
-                AssetManager
-                    .Builder()
-                    .addApkAssets(ApkAssets.loadFromPath(apkPath))
-                    .build()
-            var hostedPackage: android.content.pm.HostedPackage
-            try {
-                hostedPackage =
-                    android.content.pm.HostedPackageParser
-                        .parse(mam)
-            } finally {
-                mam.close()
-            }
-            val pkg: String = hostedPackage.packageName
-            // Identity first: the broker assigns this process its Android uid,
-            // and Process.myUid() must not be observed before that.
+            // Identity first: the pre-bootstrap package name comes from a
+            // lightweight ApkLite parse (AOSP shape); the broker assigns this
+            // process its Android uid, and Process.myUid() must not be
+            // observed before that. The full manifest parse happens only in
+            // the system process (installPackage).
+            val pkg: String = parseApkLitePackageName(apkPath)
             android.os.HostedBinderRuntime.bootstrap(pkg, false)
-            val appClass: String? = hostedPackage.applicationClassName
-            val mainActivity: String? = hostedPackage.launcherActivityName
-            val appThemeRes: Int = hostedPackage.applicationTheme
-            val providers: List<android.content.pm.ProviderInfo> =
-                hostedPackage.providersForProcess(pkg)
+            installOwnPackage(apkPath, pkg)
+            val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
+            val appInfo: android.content.pm.ApplicationInfo =
+                checkNotNull(pm.getApplicationInfo(pkg, 0L, 0)) { "no ApplicationInfo for " + pkg }
+            val appClass: String? = appInfo.className
+            val mainActivity: String? = resolveLauncherActivity(pm, pkg)
+            val appThemeRes: Int = appInfo.theme
+            val providers: List<android.content.pm.ProviderInfo> = providersForProcess(pm, pkg)
             Log.i(
                 TAG,
                 "pkg=" + pkg + " app=" + appClass + " main=" + mainActivity + " theme=0x" +
                     Integer.toHexString(appThemeRes),
-            )
-            android.content.pm.PackageManager.configureHostedPackage(
-                hostedPackage,
-                apkPath,
-                android.os.Environment
-                    .getDataDirectory()
-                    .getAbsolutePath(),
-                platformPermissionProtectionLevels,
             )
 
             // --- classloader over the apk (+ bundled native libs)
@@ -431,10 +403,11 @@ public final class ApkHost {
             )
             // A resizable Activity starts with the current window bounds; a fixed
             // manifest orientation constrains those bounds before onCreate.
-            val mainInfo: android.content.pm.ActivityInfo? = hostedPackage.activities.get(mainActivity)
             val initialOrientation: Int =
-                if (mainInfo != null) {
-                    mainInfo.screenOrientation
+                if (mainActivity != null) {
+                    pm.getActivityInfo(android.content.ComponentName(pkg, mainActivity), 0L, 0)
+                        ?.screenOrientation
+                        ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 } else {
                     android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 }
@@ -460,7 +433,7 @@ public final class ApkHost {
                 })
             }
             android.app.ActivityThread.configureServiceHost(sContext, cl)
-            installActivityHost(hostedPackage)
+            installActivityHost(pm, pkg)
 
             // A hosted process has no keystore daemon. Install the compatible,
             // persistent provider before Application.onCreate initializes its
@@ -471,9 +444,7 @@ public final class ApkHost {
 
             // AOSP ordering: attach first, then install providers + publish +
             // Application.onCreate (bindApplicationInProcess).
-            android.app.ActivityThread.attachApplicationHosted(
-                buildManifest(hostedPackage, apkPath, platformPermissionProtectionLevels),
-            )
+            android.app.ActivityThread.attachApplicationHosted(pkg)
             android.app.ActivityThread.bindApplicationInProcess(sContext, cl, appClass, providers)
             sProcessInitialized = true
 
@@ -484,36 +455,62 @@ public final class ApkHost {
             Log.i(TAG, "activity up")
         }
 
-        /** The manifest slice the activity manager needs (services, actions, permissions). */
+        /** The pre-bootstrap package name, read with the AOSP lightweight
+         * parse (ApkLiteParseUtils) — no binder identity needed. */
         @JvmStatic
-        private fun buildManifest(
-            hostedPackage: android.content.pm.HostedPackage,
-            apkPath: String,
-            platformPermissionProtectionLevels: Map<String, Int>,
-        ): dev.artzig.system.HostedProcessManifest {
-            val services =
-                hostedPackage.services.map { info ->
-                    dev.artzig.system.HostedProcessManifest.ServiceEntry(
-                        info.name,
-                        info.permission,
-                        info.exported,
-                        hostedPackage.serviceActions[info.name]?.toList() ?: emptyList(),
-                    )
-                }
-            // Granted, not requested: the activity manager's bind checks trust
-            // this list, and only normal-protection permissions are granted.
-            val granted = android.content.pm.PackageManager.computeGrantedPermissions(
-                hostedPackage.requestedPermissions,
-                hostedPackage.declaredPermissionProtectionLevels,
-                platformPermissionProtectionLevels,
+        private fun parseApkLitePackageName(apkPath: String): String {
+            // Not forDefaultParsing(): that resolves the platform-compat
+            // service through ServiceManager, which would connect the hosted
+            // Binder runtime anonymously before bootstrap fixes this
+            // process's package identity.
+            val input = android.content.pm.parsing.result.ParseTypeImpl(
+                android.content.pm.parsing.result.ParseInput.Callback { _, _, _ -> true },
+            ).reset()
+            val result = android.content.pm.parsing.ApkLiteParseUtils.parsePackageLite(
+                input, java.io.File(apkPath), 0,
             )
-            return dev.artzig.system.HostedProcessManifest(
-                hostedPackage.packageName,
-                hostedPackage.packageName,
-                apkPath,
-                services,
-                granted.toList(),
-            )
+            if (result.isError) {
+                throw IllegalStateException("cannot read package name of " + apkPath + ": " + result.errorMessage)
+            }
+            return result.result.packageName
+        }
+
+        /** Installs this process's APK through the activity manager (parsing
+         * happens only in the system process). */
+        @JvmStatic
+        private fun installOwnPackage(apkPath: String, pkg: String) {
+            val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull()) {
+                "no activity manager in this session"
+            }
+            val installed = am.installPackage(apkPath)
+            check(installed == pkg) { "installed as " + installed + ", expected " + pkg }
+        }
+
+        /** The MAIN/LAUNCHER activity via the real resolver. */
+        @JvmStatic
+        private fun resolveLauncherActivity(
+            pm: android.content.pm.IPackageManager,
+            pkg: String,
+        ): String? {
+            val query = android.content.Intent(android.content.Intent.ACTION_MAIN)
+                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                .setPackage(pkg)
+            val matches = pm.queryIntentActivities(query, null, 0L, 0)?.list ?: return null
+            return (matches.firstOrNull() as? android.content.pm.ResolveInfo)?.activityInfo?.name
+        }
+
+        /** Providers this process must instantiate: those of its own process
+         * name (AOSP installContentProviders filters by processName). */
+        @JvmStatic
+        private fun providersForProcess(
+            pm: android.content.pm.IPackageManager,
+            pkg: String,
+        ): List<android.content.pm.ProviderInfo> {
+            val info = pm.getPackageInfo(
+                pkg, android.content.pm.PackageManager.GET_PROVIDERS.toLong(), 0,
+            ) ?: return emptyList()
+            return info.providers?.filter { it.processName == null || it.processName == pkg }
+                ?: emptyList()
         }
 
         /**
@@ -531,29 +528,12 @@ public final class ApkHost {
             val frameworkRes: String = System.getenv("ARTZIG_FRAMEWORK_RES")
             val apkPath: String = System.getenv("ARTZIG_APK")
             AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
-            val platformPermissionProtectionLevels: Map<String, Int> =
-                AssetManager
-                    .Builder()
-                    .addApkAssets(ApkAssets.loadFromPath(frameworkRes, ApkAssets.PROPERTY_SYSTEM))
-                    .build()
-                    .use { platformAssets ->
-                        android.content.pm.HostedPackageParser.parsePermissionDefinitions(platformAssets)
-                    }
-            val mam: AssetManager = AssetManager.Builder().addApkAssets(ApkAssets.loadFromPath(apkPath)).build()
-            val hostedPackage: android.content.pm.HostedPackage =
-                try {
-                    android.content.pm.HostedPackageParser.parse(mam)
-                } finally {
-                    mam.close()
-                }
-            val pkg: String = hostedPackage.packageName
+            val pkg: String = parseApkLitePackageName(apkPath)
             android.os.HostedBinderRuntime.bootstrap(pkg, false)
-            android.content.pm.PackageManager.configureHostedPackage(
-                hostedPackage,
-                apkPath,
-                android.os.Environment.getDataDirectory().getAbsolutePath(),
-                platformPermissionProtectionLevels,
-            )
+            installOwnPackage(apkPath, pkg)
+            val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
+            val appInfo: android.content.pm.ApplicationInfo =
+                checkNotNull(pm.getApplicationInfo(pkg, 0L, 0)) { "no ApplicationInfo for " + pkg }
             val libPath: String = extractNativeLibraries(apkPath)
             val cl: HostedApkClassLoader = HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
             sClassLoader = cl
@@ -570,7 +550,7 @@ public final class ApkHost {
                 dev.artzig.system.HostedDisplayManagerService(),
             )
             sContext =
-                makeContext(frameworkRes, apkPath, 640, 480, 120, hostedPackage.applicationTheme, pkg)
+                makeContext(frameworkRes, apkPath, 640, 480, 120, appInfo.theme, pkg)
             sContext.setClassLoaderOverride(cl)
             android.app.ActivityThread.configureServiceHost(sContext, cl)
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
@@ -578,19 +558,28 @@ public final class ApkHost {
             }
             // AOSP ordering: attach first, then install providers + publish +
             // Application.onCreate.
-            android.app.ActivityThread.attachApplicationHosted(
-                buildManifest(hostedPackage, apkPath, platformPermissionProtectionLevels),
-            )
+            android.app.ActivityThread.attachApplicationHosted(pkg)
             android.app.ActivityThread.bindApplicationInProcess(
                 sContext,
                 cl,
-                hostedPackage.applicationClassName,
-                hostedPackage.providersForProcess(pkg),
+                appInfo.className,
+                providersForProcess(pm, pkg),
             )
             Log.i(TAG, "headless app process up: " + pkg)
         }
 
-        @JvmStatic private fun installActivityHost(hostedPackage: android.content.pm.HostedPackage) {
+        @JvmStatic private fun installActivityHost(
+            pm: android.content.pm.IPackageManager,
+            pkg: String,
+        ) {
+            val activities = HashMap<String, android.content.pm.ActivityInfo>()
+            for (
+                activity in pm.getPackageInfo(
+                    pkg, android.content.pm.PackageManager.GET_ACTIVITIES.toLong(), 0,
+                )?.activities ?: emptyArray()
+            ) {
+                activities[activity.name] = activity
+            }
             android.app.ActivityThread.configureActivityHost(
                 object : android.app.ActivityThread.HostAdapter {
                     public override fun getActivityContext(): android.content.Context = sContext
@@ -624,7 +613,7 @@ public final class ApkHost {
                     ): android.content.ComponentName? =
                         HostedDesktopIntents.resolve(sContext, intent)
                 },
-                hostedPackage.activities,
+                activities,
             )
         }
 

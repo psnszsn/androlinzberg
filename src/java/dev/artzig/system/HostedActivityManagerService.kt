@@ -34,7 +34,8 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         val thread: IHostedApplicationThread,
         val pid: Int,
         val uid: Int,
-        val manifest: HostedProcessManifest,
+        val packageName: String,
+        val processName: String,
     ) : IBinder.DeathRecipient {
         val binder: IBinder = thread.asBinder()
         override fun binderDied() = handleProcessDied(this)
@@ -53,7 +54,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         }
     }
 
-    private inner class ServiceRecord(val name: ComponentName, val entry: HostedProcessManifest.ServiceEntry) {
+    private inner class ServiceRecord(val name: ComponentName, val entry: android.content.pm.ServiceInfo) {
         val token: IBinder = Binder()
         var app: ProcessRecord? = null
         var created = false
@@ -94,8 +95,6 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
     private val processes = LinkedHashMap<IBinder, ProcessRecord>()
     private val servicesByComponent = LinkedHashMap<ComponentName, ServiceRecord>()
     private val servicesByToken = LinkedHashMap<IBinder, ServiceRecord>()
-    /** package -> APK path, for respawning; filled from manifests. */
-    private val packagePaths = LinkedHashMap<String, String>()
     /** Bind/start operations waiting for a package's process to attach. */
     private val pendingByPackage = LinkedHashMap<String, MutableList<() -> Unit>>()
     /** Published content providers, one record per declared authority
@@ -109,42 +108,42 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
 
     // ------------------------------------------------------------- attach
 
-    override fun attachApplication(thread: IHostedApplicationThread, manifest: HostedProcessManifest) {
+    /** Parses and installs an APK in the system process (the package manager
+     * is the only parser in the session); returns the package name. */
+    override fun installPackage(apkPath: String): String =
+        checkNotNull(packageService) { "no package service" }.installPackage(apkPath)
+
+    override fun attachApplication(
+        thread: IHostedApplicationThread,
+        packageName: String,
+        processName: String?,
+    ) {
         val callingUid = Binder.getCallingUid()
-        // Interim identity lock (full per-connection credential auth is a
-        // follow-up): a process may only attach as a package whose known uid
-        // is its own, and may not attach a package another uid already holds.
-        val knownUid = packageService?.getPackageUid(manifest.packageName) ?: -1
-        if (knownUid != -1 && knownUid != callingUid && callingUid != android.os.Process.SYSTEM_UID) {
-            throw SecurityException(
-                "uid " + callingUid + " may not attach as " + manifest.packageName + " (uid " + knownUid + ")",
-            )
+        // Identity: the package record binds to the first attaching broker
+        // uid; the package manager rejects a uid claiming a second package or
+        // a package already bound to another uid (interim gate until
+        // per-connection credential auth).
+        if (callingUid != android.os.Process.SYSTEM_UID) {
+            packageService?.bindPackageUid(packageName, callingUid)
         }
-        val record = ProcessRecord(thread, Binder.getCallingPid(), callingUid, manifest)
+        val record = ProcessRecord(
+            thread, Binder.getCallingPid(), callingUid, packageName, processName ?: packageName,
+        )
         val drained: List<() -> Unit>
         // Insert before linking so a death in the window between the two runs
         // handleProcessDied against a record that is actually registered.
         synchronized(lock) {
-            val conflict = processes.values.firstOrNull {
-                it.manifest.packageName == manifest.packageName && it.uid != callingUid
-            }
-            if (conflict != null) {
-                throw SecurityException(
-                    "package " + manifest.packageName + " already attached under uid " + conflict.uid,
-                )
-            }
             processes[record.binder] = record
-            manifest.apkPath?.let { packagePaths[manifest.packageName] = it }
-            drained = pendingByPackage.remove(manifest.packageName) ?: emptyList()
+            drained = pendingByPackage.remove(packageName) ?: emptyList()
         }
         try {
             record.binder.linkToDeath(record, 0)
         } catch (e: RemoteException) {
-            Log.w(TAG, "process died before attach completed: " + manifest.packageName)
+            Log.w(TAG, "process died before attach completed: " + packageName)
             handleProcessDied(record)
             return
         }
-        Log.i(TAG, "attached " + manifest.packageName + " pid=" + record.pid + " uid=" + record.uid)
+        Log.i(TAG, "attached " + packageName + " pid=" + record.pid + " uid=" + record.uid)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
         for (op in drained) op()
@@ -170,7 +169,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
             // were counting on that package publishing.
             providersByAuthority.entries.removeAll { it.value.app === record }
             for (waiters in providerWaiters.values) {
-                val failed = waiters.filter { it.packageName == record.manifest.packageName }
+                val failed = waiters.filter { it.packageName == record.packageName }
                 for (waiter in failed) waiter.latch.countDown()
             }
         }
@@ -181,38 +180,29 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
                 // The client is gone too; its own death handling cleans up.
             }
         }
-        Log.i(TAG, "process died: " + record.manifest.packageName + " pid=" + record.pid)
+        Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
     }
 
     // ---------------------------------------------------------- resolution
 
-    private fun resolveServiceLocked(service: Intent, callingPackage: String?): Pair<ProcessRecord, HostedProcessManifest.ServiceEntry>? {
-        val component = service.component
-        for (process in processes.values) {
-            val manifest = process.manifest
-            if (component != null) {
-                if (manifest.packageName != component.packageName) continue
-                val entry = manifest.services.firstOrNull { it.className == component.className } ?: continue
-                return process to entry
-            }
-            if (service.`package` != null && service.`package` != manifest.packageName) continue
-            val action = service.action ?: continue
-            val entry = manifest.services.firstOrNull { it.actions.contains(action) } ?: continue
-            return process to entry
-        }
-        return null
+    /** Resolves a service intent through the package manager's real filters,
+     * then finds the attached process hosting that package. */
+    private fun resolveServiceLocked(service: Intent, callingPackage: String?): Pair<ProcessRecord, android.content.pm.ServiceInfo>? {
+        val info = packageService?.resolveServiceInfo(service) ?: return null
+        val process = processes.values.firstOrNull { it.packageName == info.packageName } ?: return null
+        return process to info
     }
 
     /** The package that would host this service intent, whether or not attached. */
     private fun targetPackageForLocked(service: Intent): String? {
         service.component?.let { return it.packageName }
-        return packageService?.queryIntentServices(service, 0)?.firstOrNull()?.serviceInfo?.packageName
+        return packageService?.resolveServiceInfo(service)?.packageName
     }
 
     /** Not attached: spawn the package's process; the pending op replays on attach. Requires `lock`. */
     private fun bringUpProcessLocked(packageName: String): Boolean {
         val launcher = processLauncher ?: return false
-        val apkPath = packagePaths[packageName] ?: packageService?.getApkPath(packageName) ?: return false
+        val apkPath = packageService?.getApkPathInternal(packageName) ?: return false
         return launcher.launch(packageName, apkPath)
     }
 
@@ -223,7 +213,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
      * must be held by the caller.
      */
     private fun checkAccessLocked(
-        entry: HostedProcessManifest.ServiceEntry,
+        entry: android.content.pm.ServiceInfo,
         ownerUid: Int,
         callingUid: Int,
     ): Boolean {
@@ -232,11 +222,12 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         }
         val permission = entry.permission ?: return true
         if (callingUid == android.os.Process.SYSTEM_UID || callingUid == ownerUid) return true
-        return processes.values.any { it.uid == callingUid && it.manifest.grantedPermissions.contains(permission) }
+        return packageService?.checkUidPermission(permission, callingUid) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
-    private fun serviceForLocked(process: ProcessRecord, entry: HostedProcessManifest.ServiceEntry): ServiceRecord {
-        val name = ComponentName(process.manifest.packageName, entry.className)
+    private fun serviceForLocked(process: ProcessRecord, entry: android.content.pm.ServiceInfo): ServiceRecord {
+        val name = ComponentName(process.packageName, entry.name)
         return servicesByComponent.getOrPut(name) {
             ServiceRecord(name, entry).also {
                 it.app = process
@@ -274,7 +265,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
                     p.schedule?.invoke()
                 }
                 val name = service.component
-                    ?: packageService?.queryIntentServices(service, 0)?.firstOrNull()?.serviceInfo
+                    ?: packageService?.resolveServiceInfo(service)
                         ?.let { ComponentName(it.packageName, it.name) }
                 return PostStart(null, name, 2)
             }
@@ -298,7 +289,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         var schedule: (() -> Unit)? = null
         synchronized(lock) {
             val component = service.component
-                ?: resolveServiceLocked(service, null)?.let { ComponentName(it.first.manifest.packageName, it.second.className) }
+                ?: resolveServiceLocked(service, null)?.let { ComponentName(it.first.packageName, it.second.name) }
                 ?: return 0
             val record = servicesByComponent[component] ?: return 0
             record.startRequested = false
@@ -530,7 +521,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
      * provider's Transport; source note ActivityManagerService.checkContentProviderPermission). */
     private fun checkProviderAccess(info: android.content.pm.ProviderInfo, callingUid: Int) {
         if (callingUid == android.os.Process.SYSTEM_UID || callingUid == 0) return
-        val ownerUid = packageService?.getPackageUid(info.packageName) ?: -1
+        val ownerUid = packageService?.getPackageUidInternal(info.packageName) ?: -1
         if (ownerUid == callingUid) return
         if (!info.exported) {
             throw SecurityException(
@@ -559,11 +550,11 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
                 checkProviderAccess(it.holder.info, callingUid)
                 return it.holder
             }
-            val info = packageService?.resolveContentProvider(authority, 0) ?: return null
+            val info = packageService?.resolveContentProvider(authority, 0L, 0) ?: return null
             checkProviderAccess(info, callingUid)
             // The owning package has published nothing yet: make sure its
             // process is coming up, then wait for publishContentProviders.
-            if (processes.values.none { it.manifest.packageName == info.packageName }) {
+            if (processes.values.none { it.packageName == info.packageName }) {
                 if (!bringUpProcessLocked(info.packageName)) return null
             }
             waiter = ProviderWaiter(info.packageName)
@@ -598,7 +589,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
                 if (holder.provider == null) continue
                 // A process may only publish authorities of its own package
                 // (same interim identity model as attachApplication).
-                val ownerUid = packageService?.getPackageUid(holder.info.packageName) ?: -1
+                val ownerUid = packageService?.getPackageUidInternal(holder.info.packageName) ?: -1
                 if (callingUid != android.os.Process.SYSTEM_UID && ownerUid != callingUid) {
                     Log.w(TAG, "uid " + callingUid + " may not publish providers of " + holder.info.packageName)
                     continue

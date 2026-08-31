@@ -1,181 +1,650 @@
 package dev.artzig.system
 
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.ParceledListSlice
+import android.content.pm.PermissionGroupInfo
+import android.content.pm.PermissionInfo
+import android.content.pm.ProviderInfo
 import android.content.pm.ResolveInfo
 import android.content.pm.ServiceInfo
-import android.content.res.ApkAssets
-import android.content.res.AssetManager
+import android.content.pm.SigningDetails
 import android.os.Binder
-import android.os.Bundle
+import android.os.Process
 import android.util.Log
+import com.android.internal.pm.parsing.PackageParser2
+import com.android.internal.pm.parsing.pkg.AndroidPackageInternal
+import com.android.internal.pm.parsing.pkg.PackageImpl
+import com.android.internal.pm.pkg.component.ParsedPermission
+import com.android.internal.pm.pkg.component.ParsedPermissionGroup
+import com.android.internal.pm.pkg.parsing.ParsingPackageUtils
+import android.content.pm.parsing.result.ParseTypeImpl
+import com.android.server.pm.Computer
+import com.android.server.pm.UserManagerService
+import com.android.server.pm.UserNeedsBadgingCache
+import com.android.server.pm.parsing.PackageInfoUtils
+import com.android.server.pm.pkg.AndroidPackage
+import com.android.server.pm.pkg.PackageStateInternal
+import com.android.server.pm.resolution.ComponentResolver
+import java.io.File
 
 /**
- * The session-wide package manager: one record per installed package, fed by
- * each process registering its parsed APK (or by parsing here for respawns).
+ * The session-wide package manager on the real `IPackageManager` surface:
+ * APKs are parsed only here (AOSP `PackageParser2` -> `ParsedPackage` ->
+ * `AndroidPackageInternal`), components resolve through the real
+ * `ComponentResolver`/`IntentResolver`, and every Info object comes from
+ * `PackageInfoUtils` over [HostedPackageState].
  *
- * Source note: follows `com.android.server.pm.ComputerEngine`
- * (`queryIntentServicesInternal`, `resolveIntentInternal`, `getPackageInfo`)
- * and `PermissionManagerService.checkPermission` for query and permission
- * semantics; `PackageManagerService` itself is inseparable from the full
- * system_server graph (spike result), so the record model is hosted. Intent
- * matching uses the parser's per-service action sets; full `IntentFilter`
- * matching arrives with cross-process broadcasts.
+ * Source note: follows `com.android.server.pm.PackageManagerService` /
+ * `ComputerEngine` (install -> `addAllComponents`, `queryIntentActivitiesInternal`,
+ * `getPackageInfo`) and `PermissionManagerServiceImpl` (install-time grant of
+ * normal protection, signature grant on SigningDetails match) — the real
+ * classes are inseparable from the full system_server graph (spike result).
+ * Anything not overridden here fails loudly through
+ * [PackageManagerServiceBase].
  */
-class HostedPackageManagerService : IHostedPackageManager.Stub() {
-    private class Record(val pkg: HostedInstalledPackage, val uid: Int)
-
+class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     private val lock = Any()
-    private val packages = LinkedHashMap<String, Record>()
+    private val packages = LinkedHashMap<String, HostedPackageState>()
+    /** Broker uid -> package state, bound at process attach. */
+    private val packagesByUid = HashMap<Int, HostedPackageState>()
+    private val componentResolver =
+        ComponentResolver(UserManagerService.getInstance(), UserNeedsBadgingCache(UserManagerService.getInstance()))
+    /** Permission name -> (definition, defining package); first definition wins. */
+    private class PermissionDef(val permission: ParsedPermission, val owner: HostedPackageState)
+    private val permissionDefs = HashMap<String, PermissionDef>()
+    private val permissionGroups = HashMap<String, ParsedPermissionGroup>()
 
-    override fun registerPackage(pkg: HostedInstalledPackage) {
-        val callerUid = Binder.getCallingUid()
+    // ------------------------------------------------------------- install
+
+    private val parserCallback = object : PackageParser2.Callback() {
+        /**
+         * The no-platform-compat fallback (source note:
+         * ParseTypeImpl.forDefaultParsing): a deferred parse error becomes
+         * fatal only when the package's target SDK is past the SDK the change
+         * is gated on. Returning true unconditionally would reject otherwise
+         * valid APKs (e.g. an API-30 target with an implicit intent-filter
+         * and no android:exported trips MISSING_EXPORTED_FLAG, gated at R).
+         */
+        override fun isChangeEnabled(changeId: Long, appInfo: ApplicationInfo): Boolean {
+            val gate = android.content.pm.parsing.result.ParseInput.DeferredError
+                .getTargetSdkForChange(changeId)
+            return gate != -1 && appInfo.targetSdkVersion > gate
+        }
+        override fun hasFeature(feature: String?): Boolean = false
+        override fun getHiddenApiWhitelistedApps(): Set<String> = emptySet()
+        override fun getInstallConstraintsAllowlist(): Set<String> = emptySet()
+    }
+
+    /**
+     * Parses and installs an APK; idempotent per package name (a re-install
+     * from the same path returns the existing record). The parse happens here,
+     * so a caller can only feed the service a manifest its APK carries, and a
+     * non-system caller is bound to the package it installs (one package per
+     * broker uid — the same interim identity gate as attach; per-connection
+     * package authentication is the standing follow-up). A system caller may
+     * install any number (respawn, platform).
+     */
+    fun installPackage(apkPath: String): String {
+        val callingUid = Binder.getCallingUid()
+        val file = File(apkPath)
+        require(file.isFile) { "no APK at $apkPath" }
+        // Parse outside the lock (I/O + signature verification).
+        val parsed = PackageParser2(null, null, null, parserCallback).use { parser ->
+            parser.parsePackage(file, 0, false)
+        }
+        val signing = ParsingPackageUtils.getSigningDetails(
+            ParseTypeImpl.forDefaultParsing().reset(), parsed, false,
+        )
+        if (signing.isError) {
+            throw SecurityException("cannot verify " + apkPath + ": " + signing.errorMessage)
+        }
+        parsed.setSigningDetails(signing.result)
+        val pkg = parsed.hideAsFinal()
+        val app = callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID
         synchronized(lock) {
-            val existing = packages[pkg.packageInfo.packageName]
-            // A package record belongs to the uid that first registered it: a
-            // different app uid may not replace its content (that would let a
-            // peer plant grantedPermissions honoured for the victim's uid).
-            // The system uid may always update, and a system-side parse
-            // (installPackage before spawn) yields to the app process that
-            // later attaches with its broker-assigned uid.
-            if (existing != null && callerUid != android.os.Process.SYSTEM_UID &&
-                existing.uid != android.os.Process.SYSTEM_UID && existing.uid != callerUid
-            ) {
-                throw SecurityException(
-                    "uid " + callerUid + " may not re-register " + pkg.packageInfo.packageName +
-                        " owned by uid " + existing.uid,
-                )
-            }
-            // Interim identity lock (until per-connection credential auth): an
-            // app uid owns exactly one package, so a peer cannot register a
-            // second, unused package name and self-grant its permissions. The
-            // system uid legitimately parses many (android + installPackage).
-            if (existing == null && callerUid != android.os.Process.SYSTEM_UID) {
-                val already = packages.values.firstOrNull { it.uid == callerUid }
-                if (already != null) {
+            packages[pkg.packageName]?.let { existing ->
+                if (existing.pathString != apkPath) {
                     throw SecurityException(
-                        "uid " + callerUid + " already owns " + already.pkg.packageInfo.packageName +
-                            " and may not also register " + pkg.packageInfo.packageName,
+                        pkg.packageName + " is already installed from " + existing.pathString,
+                    )
+                }
+                if (app) bindPackageUidLocked(pkg.packageName, callingUid)
+                return pkg.packageName
+            }
+            // An app peer may not install a package while it already owns a
+            // different one; bind before registering so a rejected install
+            // leaves no record.
+            if (app) {
+                val owned = packagesByUid[callingUid]
+                if (owned != null) {
+                    throw SecurityException(
+                        "uid " + callingUid + " already owns " + owned.packageName +
+                            " and may not install " + pkg.packageName,
                     )
                 }
             }
-            val uid = when {
-                existing == null -> callerUid
-                existing.uid == android.os.Process.SYSTEM_UID &&
-                    callerUid != android.os.Process.SYSTEM_UID -> callerUid
-                else -> existing.uid
-            }
-            packages[pkg.packageInfo.packageName] = Record(pkg, uid)
+            installLocked(pkg, apkPath, system = false)
+            if (app) bindPackageUidLocked(pkg.packageName, callingUid)
         }
-        Log.i(TAG, "registered " + pkg.packageInfo.packageName + " uid=" + callerUid)
+        invalidateClientCaches()
+        Log.i(TAG, "installed " + pkg.packageName + " from " + apkPath)
+        return pkg.packageName
     }
 
-    override fun installPackage(apkPath: String): HostedInstalledPackage {
+    /** Installs framework-res.apk as package "android" (boot, system process). */
+    fun installPlatform(frameworkResPath: String) {
+        val parsed = PackageParser2(null, null, null, parserCallback).use { parser ->
+            parser.parsePackage(File(frameworkResPath), 0, false)
+        }
+        val signing = ParsingPackageUtils.getSigningDetails(
+            ParseTypeImpl.forDefaultParsing().reset(), parsed, false,
+        )
+        if (signing.isError) {
+            throw IllegalStateException("cannot verify framework-res: " + signing.errorMessage)
+        }
+        parsed.setSigningDetails(signing.result)
+        // PackageInfoUtils reads FLAG_SYSTEM / PRIVATE_FLAG_PRIVILEGED from the
+        // parsed package (AndroidPackageLegacyUtils.isSystem/isPrivileged), not
+        // from PackageStateInternal, so the scan-derived flags must be set on
+        // the package itself before it is frozen (AOSP sets them during scan).
+        parsed.setSystem(true).setPrivileged(true)
+        val pkg = parsed.hideAsFinal()
+        check(pkg.packageName == "android") { "framework-res parsed as " + pkg.packageName }
         synchronized(lock) {
-            packages.values.firstOrNull { it.pkg.apkPath == apkPath }?.let { return it.pkg }
+            installLocked(pkg, frameworkResPath, system = true)
+            packagesByUid[Process.SYSTEM_UID] = packages.getValue("android")
         }
-        val assets = AssetManager.Builder().addApkAssets(ApkAssets.loadFromPath(apkPath)).build()
-        val hosted = try {
-            android.content.pm.HostedPackageParser.parse(assets)
-        } finally {
-            assets.close()
-        }
-        val installed = PackageManager.toInstalledPackage(hosted, apkPath, null, emptyMap())
-        registerPackage(installed)
-        return installed
+        invalidateClientCaches()
+        Log.i(
+            TAG,
+            "platform installed: " + permissionDefs.size + " permissions, " +
+                permissionGroups.size + " groups",
+        )
     }
 
-    override fun getPackage(packageName: String?): HostedInstalledPackage? =
+    private fun installLocked(pkg: AndroidPackageInternal, apkPath: String, system: Boolean) {
+        // Register this package's permission definitions before computing its
+        // own grants (a package may request a permission it declares).
+        val state = HostedPackageState(
+            pkg, apkPath, system,
+            pkg.usesPermissions.mapTo(LinkedHashSet()) { it.name },
+            LinkedHashSet(),
+        )
+        for (permission in pkg.permissions) {
+            val existing = permissionDefs[permission.name]
+            if (existing != null && existing.owner.packageName != pkg.packageName) {
+                Log.w(
+                    TAG,
+                    pkg.packageName + " may not redefine " + permission.name +
+                        " owned by " + existing.owner.packageName,
+                )
+                continue
+            }
+            permissionDefs[permission.name] = PermissionDef(permission, state)
+        }
+        for (group in pkg.permissionGroups) {
+            permissionGroups.putIfAbsent(group.name, group)
+        }
+        state.grantedPermissions.addAll(computeInstallGrantsLocked(state))
+        state.userState.setInstalled(true)
+        state.userState.setFirstInstallTimeMillis(System.currentTimeMillis())
+        packages[pkg.packageName] = state
+        componentResolver.addAllComponents(pkg, false, null, this)
+        // A package installed before its permission's definer was denied that
+        // permission at its own install (the definition did not exist yet).
+        // Now that this package may contribute new definitions, reconsider
+        // existing requesters so grants no longer depend on install order.
+        // Install grants only ever add, so a union is safe (it cannot resurrect
+        // a runtime-revoked dangerous permission — those are never install-granted).
+        val newlyDefined = pkg.permissions.mapTo(HashSet()) { it.name }
+        if (newlyDefined.isNotEmpty()) {
+            for (other in packages.values) {
+                if (other === state) continue
+                if (other.requestedPermissions.none { it in newlyDefined }) continue
+                other.grantedPermissions.addAll(computeInstallGrantsLocked(other))
+            }
+        }
+    }
+
+    /**
+     * Install-time grant (source note: `PermissionManagerServiceImpl`
+     * `grantRequestedPermissionsInternal`/`shouldGrantSignaturePermission`,
+     * reduced): normal protection is granted outright; signature protection
+     * is granted on a SigningDetails match with the defining package (the
+     * platform's definitions match packages signed with the azk-platform
+     * key). Dangerous protection is never granted at install — it is runtime
+     * state, mutable through [grantRuntimePermission].
+     */
+    private fun computeInstallGrantsLocked(state: HostedPackageState): List<String> {
+        val granted = ArrayList<String>()
+        for (name in state.requestedPermissions) {
+            val def = permissionDefs[name] ?: continue
+            when (def.permission.protectionLevel and PermissionInfo.PROTECTION_MASK_BASE) {
+                PermissionInfo.PROTECTION_NORMAL -> granted.add(name)
+                PermissionInfo.PROTECTION_SIGNATURE -> {
+                    if (state.packageName == def.owner.packageName ||
+                        state.signingDetails.hasCommonSignerWithCapability(
+                            def.owner.signingDetails,
+                            SigningDetails.CertCapabilities.PERMISSION,
+                        )
+                    ) {
+                        granted.add(name)
+                    }
+                }
+            }
+        }
+        return granted
+    }
+
+    // ---------------------------------------------- identity (uid binding)
+
+    /**
+     * Binds a package to the broker uid of its first attaching process
+     * (called by the activity manager's attach path). The broker's uid map
+     * is stable per package for the session, so a second process of the same
+     * package carries the same uid.
+     */
+    fun bindPackageUid(packageName: String, uid: Int) {
+        if (uid == Process.SYSTEM_UID) return
+        synchronized(lock) { bindPackageUidLocked(packageName, uid) }
+        invalidateClientCaches()
+    }
+
+    /** Requires `lock`; caller invalidates caches once outside it. */
+    private fun bindPackageUidLocked(packageName: String, uid: Int) {
+        val state = packages[packageName]
+            ?: throw SecurityException("cannot attach unknown package $packageName")
+        if (state.appId != -1 && state.appId != uid) {
+            throw SecurityException(
+                "package " + packageName + " is uid " + state.appId + ", not " + uid,
+            )
+        }
+        val holder = packagesByUid[uid]
+        if (holder != null && holder !== state) {
+            throw SecurityException(
+                "uid " + uid + " already owns " + holder.packageName +
+                    " and may not attach as " + packageName,
+            )
+        }
+        state.appId = uid
+        packagesByUid[uid] = state
+        // PackageInfoUtils reads ApplicationInfo.uid from the parsed package's
+        // appId, not from PackageStateInternal; keep them in sync so generated
+        // info reports the broker uid (single user 0, so appId == uid).
+        (state.pkg as PackageImpl).setUid(uid)
+    }
+
+    // ------------------------------------------------- Computer (resolver)
+
+    override fun getPackage(packageName: String): AndroidPackage? =
         synchronized(lock) { packages[packageName]?.pkg }
 
-    override fun queryIntentServices(intent: Intent?, flags: Int): List<ResolveInfo> {
-        val result = ArrayList<ResolveInfo>()
-        if (intent == null) return result
-        val component = intent.component
+    override fun getPackageStateInternal(packageName: String): PackageStateInternal? =
+        synchronized(lock) { packages[packageName] }
+
+    // -------------------------------------------------- internal (in-process)
+
+    fun getApkPathInternal(packageName: String): String? =
+        synchronized(lock) { packages[packageName]?.pathString }
+
+    fun getPackageUidInternal(packageName: String): Int =
+        synchronized(lock) { packages[packageName]?.appId ?: -1 }
+
+    /** First match for a service intent (activity manager's bind/start path). */
+    fun resolveServiceInfo(intent: Intent): ServiceInfo? =
+        resolveService(intent, intent.type, 0L, 0)?.serviceInfo
+
+    // ----------------------------------------------------- IPackageManager
+
+    /** The single hosted user is always running and unlocked, so every query
+     * matches both direct-boot states (source note:
+     * ComputerEngine.updateFlagsForResolve / updateFlagsForComponent). */
+    private fun withDirectBoot(flags: Long): Long =
+        flags or PackageManager.MATCH_DIRECT_BOOT_AWARE.toLong() or
+            PackageManager.MATCH_DIRECT_BOOT_UNAWARE.toLong()
+
+    override fun getPackageInfo(packageName: String?, flags: Long, userId: Int): PackageInfo? {
+        val name = packageName ?: return null
         synchronized(lock) {
-            for (record in packages.values) {
-                val info = record.pkg.packageInfo
-                val services = info.services ?: continue
-                for (service in services) {
-                    if (!service.enabled && (flags and PackageManager.MATCH_DISABLED_COMPONENTS) == 0) continue
-                    if (component != null) {
-                        if (component.packageName != service.packageName || component.className != service.name) continue
-                    } else {
-                        if (intent.`package` != null && intent.`package` != service.packageName) continue
-                        val action = intent.action ?: continue
-                        val actions = record.pkg.serviceActions.getStringArrayList(service.name) ?: continue
-                        if (!actions.contains(action)) continue
-                    }
-                    val resolve = ResolveInfo()
-                    resolve.serviceInfo = ServiceInfo(service)
-                    result.add(resolve)
-                }
+            val state = packages[name] ?: return null
+            return PackageInfoUtils.generate(
+                state.pkg, gidsFor(state), withDirectBoot(flags), 0, 0,
+                state.requestedPermissions, state.grantedPermissions,
+                state.userState, userId, state,
+            )
+        }
+    }
+
+    override fun getApplicationInfo(packageName: String?, flags: Long, userId: Int): ApplicationInfo? {
+        val name = packageName ?: return null
+        synchronized(lock) {
+            val state = packages[name] ?: return null
+            return PackageInfoUtils.generateApplicationInfo(
+                state.pkg, withDirectBoot(flags), state.userState, userId, state,
+            )
+        }
+    }
+
+    override fun getTargetSdkVersion(packageName: String?): Int = synchronized(lock) {
+        packages[packageName]?.pkg?.targetSdkVersion ?: -1
+    }
+
+    override fun isPackageAvailable(packageName: String?, userId: Int): Boolean =
+        synchronized(lock) { packages.containsKey(packageName) }
+
+    override fun getAllPackages(): MutableList<String> =
+        synchronized(lock) { packages.keys.toMutableList() }
+
+    override fun getInstalledPackages(flags: Long, userId: Int): ParceledListSlice<*> {
+        val result = ArrayList<PackageInfo>()
+        synchronized(lock) {
+            for (state in packages.values) {
+                result.add(
+                    PackageInfoUtils.generate(
+                        state.pkg, gidsFor(state), withDirectBoot(flags), 0, 0,
+                        state.requestedPermissions, state.grantedPermissions,
+                        state.userState, userId, state,
+                    ) ?: continue,
+                )
             }
         }
-        return result
+        return ParceledListSlice(result)
     }
 
-    override fun queryIntentActivities(intent: Intent?, flags: Int): List<ResolveInfo> {
-        val result = ArrayList<ResolveInfo>()
-        val component = intent?.component ?: return result
+    override fun getInstalledApplications(flags: Long, userId: Int): ParceledListSlice<*> {
+        val result = ArrayList<ApplicationInfo>()
         synchronized(lock) {
-            for (record in packages.values) {
-                val activities = record.pkg.packageInfo.activities ?: continue
-                for (activity in activities) {
-                    if (component.packageName != activity.packageName || component.className != activity.name) continue
-                    if (!activity.enabled && (flags and PackageManager.MATCH_DISABLED_COMPONENTS) == 0) continue
-                    val resolve = ResolveInfo()
-                    resolve.activityInfo = android.content.pm.ActivityInfo(activity)
-                    result.add(resolve)
-                }
+            for (state in packages.values) {
+                result.add(
+                    PackageInfoUtils.generateApplicationInfo(
+                        state.pkg, withDirectBoot(flags), state.userState, userId, state,
+                    ) ?: continue,
+                )
             }
         }
-        return result
+        return ParceledListSlice(result)
     }
 
-    /** Runtime overlay on the install-time grants (source note:
-     * PermissionManagerService.grantRuntimePermission, reduced): grants and
-     * revocations layered per package, mutable only by the system uid. */
-    private val runtimeGranted = HashMap<String, MutableSet<String>>()
-    private val runtimeRevoked = HashMap<String, MutableSet<String>>()
+    override fun getPackageUid(packageName: String?, flags: Long, userId: Int): Int =
+        synchronized(lock) { packages[packageName]?.appId ?: -1 }
 
-    private fun enforceSystem(what: String) {
-        val callingUid = android.os.Binder.getCallingUid()
-        if (callingUid != android.os.Process.SYSTEM_UID && callingUid != android.os.Process.ROOT_UID) {
-            throw SecurityException("uid " + callingUid + " may not " + what)
+    override fun getPackagesForUid(uid: Int): Array<String>? = synchronized(lock) {
+        if (uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) return arrayOf("android")
+        packagesByUid[uid]?.let { arrayOf(it.packageName) }
+    }
+
+    override fun getNameForUid(uid: Int): String? = getPackagesForUid(uid)?.firstOrNull()
+
+    override fun getNamesForUids(uids: IntArray?): Array<String>? =
+        uids?.map { getNameForUid(it) ?: "" }?.toTypedArray()
+
+    override fun getPackageGids(packageName: String?, flags: Long, userId: Int): IntArray =
+        IntArray(0)
+
+    private fun gidsFor(state: HostedPackageState): IntArray = IntArray(0)
+
+    // ------------------------------------------------------- components
+
+    /**
+     * Enabled/direct-boot gate AOSP applies before returning a component from
+     * an explicit lookup (source note: ComputerEngine.getActivityInfoInternal
+     * etc. -> PackageUserStateUtils.isMatch). PackageInfoUtils.generate* does
+     * not evaluate enabled state, so without this a component disabled through
+     * setComponent/ApplicationEnabledSetting would still resolve. Requires `lock`.
+     */
+    private fun <T : android.content.pm.ComponentInfo> matchedOrNull(
+        state: HostedPackageState,
+        info: T?,
+        flags: Long,
+    ): T? {
+        if (info == null) return null
+        return if (com.android.server.pm.pkg.PackageUserStateUtils.isMatch(
+                state.userState, info, flags,
+            )
+        ) {
+            info
+        } else {
+            null
         }
     }
 
-    override fun grantRuntimePermission(packageName: String?, permission: String?) {
-        enforceSystem("grant permissions")
-        if (packageName == null || permission == null) return
+    override fun getActivityInfo(className: ComponentName?, flags: Long, userId: Int): ActivityInfo? {
+        val component = className ?: return null
         synchronized(lock) {
-            runtimeGranted.getOrPut(packageName) { LinkedHashSet() }.add(permission)
-            runtimeRevoked[packageName]?.remove(permission)
+            val activity = componentResolver.getActivity(component) ?: return null
+            val state = packages[activity.packageName] ?: return null
+            return matchedOrNull(
+                state,
+                PackageInfoUtils.generateActivityInfo(
+                    state.pkg, activity, withDirectBoot(flags), state.userState, userId, state,
+                ),
+                withDirectBoot(flags),
+            )
         }
     }
 
-    override fun revokeRuntimePermission(packageName: String?, permission: String?) {
-        enforceSystem("revoke permissions")
-        if (packageName == null || permission == null) return
+    override fun getReceiverInfo(className: ComponentName?, flags: Long, userId: Int): ActivityInfo? {
+        val component = className ?: return null
         synchronized(lock) {
-            runtimeRevoked.getOrPut(packageName) { LinkedHashSet() }.add(permission)
-            runtimeGranted[packageName]?.remove(permission)
+            val receiver = componentResolver.getReceiver(component) ?: return null
+            val state = packages[receiver.packageName] ?: return null
+            return matchedOrNull(
+                state,
+                PackageInfoUtils.generateActivityInfo(
+                    state.pkg, receiver, withDirectBoot(flags), state.userState, userId, state,
+                ),
+                withDirectBoot(flags),
+            )
         }
     }
 
-    /** Requires `lock`. */
-    private fun holdsLocked(record: Record, packageName: String, permission: String): Boolean {
-        if (runtimeRevoked[packageName]?.contains(permission) == true) return false
-        if (runtimeGranted[packageName]?.contains(permission) == true) return true
-        return record.pkg.grantedPermissions.contains(permission)
+    override fun getServiceInfo(className: ComponentName?, flags: Long, userId: Int): ServiceInfo? {
+        val component = className ?: return null
+        synchronized(lock) {
+            val service = componentResolver.getService(component) ?: return null
+            val state = packages[service.packageName] ?: return null
+            return matchedOrNull(
+                state,
+                PackageInfoUtils.generateServiceInfo(
+                    state.pkg, service, withDirectBoot(flags), state.userState, userId, state,
+                ),
+                withDirectBoot(flags),
+            )
+        }
     }
 
-    override fun checkPermission(permission: String?, packageName: String?): Int {
-        if (permission == null || packageName == null) return PackageManager.PERMISSION_DENIED
+    override fun getProviderInfo(className: ComponentName?, flags: Long, userId: Int): ProviderInfo? {
+        val component = className ?: return null
         synchronized(lock) {
-            val record = packages[packageName] ?: return PackageManager.PERMISSION_DENIED
-            return if (holdsLocked(record, packageName, permission)) {
+            val provider = componentResolver.getProvider(component) ?: return null
+            val state = packages[provider.packageName] ?: return null
+            val app = PackageInfoUtils.generateApplicationInfo(
+                state.pkg, withDirectBoot(flags), state.userState, userId, state,
+            ) ?: return null
+            return matchedOrNull(
+                state,
+                PackageInfoUtils.generateProviderInfo(
+                    state.pkg, provider, withDirectBoot(flags), state.userState, app, userId, state,
+                ),
+                withDirectBoot(flags),
+            )
+        }
+    }
+
+    // ------------------------------------------------------- resolution
+
+    /** Explicit-component fast path shared by the query methods (source note:
+     * ComputerEngine.queryIntentActivitiesInternal component branch). */
+    private fun componentMatch(info: Any?): List<ResolveInfo> {
+        if (info == null) return emptyList()
+        val resolve = ResolveInfo()
+        when (info) {
+            is ActivityInfo -> resolve.activityInfo = info
+            is ServiceInfo -> resolve.serviceInfo = info
+            is ProviderInfo -> resolve.providerInfo = info
+        }
+        return listOf(resolve)
+    }
+
+    private fun queryActivitiesInternal(
+        intent: Intent,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): List<ResolveInfo> {
+        intent.component?.let {
+            return componentMatch(getActivityInfo(it, flags, userId))
+        }
+        synchronized(lock) {
+            val pkg = intent.`package`
+            if (pkg != null) {
+                val state = packages[pkg] ?: return emptyList()
+                return componentResolver.queryActivities(
+                    this, intent, resolvedType, withDirectBoot(flags), state.pkg.activities, userId,
+                ) ?: emptyList()
+            }
+            return componentResolver.queryActivities(this, intent, resolvedType, withDirectBoot(flags), userId)
+                ?: emptyList()
+        }
+    }
+
+    override fun queryIntentActivities(
+        intent: Intent?,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): ParceledListSlice<*> =
+        ParceledListSlice(intent?.let { queryActivitiesInternal(it, resolvedType, flags, userId) } ?: emptyList<ResolveInfo>())
+
+    override fun queryIntentReceivers(
+        intent: Intent?,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): ParceledListSlice<*> {
+        if (intent == null) return ParceledListSlice(emptyList<ResolveInfo>())
+        intent.component?.let {
+            return ParceledListSlice(componentMatch(getReceiverInfo(it, flags, userId)))
+        }
+        synchronized(lock) {
+            val pkg = intent.`package`
+            if (pkg != null) {
+                val state = packages[pkg] ?: return ParceledListSlice(emptyList<ResolveInfo>())
+                return ParceledListSlice(
+                    componentResolver.queryReceivers(
+                        this, intent, resolvedType, withDirectBoot(flags), state.pkg.receivers, userId,
+                    ) ?: emptyList(),
+                )
+            }
+            return ParceledListSlice(
+                componentResolver.queryReceivers(this, intent, resolvedType, withDirectBoot(flags), userId)
+                    ?: emptyList(),
+            )
+        }
+    }
+
+    private fun queryServicesInternal(
+        intent: Intent,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): List<ResolveInfo> {
+        intent.component?.let {
+            return componentMatch(getServiceInfo(it, flags, userId))
+        }
+        synchronized(lock) {
+            val pkg = intent.`package`
+            if (pkg != null) {
+                val state = packages[pkg] ?: return emptyList()
+                return componentResolver.queryServices(
+                    this, intent, resolvedType, withDirectBoot(flags), state.pkg.services, userId,
+                ) ?: emptyList()
+            }
+            return componentResolver.queryServices(this, intent, resolvedType, withDirectBoot(flags), userId)
+                ?: emptyList()
+        }
+    }
+
+    override fun queryIntentServices(
+        intent: Intent?,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): ParceledListSlice<*> =
+        ParceledListSlice(intent?.let { queryServicesInternal(it, resolvedType, flags, userId) } ?: emptyList<ResolveInfo>())
+
+    override fun queryIntentContentProviders(
+        intent: Intent?,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): ParceledListSlice<*> {
+        if (intent == null) return ParceledListSlice(emptyList<ResolveInfo>())
+        intent.component?.let {
+            return ParceledListSlice(componentMatch(getProviderInfo(it, flags, userId)))
+        }
+        synchronized(lock) {
+            return ParceledListSlice(
+                componentResolver.queryProviders(this, intent, resolvedType, withDirectBoot(flags), userId)
+                    ?: emptyList(),
+            )
+        }
+    }
+
+    override fun resolveIntent(
+        intent: Intent?,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): ResolveInfo? {
+        if (intent == null) return null
+        // The resolver returns the list priority-sorted; first is best
+        // (source note: ComputerEngine.chooseBestActivity, reduced).
+        return queryActivitiesInternal(intent, resolvedType, flags, userId).firstOrNull()
+    }
+
+    override fun resolveService(
+        intent: Intent?,
+        resolvedType: String?,
+        flags: Long,
+        userId: Int,
+    ): ResolveInfo? {
+        if (intent == null) return null
+        return queryServicesInternal(intent, resolvedType, flags, userId).firstOrNull()
+    }
+
+    override fun resolveContentProvider(name: String?, flags: Long, userId: Int): ProviderInfo? {
+        val authority = name ?: return null
+        synchronized(lock) {
+            return componentResolver.queryProvider(this, authority, withDirectBoot(flags), userId)
+        }
+    }
+
+    override fun queryContentProviders(
+        processName: String?,
+        uid: Int,
+        flags: Long,
+        metaDataKey: String?,
+    ): ParceledListSlice<*> = synchronized(lock) {
+        ParceledListSlice(
+            componentResolver.queryProviders(this, processName, metaDataKey, uid, withDirectBoot(flags), 0)
+                ?: emptyList<ProviderInfo>(),
+        )
+    }
+
+    // ------------------------------------------------------- permissions
+
+    override fun checkPermission(permName: String?, pkgName: String?, userId: Int): Int {
+        if (permName == null || pkgName == null) return PackageManager.PERMISSION_DENIED
+        if (pkgName == "android") return PackageManager.PERMISSION_GRANTED
+        synchronized(lock) {
+            val state = packages[pkgName] ?: return PackageManager.PERMISSION_DENIED
+            return if (state.grantedPermissions.contains(permName)) {
                 PackageManager.PERMISSION_GRANTED
             } else {
                 PackageManager.PERMISSION_DENIED
@@ -183,48 +652,245 @@ class HostedPackageManagerService : IHostedPackageManager.Stub() {
         }
     }
 
-    override fun checkUidPermission(permission: String?, uid: Int): Int {
-        if (uid == android.os.Process.ROOT_UID || uid == android.os.Process.SYSTEM_UID) {
+    override fun checkUidPermission(permName: String?, uid: Int): Int {
+        if (uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) {
             return PackageManager.PERMISSION_GRANTED
         }
-        if (permission == null) return PackageManager.PERMISSION_DENIED
+        if (permName == null) return PackageManager.PERMISSION_DENIED
         synchronized(lock) {
-            val granted = packages.entries.any { (name, record) ->
-                record.uid == uid && holdsLocked(record, name, permission)
+            val state = packagesByUid[uid] ?: return PackageManager.PERMISSION_DENIED
+            return if (state.grantedPermissions.contains(permName)) {
+                PackageManager.PERMISSION_GRANTED
+            } else {
+                PackageManager.PERMISSION_DENIED
             }
-            return if (granted) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
+        }
+    }
+
+    override fun getPackagesHoldingPermissions(
+        permissions: Array<String>?,
+        flags: Long,
+        userId: Int,
+    ): ParceledListSlice<*> {
+        val wanted = permissions ?: return ParceledListSlice(emptyList<PackageInfo>())
+        val result = ArrayList<PackageInfo>()
+        synchronized(lock) {
+            for (state in packages.values) {
+                if (wanted.none { state.grantedPermissions.contains(it) }) continue
+                result.add(
+                    PackageInfoUtils.generate(
+                        state.pkg, gidsFor(state), withDirectBoot(flags), 0, 0,
+                        state.requestedPermissions, state.grantedPermissions,
+                        state.userState, userId, state,
+                    ) ?: continue,
+                )
+            }
+        }
+        return ParceledListSlice(result)
+    }
+
+    /**
+     * Nonce bump after any mutation the client-side caches observe (source
+     * note: PackageManagerService.onChanged / scheduleWritePackageRestrictions
+     * paths call the same statics). Sets the cache_key.* system properties
+     * through the broker; only this (system) process may.
+     */
+    private fun invalidateClientCaches() {
+        PackageManager.invalidatePackageInfoCache()
+        android.app.ApplicationPackageManager.invalidateGetPackagesForUidCache()
+        android.app.ApplicationPackageManager.invalidateHasSystemFeatureCache()
+    }
+
+    private fun enforceSystem(what: String) {
+        val callingUid = Binder.getCallingUid()
+        if (callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID) {
+            throw SecurityException("uid " + callingUid + " may not " + what)
         }
     }
 
-    override fun getPackagesForUid(uid: Int): Array<String> = synchronized(lock) {
-        packages.values.filter { it.uid == uid }.map { it.pkg.packageInfo.packageName }.toTypedArray()
-    }
-
-    override fun getPackageUid(packageName: String?): Int = synchronized(lock) {
-        packages[packageName]?.uid ?: -1
-    }
-
-    override fun getApkPath(packageName: String?): String? = synchronized(lock) {
-        packages[packageName]?.pkg?.apkPath
-    }
-
-    /** Session-wide authority resolution (AOSP ComputerEngine.resolveContentProvider). */
-    override fun resolveContentProvider(authority: String, flags: Int): android.content.pm.ProviderInfo? {
+    override fun grantRuntimePermission(packageName: String?, permissionName: String?, userId: Int) {
+        enforceSystem("grant permissions")
+        if (packageName == null || permissionName == null) return
         synchronized(lock) {
-            for (record in packages.values) {
-                val providers = record.pkg.packageInfo.providers ?: continue
-                for (provider in providers) {
-                    val declared = provider.authority?.split(";") ?: continue
-                    if (declared.contains(authority)) return android.content.pm.ProviderInfo(provider)
-                }
+            val state = packages[packageName] ?: return
+            if (!state.requestedPermissions.contains(permissionName)) {
+                throw SecurityException(
+                    packageName + " does not request " + permissionName,
+                )
+            }
+            state.grantedPermissions.add(permissionName)
+        }
+        invalidateClientCaches()
+    }
+
+    /** System-only revoke; not on IPackageManager (AOSP moved it to
+     * PermissionManager) but the hosted permission client still needs it. */
+    fun revokeRuntimePermission(packageName: String?, permissionName: String?) {
+        enforceSystem("revoke permissions")
+        if (packageName == null || permissionName == null) return
+        synchronized(lock) {
+            packages[packageName]?.grantedPermissions?.remove(permissionName)
+        }
+        invalidateClientCaches()
+    }
+
+    override fun getPermissionGroupInfo(name: String?, flags: Int): PermissionGroupInfo? =
+        synchronized(lock) {
+            permissionGroups[name]?.let {
+                PackageInfoUtils.generatePermissionGroupInfo(it, flags.toLong())
             }
         }
-        return null
+
+    // ------------------------------------------------------ signatures
+
+    override fun checkSignatures(pkg1: String?, pkg2: String?, userId: Int): Int {
+        synchronized(lock) {
+            val a = packages[pkg1] ?: return PackageManager.SIGNATURE_UNKNOWN_PACKAGE
+            val b = packages[pkg2] ?: return PackageManager.SIGNATURE_UNKNOWN_PACKAGE
+            return if (a.signingDetails.signaturesMatchExactly(b.signingDetails)) {
+                PackageManager.SIGNATURE_MATCH
+            } else {
+                PackageManager.SIGNATURE_NO_MATCH
+            }
+        }
     }
 
-    override fun getInstalledPackageNames(): Array<String> = synchronized(lock) {
-        packages.keys.toTypedArray()
+    override fun checkUidSignatures(uid1: Int, uid2: Int): Int {
+        synchronized(lock) {
+            val a = packagesByUid[uid1] ?: return PackageManager.SIGNATURE_UNKNOWN_PACKAGE
+            val b = packagesByUid[uid2] ?: return PackageManager.SIGNATURE_UNKNOWN_PACKAGE
+            return checkSignatures(a.packageName, b.packageName, 0)
+        }
     }
+
+    override fun hasSigningCertificate(packageName: String?, certificate: ByteArray?, flags: Int): Boolean =
+        synchronized(lock) {
+            val state = packages[packageName] ?: return false
+            certificate != null && hasCertificate(state.signingDetails, certificate, flags)
+        }
+
+    override fun hasUidSigningCertificate(uid: Int, certificate: ByteArray?, flags: Int): Boolean =
+        synchronized(lock) {
+            val state = packagesByUid[uid] ?: return false
+            certificate != null && hasCertificate(state.signingDetails, certificate, flags)
+        }
+
+    /** flags is PackageManager.CERT_INPUT_RAW_X509 or CERT_INPUT_SHA256. */
+    private fun hasCertificate(details: SigningDetails, certificate: ByteArray, type: Int): Boolean =
+        if (type == PackageManager.CERT_INPUT_SHA256) {
+            details.hasSha256Certificate(certificate)
+        } else {
+            details.hasCertificate(certificate)
+        }
+
+    // ------------------------------------------------- enabled settings
+
+    override fun setComponentEnabledSetting(
+        componentName: ComponentName?,
+        newState: Int,
+        flags: Int,
+        userId: Int,
+        callingPackage: String?,
+    ) {
+        val component = componentName ?: return
+        enforceOwnPackageOrSystem(component.packageName, "change component enabled state")
+        synchronized(lock) {
+            val state = packages[component.packageName] ?: return
+            val enabled = android.util.ArraySet(state.userState.enabledComponents)
+            val disabled = android.util.ArraySet(state.userState.disabledComponents)
+            enabled.remove(component.className)
+            disabled.remove(component.className)
+            when (newState) {
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> enabled.add(component.className)
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED,
+                -> disabled.add(component.className)
+            }
+            state.userState.setEnabledComponents(enabled)
+            state.userState.setDisabledComponents(disabled)
+        }
+        invalidateClientCaches()
+    }
+
+    override fun getComponentEnabledSetting(componentName: ComponentName?, userId: Int): Int {
+        val component = componentName ?: return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+        synchronized(lock) {
+            val state = packages[component.packageName]
+                ?: return PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+            return when {
+                state.userState.isComponentEnabled(component.className) ->
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                state.userState.isComponentDisabled(component.className) ->
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                else -> PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+            }
+        }
+    }
+
+    override fun setApplicationEnabledSetting(
+        packageName: String?,
+        newState: Int,
+        flags: Int,
+        userId: Int,
+        callingPackage: String?,
+    ) {
+        enforceOwnPackageOrSystem(packageName, "change application enabled state")
+        synchronized(lock) {
+            packages[packageName]?.userState?.setEnabledState(newState)
+        }
+        invalidateClientCaches()
+    }
+
+    /** AOSP allows a package to change its own components; anything else
+     * needs CHANGE_COMPONENT_ENABLED_STATE (system here). */
+    private fun enforceOwnPackageOrSystem(packageName: String?, what: String) {
+        val callingUid = Binder.getCallingUid()
+        if (callingUid == Process.SYSTEM_UID || callingUid == Process.ROOT_UID) return
+        synchronized(lock) {
+            if (packages[packageName]?.appId == callingUid) return
+        }
+        throw SecurityException("uid " + callingUid + " may not " + what + " of " + packageName)
+    }
+
+    override fun getApplicationEnabledSetting(packageName: String?, userId: Int): Int =
+        synchronized(lock) {
+            packages[packageName]?.userState?.enabledState
+                ?: PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+        }
+
+    // ------------------------------------------------- benign constants
+
+    override fun checkPackageStartable(packageName: String?, userId: Int) {}
+    override fun isProtectedBroadcast(actionName: String?): Boolean = false
+    override fun isInstantApp(packageName: String?, userId: Int): Boolean = false
+    override fun getInstallerPackageName(packageName: String?): String? = null
+    override fun hasSystemFeature(name: String?, version: Int): Boolean = false
+    override fun getSystemAvailableFeatures(): ParceledListSlice<*> =
+        ParceledListSlice(emptyList<android.content.pm.FeatureInfo>())
+    override fun getSystemSharedLibraryNames(): Array<String>? = null
+    override fun isSafeMode(): Boolean = false
+    override fun isFirstBoot(): Boolean = false
+    override fun isDeviceUpgrading(): Boolean = false
+    override fun isStorageLow(): Boolean = false
+    override fun currentToCanonicalPackageNames(names: Array<String>?): Array<String>? = names
+    override fun canonicalToCurrentPackageNames(names: Array<String>?): Array<String>? = names
+    override fun notifyPackageUse(packageName: String?, reason: Int) {}
+    override fun notifyDexLoad(
+        loadingPackageName: String?,
+        classLoaderContextMap: MutableMap<String, String>?,
+        loaderIsa: String?,
+    ) {}
+    override fun getMimeGroup(packageName: String?, group: String?): MutableList<String>? = null
+    override fun isPackageSuspendedForUser(packageName: String?, userId: Int): Boolean = false
+    override fun isPackageQuarantinedForUser(packageName: String?, userId: Int): Boolean = false
+    override fun isPackageStoppedForUser(packageName: String?, userId: Int): Boolean = false
+    override fun isUidPrivileged(uid: Int): Boolean = uid == Process.SYSTEM_UID
+    override fun getPrivateFlagsForUid(uid: Int): Int = 0
+    override fun getFlagsForUid(uid: Int): Int = 0
+    override fun getUidForSharedUser(sharedUserName: String?): Int = -1
+    override fun getSplashScreenTheme(packageName: String?, userId: Int): String? = null
+    override fun getHarmfulAppWarning(packageName: String?, userId: Int): CharSequence? = null
 
     private companion object {
         const val TAG = "HostedPackageManager"

@@ -6,6 +6,16 @@ import android.content.pm.UserInfo;
 import java.util.ArrayList;
 import java.util.List;
 public class UserManager {
+    // ApplicationPackageManager badging/direct-boot surface: the single
+    // hosted user is unlocked and carries no badge.
+    public boolean hasBadge(int userId) { return false; }
+    public int getUserBadgeResId(int userId) { return 0; }
+    public int getUserBadgeNoBackgroundResId(int userId) { return 0; }
+    public int getUserIconBadgeResId(int userId) { return 0; }
+    public int getUserBadgeColor(int userId) { return 0; }
+    public int getUserBadgeDarkColor(int userId) { return 0; }
+    public boolean isUserUnlockingOrUnlocked(int userId) { return true; }
+    public CharSequence getBadgedLabelForUser(CharSequence label, UserHandle user) { return label; }
     public static final String USER_TYPE_FULL_SYSTEM = "android.os.usertype.full.SYSTEM";
     public static final String USER_TYPE_PROFILE_MANAGED = "android.os.usertype.profile.MANAGED";
     public static final String DISALLOW_CROSS_PROFILE_COPY_PASTE = "no_cross_profile_copy_paste";
@@ -16,6 +26,7 @@ public class UserManager {
     public boolean isVisibleBackgroundUsersSupported() { return false; }
     public int getMainDisplayIdAssignedToUser() { return 0; }
     public boolean isManagedProfile() { return false; }
+    public boolean isManagedProfile(int userId) { return false; }
     public static boolean supportsMultipleUsers() { return false; }
     public static boolean isUserTypeManagedProfile(String userType) { return USER_TYPE_PROFILE_MANAGED.equals(userType); }
     public static boolean isUserTypeGuest(String userType) { return false; }

@@ -89,6 +89,7 @@ public final class Flags {
     public static boolean secureLockdown() { return false; }
     public static boolean setAutoTimeEnabledCoexistence() { return false; }
     public static boolean setAutoTimeZoneEnabledCoexistence() { return false; }
+    public static boolean ignoreProcessText() { return false; }
     public static boolean shouldRegisterAttributionSource() { return false; }
     public static boolean supervisionApi() { return false; }
     public static boolean systemServerRoleControllerEnabled() { return false; }

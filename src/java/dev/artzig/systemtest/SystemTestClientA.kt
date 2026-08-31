@@ -11,7 +11,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Process
 import android.os.ServiceManager
-import dev.artzig.system.HostedProcessManifest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -38,11 +37,23 @@ internal object SystemTestClientA {
         Looper.prepareMainLooper()
         HostedBinderRuntime.bootstrap("dev.artzig.test.a", false)
         val frameworkRes = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
-        val context = ContextImpl.createSystemContext(frameworkRes, 640, 480, 120, 0)
-        ActivityThread.configureServiceHost(context, SystemTestClientA::class.java.classLoader)
-        ActivityThread.attachApplicationHosted(
-            HostedProcessManifest("dev.artzig.test.a", "dev.artzig.test.a", null, emptyList(), emptyList()),
+        // This process's context carries its own package identity: services
+        // like the clipboard verify the calling package against the uid
+        // (AppOpsService.checkPackage), so "android" would be a spoofed claim.
+        val context = ContextImpl(
+            ContextImpl.createSystemContext(frameworkRes, 640, 480, 120, 0).resources,
+            "dev.artzig.test.a",
+            0,
         )
+        ActivityThread.configureServiceHost(context, SystemTestClientA::class.java.classLoader)
+        // Server-side install of this package's fixture APK, then attach.
+        // The fixture requests WRITE_SECURE_SETTINGS; the signature match
+        // with framework-res.apk (both signed by the azk-platform test key)
+        // grants it at install.
+        val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
+        val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
+        check(am.installPackage("$fixtures/dev.artzig.test.a.apk") == "dev.artzig.test.a")
+        ActivityThread.attachApplicationHosted("dev.artzig.test.a")
         thread(name = "system-test", isDaemon = true) {
             try {
                 run(context)
@@ -72,20 +83,109 @@ internal object SystemTestClientA {
         }
         check(denied, "an app may not register the activity manager's name")
 
-        // Cross-process package manager: host B registers its package with the
-        // session's PMS; poll for it (both peers start concurrently).
+        // Cross-process package manager: host B installs its fixture APK with
+        // the session's PMS; poll for it (both peers start concurrently).
         val pm = context.packageManager
-        var bInfo = pm.getPackageInfo("dev.artzig.test.b", 0)
+        var bInfo: android.content.pm.PackageInfo? = null
         val pmsDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
-        while (bInfo.versionCode != 7 && System.nanoTime() < pmsDeadline) {
-            Thread.sleep(100)
-            bInfo = pm.getPackageInfo("dev.artzig.test.b", 0)
+        while (bInfo == null && System.nanoTime() < pmsDeadline) {
+            bInfo = try {
+                pm.getPackageInfo("dev.artzig.test.b", 0)
+            } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+                Thread.sleep(100)
+                null
+            }
         }
-        check(bInfo.versionCode == 7 && bInfo.versionName == "7.0", "cross-process getPackageInfo")
+        check(bInfo?.versionCode == 7 && bInfo?.versionName == "7.0", "cross-process getPackageInfo")
         val echoMatches = pm.queryIntentServices(Intent("dev.artzig.test.ECHO"), 0)
         check(
             echoMatches.size == 1 && echoMatches[0].serviceInfo.name == "dev.artzig.systemtest.EchoService",
-            "cross-process queryIntentServices",
+            "cross-process queryIntentServices (real IntentFilter match)",
+        )
+        // Implicit resolution across packages through the real resolver: B's
+        // fixture declares a MAIN/LAUNCHER activity.
+        val launchers = pm.queryIntentActivities(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0,
+        )
+        check(
+            launchers.any { it.activityInfo?.name == "dev.artzig.systemtest.BMainActivity" },
+            "implicit cross-package LAUNCHER query",
+        )
+        val ipm = android.content.pm.IPackageManager.Stub.asInterface(
+            ServiceManager.getService("package"),
+        )
+        val allPackages = ipm.allPackages
+        check(
+            allPackages.containsAll(listOf("android", "dev.artzig.test.a", "dev.artzig.test.b")),
+            "getAllPackages lists the platform and both fixtures",
+        )
+        check(
+            ipm.checkSignatures("dev.artzig.test.a", "dev.artzig.test.b", 0) ==
+                android.content.pm.PackageManager.SIGNATURE_MATCH,
+            "fixtures share the azk-platform signature",
+        )
+        check(
+            ipm.getPackageUid("dev.artzig.test.a", 0, 0) == Process.myUid(),
+            "package uid bound to the broker uid at attach",
+        )
+        // PropertyInvalidatedCache: an enabled-state mutation in the system
+        // process bumps the cache_key.* nonce through the session property
+        // area, so the client-side ApplicationInfo cache re-fetches.
+        check(pm.getApplicationInfo("dev.artzig.test.a", 0).enabled, "own package starts enabled")
+        pm.setApplicationEnabledSetting(
+            "dev.artzig.test.a",
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            0,
+        )
+        check(
+            !pm.getApplicationInfo("dev.artzig.test.a", 0).enabled,
+            "disabled state observed through the invalidated cache",
+        )
+        pm.setApplicationEnabledSetting(
+            "dev.artzig.test.a",
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+            0,
+        )
+        check(pm.getApplicationInfo("dev.artzig.test.a", 0).enabled, "re-enabled state observed")
+        val enabledDenied = try {
+            pm.setApplicationEnabledSetting(
+                "dev.artzig.test.b",
+                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                0,
+            )
+            false
+        } catch (expected: SecurityException) {
+            true
+        }
+        check(enabledDenied, "enabled-state mutation of another package denied")
+
+        // Explicit-lookup enabled-state gate: a disabled component must not
+        // resolve through getActivityInfo (PackageInfoUtils.generate* does not
+        // evaluate enabled state; the service applies PackageUserStateUtils.isMatch).
+        val toggle = ComponentName("dev.artzig.test.a", "dev.artzig.systemtest.AToggleActivity")
+        check(pm.getActivityInfo(toggle, 0).enabled, "component resolvable while enabled")
+        pm.setComponentEnabledSetting(
+            toggle,
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            android.content.pm.PackageManager.DONT_KILL_APP,
+        )
+        val componentHidden = try {
+            pm.getActivityInfo(toggle, 0)
+            false
+        } catch (expected: android.content.pm.PackageManager.NameNotFoundException) {
+            true
+        }
+        check(componentHidden, "disabled component not returned by explicit lookup")
+        // MATCH_DISABLED_COMPONENTS still finds it (AOSP escape hatch).
+        check(
+            pm.getActivityInfo(toggle, android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS)
+                .name == toggle.className,
+            "disabled component visible with MATCH_DISABLED_COMPONENTS",
+        )
+        pm.setComponentEnabledSetting(
+            toggle,
+            android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+            android.content.pm.PackageManager.DONT_KILL_APP,
         )
 
         val connected = CountDownLatch(1)
@@ -255,23 +355,16 @@ internal object SystemTestClientA {
         )
 
         // --- settings through the verbatim AOSP client + hosted SettingsProvider.
-        val secureDenied = try {
-            android.provider.Settings.Secure.putString(resolver, "azk_test_setting", "nope")
+        // The fixture requests WRITE_SECURE_SETTINGS (granted at install via
+        // the platform-signature match) but not WRITE_SETTINGS, so the system
+        // table stays gated while secure/global writes are allowed.
+        val systemTableDenied = try {
+            android.provider.Settings.System.putString(resolver, "azk_test_setting", "nope")
             false
         } catch (expected: SecurityException) {
             true
         }
-        check(secureDenied, "secure settings write denied without WRITE_SECURE_SETTINGS")
-        // The interim permission model grants what a package declares at normal
-        // protection; stage the grant, then write for real.
-        android.content.pm.PackageManager.configureHostedPackage(
-            "dev.artzig.test.a", 1, "1", "/nonexistent/a.apk", "/tmp/a-data",
-        )
-        android.content.pm.PackageManager.configureHostedPermissions(
-            setOf("android.permission.WRITE_SECURE_SETTINGS"),
-            mapOf("android.permission.WRITE_SECURE_SETTINGS" to 0),
-            emptyMap(),
-        )
+        check(systemTableDenied, "system settings write denied without WRITE_SETTINGS")
         val settingChanged = CountDownLatch(1)
         val observer = object : android.database.ContentObserver(android.os.Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
@@ -332,10 +425,7 @@ internal object SystemTestClientA {
         }
         check(opsDenied, "app-op modes are system-only")
         val grantDenied = try {
-            val pm = dev.artzig.system.IHostedPackageManager.Stub.asInterface(
-                ServiceManager.getService("package"),
-            )
-            pm.grantRuntimePermission("dev.artzig.test.a", "android.permission.CAMERA")
+            ipm.grantRuntimePermission("dev.artzig.test.a", "android.permission.CAMERA", 0)
             false
         } catch (expected: SecurityException) {
             true

@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Bundle;
 import dev.artzig.system.HostedContentProviderHolder;
-import dev.artzig.system.HostedProcessManifest;
 import dev.artzig.system.IHostedApplicationThread;
 
 /**
@@ -16,7 +15,13 @@ import dev.artzig.system.IHostedApplicationThread;
  * and a 57-method application thread).
  */
 interface IHostedActivityManager {
-    void attachApplication(IHostedApplicationThread thread, in HostedProcessManifest manifest);
+    /** Parses and installs an APK server-side (the system process is the only
+     * parser in the session); idempotent, returns the package name. */
+    String installPackage(String apkPath);
+    /** Registers the calling process as a running process of packageName; the
+     * activity manager derives services and permissions from the package
+     * manager's record and binds the package to the caller's broker uid. */
+    void attachApplication(IHostedApplicationThread thread, String packageName, String processName);
     ComponentName startService(in Intent service, String callingPackage);
     int stopService(in Intent service);
     int bindService(IHostedApplicationThread caller, in Intent service, IServiceConnection connection, int flags, String callingPackage);

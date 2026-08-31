@@ -5,6 +5,22 @@ import java.io.IOException;
 import java.util.UUID;
 public class StorageManager {
     public static final UUID UUID_DEFAULT = new UUID(0L, 0L);
+    /** AOSP: null marks internal storage; the magic string a primary SD card. */
+    public static final String UUID_PRIVATE_INTERNAL = null;
+    public static final String UUID_PRIMARY_PHYSICAL = "primary_physical";
+    private static final VolumeInfo INTERNAL =
+            new VolumeInfo(VolumeInfo.ID_PRIVATE_INTERNAL, VolumeInfo.TYPE_PRIVATE);
+    public VolumeInfo findVolumeById(String id) {
+        return VolumeInfo.ID_PRIVATE_INTERNAL.equals(id) ? INTERNAL : null;
+    }
+    public VolumeInfo findVolumeByUuid(String fsUuid) { return null; }
+    public VolumeInfo findVolumeByQualifiedUuid(String volumeUuid) {
+        return volumeUuid == null ? INTERNAL : null;
+    }
+    public java.util.List<VolumeInfo> getVolumes() {
+        return java.util.Collections.singletonList(INTERNAL);
+    }
+    public String getPrimaryStorageUuid() { return UUID_PRIVATE_INTERNAL; }
     public UUID getUuidForPath(File path) throws IOException {
         if (path == null) throw new IOException("null path");
         return UUID_DEFAULT;

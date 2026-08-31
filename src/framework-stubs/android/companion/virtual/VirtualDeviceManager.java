@@ -3,6 +3,8 @@
  * path everywhere. */
 package android.companion.virtual;
 public class VirtualDeviceManager {
+    public static final String PERSISTENT_DEVICE_ID_DEFAULT =
+            "default:" + android.content.Context.DEVICE_ID_DEFAULT;
     public static final String ACTION_VIRTUAL_DEVICE_REMOVED =
             "android.companion.virtual.action.VIRTUAL_DEVICE_REMOVED";
     public static final String EXTRA_VIRTUAL_DEVICE_ID =

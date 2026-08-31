@@ -1,6 +1,11 @@
 /* artzig shim. */
 package android.os;
 public final class PersistableBundle extends BaseBundle implements Parcelable {
+    /** AOSP reads a persisted XML bundle; nothing persists app metadata here. */
+    public static PersistableBundle readFromStream(java.io.InputStream inputStream)
+            throws java.io.IOException {
+        return new PersistableBundle();
+    }
     public static final PersistableBundle EMPTY = new PersistableBundle();
     public PersistableBundle() { super(); }
     public PersistableBundle(Bundle b) { super(); }

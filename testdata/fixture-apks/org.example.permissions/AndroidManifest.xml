@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- jvm-test fixture: one normal-protection and one dangerous-protection
+     platform permission, for FrameworkModuleSmoke's install-time grant
+     assertions (WAKE_LOCK granted, CAMERA not). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.example.permissions"
+    android:versionCode="1"
+    android:versionName="1">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <application android:hasCode="false" android:label="org example permissions" />
+</manifest>

@@ -217,7 +217,7 @@ public abstract class ContentProvider {
             }
             String permission = write ? info.writePermission : info.readPermission;
             if (permission == null) return;
-            if (PackageManager.checkPermissionForUid(permission, uid)
+            if (android.app.HostedServiceClient.checkUidPermission(permission, uid)
                     != PackageManager.PERMISSION_GRANTED) {
                 throw new SecurityException("Provider " + mAuthority + " requires "
                         + permission + " for " + what + " (uid " + uid + ")");

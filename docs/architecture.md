@@ -66,11 +66,26 @@ main looper, `onServiceDisconnected`/`onBindingDied` on host death), Bundles
 stay lazily parcelled until first access, and `androlinzberg --app-process
 <apk>` runs a headless service host the activity manager can spawn. The system
 process also hosts the session-wide package manager
-(`dev.artzig.system.HostedPackageManagerService`, registered as `package`):
-each process registers the package it parsed, and `PackageManager` is a client
-that answers every query from the service, so package info, intent-service
-resolution, uid↔package mapping, and cross-uid permission checks agree across
-the session. Dynamically registered broadcasts route through the activity
+(`dev.artzig.system.HostedPackageManagerService`, registered as `package` on
+the real `android.content.pm.IPackageManager` surface): APKs are parsed only
+in the system process by the AOSP parsing stack (`PackageParser2` ->
+`ParsedPackage`, signatures verified through `ApkSignatureVerifier`),
+components resolve through the real `ComponentResolver`/`IntentResolver`, and
+every `PackageInfo`/`ApplicationInfo`/component Info comes from AOSP
+`PackageInfoUtils` over the per-package `HostedPackageState`. framework-res.apk
+is installed as package `android` at boot — its manifest is the session's
+platform-permission source — and install-time grants follow AOSP protection
+levels (normal granted outright, signature granted on a `SigningDetails`
+match; framework-res.apk and the test fixture APKs are signed by the
+`tools/signing` azk-platform test key). A package binds to its broker uid when
+its first process attaches, so package info, intent resolution through real
+`IntentFilter` matching, uid↔package mapping, and cross-uid permission checks
+agree across the session; any method the hosted service does not implement
+fails loudly (`PackageManagerServiceBase`). The client is the unchanged AOSP
+`PackageManager`/`ApplicationPackageManager` pair, and the real
+`PropertyInvalidatedCache` runs over the session property area (the service
+bumps the `cache_key.system_server.*` nonces on every mutation, so
+client-side caches invalidate across processes exactly as on Android). Dynamically registered broadcasts route through the activity
 manager's broadcast queue (`HostedBroadcastQueue`, following AOSP
 `BroadcastQueueImpl` semantics): unordered broadcasts fan out to every
 matching receiver in the session, ordered broadcasts chain result state

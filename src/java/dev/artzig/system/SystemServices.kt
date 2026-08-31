@@ -92,8 +92,13 @@ internal object SystemServices {
 
         val trace = TimingsTraceAndSlog()
         // Bootstrap services (source note: SystemServer.startBootstrapServices
-        // starts the package manager before the activity manager).
+        // starts the package manager before the activity manager). The
+        // platform package "android" is framework-res.apk parsed by the real
+        // AOSP parser — its manifest is the session's permission source.
         val packageManager = HostedPackageManagerService()
+        packageManager.installPlatform(
+            checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
+        )
         android.os.ServiceManager.addService("package", packageManager)
         LocalServices.addService(
             android.content.pm.PackageManagerInternal::class.java,
@@ -104,7 +109,7 @@ internal object SystemServices {
                     // peers and system contexts); only a claim that contradicts
                     // a registered uid is rejected.
                     val packages = packageManager.getPackagesForUid(uid)
-                    return packages.isEmpty() || packages.contains(packageName)
+                    return packages == null || packages.isEmpty() || packages.contains(packageName)
                 }
             },
         )

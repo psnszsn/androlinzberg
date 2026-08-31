@@ -34,6 +34,15 @@ public class Environment {
     public static java.io.File getDataUserDePackageDirectory(String volumeUuid, int userId, String packageName) {
         return new java.io.File(getDataDirectory(), "user_de/" + userId + "/" + packageName);
     }
+    public static java.io.File getDataProfilesDePackageDirectory(int userId, String packageName) {
+        return new java.io.File(getDataDirectory(), "misc/profiles/cur/" + userId + "/" + packageName);
+    }
+    public static java.io.File getDataRefProfilesDePackageDirectory(String packageName) {
+        return new java.io.File(getDataDirectory(), "misc/profiles/ref/" + packageName);
+    }
+    public static String getDataDirectoryPath() {
+        return getDataDirectory().getAbsolutePath();
+    }
     public static String getDataDirectoryPath(String volumeUuid) {
         return getDataDirectory().getAbsolutePath();
     }

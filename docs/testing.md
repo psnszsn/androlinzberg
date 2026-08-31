@@ -30,7 +30,13 @@ zig build -j10 binder-test
 
 Run the system-service tests (broker + system process + two app peers binding a
 service across processes through the activity manager, and resolving each
-other's packages through the session's package manager):
+other's packages through the session's package manager). The test packages are
+resources-only fixture APKs built at build time from
+`testdata/fixture-apks/*/AndroidManifest.xml` (aapt2, signed with the
+`tools/signing` azk-platform test key — the same key that signs
+framework-res.apk, which is what makes the signature-protected
+`WRITE_SECURE_SETTINGS` grant test real); the peers install them through the
+system process and their code loads from framework.jar:
 
 ```sh
 zig build -j10 system-test

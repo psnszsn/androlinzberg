@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- system-test peer B: hosts EchoService and two content providers (one
+     non-exported, for the acquisition-gate assertion). The classes live in
+     framework.jar; this APK only supplies the manifest the session's package
+     manager parses. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.artzig.test.b"
+    android:versionCode="7"
+    android:versionName="7.0">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <application android:hasCode="false" android:label="azk test b">
+        <activity android:name="dev.artzig.systemtest.BMainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name="dev.artzig.systemtest.EchoService" android:exported="true">
+            <!-- The client binds with data "test://echo"; a real IntentFilter
+                 only matches a data-carrying intent if it declares the scheme. -->
+            <intent-filter>
+                <action android:name="dev.artzig.test.ECHO" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="dev.artzig.test.ECHO" />
+                <data android:scheme="test" />
+            </intent-filter>
+        </service>
+        <provider android:name="dev.artzig.systemtest.TestProvider"
+            android:authorities="dev.artzig.test.b.provider"
+            android:exported="true" />
+        <provider android:name="dev.artzig.systemtest.SecretProvider"
+            android:authorities="dev.artzig.test.b.secret"
+            android:exported="false" />
+    </application>
+</manifest>

@@ -1,6 +1,9 @@
 /* artzig shim: android.os.StrictMode — no-op. */
 package android.os;
 public final class StrictMode {
+    /** Direct-boot violations cannot occur: the single hosted user is always unlocked. */
+    public static boolean vmImplicitDirectBootEnabled() { return false; }
+    public static void onImplicitDirectBoot() {}
     private StrictMode() {}
     public static void noteSlowCall(String name) {}
     public static void noteResourceMismatch(Object tag) {}

@@ -55,6 +55,8 @@ public class Binder implements IBinder {
         long[] id = sCallingIdentity.get();
         return id != null ? (int) id[1] : Process.myUid();
     }
+    /** No work-source propagation on this host; the calling uid stands in. */
+    public static int getCallingWorkSourceUid() { return getCallingUid(); }
     public static int getCallingUidOrThrow() { return getCallingUid(); }
     public static UserHandle getCallingUserHandle() { return UserHandle.of(0); }
     /** Token: -1 when the identity was already "self", else pid<<32 | uid. */

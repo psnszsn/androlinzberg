@@ -18,7 +18,6 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
-import android.content.pm.HostedPackageParser
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.res.ApkAssets
@@ -39,6 +38,7 @@ import android.media.MediaFormat
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import com.android.internal.pm.pkg.parsing.ParsingUtils
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.Parcelable
@@ -87,9 +87,12 @@ internal object FrameworkModuleSmoke {
     private val events = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
 
+    private var fixtureApkDir: String? = null
+
     @JvmStatic
     fun main(args: Array<String>) {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
+        fixtureApkDir = args.firstOrNull()
         testPackageNames()
         testIntentTypedExtras()
         testRemoteActionContract()
@@ -124,45 +127,26 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testPackageNames() {
-        check(HostedPackageParser.buildClassName("org.example", ".MainActivity") ==
+        // The AOSP parser's component-name normalization (ParsingUtils).
+        check(ParsingUtils.buildClassName("org.example", ".MainActivity") ==
             "org.example.MainActivity")
-        check(HostedPackageParser.buildClassName("org.example", "MainActivity") ==
+        check(ParsingUtils.buildClassName("org.example", "MainActivity") ==
             "org.example.MainActivity")
-        check(HostedPackageParser.buildClassName("org.example", "other.MainActivity") ==
+        check(ParsingUtils.buildClassName("org.example", "other.MainActivity") ==
             "other.MainActivity")
     }
 
     private fun testHostedPermissionGrants() {
         val frameworkResources =
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk"
-        val platformPermissionProtectionLevels =
-            AssetManager.Builder()
-                .addApkAssets(
-                    ApkAssets.loadFromPath(frameworkResources, ApkAssets.PROPERTY_SYSTEM),
-                ).build()
-                .use { HostedPackageParser.parsePermissionDefinitions(it) }
+        // Server-side install of the fixture APK: WAKE_LOCK (normal) is
+        // granted at install, CAMERA (dangerous) is not.
+        val fixtures = checkNotNull(fixtureApkDir) { "fixture APK directory argument missing" }
+        val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
+        check(am.installPackage("$fixtures/org.example.permissions.apk") == "org.example.permissions")
 
         val wakeLock = "android.permission.WAKE_LOCK"
         val camera = "android.permission.CAMERA"
-        check((platformPermissionProtectionLevels[wakeLock] ?: -1).and(0x0f) == 0) {
-            "framework WAKE_LOCK permission must have normal protection"
-        }
-        check((platformPermissionProtectionLevels[camera] ?: -1).and(0x0f) == 1) {
-            "framework CAMERA permission must have dangerous protection"
-        }
-
-        PackageManager.configureHostedPackage(
-            "org.example.permissions",
-            1,
-            "1",
-            "/tmp/example-permissions.apk",
-            "/tmp/example-permissions-data",
-        )
-        PackageManager.configureHostedPermissions(
-            linkedSetOf(wakeLock, camera),
-            emptyMap(),
-            platformPermissionProtectionLevels,
-        )
         val base = ContextImpl(
             ContextImpl.createSystemContext(frameworkResources, 200, 200, 120, 0).resources,
             "org.example.permissions",

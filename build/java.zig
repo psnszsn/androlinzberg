@@ -18,6 +18,8 @@ pub const Result = struct {
     /// Test dex whose kotlin.KotlinVersion must shadow the host copy.
     kotlin_shadow_fixture: LazyPath,
     res_apk: LazyPath,
+    /// Directory of signed resources-only fixture APKs (testdata/fixture-apks).
+    fixture_apks_dir: LazyPath,
     java_step: *std.Build.Step,
 };
 
@@ -50,7 +52,16 @@ pub fn build(b: *std.Build, o: Options) Result {
         dep.path("vendor/external/kotlinc/lib"),
         dep.path("vendor/external/kotlinc/build.txt"),
     });
-    const stamp_res = stamp(b, "res.stamp", &.{ fb.path(b, "core/res"), b.path("tools/build-res.sh") });
+    const stamp_res = stamp(b, "res.stamp", &.{
+        fb.path(b, "core/res"),
+        b.path("tools/build-res.sh"),
+        b.path("tools/signing"),
+    });
+    const stamp_fixture_apks = stamp(b, "fixture-apks.stamp", &.{
+        b.path("testdata/fixture-apks"),
+        b.path("tools/build-fixture-apks.sh"),
+        b.path("tools/signing"),
+    });
     const stamp_aidl = stamp(b, "aidl.stamp", &.{
         b.path("tools/aidl-list.txt"),
         b.path("tools/build-aidl.sh"),
@@ -82,6 +93,13 @@ pub fn build(b: *std.Build, o: Options) Result {
     const res_dir = res.addOutputDirectoryArg("res");
     res.addFileInput(stamp_res);
     const res_apk = res_dir.path(b, "framework-res.apk");
+
+    // Resources-only test packages, parsed server-side by the hosted package
+    // manager (signed with the same azk-platform key as framework-res.apk).
+    const fixture_apks = b.addSystemCommand(&.{ "bash", "tools/build-fixture-apks.sh" });
+    fixture_apks.addFileArg(res_apk);
+    const fixture_apks_dir = fixture_apks.addOutputDirectoryArg("fixture-apks");
+    fixture_apks.addFileInput(stamp_fixture_apks);
 
     // 3. curated source list
     const srcs = b.addSystemCommand(&.{ "python3", "tools/java-srcs.py" });
@@ -115,7 +133,7 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
     d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
-    d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "34", "--lib" });
+    d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     d8.addFileArg(core_plus);
     d8.addArg("--output");
     const classpath_jar = d8.addOutputFileArg("framework.jar");
@@ -127,7 +145,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // stored runtime context used for freshness validation.
     const app_context_d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
     app_context_d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
-    app_context_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "34", "--lib" });
+    app_context_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     app_context_d8.addFileArg(core_plus);
     app_context_d8.addArg("--lib");
     app_context_d8.addFileArg(dep.path("vendor/external/kotlinc/lib/kotlin-stdlib.jar"));
@@ -163,7 +181,7 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     const fixture_d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
     fixture_d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
-    fixture_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "34", "--lib" });
+    fixture_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     fixture_d8.addFileArg(core_plus);
     fixture_d8.addArg("--output");
     const kotlin_shadow_fixture = fixture_d8.addOutputFileArg("kotlin-shadow.jar");
@@ -191,6 +209,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .classpath_jar = classpath_jar,
         .kotlin_shadow_fixture = kotlin_shadow_fixture,
         .res_apk = res_apk,
+        .fixture_apks_dir = fixture_apks_dir,
         .java_step = java_step,
     };
 }

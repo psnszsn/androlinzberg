@@ -20,6 +20,11 @@ while IFS= read -r source; do
         testdata/kotlin-shadow/*)
             # Java-compiler fixtures used to test Kotlin runtime shadowing.
             ;;
+        src/annotation-runtime/*)
+            # android.annotation marker classes compiled in a separate
+            # module-free javac pass (the sysmodules image owns the package);
+            # codegen'd AOSP classes reference them via .class literals.
+            ;;
         *)
             printf 'repository-owned Java is not allowed here: %s\n' "$source" >&2
             status=1

@@ -360,6 +360,7 @@ pub fn build(b: *std.Build) void {
     const system_test_run = b.addRunArtifact(system_test_driver);
     system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
     system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
+    system_test_run.addDirectoryArg(java.fixture_apks_dir);
     system_test_run.step.dependOn(b.getInstallStep());
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.step);
 
@@ -396,6 +397,8 @@ pub fn build(b: *std.Build) void {
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkModuleSmoke",
     );
+    // Fixture APKs (installed server-side by the permission-grant test).
+    framework_module_smoke.addDirectoryArg(java.fixture_apks_dir);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
@@ -409,10 +412,12 @@ pub fn build(b: *std.Build) void {
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkCompatSmoke",
     );
-    // Absolute fixture path on argv (the smoke must not depend on the CWD).
+    // Absolute fixture paths on argv (the smoke must not depend on the CWD):
+    // the androidfw parser fixture, then the fixture-APK directory.
     framework_compat_smoke.addFileArg(
         b.path("artzig/extra/frameworks-base/libs/androidfw/tests/data/app/app.apk"),
     );
+    framework_compat_smoke.addDirectoryArg(java.fixture_apks_dir);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).

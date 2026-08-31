@@ -14,6 +14,7 @@ android/content/UriRelativeFilterGroupParcel.aidl
 android/content/pm/IDexModuleRegisterCallback.aidl
 android/content/pm/IOnChecksumsReadyListener.aidl
 android/content/pm/IPackageDataObserver.aidl
+android/content/pm/IPackageInstallObserver2.aidl
 android/content/pm/IPackageDeleteObserver.aidl
 android/content/pm/IPackageDeleteObserver2.aidl
 android/content/pm/IPackageManager.aidl
@@ -127,10 +128,7 @@ com/android/internal/widget/IRemoteViewsFactory.aidl
 dev/artzig/binder/IBinderTestCallback.aidl
 dev/artzig/binder/IBinderTestService.aidl
 dev/artzig/system/HostedContentProviderHolder.aidl
-dev/artzig/system/HostedInstalledPackage.aidl
-dev/artzig/system/HostedProcessManifest.aidl
 dev/artzig/system/IHostedActivityManager.aidl
 dev/artzig/system/IHostedApplicationThread.aidl
 dev/artzig/system/IHostedContentProvider.aidl
 dev/artzig/system/IHostedContentService.aidl
-dev/artzig/system/IHostedPackageManager.aidl

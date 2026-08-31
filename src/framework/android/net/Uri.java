@@ -62,6 +62,16 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
     public void checkFileUriExposed(String location) {}
     public boolean isPathPrefixMatch(Uri prefix) { return false; }
     public static Uri parse(String uriString) { return new StringUri(uriString); }
+    /** AOSP opaque-uri factory (package:..., tel:..., mailto:...). */
+    /** AOSP Uri.fromParts: scheme and ssp are required and treated as decoded
+     * parts, so they are percent-encoded to preserve structure (an ssp with a
+     * '#' must not become a fragment). */
+    public static Uri fromParts(String scheme, String ssp, String fragment) {
+        if (scheme == null) throw new NullPointerException("scheme");
+        if (ssp == null) throw new NullPointerException("ssp");
+        return new StringUri(scheme + ":" + encode(ssp)
+                + (fragment != null ? "#" + encode(fragment) : ""));
+    }
     public static Uri fromFile(java.io.File file) { return new StringUri("file://" + file.getAbsolutePath()); }
     public static Uri withAppendedPath(Uri baseUri, String pathSegment) {
         if (baseUri == null) throw new NullPointerException("baseUri");

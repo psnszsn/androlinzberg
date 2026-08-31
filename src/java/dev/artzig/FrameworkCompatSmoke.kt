@@ -193,22 +193,16 @@ public final class FrameworkCompatSmoke {
                 "Intent.filterHashCode copy",
             )
 
-            PackageManager.configureHostedPackage("org.example", 1, "1", "/tmp/example.apk", "/tmp/example-data")
-            PackageManager.configureHostedLauncher("org.example.MainActivity")
+            // Server-side install: the org.example fixture APK's manifest
+            // declares the launcher activity and the PLAYBACK service the
+            // assertions below resolve through real IntentFilters.
+            val fixtureDir: String = requireNotNull(args.getOrNull(1)) { "fixture APK directory argument missing" }
+            val am = requireNotNull(android.app.HostedServiceClient.activityManagerOrNull())
+            require(am.installPackage("$fixtureDir/org.example.apk") == "org.example", "fixture install")
 
-            val service: ServiceInfo = ServiceInfo()
-            service.packageName = "org.example"
-            service.name = "org.example.PlaybackService"
-            service.enabled = true
-            val services: MutableList<ServiceInfo> = ArrayList()
-            services.add(service)
-            val serviceActions: MutableMap<String, MutableSet<String>> = HashMap()
-            val actions: MutableSet<String> = HashSet()
-            actions.add("org.example.PLAYBACK")
-            serviceActions.put(service.name, actions)
-            PackageManager.configureHostedServices(services, serviceActions)
-
-            val packageManager: PackageManager = object : PackageManager() {}
+            val packageManager: PackageManager = android.app.ContextImpl.createSystemContext(
+                requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
+            ).packageManager
             val launch: Intent? = packageManager.getLaunchIntentForPackage("org.example")
             require(launch != null, "hosted launch intent")
             require(

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- jvm-test fixture: a launcher activity and an implicit-action service for
+     FrameworkCompatSmoke's package-manager assertions. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.example"
+    android:versionCode="1"
+    android:versionName="1">
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <application android:hasCode="false" android:label="org example">
+        <activity android:name="org.example.MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name="org.example.PlaybackService" android:exported="true">
+            <intent-filter>
+                <action android:name="org.example.PLAYBACK" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

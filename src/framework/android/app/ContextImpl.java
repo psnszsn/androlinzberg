@@ -13,6 +13,10 @@ public class ContextImpl extends Context {
     private final Resources.Theme mTheme;
     private final String mPackageName;
     private boolean mIsConfigurationBasedContext;
+    // ApplicationPackageManager reaches these (AOSP field names): the hosted
+    // process's single ActivityThread and its one loaded APK.
+    final ActivityThread mMainThread = ActivityThread.currentActivityThread();
+    final LoadedApk mPackageInfo = new LoadedApk();
     public ContextImpl(Resources resources, String packageName, int themeResId) {
         mResources = resources;
         mPackageName = packageName;
@@ -52,9 +56,17 @@ public class ContextImpl extends Context {
     @Override public AssetManager getAssets() { return mResources.getAssets(); }
     @Override public Resources.Theme getTheme() { return mTheme; }
     @Override public String getPackageName() { return mPackageName; }
-    private static final android.content.pm.PackageManager sPackageManager =
-            new android.content.pm.PackageManager() {};
-    @Override public android.content.pm.PackageManager getPackageManager() { return sPackageManager; }
+    /** The real AOSP client over the session's IPackageManager (AOSP shape:
+     * one ApplicationPackageManager per ContextImpl). */
+    private volatile ApplicationPackageManager mPackageManager;
+    @Override public android.content.pm.PackageManager getPackageManager() {
+        ApplicationPackageManager pm = mPackageManager;
+        if (pm == null) {
+            pm = new ApplicationPackageManager(this, ActivityThread.getPackageManager());
+            mPackageManager = pm;
+        }
+        return pm;
+    }
     /**
      * Hosted adaptation of AOSP ContextImpl permission checks. PermissionManager
      * is a system_server service and is unavailable here, so PackageManager's
@@ -67,9 +79,15 @@ public class ContextImpl extends Context {
             return android.content.pm.PackageManager.PERMISSION_GRANTED;
         }
         if (uid == android.os.Process.myUid()) {
-            return sPackageManager.checkPermission(permission, mPackageName);
+            return getPackageManager().checkPermission(permission, mPackageName);
         }
-        return android.content.pm.PackageManager.checkPermissionForUid(permission, uid);
+        try {
+            return ActivityThread.getPackageManager().checkUidPermission(permission, uid);
+        } catch (android.os.RemoteException e) {
+            android.util.Log.w("ContextImpl", "permission " + permission + " for uid " + uid
+                    + " denied: package manager unreachable", e);
+            return android.content.pm.PackageManager.PERMISSION_DENIED;
+        }
     }
     @Override public int checkPermission(String permission, int pid, int uid, Object callerToken) {
         return checkPermission(permission, pid, uid);
@@ -107,7 +125,7 @@ public class ContextImpl extends Context {
     }
     @Override public android.content.pm.ApplicationInfo getApplicationInfo() {
         try {
-            return sPackageManager.getApplicationInfo(mPackageName, 0);
+            return getPackageManager().getApplicationInfo(mPackageName, 0);
         } catch (android.content.pm.PackageManager.NameNotFoundException e) {
             return new android.content.pm.ApplicationInfo();
         }

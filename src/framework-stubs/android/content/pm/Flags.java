@@ -39,6 +39,7 @@ public final class Flags {
     public static final String FLAG_THREAD_ENABLED_PLATFORM = "android.content.pm.thread_enabled_platform";
     public static final String FLAG_XR_MANIFEST_ENTRIES = "android.content.pm.xr_manifest_entries";
     public static boolean addLauncherUserConfig() { return false; }
+    public static boolean nullableDataDir() { return false; }
     public static boolean allowPrivateProfile() { return false; }
     public static boolean allowsScreenSizeDecoupledFromStatusBarAndCutout() { return false; }
     public static boolean appCompatOption16kb() { return false; }

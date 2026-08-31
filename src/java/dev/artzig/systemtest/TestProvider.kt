@@ -8,7 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 
 /** system-test provider hosted by package `dev.artzig.test.b`. */
-internal class TestProvider : ContentProvider() {
+internal open class TestProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
     override fun query(
@@ -41,3 +41,7 @@ internal class TestProvider : ContentProvider() {
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle =
         Bundle().apply { putString("echo", method + ":" + arg) }
 }
+
+/** The non-exported fixture provider: same behavior as [TestProvider]; a
+ * manifest declares each component under a distinct class name. */
+internal class SecretProvider : TestProvider()

@@ -45,6 +45,11 @@ public class BaseBundle {
             mClassLoader = b.mClassLoader;
         }
     }
+    /** AOSP's loose equality: false negatives allowed, true means equal. The
+     * hosted map-backed bundle can simply compare maps. */
+    public static boolean kindofEquals(BaseBundle a, BaseBundle b) {
+        return (a == b) || (a != null && b != null && a.map().equals(b.map()));
+    }
     public int size() { return map().size(); }
     public boolean isEmpty() { return map().isEmpty(); }
     public void clear() { map().clear(); }
