@@ -10,7 +10,7 @@ import java.nio.ByteOrder
  */
 internal object HostedBinderProtocol {
     const val MAGIC = 0x424B5A41
-    const val VERSION = 2
+    const val VERSION = 3
     const val HEADER_LEN = 32
 
     // peer -> broker
@@ -24,6 +24,7 @@ internal object HostedBinderProtocol {
     const val TAG_LOOKUP_SERVICE = 7
     const val TAG_LIST_SERVICES = 8
     const val TAG_RELEASE_ACK = 9
+    const val TAG_SET_PROPERTY = 10
 
     // broker -> peer
     const val IN_WELCOME = 0
@@ -34,6 +35,7 @@ internal object HostedBinderProtocol {
     const val IN_OBJECT_RELEASED = 5
     const val IN_SERVICE_RESULT = 6
     const val IN_SHUTDOWN = 7
+    const val IN_PROPERTY_CHANGED = 8
 
     const val REF_NULL = 0
     const val REF_LOCAL = 1

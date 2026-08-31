@@ -14,6 +14,7 @@ import android.util.AttributeSet;
 import java.io.File;
 import java.util.concurrent.Executor;
 public abstract class Context {
+    public static final String PLATFORM_COMPAT_SERVICE = "platform_compat";
     /** AOSP Context.BIND_* flags used by the hosted service path. */
     public static final int BIND_AUTO_CREATE = 0x0001;
     public static final int BIND_DEBUG_UNBIND = 0x0002;

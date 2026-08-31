@@ -1,8 +1,10 @@
 /* artzig stub. */
 package android.content;
 
-/** Minimal in-process representation used by framework clients for call attribution. */
-public class AttributionSource {
+/** Minimal representation used by framework clients for call attribution.
+ * Parcelable so it can ride in Bundles; the hosted provider transport never
+ * trusts a parceled instance (the broker uid is authoritative). */
+public class AttributionSource implements android.os.Parcelable {
     private final int uid;
     private final int pid;
     private final String packageName;
@@ -38,4 +40,19 @@ public class AttributionSource {
     public AttributionSource withNext(AttributionSource next) {
         return new AttributionSource(this, next);
     }
+
+    @Override public int describeContents() { return 0; }
+    @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+        dest.writeInt(uid);
+        dest.writeInt(pid);
+        dest.writeString(packageName);
+        dest.writeString(attributionTag);
+    }
+    public static final Creator<AttributionSource> CREATOR = new Creator<AttributionSource>() {
+        @Override public AttributionSource createFromParcel(android.os.Parcel source) {
+            return new AttributionSource(source.readInt(), source.readInt(),
+                    source.readString(), source.readString());
+        }
+        @Override public AttributionSource[] newArray(int size) { return new AttributionSource[size]; }
+    };
 }

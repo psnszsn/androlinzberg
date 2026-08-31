@@ -556,6 +556,20 @@ class HostedBinderRuntime private constructor(
         return names.split(' ').filter { it.isNotEmpty() }.toTypedArray()
     }
 
+    /**
+     * Sets a session-wide system property through the broker (the area file
+     * itself is read-only in every process). Returns false when the broker's
+     * policy denies the write.
+     */
+    fun setProperty(name: String, value: String): Boolean {
+        val nameBytes = name.toByteArray(Charsets.UTF_8)
+        val valueBytes = value.toByteArray(Charsets.UTF_8)
+        val requestId = nextRequestId.getAndIncrement()
+        val b = HostedBinderProtocol.Builder(HostedBinderProtocol.TAG_SET_PROPERTY, 0, requestId, 0)
+        b.u32(nameBytes.size).u32(valueBytes.size).bytes(nameBytes).bytes(valueBytes)
+        return serviceRequest(requestId, b.finish()).status == HostedBinderProtocol.SERVICE_OK
+    }
+
     private fun serviceRequest(requestId: Long, frame: ByteArray): ServiceResult {
         if (disconnected) throw IllegalStateException("binder broker connection lost")
         val call = PendingCall()
@@ -693,6 +707,12 @@ class HostedBinderRuntime private constructor(
                 val reason = ByteArray(body.remaining()).also { body.get(it) }
                 Log.e(TAG, "binder broker protocol error: " + String(reason, Charsets.UTF_8))
                 return false
+            }
+            HostedBinderProtocol.IN_PROPERTY_CHANGED -> {
+                // A property changed in the session area; the mapping is
+                // already current. Drives SystemProperties change callbacks
+                // (the SYSPROPS_TRANSACTION analogue).
+                executor.execute { SystemProperties.reportSyspropChanged() }
             }
             HostedBinderProtocol.IN_SHUTDOWN -> return false
             else -> {

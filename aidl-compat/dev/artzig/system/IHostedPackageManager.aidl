@@ -1,6 +1,7 @@
 package dev.artzig.system;
 
 import android.content.Intent;
+import android.content.pm.ProviderInfo;
 import android.content.pm.ResolveInfo;
 import dev.artzig.system.HostedInstalledPackage;
 
@@ -23,4 +24,10 @@ interface IHostedPackageManager {
     int getPackageUid(String packageName);
     String getApkPath(String packageName);
     String[] getInstalledPackageNames();
+    /** Runtime grant state (AOSP PermissionManagerService.grantRuntimePermission
+     * shape, reduced); callable only by the system uid. */
+    void grantRuntimePermission(String packageName, String permission);
+    void revokeRuntimePermission(String packageName, String permission);
+    /** Session-wide authority resolution (AOSP resolveContentProvider). */
+    ProviderInfo resolveContentProvider(String authority, int flags);
 }

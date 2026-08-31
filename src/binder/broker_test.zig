@@ -18,6 +18,7 @@ const system_cookie = "test-system-cookie";
 const Harness = struct {
     broker: *Broker,
     path: []u8,
+    prop_path: []u8,
     group: Io.Group = .init,
 
     fn start(gpa: std.mem.Allocator, io: Io) !*Harness {
@@ -26,9 +27,11 @@ const Harness = struct {
         io.random(&nonce_bytes);
         const nonce = std.mem.readInt(u64, &nonce_bytes, .little);
         const path = try gpa.dupe(u8, try std.fmt.bufPrint(&buf, "/tmp/azk-binder-test-{x}.sock", .{nonce}));
-        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie });
+        var prop_buf: [64]u8 = undefined;
+        const prop_path = try gpa.dupe(u8, try std.fmt.bufPrint(&prop_buf, "/tmp/azk-binder-test-{x}.props", .{nonce}));
+        const broker = try Broker.init(gpa, io, .{ .socket_path = path, .cookie = cookie, .system_cookie = system_cookie, .prop_area_path = prop_path });
         const h = try gpa.create(Harness);
-        h.* = .{ .broker = broker, .path = path };
+        h.* = .{ .broker = broker, .path = path, .prop_path = prop_path };
         try h.group.concurrent(io, runBroker, .{broker});
         return h;
     }
@@ -41,7 +44,9 @@ const Harness = struct {
         h.broker.shutdown();
         h.group.await(io) catch {};
         h.broker.deinit();
+        Io.Dir.deleteFileAbsolute(io, h.prop_path) catch {};
         gpa.free(h.path);
+        gpa.free(h.prop_path);
         gpa.destroy(h);
     }
 };
@@ -508,5 +513,68 @@ test "per-package uids, system role, and registry policy" {
         const msg = try anon.next();
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.protocol_error, msg.header.tag);
+    }
+}
+
+test "session-wide properties: policy, area contents, change push" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const prop_area = @import("prop_area.zig");
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+
+    var app: Peer = undefined;
+    try app.connectAs(io, h.path, cookie, "com.example.app");
+    defer app.close();
+    try app.expectWelcome();
+    var sys: Peer = undefined;
+    try sys.connectAs(io, h.path, system_cookie, "");
+    defer sys.close();
+    try sys.expectWelcome();
+
+    var reader = try prop_area.Reader.open(io, h.prop_path);
+    defer reader.deinit();
+    var buf: [prop_area.value_max]u8 = undefined;
+    // Broker-seeded defaults are visible before any set.
+    try testing.expectEqualStrings("35", reader.get("ro.build.version.sdk", &buf).?);
+
+    const cases = [_]struct { peer: *Peer, name: []const u8, value: []const u8, status: Server.Message.ServiceResult.Status }{
+        .{ .peer = &sys, .name = "sys.session", .value = "up", .status = .ok },
+        .{ .peer = &sys, .name = "ro.boot.once", .value = "1", .status = .ok },
+        // ro.* is write-once even for the system.
+        .{ .peer = &sys, .name = "ro.boot.once", .value = "2", .status = .denied },
+        .{ .peer = &sys, .name = "ro.build.version.sdk", .value = "36", .status = .denied },
+        .{ .peer = &app, .name = "debug.example", .value = "on", .status = .ok },
+        .{ .peer = &app, .name = "log.tag.Example", .value = "V", .status = .ok },
+        .{ .peer = &app, .name = "sys.session", .value = "spoof", .status = .denied },
+        .{ .peer = &app, .name = "ro.app", .value = "x", .status = .denied },
+    };
+    for (cases, 0..) |case, i| {
+        try case.peer.client.serveSetProperty(@intCast(i + 1), case.name, case.value);
+        // Every successful set is also pushed to every peer; drain messages
+        // until this request's service_result arrives.
+        while (true) {
+            const msg = try case.peer.next();
+            defer gpa.free(msg.fds);
+            if (msg.header.tag == .property_changed) continue;
+            try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
+            try testing.expectEqual(@as(u64, @intCast(i + 1)), msg.header.request_id);
+            try testing.expectEqual(case.status, (try serviceResult(msg.body)).status);
+            break;
+        }
+        if (case.status == .ok) {
+            try testing.expectEqualStrings(case.value, reader.get(case.name, &buf).?);
+        }
+    }
+    try testing.expectEqualStrings("1", reader.get("ro.boot.once", &buf).?);
+    try testing.expectEqualStrings("up", reader.get("sys.session", &buf).?);
+
+    // After its own drains, sys has exactly the pushes for app's two
+    // successful sets still queued, in order.
+    for ([_][]const u8{ "debug.example", "log.tag.Example" }) |expected| {
+        const msg = try sys.next();
+        defer gpa.free(msg.fds);
+        try testing.expectEqual(Server.Message.Tag.property_changed, msg.header.tag);
+        try testing.expectEqualStrings(expected, msg.body);
     }
 }

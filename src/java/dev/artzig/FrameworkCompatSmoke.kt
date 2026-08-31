@@ -10,6 +10,7 @@ import android.content.ComponentName
 import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.PackageManager
+import com.android.internal.pm.parsing.PackageParser2
 import android.content.pm.ResolveInfo
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
@@ -40,10 +41,146 @@ public final class FrameworkCompatSmoke {
             if (!condition) throw AssertionError(message)
         }
 
+        /** The AOSP parsing stack (PackageParser2 -> ParsingPackageUtils ->
+         * PackageImpl) parses a real APK end to end; framework-res.apk is the
+         * always-available fixture (package "android", platform permissions,
+         * no code). */
+        @JvmStatic
+        private fun testAospPackageParser(fixturePath: String?) {
+            // androidfw's test fixture: a small unsigned APK with a binary
+            // manifest (framework-res trips the parser's duplicate-permission
+            // strictness and NewPipe is integration-only). The harness passes
+            // the absolute path on argv so the smoke is CWD-independent.
+            val fixture = java.io.File(requireNotNull(fixturePath) { "fixture APK argument missing" })
+            require(fixture.isFile, "parser fixture exists: " + fixture)
+            val callback = object : PackageParser2.Callback() {
+                override fun isChangeEnabled(changeId: Long, appInfo: android.content.pm.ApplicationInfo): Boolean = true
+                override fun hasFeature(feature: String?): Boolean = false
+                override fun getHiddenApiWhitelistedApps(): Set<String> = emptySet()
+                override fun getInstallConstraintsAllowlist(): Set<String> = emptySet()
+            }
+            val parser = PackageParser2(null, null, null, callback)
+            val pkg = parser.parsePackage(fixture, 0, false)
+            require(pkg.packageName.isNotEmpty(), "PackageParser2 parses the fixture APK")
+            require(pkg.baseApkPath.endsWith("app.apk"), "base APK path recorded")
+            // The fixture's manifest declares no uses-sdk; the parser then
+            // reports 0, which still proves the parse completed.
+            require(pkg.targetSdkVersion >= 0, "targetSdkVersion parsed")
+            parser.close()
+        }
+
+        /** Local providers: acquire through a resolver, hit the in-process
+         * short-circuit (no cursor marshalling), and exercise the modern
+         * overload delegation. */
+        @JvmStatic
+        private fun testLocalContentProvider() {
+            var lastCursor: android.database.Cursor? = null
+            val provider = object : android.content.ContentProvider() {
+                override fun onCreate(): Boolean = true
+                override fun query(
+                    uri: android.net.Uri,
+                    projection: Array<String>?,
+                    selection: String?,
+                    selectionArgs: Array<String>?,
+                    sortOrder: String?,
+                ): android.database.Cursor {
+                    val cursor = android.database.MatrixCursor(arrayOf("k", "v"))
+                    cursor.addRow(arrayOf("selection", selection ?: ""))
+                    lastCursor = cursor
+                    return cursor
+                }
+                override fun getType(uri: android.net.Uri): String = "vnd.test/x"
+                override fun insert(uri: android.net.Uri, values: android.content.ContentValues?): android.net.Uri =
+                    android.net.Uri.parse("content://org.example.local/inserted")
+                override fun delete(uri: android.net.Uri, selection: String?, selectionArgs: Array<String>?): Int = 3
+                override fun update(
+                    uri: android.net.Uri,
+                    values: android.content.ContentValues?,
+                    selection: String?,
+                    selectionArgs: Array<String>?,
+                ): Int = 4
+                override fun call(method: String, arg: String?, extras: Bundle?): Bundle =
+                    Bundle().apply { putString("m", method) }
+            }
+            val info = android.content.pm.ProviderInfo()
+            info.packageName = "org.example"
+            info.name = "org.example.LocalProvider"
+            info.authority = "org.example.local"
+            info.exported = false
+            provider.attachInfo(null, info)
+            val resolver = object : android.content.ContentResolver() {
+                override fun acquireProvider(authority: String): android.content.IContentProvider? =
+                    if (authority == "org.example.local") provider.getIContentProvider() else null
+            }
+            val uri = android.net.Uri.parse("content://org.example.local/table")
+            val cursor = resolver.query(uri, null, "name=?", arrayOf("x"), null)
+            require(cursor != null && cursor === lastCursor, "local provider short-circuit returns the provider's own cursor")
+            cursor!!.moveToFirst()
+            require(cursor.getString(1) == "name=?", "classic query overload received the selection")
+            cursor.close()
+            require(resolver.getType(uri) == "vnd.test/x", "local provider getType")
+            require(resolver.insert(uri, android.content.ContentValues())?.toString() == "content://org.example.local/inserted", "local provider insert")
+            require(resolver.delete(uri, null, null) == 3, "local provider delete")
+            require(resolver.update(uri, android.content.ContentValues(), null, null) == 4, "local provider update")
+            require(resolver.call(uri, "m1", null, null)?.getString("m") == "m1", "local provider call")
+            require(resolver.query(android.net.Uri.parse("content://absent/x"), null, null, null, null) == null, "unknown authority yields null")
+        }
+
+        /** Session-wide SystemProperties over the shared area (prop_area.zig). */
+        @JvmStatic
+        private fun testSystemProperties() {
+            // Broker-seeded defaults are visible in every process.
+            require(android.os.SystemProperties.get("ro.build.version.sdk") == "35", "seeded ro.build.version.sdk")
+            require(android.os.SystemProperties.getInt("ro.build.version.sdk", 0) == 35, "seeded sdk as int")
+            require(android.os.SystemProperties.get("ro.missing", "fallback") == "fallback", "missing property default")
+            // Round trip through the broker and back out of the mapping.
+            android.os.SystemProperties.set("debug.azk.smoke", "smoke-value")
+            require(android.os.SystemProperties.get("debug.azk.smoke") == "smoke-value", "set/get round trip")
+            android.os.SystemProperties.set("debug.azk.smoke", "on")
+            require(android.os.SystemProperties.getBoolean("debug.azk.smoke", false), "getBoolean truth table: on")
+            // find()/Handle re-read the live slot.
+            val handle = android.os.SystemProperties.find("debug.azk.smoke")
+            require(handle != null, "find() locates a set property")
+            require(handle!!.get() == "on", "Handle.get")
+            android.os.SystemProperties.set("debug.azk.smoke", "42")
+            require(handle.getInt(0) == 42, "Handle tracks later writes")
+            require(android.os.SystemProperties.find("ro.never.set") == null, "find() misses unset names")
+            // Policy: an app process may not touch names outside debug./log.
+            val denied = try {
+                android.os.SystemProperties.set("sys.azk.smoke", "x")
+                false
+            } catch (expected: RuntimeException) {
+                true
+            }
+            require(denied, "app property namespace policy enforced")
+            // Length cap per AOSP: >91 chars rejected for non-ro names.
+            val tooLong = try {
+                android.os.SystemProperties.set("debug.azk.long", "x".repeat(92))
+                false
+            } catch (expected: IllegalArgumentException) {
+                true
+            }
+            require(tooLong, "PROP_VALUE_MAX enforced")
+            require(android.os.SystemProperties.digestOf("debug.azk.smoke").length == 40, "digestOf yields sha-1 hex")
+            // Change callbacks ride the broker's property_changed push.
+            val changed = java.util.concurrent.CountDownLatch(1)
+            val callback = Runnable { changed.countDown() }
+            android.os.SystemProperties.addChangeCallback(callback)
+            android.os.SystemProperties.set("debug.azk.callback", "1")
+            require(changed.await(30, java.util.concurrent.TimeUnit.SECONDS), "change callback delivered")
+            android.os.SystemProperties.removeChangeCallback(callback)
+            // App processes never look like an emulator (the flag is
+            // process-local to the system process, not a shared property).
+            require(!android.os.Build.IS_EMULATOR, "IS_EMULATOR is false in app processes")
+        }
+
         @Throws(Exception::class)
         @JvmStatic
         public fun main(args: Array<String>) {
         testParcelRoundTrips()
+            testSystemProperties()
+            testLocalContentProvider()
+            testAospPackageParser(args.firstOrNull())
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
             val filtered: Intent =
                 Intent(Intent.ACTION_VIEW)
@@ -338,6 +475,7 @@ public final class FrameworkCompatSmoke {
             val expected: Bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
             val resolver: ContentResolver =
                 object : ContentResolver() {
+                    override fun acquireProvider(authority: String): android.content.IContentProvider? = null
                     override fun loadThumbnail(
                         uri: android.net.Uri,
                         size: Size,
@@ -455,6 +593,8 @@ public final class FrameworkCompatSmoke {
         service.name = "dev.artzig.pkg.Svc"
         service.permission = "dev.artzig.PERM"
         service.exported = true
+        // The real AOSP ComponentInfo parcels applicationInfo.
+        service.applicationInfo = app
         val resolve = android.content.pm.ResolveInfo()
         resolve.serviceInfo = service
         val resolve2 = roundTrip(resolve, android.content.pm.ResolveInfo.CREATOR)
@@ -476,6 +616,7 @@ public final class FrameworkCompatSmoke {
         provider.name = "dev.artzig.pkg.Provider"
         provider.authority = "dev.artzig"
         provider.grantUriPermissions = true
+        provider.applicationInfo = app
         val provider2 = roundTrip(provider, android.content.pm.ProviderInfo.CREATOR)
         check(provider2.authority == "dev.artzig" && provider2.grantUriPermissions) { "providerInfo" }
         // Wire-shaped bundle path: marshalled bytes into a fresh Parcel, lazy decode.

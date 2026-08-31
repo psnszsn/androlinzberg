@@ -236,6 +236,7 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         const info = try joinSession(init, dir);
         _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, info.socket, 0), 1);
         _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, info.cookie, 0), 1);
+        _ = setenv(binder_session.prop_area_env, try arena.dupeSentinel(u8, info.prop_area, 0), 1);
         std.debug.print("azk: joined binder session: {s}\n", .{dir});
         return;
     }
@@ -250,6 +251,7 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
     });
     _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);
     _ = setenv(binder_session.cookie_env, try arena.dupeSentinel(u8, binder.*.?.cookie, 0), 1);
+    _ = setenv(binder_session.prop_area_env, try arena.dupeSentinel(u8, binder.*.?.prop_area_path, 0), 1);
     std.debug.print("azk: binder session: {s}\n", .{binder.*.?.dir});
 }
 

@@ -28,6 +28,22 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
         }
         return result;
     }
+    public String getFragment() {
+        try { return new java.net.URI(toString()).getFragment(); } catch (Exception e) { return null; }
+    }
+    public String getSchemeSpecificPart() {
+        String s0 = toString();
+        int colon = s0.indexOf(':');
+        String ssp = colon >= 0 ? s0.substring(colon + 1) : s0;
+        int frag = ssp.indexOf('#');
+        return frag >= 0 ? ssp.substring(0, frag) : ssp;
+    }
+    public int getPort() {
+        try { return new java.net.URI(toString()).getPort(); } catch (Exception e) { return -1; }
+    }
+    public String getQuery() {
+        try { return new java.net.URI(toString()).getQuery(); } catch (Exception e) { return null; }
+    }
     public String getQueryParameter(String key) {
         String rawQuery = null;
         try { rawQuery = new java.net.URI(toString()).getRawQuery(); } catch (Exception ignored) {}

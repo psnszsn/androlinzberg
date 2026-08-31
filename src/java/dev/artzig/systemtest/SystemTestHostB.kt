@@ -33,6 +33,23 @@ internal object SystemTestHostB {
             listOf(echoInfo),
             mapOf(echoInfo.name to setOf("dev.artzig.test.ECHO")),
         )
+        val hostAppInfo = android.content.pm.ApplicationInfo().apply {
+            packageName = "dev.artzig.test.b"
+            processName = "dev.artzig.test.b"
+        }
+        val providerInfo = android.content.pm.ProviderInfo()
+        providerInfo.packageName = "dev.artzig.test.b"
+        providerInfo.name = TestProvider::class.java.name
+        providerInfo.authority = "dev.artzig.test.b.provider"
+        providerInfo.exported = true
+        providerInfo.applicationInfo = hostAppInfo
+        val secretInfo = android.content.pm.ProviderInfo()
+        secretInfo.packageName = "dev.artzig.test.b"
+        secretInfo.name = TestProvider::class.java.name
+        secretInfo.authority = "dev.artzig.test.b.secret"
+        secretInfo.exported = false
+        secretInfo.applicationInfo = hostAppInfo
+        android.content.pm.PackageManager.configureHostedProviders(listOf(providerInfo, secretInfo))
         val manifest = HostedProcessManifest(
             "dev.artzig.test.b",
             "dev.artzig.test.b",
@@ -48,6 +65,22 @@ internal object SystemTestHostB {
             emptyList(),
         )
         ActivityThread.attachApplicationHosted(manifest)
+        // Publish the test providers (client A queries them cross-process; the
+        // non-exported one asserts the acquisition gate).
+        val provider = TestProvider().also { it.attachInfo(context, providerInfo) }
+        val secret = TestProvider().also { it.attachInfo(context, secretInfo) }
+        android.app.HostedServiceClient.activityManagerOrNull()!!.publishContentProviders(
+            listOf(
+                dev.artzig.system.HostedContentProviderHolder(
+                    providerInfo,
+                    provider.getIContentProvider().asBinder(),
+                ),
+                dev.artzig.system.HostedContentProviderHolder(
+                    secretInfo,
+                    secret.getIContentProvider().asBinder(),
+                ),
+            ),
+        )
         System.err.println("system-test-host-b: attached pid=" + Process.myPid() + " uid=" + Process.myUid())
         Thread {
             val exited = EchoService.exitLatch.await(120, java.util.concurrent.TimeUnit.SECONDS)

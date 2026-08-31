@@ -181,8 +181,8 @@ internal object FrameworkModuleSmoke {
             "org.example.permissions",
             PackageManager.GET_PERMISSIONS,
         )
-        val grants = packageInfo.requestedPermissions
-            .zip(packageInfo.requestedPermissionsFlags.toTypedArray())
+        val grants = packageInfo.requestedPermissions!!
+            .zip(packageInfo.requestedPermissionsFlags!!.toTypedArray())
             .toMap()
         check(grants.getValue(wakeLock) and PackageInfo.REQUESTED_PERMISSION_GRANTED != 0)
         check(grants.getValue(camera) and PackageInfo.REQUESTED_PERMISSION_GRANTED == 0)

@@ -1,7 +1,7 @@
 //! azk-binder-broker: the hosted Binder transaction router process.
 //!
 //! Usage: AZK_BINDER_COOKIE=<app cookie> AZK_BINDER_SYSTEM_COOKIE=<system cookie>
-//!        azk-binder-broker --socket <path> [--first-app-uid N]
+//!        azk-binder-broker --socket <path> --prop-area <path> [--first-app-uid N]
 //!
 //! Both cookies come from the environment, not argv, so they are not readable
 //! through /proc/<pid>/cmdline. The system cookie identifies the session's one
@@ -23,6 +23,7 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     var socket_path: ?[]const u8 = null;
     var session_dir: ?[]const u8 = null;
+    var prop_area_path: ?[]const u8 = null;
     const cookie = init.minimal.environ.getPosix("AZK_BINDER_COOKIE");
     const system_cookie = init.minimal.environ.getPosix("AZK_BINDER_SYSTEM_COOKIE");
     var first_app_uid: u32 = Client.default_app_uid;
@@ -35,11 +36,14 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--session-dir") and i + 1 < args.len) {
             i += 1;
             session_dir = args[i];
+        } else if (std.mem.eql(u8, arg, "--prop-area") and i + 1 < args.len) {
+            i += 1;
+            prop_area_path = args[i];
         } else if (std.mem.eql(u8, arg, "--first-app-uid") and i + 1 < args.len) {
             i += 1;
             first_app_uid = try std.fmt.parseInt(u32, args[i], 10);
         } else {
-            std.debug.print("usage: AZK_BINDER_COOKIE=<cookie> AZK_BINDER_SYSTEM_COOKIE=<cookie> azk-binder-broker --socket <path> [--first-app-uid N]\n", .{});
+            std.debug.print("usage: AZK_BINDER_COOKIE=<cookie> AZK_BINDER_SYSTEM_COOKIE=<cookie> azk-binder-broker --socket <path> --prop-area <path> [--first-app-uid N]\n", .{});
             return error.InvalidArguments;
         }
     }
@@ -51,6 +55,10 @@ pub fn main(init: std.process.Init) !void {
         },
         .system_cookie = system_cookie orelse {
             std.debug.print("azk-binder-broker: AZK_BINDER_SYSTEM_COOKIE is not set\n", .{});
+            return error.InvalidArguments;
+        },
+        .prop_area_path = prop_area_path orelse {
+            std.debug.print("azk-binder-broker: --prop-area is required\n", .{});
             return error.InvalidArguments;
         },
         .first_app_uid = first_app_uid,

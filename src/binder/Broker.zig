@@ -24,6 +24,7 @@ const assert = std.debug.assert;
 const Client = @import("Client.zig");
 const Server = @import("Server.zig");
 const Connection = @import("Connection.zig");
+const prop_area = @import("prop_area.zig");
 const ObjectRef = Client.ObjectRef;
 const ObjectEntry = Client.ObjectEntry;
 const limits = Client.limits;
@@ -41,6 +42,9 @@ cookie: []const u8,
 system_cookie: []const u8,
 /// Package name -> Android uid for this session; uids are never reused.
 packages: std.StringHashMapUnmanaged(u32) = .empty,
+/// Session-wide system property area; the broker is the only writer
+/// (source note: init's property_service).
+props: prop_area.Area,
 next_app_uid: u32,
 shutting_down: bool = false,
 peers: std.AutoHashMapUnmanaged(u32, *Peer) = .empty,
@@ -62,6 +66,8 @@ pub const Options = struct {
     socket_path: []const u8,
     cookie: []const u8,
     system_cookie: []const u8,
+    /// File every session process maps read-only for `SystemProperties`.
+    prop_area_path: []const u8,
     first_app_uid: u32 = Client.default_app_uid,
     kernel_backlog: u31 = 16,
 };
@@ -173,6 +179,9 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     errdefer gpa.free(cookie);
     const system_cookie = try gpa.dupe(u8, options.system_cookie);
     errdefer gpa.free(system_cookie);
+    var props = try prop_area.Area.create(io, options.prop_area_path);
+    errdefer props.deinit();
+    seedProperties(&props);
     const address = try net.UnixAddress.init(socket_path);
     const listener = try address.listen(io, .{ .kernel_backlog = options.kernel_backlog });
     b.* = .{
@@ -182,9 +191,24 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
         .socket_path = socket_path,
         .cookie = cookie,
         .system_cookie = system_cookie,
+        .props = props,
         .next_app_uid = options.first_app_uid,
     };
     return b;
+}
+
+/// Boot-time defaults, previously the static block of the per-process
+/// `SystemProperties` shim.
+fn seedProperties(props: *prop_area.Area) void {
+    const seeds = [_][2][]const u8{
+        .{ "ro.build.version.sdk", "35" },
+        .{ "ro.build.version.release", "15" },
+        .{ "ro.build.version.codename", "REL" },
+        .{ "ro.hardware", "artzig" },
+        .{ "ro.product.cpu.abi", "x86_64" },
+        .{ "debug.force_rtl", "0" },
+    };
+    for (seeds) |seed| props.set(seed[0], seed[1]) catch unreachable;
 }
 
 /// Accepts peers until `shutdown` is called, then tears every peer down.
@@ -249,6 +273,7 @@ pub fn deinit(b: *Broker) void {
     const gpa = b.gpa;
     const io = b.io;
     b.listener.deinit(io);
+    b.props.deinit();
     Io.Dir.cwd().deleteFile(io, b.socket_path) catch {};
     var objects = b.objects.valueIterator();
     while (objects.next()) |o| o.*.deinit(gpa);
@@ -460,6 +485,7 @@ fn serveLoop(peer: *Peer) ServeError!void {
             .register_service => try handleRegister(peer, header, body),
             .lookup_service => try handleLookup(peer, header, body),
             .list_services => try handleList(peer, header),
+            .set_property => try handleSetProperty(peer, header, body),
             _ => return protocolError(peer, "unknown message tag"),
         }
     }
@@ -962,6 +988,53 @@ fn handleList(peer: *Peer, header: Client.Message.Header) ServeError!void {
         try names.append(b.gpa, 0);
     }
     peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .ok, ObjectRef.null_ref, names.items }));
+}
+
+/// Property policy (source note: init's property_service + SELinux property
+/// contexts, reduced): the system process may set anything, but an `ro.*`
+/// only while it is unset; app peers may touch only `debug.*` and `log.*`.
+fn maySetProperty(peer: *const Peer, name: []const u8) bool {
+    const b = peer.broker;
+    if (peer.role == .system) {
+        if (!std.mem.startsWith(u8, name, "ro.")) return true;
+        var buf: [prop_area.value_max]u8 = undefined;
+        return b.props.get(name, &buf) == null;
+    }
+    return std.mem.startsWith(u8, name, "debug.") or std.mem.startsWith(u8, name, "log.");
+}
+
+fn handleSetProperty(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
+    const b = peer.broker;
+    const io = b.io;
+    const msg = takeStruct(Client.Message.SetProperty, body) catch return protocolError(peer, "malformed set_property");
+    const rest = body[@sizeOf(Client.Message.SetProperty)..];
+    if (@as(usize, msg.name_len) + msg.value_len != rest.len or msg.name_len == 0 or
+        msg.name_len > limits.max_name_len or msg.value_len > limits.max_name_len)
+        return protocolError(peer, "malformed set_property");
+    const name = rest[0..msg.name_len];
+    const value = rest[msg.name_len..];
+    if (std.mem.indexOfScalar(u8, name, 0) != null or std.mem.indexOfScalar(u8, value, 0) != null)
+        return protocolError(peer, "malformed set_property");
+    b.mutex.lockUncancelable(io);
+    defer b.mutex.unlock(io);
+    if (!maySetProperty(peer, name)) {
+        log.warn("peer {d} ({s}) may not set property '{s}'", .{ peer.id, peer.package, name });
+        peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .denied, ObjectRef.null_ref, "" }));
+        return;
+    }
+    b.props.set(name, value) catch |err| {
+        log.warn("cannot set property '{s}': {t}", .{ name, err });
+        peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .denied, ObjectRef.null_ref, "" }));
+        return;
+    };
+    peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .ok, ObjectRef.null_ref, "" }));
+    // Everyone (the setter included) learns of the change; the area itself is
+    // already current, this only drives change callbacks.
+    var it = b.peers.valueIterator();
+    while (it.next()) |other| {
+        if (!other.*.alive or !other.*.hello_done) continue;
+        other.*.enqueue(try b.encode(Server.servePropertyChanged, .{name}));
+    }
 }
 
 /// Tears a peer down: fails its calls, kills its objects, drops its holdings.

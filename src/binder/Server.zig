@@ -63,6 +63,11 @@ pub const Message = struct {
         service_result,
         /// No body. The broker is going away.
         shutdown,
+        /// Body is the UTF-8 name of a property that changed in the session's
+        /// property area. Not acknowledged; drives
+        /// `SystemProperties.addChangeCallback` (the `SYSPROPS_TRANSACTION`
+        /// analogue).
+        property_changed,
         _,
     };
 
@@ -236,6 +241,12 @@ pub fn serveObjectRefMessage(s: *const Server, tag: OutMessage.Tag, object: Obje
 pub fn serveObjectReleased(s: *const Server, object: ObjectRef, uses: u64) Writer.Error!void {
     try s.serveMessageHeader(.{ .tag = .object_released, .bytes_len = @sizeOf(OutMessage.ObjectReleased) });
     try s.out.writeStruct(OutMessage.ObjectReleased{ .object = object, .uses = uses }, .little);
+    try s.out.flush();
+}
+
+pub fn servePropertyChanged(s: *const Server, name: []const u8) Writer.Error!void {
+    try s.serveMessageHeader(.{ .tag = .property_changed, .bytes_len = @intCast(name.len) });
+    try s.out.writeAll(name);
     try s.out.flush();
 }
 

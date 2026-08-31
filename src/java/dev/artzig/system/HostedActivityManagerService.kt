@@ -72,6 +72,16 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         var doRebind = false
     }
 
+    private class ContentProviderRecord(
+        val holder: HostedContentProviderHolder,
+        /** Null for providers the system process installed in-process. */
+        val app: ProcessRecord?,
+    )
+
+    private class ProviderWaiter(val packageName: String) {
+        val latch = java.util.concurrent.CountDownLatch(1)
+    }
+
     private inner class ConnectionRecord(
         val conn: IServiceConnection,
         val client: ProcessRecord,
@@ -88,6 +98,11 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
     private val packagePaths = LinkedHashMap<String, String>()
     /** Bind/start operations waiting for a package's process to attach. */
     private val pendingByPackage = LinkedHashMap<String, MutableList<() -> Unit>>()
+    /** Published content providers, one record per declared authority
+     * (source note: ActivityManagerService.mProviderMap). */
+    private val providersByAuthority = LinkedHashMap<String, ContentProviderRecord>()
+    /** getContentProvider calls blocked until the owning package publishes. */
+    private val providerWaiters = LinkedHashMap<String, MutableList<ProviderWaiter>>()
     @Volatile var processLauncher: ProcessLauncher? = null
     /** The session's package manager; consulted for APK paths of packages with no running process. */
     @Volatile var packageService: HostedPackageManagerService? = null
@@ -150,6 +165,13 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
             for (service in servicesByComponent.values) {
                 val owned = service.connections.values.filter { it.client === record }
                 for (connection in owned) removeConnectionLocked(connection)
+            }
+            // Provider records the dead process published, and waiters that
+            // were counting on that package publishing.
+            providersByAuthority.entries.removeAll { it.value.app === record }
+            for (waiters in providerWaiters.values) {
+                val failed = waiters.filter { it.packageName == record.manifest.packageName }
+                for (waiter in failed) waiter.latch.countDown()
             }
         }
         for ((connection, service) in notify) {
@@ -489,6 +511,106 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
     internal fun checkUidPermission(permission: String, uid: Int): Int =
         packageService?.checkUidPermission(permission, uid)
             ?: android.content.pm.PackageManager.PERMISSION_DENIED
+
+    // ------------------------------------------------------------ providers
+
+    /** In-process publication for providers the system process hosts. */
+    fun addSystemProvider(holder: HostedContentProviderHolder) {
+        val released = ArrayList<ProviderWaiter>()
+        synchronized(lock) {
+            for (authority in holder.info.authority?.split(";") ?: return) {
+                providersByAuthority[authority] = ContentProviderRecord(holder, null)
+                providerWaiters.remove(authority)?.let { released.addAll(it) }
+            }
+        }
+        for (waiter in released) waiter.latch.countDown()
+    }
+
+    /** Access gate for acquiring a provider (the per-call gate lives in the
+     * provider's Transport; source note ActivityManagerService.checkContentProviderPermission). */
+    private fun checkProviderAccess(info: android.content.pm.ProviderInfo, callingUid: Int) {
+        if (callingUid == android.os.Process.SYSTEM_UID || callingUid == 0) return
+        val ownerUid = packageService?.getPackageUid(info.packageName) ?: -1
+        if (ownerUid == callingUid) return
+        if (!info.exported) {
+            throw SecurityException(
+                "provider " + info.authority + " from " + info.packageName + " is not exported to uid " + callingUid,
+            )
+        }
+        val read = info.readPermission
+        val write = info.writePermission
+        if (read == null && write == null) return
+        val granted = { permission: String? ->
+            permission != null && packageService?.checkUidPermission(permission, callingUid) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (granted(read) || granted(write)) return
+        if (read == null || write == null) return
+        throw SecurityException(
+            "uid " + callingUid + " holds neither " + read + " nor " + write + " for provider " + info.authority,
+        )
+    }
+
+    override fun getContentProvider(authority: String, callingPackage: String?): HostedContentProviderHolder? {
+        val callingUid = Binder.getCallingUid()
+        val waiter: ProviderWaiter
+        synchronized(lock) {
+            providersByAuthority[authority]?.let {
+                checkProviderAccess(it.holder.info, callingUid)
+                return it.holder
+            }
+            val info = packageService?.resolveContentProvider(authority, 0) ?: return null
+            checkProviderAccess(info, callingUid)
+            // The owning package has published nothing yet: make sure its
+            // process is coming up, then wait for publishContentProviders.
+            if (processes.values.none { it.manifest.packageName == info.packageName }) {
+                if (!bringUpProcessLocked(info.packageName)) return null
+            }
+            waiter = ProviderWaiter(info.packageName)
+            providerWaiters.getOrPut(authority) { ArrayList() }.add(waiter)
+        }
+        // Wait outside the lock; publish/death arrive on other binder threads.
+        val published = waiter.latch.await(15, java.util.concurrent.TimeUnit.SECONDS)
+        synchronized(lock) {
+            providerWaiters[authority]?.remove(waiter)
+            if (!published) Log.w(TAG, "timed out waiting for provider " + authority)
+            val record = providersByAuthority[authority] ?: return null
+            checkProviderAccess(record.holder.info, callingUid)
+            return record.holder
+        }
+    }
+
+    override fun publishContentProviders(providers: List<HostedContentProviderHolder>?) {
+        if (providers == null) return
+        val callingUid = Binder.getCallingUid()
+        val callingPid = Binder.getCallingPid()
+        val released = ArrayList<ProviderWaiter>()
+        synchronized(lock) {
+            val app = processes.values.firstOrNull { it.pid == callingPid && it.uid == callingUid }
+            if (app == null && callingUid != android.os.Process.SYSTEM_UID) {
+                // A null ProcessRecord is the system-installed sentinel (never
+                // swept by process death); an unattached app peer must not
+                // publish records that would outlive it.
+                Log.w(TAG, "unattached uid " + callingUid + " pid " + callingPid + " may not publish providers")
+                return
+            }
+            for (holder in providers) {
+                if (holder.provider == null) continue
+                // A process may only publish authorities of its own package
+                // (same interim identity model as attachApplication).
+                val ownerUid = packageService?.getPackageUid(holder.info.packageName) ?: -1
+                if (callingUid != android.os.Process.SYSTEM_UID && ownerUid != callingUid) {
+                    Log.w(TAG, "uid " + callingUid + " may not publish providers of " + holder.info.packageName)
+                    continue
+                }
+                for (authority in holder.info.authority?.split(";") ?: continue) {
+                    providersByAuthority[authority] = ContentProviderRecord(holder, app)
+                    providerWaiters.remove(authority)?.let { released.addAll(it) }
+                }
+            }
+        }
+        for (waiter in released) waiter.latch.countDown()
+    }
 
     override fun registerReceiver(
         receiver: android.content.IIntentReceiver?,

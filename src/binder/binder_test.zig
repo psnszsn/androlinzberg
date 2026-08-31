@@ -33,6 +33,7 @@ pub fn main(init: std.process.Init) !void {
     try Io.Dir.createDirAbsolute(io, dir, @fromBackingInt(@intCast(0o700)));
     defer Io.Dir.cwd().deleteTree(io, dir) catch {};
     const socket_path = try std.fs.path.join(arena, &.{ dir, "binder.sock" });
+    const prop_area_path = try std.fs.path.join(arena, &.{ dir, "props" });
     const cookie = "binder-test";
 
     var env = try init.minimal.environ.createMap(gpa);
@@ -41,9 +42,14 @@ pub fn main(init: std.process.Init) !void {
     try env.put("AZK_BINDER_COOKIE", cookie);
     try env.put("AZK_BINDER_SYSTEM_COOKIE", "binder-test-system");
     try env.put("AZK_BINDER_PACKAGE", "dev.artzig.binder");
+    try env.put("AZK_PROP_AREA", prop_area_path);
+    // Hermetic: a nonexistent display keeps the hosted clipboard monitor off
+    // the developer's real Wayland clipboard (an empty value would fall back
+    // to wayland-0; parallel test sessions would cross-talk through it).
+    try env.put("WAYLAND_DISPLAY", "azk-hermetic-none");
 
     var broker = try std.process.spawn(io, .{
-        .argv = &.{ broker_exe, "--socket", socket_path },
+        .argv = &.{ broker_exe, "--socket", socket_path, "--prop-area", prop_area_path },
         .environ_map = &env,
         .stdin = .pipe,
         .stdout = .pipe,

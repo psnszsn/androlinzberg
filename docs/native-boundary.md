@@ -29,7 +29,11 @@ macros and callback code that Zig cannot import directly.
 - `HardwareBufferRender.cpp` imports DMA-BUF buffers into EGL and Skia.
 - `HwuiRenderProxyBridge.cpp` supplies two C calls for HWUI `RenderProxy`.
 - `AospJniBridge.cpp` registers AOSP JNI code and manages Skia bitmap access.
-- `AospParcelAbi.cpp` supplies required AOSP input symbols.
+- `AospParcelAbi.cpp` supplies required AOSP `android::Parcel` symbols. Most
+  members abort (their paths are never taken in-process); the subset
+  CursorWindow's parcel path uses is a real JNI bridge onto the hosted Java
+  `android.os.Parcel`, so cross-process provider cursors ship genuine
+  CursorWindows (memfd over SCM_RIGHTS).
 
 These files can use HWUI, Skia, and AOSP C++ types. Put new platform behavior in
 Zig behind a small C interface. Update this document and the build audit when

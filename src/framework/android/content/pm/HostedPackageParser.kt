@@ -285,7 +285,7 @@ object HostedPackageParser {
                             "directBootAware",
                             false,
                         )
-                        foregroundServiceType = parser.getAttributeIntValue(
+                        mForegroundServiceType = parser.getAttributeIntValue(
                             ANDROID_NS,
                             "foregroundServiceType",
                             0,

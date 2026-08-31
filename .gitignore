@@ -5,3 +5,4 @@ zig-pkg/
 .native-cache/
 .direnv/
 vendor/*
+javac.*.args

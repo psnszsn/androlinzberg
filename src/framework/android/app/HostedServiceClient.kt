@@ -53,6 +53,60 @@ object HostedServiceClient {
         }
     }
 
+    /** Publishes this process's installed providers (AOSP ordering: attach ->
+     * install -> publish -> Application.onCreate; the application runtime
+     * calls this between install and onCreate). */
+    @JvmStatic
+    fun publishInstalledProviders() {
+        val am = activityManagerOrNull() ?: return
+        val holders = HostedApplicationRuntime.installedProviderHolders()
+        if (holders.isEmpty()) return
+        try {
+            am.publishContentProviders(holders)
+        } catch (e: RemoteException) {
+            Log.w(TAG, "publishContentProviders failed", e)
+        }
+    }
+
+    private val providerLock = Any()
+    private val providerCache = HashMap<String, android.content.IContentProvider>()
+
+    /**
+     * Authority -> provider connection (source note: ActivityThread.acquireProvider):
+     * this process's own installed providers first, then the per-process cache,
+     * then the activity manager (which spawns the owning package on demand).
+     * Death evicts the cache entry so a re-acquire respawns.
+     */
+    @JvmStatic
+    fun acquireContentProvider(context: Context, authority: String): android.content.IContentProvider? {
+        HostedApplicationRuntime.localProvider(authority)?.let { return it.getIContentProvider() }
+        synchronized(providerLock) { providerCache[authority]?.let { return it } }
+        val am = activityManagerOrNull() ?: return null
+        val holder = try {
+            am.getContentProvider(authority, context.packageName)
+        } catch (e: RemoteException) {
+            Log.w(TAG, "getContentProvider failed for " + authority, e)
+            null
+        } ?: return null
+        val binder = holder.provider ?: return null
+        val proxy = android.content.HostedContentProviderProxy(
+            dev.artzig.system.IHostedContentProvider.Stub.asInterface(binder),
+        )
+        synchronized(providerLock) {
+            providerCache[authority]?.let { return it }
+            providerCache[authority] = proxy
+        }
+        try {
+            binder.linkToDeath(
+                { synchronized(providerLock) { providerCache.remove(authority) } },
+                0,
+            )
+        } catch (e: RemoteException) {
+            synchronized(providerLock) { providerCache.remove(authority) }
+        }
+        return proxy
+    }
+
     @JvmStatic
     fun startService(intent: Intent): ComponentName? {
         val am = activityManagerOrNull() ?: return null

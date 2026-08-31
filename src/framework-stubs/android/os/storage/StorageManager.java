@@ -15,4 +15,11 @@ public class StorageManager {
     public long getAllocatableBytes(UUID storageUuid, int flags) throws IOException {
         return getAllocatableBytes(storageUuid);
     }
+    public static java.util.UUID convert(String volumeUuid) {
+        return volumeUuid == null ? UUID_DEFAULT : java.util.UUID.fromString(volumeUuid);
+    }
+    /** AOSP maps the default-storage sentinel UUID to null (internal). */
+    public static String convert(java.util.UUID storageUuid) {
+        return UUID_DEFAULT.equals(storageUuid) ? null : storageUuid.toString();
+    }
 }

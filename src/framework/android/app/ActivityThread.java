@@ -79,6 +79,12 @@ public final class ActivityThread {
     public static void unbindServiceInProcess(android.content.ServiceConnection conn) {
         HostedServiceClient.unbindService(conn);
     }
+    /** AOSP static; the real service arrives with the IPackageManager client
+     * swap — until then this resolves to null and callers' dead paths stay dead. */
+    public static android.content.pm.IPackageManager getPackageManager() {
+        return android.content.pm.IPackageManager.Stub.asInterface(null);
+    }
+
     /** Registers this process with the activity manager (AOSP attachApplication). */
     public static void attachApplicationHosted(dev.artzig.system.HostedProcessManifest manifest) {
         HostedServiceClient.attachApplication(manifest);

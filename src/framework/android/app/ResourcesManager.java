@@ -37,4 +37,20 @@ public class ResourcesManager {
         }
         @Override public String toString() { return path; }
     }
+    /** AOSP overload used by ParsingPackageUtils' overlayable-resource path
+     * (not taken on this host). */
+    public android.content.res.Resources getResources(
+            android.os.IBinder activityToken,
+            String resDir,
+            String[] splitResDirs,
+            String[] legacyOverlayDirs,
+            String[] overlayPaths,
+            String[] libDirs,
+            Integer overrideDisplayId,
+            android.content.res.Configuration overrideConfig,
+            android.content.res.CompatibilityInfo compatInfo,
+            ClassLoader classLoader,
+            java.util.List<android.content.res.loader.ResourcesLoader> loaders) {
+        return null;
+    }
 }

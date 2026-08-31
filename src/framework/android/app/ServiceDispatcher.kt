@@ -85,8 +85,13 @@ internal class ServiceDispatcher(
                 } catch (e: Exception) {
                 }
                 active.remove(name)
+                replaced = existing.service
             }
         }
+        // AOSP LoadedApk.ServiceDispatcher.doConnected: any old binding is
+        // disconnected here, so the callback fires no matter whether the
+        // activity manager's dead-notify or the binder death arrives first
+        // (whichever runs first also unlinks the monitor, keeping it single).
         if (replaced != null && replaced !== service) {
             connection.onServiceDisconnected(name)
         }

@@ -469,10 +469,12 @@ public final class ApkHost {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
             }
 
-            android.app.ActivityThread.bindApplicationInProcess(sContext, cl, appClass, providers)
+            // AOSP ordering: attach first, then install providers + publish +
+            // Application.onCreate (bindApplicationInProcess).
             android.app.ActivityThread.attachApplicationHosted(
                 buildManifest(hostedPackage, apkPath, platformPermissionProtectionLevels),
             )
+            android.app.ActivityThread.bindApplicationInProcess(sContext, cl, appClass, providers)
             sProcessInitialized = true
 
             // --- MainActivity
@@ -574,14 +576,16 @@ public final class ApkHost {
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
             }
+            // AOSP ordering: attach first, then install providers + publish +
+            // Application.onCreate.
+            android.app.ActivityThread.attachApplicationHosted(
+                buildManifest(hostedPackage, apkPath, platformPermissionProtectionLevels),
+            )
             android.app.ActivityThread.bindApplicationInProcess(
                 sContext,
                 cl,
                 hostedPackage.applicationClassName,
                 hostedPackage.providersForProcess(pkg),
-            )
-            android.app.ActivityThread.attachApplicationHosted(
-                buildManifest(hostedPackage, apkPath, platformPermissionProtectionLevels),
             )
             Log.i(TAG, "headless app process up: " + pkg)
         }

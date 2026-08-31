@@ -17,4 +17,9 @@ public class FileUtils {
         while ((r = in.read(buf)) > 0) { out.write(buf, 0, r); total += r; }
         return total;
     }
+    /** AOSP: valid ext4 filename component. */
+    public static boolean isValidExtFilename(String name) {
+        if (name == null || name.isEmpty() || name.equals(".") || name.equals("..")) return false;
+        return name.indexOf('/') < 0 && name.indexOf('\0') < 0;
+    }
 }

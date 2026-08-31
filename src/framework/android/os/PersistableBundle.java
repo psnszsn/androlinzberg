@@ -13,4 +13,12 @@ public final class PersistableBundle extends BaseBundle implements Parcelable {
     };
     public boolean isParcelled() { return false; }
     public void dumpDebug(android.util.proto.ProtoOutputStream proto, long fieldId) {}
+    /** AOSP persists bundles as XML; IntentFilter extras are not persisted on
+     * this host (written and read as an empty element). */
+    public void saveToXml(org.xmlpull.v1.XmlSerializer out)
+            throws java.io.IOException, org.xmlpull.v1.XmlPullParserException {}
+    public static PersistableBundle restoreFromXml(org.xmlpull.v1.XmlPullParser in)
+            throws java.io.IOException, org.xmlpull.v1.XmlPullParserException {
+        return new PersistableBundle();
+    }
 }

@@ -8,6 +8,7 @@ public final class DeviceConfig {
     public static final String NAMESPACE_WIDGET = "widget";
     public static final String NAMESPACE_ANDROID = "android";
     public static final String NAMESPACE_TEXTCLASSIFIER = "textclassifier";
+    public static final String NAMESPACE_CONSTRAIN_DISPLAY_APIS = "constrain_display_apis";
     public static final String NAMESPACE_WINDOW_MANAGER = "window_manager";
     public static final String NAMESPACE_CLIPBOARD = "clipboard";
     public static final String NAMESPACE_PRIVACY = "privacy";
@@ -23,6 +24,14 @@ public final class DeviceConfig {
             OnPropertiesChangedListener listener) {}
     public static void removeOnPropertiesChangedListener(OnPropertiesChangedListener listener) {}
     public interface OnPropertiesChangedListener { void onPropertiesChanged(Properties properties); }
+    public static final int SYNC_DISABLED_MODE_NONE = 0;
+    public static final int SYNC_DISABLED_MODE_PERSISTENT = 1;
+    public static final int SYNC_DISABLED_MODE_UNTIL_REBOOT = 2;
+    public static class BadConfigException extends Exception {}
+    public interface MonitorCallback {
+        void onNamespaceUpdate(String updatedNamespace);
+        void onDeviceConfigAccess(String callingPackage, String namespace);
+    }
     public static class Properties {
         public String getString(String name, String defaultValue) { return defaultValue; }
         public boolean getBoolean(String name, boolean defaultValue) { return defaultValue; }

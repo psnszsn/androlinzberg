@@ -23,8 +23,10 @@ internal object SystemServer {
     fun main(args: Array<String>) {
         // Before any framework class loads: turns on Build.IS_EMULATOR in this
         // process only, so the reused ClipboardService constructs the hosted
-        // (Wayland) clipboard monitor. App processes keep IS_EMULATOR = false.
-        android.os.SystemProperties.set("ro.boot.qemu", "1")
+        // (Wayland) clipboard monitor. A JVM system property is process-local
+        // by nature; the session-wide Android property area must never carry
+        // ro.boot.qemu, or apps would think they run on an emulator.
+        System.setProperty("azk.emulator", "true")
         Looper.prepareMainLooper()
         // Identity first: uid 1000, the only peer allowed to claim system names.
         val runtime = HostedBinderRuntime.bootstrap("android", true)
@@ -33,6 +35,9 @@ internal object SystemServer {
             ?: throw IllegalStateException("ARTZIG_FRAMEWORK_RES is not set")
         val context = ContextImpl.createSystemContext(frameworkRes, 800, 600, 120, 0)
         ActivityThread.markSystem()
+        // Reused services read @hide settings; the verbatim AOSP Settings
+        // client exempts the system server from the @Readable restriction.
+        android.provider.Settings.setInSystemServer()
         SystemServices.start(context)
 
         // The launcher holds the other end of stdin; EOF means the session is over.

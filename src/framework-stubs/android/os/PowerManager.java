@@ -36,4 +36,6 @@ public class PowerManager {
         public boolean isHeld() { return false; }
         public void setReferenceCounted(boolean value) {}
     }
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface AutoPowerSaveModeTriggers {}
 }

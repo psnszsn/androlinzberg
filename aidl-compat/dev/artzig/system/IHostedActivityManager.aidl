@@ -6,6 +6,7 @@ import android.content.IIntentReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Bundle;
+import dev.artzig.system.HostedContentProviderHolder;
 import dev.artzig.system.HostedProcessManifest;
 import dev.artzig.system.IHostedApplicationThread;
 
@@ -32,4 +33,11 @@ interface IHostedActivityManager {
     /** Ordered-broadcast receivers report completion here (who = the registered IIntentReceiver). */
     void finishReceiver(IIntentReceiver who, int resultCode, String resultData, in Bundle resultExtras, boolean abortBroadcast);
     void removeStickyBroadcast(in Intent intent);
+    /** Resolves an authority to a live provider, spawning the owning package's
+     * process if needed (blocks until publish or times out). Null when the
+     * authority is unknown; SecurityException when access is denied. */
+    HostedContentProviderHolder getContentProvider(String authority, String callingPackage);
+    /** A process publishes its installed providers after attachApplication,
+     * before Application.onCreate (AOSP ordering). */
+    void publishContentProviders(in List<HostedContentProviderHolder> providers);
 }

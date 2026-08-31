@@ -13,6 +13,25 @@ import android.util.Log
 object HostedApplicationRuntime {
     private const val TAG = "HostedApplicationRuntime"
     private val providers = mutableListOf<ContentProvider>()
+    private val providersByAuthority = HashMap<String, ContentProvider>()
+
+    /** A provider installed in this process, keyed by one of its authorities. */
+    @JvmStatic
+    fun localProvider(authority: String): ContentProvider? =
+        synchronized(providers) { providersByAuthority[authority] }
+
+    /** Holders for the activity manager, built from the installed providers. */
+    @JvmStatic
+    fun installedProviderHolders(): List<dev.artzig.system.HostedContentProviderHolder> =
+        synchronized(providers) {
+            providers.mapNotNull { provider ->
+                val info = provider.providerInfo() ?: return@mapNotNull null
+                dev.artzig.system.HostedContentProviderHolder(
+                    info,
+                    provider.getIContentProvider().asBinder(),
+                )
+            }
+        }
 
     @JvmStatic
     fun bind(
@@ -34,15 +53,27 @@ object HostedApplicationRuntime {
         ActivityThread.setApplication(application)
         application.attach(context)
 
-        providers.clear()
+        synchronized(providers) {
+            providers.clear()
+            providersByAuthority.clear()
+        }
         providerInfos.forEach { info ->
             Log.i(TAG, "installing provider ${info.name} authority=${info.authority}")
             val provider = classLoader.loadClass(info.name)
                 .getDeclaredConstructor()
                 .newInstance() as ContentProvider
             provider.attachInfo(context, info)
-            providers += provider
+            synchronized(providers) {
+                providers += provider
+                info.authority?.split(";")?.forEach { authority ->
+                    providersByAuthority[authority] = provider
+                }
+            }
         }
+
+        // Publish before onCreate (AOSP installContentProviders ordering); a
+        // no-op when the process has not attached to the activity manager yet.
+        HostedServiceClient.publishInstalledProviders()
 
         Log.i(TAG, "Application.onCreate: ${application.javaClass.name}")
         application.onCreate()
@@ -53,7 +84,10 @@ object HostedApplicationRuntime {
     fun shutdown() {
         val application = ActivityThread.currentApplication()
         if (application != null) application.onTerminate()
-        providers.clear()
+        synchronized(providers) {
+            providers.clear()
+            providersByAuthority.clear()
+        }
         ActivityThread.setApplication(null)
     }
 }

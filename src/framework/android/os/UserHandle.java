@@ -9,6 +9,7 @@ public final class UserHandle implements Parcelable {
     public static final UserHandle CURRENT_OR_SELF = new UserHandle(USER_CURRENT_OR_SELF);
     private final int mHandle;
     public UserHandle(int h) { mHandle = h; }
+    public static UserHandle getUserHandleForUid(int uid) { return of(getUserId(uid)); }
     public static UserHandle of(int userId) { return userId == 0 ? SYSTEM : new UserHandle(userId); }
     public int getIdentifier() { return mHandle; }
     public static int myUserId() { return 0; }

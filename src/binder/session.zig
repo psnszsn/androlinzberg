@@ -16,6 +16,9 @@ pub const socket_env = "AZK_BINDER_SOCKET";
 pub const cookie_env = "AZK_BINDER_COOKIE";
 /// Given only to the broker and the session's system process.
 pub const system_cookie_env = "AZK_BINDER_SYSTEM_COOKIE";
+/// Path of the session's read-only property area file (see
+/// `src/binder/prop_area.zig`); exported to every session process.
+pub const prop_area_env = "AZK_PROP_AREA";
 
 pub const session_file = "session.json";
 
@@ -25,6 +28,7 @@ pub const SessionInfo = struct {
     cookie: []const u8,
     launcher: []const u8,
     pid: i32,
+    prop_area: []const u8,
 };
 
 pub const Session = struct {
@@ -38,6 +42,7 @@ pub const Session = struct {
     drain: Io.Group = .init,
     dir: []u8,
     socket_path: []u8,
+    prop_area_path: []u8,
     cookie: []u8,
     system_cookie: []u8,
 
@@ -66,6 +71,8 @@ pub const Session = struct {
 
         const socket_path = try std.fs.path.join(gpa, &.{ dir, "binder.sock" });
         errdefer gpa.free(socket_path);
+        const prop_area_path = try std.fs.path.join(gpa, &.{ dir, "props" });
+        errdefer gpa.free(prop_area_path);
         io.random(&random);
         const cookie = try std.fmt.allocPrint(gpa, "{x}", .{&random});
         errdefer gpa.free(cookie);
@@ -81,7 +88,7 @@ pub const Session = struct {
         try child_env.put(cookie_env, cookie);
         try child_env.put(system_cookie_env, system_cookie);
         var child = try std.process.spawn(io, .{
-            .argv = &.{ options.broker_exe, "--socket", socket_path, "--session-dir", dir, "--first-app-uid", uid_text },
+            .argv = &.{ options.broker_exe, "--socket", socket_path, "--prop-area", prop_area_path, "--session-dir", dir, "--first-app-uid", uid_text },
             .environ_map = &child_env,
             .stdin = .pipe,
             .stdout = .pipe,
@@ -107,6 +114,7 @@ pub const Session = struct {
             .child = child,
             .dir = dir,
             .socket_path = socket_path,
+            .prop_area_path = prop_area_path,
             .cookie = cookie,
             .system_cookie = system_cookie,
         };
@@ -127,6 +135,7 @@ pub const Session = struct {
             .cookie = s.cookie,
             .launcher = launcher_exe,
             .pid = @intCast(std.os.linux.getpid()),
+            .prop_area = s.prop_area_path,
         }, .{});
         defer s.gpa.free(text);
         const file = try Io.Dir.createFileAbsolute(io, path, .{ .permissions = @fromBackingInt(@intCast(0o600)) });
@@ -143,6 +152,7 @@ pub const Session = struct {
         try child_env.put(socket_env, s.socket_path);
         try child_env.put(cookie_env, s.cookie);
         try child_env.put(system_cookie_env, s.system_cookie);
+        try child_env.put(prop_area_env, s.prop_area_path);
         // The system process's activity manager spawns app processes with these.
         try child_env.put("AZK_BINDER_SESSION_DIR", s.dir);
         try child_env.put("AZK_LAUNCHER_EXE", options.launcher_exe);
@@ -202,6 +212,7 @@ pub const Session = struct {
         Io.Dir.cwd().deleteTree(io, s.dir) catch {};
         s.gpa.free(s.dir);
         s.gpa.free(s.socket_path);
+        s.gpa.free(s.prop_area_path);
         s.gpa.free(s.cookie);
         s.gpa.free(s.system_cookie);
     }

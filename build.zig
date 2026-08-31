@@ -382,6 +382,10 @@ pub fn build(b: *std.Build) void {
     jvm_test_run.addArg("--javatest");
     jvm_test_run.addFileArg(java.kotlin_shadow_fixture);
     jvm_test_run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.KotlinClassLoaderSmoke");
+    // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
+    // monitor off the developer's real desktop clipboard (empty falls back
+    // to wayland-0).
+    jvm_test_run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
     jvm_test_run.step.dependOn(b.getInstallStep());
     const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
     jvm_test_step.dependOn(&jvm_test_run.step);
@@ -392,6 +396,10 @@ pub fn build(b: *std.Build) void {
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkModuleSmoke",
     );
+    // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
+    // monitor off the developer's real desktop clipboard (empty falls back
+    // to wayland-0).
+    framework_module_smoke.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_module_smoke.step.dependOn(b.getInstallStep());
     jvm_test_step.dependOn(&framework_module_smoke.step);
     const framework_compat_smoke = std.Build.Step.Run.create(b, "run framework compatibility smoke");
@@ -401,6 +409,14 @@ pub fn build(b: *std.Build) void {
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkCompatSmoke",
     );
+    // Absolute fixture path on argv (the smoke must not depend on the CWD).
+    framework_compat_smoke.addFileArg(
+        b.path("artzig/extra/frameworks-base/libs/androidfw/tests/data/app/app.apk"),
+    );
+    // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
+    // monitor off the developer's real desktop clipboard (empty falls back
+    // to wayland-0).
+    framework_compat_smoke.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_compat_smoke.step.dependOn(b.getInstallStep());
     jvm_test_step.dependOn(&framework_compat_smoke.step);
     const jvm_exit_smoke = std.Build.Step.Run.create(b, "run hosted JVM exit smoke");
@@ -408,6 +424,10 @@ pub fn build(b: *std.Build) void {
     jvm_exit_smoke.addArg("--javatest");
     jvm_exit_smoke.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.JvmExitSmoke");
     jvm_exit_smoke.expectExitCode(23);
+    // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
+    // monitor off the developer's real desktop clipboard (empty falls back
+    // to wayland-0).
+    jvm_exit_smoke.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
     jvm_exit_smoke.step.dependOn(b.getInstallStep());
     jvm_test_step.dependOn(&jvm_exit_smoke.step);
 

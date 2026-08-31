@@ -92,6 +92,7 @@ public final class Flags {
     public static boolean multiCrop() { return false; }
     public static boolean predictiveBackPrioritySystemNavigationObserver() { return false; }
     public static boolean predictiveBackSwipeEdgeNoneApi() { return false; }
+    public static boolean predictiveBackDefaultEnableSdk36() { return false; }
     public static boolean predictiveBackSystemOverrideCallback() { return false; }
     public static boolean predictiveBackTimestampApi() { return false; }
     public static boolean preventLeakingViewrootimpl() { return false; }

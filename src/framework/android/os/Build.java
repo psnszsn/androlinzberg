@@ -13,9 +13,12 @@ public class Build {
     public static final String CPU_ABI = "x86_64", CPU_ABI2 = "";
     public static boolean IS_DEBUGGABLE = false;
     public static final boolean IS_ENG = false, IS_USER = true, IS_USERDEBUG = false;
-    /** AOSP: ro.boot.qemu. The system process sets it so the reused ClipboardService
-     * constructs the (hosted, Wayland-backed) EmulatorClipboardMonitor; app processes see false. */
-    public static final boolean IS_EMULATOR = SystemProperties.getBoolean("ro.boot.qemu", false);
+    /** AOSP: ro.boot.qemu. Read from a process-local JVM property (set by the
+     * system process before framework classes load) so the reused
+     * ClipboardService constructs the hosted Wayland EmulatorClipboardMonitor
+     * there while app processes — and the session-wide property area — never
+     * see an emulator flag. */
+    public static final boolean IS_EMULATOR = Boolean.getBoolean("azk.emulator");
     public static final boolean IS_ARC = false;
     public static final int HW_TIMEOUT_MULTIPLIER = 1;
     public static class VERSION {
@@ -31,6 +34,10 @@ public class Build {
         public static final int DEVICE_INITIAL_SDK_INT = 24;
         public static final String BASE_OS = "";
         public static final int RESOURCES_SDK_INT = SDK_INT;
+        /** AOSP: codenames of in-development platform versions; none here. */
+        public static final String[] ACTIVE_CODENAMES = new String[0];
+        /** AOSP SDK_INT_FULL: major * 100000 + minor. */
+        public static final int SDK_INT_FULL = SDK_INT * 100000;
     }
     public static class VERSION_CODES {
         public static final int CUR_DEVELOPMENT = 10000;
@@ -42,6 +49,21 @@ public class Build {
                 LOLLIPOP_MR1 = 22, M = 23, N = 24, N_MR1 = 25, O = 26, O_MR1 = 27, P = 28,
                 Q = 29, R = 30, S = 31, S_V2 = 32, TIRAMISU = 33, UPSIDE_DOWN_CAKE = 34,
                 VANILLA_ICE_CREAM = 35, BAKLAVA = 36;
+    }
+    /** AOSP: parses "major" or "major.minor" into the full version int. */
+    public static int parseFullVersion(String version) {
+        try {
+            int dot = version.indexOf('.');
+            if (dot < 0) return Integer.parseInt(version) * 100000;
+            return Integer.parseInt(version.substring(0, dot)) * 100000
+                    + Integer.parseInt(version.substring(dot + 1));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("bad full version: " + version);
+        }
+    }
+    /** AOSP: renders a full (major.minor) version int. */
+    public static String fullVersionToString(int version) {
+        return (version / 100000) + "." + (version % 100000);
     }
     public static String getSerial() { return SERIAL; }
     public static boolean isDebuggable() { return IS_DEBUGGABLE; }

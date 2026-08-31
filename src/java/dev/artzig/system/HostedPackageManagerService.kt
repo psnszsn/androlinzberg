@@ -133,11 +133,49 @@ class HostedPackageManagerService : IHostedPackageManager.Stub() {
         return result
     }
 
+    /** Runtime overlay on the install-time grants (source note:
+     * PermissionManagerService.grantRuntimePermission, reduced): grants and
+     * revocations layered per package, mutable only by the system uid. */
+    private val runtimeGranted = HashMap<String, MutableSet<String>>()
+    private val runtimeRevoked = HashMap<String, MutableSet<String>>()
+
+    private fun enforceSystem(what: String) {
+        val callingUid = android.os.Binder.getCallingUid()
+        if (callingUid != android.os.Process.SYSTEM_UID && callingUid != android.os.Process.ROOT_UID) {
+            throw SecurityException("uid " + callingUid + " may not " + what)
+        }
+    }
+
+    override fun grantRuntimePermission(packageName: String?, permission: String?) {
+        enforceSystem("grant permissions")
+        if (packageName == null || permission == null) return
+        synchronized(lock) {
+            runtimeGranted.getOrPut(packageName) { LinkedHashSet() }.add(permission)
+            runtimeRevoked[packageName]?.remove(permission)
+        }
+    }
+
+    override fun revokeRuntimePermission(packageName: String?, permission: String?) {
+        enforceSystem("revoke permissions")
+        if (packageName == null || permission == null) return
+        synchronized(lock) {
+            runtimeRevoked.getOrPut(packageName) { LinkedHashSet() }.add(permission)
+            runtimeGranted[packageName]?.remove(permission)
+        }
+    }
+
+    /** Requires `lock`. */
+    private fun holdsLocked(record: Record, packageName: String, permission: String): Boolean {
+        if (runtimeRevoked[packageName]?.contains(permission) == true) return false
+        if (runtimeGranted[packageName]?.contains(permission) == true) return true
+        return record.pkg.grantedPermissions.contains(permission)
+    }
+
     override fun checkPermission(permission: String?, packageName: String?): Int {
-        if (permission == null) return PackageManager.PERMISSION_DENIED
+        if (permission == null || packageName == null) return PackageManager.PERMISSION_DENIED
         synchronized(lock) {
             val record = packages[packageName] ?: return PackageManager.PERMISSION_DENIED
-            return if (record.pkg.grantedPermissions.contains(permission)) {
+            return if (holdsLocked(record, packageName, permission)) {
                 PackageManager.PERMISSION_GRANTED
             } else {
                 PackageManager.PERMISSION_DENIED
@@ -149,8 +187,11 @@ class HostedPackageManagerService : IHostedPackageManager.Stub() {
         if (uid == android.os.Process.ROOT_UID || uid == android.os.Process.SYSTEM_UID) {
             return PackageManager.PERMISSION_GRANTED
         }
+        if (permission == null) return PackageManager.PERMISSION_DENIED
         synchronized(lock) {
-            val granted = packages.values.any { it.uid == uid && it.pkg.grantedPermissions.contains(permission) }
+            val granted = packages.entries.any { (name, record) ->
+                record.uid == uid && holdsLocked(record, name, permission)
+            }
             return if (granted) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
         }
     }
@@ -165,6 +206,20 @@ class HostedPackageManagerService : IHostedPackageManager.Stub() {
 
     override fun getApkPath(packageName: String?): String? = synchronized(lock) {
         packages[packageName]?.pkg?.apkPath
+    }
+
+    /** Session-wide authority resolution (AOSP ComputerEngine.resolveContentProvider). */
+    override fun resolveContentProvider(authority: String, flags: Int): android.content.pm.ProviderInfo? {
+        synchronized(lock) {
+            for (record in packages.values) {
+                val providers = record.pkg.packageInfo.providers ?: continue
+                for (provider in providers) {
+                    val declared = provider.authority?.split(";") ?: continue
+                    if (declared.contains(authority)) return android.content.pm.ProviderInfo(provider)
+                }
+            }
+        }
+        return null
     }
 
     override fun getInstalledPackageNames(): Array<String> = synchronized(lock) {

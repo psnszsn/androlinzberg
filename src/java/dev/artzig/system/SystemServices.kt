@@ -52,15 +52,6 @@ internal object SystemServices {
         ) {}
     }
 
-    /** The single-user answers the reused services ask IUserManager for. */
-    private class HostedUserManagerService(private val context: Context) :
-        android.os.Binder(), android.os.IUserManager {
-        override fun isUserRunning(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
-        override fun getProfiles(userId: Int, enabledOnly: Boolean): List<UserInfo> =
-            UserManager.get(context).users
-        override fun hasUserRestriction(restrictionKey: String?, userId: Int): Boolean = false
-    }
-
     /** App-process hosts this session spawned, destroyed when the system process exits. */
     private val spawnedProcesses = java.util.concurrent.CopyOnWriteArrayList<Process>()
 
@@ -93,10 +84,11 @@ internal object SystemServices {
             com.android.server.uri.UriGrantsManagerInternal::class.java,
             HostedUriGrantsManagerInternal(),
         )
-        android.os.ServiceManager.addProcessLocalService(
-            Context.USER_SERVICE,
-            HostedUserManagerService(context),
-        )
+        // Identity/policy services on the real AIDL surfaces, session-global
+        // (any process may ask about users or app-ops).
+        android.os.ServiceManager.addService(Context.USER_SERVICE, HostedUserManagerService())
+        val appOps = HostedAppOpsService()
+        android.os.ServiceManager.addService("appops", appOps)
 
         val trace = TimingsTraceAndSlog()
         // Bootstrap services (source note: SystemServer.startBootstrapServices
@@ -119,7 +111,41 @@ internal object SystemServices {
         val activityManager = HostedActivityManagerService()
         activityManager.processLauncher = sessionProcessLauncher()
         activityManager.packageService = packageManager
+        appOps.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
+        // Reused services resolve users through ActivityManagerInternal.
+        LocalServices.addService(
+            android.app.ActivityManagerInternal::class.java,
+            object : android.app.ActivityManagerInternal() {
+                override fun handleIncomingUser(
+                    callingPid: Int,
+                    callingUid: Int,
+                    userId: Int,
+                    allowAll: Boolean,
+                    allowMode: Int,
+                    name: String?,
+                    callerPackage: String?,
+                ): Int = UserHandle.USER_SYSTEM
+            },
+        )
+        // Observer registry and the settings provider, registered before any
+        // service that reads settings during startup.
+        android.os.ServiceManager.addService("content", HostedContentService())
+        val settingsInfo = android.content.pm.ProviderInfo()
+        settingsInfo.packageName = "android"
+        settingsInfo.name = SettingsProvider::class.java.name
+        settingsInfo.authority = "settings"
+        settingsInfo.exported = true
+        // The real AOSP ComponentInfo parcels applicationInfo.
+        settingsInfo.applicationInfo = android.content.pm.ApplicationInfo().apply {
+            packageName = "android"
+            processName = "android"
+        }
+        val settingsProvider = SettingsProvider()
+        settingsProvider.attachInfo(context, settingsInfo)
+        activityManager.addSystemProvider(
+            HostedContentProviderHolder(settingsInfo, settingsProvider.getIContentProvider().asBinder()),
+        )
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
         manager.preSystemReady()
@@ -128,6 +154,9 @@ internal object SystemServices {
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
         manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
         manager.onUserStarting(trace, UserHandle.USER_SYSTEM)
+        // Session-wide marker: app processes (system-test) observe a property
+        // set by the system process through the shared area.
+        android.os.SystemProperties.set("sys.azk.boot_completed", "1")
         Log.i(TAG, "system services started for " + context.packageName)
     }
 

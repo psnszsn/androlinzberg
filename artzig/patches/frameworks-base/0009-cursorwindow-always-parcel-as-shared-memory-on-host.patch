@@ -1,0 +1,37 @@
+From 6f7dd5535cff6d7877eb33ed0a80375a46599a20 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 31 Aug 2026 01:25:58 +0200
+Subject: [PATCH] CursorWindow: always parcel as shared memory on the artzig
+ host
+
+The host libbinder Parcel is a JNI bridge onto the hosted Java Parcel
+(AospParcelAbi.cpp); it cannot implement writeInplace, whose returned
+pointer the caller fills after the call. Inflate inline windows before
+writing so every parceled window rides an fd, which the bridge forwards
+over SCM_RIGHTS.
+---
+ libs/androidfw/CursorWindow.cpp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/libs/androidfw/CursorWindow.cpp b/libs/androidfw/CursorWindow.cpp
+index a592749c5..beef0d6e7 100644
+--- a/libs/androidfw/CursorWindow.cpp
++++ b/libs/androidfw/CursorWindow.cpp
+@@ -211,6 +211,14 @@ fail_silent:
+ status_t CursorWindow::writeToParcel(Parcel* parcel) {
+     LOG(DEBUG) << "Writing to parcel: " << this->toString();
+ 
++    // artzig host: the Parcel here is a bridge onto the hosted Java Parcel
++    // (AospParcelAbi.cpp), which cannot honor writeInplace's fill-after-return
++    // contract; windows always travel as shared memory (memfd-backed ashmem).
++    if (mAshmemFd == -1) {
++        if (mSize == mInflatedSize) mInflatedSize += kSlotSizeBytes;
++        if (maybeInflate()) goto fail;
++    }
++
+     if (parcel->writeString8(mName)) goto fail;
+     if (parcel->writeUint32(mNumRows)) goto fail;
+     if (parcel->writeUint32(mNumColumns)) goto fail;
+-- 
+2.55.0
+

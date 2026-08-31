@@ -59,6 +59,11 @@ internal object SystemTestClientA {
 
     private fun run(context: Context) {
         check(Process.myUid() != Process.SYSTEM_UID && Process.myUid() >= Process.FIRST_APPLICATION_UID, "app uid assigned")
+        check(
+            android.os.SystemProperties.get("sys.azk.boot_completed") == "1",
+            "property set by the system process observed",
+        )
+        check(!android.os.Build.IS_EMULATOR, "IS_EMULATOR stays false outside the system process")
         var denied = false
         try {
             ServiceManager.addService("activity", android.os.Binder())
@@ -138,6 +143,17 @@ internal object SystemTestClientA {
         check(pingSeq == 42, "broadcast extras intact")
         check(pingThread === Looper.getMainLooper().thread, "broadcast delivered on the main looper")
         context.unregisterReceiver(pingReceiver)
+        // noteSeq is oneway and also writes clip-42 in B; wait for that write
+        // so it cannot land in the middle of the clipboard section below.
+        var clipWaitMs = 0
+        while (clipWaitMs < 30_000) {
+            val fromB = context.getSystemService(android.content.ClipboardManager::class.java)
+                ?.primaryClip?.getItemAt(0)?.text
+            if (fromB == "clip-42") break
+            Thread.sleep(50)
+            clipWaitMs += 50
+        }
+        check(clipWaitMs < 30_000, "clipboard write paired with the broadcast observed")
 
         // Ordered: high priority first, result state chains to the lower one.
         val orderedDone = CountDownLatch(2)
@@ -182,7 +198,15 @@ internal object SystemTestClientA {
         clipboard.addPrimaryClipChangedListener { clipChanged.countDown() }
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("t", "from-a"))
         check(clipboard.hasPrimaryClip(), "clipboard set visible")
-        check(clipboard.primaryClip?.getItemAt(0)?.text == "from-a", "clipboard round trip")
+        val roundTrip = clipboard.primaryClip
+        if (roundTrip?.getItemAt(0)?.text != "from-a") {
+            System.err.println(
+                "system-test-client-a: round trip diagnostic: clip=" + roundTrip +
+                    " text=" + roundTrip?.getItemAt(0)?.text +
+                    " label=" + roundTrip?.description?.label,
+            )
+        }
+        check(roundTrip?.getItemAt(0)?.text == "from-a", "clipboard round trip")
         check(clipChanged.await(30, TimeUnit.SECONDS), "primary clip listener notified")
         val clipFromB = CountDownLatch(1)
         clipboard.addPrimaryClipChangedListener {
@@ -190,6 +214,133 @@ internal object SystemTestClientA {
         }
         service.noteSeq(43)
         check(clipFromB.await(30, TimeUnit.SECONDS), "clipboard set by another process observed")
+
+        // --- cross-process content provider (real CursorWindow transport).
+        val providerUri = android.net.Uri.parse("content://dev.artzig.test.b.provider/rows")
+        val resolver = context.contentResolver
+        val cursor = resolver.query(providerUri, null, null, null, null)
+        check(cursor != null, "cross-process provider query returned a cursor")
+        val names = ArrayList<String>()
+        var sum = 0L
+        cursor!!.use {
+            while (it.moveToNext()) {
+                names.add(it.getString(it.getColumnIndexOrThrow("name")))
+                sum += it.getLong(it.getColumnIndexOrThrow("value"))
+            }
+        }
+        check(names == listOf("alpha", "beta") && sum == 30L, "provider rows arrive through a CursorWindow")
+        check(
+            resolver.getType(providerUri) == "vnd.android.cursor.dir/vnd.artzig.row",
+            "cross-process provider getType",
+        )
+        val reply = resolver.call("dev.artzig.test.b.provider", "ping", "arg1", null)
+        check(reply?.getString("echo") == "ping:arg1", "provider call round trip")
+        val values = android.content.ContentValues()
+        values.put("name", "gamma")
+        check(
+            resolver.insert(providerUri, values)?.toString() ==
+                "content://dev.artzig.test.b.provider/rows/gamma",
+            "cross-process provider insert",
+        )
+        val deniedProvider = try {
+            resolver.query(android.net.Uri.parse("content://dev.artzig.test.b.secret/x"), null, null, null, null)
+            false
+        } catch (expected: SecurityException) {
+            true
+        }
+        check(deniedProvider, "non-exported provider denied across uids")
+        check(
+            resolver.query(android.net.Uri.parse("content://no.such.authority/x"), null, null, null, null) == null,
+            "unknown authority yields null",
+        )
+
+        // --- settings through the verbatim AOSP client + hosted SettingsProvider.
+        val secureDenied = try {
+            android.provider.Settings.Secure.putString(resolver, "azk_test_setting", "nope")
+            false
+        } catch (expected: SecurityException) {
+            true
+        }
+        check(secureDenied, "secure settings write denied without WRITE_SECURE_SETTINGS")
+        // The interim permission model grants what a package declares at normal
+        // protection; stage the grant, then write for real.
+        android.content.pm.PackageManager.configureHostedPackage(
+            "dev.artzig.test.a", 1, "1", "/nonexistent/a.apk", "/tmp/a-data",
+        )
+        android.content.pm.PackageManager.configureHostedPermissions(
+            setOf("android.permission.WRITE_SECURE_SETTINGS"),
+            mapOf("android.permission.WRITE_SECURE_SETTINGS" to 0),
+            emptyMap(),
+        )
+        val settingChanged = CountDownLatch(1)
+        val observer = object : android.database.ContentObserver(android.os.Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+                if (uri?.lastPathSegment == "azk_test_setting") settingChanged.countDown()
+            }
+        }
+        resolver.registerContentObserver(
+            android.provider.Settings.Secure.getUriFor("azk_test_setting"),
+            false,
+            observer,
+        )
+        check(
+            android.provider.Settings.Secure.putString(resolver, "azk_test_setting", "42"),
+            "secure settings write accepted with the permission",
+        )
+        check(
+            android.provider.Settings.Secure.getString(resolver, "azk_test_setting") == "42",
+            "secure settings round trip through the session provider",
+        )
+        check(
+            android.provider.Settings.Secure.getInt(resolver, "azk_test_setting", 0) == 42,
+            "secure settings typed read",
+        )
+        check(settingChanged.await(30, TimeUnit.SECONDS), "ContentObserver fired across processes")
+        resolver.unregisterContentObserver(observer)
+        check(
+            android.provider.Settings.Global.getString(resolver, "azk_test_setting") == null,
+            "tables are distinct",
+        )
+
+        // --- identity/policy trio on the real AIDL surfaces.
+        val userManager = android.os.IUserManager.Stub.asInterface(
+            ServiceManager.getService(Context.USER_SERVICE),
+        )
+        check(userManager != null, "user manager published session-wide")
+        check(userManager.getUsers(false, false, false)?.size == 1, "single hosted user")
+        check(userManager.isUserRunning(0) && userManager.isUserUnlocked(0), "system user running and unlocked")
+        check(userManager.getUserInfo(0)?.id == 0, "user info for user 0")
+        val appOps = com.android.internal.app.IAppOpsService.Stub.asInterface(
+            ServiceManager.getService("appops"),
+        )
+        check(appOps != null, "app-ops service published session-wide")
+        check(
+            appOps.checkOperation(29, Process.myUid(), "dev.artzig.test.a") ==
+                android.app.AppOpsManager.MODE_ALLOWED,
+            "app-ops default to allowed",
+        )
+        check(
+            appOps.checkPackage(Process.myUid(), "dev.artzig.test.b") ==
+                android.app.AppOpsManager.MODE_ERRORED,
+            "app-ops rejects a spoofed package claim",
+        )
+        val opsDenied = try {
+            appOps.setMode(29, Process.myUid(), "dev.artzig.test.a", android.app.AppOpsManager.MODE_ERRORED)
+            false
+        } catch (expected: SecurityException) {
+            true
+        }
+        check(opsDenied, "app-op modes are system-only")
+        val grantDenied = try {
+            val pm = dev.artzig.system.IHostedPackageManager.Stub.asInterface(
+                ServiceManager.getService("package"),
+            )
+            pm.grantRuntimePermission("dev.artzig.test.a", "android.permission.CAMERA")
+            false
+        } catch (expected: SecurityException) {
+            true
+        }
+        check(grantDenied, "runtime permission grants are system-only")
 
         // Unbind: the last connection triggers onUnbind in the host; an unbound
         // connection receives no further callbacks.
@@ -222,5 +373,11 @@ internal object SystemTestClientA {
             dead = true
         }
         check(dead, "calls after host death throw DeadObjectException")
+        // The provider record died with its host; re-acquisition finds no
+        // process and (with no launcher in this harness) yields null.
+        check(
+            resolver.query(providerUri, null, null, null, null) == null,
+            "provider gone after host death",
+        )
     }
 }

@@ -145,6 +145,33 @@ public final class Parcel {
         grew();
     }
     public void writeString8(String v) { writeString(v); }
+    public void writeString8Array(String[] a) { writeStringArray(a); }
+    /** AOSP squashing API (dedupes repeated ApplicationInfo in one parcel);
+     * this host never squashes, so the marker is always "full body follows". */
+    public interface SquashReadHelper<T> { T readRawParceled(Parcel p); }
+    public boolean allowSquashing() { return false; }
+    public void restoreAllowSquashing(boolean previous) {}
+    public boolean maybeWriteSquashed(Parcelable p) { writeInt(0); return false; }
+    @SuppressWarnings("unchecked")
+    public java.util.ArrayList readArrayList(ClassLoader loader) {
+        int n = readInt();
+        if (n < 0) return null;
+        java.util.ArrayList out = new java.util.ArrayList(n);
+        for (int i = 0; i < n; i++) out.add(readValue(loader));
+        return out;
+    }
+    @SuppressWarnings("unchecked")
+    public <T> java.util.ArrayList<T> readArrayList(ClassLoader loader, Class<? extends T> clazz) {
+        return (java.util.ArrayList<T>) readArrayList(loader);
+    }
+    public <T extends Parcelable> T readSquashed(SquashReadHelper<T> reader) {
+        int marker = readInt();
+        if (marker != 0) throw new BadParcelableException("unexpected squashed object reference");
+        return reader.readRawParceled(this);
+    }
+    public String[] createString8Array() { return createStringArray(); }
+    public void writeString16Array(String[] a) { writeStringArray(a); }
+    public String[] createString16Array() { return createStringArray(); }
     public void writeString16(String v) { writeString(v); }
     public void writeCharSequence(CharSequence v) { writeString(v == null ? null : v.toString()); }
     public void writeByteArray(byte[] b) {

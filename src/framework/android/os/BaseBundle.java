@@ -60,6 +60,35 @@ public class BaseBundle {
     public void putInt(String k, int v) { map().put(k, v); }
     public void putLong(String k, long v) { map().put(k, v); }
     public void putDouble(String k, double v) { map().put(k, v); }
+    /** AOSP hidden helper (BaseBundle.putObject): type-dispatched put. */
+    public void putObject(String key, Object value) {
+        if (value == null) {
+            putString(key, null);
+        } else if (value instanceof Boolean) {
+            putBoolean(key, (Boolean) value);
+        } else if (value instanceof Integer) {
+            putInt(key, (Integer) value);
+        } else if (value instanceof Long) {
+            putLong(key, (Long) value);
+        } else if (value instanceof Double) {
+            putDouble(key, (Double) value);
+        } else if (value instanceof String) {
+            putString(key, (String) value);
+        } else if (value instanceof boolean[]) {
+            putBooleanArray(key, (boolean[]) value);
+        } else if (value instanceof int[]) {
+            putIntArray(key, (int[]) value);
+        } else if (value instanceof long[]) {
+            putLongArray(key, (long[]) value);
+        } else if (value instanceof double[]) {
+            putDoubleArray(key, (double[]) value);
+        } else if (value instanceof String[]) {
+            putStringArray(key, (String[]) value);
+        } else {
+            throw new IllegalArgumentException("Unsupported type " + value.getClass());
+        }
+    }
+
     public void putString(String k, String v) { map().put(k, v); }
     public void putBooleanArray(String k, boolean[] v) { map().put(k, v); }
     public void putShortArray(String k, short[] v) { map().put(k, v); }

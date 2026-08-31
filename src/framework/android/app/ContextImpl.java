@@ -152,8 +152,18 @@ public class ContextImpl extends Context {
     @Override public boolean isConfigurationContext() { return mIsConfigurationBasedContext; }
     private android.content.ContentResolver mContentResolver;
     @Override public android.content.ContentResolver getContentResolver() {
-        if (mContentResolver == null) mContentResolver = new android.content.ContentResolver() {};
+        if (mContentResolver == null) mContentResolver = new ApplicationContentResolver(this);
         return mContentResolver;
+    }
+    /** Source note: ActivityThread.ApplicationContentResolver — authorities
+     * resolve through the session's activity manager. */
+    private static final class ApplicationContentResolver extends android.content.ContentResolver {
+        private final ContextImpl mContext;
+        ApplicationContentResolver(ContextImpl context) { mContext = context; }
+        @Override public android.content.IContentProvider acquireProvider(String authority) {
+            return HostedServiceClient.acquireContentProvider(mContext, authority);
+        }
+        @Override public String getPackageName() { return mContext.getPackageName(); }
     }
     /** Per-context service cache; slots are assigned by HostedSystemServiceRegistry. */
     private Object[] mServiceCache = new Object[0];

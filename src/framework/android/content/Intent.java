@@ -33,6 +33,10 @@ public class Intent implements Parcelable, Cloneable {
     public static final String EXTRA_CHOOSER_RESULT_INTENT_SENDER =
             "android.intent.extra.CHOOSER_RESULT_INTENT_SENDER";
     public static final String ACTION_SEND = "android.intent.action.SEND";
+    public static final String ACTION_SENDTO = "android.intent.action.SENDTO";
+    public static final String ACTION_DEFAULT = "android.intent.action.VIEW";
+    public static final String CATEGORY_DEFAULT = "android.intent.category.DEFAULT";
+    public static final String ACTION_BOOT_COMPLETED = "android.intent.action.BOOT_COMPLETED";
     public static final String ACTION_SEND_MULTIPLE = "android.intent.action.SEND_MULTIPLE";
     public static final String CATEGORY_APP_BROWSER = "android.intent.category.APP_BROWSER";
     public static final String CATEGORY_APP_EMAIL = "android.intent.category.APP_EMAIL";
@@ -402,4 +406,24 @@ public class Intent implements Parcelable, Cloneable {
         public Intent createFromParcel(Parcel in) { return new Intent(in); }
         public Intent[] newArray(int size) { return new Intent[size]; }
     };
+    public String getScheme() {
+        android.net.Uri data = getData();
+        return data != null ? data.getScheme() : null;
+    }
+    /** AOSP: content: data resolves through the provider; else the set type. */
+    public String resolveType(android.content.ContentResolver resolver) {
+        if (getType() != null) return getType();
+        android.net.Uri data = getData();
+        if (data != null && "content".equals(data.getScheme()) && resolver != null) {
+            return resolver.getType(data);
+        }
+        return null;
+    }
+    public String resolveType(android.content.Context context) {
+        return resolveType(context.getContentResolver());
+    }
+    public String resolveTypeIfNeeded(android.content.ContentResolver resolver) {
+        if (getComponent() != null) return getType();
+        return resolveType(resolver);
+    }
 }

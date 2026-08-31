@@ -24,7 +24,7 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 2;
+pub const version: u16 = 3;
 
 /// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
 pub const system_uid: u32 = 1000;
@@ -140,6 +140,9 @@ pub const Message = struct {
         /// owner dropped its export. Sent only when the owner's own count of
         /// references sent equals the `uses` in the notification.
         release_ack,
+        /// Body is a `SetProperty`. Answered with a `service_result`
+        /// (`ok`/`denied`); on `ok` the property area is already updated.
+        set_property,
         _,
     };
 
@@ -150,6 +153,14 @@ pub const Message = struct {
     pub const Hello = extern struct {
         cookie_len: u32,
         package_len: u32,
+    };
+
+    /// Trailing:
+    /// * name: [name_len]u8
+    /// * value: [value_len]u8
+    pub const SetProperty = extern struct {
+        name_len: u32,
+        value_len: u32,
     };
 
     /// Trailing:
@@ -346,6 +357,21 @@ pub fn serveLookupService(c: *const Client, request_id: u64, name: []const u8, w
     });
     try c.out.writeStruct(OutMessage.LookupService{ .flags = .{ .wait = wait }, .name_len = @intCast(name.len) }, .little);
     try c.out.writeAll(name);
+    try c.out.flush();
+}
+
+pub fn serveSetProperty(c: *const Client, request_id: u64, name: []const u8, value: []const u8) Writer.Error!void {
+    try c.serveMessageHeader(.{
+        .tag = .set_property,
+        .bytes_len = @intCast(@sizeOf(OutMessage.SetProperty) + name.len + value.len),
+        .request_id = request_id,
+    });
+    try c.out.writeStruct(OutMessage.SetProperty{
+        .name_len = @intCast(name.len),
+        .value_len = @intCast(value.len),
+    }, .little);
+    try c.out.writeAll(name);
+    try c.out.writeAll(value);
     try c.out.flush();
 }
 

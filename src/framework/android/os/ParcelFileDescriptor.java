@@ -29,6 +29,17 @@ public class ParcelFileDescriptor implements Parcelable, Closeable {
             throw new IOException(e);
         }
     }
+    /** AOSP mode-string table: r, w, wt, wa, rw, rwt. */
+    public static int parseMode(String mode) {
+        switch (mode) {
+            case "r": return MODE_READ_ONLY;
+            case "w": case "wt": return MODE_WRITE_ONLY | MODE_CREATE | MODE_TRUNCATE;
+            case "wa": return MODE_WRITE_ONLY | MODE_CREATE | MODE_APPEND;
+            case "rw": return MODE_READ_WRITE | MODE_CREATE;
+            case "rwt": return MODE_READ_WRITE | MODE_CREATE | MODE_TRUNCATE;
+            default: throw new IllegalArgumentException("Bad mode: " + mode);
+        }
+    }
     public static ParcelFileDescriptor dup(FileDescriptor orig) throws IOException {
         try { return new ParcelFileDescriptor(Os.dup(orig)); }
         catch (ErrnoException e) { throw new IOException(e); }

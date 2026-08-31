@@ -41,6 +41,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         fb.path(b, "core/java"),           fb.path(b, "graphics/java"),
         fb.path(b, "libs/hwui/apex/java"), dep.path("extra/modules-utils/java"),
         b.path("src/framework"),           b.path("src/framework-stubs"),
+        b.path("src/annotation-runtime"),
         b.path("src/java"),                b.path("tools/java-srcs.py"),
         b.path("tools/compile-jvm.sh"),
     });

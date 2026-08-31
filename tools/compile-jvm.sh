@@ -36,6 +36,14 @@ if [[ -s "$KOTLIN_SOURCES" ]]; then
         "@$JAVA_SOURCES" "@$KOTLIN_SOURCES"
 fi
 
+# Runtime annotation classes (android.annotation): the sysmodules image owns
+# that package, so they compile in a separate module-free pass.
+APP_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+if [[ -d "$APP_ROOT/src/annotation-runtime" ]]; then
+    find "$APP_ROOT/src/annotation-runtime" -name '*.java' > "$WORK/annotation-sources.txt"
+    javac -source 21 -target 21 -encoding UTF-8 -nowarn -d "$OUT" "@$WORK/annotation-sources.txt"
+fi
+
 javac \
     --system="$SYSTEM_MODULES" \
     -source 21 -target 21 \

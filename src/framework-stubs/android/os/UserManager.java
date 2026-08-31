@@ -27,4 +27,13 @@ public class UserManager {
                 USER_TYPE_FULL_SYSTEM));
         return users;
     }
+    /** Nested type of the IUserManager surface. */
+    public static class EnforcingUser implements Parcelable {
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(Parcel dest, int flags) {}
+        public static final Creator<EnforcingUser> CREATOR = new Creator<EnforcingUser>() {
+            @Override public EnforcingUser createFromParcel(Parcel source) { return new EnforcingUser(); }
+            @Override public EnforcingUser[] newArray(int size) { return new EnforcingUser[size]; }
+        };
+    }
 }

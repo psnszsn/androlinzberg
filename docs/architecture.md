@@ -79,7 +79,38 @@ retained, and delivery lands on the registering process's chosen `Handler`.
 The clipboard is the real AOSP `ClipboardService` running in the system
 process (with the unchanged `ClipboardManager` client), and its emulator
 clipboard monitor is a hosted replacement that syncs with the Wayland
-clipboard through `wl-copy`/`wl-paste`.
+clipboard through `wl-copy`/`wl-paste`. System properties are session-wide,
+following Android's model: the broker owns a shared property area file in the
+session directory (`src/binder/prop_area.zig`, the `__system_property_area__`
+analogue) that every process — the JVM `SystemProperties` and NDK code through
+the bionic shim alike — maps read-only and reads lock-free with the bionic
+torn-read serial protocol; `SystemProperties.set` is a broker message checked
+against a property-service-shaped policy (only the system process may set
+non-`debug.*`/`log.*` names, `ro.*` is write-once), and the broker pushes a
+`property_changed` notification that drives `addChangeCallback`.
+Content providers work across processes: `ContentResolver` acquires
+providers by authority through the activity manager
+(`getContentProvider`/`publishContentProviders`, following AOSP
+`getContentProviderImpl`), the transport is the verbatim AOSP
+`android.content.IContentProvider` interface over a hosted stub, permission
+gates follow `ContentProvider.enforceReadPermissionInner`, and `query()`
+results ride real `CursorWindow` shared memory through the unchanged AOSP
+BulkCursor machinery (the `android::Parcel` members CursorWindow needs are a
+JNI bridge onto the hosted Java Parcel). Settings are real: the verbatim AOSP
+`android.provider.Settings` client talks to a hosted `SettingsProvider` in the
+system process (authority `settings`, write-through XML in the session
+directory, `WRITE_SETTINGS`/`WRITE_SECURE_SETTINGS` enforced), and
+`ContentObserver` registration routes through a session-wide observer registry
+(`HostedContentService`, published as `content`, following AOSP
+`ContentService.ObserverNode` semantics).
+The identity/policy services speak their real AOSP AIDL surfaces:
+`HostedUserManagerService` implements `android.os.IUserManager` (single
+always-on user 0) as `Context.USER_SERVICE`, `HostedAppOpsService` implements
+`com.android.internal.app.IAppOpsService` (per-(op, uid) mode table defaulting
+to allowed, mutable only by the system) as `"appops"`, and the package manager
+carries a runtime grant/revoke overlay on the install-time permission grants —
+so reused `com.android.server` code linking against those interfaces works
+unchanged.
 `ContextImpl.getSystemService` resolves through a
 `SystemServiceRegistry`-shaped table, and the per-process display and input
 services are Binder objects (`IDisplayManager`/`IInputManager`) registered

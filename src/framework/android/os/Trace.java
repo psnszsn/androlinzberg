@@ -5,7 +5,7 @@ public final class Trace {
             TRACE_TAG_INPUT = 1 << 2, TRACE_TAG_VIEW = 1 << 3, TRACE_TAG_APP = 1 << 12,
             TRACE_TAG_RESOURCES = 1 << 13, TRACE_TAG_DALVIK = 1 << 14, TRACE_TAG_ACTIVITY_MANAGER = 1 << 6,
             TRACE_TAG_WINDOW_MANAGER = 1 << 5, TRACE_TAG_RRO = 1L << 26, TRACE_TAG_AIDL = 1L << 24,
-            TRACE_TAG_DATABASE = 1 << 20, TRACE_TAG_POWER = 1 << 17, TRACE_TAG_SYSTEM_SERVER = 1 << 19;
+            TRACE_TAG_DATABASE = 1 << 20, TRACE_TAG_PACKAGE_MANAGER = 1 << 21, TRACE_TAG_POWER = 1 << 17, TRACE_TAG_SYSTEM_SERVER = 1 << 19;
     public static final int MAX_SECTION_NAME_LEN = 127;
     private Trace() {}
     public static boolean isEnabled() { return false; }
