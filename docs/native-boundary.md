@@ -19,6 +19,16 @@ zig build -j10 cpp-audit
 - `src/main.zig` starts ART and registers native interfaces.
 - `src/binder/` implements the hosted Binder wire protocol, the
   `azk-binder-broker` router, and the launcher's broker session.
+- `src/binder/ndk.zig` is `libbinder_ndk` — the Android NDK binder C ABI
+  (`AIBinder_*`, `AParcel_*`, `AServiceManager_*`, `AStatus_*`,
+  `ABinderProcess_*`) implemented in Zig over the same AZKB protocol, so
+  unmodified NDK/AIDL-cpp code links against it. It opens its own broker
+  connection (a second peer of the process's package, sharing the JVM
+  runtime's uid), so a native service a Java peer looks up and a Java service a
+  native caller resolves both route through the broker. Installed as
+  `lib/art/libbinder_ndk.so` (the NDK surface is a C ABI, so it stays in Zig
+  and never touches the C++ allowlist); `src/bionic_translation.cfg` maps the
+  soname to it.
 
 `src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C
 macros and callback code that Zig cannot import directly.

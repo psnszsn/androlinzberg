@@ -131,6 +131,43 @@ pub fn build(b: *std.Build) void {
         "bionic_translation.cfg",
     ).step);
 
+    // --- libbinder_ndk.so: the NDK binder C ABI in Zig over the AZKB protocol.
+    // Installed under lib/art so the bionic linker resolves the soname; the
+    // .cfg above maps `libbinder_ndk.so` to it.
+    const binder_ndk = b.addLibrary(.{
+        .name = "binder_ndk",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/ndk.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+        binder_ndk.getEmittedBin(),
+        .{ .custom = "lib/art" },
+        "libbinder_ndk.so",
+    ).step);
+    b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
+        .dependOn(&b.addInstallFileWithDir(binder_ndk.getEmittedBin(), .{ .custom = "lib/art" }, "libbinder_ndk.so").step);
+
+    // Native binder self-test: links the ABI and drives it against a broker.
+    const ndk_test = b.addExecutable(.{
+        .name = "azk-ndk-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/ndk_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    ndk_test.root_module.linkLibrary(binder_ndk);
+    const ndk_test_run = b.addRunArtifact(ndk_test);
+    ndk_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
+    ndk_test_run.step.dependOn(b.getInstallStep());
+    b.step("ndk-test", "Run the native binder ABI self-test").dependOn(&ndk_test_run.step);
+
     // --- artzig runtime (ART) module
 
     // --- launcher exe
