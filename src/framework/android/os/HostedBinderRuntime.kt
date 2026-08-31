@@ -179,6 +179,7 @@ class HostedBinderRuntime private constructor(
     private class IncomingReply(
         val status: Int,
         val handled: Boolean,
+        val binderStatus: Int,
         val payload: HostedBinderProtocol.Payload,
         val fds: List<FileDescriptor>,
     )
@@ -401,7 +402,24 @@ class HostedBinderRuntime private constructor(
             }
             val r = result!!
             when (r.status) {
-                HostedBinderProtocol.STATUS_OK -> {}
+                HostedBinderProtocol.STATUS_OK -> {
+                    // v4: the reply carries the callee's exact binder_status_t.
+                    // Mirror AOSP's android_os_BinderProxy_transact: OK proceeds,
+                    // UNKNOWN_TRANSACTION returns false so the proxy falls back to
+                    // its default impl, and any other error throws (rather than a
+                    // silent false).
+                    when (r.binderStatus) {
+                        HostedBinderProtocol.BINDER_STATUS_OK -> {}
+                        HostedBinderProtocol.BINDER_STATUS_UNKNOWN_TRANSACTION -> {
+                            r.fds.forEach(::closeQuietly)
+                            return false
+                        }
+                        else -> {
+                            r.fds.forEach(::closeQuietly)
+                            throw RemoteException("remote transaction failed with status " + r.binderStatus)
+                        }
+                    }
+                }
                 HostedBinderProtocol.STATUS_DEAD_OBJECT -> {
                     r.fds.forEach(::closeQuietly)
                     throw DeadObjectException()
@@ -481,22 +499,30 @@ class HostedBinderRuntime private constructor(
                     stack.removeLast()
                 }
             }
-            if (!oneway) sendReply(t.routingId, status, handled, if (status == HostedBinderProtocol.STATUS_OK) reply else null)
+            // v4: carry the exact binder_status_t. A stub's onTransact returning
+            // false for an unknown code becomes STATUS_UNKNOWN_TRANSACTION so a
+            // native caller's default-impl fallback works (a Java caller reads
+            // the `handled` boolean, which already conveys this).
+            val binderStatus = if (status == HostedBinderProtocol.STATUS_OK && !handled)
+                HostedBinderProtocol.BINDER_STATUS_UNKNOWN_TRANSACTION
+            else
+                HostedBinderProtocol.BINDER_STATUS_OK
+            if (!oneway) sendReply(t.routingId, status, handled, binderStatus, if (status == HostedBinderProtocol.STATUS_OK) reply else null)
         } catch (e: Throwable) {
             Log.w(TAG, "failed to dispatch remote transaction", e)
-            if (!oneway) try { sendReply(t.routingId, HostedBinderProtocol.STATUS_FAILED, false, null) } catch (ignored: Throwable) {}
+            if (!oneway) try { sendReply(t.routingId, HostedBinderProtocol.STATUS_FAILED, false, HostedBinderProtocol.BINDER_STATUS_OK, null) } catch (ignored: Throwable) {}
         } finally {
             data.recycle()
             reply?.recycle()
         }
     }
 
-    private fun sendReply(routingId: Long, status: Int, handled: Boolean, reply: Parcel?) {
+    private fun sendReply(routingId: Long, status: Int, handled: Boolean, binderStatus: Int, reply: Parcel?) {
         val fds = ArrayList<FileDescriptor>()
         val entries = flatten(reply, fds)
         val bytes = reply?.payloadBytes() ?: ByteArray(0)
         val b = HostedBinderProtocol.Builder(HostedBinderProtocol.TAG_REPLY, fds.size, 0, routingId)
-        b.u32(status).u32(if (handled) 1 else 0).u32(entries.size).u32(bytes.size).entries(entries).bytes(bytes)
+        b.u32(status).u32(if (handled) 1 else 0).u32(entries.size).u32(bytes.size).u32(binderStatus).entries(entries).bytes(bytes)
         try {
             channel.writeFrame(b.finish(), fds)
         } catch (e: ErrnoException) {
@@ -645,13 +671,14 @@ class HostedBinderRuntime private constructor(
                 val handled = body.getInt() != 0
                 val count = body.getInt()
                 val dataLen = body.getInt()
+                val binderStatus = body.getInt() // v4: exact binder_status_t
                 val payload = HostedBinderProtocol.readPayload(body, count, dataLen)
                 val call = synchronized(lock) { pending.remove(h.requestId) }
                 if (call == null) {
                     frame.fds.forEach(::closeQuietly)
                 } else {
                     synchronized(call.lock) {
-                        call.reply = IncomingReply(status, handled, payload, frame.fds)
+                        call.reply = IncomingReply(status, handled, binderStatus, payload, frame.fds)
                         call.lock.notifyAll()
                     }
                 }

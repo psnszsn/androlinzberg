@@ -97,7 +97,7 @@ const STATUS_NAME_NOT_FOUND: i32 = -@as(i32, @intCast(@intFromEnum(E.NOENT)));
 const STATUS_DEAD_OBJECT: i32 = -@as(i32, @intCast(@intFromEnum(E.PIPE)));
 const STATUS_FAILED_TRANSACTION: i32 = STATUS_UNKNOWN_ERROR + 2;
 const STATUS_UNEXPECTED_NULL: i32 = STATUS_UNKNOWN_ERROR + 8;
-const STATUS_BAD_TYPE: i32 = -@as(i32, @intCast(@intFromEnum(E.ISDIR)));
+const STATUS_BAD_TYPE: i32 = STATUS_UNKNOWN_ERROR + 1;
 const STATUS_UNKNOWN_TRANSACTION: i32 = -@as(i32, @intCast(@intFromEnum(E.BADMSG)));
 
 const EX_NONE: i32 = 0;
@@ -418,6 +418,7 @@ const PendingCall = struct {
     // reply:
     reply: ?*AParcel = null,
     reply_status: Client.Message.Reply.Status = .ok,
+    reply_binder_status: i32 = 0,
     // service_result:
     svc_status: Server.Message.ServiceResult.Status = .ok,
     svc_ref: ObjectRef = ObjectRef.null_ref,
@@ -643,6 +644,7 @@ const Runtime = struct {
                     c.mu.lockUncancelable(g_io);
                     c.reply = parcel;
                     c.reply_status = rep.status;
+                    c.reply_binder_status = rep.binder_status;
                     c.done = true;
                     c.cv.signal(g_io);
                     c.mu.unlock(g_io);
@@ -704,17 +706,20 @@ const Runtime = struct {
         var out = AParcel.create();
         defer out.destroy();
         var status = Client.Message.Reply.Status.ok;
+        // The exact binder_status_t the caller receives (protocol v4). `status`
+        // stays `ok` whenever the target was reached, so an error code (e.g.
+        // STATUS_UNKNOWN_TRANSACTION from a stub) rides `binder_status` and the
+        // caller's default-impl fallback works.
+        var binder_status: i32 = STATUS_OK;
         const token_ok = target != null and target.?.class != null and
             (!target.?.class.?.token_header or
                 in.code < FIRST_CALL_TRANSACTION or in.code > LAST_CALL_TRANSACTION or
                 in.parcel.enforceInterfaceToken(target.?.class.?.descriptor));
         if (target == null or target.?.class == null or target.?.class.?.on_transact == null) {
-            status = .failed;
+            status = .failed; // no reachable target: transport-level failure
+            binder_status = STATUS_FAILED_TRANSACTION;
         } else if (!token_ok) {
-            // Wrong interface descriptor: refuse the call (AOSP returns
-            // STATUS_BAD_TYPE). The v3 reply enum collapses this to `failed`;
-            // 6.5 carries the exact status.
-            status = .failed;
+            binder_status = STATUS_BAD_TYPE; // wrong interface descriptor (AOSP)
         } else {
             const prev_routing = current_routing;
             const prev_uid = current_caller_uid;
@@ -723,16 +728,15 @@ const Runtime = struct {
             current_caller_uid = in.caller_uid;
             // Oneway transactions have no waiting caller; AOSP reports pid 0.
             current_caller_pid = if (oneway) 0 else in.caller_pid;
-            const rc = target.?.class.?.on_transact.?(target.?, in.code, in.parcel, out);
+            binder_status = target.?.class.?.on_transact.?(target.?, in.code, in.parcel, out);
             current_routing = prev_routing;
             current_caller_uid = prev_uid;
             current_caller_pid = prev_pid;
-            if (rc != STATUS_OK) status = .failed;
         }
-        if (!oneway) r.sendReply(in.routing_id, status, out);
+        if (!oneway) r.sendReply(in.routing_id, status, binder_status, out);
     }
 
-    fn sendReply(r: *Runtime, routing_id: u64, status: Client.Message.Reply.Status, out: *AParcel) void {
+    fn sendReply(r: *Runtime, routing_id: u64, status: Client.Message.Reply.Status, binder_status: i32, out: *AParcel) void {
         var body = std.ArrayListUnmanaged(u8).empty;
         defer body.deinit(alloc);
         var fds = std.ArrayListUnmanaged(fd_t).empty;
@@ -742,9 +746,12 @@ const Runtime = struct {
         const data: []const u8 = if (status == .ok) out.data.items else &.{};
         const rep = Client.Message.Reply{
             .status = status,
-            .handled = 1,
+            // The JVM caller reads `handled` as the transact boolean; a non-OK
+            // binder_status means the call was not handled (unknown/refused).
+            .handled = if (binder_status == STATUS_OK) 1 else 0,
             .object_count = if (status == .ok) @intCast(wire.len) else 0,
             .data_len = @intCast(data.len),
+            .binder_status = binder_status,
         };
         body.appendSlice(alloc, std.mem.asBytes(&rep)) catch @panic("oom");
         if (status == .ok) {
@@ -1099,7 +1106,9 @@ const Runtime = struct {
                     alloc.destroy(p);
                 } else p.destroy();
             }
-            return STATUS_OK;
+            // Return the callee's exact status (STATUS_OK on success; e.g.
+            // STATUS_UNKNOWN_TRANSACTION so a generated proxy falls back).
+            return call.reply_binder_status;
         }
     }
 

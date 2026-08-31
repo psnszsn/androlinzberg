@@ -793,6 +793,7 @@ fn handleReply(peer: *Peer, header: Client.Message.Header, body: []const u8, fds
         .request_id = call.caller_request,
         .status = r.status,
         .handled = r.handled != 0,
+        .binder_status = r.binder_status,
         .entries = entries,
         .data = payload.data,
         .fd_count = header.fd_count,

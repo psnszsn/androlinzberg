@@ -208,6 +208,7 @@ pub const ReplyOptions = struct {
     request_id: u64,
     status: OutMessage.Reply.Status,
     handled: bool,
+    binder_status: i32 = 0,
     entries: []const ObjectEntry = &.{},
     data: []const u8 = &.{},
     fd_count: u16 = 0,
@@ -226,6 +227,7 @@ pub fn serveReply(s: *const Server, options: ReplyOptions) Writer.Error!void {
         .handled = @intFromBool(options.handled),
         .object_count = @intCast(options.entries.len),
         .data_len = @intCast(options.data.len),
+        .binder_status = options.binder_status,
     }, .little);
     try s.out.writeSliceEndian(ObjectEntry, options.entries, .little);
     try s.out.writeAll(options.data);

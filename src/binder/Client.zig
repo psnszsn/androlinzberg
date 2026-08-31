@@ -24,7 +24,7 @@ out: *Writer,
 /// First 4 bytes of every frame ("AZKB" as little-endian u32).
 pub const magic: u32 = 0x424B5A41;
 /// Bumped for every incompatible wire change.
-pub const version: u16 = 3;
+pub const version: u16 = 4;
 
 /// Android uid of the trusted system process (AOSP `Process.SYSTEM_UID`).
 pub const system_uid: u32 = 1000;
@@ -183,6 +183,11 @@ pub const Message = struct {
         handled: u32,
         object_count: u32,
         data_len: u32,
+        /// Exact `binder_status_t` from the callee's onTransact (protocol v4).
+        /// The caller returns it verbatim so default-impl fallbacks
+        /// (STATUS_UNKNOWN_TRANSACTION) work across the language boundary;
+        /// meaningful only when `status` is `ok`.
+        binder_status: i32 = 0,
 
         pub const Status = enum(u32) {
             ok = 0,
@@ -302,6 +307,7 @@ pub const ReplyOptions = struct {
     routing_id: u64,
     status: OutMessage.Reply.Status = .ok,
     handled: bool = true,
+    binder_status: i32 = 0,
     entries: []const ObjectEntry = &.{},
     data: []const u8 = &.{},
     fd_count: u16 = 0,
@@ -320,6 +326,7 @@ pub fn serveReply(c: *const Client, options: ReplyOptions) Writer.Error!void {
         .handled = @intFromBool(options.handled),
         .object_count = @intCast(options.entries.len),
         .data_len = @intCast(options.data.len),
+        .binder_status = options.binder_status,
     }, .little);
     try c.out.writeSliceEndian(ObjectEntry, options.entries, .little);
     try c.out.writeAll(options.data);

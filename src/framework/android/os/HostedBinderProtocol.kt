@@ -10,7 +10,7 @@ import java.nio.ByteOrder
  */
 internal object HostedBinderProtocol {
     const val MAGIC = 0x424B5A41
-    const val VERSION = 3
+    const val VERSION = 4
     const val HEADER_LEN = 32
 
     // peer -> broker
@@ -49,6 +49,10 @@ internal object HostedBinderProtocol {
     const val STATUS_OK = 0
     const val STATUS_DEAD_OBJECT = 1
     const val STATUS_FAILED = 2
+    // binder_status_t values carried in the reply's binder_status field (v4),
+    // distinct from the transport status enum above.
+    const val BINDER_STATUS_OK = 0
+    const val BINDER_STATUS_UNKNOWN_TRANSACTION = -74 // -EBADMSG, matches the ndk
 
     const val SERVICE_OK = 0
     const val SERVICE_NOT_FOUND = 1

@@ -41,6 +41,8 @@ const DESCRIPTOR = "dev.artzig.test.b.INdkProbe";
 const TX_ADD: u32 = 1; // add(a, b) -> a + b
 const TX_ECHO: u32 = 2; // echo(String) -> String
 const TX_FIRE: u32 = 3; // fireOneway(n): host sends n ordered oneway calls to SINK
+const TX_UNKNOWN: u32 = 99; // a code the Java stub does not handle
+const STATUS_UNKNOWN_TRANSACTION: i32 = -74; // -EBADMSG (binder_status_t)
 
 // A native service this process hosts, so that oneway calls from the Java host
 // exercise libbinder_ndk's own per-target serial queue (the incoming-dispatch
@@ -125,6 +127,18 @@ pub fn main() !void {
             AParcel_delete(o);
         }
         check(std.mem.eql(u8, read_buf[0..read_len], s), "Java service echoed the string", &failures);
+    }
+
+    // Exact status propagation (protocol v4): an unknown transaction code the
+    // Java stub does not handle comes back as STATUS_UNKNOWN_TRANSACTION, so a
+    // generated proxy would fall back to its default implementation.
+    {
+        var in: ?*AParcel = null;
+        _ = AIBinder_prepareTransaction(svc, &in);
+        var out: ?*AParcel = null;
+        const rc = AIBinder_transact(svc, TX_UNKNOWN, &in, &out, 0);
+        check(rc == STATUS_UNKNOWN_TRANSACTION, "unknown code returns STATUS_UNKNOWN_TRANSACTION", &failures);
+        if (out) |o| AParcel_delete(o);
     }
 
     // Oneway serialization: host our own native sink, ask the Java host to fire
