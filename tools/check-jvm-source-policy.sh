@@ -1,35 +1,83 @@
 #!/usr/bin/env bash
+# JVM source provenance gate. Two rules:
+#   1. Repository-owned JVM sources (.java AND .kt) may only live in the
+#      allowlisted directories.
+#   2. No repository-owned class may shadow a class we now GENERATE: a file
+#      whose package+name matches a generated aconfig/logtags artifact (derived
+#      from the generator input lists, so this ratchets automatically as more
+#      generators land) is rejected — it must come from generation, not by hand.
+# Plus a pin-provenance check that the vendored AOSP trees match provenance/pins.lock.
 set -euo pipefail
-
 cd "$(dirname "$0")/.."
 
 status=0
+
+# --- 1. directory allowlist (now covers .kt, which the old gate never saw) ---
 while IFS= read -r source; do
     [[ -e "$source" ]] || continue
     case "$source" in
-        artzig/src/gen/*)
-            # Generated repository outputs.
-            ;;
-        artzig/examples/*)
-            # Directly reused Android example source.
-            ;;
-        src/framework/*|src/framework-stubs/*)
-            # AOSP-facing compatibility sources. Migrate these only with a
-            # focused ABI and behavior review; never through a bulk rewrite.
-            ;;
-        testdata/kotlin-shadow/*)
-            # Java-compiler fixtures used to test Kotlin runtime shadowing.
-            ;;
-        src/annotation-runtime/*)
-            # android.annotation marker classes compiled in a separate
-            # module-free javac pass (the sysmodules image owns the package);
-            # codegen'd AOSP classes reference them via .class literals.
-            ;;
+        artzig/src/gen/*) ;;                 # generated repository outputs
+        artzig/examples/*) ;;                # directly reused Android example source
+        src/framework/*|src/framework-stubs/*) ;; # AOSP-facing compatibility sources
+        src/java/*) ;;                       # repo-owned app/system code (dev.artzig)
+        src/annotation-runtime/*) ;;         # android.annotation markers (separate javac pass)
+        src/testkit/*|tests/*) ;;            # test helpers/fixtures
+        testdata/kotlin-shadow/*) ;;         # javac fixtures for Kotlin runtime shadowing
         *)
-            printf 'repository-owned Java is not allowed here: %s\n' "$source" >&2
+            printf 'repository-owned JVM source is not allowed here: %s\n' "$source" >&2
             status=1
             ;;
     esac
-done < <(git ls-files '*.java')
+done < <(git ls-files '*.java' '*.kt')
+
+# --- 2. no hand-written class in a package we generate -----------------------
+# Forbidden = <pkg-path>/<Class>.{java,kt} for every generated artifact. The
+# lists are the same inputs the generators consume, so adding a package here
+# (as a deferred generator lands) automatically forbids its hand-written stub.
+forbidden=$(mktemp)
+trap 'rm -f "$forbidden"' EXIT
+
+# aconfig: each package emits Flags + the FeatureFlags family.
+while IFS= read -r pkg; do
+    case "$pkg" in \#*|'') continue ;; esac
+    d="${pkg//.//}"
+    for c in Flags FeatureFlags FeatureFlagsImpl CustomFeatureFlags FakeFeatureFlagsImpl; do
+        printf '%s/%s.java\n%s/%s.kt\n' "$d" "$c" "$d" "$c" >> "$forbidden"
+    done
+done < tools/aconfig-packages.txt
+
+# logtags: the EventLogTags class in each source's java_package.
+while IFS= read -r rel; do
+    case "$rel" in \#*|'') continue ;; esac
+    src="artzig/extra/frameworks-base/$rel"
+    [ -f "$src" ] || continue
+    pkg=$(sed -n 's/^option java_package \([A-Za-z0-9_.]*\).*/\1/p' "$src" | head -1)
+    base=$(basename "$src" .logtags)
+    [ -n "$pkg" ] && printf '%s/%s.java\n%s/%s.kt\n' "${pkg//.//}" "$base" "${pkg//.//}" "$base" >> "$forbidden"
+done < tools/logtags-list.txt
+
+for root in src/framework-stubs src/framework; do
+    while IFS= read -r rel; do
+        if grep -qxF "$rel" "$forbidden"; then
+            printf 'hand-written class shadows a generated one (must be generated): %s/%s\n' "$root" "$rel" >&2
+            status=1
+        fi
+    done < <(cd "$root" && git ls-files '*.java' '*.kt' 2>/dev/null)
+done
+
+# --- 3. pin-provenance: vendored trees must match provenance/pins.lock -------
+if [ -f provenance/pins.lock ]; then
+    while read -r sha rel; do
+        case "$sha" in \#*|'') continue ;; esac
+        tree="$rel"
+        if [ -d "$tree/.git" ]; then
+            have=$(git -C "$tree" rev-list --max-parents=0 HEAD 2>/dev/null | head -1)
+            if [ -n "$have" ] && [ "$have" != "$sha" ]; then
+                printf 'vendored tree drifted from pins.lock: %s (%s != %s)\n' "$rel" "$have" "$sha" >&2
+                status=1
+            fi
+        fi
+    done < provenance/pins.lock
+fi
 
 exit "$status"

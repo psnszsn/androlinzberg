@@ -55,6 +55,18 @@ being followed and why the source cannot currently be compiled directly. Do
 not special-case an application package, class, or workflow when an Android
 framework contract explains the behavior.
 
+Do not hand-write a class that Soong generates. aconfig `Flags`/`FeatureFlags`,
+logtags `EventLogTags`, `*Proto` message classes, sysprop accessors, and
+`FrameworkStatsLog` come from the generators wired into `build/java.zig`
+(`tools/build-{aidl,logtags,aconfig,…}.sh`), driven by the declaration files
+(`.aconfig`/`.logtags`/`.proto`/`.sysprop`, stats atoms) in the vendored trees.
+Add the package to the generator's input list rather than writing a placeholder;
+`tools/check-jvm-source-policy.sh` rejects a repo-owned class whose package
+matches a generated artifact (`.java` and `.kt`). A package whose declaration is
+not yet in a vendored tree may stay hand-stubbed until its module tree is
+imported. `provenance/pins.lock` records the vendored trees' revisions; the same
+check verifies they have not drifted.
+
 Prefer deep modules at the AOSP/host seam: callers should provide an Android
 operation such as “apply this configuration” or “launch this activity,” while
 the module owns parsing, lifecycle decisions, saved-state handling, and callback
