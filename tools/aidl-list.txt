@@ -147,3 +147,8 @@ dev/artzig/system/IHostedActivityManager.aidl
 dev/artzig/system/IHostedApplicationThread.aidl
 dev/artzig/system/IHostedContentProvider.aidl
 dev/artzig/system/IHostedContentService.aidl
+android/app/IAlarmManager.aidl
+android/app/IAlarmListener.aidl
+android/app/IAlarmCompleteListener.aidl
+android/app/timedetector/ITimeDetectorService.aidl
+android/app/time/ITimeDetectorListener.aidl

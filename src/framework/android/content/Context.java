@@ -24,7 +24,7 @@ public abstract class Context {
             MODE_APPEND = 0x8000, MODE_MULTI_PROCESS = 4, MODE_ENABLE_WRITE_AHEAD_LOGGING = 8,
             MODE_NO_LOCALIZED_COLLATORS = 0x10;
     public static final String ACTIVITY_SERVICE = "activity", ALARM_SERVICE = "alarm",
-            AUDIO_SERVICE = "audio", CLIPBOARD_SERVICE = "clipboard",
+            AUDIO_SERVICE = "audio", CLIPBOARD_SERVICE = "clipboard", TIME_DETECTOR_SERVICE = "time_detector",
             CONNECTIVITY_SERVICE = "connectivity", DISPLAY_SERVICE = "display",
             DOWNLOAD_SERVICE = "download", INPUT_METHOD_SERVICE = "input_method",
             INPUT_SERVICE = "input", JOB_SCHEDULER_SERVICE = "jobscheduler",

@@ -13,6 +13,31 @@ public class AlarmManager {
 
     public interface OnAlarmListener { void onAlarm(); }
 
+    /** AOSP AlarmManager.AlarmClockInfo (IAlarmManager parcels it). */
+    public static final class AlarmClockInfo implements android.os.Parcelable {
+        private final long mTriggerTime;
+        private final PendingIntent mShowIntent;
+        public AlarmClockInfo(long triggerTime, PendingIntent showIntent) {
+            mTriggerTime = triggerTime;
+            mShowIntent = showIntent;
+        }
+        AlarmClockInfo(android.os.Parcel in) {
+            mTriggerTime = in.readLong();
+            mShowIntent = in.readParcelable(PendingIntent.class.getClassLoader(), PendingIntent.class);
+        }
+        public long getTriggerTime() { return mTriggerTime; }
+        public PendingIntent getShowIntent() { return mShowIntent; }
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeLong(mTriggerTime);
+            dest.writeParcelable(mShowIntent, flags);
+        }
+        public static final Creator<AlarmClockInfo> CREATOR = new Creator<AlarmClockInfo>() {
+            @Override public AlarmClockInfo createFromParcel(android.os.Parcel in) { return new AlarmClockInfo(in); }
+            @Override public AlarmClockInfo[] newArray(int size) { return new AlarmClockInfo[size]; }
+        };
+    }
+
     private static final class ScheduledAlarm {
         final Handler handler;
         final Runnable runnable;

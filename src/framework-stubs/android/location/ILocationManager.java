@@ -5,6 +5,8 @@ import android.os.IBinder;
 public interface ILocationManager {
     void setLocationEnabledForUser(boolean enabled, int userId) throws android.os.RemoteException;
     boolean isProviderEnabledForUser(String provider, int userId) throws android.os.RemoteException;
+    /** SystemClock.currentGnssTimeClock: no GNSS receiver on the host. */
+    LocationTime getGnssTimeMillis() throws android.os.RemoteException;
     abstract class Stub {
         public static ILocationManager asInterface(IBinder binder) { return null; }
     }

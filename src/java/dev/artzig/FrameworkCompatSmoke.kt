@@ -564,6 +564,17 @@ public final class FrameworkCompatSmoke {
             require(progress == listOf(1, 2, 3), "AsyncTask.publishProgress ordered on the main looper: " + progress)
             require(task.status == android.os.AsyncTask.Status.FINISHED, "AsyncTask ends FINISHED")
 
+            val up0 = android.os.SystemClock.uptimeNanos()
+            val el0 = android.os.SystemClock.elapsedRealtimeNanos()
+            require(el0 >= up0, "SystemClock: elapsedRealtime (BOOTTIME) >= uptime (MONOTONIC)")
+            require(Math.abs(android.os.SystemClock.uptimeMillis() - up0 / 1_000_000) < 1000, "SystemClock.uptimeMillis matches uptimeNanos")
+            require(Math.abs(android.os.SystemClock.currentTimeMicro() / 1000 - System.currentTimeMillis()) < 1000, "SystemClock.currentTimeMicro is wall time")
+            val cpu0 = android.os.SystemClock.currentThreadTimeMillis()
+            var spin = 0L
+            val spinUntil = System.nanoTime() + 20_000_000L
+            while (System.nanoTime() < spinUntil) spin += spin xor 1
+            val cpu1 = android.os.SystemClock.currentThreadTimeMillis()
+            require(cpu1 >= cpu0 && cpu1 < android.os.SystemClock.uptimeMillis(), "SystemClock.currentThreadTimeMillis is thread CPU time, not wall time (" + spin + ")")
             require(!android.os.Trace.isEnabled(), "Trace: no tag enabled on the host")
             require(!android.os.Trace.isTagEnabled(android.os.Trace.TRACE_TAG_VIEW), "Trace.isTagEnabled(VIEW) false")
             android.os.Trace.beginSection("azk-smoke")

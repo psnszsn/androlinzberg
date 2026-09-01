@@ -658,6 +658,60 @@ fn registerProcess(env: JNIEnvPtr) !void {
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }
 
+// ------------------------------------------------------------- SystemClock
+// android.os.SystemClock natives (core/jni/android_os_SystemClock.cpp ->
+// libutils SystemClock.cpp): all @CriticalNative, so no env/jclass. Pure
+// clock_gettime syscalls; no descriptor is owned, so std.Io has nothing to hold.
+
+fn clockNanos(id: linux.CLOCK) i64 {
+    var ts: linux.timespec = undefined;
+    if (linux.errno(linux.clock_gettime(id, &ts)) != .SUCCESS) return 0;
+    return @as(i64, ts.sec) * std.time.ns_per_s + @as(i64, ts.nsec);
+}
+/// libutils elapsedRealtimeNano: CLOCK_BOOTTIME, falling back to MONOTONIC.
+fn bootNanos() i64 {
+    var ts: linux.timespec = undefined;
+    if (linux.errno(linux.clock_gettime(.BOOTTIME, &ts)) == .SUCCESS)
+        return @as(i64, ts.sec) * std.time.ns_per_s + @as(i64, ts.nsec);
+    return clockNanos(.MONOTONIC);
+}
+fn clkUptimeMillis() callconv(.c) jni.jlong {
+    return @divTrunc(clockNanos(.MONOTONIC), std.time.ns_per_ms);
+}
+fn clkUptimeNanos() callconv(.c) jni.jlong {
+    return clockNanos(.MONOTONIC);
+}
+fn clkElapsedRealtime() callconv(.c) jni.jlong {
+    return @divTrunc(bootNanos(), std.time.ns_per_ms);
+}
+fn clkElapsedRealtimeNanos() callconv(.c) jni.jlong {
+    return bootNanos();
+}
+fn clkThreadTimeMillis() callconv(.c) jni.jlong {
+    return @divTrunc(clockNanos(.THREAD_CPUTIME_ID), std.time.ns_per_ms);
+}
+fn clkThreadTimeMicro() callconv(.c) jni.jlong {
+    return @divTrunc(clockNanos(.THREAD_CPUTIME_ID), std.time.ns_per_us);
+}
+fn clkCurrentTimeMicro() callconv(.c) jni.jlong {
+    return @divTrunc(clockNanos(.REALTIME), std.time.ns_per_us);
+}
+
+fn registerSystemClock(env: JNIEnvPtr) !void {
+    const cls = env.*.*.FindClass.?(env, "android/os/SystemClock") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method("uptimeMillis", "()J", &clkUptimeMillis),
+        method("uptimeNanos", "()J", &clkUptimeNanos),
+        method("elapsedRealtime", "()J", &clkElapsedRealtime),
+        method("elapsedRealtimeNanos", "()J", &clkElapsedRealtimeNanos),
+        method("currentThreadTimeMillis", "()J", &clkThreadTimeMillis),
+        method("currentThreadTimeMicro", "()J", &clkThreadTimeMicro),
+        method("currentTimeMicro", "()J", &clkCurrentTimeMicro),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
+
 // ------------------------------------------------------------- Trace
 // android.os.Trace natives in the Ravenwood shape (Trace.java
 // nativeIsTagEnabled$ravenwood & co.): no tag is ever enabled, so every public
@@ -734,6 +788,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerSharedMemory(env) catch return -1;
     registerProcess(env) catch return -1;
     registerTrace(env) catch return -1;
+    registerSystemClock(env) catch return -1;
     // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
     // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;

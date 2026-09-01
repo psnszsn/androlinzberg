@@ -40,3 +40,4 @@ frameworks/base/core/proto/android/os/persistablebundle.proto
 frameworks/base/core/proto/android/os/looper.proto
 frameworks/base/core/proto/android/os/message.proto
 frameworks/base/core/proto/android/os/messagequeue.proto
+frameworks/base/core/proto/android/os/worksource.proto
