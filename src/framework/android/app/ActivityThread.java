@@ -24,6 +24,11 @@ public final class ActivityThread {
         return HostedActivityRuntime.launchMain(activityClassName);
     }
     public static Activity currentActivity() { return HostedActivityRuntime.currentActivity(); }
+    /** AOSP ActivityThread.sCurrentBroadcastIntent: the Intent a receiver on this thread is handling. */
+    private static final ThreadLocal<android.content.Intent> sCurrentBroadcastIntent = new ThreadLocal<>();
+    public static android.content.Intent getIntentBeingBroadcast() { return sCurrentBroadcastIntent.get(); }
+    /** Set by the receiver dispatcher around onReceive (LoadedApk.ReceiverDispatcher.Args.run). */
+    public static void setIntentBeingBroadcast$artzig(android.content.Intent intent) { sCurrentBroadcastIntent.set(intent); }
     public static int getManifestOrientation(String activityClassName) {
         return HostedActivityRuntime.manifestOrientation(activityClassName);
     }

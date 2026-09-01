@@ -74,7 +74,9 @@ class ApkRule(
         index: Int? = null,
         via: InputVia = InputVia.WAYLAND,
         settle: WaitKind = WaitKind.IDLE,
-    ) = session.click(resourceId, text, description, className, role, index, via, settle)
+        xFraction: Double? = null,
+        yFraction: Double? = null,
+    ) = session.click(resourceId, text, description, className, role, index, via, settle, xFraction, yFraction)
 
     fun drag(
         fromXFraction: Double,

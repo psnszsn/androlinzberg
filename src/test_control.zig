@@ -547,7 +547,23 @@ pub const Server = struct {
             const x: i32 = @intCast(left + @divTrunc(right - left, 2));
             const y: i32 = @intCast(top + @divTrunc(bottom - top, 2));
             if (std.mem.eql(u8, kind, "click") or std.mem.eql(u8, kind, "tap")) {
-                input.tap(x, y) catch |err| {
+                // Optional position within the node (from_x/from_y fractions);
+                // the centre otherwise. A present but invalid fraction rejects.
+                const tap_x = if (floatField(action, "from_x_fraction") != null)
+                    fractionCoordinate(action, "from_x_fraction", left, right) orelse {
+                        if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
+                        return;
+                    }
+                else
+                    x;
+                const tap_y = if (floatField(action, "from_y_fraction") != null)
+                    fractionCoordinate(action, "from_y_fraction", top, bottom) orelse {
+                        if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
+                        return;
+                    }
+                else
+                    y;
+                input.tap(tap_x, tap_y) catch |err| {
                     if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
                     return;
                 };
@@ -1092,6 +1108,13 @@ test "control server advertises pending nonblocking output" {
     try std.testing.expect(server.clientWantsWrite());
     server.client = -1;
     try std.testing.expect(!server.clientWantsWrite());
+}
+
+test "absent pointer fraction reads as null, present ones map" {
+    var action = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, "{\"from_y_fraction\":0.25}", .{});
+    defer action.deinit();
+    try std.testing.expect(floatField(action.value, "from_x_fraction") == null);
+    try std.testing.expectEqual(@as(i32, 25), fractionCoordinate(action.value, "from_y_fraction", 0, 100).?);
 }
 
 test "pointer fractions map within selected bounds" {

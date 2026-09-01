@@ -93,9 +93,11 @@ class AppSession internal constructor(
         index: Int? = null,
         via: InputVia = InputVia.WAYLAND,
         settle: WaitKind = WaitKind.IDLE,
+        xFraction: Double? = null,
+        yFraction: Double? = null,
     ): StepResult = action(
         Selector(resourceId, text, description, className, role, index, visible = true),
-        Action(ActionKind.CLICK, via),
+        Action(ActionKind.CLICK, via, fromXFraction = xFraction, fromYFraction = yFraction),
         settle,
     )
 

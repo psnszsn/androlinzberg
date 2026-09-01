@@ -8,6 +8,7 @@ public interface IWindowManager {
         private Stub() {}
     }
     default boolean isKeyguardLocked() throws android.os.RemoteException { return false; }
+    default void showStrictModeViolation(boolean on) throws android.os.RemoteException {}
     default boolean isKeyguardSecure(int userId) throws android.os.RemoteException { return false; }
     default int getInitialDisplayDensity(int displayId) throws android.os.RemoteException { return 160; }
     default int getBaseDisplayDensity(int displayId) throws android.os.RemoteException { return 160; }

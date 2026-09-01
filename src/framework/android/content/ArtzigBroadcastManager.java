@@ -60,8 +60,11 @@ final class ArtzigBroadcastManager {
                         ClassLoader cl = receiver.getClass().getClassLoader();
                         intent.setExtrasClassLoader(cl);
                         receiver.setPendingResult(this);
+                        android.app.ActivityThread.setIntentBeingBroadcast$artzig(intent);
                         receiver.onReceive(mContext, intent);
+                        android.app.ActivityThread.setIntentBeingBroadcast$artzig(null);
                     } catch (Exception e) {
+                        android.app.ActivityThread.setIntentBeingBroadcast$artzig(null);
                         finish();
                         throw new RuntimeException(
                                 "Error receiving broadcast " + intent + " in " + receiver, e);

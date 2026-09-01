@@ -194,10 +194,13 @@ object AzkTestCli {
         }
 
         val actualCommand = command.substringAfter("step:", command)
-        if (actualCommand != "drag" &&
-            listOf(fromXFraction, fromYFraction, toXFraction, toYFraction).any { it != null }
+        if (actualCommand != "drag" && listOf(toXFraction, toYFraction).any { it != null }) {
+            throw UsageException("--to-x/--to-y require the drag command")
+        }
+        if (actualCommand != "drag" && actualCommand != "click" &&
+            listOf(fromXFraction, fromYFraction).any { it != null }
         ) {
-            throw UsageException("drag coordinate options require the drag command")
+            throw UsageException("--from-x/--from-y require the click or drag command")
         }
         if (command == "wait") {
             if (positional.size != 1) throw UsageException("wait requires ready, idle, exists, or absent")
@@ -212,7 +215,10 @@ object AzkTestCli {
         val action = when (actualCommand) {
             "click" -> {
                 if (positional.isNotEmpty()) throw UsageException("click does not take a value")
-                Action(ActionKind.CLICK, via)
+                if (via != InputVia.WAYLAND && (fromXFraction != null || fromYFraction != null)) {
+                    throw UsageException("click position fractions require --via wayland")
+                }
+                Action(ActionKind.CLICK, via, fromXFraction = fromXFraction, fromYFraction = fromYFraction)
             }
             "drag" -> {
                 if (positional.isNotEmpty()) throw UsageException("drag does not take a value")

@@ -387,6 +387,10 @@ file('$CJ/android/content/ContentUris.java')
 file('$CJ/android/os/SystemClock.java')
 # Real Build: every value is a session property the broker seeds (Broker.zig seedProperties).
 file('$CJ/android/os/Build.java')
+# Real StrictMode + its violation types; the AMS/WM/mount/netd touch points are stubbed services.
+file('$CJ/android/os/StrictMode.java')
+file('$CJ/android/os/FileUriExposedException.java')
+add('$CJ/android/os/strictmode')
 file('$CJ/android/os/SimpleClock.java')
 file('$CJ/android/os/WorkSource.java')
 file('$CJ/android/os/ShellCommand.java')

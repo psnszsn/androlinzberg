@@ -153,3 +153,5 @@ android/app/IAlarmCompleteListener.aidl
 android/app/timedetector/ITimeDetectorService.aidl
 android/app/time/ITimeDetectorListener.aidl
 android/os/IDeviceIdentifiersPolicyService.aidl
+android/app/IUnsafeIntentStrictModeCallback.aidl
+android/app/IBackgroundActivityLaunchCallback.aidl

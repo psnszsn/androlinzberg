@@ -72,11 +72,11 @@ class NewPipeTest {
         // timing-dependent); a tap on the surface hides them deterministically,
         // as fullscreenButtonExitsAndRestoresVideoDetails does.
         if (isVisible(description = "Toggle screen orientation")) {
-            click(description = "Play video, duration:", settle = WaitKind.NOW)
+            tapPlayerSurface()
         }
         waitFor(description = "Toggle screen orientation", absent = true)
         assertFullscreenVideoVisible(screenshot("fullscreen-video.png"))
-        click(description = "Play video, duration:", settle = WaitKind.NOW)
+        tapPlayerSurface()
         assertFullscreenRemains(true, durationMillis = 2_000)
         waitFor(description = "Toggle screen orientation")
     }
@@ -96,11 +96,11 @@ class NewPipeTest {
         waitForFullscreen(true)
         waitFor(description = "Comments", absent = true)
         if (isVisible(description = "Toggle screen orientation")) {
-            click(description = "Play video, duration:", settle = WaitKind.NOW)
+            tapPlayerSurface()
         }
         waitFor(description = "Toggle screen orientation", absent = true)
 
-        click(description = "Play video, duration:", settle = WaitKind.NOW)
+        tapPlayerSurface()
         waitFor(description = "Toggle screen orientation")
         waitForFullscreen(true)
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
@@ -239,11 +239,20 @@ private fun colorDelta(first: Int, second: Int): Int =
  * tap on the surface toggles them, so poll: tap only while they are hidden, until the
  * orientation toggle (part of the overlay) is present.
  */
+/**
+ * Taps the player surface to toggle its controls. The tap lands in the upper
+ * quarter of the surface: its centre is the play/pause button whenever the
+ * controls are showing, and pausing a stream keeps the controls on screen.
+ */
+private fun AppSession.tapPlayerSurface() {
+    click(description = "Play video, duration:", settle = WaitKind.NOW, xFraction = 0.5, yFraction = 0.25)
+}
+
 private fun AppSession.revealPlayerControls() {
     repeat(10) {
         if (isVisible(description = "Toggle screen orientation")) return
         if (isVisible(description = "Play video, duration:")) {
-            click(description = "Play video, duration:", settle = WaitKind.NOW)
+            tapPlayerSurface()
         }
         Thread.sleep(700)
     }
