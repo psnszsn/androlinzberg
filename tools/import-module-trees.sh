@@ -26,6 +26,7 @@ import frameworks-av  platform/frameworks/av          camera media/aconfig media
 import opt-telephony  platform/frameworks/opt/telephony flags
 import modules-uwb    platform/packages/modules/Uwb   ranging/flags
 import modules-statsd platform/packages/modules/StatsD framework/java
+import proto-logging  platform/frameworks/proto_logging stats
 
 # Declaration dirs of the sparse-hidden platform aconfig packages + the
 # generator tool sources (streaming_proto, sysprop include/).

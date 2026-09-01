@@ -63,6 +63,10 @@ add('$LOGTAGS')
 add('$ACONFIG')
 add('$SYSPROP')
 add('$PROTO')
+add('$STATS')
+# Reused StatsD-module source: the real StatsEvent encoder (android.util.StatsLog
+# is the host-seam sink in src/framework).
+file('$SD/framework/java/android/util/StatsEvent.java')
 add('$APP/src/framework-stubs')
 # AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
 file('$FB/services/core/java/com/android/server/SystemService.java')

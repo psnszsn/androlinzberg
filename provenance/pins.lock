@@ -150,3 +150,4 @@ d992a222ec28b56efa29f9104db060379298049c artzig/vendor/tools/dexter
 3449e9e2cd2738d8cdeb88514498f728622e3a6b artzig/extra/opt-telephony
 adcc2fe7aadac53e67402901e2246af21699749d artzig/extra/modules-uwb
 8022cc37e35d424fb0eab65f79cd272759b5dc54 artzig/extra/modules-statsd
+29d96a39adaffda3ad1b08ae17b6befbe2a625fa artzig/extra/proto-logging

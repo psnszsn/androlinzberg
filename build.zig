@@ -99,6 +99,18 @@ pub fn build(b: *std.Build) void {
     b.step("javastream-tool", "Build the protoc-gen-javastream plugin")
         .dependOn(&b.addInstallArtifact(javastream_tool, .{}).step);
 
+    // --- stats-log-api-gen: built from the pinned frameworks/proto_logging source
+    // (atoms compiled in); the vendored mainline prebuilt's atoms are too old.
+    const stats_tool = blk: {
+        const r = b.addSystemCommand(&.{ "bash", "tools/build-stats-tool.sh" });
+        r.addFileArg(protobuf_lib.getEmittedBin());
+        const exe = r.addOutputFileArg("stats-log-api-gen");
+        r.addFileInput(b.path("tools/build-stats-tool.sh"));
+        r.addFileInput(b.path("tools/aosp-run.sh"));
+        r.setName("build stats-log-api-gen (zig c++)");
+        break :blk exe;
+    };
+
     const wayland_mod = b.createModule(.{
         .root_source_file = scanner.result,
         .target = target,
@@ -133,6 +145,7 @@ pub fn build(b: *std.Build) void {
         .artzig = artzig_dep,
         .sysprop_tool = sysprop_tool,
         .javastream_tool = javastream_tool,
+        .stats_tool = stats_tool,
     });
     b.getInstallStep().dependOn(java.java_step);
     const testkit = @import("build/testkit.zig").build(b, artzig_dep);

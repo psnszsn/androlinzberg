@@ -14,6 +14,8 @@ pub const Options = struct {
     sysprop_tool: *std.Build.Step.Compile,
     /// The protoc-gen-javastream plugin (build/javastream.zig).
     javastream_tool: *std.Build.Step.Compile,
+    /// The stats-log-api-gen executable (tools/build-stats-tool.sh).
+    stats_tool: LazyPath,
 };
 
 pub const Result = struct {
@@ -85,6 +87,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("tools/build-proto.sh"),
         dep.path("extra/frameworks-base/core/proto"),
     });
+    const stamp_stats = stamp(b, "stats.stamp", &.{
+        b.path("tools/build-stats.sh"),
+        b.path("tools/build-stats-tool.sh"),
+    });
     const stamp_aconfig = stamp(b, "aconfig.stamp", &.{
         b.path("tools/aconfig-packages.txt"),
         b.path("tools/build-aconfig.sh"),
@@ -126,6 +132,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     const sysprop_dir = sysprop.addOutputDirectoryArg("sysprop-java");
     sysprop.addFileInput(stamp_sysprop);
 
+    // FrameworkStatsLog from the AOSP stats-log-api-gen prebuilt (atoms built in).
+    const stats = b.addSystemCommand(&.{ "bash", "tools/build-stats.sh" });
+    stats.addFileArg(o.stats_tool);
+    const stats_dir = stats.addOutputDirectoryArg("stats-java");
+    stats.addFileInput(stamp_stats);
+
     // *Proto stream constant classes from the protoc-gen-javastream plugin.
     const proto = b.addSystemCommand(&.{ "bash", "tools/build-proto.sh" });
     proto.addFileArg(o.javastream_tool.getEmittedBin());
@@ -155,6 +167,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("ACONFIG=", aconfig_dir);
     srcs.addPrefixedDirectoryArg("SYSPROP=", sysprop_dir);
     srcs.addPrefixedDirectoryArg("PROTO=", proto_dir);
+    srcs.addPrefixedDirectoryArg("STATS=", stats_dir);
+    srcs.addPrefixedDirectoryArg("SD=", dep.path("extra/modules-statsd"));
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);
 
