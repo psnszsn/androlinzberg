@@ -1598,6 +1598,12 @@ export fn AParcel_readParcelFileDescriptor(parcel: *const AParcel, fd: *i32) cal
     }
     for (p.entries.items) |e| {
         if (e.offset == off and e.kind == .file_descriptor) {
+            if (e.fd >= 0) {
+                // Written by this process (not received): hand out a dup so the
+                // parcel keeps its own copy for sending.
+                fd.* = dupFd(e.fd);
+                return STATUS_OK;
+            }
             const ordinal: usize = @intCast(e.value);
             if (ordinal < p.fds.items.len) {
                 fd.* = p.fds.items[ordinal];
@@ -1676,6 +1682,10 @@ export fn azk_parcel_readFileDescriptorBorrowed(parcel: *const AParcel, fd: *i32
     if (has == 0) return STATUS_OK;
     for (p.entries.items) |e| {
         if (e.offset == off and e.kind == .file_descriptor) {
+            if (e.fd >= 0) {
+                fd.* = e.fd; // written by this process: the entry owns it
+                return STATUS_OK;
+            }
             const ordinal: usize = @intCast(e.value);
             if (ordinal < p.fds.items.len) fd.* = p.fds.items[ordinal];
             return STATUS_OK;
@@ -2986,11 +2996,70 @@ fn pWriteByteArray(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, arr: jni.
     p.writeBytes(buf);
     p.pad4();
 }
+/// Parcel::writeBlob layout: after the Java-written length, an i32 kind, then
+/// either the bytes inline (BLOB_INPLACE, padded) or a descriptor to a sealed
+/// memfd holding them (BLOB_ASHMEM_IMMUTABLE). AOSP inlines up to
+/// BLOB_INPLACE_LIMIT; spilling larger blobs keeps a Parcel under the broker's
+/// frame cap, since the descriptor rides SCM_RIGHTS instead of the data.
+const BLOB_INPLACE_LIMIT: usize = 16 * 1024;
+const BLOB_INPLACE: i32 = 0;
+const BLOB_ASHMEM_IMMUTABLE: i32 = 1;
+const F_ADD_SEALS: i32 = 1033;
+const F_SEAL_SHRINK: usize = 0x2;
+const F_SEAL_GROW: usize = 0x4;
+const F_SEAL_WRITE: usize = 0x8;
+
 fn pWriteBlob(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, arr: jni.jbyteArray, offset: jni.jint, len: jni.jint) callconv(.c) void {
-    // v1: blobs are stored inline like a byte array (small-Bundle path). Large
-    // blobs that would exceed the broker frame cap are a follow-up (memfd spill).
-    pWriteByteArray(env, cls, handle, arr, offset, len);
+    _ = cls;
+    const p = parcelOf(handle);
+    if (arr == null or len < 0) {
+        p.writeI32(-1);
+        return;
+    }
+    p.writeI32(len);
+    const n: usize = @intCast(len);
+    const buf = alloc.alloc(u8, n) catch @panic("oom");
+    defer alloc.free(buf);
+    if (n > 0) env.*.*.GetByteArrayRegion.?(env, arr, offset, len, @ptrCast(buf.ptr));
+    if (!p.allow_fds or n <= BLOB_INPLACE_LIMIT) {
+        p.writeI32(BLOB_INPLACE);
+        p.writeBytes(buf);
+        p.pad4();
+        return;
+    }
+    const fd = blobMemfd(buf) orelse {
+        throwRuntime(env, "cannot create a memfd for a Parcel blob");
+        return;
+    };
+    defer closeFd(fd);
+    p.writeI32(BLOB_ASHMEM_IMMUTABLE);
+    _ = AParcel_writeParcelFileDescriptor(p, fd); // dups the descriptor into the parcel
 }
+
+/// A sealed, read-only memfd holding `bytes` (the host stand-in for an
+/// immutable ashmem blob region). Returns the descriptor, or null on failure.
+fn blobMemfd(bytes: []const u8) ?fd_t {
+    const linux = std.os.linux;
+    const rc = linux.memfd_create("Parcel Blob", 0x0001 | 0x0002); // MFD_CLOEXEC | MFD_ALLOW_SEALING
+    if (linux.errno(rc) != .SUCCESS) return null;
+    const fd: fd_t = @intCast(rc);
+    if (linux.errno(linux.ftruncate(fd, @intCast(bytes.len))) != .SUCCESS) {
+        closeFd(fd);
+        return null;
+    }
+    var done: usize = 0;
+    while (done < bytes.len) {
+        const w = linux.pwrite(fd, bytes[done..].ptr, bytes.len - done, @intCast(done));
+        if (linux.errno(w) != .SUCCESS) {
+            closeFd(fd);
+            return null;
+        }
+        done += w;
+    }
+    _ = linux.fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE);
+    return fd;
+}
+
 fn pCreateByteArray(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jbyteArray {
     _ = cls;
     const p = parcelOf(handle);
@@ -3017,7 +3086,39 @@ fn pReadByteArray(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, dest: jni.
     return jni.JNI_TRUE;
 }
 fn pReadBlob(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jbyteArray {
-    return pCreateByteArray(env, cls, handle);
+    _ = cls;
+    const p = parcelOf(handle);
+    const len = p.readI32() orelse return null;
+    if (len < 0) return null;
+    const n: usize = @intCast(len);
+    const kind = p.readI32() orelse return null;
+    const arr = env.*.*.NewByteArray.?(env, len) orelse return null;
+    if (kind == BLOB_INPLACE) {
+        const s = p.readSlice(n) orelse return null;
+        p.skipPad();
+        if (n > 0) env.*.*.SetByteArrayRegion.?(env, arr, 0, len, @ptrCast(s.ptr));
+        return arr;
+    }
+    // A descriptor-backed blob: the parcel keeps the descriptor; read it out.
+    var fd: i32 = -1;
+    _ = azk_parcel_readFileDescriptorBorrowed(p, &fd);
+    if (fd < 0) {
+        throwRuntime(env, "Parcel blob descriptor missing");
+        return null;
+    }
+    const buf = alloc.alloc(u8, n) catch @panic("oom");
+    defer alloc.free(buf);
+    var done: usize = 0;
+    while (done < n) {
+        const r = std.os.linux.pread(fd, buf[done..].ptr, n - done, @intCast(done));
+        if (std.os.linux.errno(r) != .SUCCESS or r == 0) {
+            throwRuntime(env, "cannot read a Parcel blob descriptor");
+            return null;
+        }
+        done += r;
+    }
+    if (n > 0) env.*.*.SetByteArrayRegion.?(env, arr, 0, len, @ptrCast(buf.ptr));
+    return arr;
 }
 fn pSignalExceptionForError(env: JNIEnvPtr, cls: jni.jclass, err: jni.jint) callconv(.c) void {
     _ = cls;

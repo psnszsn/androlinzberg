@@ -657,6 +657,26 @@ public final class FrameworkCompatSmoke {
             copy.putString("extra", "x")
             check(copy.getInt("i") == 7 && copy.getString("extra") == "x") { "bundle copy after unparcel" }
             dst.recycle()
+
+            // Blobs: small ones ride inline, large ones spill to a sealed memfd
+            // carried as a descriptor (AOSP's ashmem blob), so a Parcel with a
+            // multi-megabyte payload stays under the broker's frame cap.
+            for (size in intArrayOf(0, 5, 16 * 1024, 2 * 1024 * 1024)) {
+                val blob = ByteArray(size) { i -> (i % 251).toByte() }
+                val bp = android.os.Parcel.obtain()
+                bp.writeBlob(blob)
+                check(bp.hasFileDescriptors() == (size > 16 * 1024)) { "blob of $size bytes: descriptor spill" }
+                bp.setDataPosition(0)
+                val back = checkNotNull(bp.readBlob()) { "blob of $size bytes read back null" }
+                check(back.contentEquals(blob)) { "blob of $size bytes round trip" }
+                check(bp.dataAvail() == 0) { "blob of $size bytes: ${bp.dataAvail()} bytes unread" }
+                bp.recycle()
+            }
+            val np = android.os.Parcel.obtain()
+            np.writeBlob(null)
+            np.setDataPosition(0)
+            check(np.readBlob() == null) { "null blob round trip" }
+            np.recycle()
         }
         android.util.Log.i("FrameworkCompatSmoke", "parcel round trips ok")
         }
