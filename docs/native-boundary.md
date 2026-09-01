@@ -39,7 +39,12 @@ zig build -j10 cpp-audit
   registers the Parcel/Binder/BinderProxy/BinderInternal/ServiceManager
   natives (`framework_jni.zig` → `registerBinderFrameworkNatives`), so one
   broker connection per process serves Java and native code alike. Local
-  `AIBinder` operations need no broker connection.
+  `AIBinder` operations need no broker connection. `framework_jni.zig` is also
+  the registrar for the other real `android.os` classes: SystemProperties
+  (property area reader, broker set), SharedMemory/MemoryFile (memfd),
+  Process (priorities, signals, /proc), SystemClock (`clock_gettime`; all
+  `@CriticalNative`, so the Zig functions take no `JNIEnv`), and Trace (the
+  Ravenwood no-op shape: no tag enabled, emitters empty).
 
 `src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C
 macros and callback code that Zig cannot import directly.

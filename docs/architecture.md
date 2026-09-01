@@ -18,6 +18,23 @@ adapter replaces behavior that needs an Android daemon or system service.
 Each adapter keeps the Android interface at its boundary. Framework callers do
 not need Linux-specific branches.
 
+`android.os` is the real AOSP package (Parcel, Binder, ServiceManager, Looper,
+MessageQueue, Process, SystemProperties, SystemClock, Build, StrictMode,
+Environment, …) over natives in Zig; `src/framework/android/os/` holds no
+replacements. Likewise `android.net.Uri`, `android.content.Intent`, and
+`BroadcastReceiver` are verbatim; the hosted seams left in `android.content`
+are Context/ContextWrapper, ContentResolver/ContentProvider, and the receiver
+dispatcher (`ArtzigBroadcastManager`, the LoadedApk role).
+
+The launcher owns the session's Android data root and exports it to every
+process it starts: `ARTZIG_DATA_DIR` (default `$XDG_DATA_HOME/artzig`, else
+`~/.local/share/artzig`) is `Environment.getDataDirectory()`, with
+`DOWNLOAD_CACHE` and `EXTERNAL_STORAGE` (the one emulated volume) beneath it.
+`ANDROID_DATA` remains ART's dalvik-cache root (an XDG cache directory) and is
+not the data directory; vendored patch 0019 gives `Environment` that
+precedence. `Build` values are session properties the broker seeds
+(`ro.build.*`, `ro.product.*`); `ro.boot.qemu` is never set.
+
 ### Graphics and windows
 
 The application uses AOSP HWUI, Skia, and Minikin. The platform layer gives
