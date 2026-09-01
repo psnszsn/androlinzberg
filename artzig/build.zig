@@ -15,10 +15,13 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const aosp_dep = b.dependency("aosp", .{});
+    const aosp = aosp_dep.path("");
+    const bionic_translation = b.dependency("bionic_translation", .{}).path("");
 
     // --- the `art` module: translated jni.h + src/art.zig
     const jni_tc = b.addTranslateC(.{
-        .root_source_file = b.path("vendor/libnativehelper/include_jni/jni.h"),
+        .root_source_file = aosp.path(b, "libnativehelper/include_jni/jni.h"),
         .target = target,
         .optimize = optimize,
     });
@@ -44,7 +47,7 @@ pub fn build(b: *std.Build) void {
     const androidfw = @import("build/androidfw.zig").build(b, .{
         .target = target,
         .optimize = optimize,
-        .vendor = b.path("vendor"),
+        .vendor = aosp,
         .extra = b.path("extra"),
     });
     b.installArtifact(androidfw);
@@ -76,10 +79,7 @@ pub fn build(b: *std.Build) void {
     run_res.addPassthruArgs();
     b.step("run-resources", "Run examples/resources (args: <apk> [type/name...])").dependOn(&run_res.step);
 
-    // --- generated from Soong's ninja graph (tools/ninja2zig.py); hybrid: generated
-    //     sources/headers still come from out/ until the genrules are ported.
-    const gen_step = b.step("gen-libartbase", "Build libartbase.so + deps from build/gen/libartbase.zig with Zig");
-    const vendor_dir = (b.root.join(b.allocator, "vendor") catch @panic("OOM")).toString(b.allocator) catch @panic("OOM");
+    const vendor_dir = aosp_dep.builder.root.toString(b.allocator) catch @panic("OOM");
     const out_dir = (b.root.join(b.allocator, "out") catch @panic("OOM")).toString(b.allocator) catch @panic("OOM");
     const root_dir = b.root.toString(b.allocator) catch @panic("OOM");
     // headers Soong's host sysroot provides that a plain glibc doesn't (libcap); from pkg-config
@@ -91,22 +91,11 @@ pub fn build(b: *std.Build) void {
         while (it.next()) |t| if (std.mem.startsWith(u8, t, "-I")) list.append(b.allocator, b.fmt("-isystem{s}", .{t[2..]})) catch @panic("OOM");
         break :blk list.items;
     };
-    const gen = @import("build/gen/libartbase.zig").build(b, .{
-        .target = target,
-        .optimize = optimize,
-        .vendor = b.path("vendor"),
-        .out = b.path("out"),
-        .vendor_dir = vendor_dir,
-        .out_dir = out_dir,
-        .root_dir = root_dir,
-    });
-    gen_step.dependOn(&b.addInstallArtifact(gen.libartbase, .{ .dest_dir = .{ .override = .{ .custom = "gen" } } }).step);
-
     const art_step = b.step("gen-art", "Build the whole ART host runtime from build/gen/art.zig with Zig");
     var art_opts: @import("build/gen/art.zig").Options = .{
         .target = target,
         .optimize = optimize,
-        .vendor = b.path("vendor"),
+        .vendor = aosp,
         .out = b.path("out"),
         .vendor_dir = vendor_dir,
         .out_dir = out_dir,
@@ -114,8 +103,10 @@ pub fn build(b: *std.Build) void {
         .extra_cflags = extra_cflags,
     };
     // genrules ported to Zig (operator_out, mterp, asm_defines, vendored aconfig): no Soong out/ needed
-    art_opts.gen_dirs = @import("build/genrules.zig").build(b, .{ .vendor = b.path("vendor"), .art_opts = art_opts });
+    art_opts.gen_dirs = @import("build/genrules.zig").build(b, .{ .vendor = aosp, .art_opts = art_opts });
     const art_gen = @import("build/gen/art.zig").build(b, art_opts);
+    const gen_step = b.step("gen-libartbase", "Build libartbase.so + deps with Zig");
+    gen_step.dependOn(&b.addInstallArtifact(art_gen.libartbase, .{ .dest_dir = .{ .override = .{ .custom = "gen" } } }).step);
     // The runtime is relocatable, so retain only the explicit $ORIGIN rpaths
     // configured by build/gen/art.zig. Zig's default per-library rpaths point
     // back into .zig-cache and break bare dlopen() calls after installation.
@@ -144,7 +135,7 @@ pub fn build(b: *std.Build) void {
 
     // --- boot classpath jars built with the system JDK (no Soong)
     const javalib = @import("build/javalib.zig").build(b, .{
-        .vendor = b.path("vendor"),
+        .vendor = aosp,
         .target = target,
         .optimize = optimize,
     });
@@ -162,12 +153,12 @@ pub fn build(b: *std.Build) void {
     // core-icu4j: d8 of the vendored i18n SDK class jar
     const icu4j_dex = blk: {
         const d8run = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-Dcom.android.tools.r8.emitRecordAnnotationsInDex", "-Dcom.android.tools.r8.emitPermittedSubclassesAnnotationsInDex", "-cp" });
-        d8run.addFileArg(b.path("vendor/prebuilts/r8/r8.jar"));
+        d8run.addFileArg(aosp.path(b, "prebuilts/r8/r8.jar"));
         d8run.addArgs(&.{ "com.android.tools.r8.D8", "--debug", "--min-api", "31", "--classpath" });
         d8run.addFileArg(javalib.class_jars.get("core-all").?);
         d8run.addArg("--output");
         const dexdir = d8run.addOutputDirectoryArg("core-icu4j-dex");
-        d8run.addFileArg(b.path("vendor/prebuilts/runtime/mainline/i18n/sdk/java/core-icu4j.jar"));
+        d8run.addFileArg(aosp.path(b, "prebuilts/runtime/mainline/i18n/sdk/java/core-icu4j.jar"));
         const mk = b.addSystemCommand(&.{ "jar", "--create", "--file" });
         const out = mk.addOutputFileArg("core-icu4j.jar");
         mk.addArg("-C");
@@ -179,7 +170,7 @@ pub fn build(b: *std.Build) void {
     const bionic = @import("build/bionic.zig").build(b, .{
         .target = target,
         .optimize = optimize,
-        .src = b.path("extra/bionic_translation"),
+        .src = bionic_translation,
     });
     inline for (.{ bionic.dl_bio, bionic.pthread_bio, bionic.c_bio, bionic.stdcpp_bio }) |artifact| {
         artifact.each_lib_rpath = false;
@@ -195,7 +186,7 @@ pub fn build(b: *std.Build) void {
 
     const dist_step = b.step("dist", "Assemble the relocatable runtime tree (zig-out/dist/art) from Zig-built pieces");
     const runtime = @import("build/dist.zig").build(b, dist_step, .{
-        .vendor = b.path("vendor"),
+        .vendor = aosp,
         .arts = art_gen,
         .bionics = &.{ bionic.dl_bio, bionic.pthread_bio, bionic.c_bio, bionic.stdcpp_bio },
         .jars = &javalib,

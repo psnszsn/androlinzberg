@@ -32,6 +32,10 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .aosp = .{
+            .url = "file:///mnt/code/proj/androlinzberg/aosp/artzig-aosp-android-16.0.0_r1.tar.gz",
+            .hash = "N-V-__8AAM1CcgqX0S4kRiTPFlFY8hEyf64MhhnneLUZwL0j",
+        },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{
         //    // When updating this field to a new URL, be sure to delete the corresponding
@@ -61,6 +65,10 @@
         //    // actually used.
         //    .lazy = false,
         //},
+        .bionic_translation = .{
+            .url = "git+https://gitlab.com/android_translation_layer/bionic_translation.git#ef588129f1b505e62de8750793e44aba98817a98",
+            .hash = "N-V-__8AAGCkBQDzuN_HnnSdm_vKSf4WCvHYVQsAS-PGUTuJ",
+        },
     },
     // Specifies the set of files and directories that are included in this package.
     // Only files and directories listed here are included in the `hash` that
@@ -75,15 +83,13 @@
         "build.zig.zon",
         "src",
         "tools/d8.sh",
-        "vendor/libnativehelper/include_jni",
         "build",
         "tools",
         "patches",
         "flake.nix",
         "flake.lock",
         "README.md",
-        // NOTE: vendor/ and extra/ are NOT listed — a consumer fetches the pruned
-        // source tree (tools/make-dist-tarball.sh, ~110 MB) next to this package,
-        // or the artifact tree from `zig build dist`.
+        // AOSP and bionic_translation sources are package dependencies and are
+        // intentionally not copied into the Artzig package itself.
     },
 }

@@ -7,7 +7,7 @@ const std = @import("std");
 pub const Options = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    /// checkout of bionic_translation (extra/bionic_translation)
+    /// bionic_translation package root
     src: std.Build.LazyPath,
 };
 
