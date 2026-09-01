@@ -123,6 +123,7 @@ com/android/internal/inputmethod/IInputMethodSessionCallback.aidl
 com/android/internal/inputmethod/IRemoteAccessibilityInputConnection.aidl
 com/android/internal/inputmethod/IRemoteInputConnection.aidl
 com/android/internal/os/IResultReceiver.aidl
+com/android/internal/os/IShellCallback.aidl
 com/android/internal/textservice/ISpellCheckerSession.aidl
 com/android/internal/textservice/ISpellCheckerSessionListener.aidl
 com/android/internal/textservice/ITextServicesManager.aidl

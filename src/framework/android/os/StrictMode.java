@@ -56,4 +56,10 @@ public final class StrictMode {
             public VmPolicy build() { return new VmPolicy(); }
         }
     }
+    // Binder violation gathering (real Binder/Parcel call these around each
+    // transaction); no policy is ever gathered on this host, so they are no-ops.
+    public static void clearGatheredViolations() {}
+    public static boolean hasGatheredViolations() { return false; }
+    public static void writeGatheredViolationsToParcel(Parcel p) {}
+    public static void readAndHandleBinderCallViolations(Parcel p) {}
 }

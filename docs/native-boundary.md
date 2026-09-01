@@ -31,11 +31,15 @@ zig build -j10 cpp-audit
   soname to it. When loaded into an ART process (`System.load` of its absolute
   path; `JNI_OnLoad` captures the `JavaVM`), the `AIBinder_fromJavaBinder` /
   `AIBinder_toJavaBinder` / `AParcel_fromJavaParcel` bridge converts binders
-  across the language boundary in-process — a remote handle by broker global
-  id, a local handle by a JNI-forwarding wrapper (native→Java via
-  `Binder.transact`, Java→native via the `NativeForwardingBinder` native
-  method). Local `AIBinder` operations need no broker connection, so the
-  library is usable purely for the bridge in a process that never connects.
+  across the language boundary in-process with true sharing: the real AOSP
+  `android.os.Parcel`'s `mNativePtr` *is* an `AParcel`, a Java `Binder`'s
+  `mObject` is a `JavaBBinderHolder` whose `AIBinder` calls back
+  `Binder.execTransact` with the native parcels, and a `BinderProxy`'s
+  `mNativeData` owns a remote (or native-local) `AIBinder`. The same library
+  registers the Parcel/Binder/BinderProxy/BinderInternal/ServiceManager
+  natives (`framework_jni.zig` → `registerBinderFrameworkNatives`), so one
+  broker connection per process serves Java and native code alike. Local
+  `AIBinder` operations need no broker connection.
 
 `src/platform/azk_pipewire.c` is a small PipeWire adapter. It contains the C
 macros and callback code that Zig cannot import directly.
@@ -48,9 +52,11 @@ macros and callback code that Zig cannot import directly.
 - `AospJniBridge.cpp` registers AOSP JNI code and manages Skia bitmap access.
 - `AospParcelAbi.cpp` supplies required AOSP `android::Parcel` symbols. Most
   members abort (their paths are never taken in-process); the subset
-  CursorWindow's parcel path uses is a real JNI bridge onto the hosted Java
-  `android.os.Parcel`, so cross-process provider cursors ship genuine
-  CursorWindows (memfd over SCM_RIGHTS).
+  CursorWindow's parcel path uses resolves the Java `android.os.Parcel`'s
+  `mNativePtr` and operates on that `AParcel` directly through the NDK C ABI
+  plus a tiny `azk_parcel_*` shim (real String8/descriptor wire layout, no JNI
+  round trips), so cross-process provider cursors ship genuine CursorWindows
+  (memfd over SCM_RIGHTS).
 
 These files can use HWUI, Skia, and AOSP C++ types. Put new platform behavior in
 Zig behind a small C interface. Update this document and the build audit when

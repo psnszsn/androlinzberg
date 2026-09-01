@@ -1039,7 +1039,9 @@ const EX_UNSUPPORTED_OPERATION: i32 = -7;
 /// IBinder.FIRST_CALL_TRANSACTION == 1).
 const SM = struct {
     const getService = 1;
+    const getService2 = 2;
     const checkService = 3;
+    const checkService2 = 4;
     const addService = 5;
     const listServices = 6;
     const isDeclared = 9;
@@ -1093,15 +1095,26 @@ fn handleServiceManagerTransact(
             const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
             defer gpa.free(name);
             try smWriteI32(&data, gpa, 0); // no exception
-            if (b.services.get(name)) |gid| {
-                const object = b.objects.get(gid).?;
-                const ref = try b.deliverRef(peer, object);
-                const off: u32 = @intCast(data.items.len);
-                try smWriteI32(&data, gpa, 1); // strong binder present
-                try entries.append(gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
-            } else {
-                try smWriteI32(&data, gpa, 0); // null binder
-            }
+            try smWriteServiceBinder(b, peer, &data, &entries, name);
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.getService2, SM.checkService2 => {
+            // The framework's ServiceManagerProxy resolves every service through
+            // checkService2, which returns a Service union. Reply shape:
+            //   no-exception, Service(present), tag=serviceWithMetadata,
+            //   ServiceWithMetadata(present, length-prefixed){ IBinder, boolean }.
+            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
+            defer gpa.free(name);
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smWriteI32(&data, gpa, 1); // Service typedObject present
+            try smWriteI32(&data, gpa, 0); // union tag: serviceWithMetadata
+            try smWriteI32(&data, gpa, 1); // ServiceWithMetadata typedObject present
+            const swm_start = data.items.len;
+            try smWriteI32(&data, gpa, 0); // parcelable size placeholder
+            try smWriteServiceBinder(b, peer, &data, &entries, name); // @nullable IBinder service
+            try smWriteI32(&data, gpa, 0); // isLazyService = false
+            const size: i32 = @intCast(data.items.len - swm_start);
+            std.mem.writeInt(i32, data.items[swm_start..][0..4], size, .little);
             try smReply(peer, header, data.items, entries.items);
         },
         SM.addService => {
@@ -1170,6 +1183,27 @@ fn handleServiceManagerTransact(
             try smReply(peer, header, data.items, entries.items);
         },
         else => return smReplyException(peer, header, EX_UNSUPPORTED_OPERATION, "unsupported IServiceManager transaction"),
+    }
+}
+
+/// Writes a strong-binder value (writeStrongBinder layout: an i32 placeholder +
+/// a side-table entry) for the registry service `name`, delivering it to `peer`;
+/// writes a null binder (i32 0, no entry) when the service is absent.
+fn smWriteServiceBinder(
+    b: *Broker,
+    peer: *Peer,
+    data: *std.ArrayList(u8),
+    entries: *std.ArrayList(ObjectEntry),
+    name: []const u8,
+) ServeError!void {
+    if (b.services.get(name)) |gid| {
+        const object = b.objects.get(gid).?;
+        const ref = try b.deliverRef(peer, object);
+        const off: u32 = @intCast(data.items.len);
+        try smWriteI32(data, b.gpa, 1); // strong binder present
+        try entries.append(b.gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
+    } else {
+        try smWriteI32(data, b.gpa, 0); // null binder
     }
 }
 

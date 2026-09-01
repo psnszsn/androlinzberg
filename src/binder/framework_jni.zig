@@ -373,5 +373,8 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     ndk.ensureJavaVm(env);
     registerSystemProperties(env) catch return -1;
     registerSharedMemory(env) catch return -1;
+    // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
+    // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
+    if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;
     return 0;
 }

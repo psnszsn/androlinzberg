@@ -3,3 +3,4 @@
 # java-event-log-tags.py tool. One .logtags per line.
 core/java/android/view/EventLogTags.logtags
 services/core/java/com/android/server/am/EventLogTags.logtags
+core/java/android/os/EventLogTags.logtags

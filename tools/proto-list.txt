@@ -34,3 +34,6 @@ frameworks/base/core/proto/android/view/insetsstate.proto
 frameworks/base/core/proto/android/view/remote_animation_target.proto
 frameworks/base/core/proto/android/view/windowlayoutparams.proto
 frameworks/proto_logging/stats/enums/view/inputmethod/enums.proto
+frameworks/base/core/proto/android/server/statlogger.proto
+frameworks/base/core/proto/android/os/bundle.proto
+frameworks/base/core/proto/android/os/persistablebundle.proto

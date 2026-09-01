@@ -1,6 +1,7 @@
 package dev.artzig.integration
 
 import dev.artzig.testkit.ApkRule
+import dev.artzig.testkit.AppSession
 import dev.artzig.testkit.LaunchSize
 import dev.artzig.testkit.WaitKind
 import java.nio.file.Path
@@ -63,16 +64,16 @@ class NewPipeTest {
         click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
         click(description = "Play video, duration:")
-        if (!isVisible(description = "Toggle screen orientation")) {
-            waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
-            if (!isVisible(description = "Toggle screen orientation")) {
-                click(description = "Play video, duration:", settle = WaitKind.NOW)
-            }
-        }
-        waitFor(description = "Toggle screen orientation")
+        revealPlayerControls()
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
         waitForFullscreen(true)
 
+        // The controls may still be showing after the switch (their auto-hide is
+        // timing-dependent); a tap on the surface hides them deterministically,
+        // as fullscreenButtonExitsAndRestoresVideoDetails does.
+        if (isVisible(description = "Toggle screen orientation")) {
+            click(description = "Play video, duration:", settle = WaitKind.NOW)
+        }
         waitFor(description = "Toggle screen orientation", absent = true)
         assertFullscreenVideoVisible(screenshot("fullscreen-video.png"))
         click(description = "Play video, duration:", settle = WaitKind.NOW)
@@ -89,13 +90,7 @@ class NewPipeTest {
         waitForFullscreen(false)
 
         click(description = "Play video, duration:")
-        if (!isVisible(description = "Toggle screen orientation")) {
-            waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
-            if (!isVisible(description = "Toggle screen orientation")) {
-                click(description = "Play video, duration:", settle = WaitKind.NOW)
-            }
-        }
-        waitFor(description = "Toggle screen orientation")
+        revealPlayerControls()
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
 
         waitForFullscreen(true)
@@ -145,13 +140,7 @@ class NewPipeDesktopTest {
         waitForFullscreen(false)
 
         click(description = "Play video, duration:")
-        if (!isVisible(description = "Toggle screen orientation")) {
-            waitFor(className = "android.widget.ProgressBar", stateDescription = "0%")
-            if (!isVisible(description = "Toggle screen orientation")) {
-                click(description = "Play video, duration:", settle = WaitKind.NOW)
-            }
-        }
-        waitFor(description = "Toggle screen orientation")
+        revealPlayerControls()
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
         waitForFullscreen(true)
     }
@@ -243,3 +232,20 @@ private fun colorDelta(first: Int, second: Int): Int =
     kotlin.math.abs((first ushr 16 and 0xff) - (second ushr 16 and 0xff)) +
         kotlin.math.abs((first ushr 8 and 0xff) - (second ushr 8 and 0xff)) +
         kotlin.math.abs((first and 0xff) - (second and 0xff))
+
+/**
+ * Brings up the main player's control overlay after "Play video". NewPipe shows the
+ * controls when playback starts and auto-hides them about two seconds later, and a
+ * tap on the surface toggles them, so poll: tap only while they are hidden, until the
+ * orientation toggle (part of the overlay) is present.
+ */
+private fun AppSession.revealPlayerControls() {
+    repeat(10) {
+        if (isVisible(description = "Toggle screen orientation")) return
+        if (isVisible(description = "Play video, duration:")) {
+            click(description = "Play video, duration:", settle = WaitKind.NOW)
+        }
+        Thread.sleep(700)
+    }
+    waitFor(description = "Toggle screen orientation")
+}

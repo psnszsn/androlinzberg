@@ -1,6 +1,8 @@
 /* artzig shim: android.os.Message. */
 package android.os;
 public final class Message {
+    /** AOSP Message.UID_NONE: no work-source uid attributed to this message. */
+    public static final int UID_NONE = -1;
     public int what, arg1, arg2;
     public Object obj;
     public Messenger replyTo;

@@ -63,6 +63,8 @@ object HostedServiceRuntime {
 
     @JvmStatic
     fun handleBindService(token: IBinder, intent: Intent, rebind: Boolean) {
+        // AOSP ActivityThread.handleBindService: extras resolve against the app loader.
+        intent.setExtrasClassLoader(classLoader)
         val state = services[token] ?: run {
             // Creation failed earlier; publish a null binder so waiting
             // connections get onNullBinding instead of hanging forever.
@@ -93,6 +95,7 @@ object HostedServiceRuntime {
 
     @JvmStatic
     fun handleUnbindService(token: IBinder, intent: Intent) {
+        intent.setExtrasClassLoader(classLoader)
         val state = services[token] ?: return
         try {
             val doRebind = state.service.onUnbind(intent)
@@ -108,6 +111,8 @@ object HostedServiceRuntime {
 
     @JvmStatic
     fun handleServiceArgs(token: IBinder, startId: Int, flags: Int, args: Intent?) {
+        // AOSP ActivityThread.handleServiceArgs: data.args.setExtrasClassLoader(s.getClassLoader()).
+        args?.setExtrasClassLoader(classLoader)
         val state = services[token] ?: return
         try {
             val res = state.service.onStartCommand(args, flags, startId)

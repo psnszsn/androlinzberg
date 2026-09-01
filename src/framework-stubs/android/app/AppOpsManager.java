@@ -63,4 +63,15 @@ public class AppOpsManager {
     public int noteOpNoThrow(int op, int uid, String packageName, String attributionTag, String message) {
         return checkWithService(op, uid, packageName);
     }
+    // Noted-app-ops collection hooks the real Binder/Parcel call around each
+    // transaction. No collection ever runs on this host: nothing is prefixed to
+    // a reply and the "noted appops" reply header therefore never appears.
+    public static final class PausedNotedAppOpsCollection {}
+    public static void prefixParcelWithAppOpsIfNeeded(android.os.Parcel p) {}
+    public static void startNotedAppOpsCollection(int callingUid) {}
+    public static void finishNotedAppOpsCollection() {}
+    public static PausedNotedAppOpsCollection pauseNotedAppOpsCollection() { return null; }
+    public static void resumeNotedAppOpsCollection(PausedNotedAppOpsCollection c) {}
+    public static boolean isListeningForOpNoted() { return false; }
+    public static void readAndLogNotedAppops(android.os.Parcel p) {}
 }

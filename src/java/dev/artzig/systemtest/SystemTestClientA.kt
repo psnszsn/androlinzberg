@@ -6,7 +6,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.os.HostedBinderRuntime
 import android.os.IBinder
 import android.os.Looper
 import android.os.Process
@@ -35,7 +34,8 @@ internal object SystemTestClientA {
     @JvmStatic
     fun main(args: Array<String>) {
         Looper.prepareMainLooper()
-        HostedBinderRuntime.bootstrap("dev.artzig.test.a", false)
+        // Package identity comes from AZK_BINDER_PACKAGE (set by the harness);
+        // the binder connection is established lazily on first use.
         val frameworkRes = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
         // This process's context carries its own package identity: services
         // like the clipboard verify the calling package against the uid

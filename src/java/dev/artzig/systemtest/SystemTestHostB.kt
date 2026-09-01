@@ -3,7 +3,6 @@ package dev.artzig.systemtest
 import android.app.ActivityThread
 import android.app.ContextImpl
 import android.os.Binder
-import android.os.HostedBinderRuntime
 import android.os.Looper
 import android.os.Parcel
 import android.os.Process
@@ -19,7 +18,8 @@ internal object SystemTestHostB {
     @JvmStatic
     fun main(args: Array<String>) {
         Looper.prepareMainLooper()
-        HostedBinderRuntime.bootstrap("dev.artzig.test.b", false)
+        // Package identity comes from AZK_BINDER_PACKAGE (set by the harness);
+        // the binder connection is established lazily on first use.
         val frameworkRes = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
         // Own package identity (the clipboard's AppOps checkPackage verifies
         // the calling package against this process's uid).

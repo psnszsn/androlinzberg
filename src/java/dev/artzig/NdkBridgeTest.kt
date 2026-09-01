@@ -12,7 +12,7 @@ import android.os.Parcel
  */
 object NdkBridgeTest {
     @JvmStatic external fun forwardAdd(callback: Binder, a: Int, b: Int): Int
-    @JvmStatic external fun makeNativeAdder(): Binder
+    @JvmStatic external fun makeNativeAdder(): android.os.IBinder
 
     /** A local Java Binder the native side calls back into. */
     private class JavaAdder : Binder() {

@@ -367,7 +367,7 @@ public final class ApkHost {
             // observed before that. The full manifest parse happens only in
             // the system process (installPackage).
             val pkg: String = parseApkLitePackageName(apkPath)
-            android.os.HostedBinderRuntime.bootstrap(pkg, false)
+            dev.artzig.BinderSession.setIdentity(pkg, false)
             installOwnPackage(apkPath, pkg)
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =
@@ -387,7 +387,9 @@ public final class ApkHost {
             val cl: HostedApkClassLoader =
                 HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
             sClassLoader = cl;
-            android.os.Parcel.setDefaultClassLoader(cl)
+            // The real AOSP Parcel has no default-classloader hook; Parcelables
+            // are read with an explicit loader (Bundle.setClassLoader) at the
+            // call sites. sClassLoader holds the APK loader for that routing.
             Log.i(TAG, "APK dexopt status: " + apkDexoptStatus())
 
             // Per-process display and input services: real Binder objects the
@@ -524,12 +526,12 @@ public final class ApkHost {
             if (Looper.myLooper() == null) Looper.prepareMainLooper()
             // A windowless service host has no reason to outlive the session:
             // exit if the broker connection is lost (parent death, teardown).
-            android.os.HostedBinderRuntime.exitProcessOnDisconnect = true
+            dev.artzig.BinderSession.setExitOnDisconnect()
             val frameworkRes: String = System.getenv("ARTZIG_FRAMEWORK_RES")
             val apkPath: String = System.getenv("ARTZIG_APK")
             AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
             val pkg: String = parseApkLitePackageName(apkPath)
-            android.os.HostedBinderRuntime.bootstrap(pkg, false)
+            dev.artzig.BinderSession.setIdentity(pkg, false)
             installOwnPackage(apkPath, pkg)
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =
@@ -537,7 +539,9 @@ public final class ApkHost {
             val libPath: String = extractNativeLibraries(apkPath)
             val cl: HostedApkClassLoader = HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
             sClassLoader = cl
-            android.os.Parcel.setDefaultClassLoader(cl)
+            // The real AOSP Parcel has no default-classloader hook; Parcelables
+            // are read with an explicit loader (Bundle.setClassLoader) at the
+            // call sites. sClassLoader holds the APK loader for that routing.
             // Same per-process display/input Binder services as init(): the
             // AOSP manager clients resolve them through ServiceManager even in
             // a headless service host.

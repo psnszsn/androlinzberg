@@ -9,8 +9,8 @@
 //! Java peer registered resolves to a remote `AIBinder`, and a service this
 //! library registers is a broker object a Java peer can look up and call.
 //!
-//! Source note: the peer half mirrors
-//! `android.os.HostedBinderRuntime` (Kotlin) — the same request-id/pending-call
+//! Source note: the peer half follows libbinder's IPCThreadState/BpBinder
+//! shape over the AZKB protocol — a request-id/pending-call
 //! map, per-remote delivery counting with `release`, local-export `uses` with
 //! the `object_released`/`release_ack` handshake, nested transactions executed
 //! on the thread parked on the originating request, and per-local oneway
@@ -89,6 +89,14 @@ fn closeFd(fd: fd_t) void {
     (Io.File{ .handle = fd, .flags = .{ .nonblocking = false } }).close(g_io);
 }
 
+/// Duplicates a descriptor (used when a parcel range carrying an fd entry is
+/// copied into another parcel); returns -1 on failure.
+fn dupFd(fd: fd_t) fd_t {
+    if (fd < 0) return -1;
+    const rc = std.os.linux.dup(fd);
+    return if (std.os.linux.errno(rc) != .SUCCESS) -1 else @intCast(rc);
+}
+
 /// NUL-terminated dup (this Zig's Allocator has no dupeZ); null on OOM.
 fn dupz(bytes: []const u8) ?[:0]u8 {
     const buf = alloc.allocSentinel(u8, bytes.len, 0) catch return null;
@@ -154,7 +162,7 @@ const Entry = struct {
     fd: fd_t = -1,
 };
 
-const AParcel = struct {
+pub const AParcel = struct {
     data: std.ArrayListUnmanaged(u8) = .empty,
     entries: std.ArrayListUnmanaged(Entry) = .empty,
     /// Received descriptors, indexed by an entry's ordinal `value`.
@@ -163,6 +171,10 @@ const AParcel = struct {
     /// A received parcel owns its fds and closes them on delete; a locally
     /// built parcel hands its fds to the frame and must not.
     owns_fds: bool = false,
+    /// Whether writing a file descriptor into this parcel is permitted
+    /// (Parcel.pushAllowFds/restoreAllowFds). Defaults to allowed, matching a
+    /// fresh AOSP Parcel.
+    allow_fds: bool = true,
 
     fn create() *AParcel {
         const p = alloc.create(AParcel) catch @panic("oom");
@@ -310,24 +322,76 @@ const AParcel = struct {
         return out.toOwnedSlice(alloc) catch @panic("oom");
     }
 
-    /// Interface-descriptor token, in the hosted layout the JVM Parcel's
-    /// writeInterfaceToken uses: a single strict-mode policy int (0) followed
-    /// by writeString(descriptor). libbinder_ndk writes it in
-    /// prepareTransaction and checks it before dispatch (mirroring ABBinder).
+    /// Interface-descriptor token in the exact AOSP libbinder layout the JVM
+    /// Parcel's writeInterfaceToken uses: strict-mode policy int, work-source
+    /// int, the 'SYST' interface header marker, then writeString16(descriptor).
+    /// This is the single wire format shared by every peer (NDK, JVM Parcel, and
+    /// the broker's IServiceManager decoder) after the android.os flip.
     fn writeInterfaceToken(p: *AParcel, descriptor: []const u8) void {
-        p.writeI32(0);
+        p.writeI32(0); // strict-mode policy
+        p.writeI32(-1); // work source (kUnsetWorkSource)
+        p.writeI32(interface_header); // 'SYST'
         p.writeString(descriptor, @intCast(descriptor.len));
     }
     /// Consumes a token and reports whether it names `descriptor`. Leaves the
     /// parcel positioned just after the token; a short/malformed token counts
     /// as a mismatch.
     fn enforceInterfaceToken(p: *AParcel, descriptor: []const u8) bool {
-        _ = p.readI32() orelse return false;
+        _ = p.readI32() orelse return false; // strict-mode policy
+        _ = p.readI32() orelse return false; // work source
+        _ = p.readI32() orelse return false; // interface header marker
         const s = p.readString() catch return false;
         defer alloc.free(s);
         return std.mem.eql(u8, s, descriptor);
     }
+
+    /// AOSP writeString8 layout: i32 byte count, the UTF-8 bytes, a NUL byte,
+    /// padded to 4. length<0 writes the null marker.
+    fn writeString8(p: *AParcel, utf8: []const u8, length: i32) void {
+        if (length < 0) {
+            p.writeI32(-1);
+            return;
+        }
+        p.writeI32(@intCast(utf8.len));
+        p.writeBytes(utf8);
+        p.writeBytes(&[_]u8{0});
+        p.pad4();
+    }
+    /// Reads the writeString8 layout into freshly allocated UTF-8 (caller frees);
+    /// `error.Null` for the -1 marker.
+    fn readString8(p: *AParcel) error{ Malformed, Null }![]u8 {
+        const count = p.readI32() orelse return error.Malformed;
+        if (count < 0) return error.Null;
+        const n: usize = @intCast(count);
+        const s = p.readSlice(n) orelse return error.Malformed;
+        const out = alloc.dupe(u8, s) catch @panic("oom");
+        _ = p.readSlice(1); // NUL byte
+        p.skipPad();
+        return out;
+    }
+
+    /// Appends `len` bytes from `other` starting at `offset`, copying any object
+    /// entries that fall in that range (offsets rebased). Used by nativeAppendFrom.
+    fn appendRange(p: *AParcel, other: *AParcel, offset: usize, len: usize) void {
+        if (offset > other.data.items.len) return;
+        const end = @min(offset + len, other.data.items.len);
+        const base: u32 = @intCast(p.pos);
+        p.writeBytes(other.data.items[offset..end]);
+        for (other.entries.items) |e| {
+            if (e.offset >= offset and e.offset < end) {
+                const new_off = base + (e.offset - @as(u32, @intCast(offset)));
+                var copy = e;
+                copy.offset = new_off;
+                // A copied fd entry must dup so both parcels can close it.
+                if (e.kind == .file_descriptor and e.fd >= 0) copy.fd = dupFd(e.fd);
+                p.entries.append(alloc, copy) catch @panic("oom");
+            }
+        }
+    }
 };
+
+/// The libbinder interface header marker, B_PACK_CHARS('S','Y','S','T').
+const interface_header: i32 = 0x53595354;
 
 // ------------------------------------------------------------ AIBinder + class
 
@@ -496,6 +560,11 @@ const Runtime = struct {
     dispatch_idle: usize = 0,
     dispatch_total: usize = 0,
     disconnected: std.atomic.Value(bool) = .init(false),
+    /// BinderInternal.joinThreadPool parks a thread here until the broker
+    /// connection drops (onDisconnected broadcasts it), so a service process
+    /// that joins the pool stays alive without a busy loop.
+    join_mu: Io.Mutex = .init,
+    join_cv: Io.Condition = .init,
     /// The routing id of the call each thread is currently servicing, for
     /// nested-transaction parent tracking.
     servicing: Io.Mutex = .init,
@@ -528,15 +597,25 @@ const Runtime = struct {
     fn connect() !*Runtime {
         const io = g_io;
         const socket = getenv("AZK_BINDER_SOCKET") orelse return error.NoSocket;
-        // The system cookie is present only in the system-role process (the
-        // launcher strips it from spawned app children), so its presence IS the
-        // role — matching the JVM peer's selection.
-        const cookie = getenv("AZK_BINDER_SYSTEM_COOKIE") orelse getenv("AZK_BINDER_COOKIE") orelse "";
-        // Same anonymous fallback as the JVM peer, so both peers of one
-        // process present the same package (and share a broker uid).
+        const system_cookie = getenv("AZK_BINDER_SYSTEM_COOKIE");
+        const app_cookie = getenv("AZK_BINDER_COOKIE") orelse "";
         var anon_buf: [64]u8 = undefined;
-        const package = getenv("AZK_BINDER_PACKAGE") orelse
-            std.fmt.bufPrint(&anon_buf, "anonymous.{d}", .{std.os.linux.getpid()}) catch unreachable;
+        var cookie: []const u8 = undefined;
+        var package: []const u8 = undefined;
+        if (g_has_identity_override) {
+            // dev.artzig.BinderSession.setIdentity chose the package and role.
+            package = g_identity_pkg orelse "";
+            cookie = if (g_identity_is_system) (system_cookie orelse app_cookie) else app_cookie;
+        } else {
+            // A JVM process is an app unless BinderSession.setIdentity(_, true)
+            // claimed the system role (the hosted runtime's rule: the test
+            // harnesses hand every peer both cookies). A pure native peer has no
+            // way to declare itself, so there the system cookie's presence IS the
+            // role (the launcher strips it from spawned app children).
+            cookie = if (g_jvm != null) app_cookie else (system_cookie orelse app_cookie);
+            package = getenv("AZK_BINDER_PACKAGE") orelse
+                std.fmt.bufPrint(&anon_buf, "anonymous.{d}", .{std.os.linux.getpid()}) catch unreachable;
+        }
         const addr = try net.UnixAddress.init(socket);
         const stream = try addr.connect(io);
         errdefer stream.close(io);
@@ -628,6 +707,7 @@ const Runtime = struct {
             if (!keep) break;
         }
         r.onDisconnected();
+        detachCurrentThread();
     }
 
     fn handle(r: *Runtime, header: InHeader, body: []const u8, fds: []fd_t) bool {
@@ -782,6 +862,7 @@ const Runtime = struct {
         const in = r.dispatch_queue.orderedRemove(0);
         r.mu.unlock(g_io);
         r.dispatch(in);
+        detachCurrentThread();
     }
 
     /// Runs a received transaction against a resolved target (null = gone). The
@@ -1023,6 +1104,7 @@ const Runtime = struct {
         AIBinder_decStrong(q.target);
         q.items.deinit(alloc);
         alloc.destroy(q);
+        detachCurrentThread();
     }
 
     fn maybeRelease(r: *Runtime, id: u64, uses: u64) void {
@@ -1094,6 +1176,12 @@ const Runtime = struct {
         for (r.death_links.items) |l| links.append(alloc, l) catch @panic("oom");
         r.mu.unlock(g_io);
         for (links.items) |l| if (l.recipient.on_died) |cb| cb(l.cookie);
+        // Wake any thread parked in BinderInternal.joinThreadPool.
+        r.join_mu.lockUncancelable(g_io);
+        r.join_cv.broadcast(g_io);
+        r.join_mu.unlock(g_io);
+        // A windowless service host exits when its session's broker drops.
+        if (g_exit_on_disconnect.load(.monotonic)) std.process.exit(0);
     }
 
     // ---------------------------------------------------------- transact
@@ -1547,6 +1635,52 @@ export fn AParcel_readStatusHeader(parcel: *const AParcel, status: *?*AStatus) c
         if (ex == -8) s.service_specific = p.readI32() orelse 0;
     }
     status.* = s;
+    return STATUS_OK;
+}
+
+// ----- azk_parcel_*: small C shim for the island's libbinder Parcel stand-in
+// (src/native/AospParcelAbi.cpp), which reaches the Java Parcel's AParcel
+// through mNativePtr. String8 is the AOSP layout CursorWindow writes.
+
+export fn azk_parcel_writeString8(parcel: *AParcel, str: ?[*]const u8, len: usize) callconv(.c) i32 {
+    if (str) |s| parcel.writeString8(s[0..len], @intCast(len)) else parcel.writeString8("", -1);
+    return STATUS_OK;
+}
+/// Reads a String8 into a buffer owned by this library (free with
+/// azk_parcel_freeString8). A null marker yields a null pointer and STATUS_OK.
+export fn azk_parcel_readString8(parcel: *const AParcel, out: *?[*]u8, out_len: *usize) callconv(.c) i32 {
+    const p = @constCast(parcel);
+    const s = p.readString8() catch |e| switch (e) {
+        error.Null => {
+            out.* = null;
+            out_len.* = 0;
+            return STATUS_OK;
+        },
+        error.Malformed => return STATUS_NOT_ENOUGH_DATA,
+    };
+    out.* = s.ptr;
+    out_len.* = s.len;
+    return STATUS_OK;
+}
+export fn azk_parcel_freeString8(ptr: ?[*]u8, len: usize) callconv(.c) void {
+    if (ptr) |q| alloc.free(q[0..len]);
+}
+/// libbinder Parcel::readFileDescriptor semantics: the descriptor stays owned
+/// by the parcel (the caller dups to keep it), unlike the NDK read which
+/// transfers ownership.
+export fn azk_parcel_readFileDescriptorBorrowed(parcel: *const AParcel, fd: *i32) callconv(.c) i32 {
+    const p = @constCast(parcel);
+    const off: u32 = @intCast(p.pos);
+    const has = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    fd.* = -1;
+    if (has == 0) return STATUS_OK;
+    for (p.entries.items) |e| {
+        if (e.offset == off and e.kind == .file_descriptor) {
+            const ordinal: usize = @intCast(e.value);
+            if (ordinal < p.fds.items.len) fd.* = p.fds.items[ordinal];
+            return STATUS_OK;
+        }
+    }
     return STATUS_OK;
 }
 
@@ -2411,24 +2545,6 @@ export fn JNI_OnLoad(vm: ?*anyopaque, reserved: ?*anyopaque) callconv(.c) i32 {
     return jni.JNI_VERSION_1_6;
 }
 
-
-/// Cached JNI ids for the bridge, resolved once against the loaded classes.
-const Bridge = struct {
-    binderproxy_class: jni.jclass,
-    binderproxy_globalid: jni.jfieldID, // BinderProxy.globalId : J
-    parcel_class: jni.jclass,
-    parcel_obtain: jni.jmethodID, // static obtain()Landroid/os/Parcel;
-    parcel_marshall: jni.jmethodID, // marshall()[B
-    parcel_unmarshall: jni.jmethodID, // unmarshall([BII)V
-    parcel_recycle: jni.jmethodID, // recycle()V
-    binder_transact: jni.jmethodID, // Binder.transact(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z
-    hbr_class: jni.jclass,
-    proxy_for_global: jni.jmethodID, // static (J)Landroid/os/BinderProxy;
-    native_forwarding: jni.jmethodID, // static (J)Landroid/os/Binder;
-};
-var g_bridge: ?Bridge = null;
-var g_bridge_mu: Io.Mutex = .init;
-
 const JNIEnvPtr = [*c]jni.JNIEnv;
 
 /// A JNIEnv for the calling thread, attaching it to the VM if necessary (e.g. a
@@ -2457,41 +2573,22 @@ pub fn jniEnv() JNIEnvPtr {
     return @ptrCast(@alignCast(env));
 }
 
+/// Detaches the calling thread from the JVM if jniEnv() attached it. Every
+/// library thread that may have run Java (oneway serial workers, the reader
+/// thread, one-shot dispatchers) calls this before exiting: ART aborts a
+/// process whose attached native thread exits without detaching.
+fn detachCurrentThread() void {
+    const vm: [*c]jni.JavaVM = @ptrCast(@alignCast(g_jvm orelse return));
+    var env: ?*anyopaque = null;
+    if (vm.*.*.GetEnv.?(vm, &env, jni.JNI_VERSION_1_6) != jni.JNI_OK) return; // not attached
+    _ = vm.*.*.DetachCurrentThread.?(vm);
+}
+
 pub fn findGlobalClass(env: JNIEnvPtr, name: [*:0]const u8) ?jni.jclass {
     const local = env.*.*.FindClass.?(env, name) orelse return null;
     const global: jni.jclass = @ptrCast(env.*.*.NewGlobalRef.?(env, local));
     env.*.*.DeleteLocalRef.?(env, local);
     return global;
-}
-
-fn ensureBridge(env: JNIEnvPtr) ?*Bridge {
-    // Resolves the JVM classes/methods once and caches them. v1 note: a partial
-    // failure here (a class or member not found — a fatal misconfiguration that
-    // does not occur with the hosted framework) leaks the global refs created
-    // so far; it is not retried in practice because the members always exist.
-    g_bridge_mu.lockUncancelable(g_io);
-    defer g_bridge_mu.unlock(g_io);
-    if (g_bridge) |*b| return b;
-    const bp = findGlobalClass(env, "android/os/BinderProxy") orelse return null;
-    const pc = findGlobalClass(env, "android/os/Parcel") orelse return null;
-    const binder_class = env.*.*.FindClass.?(env, "android/os/Binder") orelse return null;
-    const hbr = findGlobalClass(env, "android/os/HostedBinderRuntime") orelse return null;
-    const b = Bridge{
-        .binderproxy_class = bp,
-        .binderproxy_globalid = env.*.*.GetFieldID.?(env, bp, "globalId", "J") orelse return null,
-        .parcel_class = pc,
-        .parcel_obtain = env.*.*.GetStaticMethodID.?(env, pc, "obtain", "()Landroid/os/Parcel;") orelse return null,
-        .parcel_marshall = env.*.*.GetMethodID.?(env, pc, "marshall", "()[B") orelse return null,
-        .parcel_unmarshall = env.*.*.GetMethodID.?(env, pc, "unmarshall", "([BII)V") orelse return null,
-        .parcel_recycle = env.*.*.GetMethodID.?(env, pc, "recycle", "()V") orelse return null,
-        .binder_transact = env.*.*.GetMethodID.?(env, binder_class, "transact", "(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z") orelse return null,
-        .hbr_class = hbr,
-        .proxy_for_global = env.*.*.GetStaticMethodID.?(env, hbr, "proxyForGlobalId", "(J)Landroid/os/BinderProxy;") orelse return null,
-        .native_forwarding = env.*.*.GetStaticMethodID.?(env, hbr, "nativeForwardingBinder", "(J)Landroid/os/Binder;") orelse return null,
-    };
-    env.*.*.DeleteLocalRef.?(env, binder_class);
-    g_bridge = b;
-    return &g_bridge.?;
 }
 
 fn clearException(env: JNIEnvPtr) bool {
@@ -2502,75 +2599,30 @@ fn clearException(env: JNIEnvPtr) bool {
     return false;
 }
 
-/// Marshals a Java Parcel's raw bytes (object-free) into an allocated slice.
-fn javaMarshall(env: JNIEnvPtr, b: *Bridge, java: jni.jobject) ?[]u8 {
-    const arr: jni.jbyteArray = @ptrCast(env.*.*.CallObjectMethodA.?(env, java, b.parcel_marshall, null));
-    if (clearException(env)) return null;
-    if (arr == null) return alloc.alloc(u8, 0) catch @panic("oom");
-    const len: usize = @intCast(env.*.*.GetArrayLength.?(env, arr));
-    const buf = alloc.alloc(u8, len) catch @panic("oom");
-    if (len > 0) env.*.*.GetByteArrayRegion.?(env, arr, 0, @intCast(len), @ptrCast(buf.ptr));
-    env.*.*.DeleteLocalRef.?(env, arr);
-    return buf;
-}
-
-/// Replaces a Java Parcel's contents with raw bytes (object-free).
-fn javaUnmarshall(env: JNIEnvPtr, b: *Bridge, java: jni.jobject, bytes: []const u8) void {
-    const arr = env.*.*.NewByteArray.?(env, @intCast(bytes.len)) orelse return;
-    if (bytes.len > 0) env.*.*.SetByteArrayRegion.?(env, arr, 0, @intCast(bytes.len), @ptrCast(@constCast(bytes.ptr)));
-    var args: [3]jni.jvalue = undefined;
-    args[0].l = arr;
-    args[1].i = 0;
-    args[2].i = @intCast(bytes.len);
-    env.*.*.CallVoidMethodA.?(env, java, b.parcel_unmarshall, &args);
-    _ = clearException(env);
-    env.*.*.DeleteLocalRef.?(env, arr);
-}
-
-/// on_transact for a native AIBinder that wraps a local Java Binder: forward the
-/// call to the Java object via JNI (fromJavaBinder's forward direction). v1
-/// limitation: the calling identity (uid/pid) is not installed on the Java
-/// Binder thread-local, so a remotely-originated call would appear to Java as
-/// self-originated (correct for the tested in-process case, where it is self).
+/// on_transact for a local Java Binder's AIBinder (JavaBBinderHolder path):
+/// promotes the holder's weak ref and calls Binder.execTransact with the native
+/// AParcel pointers directly (true sharing — no marshalling). The reply is
+/// written straight into `out`, which the reply path then serializes.
 fn javaForwardTransact(binder: *AIBinder, code: u32, in: *const AParcel, out: *AParcel) callconv(.c) i32 {
+    const fw = g_fw orelse return STATUS_FAILED_TRANSACTION;
     const env = jniEnv();
     if (env == null) return STATUS_FAILED_TRANSACTION;
-    const b = ensureBridge(env) orelse return STATUS_FAILED_TRANSACTION;
-    const java_binder: jni.jobject = @ptrCast(binder.user_data);
-
-    const data = env.*.*.CallStaticObjectMethodA.?(env, b.parcel_class, b.parcel_obtain, null) orelse return STATUS_FAILED_TRANSACTION;
-    const reply = env.*.*.CallStaticObjectMethodA.?(env, b.parcel_class, b.parcel_obtain, null) orelse {
-        _ = clearException(env);
-        env.*.*.CallVoidMethodA.?(env, data, b.parcel_recycle, null);
-        env.*.*.DeleteLocalRef.?(env, data);
-        return STATUS_FAILED_TRANSACTION;
-    };
-    javaUnmarshall(env, b, data, @constCast(in).data.items);
-
+    const h: *JavaBBinderHolder = @ptrCast(@alignCast(binder.user_data));
+    const local = env.*.*.NewLocalRef.?(env, h.java_ref) orelse return STATUS_DEAD_OBJECT;
+    defer env.*.*.DeleteLocalRef.?(env, local);
     var args: [4]jni.jvalue = undefined;
     args[0].i = @bitCast(code);
-    args[1].l = data;
-    args[2].l = reply;
-    args[3].i = 0;
-    const handled = env.*.*.CallBooleanMethodA.?(env, java_binder, b.binder_transact, &args);
-    const threw = clearException(env);
-
-    if (!threw and handled == jni.JNI_TRUE) {
-        if (javaMarshall(env, b, reply)) |bytes| {
-            defer alloc.free(bytes);
-            out.writeBytes(bytes);
-        }
-    }
-    env.*.*.CallVoidMethodA.?(env, data, b.parcel_recycle, null);
-    env.*.*.CallVoidMethodA.?(env, reply, b.parcel_recycle, null);
-    env.*.*.DeleteLocalRef.?(env, data);
-    env.*.*.DeleteLocalRef.?(env, reply);
-    if (threw) return STATUS_FAILED_TRANSACTION;
+    args[1].j = @intCast(@intFromPtr(in));
+    args[2].j = @intCast(@intFromPtr(out));
+    args[3].i = 0; // flags (the on_transact seam does not carry them; oneway is handled by the caller)
+    const handled = env.*.*.CallBooleanMethodA.?(env, local, fw.binder_exec_transact, &args);
+    if (clearException(env)) return STATUS_FAILED_TRANSACTION;
     return if (handled == jni.JNI_TRUE) STATUS_OK else STATUS_UNKNOWN_TRANSACTION;
 }
 
-/// The bridge class for Java-forwarding native binders (no interface token; the
-/// forwarded Java Parcel already carries whatever the caller wrote).
+/// The class for AIBinders that back a local Java Binder. No interface token is
+/// consumed natively; execTransact reads it on the Java side. user_data is the
+/// *JavaBBinderHolder.
 var g_java_forward_class = AIBinder_Class{
     .descriptor = @constCast("azk.JavaForward"),
     .token_header = false,
@@ -2580,122 +2632,69 @@ var g_java_forward_class = AIBinder_Class{
 };
 
 fn javaForwardDestroy(user_data: ?*anyopaque) callconv(.c) void {
-    // Release the global ref to the wrapped Java Binder when the native handle
-    // is freed.
-    if (user_data == null) return;
+    // The AIBinder's last strong ref is gone: release the strong global ref so
+    // the Java Binder becomes collectable. The holder itself is freed by the
+    // Binder's finalizer (it still holds a weak handle on this object).
+    const h: *JavaBBinderHolder = @ptrCast(@alignCast(user_data orelse return));
     const env = jniEnv();
-    if (env == null) return;
-    env.*.*.DeleteGlobalRef.?(env, @ptrCast(user_data));
+    g_holder_mu.lockUncancelable(g_io);
+    const ref = h.java_ref;
+    h.java_ref = null;
+    g_holder_mu.unlock(g_io);
+    if (env) |e| if (ref != null) e.*.*.DeleteGlobalRef.?(e, ref);
 }
 
 export fn AIBinder_fromJavaBinder(env_opaque: ?*anyopaque, binder: ?*anyopaque) callconv(.c) ?*AIBinder {
-    const obj: jni.jobject = @ptrCast(binder orelse return null);
     const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return null));
-    const b = ensureBridge(env) orelse return null;
-    if (env.*.*.IsInstanceOf.?(env, obj, b.binderproxy_class) == jni.JNI_TRUE) {
-        // Remote: a native proxy for the same broker object. Borrowed — the
-        // JVM peer received this global id, this native peer did not, so it must
-        // not count a delivery it never got.
-        const gid = env.*.*.GetLongField.?(env, obj, b.binderproxy_globalid);
-        return Runtime.get().proxyForBorrowed(@bitCast(gid));
-    }
-    // Local Java Binder: a native handle that forwards transactions to it.
-    const global = env.*.*.NewGlobalRef.?(env, obj) orelse return null;
-    return AIBinder.createLocal(&g_java_forward_class, global);
+    return javaBinderToNative(env, @ptrCast(binder));
 }
 
 export fn AIBinder_toJavaBinder(env_opaque: ?*anyopaque, binder: ?*AIBinder) callconv(.c) ?*anyopaque {
     const bnd = binder orelse return null;
     const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return null));
-    const b = ensureBridge(env) orelse return null;
-    if (bnd.kind == .remote) {
-        // Remote: a BinderProxy for the same broker object.
-        var args: [1]jni.jvalue = undefined;
-        args[0].j = @bitCast(bnd.id);
-        return env.*.*.CallStaticObjectMethodA.?(env, b.hbr_class, b.proxy_for_global, &args);
-    }
+    const fw = g_fw orelse return null;
+    // NDK contract: the caller keeps its own reference; anything created here
+    // takes its own.
     if (bnd.class == &g_java_forward_class) {
-        // Already a wrapped Java Binder: hand back the original object.
-        return env.*.*.NewLocalRef.?(env, @ptrCast(bnd.user_data));
+        // A local Java Binder read back in its own process: return the object.
+        const h: *JavaBBinderHolder = @ptrCast(@alignCast(bnd.user_data));
+        return env.*.*.NewLocalRef.?(env, h.java_ref);
     }
-    // Local native AIBinder: a Java Binder that forwards to it. The Java wrapper
-    // holds a strong ref, released when the wrapper is finalized.
+    // A remote proxy or a native-local AIBinder handed to Java: build (or reuse)
+    // a BinderProxy whose mNativeData owns a strong ref. getInstance dedups by
+    // the AIBinder address, which is stable per broker object (proxies are
+    // gid-keyed).
     AIBinder_incStrong(bnd);
-    var args: [1]jni.jvalue = undefined;
-    args[0].j = @intCast(@intFromPtr(bnd));
-    const wrapper = env.*.*.CallStaticObjectMethodA.?(env, b.hbr_class, b.native_forwarding, &args);
-    if (wrapper == null or clearException(env)) {
-        // The wrapper never took the ref; roll it back so the object is not leaked.
+    const nd = alloc.create(BinderProxyNativeData) catch @panic("oom");
+    nd.* = .{ .aibinder = bnd };
+    var args: [2]jni.jvalue = undefined;
+    args[0].j = @intCast(@intFromPtr(nd));
+    args[1].j = @intCast(@intFromPtr(bnd));
+    const proxy = env.*.*.CallStaticObjectMethodA.?(env, fw.binderproxy_class, fw.binderproxy_get_instance, &args);
+    if (proxy == null or clearException(env)) {
+        alloc.destroy(nd);
         AIBinder_decStrong(bnd);
         return null;
     }
-    return wrapper;
+    // If getInstance deduped to an existing proxy, it did not adopt our data.
+    const adopted = env.*.*.GetLongField.?(env, proxy, fw.binderproxy_native_data);
+    if (adopted != @as(jni.jlong, @intCast(@intFromPtr(nd)))) {
+        alloc.destroy(nd);
+        AIBinder_decStrong(bnd);
+    }
+    return proxy;
 }
 
 export fn AParcel_fromJavaParcel(env_opaque: ?*anyopaque, parcel: ?*anyopaque) callconv(.c) ?*AParcel {
-    // v1 limitation: a read-only byte snapshot of the Java Parcel (object-free),
-    // not a live wrapper of its buffer as AOSP provides. Native writes do not
-    // flow back to the Java Parcel, and later Java-side changes are not seen.
+    // True sharing: the Java Parcel's mNativePtr IS the AParcel. The returned
+    // pointer is borrowed (owned by the Java Parcel); the NDK caller must not
+    // delete it.
     const obj: jni.jobject = @ptrCast(parcel orelse return null);
     const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return null));
-    const b = ensureBridge(env) orelse return null;
-    const bytes = javaMarshall(env, b, obj) orelse return null;
-    defer alloc.free(bytes);
-    const p = AParcel.create();
-    p.writeBytes(bytes);
-    p.pos = 0;
-    return p;
-}
-
-/// Native method for android.os.HostedBinderRuntime.NativeForwardingBinder: a
-/// Java transaction on a native-backed binder, forwarded to the native
-/// AIBinder's on_transact (toJavaBinder's reverse direction).
-export fn Java_dev_artzig_NativeForwardingBinder_nativeTransact(
-    env_opaque: ?*anyopaque,
-    thiz: ?*anyopaque,
-    native_ptr: i64,
-    code: i32,
-    data: ?*anyopaque,
-    reply: ?*anyopaque,
-    flags: i32,
-) callconv(.c) i32 {
-    _ = thiz;
-    _ = flags;
-    const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return jni.JNI_FALSE));
-    const b = ensureBridge(env) orelse return jni.JNI_FALSE;
-    const bnd: *AIBinder = @ptrFromInt(@as(usize, @intCast(native_ptr)));
-
-    const in = AParcel.create();
-    defer in.destroy();
-    if (data) |d| {
-        const bytes = javaMarshall(env, b, @ptrCast(d)) orelse return jni.JNI_FALSE;
-        defer alloc.free(bytes);
-        in.writeBytes(bytes);
-        in.pos = 0;
-    }
-    var out = AParcel.create();
-    defer out.destroy();
-    // Route through localTransact so the interface-token header is consumed and
-    // the transaction identity (isHandlingTransaction, calling uid/pid) is
-    // installed, exactly as an incoming transaction would be.
-    const rc = Runtime.localTransact(bnd, @bitCast(code), in, out);
-    if (rc == STATUS_OK and reply != null) {
-        javaUnmarshall(env, b, @ptrCast(reply.?), out.data.items);
-    }
-    return if (rc == STATUS_OK) jni.JNI_TRUE else jni.JNI_FALSE;
-}
-
-/// Releases the native AIBinder ref held by a NativeForwardingBinder (called
-/// from its finalizer / an explicit release).
-export fn Java_dev_artzig_NativeForwardingBinder_nativeRelease(
-    env_opaque: ?*anyopaque,
-    thiz: ?*anyopaque,
-    native_ptr: i64,
-) callconv(.c) void {
-    _ = env_opaque;
-    _ = thiz;
-    const bnd: *AIBinder = @ptrFromInt(@as(usize, @intCast(native_ptr)));
-    AIBinder_decStrong(bnd);
+    const fw = g_fw orelse return null;
+    const ptr = env.*.*.GetLongField.?(env, obj, fw.parcel_native_ptr);
+    if (ptr == 0) return null;
+    return parcelOf(ptr);
 }
 
 // ----- JNI bridge self-test entries (dev.artzig.NdkBridgeTest). Exercised only
@@ -2743,4 +2742,1016 @@ export fn Java_dev_artzig_NdkBridgeTest_makeNativeAdder(env: ?*anyopaque, clazz:
     const java = AIBinder_toJavaBinder(env, binder);
     AIBinder_decStrong(binder); // the Java wrapper now holds the ref
     return java;
+}
+
+// ===========================================================================
+// android.os framework natives: Parcel, Binder, BinderProxy, BinderInternal.
+//
+// Registered by azk_register_binder_jni (framework_jni.zig) via
+// registerBinderFrameworkNatives. The real AOSP Java classes run over this: a
+// Java Parcel's mNativePtr IS an *AParcel; a Java Binder's mObject is a
+// *JavaBBinderHolder; a BinderProxy's mNativeData is a *BinderProxyNativeData.
+// This replaces the hosted pure-Java Parcel/Binder and HostedBinderRuntime.
+// ===========================================================================
+
+/// Lazily-created native backing for a local Java Binder (Binder.mObject),
+/// modelled on AOSP's JavaBBinderHolder/JavaBBinder: the holder keeps only a
+/// WEAK handle on `aibinder`, while the aibinder (class g_java_forward_class)
+/// owns a STRONG global ref to the Java Binder for as long as anything holds
+/// the native object (an export, a remote, a reader). So a Binder that was
+/// handed out stays alive exactly while it is referenced natively, and becomes
+/// collectable once the last native ref drops (javaForwardDestroy releases the
+/// global ref). The Binder's NativeAllocationRegistry finalizer then drops the
+/// holder's weak handle and frees the holder.
+const JavaBBinderHolder = struct {
+    java_ref: jni.jobject = null,
+    aibinder: ?*AIBinder = null,
+};
+
+/// Native backing for a BinderProxy (BinderProxy.mNativeData): one strong ref to
+/// a remote `aibinder`. Freed (and the ref dropped) by the proxy finalizer.
+const BinderProxyNativeData = struct {
+    aibinder: *AIBinder,
+};
+
+/// Cached class/field/method ids for the framework binder classes, resolved once
+/// by registerBinderFrameworkNatives.
+const FrameworkIds = struct {
+    parcel_native_ptr: jni.jfieldID, // Parcel.mNativePtr : J
+    binder_class: jni.jclass,
+    binder_object: jni.jfieldID, // Binder.mObject : J
+    binder_exec_transact: jni.jmethodID, // Binder.execTransact(IJJI)Z
+    binderproxy_class: jni.jclass,
+    binderproxy_native_data: jni.jfieldID, // BinderProxy.mNativeData : J
+    binderproxy_get_instance: jni.jmethodID, // static BinderProxy.getInstance(JJ)LBinderProxy;
+    fd_class: jni.jclass,
+    fd_ctor: jni.jmethodID, // FileDescriptor()
+    fd_get_int: jni.jmethodID, // FileDescriptor.getInt$()I
+    fd_set_int: jni.jmethodID, // FileDescriptor.setInt$(I)V
+    death_binder_died: jni.jmethodID, // IBinder$DeathRecipient.binderDied()V
+};
+var g_fw: ?FrameworkIds = null;
+
+inline fn parcelOf(handle: jni.jlong) *AParcel {
+    return @ptrFromInt(@as(usize, @intCast(handle)));
+}
+
+// ----- Parcel @CriticalNative (no JNIEnv*/jclass, no object params) ---------
+
+fn pMarkSensitive(handle: jni.jlong) callconv(.c) void {
+    _ = handle;
+}
+fn pIsForRpc(handle: jni.jlong) callconv(.c) jni.jboolean {
+    _ = handle;
+    return jni.JNI_FALSE;
+}
+fn pDataSize(handle: jni.jlong) callconv(.c) jni.jint {
+    return @intCast(parcelOf(handle).data.items.len);
+}
+fn pDataAvail(handle: jni.jlong) callconv(.c) jni.jint {
+    const p = parcelOf(handle);
+    return if (p.pos >= p.data.items.len) 0 else @intCast(p.data.items.len - p.pos);
+}
+fn pDataPosition(handle: jni.jlong) callconv(.c) jni.jint {
+    return @intCast(parcelOf(handle).pos);
+}
+fn pDataCapacity(handle: jni.jlong) callconv(.c) jni.jint {
+    return @intCast(parcelOf(handle).data.capacity);
+}
+fn pSetDataPosition(handle: jni.jlong, pos: jni.jint) callconv(.c) void {
+    parcelOf(handle).pos = @intCast(pos);
+}
+fn pPushAllowFds(handle: jni.jlong, allow: jni.jboolean) callconv(.c) jni.jboolean {
+    const p = parcelOf(handle);
+    const old = p.allow_fds;
+    p.allow_fds = allow != jni.JNI_FALSE;
+    return if (old) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+fn pRestoreAllowFds(handle: jni.jlong, last: jni.jboolean) callconv(.c) void {
+    parcelOf(handle).allow_fds = last != jni.JNI_FALSE;
+}
+fn pWriteInt(handle: jni.jlong, val: jni.jint) callconv(.c) jni.jint {
+    parcelOf(handle).writeI32(val);
+    return STATUS_OK;
+}
+fn pWriteLong(handle: jni.jlong, val: jni.jlong) callconv(.c) jni.jint {
+    parcelOf(handle).writeI64(val);
+    return STATUS_OK;
+}
+fn pWriteFloat(handle: jni.jlong, val: jni.jfloat) callconv(.c) jni.jint {
+    parcelOf(handle).writeI32(@bitCast(val));
+    return STATUS_OK;
+}
+fn pWriteDouble(handle: jni.jlong, val: jni.jdouble) callconv(.c) jni.jint {
+    parcelOf(handle).writeI64(@bitCast(val));
+    return STATUS_OK;
+}
+fn pReadInt(handle: jni.jlong) callconv(.c) jni.jint {
+    return parcelOf(handle).readI32() orelse 0;
+}
+fn pReadLong(handle: jni.jlong) callconv(.c) jni.jlong {
+    return parcelOf(handle).readI64() orelse 0;
+}
+fn pReadFloat(handle: jni.jlong) callconv(.c) jni.jfloat {
+    return @bitCast(parcelOf(handle).readI32() orelse 0);
+}
+fn pReadDouble(handle: jni.jlong) callconv(.c) jni.jdouble {
+    return @bitCast(parcelOf(handle).readI64() orelse 0);
+}
+fn pHasFileDescriptors(handle: jni.jlong) callconv(.c) jni.jboolean {
+    for (parcelOf(handle).entries.items) |e| if (e.kind == .file_descriptor) return jni.JNI_TRUE;
+    return jni.JNI_FALSE;
+}
+fn pReplaceCallingWorkSourceUid(handle: jni.jlong, uid: jni.jint) callconv(.c) jni.jboolean {
+    _ = handle;
+    _ = uid;
+    return jni.JNI_FALSE;
+}
+fn pReadCallingWorkSourceUid(handle: jni.jlong) callconv(.c) jni.jint {
+    _ = handle;
+    return -1; // kUnsetWorkSource
+}
+fn pGetOpenAshmemSize(handle: jni.jlong) callconv(.c) jni.jlong {
+    _ = handle;
+    return 0;
+}
+
+// ----- Parcel @FastNative / normal (JNIEnv*, jclass, ...) -------------------
+
+fn pSetDataSize(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, size: jni.jint) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    const p = parcelOf(handle);
+    const n: usize = @intCast(@max(size, 0));
+    p.data.resize(alloc, n) catch @panic("oom");
+}
+fn pSetDataCapacity(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, size: jni.jint) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    if (size > 0) parcelOf(handle).data.ensureTotalCapacity(alloc, @intCast(size)) catch @panic("oom");
+}
+fn pWriteString8(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, str: jni.jstring) callconv(.c) void {
+    _ = cls;
+    const p = parcelOf(handle);
+    if (str == null) {
+        p.writeString8("", -1);
+        return;
+    }
+    const chars = env.*.*.GetStringUTFChars.?(env, str, null) orelse return;
+    defer env.*.*.ReleaseStringUTFChars.?(env, str, chars);
+    p.writeString8(std.mem.span(chars), @intCast(std.mem.len(chars)));
+}
+fn pWriteString16(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, str: jni.jstring) callconv(.c) void {
+    _ = cls;
+    const p = parcelOf(handle);
+    if (str == null) {
+        p.writeString("", -1);
+        return;
+    }
+    const chars = env.*.*.GetStringUTFChars.?(env, str, null) orelse return;
+    defer env.*.*.ReleaseStringUTFChars.?(env, str, chars);
+    const span = std.mem.span(chars);
+    p.writeString(span, @intCast(span.len));
+}
+fn pReadString8(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jstring {
+    _ = cls;
+    const s = parcelOf(handle).readString8() catch return null;
+    defer alloc.free(s);
+    const z = dupz(s) orelse return null;
+    defer alloc.free(z);
+    return env.*.*.NewStringUTF.?(env, z);
+}
+fn pReadString16(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jstring {
+    _ = cls;
+    const s = parcelOf(handle).readString() catch return null;
+    defer alloc.free(s);
+    const z = dupz(s) orelse return null;
+    defer alloc.free(z);
+    return env.*.*.NewStringUTF.?(env, z);
+}
+fn pWriteStrongBinder(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, binder: jni.jobject) callconv(.c) void {
+    _ = cls;
+    const p = parcelOf(handle);
+    const native = javaBinderToNative(env, binder); // owns a ref, or null
+    defer if (native) |n| AIBinder_decStrong(n);
+    _ = AParcel_writeStrongBinder(p, native);
+}
+fn pWriteFileDescriptor(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, fd_obj: jni.jobject) callconv(.c) void {
+    _ = cls;
+    const p = parcelOf(handle);
+    const fw = g_fw orelse return;
+    if (fd_obj == null) {
+        p.writeI32(0);
+        return;
+    }
+    const fd = env.*.*.CallIntMethod.?(env, fd_obj, fw.fd_get_int);
+    _ = AParcel_writeParcelFileDescriptor(p, fd);
+}
+fn pReadStrongBinder(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jobject {
+    _ = cls;
+    var native: ?*AIBinder = null;
+    _ = AParcel_readStrongBinder(parcelOf(handle), &native);
+    const n = native orelse return null;
+    defer AIBinder_decStrong(n); // readStrongBinder's ref; the Java object took its own
+    return @ptrCast(AIBinder_toJavaBinder(@ptrCast(env), n));
+}
+fn pReadFileDescriptor(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jobject {
+    _ = cls;
+    const fw = g_fw orelse return null;
+    var fd: i32 = -1;
+    _ = AParcel_readParcelFileDescriptor(parcelOf(handle), &fd);
+    if (fd < 0) return null;
+    const obj = env.*.*.NewObject.?(env, fw.fd_class, fw.fd_ctor) orelse return null;
+    env.*.*.CallVoidMethod.?(env, obj, fw.fd_set_int, fd);
+    return obj;
+}
+fn pMarkForBinder(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, binder: jni.jobject) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    _ = handle;
+    _ = binder;
+}
+fn pWriteByteArray(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, arr: jni.jbyteArray, offset: jni.jint, len: jni.jint) callconv(.c) void {
+    _ = cls;
+    const p = parcelOf(handle);
+    if (arr == null or len < 0) {
+        p.writeI32(-1);
+        return;
+    }
+    p.writeI32(len);
+    const n: usize = @intCast(len);
+    const buf = alloc.alloc(u8, n) catch @panic("oom");
+    defer alloc.free(buf);
+    env.*.*.GetByteArrayRegion.?(env, arr, offset, len, @ptrCast(buf.ptr));
+    p.writeBytes(buf);
+    p.pad4();
+}
+fn pWriteBlob(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, arr: jni.jbyteArray, offset: jni.jint, len: jni.jint) callconv(.c) void {
+    // v1: blobs are stored inline like a byte array (small-Bundle path). Large
+    // blobs that would exceed the broker frame cap are a follow-up (memfd spill).
+    pWriteByteArray(env, cls, handle, arr, offset, len);
+}
+fn pCreateByteArray(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jbyteArray {
+    _ = cls;
+    const p = parcelOf(handle);
+    const count = p.readI32() orelse return null;
+    if (count < 0) return null;
+    const n: usize = @intCast(count);
+    const s = p.readSlice(n) orelse return null;
+    p.skipPad();
+    const arr = env.*.*.NewByteArray.?(env, count) orelse return null;
+    env.*.*.SetByteArrayRegion.?(env, arr, 0, count, @ptrCast(s.ptr));
+    return arr;
+}
+fn pReadByteArray(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, dest: jni.jbyteArray, dest_len: jni.jint) callconv(.c) jni.jboolean {
+    _ = cls;
+    const p = parcelOf(handle);
+    const count = p.readI32() orelse return jni.JNI_FALSE;
+    if (count != dest_len) return jni.JNI_FALSE;
+    if (count < 0) return jni.JNI_FALSE;
+    const n: usize = @intCast(count);
+    const s = p.readSlice(n) orelse return jni.JNI_FALSE;
+    p.skipPad();
+    if (dest == null) return jni.JNI_FALSE;
+    env.*.*.SetByteArrayRegion.?(env, dest, 0, count, @ptrCast(s.ptr));
+    return jni.JNI_TRUE;
+}
+fn pReadBlob(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jbyteArray {
+    return pCreateByteArray(env, cls, handle);
+}
+fn pSignalExceptionForError(env: JNIEnvPtr, cls: jni.jclass, err: jni.jint) callconv(.c) void {
+    _ = cls;
+    throwRuntime(env, "parcel error");
+    _ = err;
+}
+fn pCreate(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong {
+    _ = env;
+    _ = cls;
+    return @intCast(@intFromPtr(AParcel.create()));
+}
+fn pFreeBuffer(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    parcelOf(handle).clearContents();
+}
+fn pDestroy(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    parcelOf(handle).destroy();
+}
+fn pMarshall(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jbyteArray {
+    _ = cls;
+    const p = parcelOf(handle);
+    const n: jni.jint = @intCast(p.data.items.len);
+    const arr = env.*.*.NewByteArray.?(env, n) orelse return null;
+    if (n > 0) env.*.*.SetByteArrayRegion.?(env, arr, 0, n, @ptrCast(p.data.items.ptr));
+    return arr;
+}
+fn pUnmarshall(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, data: jni.jbyteArray, offset: jni.jint, len: jni.jint) callconv(.c) void {
+    _ = cls;
+    const p = parcelOf(handle);
+    if (data == null or len < 0) return;
+    const n: usize = @intCast(len);
+    const buf = alloc.alloc(u8, n) catch @panic("oom");
+    defer alloc.free(buf);
+    env.*.*.GetByteArrayRegion.?(env, data, offset, len, @ptrCast(buf.ptr));
+    p.clearContents();
+    p.writeBytes(buf);
+    p.pos = 0;
+}
+fn pMarshallArray(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, data: jni.jbyteArray, offset: jni.jint, length: jni.jint) callconv(.c) jni.jint {
+    _ = cls;
+    const p = parcelOf(handle);
+    const avail: usize = p.data.items.len;
+    const want: usize = @intCast(@max(length, 0));
+    const n = @min(avail, want);
+    if (n > 0) env.*.*.SetByteArrayRegion.?(env, data, offset, @intCast(n), @ptrCast(p.data.items.ptr));
+    return @intCast(n);
+}
+fn pMarshallBuffer(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, buffer: jni.jobject, offset: jni.jint, length: jni.jint) callconv(.c) jni.jint {
+    _ = cls;
+    const p = parcelOf(handle);
+    const base = env.*.*.GetDirectBufferAddress.?(env, buffer) orelse return 0;
+    const dst: [*]u8 = @ptrCast(base);
+    const want: usize = @intCast(@max(length, 0));
+    const n = @min(p.data.items.len, want);
+    if (n > 0) @memcpy(dst[@intCast(offset)..][0..n], p.data.items[0..n]);
+    return @intCast(n);
+}
+fn pUnmarshallBuffer(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, buffer: jni.jobject, offset: jni.jint, length: jni.jint) callconv(.c) void {
+    _ = cls;
+    const p = parcelOf(handle);
+    const base = env.*.*.GetDirectBufferAddress.?(env, buffer) orelse return;
+    const src: [*]const u8 = @ptrCast(base);
+    const n: usize = @intCast(@max(length, 0));
+    p.clearContents();
+    p.writeBytes(src[@intCast(offset)..][0..n]);
+    p.pos = 0;
+}
+fn pCompareData(env: JNIEnvPtr, cls: jni.jclass, a: jni.jlong, b: jni.jlong) callconv(.c) jni.jint {
+    _ = env;
+    _ = cls;
+    const pa = parcelOf(a);
+    const pb = parcelOf(b);
+    if (std.mem.eql(u8, pa.data.items, pb.data.items)) return 0;
+    return 1;
+}
+fn pCompareDataInRange(env: JNIEnvPtr, cls: jni.jclass, a: jni.jlong, off_a: jni.jint, b: jni.jlong, off_b: jni.jint, length: jni.jint) callconv(.c) jni.jboolean {
+    _ = env;
+    _ = cls;
+    const pa = parcelOf(a);
+    const pb = parcelOf(b);
+    const oa: usize = @intCast(off_a);
+    const ob: usize = @intCast(off_b);
+    const n: usize = @intCast(@max(length, 0));
+    if (oa + n > pa.data.items.len or ob + n > pb.data.items.len) return jni.JNI_FALSE;
+    return if (std.mem.eql(u8, pa.data.items[oa .. oa + n], pb.data.items[ob .. ob + n])) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+fn pAppendFrom(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, other: jni.jlong, offset: jni.jint, length: jni.jint) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    parcelOf(handle).appendRange(parcelOf(other), @intCast(@max(offset, 0)), @intCast(@max(length, 0)));
+}
+fn pHasFileDescriptorsInRange(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, offset: jni.jint, length: jni.jint) callconv(.c) jni.jboolean {
+    _ = env;
+    _ = cls;
+    const o: u32 = @intCast(@max(offset, 0));
+    const end: u32 = o + @as(u32, @intCast(@max(length, 0)));
+    for (parcelOf(handle).entries.items) |e| {
+        if (e.kind == .file_descriptor and e.offset >= o and e.offset < end) return jni.JNI_TRUE;
+    }
+    return jni.JNI_FALSE;
+}
+fn pHasBinders(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) jni.jboolean {
+    _ = env;
+    _ = cls;
+    for (parcelOf(handle).entries.items) |e| {
+        if (e.kind == .binder_local or e.kind == .binder_remote) return jni.JNI_TRUE;
+    }
+    return jni.JNI_FALSE;
+}
+fn pHasBindersInRange(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, offset: jni.jint, length: jni.jint) callconv(.c) jni.jboolean {
+    _ = env;
+    _ = cls;
+    const o: u32 = @intCast(@max(offset, 0));
+    const end: u32 = o + @as(u32, @intCast(@max(length, 0)));
+    for (parcelOf(handle).entries.items) |e| {
+        if ((e.kind == .binder_local or e.kind == .binder_remote) and e.offset >= o and e.offset < end) return jni.JNI_TRUE;
+    }
+    return jni.JNI_FALSE;
+}
+fn pWriteInterfaceToken(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, name: jni.jstring) callconv(.c) void {
+    _ = cls;
+    if (name == null) return;
+    const chars = env.*.*.GetStringUTFChars.?(env, name, null) orelse return;
+    defer env.*.*.ReleaseStringUTFChars.?(env, name, chars);
+    parcelOf(handle).writeInterfaceToken(std.mem.span(chars));
+}
+fn pEnforceInterface(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, name: jni.jstring) callconv(.c) void {
+    _ = cls;
+    if (name == null) return;
+    const chars = env.*.*.GetStringUTFChars.?(env, name, null) orelse return;
+    defer env.*.*.ReleaseStringUTFChars.?(env, name, chars);
+    if (!parcelOf(handle).enforceInterfaceToken(std.mem.span(chars)))
+        throwException(env, "java/lang/SecurityException", "Binder invocation to an incorrect interface");
+}
+fn pGetGlobalAllocSize(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong {
+    _ = env;
+    _ = cls;
+    return 0;
+}
+fn pGetGlobalAllocCount(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong {
+    _ = env;
+    _ = cls;
+    return 0;
+}
+
+// ----- transaction identity threadlocals (Binder static natives) -----------
+
+threadlocal var tl_strict_policy: i32 = 0;
+threadlocal var tl_work_source: i32 = -1; // kUnsetWorkSource
+threadlocal var tl_has_identity: bool = false;
+var g_holder_mu: Io.Mutex = .init;
+
+// Process identity override set by dev.artzig.BinderSession before the first
+// binder use (replaces HostedBinderRuntime.bootstrap): connect() prefers these
+// over the AZK_BINDER_* env when present, so a process can name itself and pick
+// the system vs app role explicitly.
+var g_identity_pkg: ?[]u8 = null;
+var g_identity_is_system: bool = false;
+var g_has_identity_override: bool = false;
+/// When set, a lost broker connection exits the process (a windowless service
+/// host has no reason to outlive its session).
+var g_exit_on_disconnect = std.atomic.Value(bool).init(false);
+
+fn throwException(env: JNIEnvPtr, class_name: [*:0]const u8, msg: [*:0]const u8) void {
+    const c = env.*.*.FindClass.?(env, class_name) orelse return;
+    _ = env.*.*.ThrowNew.?(env, c, msg);
+    env.*.*.DeleteLocalRef.?(env, c);
+}
+fn throwRuntime(env: JNIEnvPtr, msg: [*:0]const u8) void {
+    throwException(env, "java/lang/RuntimeException", msg);
+}
+
+// ----- local Java Binder <-> native AIBinder (the JavaBBinderHolder path) ---
+
+/// Returns a strong-ref'd AIBinder for a Java IBinder (Binder or BinderProxy),
+/// or null. The caller owns the returned reference.
+fn javaBinderToNative(env: JNIEnvPtr, obj: jni.jobject) ?*AIBinder {
+    if (obj == null) return null;
+    const fw = g_fw orelse return null;
+    if (env.*.*.IsInstanceOf.?(env, obj, fw.binderproxy_class) == jni.JNI_TRUE) {
+        const nd_ptr = env.*.*.GetLongField.?(env, obj, fw.binderproxy_native_data);
+        if (nd_ptr == 0) return null;
+        const nd: *BinderProxyNativeData = @ptrFromInt(@as(usize, @intCast(nd_ptr)));
+        _ = nd.aibinder.strong.fetchAdd(1, .monotonic);
+        return nd.aibinder;
+    }
+    return holderAIBinder(env, obj);
+}
+
+/// Gets (or lazily creates) the local AIBinder backing a Java Binder, via its
+/// mObject holder. Returns a new strong ref the caller owns.
+fn holderAIBinder(env: JNIEnvPtr, obj: jni.jobject) ?*AIBinder {
+    const fw = g_fw orelse return null;
+    const holder_ptr = env.*.*.GetLongField.?(env, obj, fw.binder_object);
+    if (holder_ptr == 0) return null;
+    const h: *JavaBBinderHolder = @ptrFromInt(@as(usize, @intCast(holder_ptr)));
+    g_holder_mu.lockUncancelable(g_io);
+    defer g_holder_mu.unlock(g_io);
+    if (h.aibinder) |b| {
+        if (tryIncStrong(b)) return b;
+        // The previous native object died (last ref dropped); make a fresh one.
+        decWeak(b);
+        h.aibinder = null;
+    }
+    h.java_ref = env.*.*.NewGlobalRef.?(env, obj);
+    const b = AIBinder.createLocal(&g_java_forward_class, h); // strong=1: the caller's ref
+    _ = b.weak.fetchAdd(1, .monotonic); // the holder's weak handle
+    h.aibinder = b;
+    return b;
+}
+
+/// NativeAllocationRegistry free function for a Java Binder's mObject holder.
+/// Runs only once the Java Binder is unreachable, i.e. after the aibinder (if
+/// any) released its strong global ref; drop the weak handle and free the holder.
+fn binderHolderFinalize(ptr: ?*anyopaque) callconv(.c) void {
+    const h: *JavaBBinderHolder = @ptrCast(@alignCast(ptr orelse return));
+    g_holder_mu.lockUncancelable(g_io);
+    const b = h.aibinder;
+    h.aibinder = null;
+    g_holder_mu.unlock(g_io);
+    if (b) |bb| decWeak(bb);
+    alloc.destroy(h);
+}
+
+// ----- Binder @CriticalNative --------------------------------------------
+
+fn bGetCallingPid() callconv(.c) jni.jint {
+    if (Runtime.current_routing != 0) return Runtime.current_caller_pid;
+    return Runtime.get().pid;
+}
+fn bGetCallingUid() callconv(.c) jni.jint {
+    if (Runtime.current_routing != 0) return @intCast(Runtime.current_caller_uid);
+    return @intCast(Runtime.get().uid);
+}
+fn bIsDirectlyHandlingTransaction() callconv(.c) jni.jboolean {
+    return if (Runtime.current_routing != 0) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+fn bHasExplicitIdentity() callconv(.c) jni.jboolean {
+    return if (tl_has_identity) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+fn bClearCallingIdentity() callconv(.c) jni.jlong {
+    const uid: u64 = if (Runtime.current_routing != 0) Runtime.current_caller_uid else Runtime.get().uid;
+    const pid_u: u32 = @bitCast(if (Runtime.current_routing != 0) Runtime.current_caller_pid else Runtime.get().pid);
+    const token: i64 = @bitCast((uid << 32) | pid_u);
+    Runtime.current_caller_uid = Runtime.get().uid;
+    Runtime.current_caller_pid = Runtime.get().pid;
+    tl_has_identity = true;
+    return token;
+}
+fn bRestoreCallingIdentity(token: jni.jlong) callconv(.c) void {
+    const t: u64 = @bitCast(token);
+    Runtime.current_caller_uid = @intCast(t >> 32);
+    Runtime.current_caller_pid = @bitCast(@as(u32, @truncate(t)));
+}
+fn bSetThreadStrictModePolicy(policy: jni.jint) callconv(.c) void {
+    tl_strict_policy = policy;
+}
+fn bGetThreadStrictModePolicy() callconv(.c) jni.jint {
+    return tl_strict_policy;
+}
+fn bSetCallingWorkSourceUid(ws: jni.jint) callconv(.c) jni.jlong {
+    const old = tl_work_source;
+    tl_work_source = ws;
+    return @intCast(@as(u32, @bitCast(old)));
+}
+fn bGetCallingWorkSourceUid() callconv(.c) jni.jint {
+    return tl_work_source;
+}
+fn bClearCallingWorkSource() callconv(.c) jni.jlong {
+    const old = tl_work_source;
+    tl_work_source = -1;
+    return @intCast(@as(u32, @bitCast(old)));
+}
+fn bRestoreCallingWorkSource(token: jni.jlong) callconv(.c) void {
+    tl_work_source = @bitCast(@as(u32, @truncate(@as(u64, @bitCast(token)))));
+}
+
+// ----- Binder normal natives -----------------------------------------------
+
+fn bGetNativeFinalizer(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong {
+    _ = env;
+    _ = cls;
+    return @intCast(@intFromPtr(&binderHolderFinalize));
+}
+fn bGetNativeBBinderHolder(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong {
+    _ = env;
+    _ = cls;
+    const h = alloc.create(JavaBBinderHolder) catch @panic("oom");
+    h.* = .{};
+    return @intCast(@intFromPtr(h));
+}
+fn bMarkVintfStability(env: JNIEnvPtr, this: jni.jobject) callconv(.c) void {
+    _ = env;
+    _ = this;
+}
+fn bForceDowngradeToSystemStability(env: JNIEnvPtr, this: jni.jobject) callconv(.c) void {
+    _ = env;
+    _ = this;
+}
+fn bFlushPendingCommands(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
+    _ = env;
+    _ = cls;
+}
+fn bBlockUntilThreadAvailable(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
+    _ = env;
+    _ = cls;
+}
+fn bSetExtensionNative(env: JNIEnvPtr, this: jni.jobject, ext: jni.jobject) callconv(.c) void {
+    // Set the extension on this Binder's holder AIBinder (used by getExtension
+    // on the remote side). Rare; a missing extension reads back as null.
+    const native = javaBinderToNative(env, this) orelse return;
+    defer AIBinder_decStrong(native);
+    const e = javaBinderToNative(env, ext); // owned ref, transferred to the object
+    if (native.extension) |old| AIBinder_decStrong(old);
+    native.extension = e;
+}
+
+// ----- BinderProxy natives (all take env + this) ---------------------------
+
+inline fn proxyData(env: JNIEnvPtr, this: jni.jobject) ?*BinderProxyNativeData {
+    const fw = g_fw orelse return null;
+    const nd_ptr = env.*.*.GetLongField.?(env, this, fw.binderproxy_native_data);
+    if (nd_ptr == 0) return null;
+    return @ptrFromInt(@as(usize, @intCast(nd_ptr)));
+}
+
+fn bpPingBinder(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jboolean {
+    const nd = proxyData(env, this) orelse return jni.JNI_FALSE;
+    return if (nd.aibinder.dead.load(.monotonic)) jni.JNI_FALSE else jni.JNI_TRUE;
+}
+fn bpIsBinderAlive(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jboolean {
+    const nd = proxyData(env, this) orelse return jni.JNI_FALSE;
+    return if (nd.aibinder.dead.load(.monotonic)) jni.JNI_FALSE else jni.JNI_TRUE;
+}
+fn bpGetExtension(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jobject {
+    const nd = proxyData(env, this) orelse return null;
+    const ext = nd.aibinder.extension orelse return null;
+    return @ptrCast(AIBinder_toJavaBinder(@ptrCast(env), ext));
+}
+/// IBinder.INTERFACE_TRANSACTION ('_NTF'): the callee replies writeString16(descriptor).
+const INTERFACE_TRANSACTION: u32 = ('_' << 24) | ('N' << 16) | ('T' << 8) | 'F';
+
+fn bpGetInterfaceDescriptor(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jstring {
+    const nd = proxyData(env, this) orelse return null;
+    const in = AParcel.create();
+    defer in.destroy();
+    var out = AParcel.create();
+    defer out.destroy();
+    const rc = Runtime.get().transact(nd.aibinder, INTERFACE_TRANSACTION, in, out, 0);
+    if (rc != STATUS_OK) {
+        throwException(env, if (rc == STATUS_DEAD_OBJECT) "android/os/DeadObjectException" else "android/os/RemoteException", "");
+        return null;
+    }
+    const s = out.readString() catch return null;
+    defer alloc.free(s);
+    const z = dupz(s) orelse return null;
+    defer alloc.free(z);
+    return env.*.*.NewStringUTF.?(env, z);
+}
+fn bpGetNativeFinalizer(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong {
+    _ = env;
+    _ = cls;
+    return @intCast(@intFromPtr(&binderProxyFinalize));
+}
+fn binderProxyFinalize(ptr: ?*anyopaque) callconv(.c) void {
+    const nd: *BinderProxyNativeData = @ptrCast(@alignCast(ptr orelse return));
+    AIBinder_decStrong(nd.aibinder);
+    alloc.destroy(nd);
+}
+fn bpTransactNative(env: JNIEnvPtr, this: jni.jobject, code: jni.jint, data: jni.jobject, reply: jni.jobject, flags: jni.jint) callconv(.c) jni.jboolean {
+    const fw = g_fw orelse return jni.JNI_FALSE;
+    const nd = proxyData(env, this) orelse return jni.JNI_FALSE;
+    const in = parcelOf(env.*.*.GetLongField.?(env, data, fw.parcel_native_ptr));
+    const out: ?*AParcel = if (reply == null) null else parcelOf(env.*.*.GetLongField.?(env, reply, fw.parcel_native_ptr));
+    const rc = Runtime.get().transact(nd.aibinder, @bitCast(code), in, out, @bitCast(flags));
+    if (rc == STATUS_OK or rc == STATUS_UNKNOWN_TRANSACTION) {
+        // A callee that returned UNKNOWN_TRANSACTION still yields false here so
+        // the proxy's default-impl fallback can run.
+        return if (rc == STATUS_OK) jni.JNI_TRUE else jni.JNI_FALSE;
+    }
+    if (rc == STATUS_DEAD_OBJECT) {
+        throwException(env, "android/os/DeadObjectException", "");
+    } else {
+        throwException(env, "android/os/RemoteException", "");
+    }
+    return jni.JNI_FALSE;
+}
+
+/// Shared native DeathRecipient: its cookie is a global ref to the Java
+/// IBinder.DeathRecipient, invoked when the linked object dies.
+var g_java_death_recipient = AIBinder_DeathRecipient{ .on_died = javaDeathDied };
+fn javaDeathDied(cookie: ?*anyopaque) callconv(.c) void {
+    const fw = g_fw orelse return;
+    const env = jniEnv();
+    if (env == null) return;
+    const recipient: jni.jobject = @ptrCast(cookie orelse return);
+    env.*.*.CallVoidMethod.?(env, recipient, fw.death_binder_died);
+    _ = clearException(env);
+    // A death notification is delivered once; like BpBinder::sendObituary the
+    // link is gone afterwards, so a later unlinkToDeath reports it missing.
+    const r = Runtime.get();
+    r.mu.lockUncancelable(g_io);
+    var i: usize = 0;
+    while (i < r.death_links.items.len) : (i += 1) {
+        const l = r.death_links.items[i];
+        if (l.recipient == &g_java_death_recipient and l.cookie == cookie) {
+            _ = r.death_links.orderedRemove(i);
+            break;
+        }
+    }
+    r.mu.unlock(g_io);
+    env.*.*.DeleteGlobalRef.?(env, recipient);
+}
+fn bpLinkToDeathNative(env: JNIEnvPtr, this: jni.jobject, recipient: jni.jobject, flags: jni.jint) callconv(.c) void {
+    _ = flags;
+    const nd = proxyData(env, this) orelse return;
+    const cookie = env.*.*.NewGlobalRef.?(env, recipient) orelse return;
+    _ = AIBinder_linkToDeath(nd.aibinder, &g_java_death_recipient, cookie);
+}
+fn bpUnlinkToDeathNative(env: JNIEnvPtr, this: jni.jobject, recipient: jni.jobject, flags: jni.jint) callconv(.c) jni.jboolean {
+    _ = flags;
+    const nd = proxyData(env, this) orelse return jni.JNI_FALSE;
+    const r = Runtime.get();
+    r.mu.lockUncancelable(g_io);
+    defer r.mu.unlock(g_io);
+    var i: usize = 0;
+    while (i < r.death_links.items.len) : (i += 1) {
+        const l = r.death_links.items[i];
+        if (l.global_id != nd.aibinder.id or l.recipient != &g_java_death_recipient) continue;
+        const cookie: jni.jobject = @ptrCast(l.cookie);
+        if (env.*.*.IsSameObject.?(env, cookie, recipient) != jni.JNI_TRUE) continue;
+        env.*.*.DeleteGlobalRef.?(env, cookie);
+        _ = r.death_links.orderedRemove(i);
+        return jni.JNI_TRUE;
+    }
+    return jni.JNI_FALSE;
+}
+fn bpAddFrozenStateChangeCallbackNative(env: JNIEnvPtr, this: jni.jobject, cb: jni.jobject) callconv(.c) void {
+    _ = this;
+    _ = cb;
+    throwRuntime(env, "frozen state change callbacks are not supported");
+}
+fn bpRemoveFrozenStateChangeCallbackNative(env: JNIEnvPtr, this: jni.jobject, cb: jni.jobject) callconv(.c) jni.jboolean {
+    _ = env;
+    _ = this;
+    _ = cb;
+    return jni.JNI_FALSE;
+}
+fn bpIsFrozenStateChangeCallbackSupportedNative(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jboolean {
+    _ = env;
+    _ = cls;
+    return jni.JNI_FALSE;
+}
+
+// ----- BinderInternal natives ----------------------------------------------
+
+fn biJoinThreadPool(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    const r = Runtime.get();
+    r.join_mu.lockUncancelable(g_io);
+    defer r.join_mu.unlock(g_io);
+    while (!r.disconnected.load(.acquire)) r.join_cv.waitUncancelable(g_io, &r.join_mu);
+}
+fn biGetContextObject(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jobject {
+    _ = cls;
+    const proxy = Runtime.get().proxyFor(Client.context_object_id);
+    defer AIBinder_decStrong(proxy);
+    return @ptrCast(AIBinder_toJavaBinder(@ptrCast(env), proxy));
+}
+fn biDisableBackgroundScheduling(env: JNIEnvPtr, cls: jni.jclass, disable: jni.jboolean) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    _ = disable;
+}
+fn biSetMaxThreads(env: JNIEnvPtr, cls: jni.jclass, n: jni.jint) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    _ = n;
+}
+fn biHandleGc(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
+    _ = env;
+    _ = cls;
+}
+fn biSetBinderProxyCountEnabled(env: JNIEnvPtr, cls: jni.jclass, enabled: jni.jboolean) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    _ = enabled;
+}
+fn biGetBinderProxyPerUidCounts(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jobject {
+    _ = env;
+    _ = cls;
+    return null;
+}
+fn biGetBinderProxyCount(env: JNIEnvPtr, cls: jni.jclass, uid: jni.jint) callconv(.c) jni.jint {
+    _ = env;
+    _ = cls;
+    _ = uid;
+    return 0;
+}
+fn biSetBinderProxyCountWatermarks(env: JNIEnvPtr, cls: jni.jclass, high: jni.jint, low: jni.jint, warning: jni.jint) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    _ = high;
+    _ = low;
+    _ = warning;
+}
+
+// ----- ServiceManager / ServiceManagerProxy natives ------------------------
+
+fn smWaitForServiceNative(env: JNIEnvPtr, cls: jni.jclass, name: jni.jstring) callconv(.c) jni.jobject {
+    _ = cls;
+    if (name == null) return null;
+    const chars = env.*.*.GetStringUTFChars.?(env, name, null) orelse return null;
+    defer env.*.*.ReleaseStringUTFChars.?(env, name, chars);
+    const b = lookup(@ptrCast(chars), true) orelse return null;
+    defer AIBinder_decStrong(b);
+    return @ptrCast(AIBinder_toJavaBinder(@ptrCast(env), b));
+}
+fn smpGetNativeServiceManager(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jobject {
+    _ = this;
+    const proxy = Runtime.get().proxyFor(Client.context_object_id);
+    defer AIBinder_decStrong(proxy);
+    return @ptrCast(AIBinder_toJavaBinder(@ptrCast(env), proxy));
+}
+
+// ----- dev.artzig.BinderSession (process identity / lifecycle) --------------
+
+fn bsSetIdentity(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, is_system: jni.jboolean) callconv(.c) void {
+    _ = cls;
+    if (g_identity_pkg) |old| alloc.free(old);
+    g_identity_pkg = null;
+    if (pkg != null) {
+        const chars = env.*.*.GetStringUTFChars.?(env, pkg, null);
+        if (chars) |c| {
+            defer env.*.*.ReleaseStringUTFChars.?(env, pkg, c);
+            g_identity_pkg = alloc.dupe(u8, std.mem.span(c)) catch null;
+        }
+    }
+    g_identity_is_system = is_system != jni.JNI_FALSE;
+    g_has_identity_override = true;
+}
+fn bsSetExitOnDisconnect(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
+    _ = env;
+    _ = cls;
+    g_exit_on_disconnect.store(true, .monotonic);
+}
+fn bsAssignedUid(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jint {
+    _ = env;
+    _ = cls;
+    if (Runtime.instance) |r| return @intCast(r.uid);
+    // No broker configured for this process (e.g. a standalone JVM test): report
+    // -1 so Process.myUid falls back to its constant. Otherwise connect (a
+    // broker-backed process's uid is broker-assigned) and return the uid.
+    if (getenv("AZK_BINDER_SOCKET") == null) return -1;
+    return @intCast(Runtime.get().uid);
+}
+
+// ----- registration --------------------------------------------------------
+
+fn jm(name: [*:0]const u8, sig: [*:0]const u8, ptr: anytype) jni.JNINativeMethod {
+    return .{ .name = @constCast(name), .signature = @constCast(sig), .fnPtr = @ptrCast(@constCast(ptr)) };
+}
+
+/// Registers the Parcel/Binder/BinderProxy/BinderInternal natives against the
+/// real AOSP framework classes and caches the field/method ids the native side
+/// calls back through. Called once per process by azk_register_binder_jni.
+pub fn registerBinderFrameworkNatives(env_opaque: ?*anyopaque) c_int {
+    const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return -1));
+    ensureJavaVm(env);
+
+    const parcel_cls = findGlobalClass(env, "android/os/Parcel") orelse return -1;
+    const binder_cls = findGlobalClass(env, "android/os/Binder") orelse return -1;
+    const proxy_cls = findGlobalClass(env, "android/os/BinderProxy") orelse return -1;
+    const internal_cls = findGlobalClass(env, "com/android/internal/os/BinderInternal") orelse return -1;
+    const fd_cls = findGlobalClass(env, "java/io/FileDescriptor") orelse return -1;
+    const dr_cls = findGlobalClass(env, "android/os/IBinder$DeathRecipient") orelse return -1;
+    defer env.*.*.DeleteGlobalRef.?(env, @ptrCast(dr_cls));
+
+    g_fw = .{
+        .parcel_native_ptr = env.*.*.GetFieldID.?(env, parcel_cls, "mNativePtr", "J") orelse return -1,
+        .binder_class = binder_cls,
+        .binder_object = env.*.*.GetFieldID.?(env, binder_cls, "mObject", "J") orelse return -1,
+        .binder_exec_transact = env.*.*.GetMethodID.?(env, binder_cls, "execTransact", "(IJJI)Z") orelse return -1,
+        .binderproxy_class = proxy_cls,
+        .binderproxy_native_data = env.*.*.GetFieldID.?(env, proxy_cls, "mNativeData", "J") orelse return -1,
+        .binderproxy_get_instance = env.*.*.GetStaticMethodID.?(env, proxy_cls, "getInstance", "(JJ)Landroid/os/BinderProxy;") orelse return -1,
+        .fd_class = fd_cls,
+        .fd_ctor = env.*.*.GetMethodID.?(env, fd_cls, "<init>", "()V") orelse return -1,
+        .fd_get_int = env.*.*.GetMethodID.?(env, fd_cls, "getInt$", "()I") orelse return -1,
+        .fd_set_int = env.*.*.GetMethodID.?(env, fd_cls, "setInt$", "(I)V") orelse return -1,
+        .death_binder_died = env.*.*.GetMethodID.?(env, dr_cls, "binderDied", "()V") orelse return -1,
+    };
+
+    const parcel_methods = [_]jni.JNINativeMethod{
+        jm("nativeMarkSensitive", "(J)V", &pMarkSensitive),
+        jm("nativeMarkForBinder", "(JLandroid/os/IBinder;)V", &pMarkForBinder),
+        jm("nativeIsForRpc", "(J)Z", &pIsForRpc),
+        jm("nativeDataSize", "(J)I", &pDataSize),
+        jm("nativeDataAvail", "(J)I", &pDataAvail),
+        jm("nativeDataPosition", "(J)I", &pDataPosition),
+        jm("nativeDataCapacity", "(J)I", &pDataCapacity),
+        jm("nativeSetDataSize", "(JI)V", &pSetDataSize),
+        jm("nativeSetDataPosition", "(JI)V", &pSetDataPosition),
+        jm("nativeSetDataCapacity", "(JI)V", &pSetDataCapacity),
+        jm("nativePushAllowFds", "(JZ)Z", &pPushAllowFds),
+        jm("nativeRestoreAllowFds", "(JZ)V", &pRestoreAllowFds),
+        jm("nativeWriteByteArray", "(J[BII)V", &pWriteByteArray),
+        jm("nativeWriteBlob", "(J[BII)V", &pWriteBlob),
+        jm("nativeWriteInt", "(JI)I", &pWriteInt),
+        jm("nativeWriteLong", "(JJ)I", &pWriteLong),
+        jm("nativeWriteFloat", "(JF)I", &pWriteFloat),
+        jm("nativeWriteDouble", "(JD)I", &pWriteDouble),
+        jm("nativeSignalExceptionForError", "(I)V", &pSignalExceptionForError),
+        jm("nativeWriteString8", "(JLjava/lang/String;)V", &pWriteString8),
+        jm("nativeWriteString16", "(JLjava/lang/String;)V", &pWriteString16),
+        jm("nativeWriteStrongBinder", "(JLandroid/os/IBinder;)V", &pWriteStrongBinder),
+        jm("nativeWriteFileDescriptor", "(JLjava/io/FileDescriptor;)V", &pWriteFileDescriptor),
+        jm("nativeCreateByteArray", "(J)[B", &pCreateByteArray),
+        jm("nativeReadByteArray", "(J[BI)Z", &pReadByteArray),
+        jm("nativeReadBlob", "(J)[B", &pReadBlob),
+        jm("nativeReadInt", "(J)I", &pReadInt),
+        jm("nativeReadLong", "(J)J", &pReadLong),
+        jm("nativeReadFloat", "(J)F", &pReadFloat),
+        jm("nativeReadDouble", "(J)D", &pReadDouble),
+        jm("nativeReadString8", "(J)Ljava/lang/String;", &pReadString8),
+        jm("nativeReadString16", "(J)Ljava/lang/String;", &pReadString16),
+        jm("nativeReadStrongBinder", "(J)Landroid/os/IBinder;", &pReadStrongBinder),
+        jm("nativeReadFileDescriptor", "(J)Ljava/io/FileDescriptor;", &pReadFileDescriptor),
+        jm("nativeCreate", "()J", &pCreate),
+        jm("nativeFreeBuffer", "(J)V", &pFreeBuffer),
+        jm("nativeDestroy", "(J)V", &pDestroy),
+        jm("nativeMarshall", "(J)[B", &pMarshall),
+        jm("nativeMarshallArray", "(J[BII)I", &pMarshallArray),
+        jm("nativeMarshallBuffer", "(JLjava/nio/ByteBuffer;II)I", &pMarshallBuffer),
+        jm("nativeUnmarshall", "(J[BII)V", &pUnmarshall),
+        jm("nativeUnmarshallBuffer", "(JLjava/nio/ByteBuffer;II)V", &pUnmarshallBuffer),
+        jm("nativeCompareData", "(JJ)I", &pCompareData),
+        jm("nativeCompareDataInRange", "(JIJII)Z", &pCompareDataInRange),
+        jm("nativeAppendFrom", "(JJII)V", &pAppendFrom),
+        jm("nativeHasFileDescriptors", "(J)Z", &pHasFileDescriptors),
+        jm("nativeHasFileDescriptorsInRange", "(JII)Z", &pHasFileDescriptorsInRange),
+        jm("nativeHasBinders", "(J)Z", &pHasBinders),
+        jm("nativeHasBindersInRange", "(JII)Z", &pHasBindersInRange),
+        jm("nativeWriteInterfaceToken", "(JLjava/lang/String;)V", &pWriteInterfaceToken),
+        jm("nativeEnforceInterface", "(JLjava/lang/String;)V", &pEnforceInterface),
+        jm("nativeReplaceCallingWorkSourceUid", "(JI)Z", &pReplaceCallingWorkSourceUid),
+        jm("nativeReadCallingWorkSourceUid", "(J)I", &pReadCallingWorkSourceUid),
+        jm("nativeGetOpenAshmemSize", "(J)J", &pGetOpenAshmemSize),
+        jm("getGlobalAllocSize", "()J", &pGetGlobalAllocSize),
+        jm("getGlobalAllocCount", "()J", &pGetGlobalAllocCount),
+    };
+    if (env.*.*.RegisterNatives.?(env, parcel_cls, &parcel_methods, parcel_methods.len) != 0) return -1;
+
+    const binder_methods = [_]jni.JNINativeMethod{
+        jm("getCallingPid", "()I", &bGetCallingPid),
+        jm("getCallingUid", "()I", &bGetCallingUid),
+        jm("isDirectlyHandlingTransactionNative", "()Z", &bIsDirectlyHandlingTransaction),
+        jm("hasExplicitIdentity", "()Z", &bHasExplicitIdentity),
+        jm("clearCallingIdentity", "()J", &bClearCallingIdentity),
+        jm("restoreCallingIdentity", "(J)V", &bRestoreCallingIdentity),
+        jm("setThreadStrictModePolicy", "(I)V", &bSetThreadStrictModePolicy),
+        jm("getThreadStrictModePolicy", "()I", &bGetThreadStrictModePolicy),
+        jm("setCallingWorkSourceUid", "(I)J", &bSetCallingWorkSourceUid),
+        jm("getCallingWorkSourceUid", "()I", &bGetCallingWorkSourceUid),
+        jm("clearCallingWorkSource", "()J", &bClearCallingWorkSource),
+        jm("restoreCallingWorkSource", "(J)V", &bRestoreCallingWorkSource),
+        jm("getNativeFinalizer", "()J", &bGetNativeFinalizer),
+        jm("getNativeBBinderHolder", "()J", &bGetNativeBBinderHolder),
+        jm("markVintfStability", "()V", &bMarkVintfStability),
+        jm("forceDowngradeToSystemStability", "()V", &bForceDowngradeToSystemStability),
+        jm("flushPendingCommands", "()V", &bFlushPendingCommands),
+        jm("blockUntilThreadAvailable", "()V", &bBlockUntilThreadAvailable),
+        jm("setExtensionNative", "(Landroid/os/IBinder;)V", &bSetExtensionNative),
+    };
+    if (env.*.*.RegisterNatives.?(env, binder_cls, &binder_methods, binder_methods.len) != 0) return -1;
+
+    const proxy_methods = [_]jni.JNINativeMethod{
+        jm("pingBinder", "()Z", &bpPingBinder),
+        jm("isBinderAlive", "()Z", &bpIsBinderAlive),
+        jm("getExtension", "()Landroid/os/IBinder;", &bpGetExtension),
+        jm("getNativeFinalizer", "()J", &bpGetNativeFinalizer),
+        jm("getInterfaceDescriptor", "()Ljava/lang/String;", &bpGetInterfaceDescriptor),
+        jm("transactNative", "(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z", &bpTransactNative),
+        jm("linkToDeathNative", "(Landroid/os/IBinder$DeathRecipient;I)V", &bpLinkToDeathNative),
+        jm("unlinkToDeathNative", "(Landroid/os/IBinder$DeathRecipient;I)Z", &bpUnlinkToDeathNative),
+        jm("addFrozenStateChangeCallbackNative", "(Landroid/os/IBinder$FrozenStateChangeCallback;)V", &bpAddFrozenStateChangeCallbackNative),
+        jm("removeFrozenStateChangeCallbackNative", "(Landroid/os/IBinder$FrozenStateChangeCallback;)Z", &bpRemoveFrozenStateChangeCallbackNative),
+        jm("isFrozenStateChangeCallbackSupportedNative", "()Z", &bpIsFrozenStateChangeCallbackSupportedNative),
+    };
+    if (env.*.*.RegisterNatives.?(env, proxy_cls, &proxy_methods, proxy_methods.len) != 0) return -1;
+
+    const internal_methods = [_]jni.JNINativeMethod{
+        jm("joinThreadPool", "()V", &biJoinThreadPool),
+        jm("getContextObject", "()Landroid/os/IBinder;", &biGetContextObject),
+        jm("disableBackgroundScheduling", "(Z)V", &biDisableBackgroundScheduling),
+        jm("setMaxThreads", "(I)V", &biSetMaxThreads),
+        jm("handleGc", "()V", &biHandleGc),
+        jm("nSetBinderProxyCountEnabled", "(Z)V", &biSetBinderProxyCountEnabled),
+        jm("nGetBinderProxyPerUidCounts", "()Landroid/util/SparseIntArray;", &biGetBinderProxyPerUidCounts),
+        jm("nGetBinderProxyCount", "(I)I", &biGetBinderProxyCount),
+        jm("nSetBinderProxyCountWatermarks", "(III)V", &biSetBinderProxyCountWatermarks),
+    };
+    if (env.*.*.RegisterNatives.?(env, internal_cls, &internal_methods, internal_methods.len) != 0) return -1;
+
+    // ServiceManager (static waitForServiceNative) and the package-private
+    // ServiceManagerProxy (getNativeServiceManager -> the gid-1 context object).
+    const sm_cls = findGlobalClass(env, "android/os/ServiceManager") orelse return -1;
+    defer env.*.*.DeleteGlobalRef.?(env, @ptrCast(sm_cls));
+    const sm_methods = [_]jni.JNINativeMethod{
+        jm("waitForServiceNative", "(Ljava/lang/String;)Landroid/os/IBinder;", &smWaitForServiceNative),
+    };
+    if (env.*.*.RegisterNatives.?(env, sm_cls, &sm_methods, sm_methods.len) != 0) return -1;
+
+    const smp_cls = findGlobalClass(env, "android/os/ServiceManagerProxy") orelse return -1;
+    defer env.*.*.DeleteGlobalRef.?(env, @ptrCast(smp_cls));
+    const smp_methods = [_]jni.JNINativeMethod{
+        jm("getNativeServiceManager", "()Landroid/os/IBinder;", &smpGetNativeServiceManager),
+    };
+    if (env.*.*.RegisterNatives.?(env, smp_cls, &smp_methods, smp_methods.len) != 0) return -1;
+
+    // dev.artzig.BinderSession: process identity/lifecycle (replaces
+    // HostedBinderRuntime.bootstrap / exitProcessOnDisconnect / assignedUid).
+    const bs_cls = findGlobalClass(env, "dev/artzig/BinderSession") orelse return -1;
+    defer env.*.*.DeleteGlobalRef.?(env, @ptrCast(bs_cls));
+    const bs_methods = [_]jni.JNINativeMethod{
+        jm("setIdentity", "(Ljava/lang/String;Z)V", &bsSetIdentity),
+        jm("setExitOnDisconnect", "()V", &bsSetExitOnDisconnect),
+        jm("assignedUid", "()I", &bsAssignedUid),
+    };
+    if (env.*.*.RegisterNatives.?(env, bs_cls, &bs_methods, bs_methods.len) != 0) return -1;
+
+    return 0;
 }

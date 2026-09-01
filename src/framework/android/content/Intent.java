@@ -388,7 +388,7 @@ public class Intent implements Parcelable, Cloneable {
     }
     public void readFromParcel(Parcel in) {
         mAction = in.readString8();
-        String data = in.readString8();
+        String data = in.readString(); // hosted Uri.writeToParcel writes writeString (UTF-16)
         mData = data != null ? Uri.parse(data) : null;
         mType = in.readString8();
         mIdentifier = in.readString8();

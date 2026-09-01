@@ -13,10 +13,10 @@ public class Process {
             THREAD_PRIORITY_LESS_FAVORABLE = 1;
     public static int myPid() { try { return android.system.Os.getpid(); } catch (Throwable t) { return 1; } }
     public static int myTid() { return (int) Thread.currentThread().getId(); }
-    /** The broker-assigned uid once the hosted Binder runtime is connected; the constant before. */
+    /** The broker-assigned uid once this process's Binder connection exists; the constant before. */
     public static int myUid() {
-        Integer assigned = HostedBinderRuntime.assignedUid();
-        return assigned != null ? assigned : MY_UID;
+        int assigned = dev.artzig.BinderSession.assignedUid();
+        return assigned >= 0 ? assigned : MY_UID;
     }
     public static String myProcessName() { return "artzig"; }
     public static UserHandle myUserHandle() { return UserHandle.of(0); }

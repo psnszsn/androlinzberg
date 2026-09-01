@@ -18,6 +18,8 @@ public final class UserHandle implements Parcelable {
     public static int getAppId(int uid) { return uid % 100000; }
     public static int getUid(int userId, int appId) { return userId * 100000 + appId; }
     public static boolean isSameApp(int uid1, int uid2) { return getAppId(uid1) == getAppId(uid2); }
+    /** AOSP UserHandle.isCore: a core system uid (below the first application uid). */
+    public static boolean isCore(int uid) { return uid >= 0 && getAppId(uid) < Process.FIRST_APPLICATION_UID; }
     public static void writeToParcel(UserHandle h, Parcel out) { out.writeInt(h != null ? h.mHandle : USER_NULL); }
     public static UserHandle readFromParcel(Parcel in) {
         int h = in.readInt();

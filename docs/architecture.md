@@ -54,9 +54,12 @@ system service names. The broker
 assigns global object ids, translates object references between peers, routes
 synchronous and oneway transactions, delivers nested callbacks to the waiting
 thread, tracks remote references and death links, forwards file descriptors,
-and holds the service registry. `HostedBinderRuntime` and `BinderProxy` are the
-JVM side; `Parcel` keeps Binder objects and descriptors in a side table that
-the broker translates. Java `IBinder`, generated AIDL, callbacks, calling
+and holds the service registry; it also serves the stable `IServiceManager`
+AIDL at the reserved context object, which is how the real AOSP
+`ServiceManager` reaches it. The JVM side is the real AOSP `Parcel`, `Binder`,
+`BinderProxy` and `BinderInternal` over Zig natives in `libbinder_ndk`
+(`src/binder/ndk.zig`); `Parcel` keeps Binder objects and descriptors in a
+side table that the broker translates. Java `IBinder`, generated AIDL, callbacks, calling
 identity, death notification, and Unix descriptor passing work across
 processes. The system process runs the AOSP `SystemServiceManager`/`LocalServices`
 lifecycle and hosts the activity manager (`dev.artzig.system.HostedActivityManagerService`,

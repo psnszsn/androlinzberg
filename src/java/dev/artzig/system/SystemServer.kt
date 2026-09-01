@@ -2,7 +2,7 @@ package dev.artzig.system
 
 import android.app.ActivityThread
 import android.app.ContextImpl
-import android.os.HostedBinderRuntime
+import dev.artzig.BinderSession
 import android.os.Looper
 import android.os.Process
 import kotlin.concurrent.thread
@@ -29,8 +29,9 @@ internal object SystemServer {
         System.setProperty("azk.emulator", "true")
         Looper.prepareMainLooper()
         // Identity first: uid 1000, the only peer allowed to claim system names.
-        val runtime = HostedBinderRuntime.bootstrap("android", true)
-        check(runtime.uid == Process.SYSTEM_UID) { "broker assigned uid " + runtime.uid + " to the system process" }
+        BinderSession.setIdentity("android", true)
+        val uid = BinderSession.assignedUid()
+        check(uid == Process.SYSTEM_UID) { "broker assigned uid " + uid + " to the system process" }
         val frameworkRes = System.getenv("ARTZIG_FRAMEWORK_RES")
             ?: throw IllegalStateException("ARTZIG_FRAMEWORK_RES is not set")
         val context = ContextImpl.createSystemContext(frameworkRes, 800, 600, 120, 0)

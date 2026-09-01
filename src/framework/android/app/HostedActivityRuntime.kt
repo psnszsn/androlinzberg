@@ -157,6 +157,10 @@ object HostedActivityRuntime {
         requestedOrientation: Int? = null,
     ): Activity {
         val adapter = requireHost()
+        // AOSP ActivityThread.performLaunchActivity: the intent's extras and the
+        // saved state resolve their classes against the app's loader.
+        intent?.setExtrasClassLoader(adapter.activityClassLoader)
+        savedState?.setClassLoader(adapter.activityClassLoader)
         val previous = current
         if (addCurrentToBackStack) previous?.performPause()
 

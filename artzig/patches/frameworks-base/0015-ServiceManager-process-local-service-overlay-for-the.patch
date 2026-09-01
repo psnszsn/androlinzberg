@@ -1,0 +1,44 @@
+From f6183e8c7bee5072de412057613b9b8a4f225d7a Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Tue, 1 Sep 2026 21:59:12 +0200
+Subject: [PATCH] ServiceManager: process-local service overlay for the host
+ (artzig)
+
+Host adaptation: addProcessLocalService pre-populates sCache so the unchanged
+AOSP manager clients (DisplayManagerGlobal, InputManagerGlobal) resolve the
+per-process display/input services through getService/checkService without
+a broker round-trip. The broker's session-global registry rejects a second
+owner for a name, so these inherently per-process objects cannot live there.
+---
+ core/java/android/os/ServiceManager.java | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/core/java/android/os/ServiceManager.java b/core/java/android/os/ServiceManager.java
+index a58fea891..de5fd3df3 100644
+--- a/core/java/android/os/ServiceManager.java
++++ b/core/java/android/os/ServiceManager.java
+@@ -204,6 +204,21 @@ public final class ServiceManager {
+         }
+     }
+ 
++    /**
++     * Host adaptation (artzig): register a service that is inherently per-process
++     * on this host (display, input) rather than session-global. It is placed in
++     * the local cache, which {@link #getService} and {@link #checkService}
++     * consult before the broker, so the unchanged AOSP manager clients resolve
++     * it in-process without a broker round-trip. The broker's session-global
++     * registry rejects a second owner, so these names cannot be added there.
++     * @hide
++     */
++    public static void addProcessLocalService(String name, IBinder service) {
++        synchronized (ServiceManager.class) {
++            sCache.put(name, service);
++        }
++    }
++
+     /**
+      * Place a new @a service called @a name into the service
+      * manager.
+-- 
+2.55.0
+
