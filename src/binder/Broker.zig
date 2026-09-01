@@ -50,7 +50,9 @@ shutting_down: bool = false,
 peers: std.AutoHashMapUnmanaged(u32, *Peer) = .empty,
 next_peer_id: u32 = 1,
 objects: std.AutoHashMapUnmanaged(u64, *Object) = .empty,
-next_object_id: u64 = 1,
+/// Real objects start at 2; id 1 (`Client.context_object_id`) is reserved for
+/// the service manager and is never assigned to an owned object.
+next_object_id: u64 = Client.context_object_id + 1,
 local_index: std.AutoHashMapUnmanaged(LocalKey, u64) = .empty,
 services: std.StringHashMapUnmanaged(u64) = .empty,
 waiters: std.ArrayList(Waiter) = .empty,
@@ -702,6 +704,14 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     const oneway = (t.flags & 1) != 0;
     if (!oneway and header.request_id == 0) return protocolError(peer, "synchronous transact without request id");
 
+    // The reserved context object is the service manager: the broker answers
+    // the stable IServiceManager AIDL directly rather than routing to an owner.
+    if (t.target.kind == .remote and t.target.value == Client.context_object_id) {
+        b.closeAll(fds);
+        gpa.free(fds);
+        return handleServiceManagerTransact(peer, header, t, payload);
+    }
+
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
     const object = resolveRef(peer, t.target) catch |err| switch (err) {
@@ -899,7 +909,6 @@ fn readName(peer: *Peer, name: []const u8, declared: u32) ServeError![]const u8 
 
 fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
     const b = peer.broker;
-    const gpa = b.gpa;
     const io = b.io;
     const reg = takeStruct(Client.Message.RegisterService, body) catch return protocolError(peer, "malformed register_service");
     const name = try readName(peer, body[@sizeOf(Client.Message.RegisterService)..], reg.name_len);
@@ -918,12 +927,26 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
         peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .not_found, ObjectRef.null_ref, "" }));
         return;
     }
+    const status: Server.Message.ServiceResult.Status = switch (try registerService(b, peer, object, name)) {
+        .ok => .ok,
+        .taken => .already_registered,
+    };
+    peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, status, ObjectRef.null_ref, "" }));
+}
+
+const RegisterOutcome = enum { ok, taken };
+
+/// Registers `object` under `name` (replacing the owner's own prior registration)
+/// and wakes every waiter blocked on that name. Returns `.taken` without any
+/// change when a different peer already owns the name. Shared by the native
+/// register_service path and the gid-1 IServiceManager addService path so both
+/// feed one registry and wake the same waiters. Requires `b.mutex`; the caller
+/// has already checked `mayRegister` and that the object is alive.
+fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8) ServeError!RegisterOutcome {
+    const gpa = b.gpa;
     if (b.services.getEntry(name)) |entry| {
         const existing = b.objects.get(entry.value_ptr.*).?;
-        if (existing.owner != peer.id) {
-            peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .already_registered, ObjectRef.null_ref, "" }));
-            return;
-        }
+        if (existing.owner != peer.id) return .taken;
         // The owner replaces its own registration.
         existing.service_refs -= 1;
         entry.value_ptr.* = object.id;
@@ -935,8 +958,6 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
         try b.services.put(gpa, owned_name, object.id);
         object.service_refs += 1;
     }
-    peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .ok, ObjectRef.null_ref, "" }));
-    // Wake waiters.
     var i: usize = 0;
     while (i < b.waiters.items.len) {
         const w = b.waiters.items[i];
@@ -953,6 +974,7 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
         gpa.free(w.name);
         _ = b.waiters.swapRemove(i);
     }
+    return .ok;
 }
 
 fn handleLookup(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
@@ -990,6 +1012,304 @@ fn handleList(peer: *Peer, header: Client.Message.Header) ServeError!void {
     }
     peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .ok, ObjectRef.null_ref, names.items }));
 }
+
+// ---------------------------------------------------------------------------
+// Reserved context object: the IServiceManager AIDL served by the broker.
+//
+// This is the one place the broker interprets Parcel payloads. Post-flip, the
+// framework's verbatim android.os.ServiceManager talks to
+// BinderInternal.getContextObject() (a proxy for `context_object_id`) using the
+// generated IServiceManager proxy, whose wire format is the stable libbinder
+// AIDL. We decode it directly onto the same registry the native
+// register/lookup/list ops use, so a service added through either path is
+// visible through both and wakes the same waiters.
+// ---------------------------------------------------------------------------
+
+/// The interface descriptor the IServiceManager token names.
+const iservicemanager_descriptor = "android.os.IServiceManager";
+
+/// Parcel exception codes (android.os.Parcel). writeNoException == writeInt(0);
+/// a nonzero code followed by a message string is an exception the proxy throws.
+const EX_SECURITY: i32 = -1;
+const EX_ILLEGAL_ARGUMENT: i32 = -3;
+const EX_ILLEGAL_STATE: i32 = -5;
+const EX_UNSUPPORTED_OPERATION: i32 = -7;
+
+/// Stable IServiceManager transaction codes (declaration order from
+/// IBinder.FIRST_CALL_TRANSACTION == 1).
+const SM = struct {
+    const getService = 1;
+    const checkService = 3;
+    const addService = 5;
+    const listServices = 6;
+    const isDeclared = 9;
+    const getDeclaredInstances = 10;
+    const updatableViaApex = 11;
+    const getUpdatableNames = 12;
+    const getConnectionInfo = 13;
+    const registerForNotifications = 7;
+    const unregisterForNotifications = 8;
+    const registerClientCallback = 14;
+    const tryUnregisterService = 15;
+    const getServiceDebugInfo = 16;
+};
+
+fn binderEntryKind(kind: ObjectRef.Kind) ObjectEntry.Kind {
+    return switch (kind) {
+        .local => .binder_local,
+        .remote => .binder_remote,
+        else => .binder_null,
+    };
+}
+
+/// Handles a transaction addressed to the reserved context object by decoding
+/// the stable IServiceManager AIDL and answering directly. Requires no held
+/// lock on entry (takes `b.mutex`).
+fn handleServiceManagerTransact(
+    peer: *Peer,
+    header: Client.Message.Header,
+    t: Client.Message.Transact,
+    payload: Client.Payload,
+) ServeError!void {
+    const b = peer.broker;
+    const gpa = b.gpa;
+    const io = b.io;
+    if (header.request_id == 0) return; // IServiceManager has no oneway methods
+
+    b.mutex.lockUncancelable(io);
+    defer b.mutex.unlock(io);
+
+    var r = ParcelReader{ .data = payload.data };
+    if (!r.enforceToken(gpa, iservicemanager_descriptor))
+        return smReplyException(peer, header, EX_ILLEGAL_STATE, "bad IServiceManager interface token");
+
+    var data: std.ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+    var entries: std.ArrayList(ObjectEntry) = .empty;
+    defer entries.deinit(gpa);
+
+    switch (t.code) {
+        SM.getService, SM.checkService => {
+            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
+            defer gpa.free(name);
+            try smWriteI32(&data, gpa, 0); // no exception
+            if (b.services.get(name)) |gid| {
+                const object = b.objects.get(gid).?;
+                const ref = try b.deliverRef(peer, object);
+                const off: u32 = @intCast(data.items.len);
+                try smWriteI32(&data, gpa, 1); // strong binder present
+                try entries.append(gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
+            } else {
+                try smWriteI32(&data, gpa, 0); // null binder
+            }
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.addService => {
+            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
+            defer gpa.free(name);
+            if (name.len == 0 or name.len > limits.max_name_len or std.mem.indexOfScalar(u8, name, 0) != null)
+                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "malformed service name");
+            const binder_off: u32 = @intCast(r.pos);
+            _ = r.readI32(); // strong binder placeholder
+            const svc_ref = smFindBinder(payload, binder_off) orelse
+                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "addService without a binder");
+            if (!mayRegister(peer, name)) {
+                log.warn("peer {d} ({s}) may not register '{s}' (gid-1)", .{ peer.id, peer.package, name });
+                return smReplyException(peer, header, EX_SECURITY, "not allowed to add this service");
+            }
+            const object = resolveRef(peer, svc_ref) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Invalid => return protocolError(peer, "addService with an object the peer does not hold"),
+            };
+            if (object.dead) return smReplyException(peer, header, EX_ILLEGAL_STATE, "service object is dead");
+            switch (try registerService(b, peer, object, name)) {
+                .ok => {},
+                .taken => return smReplyException(peer, header, EX_ILLEGAL_STATE, "service already registered by another owner"),
+            }
+            try smWriteI32(&data, gpa, 0); // void -> no exception only
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.listServices => {
+            _ = r.readI32(); // dumpPriority (ignored: every service is listed)
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smWriteI32(&data, gpa, @intCast(b.services.count())); // array length
+            var it = b.services.keyIterator();
+            while (it.next()) |k| try smWriteString16(&data, gpa, k.*);
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.isDeclared => {
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smWriteI32(&data, gpa, 0); // false: no VINTF-declared instances hosted
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.getDeclaredInstances, SM.getUpdatableNames => {
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smWriteI32(&data, gpa, 0); // empty String[]
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.updatableViaApex => {
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smWriteI32(&data, gpa, -1); // null String
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.getConnectionInfo => {
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smWriteI32(&data, gpa, 0); // null @nullable ConnectionInfo
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.getServiceDebugInfo => {
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smWriteI32(&data, gpa, 0); // empty ServiceDebugInfo[]
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.registerForNotifications, SM.unregisterForNotifications, SM.registerClientCallback, SM.tryUnregisterService => {
+            // Void methods. Notifications/client callbacks are accepted but not
+            // yet delivered (onRegistration firing is a follow-up); callers do
+            // not block on the callback, so a plain success is safe.
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smReply(peer, header, data.items, entries.items);
+        },
+        else => return smReplyException(peer, header, EX_UNSUPPORTED_OPERATION, "unsupported IServiceManager transaction"),
+    }
+}
+
+/// Sends an IServiceManager reply (status ok, handled) carrying `data`/`entries`.
+fn smReply(peer: *Peer, header: Client.Message.Header, data: []const u8, entries: []const ObjectEntry) ServeError!void {
+    const b = peer.broker;
+    peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
+        .request_id = header.request_id,
+        .status = .ok,
+        .handled = true,
+        .entries = entries,
+        .data = data,
+    }}));
+}
+
+/// Sends an IServiceManager reply that carries a Parcel exception (nonzero code
+/// + message), which the generated proxy rethrows.
+fn smReplyException(peer: *Peer, header: Client.Message.Header, code: i32, msg: []const u8) ServeError!void {
+    const b = peer.broker;
+    const gpa = b.gpa;
+    var data: std.ArrayList(u8) = .empty;
+    defer data.deinit(gpa);
+    try smWriteI32(&data, gpa, code);
+    try smWriteString16(&data, gpa, msg);
+    peer.enqueue(try b.encode(Server.serveReply, .{Server.ReplyOptions{
+        .request_id = header.request_id,
+        .status = .ok,
+        .handled = true,
+        .data = data.items,
+    }}));
+}
+
+/// Finds the strong-binder side-table entry at `offset` in a request payload and
+/// returns the reference the sending peer expressed.
+fn smFindBinder(payload: Client.Payload, offset: u32) ?ObjectRef {
+    for (0..payload.entries.len) |i| {
+        const e = payload.entry(i);
+        if (e.offset != offset) continue;
+        return switch (e.kind) {
+            .binder_local => ObjectRef.local(e.value),
+            .binder_remote => ObjectRef.remote(e.value),
+            else => null,
+        };
+    }
+    return null;
+}
+
+fn smWriteI32(list: *std.ArrayList(u8), gpa: Allocator, v: i32) ServeError!void {
+    var buf: [4]u8 = undefined;
+    std.mem.writeInt(i32, &buf, v, .little);
+    try list.appendSlice(gpa, &buf);
+}
+
+/// Appends `utf8` in the AOSP writeString16 layout: i32 code-unit count, the
+/// UTF-16LE units, a NUL unit, padded to a 4-byte boundary.
+fn smWriteString16(list: *std.ArrayList(u8), gpa: Allocator, utf8: []const u8) ServeError!void {
+    var units: std.ArrayList(u16) = .empty;
+    defer units.deinit(gpa);
+    var i: usize = 0;
+    while (i < utf8.len) {
+        const seq = std.unicode.utf8ByteSequenceLength(utf8[i]) catch 1;
+        const cp: u21 = if (i + seq <= utf8.len)
+            (std.unicode.utf8Decode(utf8[i .. i + seq]) catch utf8[i])
+        else
+            utf8[i];
+        i += seq;
+        if (cp <= 0xFFFF) {
+            try units.append(gpa, @intCast(cp));
+        } else {
+            const c = cp - 0x10000;
+            try units.append(gpa, @intCast(0xD800 + (c >> 10)));
+            try units.append(gpa, @intCast(0xDC00 + (c & 0x3FF)));
+        }
+    }
+    try smWriteI32(list, gpa, @intCast(units.items.len));
+    for (units.items) |u| {
+        var buf: [2]u8 = undefined;
+        std.mem.writeInt(u16, &buf, u, .little);
+        try list.appendSlice(gpa, &buf);
+    }
+    try list.appendSlice(gpa, &[_]u8{ 0, 0 }); // NUL terminator unit
+    while (list.items.len % 4 != 0) try list.append(gpa, 0); // pad to 4
+}
+
+/// A cursor over a request Parcel's data for IServiceManager decoding.
+const ParcelReader = struct {
+    data: []const u8,
+    pos: usize = 0,
+
+    fn readI32(r: *ParcelReader) ?i32 {
+        if (r.pos + 4 > r.data.len) return null;
+        const v = std.mem.readInt(i32, r.data[r.pos..][0..4], .little);
+        r.pos += 4;
+        return v;
+    }
+
+    /// Reads a writeString16 value into freshly allocated UTF-8. `error.Null`
+    /// for the -1 marker; the caller frees a returned slice.
+    fn readString16(r: *ParcelReader, gpa: Allocator) error{ OutOfMemory, Malformed, Null }![]u8 {
+        const count = r.readI32() orelse return error.Malformed;
+        if (count < 0) return error.Null;
+        const n: usize = @intCast(count);
+        var out: std.ArrayList(u8) = .empty;
+        errdefer out.deinit(gpa);
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            if (r.pos + 2 > r.data.len) return error.Malformed;
+            const unit = std.mem.readInt(u16, r.data[r.pos..][0..2], .little);
+            r.pos += 2;
+            var cp: u21 = unit;
+            if (unit >= 0xD800 and unit <= 0xDBFF and i + 1 < n and r.pos + 2 <= r.data.len) {
+                const low = std.mem.readInt(u16, r.data[r.pos..][0..2], .little);
+                if (low >= 0xDC00 and low <= 0xDFFF) {
+                    cp = 0x10000 + ((@as(u21, unit) - 0xD800) << 10) + (@as(u21, low) - 0xDC00);
+                    r.pos += 2;
+                    i += 1;
+                } else cp = 0xFFFD;
+            } else if (unit >= 0xD800 and unit <= 0xDFFF) cp = 0xFFFD; // lone surrogate
+            var buf: [4]u8 = undefined;
+            const len = std.unicode.utf8Encode(cp, &buf) catch (std.unicode.utf8Encode(0xFFFD, &buf) catch unreachable);
+            try out.appendSlice(gpa, buf[0..len]);
+        }
+        r.pos += 2; // NUL unit
+        r.pos = std.mem.alignForward(usize, r.pos, 4);
+        if (r.pos > r.data.len) r.pos = r.data.len;
+        return out.toOwnedSlice(gpa);
+    }
+
+    /// Consumes the AOSP interface token (strict-mode policy, work source,
+    /// interface header marker, descriptor string) and reports whether it names
+    /// `descriptor`.
+    fn enforceToken(r: *ParcelReader, gpa: Allocator, descriptor: []const u8) bool {
+        _ = r.readI32() orelse return false; // strict-mode policy
+        _ = r.readI32() orelse return false; // work source
+        _ = r.readI32() orelse return false; // interface header marker
+        const s = r.readString16(gpa) catch return false;
+        defer gpa.free(s);
+        return std.mem.eql(u8, s, descriptor);
+    }
+};
 
 /// Property policy (source note: init's property_service + SELinux property
 /// contexts, reduced): the system process may set anything, but an `ro.*`

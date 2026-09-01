@@ -33,6 +33,14 @@ pub const system_uid: u32 = 1000;
 /// value the JVM falls back to before it has connected).
 pub const default_app_uid: u32 = 10001;
 
+/// The well-known global object id of the context object (the service manager),
+/// reserved by the broker and never handed to a real object. A peer reaches it
+/// by transacting to `ObjectRef.remote(context_object_id)`; the broker answers
+/// the stable `IServiceManager` AIDL directly (see `Broker.handleTransact`),
+/// so `BinderInternal.getContextObject()` builds a proxy for it without any
+/// broker round-trip. AOSP's equivalent is binder handle 0.
+pub const context_object_id: u64 = 1;
+
 pub const limits = struct {
     /// Maximum Parcel payload carried by one transact or reply.
     pub const max_data_len: u32 = 1024 * 1024;

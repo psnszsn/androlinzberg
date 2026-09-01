@@ -578,3 +578,199 @@ test "session-wide properties: policy, area contents, change push" {
         try testing.expectEqualStrings(expected, msg.body);
     }
 }
+
+// --- IServiceManager (gid-1 context object) wire helpers -------------------
+
+const sm_descriptor = "android.os.IServiceManager";
+/// libbinder interface header marker B_PACK_CHARS('S','Y','S','T').
+const sm_header: i32 = 0x53595354;
+
+/// A Parcel builder mirroring the JVM/ndk writeInt32/writeString16 layout, for
+/// constructing IServiceManager request payloads in tests.
+const ParcelBuf = struct {
+    bytes: std.ArrayList(u8) = .empty,
+    gpa: std.mem.Allocator,
+
+    fn i32v(p: *ParcelBuf, v: i32) !void {
+        var b: [4]u8 = undefined;
+        std.mem.writeInt(i32, &b, v, .little);
+        try p.bytes.appendSlice(p.gpa, &b);
+    }
+    fn string16(p: *ParcelBuf, s: []const u8) !void {
+        try p.i32v(@intCast(s.len)); // ASCII: one unit per byte
+        for (s) |c| {
+            var b: [2]u8 = undefined;
+            std.mem.writeInt(u16, &b, c, .little);
+            try p.bytes.appendSlice(p.gpa, &b);
+        }
+        try p.bytes.appendSlice(p.gpa, &[_]u8{ 0, 0 }); // NUL unit
+        while (p.bytes.items.len % 4 != 0) try p.bytes.append(p.gpa, 0);
+    }
+    /// The AOSP interface token: strict-mode policy, work source, header, name.
+    fn token(p: *ParcelBuf) !void {
+        try p.i32v(0);
+        try p.i32v(-1);
+        try p.i32v(sm_header);
+        try p.string16(sm_descriptor);
+    }
+    fn deinit(p: *ParcelBuf) void {
+        p.bytes.deinit(p.gpa);
+    }
+};
+
+/// Reads a writeString16 value as ASCII bytes at `pos`, returning the text and
+/// the position after it (past the NUL unit and 4-byte padding).
+fn readString16Ascii(gpa: std.mem.Allocator, data: []const u8, pos: usize) !struct { []u8, usize } {
+    var p = pos;
+    const count = std.mem.readInt(i32, data[p..][0..4], .little);
+    p += 4;
+    const n: usize = @intCast(count);
+    const out = try gpa.alloc(u8, n);
+    for (0..n) |i| {
+        out[i] = @intCast(std.mem.readInt(u16, data[p..][0..2], .little));
+        p += 2;
+    }
+    p += 2; // NUL unit
+    p = std.mem.alignForward(usize, p, 4);
+    return .{ out, p };
+}
+
+test "context object serves the IServiceManager AIDL over the broker" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+
+    var owner: Peer = undefined;
+    try owner.connect(io, h.path, cookie);
+    defer owner.close();
+    try owner.expectWelcome();
+    var client: Peer = undefined;
+    try client.connect(io, h.path, cookie);
+    defer client.close();
+    try client.expectWelcome();
+
+    const name = "dev.artzig.test.smsvc";
+    const ctx = ObjectRef.remote(Client.context_object_id);
+
+    // addService(name, IBinder, allowIsolated=false, dumpPriority=0). The owner
+    // passes a process-local binder (local id 100) in the side table.
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16(name);
+        const binder_off: u32 = @intCast(p.bytes.items.len);
+        try p.i32v(1); // strong binder placeholder
+        try p.i32v(0); // allowIsolated
+        try p.i32v(0); // dumpPriority
+        const entries = [_]ObjectEntry{.{ .offset = binder_off, .kind = .binder_local, .value = 100 }};
+        try owner.client.serveTransact(.{ .target = ctx, .code = 5, .request_id = 1, .entries = &entries, .data = p.bytes.items });
+        const msg = try owner.next();
+        defer gpa.free(msg.fds);
+        try testing.expectEqual(Server.Message.Tag.reply, msg.header.tag);
+        const rep, const payload = try replyBody(msg.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        // void reply: writeNoException only.
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[0..4], .little));
+        try testing.expectEqual(@as(usize, 0), payload.entries.len);
+    }
+
+    // getService(name) by the owner: returns the binder as local (owner sees it
+    // as its own object 100).
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16(name);
+        try owner.client.serveTransact(.{ .target = ctx, .code = 1, .request_id = 2, .data = p.bytes.items });
+        const msg = try owner.next();
+        defer gpa.free(msg.fds);
+        const rep, const payload = try replyBody(msg.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[0..4], .little)); // no exception
+        try testing.expectEqual(@as(i32, 1), std.mem.readInt(i32, payload.data[4..8], .little)); // present
+        try testing.expectEqual(@as(usize, 1), payload.entries.len);
+        try testing.expectEqual(ObjectEntry.Kind.binder_local, payload.entry(0).kind);
+        try testing.expectEqual(@as(u32, 4), payload.entry(0).offset);
+        try testing.expectEqual(@as(u64, 100), payload.entry(0).value);
+    }
+
+    // getService(name) by a different peer: delivered as a remote proxy (gid).
+    var svc_gid: u64 = 0;
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16(name);
+        try client.client.serveTransact(.{ .target = ctx, .code = 1, .request_id = 3, .data = p.bytes.items });
+        const msg = try client.next();
+        defer gpa.free(msg.fds);
+        const rep, const payload = try replyBody(msg.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        try testing.expectEqual(@as(usize, 1), payload.entries.len);
+        try testing.expectEqual(ObjectEntry.Kind.binder_remote, payload.entry(0).kind);
+        svc_gid = payload.entry(0).value;
+        try testing.expect(svc_gid >= Client.context_object_id + 1);
+    }
+
+    // checkService of an unknown name: null binder, no entry.
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16("dev.artzig.test.absent");
+        try client.client.serveTransact(.{ .target = ctx, .code = 3, .request_id = 4, .data = p.bytes.items });
+        const msg = try client.next();
+        defer gpa.free(msg.fds);
+        const rep, const payload = try replyBody(msg.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[0..4], .little)); // no exception
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[4..8], .little)); // null
+        try testing.expectEqual(@as(usize, 0), payload.entries.len);
+    }
+
+    // listServices: the registry contains exactly our one name.
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.i32v(0); // dumpPriority
+        try client.client.serveTransact(.{ .target = ctx, .code = 6, .request_id = 5, .data = p.bytes.items });
+        const msg = try client.next();
+        defer gpa.free(msg.fds);
+        const rep, const payload = try replyBody(msg.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[0..4], .little)); // no exception
+        try testing.expectEqual(@as(i32, 1), std.mem.readInt(i32, payload.data[4..8], .little)); // one entry
+        const listed, _ = try readString16Ascii(gpa, payload.data, 8);
+        defer gpa.free(listed);
+        try testing.expectEqualStrings(name, listed);
+    }
+
+    // A malformed interface token is rejected with a Parcel exception.
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.i32v(0); // strict mode
+        try p.i32v(-1); // work source
+        try p.i32v(sm_header);
+        try p.string16("android.os.WrongInterface");
+        try client.client.serveTransact(.{ .target = ctx, .code = 1, .request_id = 6, .data = p.bytes.items });
+        const msg = try client.next();
+        defer gpa.free(msg.fds);
+        const rep, const payload = try replyBody(msg.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        // Nonzero exception code in the reply header.
+        try testing.expect(std.mem.readInt(i32, payload.data[0..4], .little) != 0);
+    }
+
+    // Cross-path: a native lookup_service now sees the AIDL-registered service.
+    {
+        try client.client.serveLookupService(7, name, false);
+        const msg = try client.next();
+        defer gpa.free(msg.fds);
+        try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
+        try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try serviceResult(msg.body)).status);
+    }
+}
