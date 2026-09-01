@@ -483,12 +483,28 @@ const Runtime = struct {
     death_links: std.ArrayListUnmanaged(DeathLink) = .empty,
     /// Per-local-target FIFO queues serializing incoming oneway transactions.
     oneway_queues: std.AutoHashMapUnmanaged(u64, *SerialQueue) = .empty,
+    /// Two-way inbound transactions are dispatched by a small elastic pool of
+    /// persistent worker threads rather than a fresh detached thread per call.
+    /// Each worker attaches to the JVM once and is reused, so the per-transaction
+    /// attach leak and unbounded OS-thread spawn of the old path are both gone.
+    /// The pool grows by one worker whenever a transaction arrives with no idle
+    /// worker (bounded by `max_dispatch_workers`); reentrant nested calls are
+    /// routed to the parked caller thread, not the pool, so they never starve it.
+    /// All three fields are guarded by `mu`.
+    dispatch_queue: std.ArrayListUnmanaged(*Incoming) = .empty,
+    dispatch_cv: Io.Condition = .init,
+    dispatch_idle: usize = 0,
+    dispatch_total: usize = 0,
     disconnected: std.atomic.Value(bool) = .init(false),
     /// The routing id of the call each thread is currently servicing, for
     /// nested-transaction parent tracking.
     servicing: Io.Mutex = .init,
 
     const DeathLink = struct { global_id: u64, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque };
+
+    /// Upper bound on persistent two-way dispatch workers. Generous so reentrant
+    /// call chains cannot deadlock the pool; a steady app uses only a few.
+    const max_dispatch_workers = 32;
 
     var instance: ?*Runtime = null;
     var connect_mu: Io.Mutex = .init;
@@ -642,12 +658,7 @@ const Runtime = struct {
                     r.serialSubmit(in.target.value, in);
                     return true;
                 }
-                const th = std.Thread.spawn(.{}, dispatch, .{ r, in }) catch {
-                    in.parcel.destroy();
-                    alloc.destroy(in);
-                    return true;
-                };
-                th.detach();
+                r.dispatchSubmit(in);
             },
             .reply => {
                 const rep = std.mem.bytesToValue(Client.Message.Reply, body[0..@sizeOf(Client.Message.Reply)]);
@@ -709,6 +720,68 @@ const Runtime = struct {
         const target = if (in.target.kind == .local) r.locals.get(in.target.value) else null;
         r.mu.unlock(g_io);
         r.dispatchTo(target, in);
+    }
+
+    /// Enqueues a two-way inbound transaction for the dispatch pool, growing the
+    /// pool by one persistent worker when no worker is idle (up to
+    /// `max_dispatch_workers`). Guarded by `mu`.
+    fn dispatchSubmit(r: *Runtime, in: *Incoming) void {
+        r.mu.lockUncancelable(g_io);
+        var spawn_worker = false;
+        if (r.dispatch_idle == 0 and r.dispatch_total < max_dispatch_workers) {
+            r.dispatch_total += 1;
+            spawn_worker = true;
+        }
+        r.dispatch_queue.append(alloc, in) catch @panic("oom");
+        r.dispatch_cv.signal(g_io);
+        r.mu.unlock(g_io);
+        if (spawn_worker) {
+            const th = std.Thread.spawn(.{}, dispatchWorker, .{r}) catch {
+                r.mu.lockUncancelable(g_io);
+                r.dispatch_total -= 1;
+                const no_workers = r.dispatch_total == 0;
+                r.mu.unlock(g_io);
+                // Could not grow the pool. A live worker will pick the item up;
+                // if none exists, run a detached one-shot so the two-way caller
+                // is never left without a reply.
+                if (no_workers) {
+                    const th2 = std.Thread.spawn(.{}, dispatchOneShot, .{r}) catch return;
+                    th2.detach();
+                }
+                return;
+            };
+            th.detach();
+        }
+    }
+
+    /// A persistent dispatch-pool worker: attaches to the JVM once (a no-op in a
+    /// native-only process) and then drains two-way transactions in a loop,
+    /// parking on `dispatch_cv` while the queue is empty.
+    fn dispatchWorker(r: *Runtime) void {
+        _ = jniEnv(); // attach this worker thread to the JVM once, if one exists
+        while (true) {
+            r.mu.lockUncancelable(g_io);
+            r.dispatch_idle += 1;
+            while (r.dispatch_queue.items.len == 0) r.dispatch_cv.waitUncancelable(g_io, &r.mu);
+            r.dispatch_idle -= 1;
+            const in = r.dispatch_queue.orderedRemove(0);
+            r.mu.unlock(g_io);
+            r.dispatch(in);
+        }
+    }
+
+    /// Best-effort fallback used only when the pool cannot grow (thread-spawn
+    /// exhaustion) and no worker exists: dispatches one queued transaction, then
+    /// exits.
+    fn dispatchOneShot(r: *Runtime) void {
+        r.mu.lockUncancelable(g_io);
+        if (r.dispatch_queue.items.len == 0) {
+            r.mu.unlock(g_io);
+            return;
+        }
+        const in = r.dispatch_queue.orderedRemove(0);
+        r.mu.unlock(g_io);
+        r.dispatch(in);
     }
 
     /// Runs a received transaction against a resolved target (null = gone). The
