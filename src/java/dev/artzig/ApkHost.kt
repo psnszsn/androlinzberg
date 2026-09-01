@@ -368,6 +368,7 @@ public final class ApkHost {
             // the system process (installPackage).
             val pkg: String = parseApkLitePackageName(apkPath)
             dev.artzig.BinderSession.setIdentity(pkg, false)
+            android.os.Process.setArgV0(pkg)
             installOwnPackage(apkPath, pkg)
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =
@@ -532,6 +533,7 @@ public final class ApkHost {
             AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
             val pkg: String = parseApkLitePackageName(apkPath)
             dev.artzig.BinderSession.setIdentity(pkg, false)
+            android.os.Process.setArgV0(pkg)
             installOwnPackage(apkPath, pkg)
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =

@@ -61,4 +61,29 @@ public class FileUtils {
         if ((mode & android.system.OsConstants.O_APPEND) == android.system.OsConstants.O_APPEND) res |= ParcelFileDescriptor.MODE_APPEND;
         return res;
     }
+    // AOSP FileUtils size helpers (Process.getAdvertisedMem): decimal units, and
+    // rounding a raw size up to the next "advertised" size (1, 2, 4 ... 512 x 1000^n).
+    public static long parseSize(String fmtSize) {
+        if (fmtSize == null || fmtSize.isEmpty()) return Long.MIN_VALUE;
+        String s = fmtSize.trim().toUpperCase(java.util.Locale.ROOT);
+        long mult = 1;
+        if (s.endsWith("TB")) { mult = 1_000_000_000_000L; s = s.substring(0, s.length() - 2); }
+        else if (s.endsWith("GB")) { mult = 1_000_000_000L; s = s.substring(0, s.length() - 2); }
+        else if (s.endsWith("MB")) { mult = 1_000_000L; s = s.substring(0, s.length() - 2); }
+        else if (s.endsWith("KB")) { mult = 1_000L; s = s.substring(0, s.length() - 2); }
+        else if (s.endsWith("B")) { s = s.substring(0, s.length() - 1); }
+        try { return (long) (Double.parseDouble(s.trim()) * mult); } catch (NumberFormatException e) { return Long.MIN_VALUE; }
+    }
+    public static long roundStorageSize(long size) {
+        long val = 1;
+        long pow = 1;
+        while ((val * pow) < size) {
+            val <<= 1;
+            if (val > 512) {
+                val = 1;
+                pow *= 1000;
+            }
+        }
+        return val * pow;
+    }
 }

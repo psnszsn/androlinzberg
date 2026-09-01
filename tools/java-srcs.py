@@ -361,6 +361,8 @@ file('$CJ/android/os/CombinedMessageQueue/MessageQueue.java')
 file('$CJ/android/os/Handler.java')
 file('$CJ/android/os/Message.java')
 file('$CJ/android/os/ParcelFileDescriptor.java')
+# Real Process (vendored patch: myUid = broker uid, no zygote); natives in framework_jni.zig.
+file('$CJ/android/os/Process.java')
 file('$CJ/android/util/JsonReader.java')
 file('$CJ/android/util/JsonScope.java')
 file('$CJ/android/util/JsonToken.java')

@@ -2,3 +2,4 @@
 # Scope matches the AOSP module's sysprop_library scope (internal for these two).
 internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/InputProperties.sysprop
 internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/DisplayProperties.sysprop
+internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/MemoryProperties.sysprop

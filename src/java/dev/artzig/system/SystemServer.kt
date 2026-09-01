@@ -30,6 +30,7 @@ internal object SystemServer {
         Looper.prepareMainLooper()
         // Identity first: uid 1000, the only peer allowed to claim system names.
         BinderSession.setIdentity("android", true)
+        Process.setArgV0("system_server")
         val uid = BinderSession.assignedUid()
         check(uid == Process.SYSTEM_UID) { "broker assigned uid " + uid + " to the system process" }
         val frameworkRes = System.getenv("ARTZIG_FRAMEWORK_RES")
