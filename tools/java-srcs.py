@@ -381,6 +381,11 @@ file('$CJ/android/os/UserHandle.java')
 # StorageManager stub's single emulated volume.
 file('$CJ/android/os/Environment.java')
 file('$CJ/android/os/storage/StorageVolume.java')
+# Real BroadcastReceiver; ArtzigBroadcastManager.Args extends its PendingResult (LoadedApk.ReceiverDispatcher.Args).
+file('$CJ/android/content/BroadcastReceiver.java')
+file('$CJ/android/app/QueuedWork.java')
+file('$CJ/com/android/internal/os/DebugStore.java')
+file('$CJ/com/android/internal/util/ExponentiallyBucketedHistogram.java')
 file('$CJ/android/os/Trace.java')
 file('$CJ/android/content/ActivityNotFoundException.java')
 file('$CJ/android/content/UriMatcher.java')

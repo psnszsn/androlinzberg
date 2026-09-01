@@ -41,8 +41,32 @@ final class ArtzigBroadcastManager {
                     boolean ordered, boolean sticky) {
                 super(resultCode, resultData, resultExtras,
                         mForgotten ? TYPE_UNREGISTERED : TYPE_REGISTERED, ordered, sticky,
-                        mIIntentReceiver);
+                        mIIntentReceiver.asBinder(), android.os.UserHandle.USER_SYSTEM, 0);
                 mCurIntent = intent;
+            }
+
+            /**
+             * AOSP PendingResult.sendFinished reports to IActivityManager keyed by
+             * the application-thread token; the hosted activity manager keys an
+             * ordered receiver by its registered IIntentReceiver. Non-ordered
+             * registered deliveries are assumed delivered (guessAssumeDelivered)
+             * and report nothing, as in AOSP.
+             */
+            @Override
+            public void sendFinished(android.app.IActivityManager am) {
+                synchronized (this) {
+                    if (mFinished) {
+                        throw new IllegalStateException("Broadcast already finished");
+                    }
+                    mFinished = true;
+                    if (mResultExtras != null) {
+                        mResultExtras.setAllowFds(false);
+                    }
+                    if (mOrderedHint) {
+                        android.app.HostedServiceClient.finishReceiver(mIIntentReceiver,
+                                mResultCode, mResultData, mResultExtras, mAbortBroadcast);
+                    }
+                }
             }
 
             Runnable getRunnable() {
@@ -87,7 +111,7 @@ final class ArtzigBroadcastManager {
                 boolean ordered, boolean sticky) {
             Args args = new Args(intent, resultCode, data, extras, ordered, sticky);
             if (!mHandler.post(args.getRunnable()) && ordered) {
-                args.sendFinished();
+                args.sendFinished(null);
             }
         }
     }

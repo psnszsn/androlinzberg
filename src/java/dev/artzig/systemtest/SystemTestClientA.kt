@@ -256,13 +256,15 @@ internal object SystemTestClientA {
             override fun onReceive(ctx: Context?, received: Intent?) {
                 pingSeq = received?.getIntExtra("seq", -1) ?: -1
                 pingThread = Thread.currentThread()
+                // Real BroadcastReceiver.PendingResult: registered, non-ordered, user 0.
+                if (sendingUserId != 0 || isOrderedBroadcast || isInitialStickyBroadcast) pingSeq = -2
                 pinged.countDown()
             }
         }
         context.registerReceiver(pingReceiver, android.content.IntentFilter("dev.artzig.test.PING"))
         service.noteSeq(42)
         check(pinged.await(30, TimeUnit.SECONDS), "cross-process broadcast delivered")
-        check(pingSeq == 42, "broadcast extras intact")
+        check(pingSeq == 42, "broadcast extras intact, sending user 0, not ordered or sticky")
         check(pingThread === Looper.getMainLooper().thread, "broadcast delivered on the main looper")
         context.unregisterReceiver(pingReceiver)
         // noteSeq is oneway and also writes clip-42 in B; wait for that write

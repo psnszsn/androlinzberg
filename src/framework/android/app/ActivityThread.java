@@ -23,6 +23,8 @@ public final class ActivityThread {
     public static Activity launchMainActivity(String activityClassName) {
         return HostedActivityRuntime.launchMain(activityClassName);
     }
+    public static final String TAG = "ActivityThread";
+    public static final boolean DEBUG_BROADCAST = false;
     public static Activity currentActivity() { return HostedActivityRuntime.currentActivity(); }
     /** AOSP ActivityThread.sCurrentBroadcastIntent: the Intent a receiver on this thread is handling. */
     private static final ThreadLocal<android.content.Intent> sCurrentBroadcastIntent = new ThreadLocal<>();
