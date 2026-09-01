@@ -3,3 +3,7 @@
 internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/InputProperties.sysprop
 internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/DisplayProperties.sysprop
 internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/MemoryProperties.sysprop
+internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/BackportedFixesProperties.sysprop
+internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/DeviceProperties.sysprop
+internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/SocProperties.sysprop
+internal|artzig/vendor/system/libsysprop/srcs/android/sysprop/TelephonyProperties.sysprop

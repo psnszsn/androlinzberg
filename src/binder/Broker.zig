@@ -203,15 +203,45 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     return b;
 }
 
-/// Boot-time defaults, previously the static block of the per-process
-/// `SystemProperties` shim.
+/// Boot-time defaults: the session's build identity, read by the real
+/// `android.os.Build` (values previously hard-coded in the hosted shim).
+/// `ro.boot.qemu` stays unset: hosted processes are not emulators.
 fn seedProperties(props: *prop_area.Area) void {
     const seeds = [_][2][]const u8{
         .{ "ro.build.version.sdk", "35" },
+        .{ "ro.build.version.sdk_full", "35.0" },
         .{ "ro.build.version.release", "15" },
+        .{ "ro.build.version.release_or_codename", "15" },
+        .{ "ro.build.version.release_or_preview_display", "15" },
         .{ "ro.build.version.codename", "REL" },
-        .{ "ro.hardware", "artzig" },
+        .{ "ro.build.version.all_codenames", "REL" },
+        .{ "ro.build.version.known_codenames", "Base,Base11,Cupcake,Donut,Eclair,Eclair01,EclairMr1,Froyo,Gingerbread,GingerbreadMr1,Honeycomb,HoneycombMr1,HoneycombMr2,IceCreamSandwich,IceCreamSandwichMr1,JellyBean,JellyBeanMr1,JellyBeanMr2,Kitkat,KitkatWatch,Lollipop,LollipopMr1,M,N,NMr1,O,OMr1,P,Q,R,S,Sv2,Tiramisu,UpsideDownCake,VanillaIceCream" },
+        .{ "ro.build.version.incremental", "artzig" },
+        .{ "ro.build.version.security_patch", "2026-08-01" },
+        .{ "ro.build.version.preview_sdk", "0" },
+        .{ "ro.build.version.min_supported_target_sdk", "28" },
+        .{ "ro.build.id", "artzig" },
+        .{ "ro.build.display.id", "artzig" },
+        .{ "ro.build.type", "user" },
+        .{ "ro.build.tags", "release-keys" },
+        .{ "ro.build.user", "artzig" },
+        .{ "ro.build.host", "artzig" },
+        .{ "ro.build.date.utc", "0" },
+        .{ "ro.build.fingerprint", "artzig/artzig:16" },
+        .{ "ro.product.brand", "artzig" },
+        .{ "ro.product.device", "artzig" },
+        .{ "ro.product.model", "artzig" },
+        .{ "ro.product.manufacturer", "artzig" },
+        .{ "ro.product.name", "artzig" },
+        .{ "ro.product.board", "artzig" },
+        .{ "ro.product.first_api_level", "24" },
         .{ "ro.product.cpu.abi", "x86_64" },
+        .{ "ro.product.cpu.abilist", "x86_64,arm64-v8a" },
+        .{ "ro.product.cpu.abilist64", "x86_64,arm64-v8a" },
+        .{ "ro.product.cpu.abilist32", "" },
+        .{ "ro.hardware", "artzig" },
+        .{ "ro.debuggable", "0" },
+        .{ "ro.hw_timeout_multiplier", "1" },
         .{ "debug.force_rtl", "0" },
     };
     for (seeds) |seed| props.set(seed[0], seed[1]) catch unreachable;

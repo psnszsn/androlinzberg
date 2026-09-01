@@ -152,3 +152,4 @@ android/app/IAlarmListener.aidl
 android/app/IAlarmCompleteListener.aidl
 android/app/timedetector/ITimeDetectorService.aidl
 android/app/time/ITimeDetectorListener.aidl
+android/os/IDeviceIdentifiersPolicyService.aidl

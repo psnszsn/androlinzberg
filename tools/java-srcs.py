@@ -385,6 +385,8 @@ file('$CJ/android/content/ContentUris.java')
 # alarm/time-detector/GNSS closure; the services are absent, the client paths
 # handle a null service as AOSP does.
 file('$CJ/android/os/SystemClock.java')
+# Real Build: every value is a session property the broker seeds (Broker.zig seedProperties).
+file('$CJ/android/os/Build.java')
 file('$CJ/android/os/SimpleClock.java')
 file('$CJ/android/os/WorkSource.java')
 file('$CJ/android/os/ShellCommand.java')

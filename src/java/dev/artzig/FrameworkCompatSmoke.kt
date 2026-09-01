@@ -192,6 +192,14 @@ public final class FrameworkCompatSmoke {
             // App processes never look like an emulator (the flag is
             // process-local to the system process, not a shared property).
             require(!android.os.Build.IS_EMULATOR, "IS_EMULATOR is false in app processes")
+            require(android.os.Build.VERSION.SDK_INT == 35, "Build.VERSION.SDK_INT from ro.build.version.sdk")
+            require(android.os.Build.VERSION.SDK_INT_FULL == 35 * 100000, "Build.VERSION.SDK_INT_FULL from ro.build.version.sdk_full")
+            require(android.os.Build.VERSION.RELEASE == "15" && android.os.Build.VERSION.CODENAME == "REL", "Build.VERSION release/codename")
+            require(android.os.Build.VERSION.SECURITY_PATCH == "2026-08-01", "Build.VERSION.SECURITY_PATCH seeded")
+            require(android.os.Build.SUPPORTED_ABIS.toList() == listOf("x86_64", "arm64-v8a"), "Build.SUPPORTED_ABIS from ro.product.cpu.abilist")
+            require(android.os.Build.SUPPORTED_32_BIT_ABIS.isEmpty(), "Build.SUPPORTED_32_BIT_ABIS empty")
+            require(android.os.Build.MODEL == "artzig" && android.os.Build.FINGERPRINT == "artzig/artzig:16", "Build identity seeded")
+            require(!android.os.Build.IS_DEBUGGABLE && android.os.Build.IS_USER, "Build type user, not debuggable")
         }
 
         @Throws(Exception::class)

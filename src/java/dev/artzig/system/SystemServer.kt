@@ -27,6 +27,8 @@ internal object SystemServer {
         Process.setArgV0("system_server")
         val uid = BinderSession.assignedUid()
         check(uid == Process.SYSTEM_UID) { "broker assigned uid " + uid + " to the system process" }
+        // ro.boot.qemu is never seeded: the real ClipboardService takes its plain path.
+        check(!android.os.Build.IS_EMULATOR) { "hosted sessions are not emulators" }
         val frameworkRes = System.getenv("ARTZIG_FRAMEWORK_RES")
             ?: throw IllegalStateException("ARTZIG_FRAMEWORK_RES is not set")
         val context = ContextImpl.createSystemContext(frameworkRes, 800, 600, 120, 0)
