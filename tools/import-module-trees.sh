@@ -36,7 +36,7 @@ git -C "$EXTRA/frameworks-base" sparse-checkout add \
     core/java/android/permission core/java/android/security \
     core/java/android/tracing services/autofill services/backup \
     apex/jobscheduler/framework/java/android/app core/java/android/location \
-    core/java/android/service/chooser \
+    core/java/android/service/chooser packages/CrashRecovery/aconfig \
     proto/src/metrics_constants \
     tools/streaming_proto
 git -C "$EXTRA/frameworks-native" sparse-checkout add services/surfaceflinger libs/permission/aidl libs/binder/aidl

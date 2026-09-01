@@ -8,6 +8,9 @@ public class AppOpsManager {
     public static final int MODE_ERRORED = 2;
     public static final int MODE_DEFAULT = 3;
     public static final int OP_NONE = -1;
+    public static final int OP_LEGACY_STORAGE = 87;
+    public static final int OP_MANAGE_EXTERNAL_STORAGE = 92;
+    public static final int OP_NO_ISOLATED_STORAGE = 99;
     public static final int _NUM_OP = 148;
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface SamplingStrategy {}

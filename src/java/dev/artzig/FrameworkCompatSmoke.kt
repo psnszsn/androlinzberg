@@ -633,6 +633,16 @@ public final class FrameworkCompatSmoke {
             } finally {
                 uriParcel.recycle()
             }
+            // Real Environment over the launcher's data root and the one emulated volume.
+            val dataRoot = java.io.File(checkNotNull(System.getenv("ARTZIG_DATA_DIR")) { "launcher exports ARTZIG_DATA_DIR" })
+            require(android.os.Environment.getDataDirectory().canonicalPath == dataRoot.canonicalPath, "Environment.getDataDirectory is the session data root")
+            val external = android.os.Environment.getExternalStorageDirectory()
+            require(external.canonicalPath.startsWith(dataRoot.canonicalPath + "/"), "external storage lives under the data root: " + external)
+            require(android.os.Environment.getExternalStorageState() == android.os.Environment.MEDIA_MOUNTED, "external storage mounted")
+            require(android.os.Environment.isExternalStorageEmulated() && !android.os.Environment.isExternalStorageRemovable(), "external storage emulated, not removable")
+            require(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS).parentFile?.canonicalPath == external.canonicalPath, "public directories under the external root")
+            require(android.os.Environment.getDownloadCacheDirectory().canonicalPath.startsWith(dataRoot.canonicalPath), "download cache under the data root")
+            require(android.os.Environment.getDataUserCePackageDirectory(null, 0, "org.example").path == dataRoot.path + "/user/0/org.example", "CE package dir layout")
             require(!android.os.Trace.isEnabled(), "Trace: no tag enabled on the host")
             require(!android.os.Trace.isTagEnabled(android.os.Trace.TRACE_TAG_VIEW), "Trace.isTagEnabled(VIEW) false")
             android.os.Trace.beginSection("azk-smoke")

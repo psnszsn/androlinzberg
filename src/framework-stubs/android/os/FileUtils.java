@@ -1,6 +1,11 @@
 /* artzig stub (auto-generated placeholder; members added on demand). */
 package android.os;
 public class FileUtils {
+    /** AOSP FileUtils.listFilesOrEmpty. */
+    public static java.io.File[] listFilesOrEmpty(java.io.File dir) {
+        java.io.File[] files = dir != null ? dir.listFiles() : null;
+        return files != null ? files : new java.io.File[0];
+    }
     public static final int S_IRWXU = 0700, S_IRUSR = 0400, S_IWUSR = 0200, S_IXUSR = 0100;
     public static final int S_IRWXG = 0070, S_IRGRP = 0040, S_IWGRP = 0020, S_IXGRP = 0010;
     public static final int S_IRWXO = 0007, S_IROTH = 0004, S_IWOTH = 0002, S_IXOTH = 0001;

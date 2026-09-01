@@ -5,6 +5,49 @@ import java.io.IOException;
 import java.util.UUID;
 public class StorageManager {
     public static final UUID UUID_DEFAULT = new UUID(0L, 0L);
+    public static final int FLAG_FOR_WRITE = 1 << 8;
+    public static final int FLAG_REAL_STATE = 1 << 9;
+    public static final int FLAG_INCLUDE_INVISIBLE = 1 << 10;
+    /**
+     * AOSP StorageManager.getVolumeList (via the mount service): this host has
+     * one primary emulated volume, rooted at $EXTERNAL_STORAGE (the launcher
+     * places it under the session data root), always mounted, owned by the
+     * requesting user. Environment's UserEnvironment reads it lazily.
+     */
+    public static StorageVolume[] getVolumeList(int userId, int flags) {
+        return new StorageVolume[] { primaryVolume(userId) };
+    }
+    /** AOSP StorageManager.getStorageVolume(File, int): the primary volume when the path lies under it. */
+    public static StorageVolume getStorageVolume(File path, int userId) {
+        StorageVolume volume = primaryVolume(userId);
+        if (path == null) return null;
+        try {
+            String root = volume.getPathFile().getCanonicalPath();
+            String candidate = path.getCanonicalPath();
+            if (candidate.equals(root) || candidate.startsWith(root + File.separator)) return volume;
+        } catch (IOException ignored) {
+        }
+        return null;
+    }
+    public StorageVolume getPrimaryStorageVolume() {
+        return primaryVolume(android.os.UserHandle.myUserId());
+    }
+    public java.util.List<StorageVolume> getStorageVolumes() {
+        return java.util.Collections.singletonList(getPrimaryStorageVolume());
+    }
+    private static StorageVolume primaryVolume(int userId) {
+        String configured = System.getenv("EXTERNAL_STORAGE");
+        File root = configured != null && !configured.isEmpty()
+                ? new File(configured)
+                : new File(android.os.Environment.getDataDirectory(), "external");
+        root.mkdirs();
+        return new StorageVolume.Builder("emulated;" + userId, root, "Internal shared storage",
+                android.os.UserHandle.of(userId), android.os.Environment.MEDIA_MOUNTED)
+                .setPrimary(true)
+                .setRemovable(false)
+                .setEmulated(true)
+                .build();
+    }
     /** AOSP: null marks internal storage; the magic string a primary SD card. */
     public static final String UUID_PRIVATE_INTERNAL = null;
     public static final String UUID_PRIMARY_PHYSICAL = "primary_physical";
@@ -31,6 +74,8 @@ public class StorageManager {
     public long getAllocatableBytes(UUID storageUuid, int flags) throws IOException {
         return getAllocatableBytes(storageUuid);
     }
+    /** AOSP: disabled since sdcardfs replaced FUSE; identity. */
+    public static File maybeTranslateEmulatedPathToInternal(File path) { return path; }
     /** No storage sandbox on the host: paths are not translated. */
     public File translateAppToSystem(File file, int pid, int uid) { return file; }
     public File translateSystemToApp(File file, int pid, int uid) { return file; }

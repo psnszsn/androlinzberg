@@ -121,8 +121,33 @@ fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtime_ro
     _ = setenv("XDG_DATA_DIRS", data_dirs, 1);
 }
 
+/// The session's Android data root (android.os.Environment.getDataDirectory):
+/// `$ARTZIG_DATA_DIR`, else `$XDG_DATA_HOME/artzig`, else
+/// `$HOME/.local/share/artzig`. Exported for this process and everything it
+/// spawns (system server, app processes, tests), with the download-cache and
+/// shared-storage roots AOSP reads from DOWNLOAD_CACHE and EXTERNAL_STORAGE
+/// placed underneath. ANDROID_DATA stays ART's dalvik-cache root.
+fn configureDataRoot(init: std.process.Init) !void {
+    const a = init.arena.allocator();
+    const env = init.minimal.environ;
+    const root = if (env.getPosix("ARTZIG_DATA_DIR")) |configured| configured else blk: {
+        if (env.getPosix("XDG_DATA_HOME")) |xdg| break :blk try std.fs.path.join(a, &.{ xdg, "artzig" });
+        const home = env.getPosix("HOME") orelse "/tmp";
+        break :blk try std.fs.path.join(a, &.{ home, ".local", "share", "artzig" });
+    };
+    try std.Io.Dir.cwd().createDirPath(init.io, root);
+    _ = setenv("ARTZIG_DATA_DIR", try a.dupeSentinel(u8, root, 0), 1);
+    if (env.getPosix("DOWNLOAD_CACHE") == null) {
+        _ = setenv("DOWNLOAD_CACHE", try std.fs.path.joinZ(a, &.{ root, "cache" }), 1);
+    }
+    if (env.getPosix("EXTERNAL_STORAGE") == null) {
+        _ = setenv("EXTERNAL_STORAGE", try std.fs.path.joinZ(a, &.{ root, "external" }), 1);
+    }
+}
+
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    try configureDataRoot(init);
 
     var frames_limit: ?u32 = null;
     var use_java = false;

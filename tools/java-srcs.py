@@ -377,6 +377,10 @@ file('$CJ/android/os/CancellationSignal.java')
 file('$CJ/android/os/Messenger.java')
 file('$CJ/android/os/LocaleList.java')
 file('$CJ/android/os/UserHandle.java')
+# Real Environment (vendored patch: data root from ARTZIG_DATA_DIR) over the
+# StorageManager stub's single emulated volume.
+file('$CJ/android/os/Environment.java')
+file('$CJ/android/os/storage/StorageVolume.java')
 file('$CJ/android/os/Trace.java')
 file('$CJ/android/content/ActivityNotFoundException.java')
 file('$CJ/android/content/UriMatcher.java')

@@ -1,0 +1,33 @@
+From 263df64bb2a1e0aa112f9dd48667f966a6034b48 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Wed, 2 Sep 2026 01:32:13 +0200
+Subject: [PATCH] Environment: session data root from ARTZIG_DATA_DIR on the
+ artzig host
+
+ANDROID_DATA is ART's dalvik-cache root on this host (an XDG cache directory
+shared between sessions), so the launcher-exported ARTZIG_DATA_DIR takes
+precedence for the Android data directory.
+---
+ core/java/android/os/Environment.java | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/core/java/android/os/Environment.java b/core/java/android/os/Environment.java
+index 69540c42a..1ad2d0672 100644
+--- a/core/java/android/os/Environment.java
++++ b/core/java/android/os/Environment.java
+@@ -98,7 +98,11 @@ public class Environment {
+     public static final String DIRECTORY_ANDROID = DIR_ANDROID;
+ 
+     private static final File DIR_ANDROID_ROOT = getDirectory(ENV_ANDROID_ROOT, "/system");
+-    private static final String DIR_ANDROID_DATA_PATH = getDirectoryPath(ENV_ANDROID_DATA, "/data");
++    // Host adaptation (artzig): ANDROID_DATA is ART's dalvik-cache root here
++    // (an XDG cache directory shared between sessions), so the session's data
++    // root, which the launcher exports as ARTZIG_DATA_DIR, takes precedence.
++    private static final String DIR_ANDROID_DATA_PATH =
++            getDirectoryPath("ARTZIG_DATA_DIR", getDirectoryPath(ENV_ANDROID_DATA, "/data"));
+     private static final File DIR_ANDROID_DATA = new File(DIR_ANDROID_DATA_PATH);
+     private static final File DIR_ANDROID_EXPAND = getDirectory(ENV_ANDROID_EXPAND, "/mnt/expand");
+     private static final File DIR_ANDROID_STORAGE = getDirectory(ENV_ANDROID_STORAGE, "/storage");
+-- 
+2.55.0
+
