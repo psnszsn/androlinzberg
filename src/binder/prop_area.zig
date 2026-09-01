@@ -145,6 +145,17 @@ pub const Reader = struct {
         return read(r.map, name, buf);
     }
 
+    /// Slot byte offset for `name`, or null. Slots are append-only and never
+    /// move, so the offset is a stable handle (SystemProperties native_find).
+    pub fn find(r: *const Reader, name: []const u8) ?usize {
+        return findSlot(r.map, name);
+    }
+
+    /// Serial-protocol read of a known slot (from `find`).
+    pub fn getAt(r: *const Reader, slot: usize, buf: *[value_max]u8) []const u8 {
+        return readSlot(r.map, slot, buf);
+    }
+
     pub fn globalSerial(r: *const Reader) u32 {
         return @atomicLoad(u32, atomicPtr(r.map, off_global_serial), .acquire);
     }
@@ -178,6 +189,10 @@ fn findSlot(map: []align(std.heap.page_size_min) u8, name: []const u8) ?usize {
 
 fn read(map: []align(std.heap.page_size_min) u8, name: []const u8, buf: *[value_max]u8) ?[]const u8 {
     const slot = findSlot(map, name) orelse return null;
+    return readSlot(map, slot, buf);
+}
+
+fn readSlot(map: []align(std.heap.page_size_min) u8, slot: usize, buf: *[value_max]u8) []const u8 {
     const serial = atomicPtr(map, slot);
     // Bounded: a writer killed mid-write leaves the serial odd forever; a
     // possibly-torn (still NUL-terminated) value beats a hang.

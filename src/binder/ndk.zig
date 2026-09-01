@@ -50,6 +50,12 @@ var g_io: Io = undefined;
 /// 0 = uninitialized, 1 = initializing, 2 = ready.
 var g_io_state: std.atomic.Value(u8) = .init(0);
 
+/// The library-owned Io for framework JNI code (framework_jni.zig).
+pub fn frameworkIo() Io {
+    ensureIo();
+    return g_io;
+}
+
 fn ensureIo() void {
     if (g_io_state.load(.acquire) == 2) return;
     if (g_io_state.cmpxchgStrong(0, 1, .acq_rel, .acquire) == null) {
@@ -65,7 +71,7 @@ fn ensureIo() void {
 /// snapshot or /proc/self/environ). A direct extern, not the std.c namespace.
 extern var environ: [*c]?[*:0]u8;
 
-fn getenv(name: []const u8) ?[]const u8 {
+pub fn getenv(name: []const u8) ?[]const u8 {
     var i: usize = 0;
     while (environ[i]) |entry| : (i += 1) {
         const e = std.mem.span(entry);
@@ -506,8 +512,15 @@ const Runtime = struct {
     fn connect() !*Runtime {
         const io = g_io;
         const socket = getenv("AZK_BINDER_SOCKET") orelse return error.NoSocket;
-        const cookie = getenv("AZK_BINDER_COOKIE") orelse "";
-        const package = getenv("AZK_BINDER_PACKAGE") orelse "";
+        // The system cookie is present only in the system-role process (the
+        // launcher strips it from spawned app children), so its presence IS the
+        // role — matching the JVM peer's selection.
+        const cookie = getenv("AZK_BINDER_SYSTEM_COOKIE") orelse getenv("AZK_BINDER_COOKIE") orelse "";
+        // Same anonymous fallback as the JVM peer, so both peers of one
+        // process present the same package (and share a broker uid).
+        var anon_buf: [64]u8 = undefined;
+        const package = getenv("AZK_BINDER_PACKAGE") orelse
+            std.fmt.bufPrint(&anon_buf, "anonymous.{d}", .{std.os.linux.getpid()}) catch unreachable;
         const addr = try net.UnixAddress.init(socket);
         const stream = try addr.connect(io);
         errdefer stream.close(io);
@@ -681,7 +694,7 @@ const Runtime = struct {
                 const rel = std.mem.bytesToValue(Server.Message.ObjectReleased, body[0..@sizeOf(Server.Message.ObjectReleased)]);
                 r.maybeRelease(rel.object.value, rel.uses);
             },
-            .property_changed => {}, // NDK has no sysprop-change callback surface
+            .property_changed => @import("framework_jni.zig").onPropertyChanged(),
             .protocol_error => return false,
             .shutdown => return false,
             else => {
@@ -2015,6 +2028,34 @@ export fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8)
 }
 const EX_ILLEGAL_STATE: i32 = -5;
 
+/// Broker set_property round-trip (SystemProperties.native_set).
+pub const SetPropertyResult = enum { ok, denied, failed };
+pub fn setSystemProperty(name: []const u8, value: []const u8) SetPropertyResult {
+    const r = Runtime.get();
+    var body = std.ArrayListUnmanaged(u8).empty;
+    defer body.deinit(alloc);
+    const sp = Client.Message.SetProperty{ .name_len = @intCast(name.len), .value_len = @intCast(value.len) };
+    body.appendSlice(alloc, std.mem.asBytes(&sp)) catch @panic("oom");
+    body.appendSlice(alloc, name) catch @panic("oom");
+    body.appendSlice(alloc, value) catch @panic("oom");
+    const call = r.serviceRequest(.set_property, body.items);
+    defer {
+        if (call.svc_names.len > 0) alloc.free(call.svc_names);
+        call.nested.deinit(alloc);
+        alloc.destroy(call);
+    }
+    if (call.failed) return .failed;
+    return switch (call.svc_status) {
+        .ok => .ok,
+        .denied => .denied,
+        else => .failed,
+    };
+}
+
+comptime {
+    _ = @import("framework_jni.zig"); // emit the framework JNI exports
+}
+
 fn lookup(instance: [*:0]const u8, wait: bool) ?*AIBinder {
     const name = std.mem.span(instance);
     const r = Runtime.get();
@@ -2325,7 +2366,16 @@ const JNIEnvPtr = [*c]jni.JNIEnv;
 /// (no DetachCurrentThread) — harmless for the tested path, where the bridge
 /// runs on already-attached JVM threads; the remote-forward path (a library
 /// worker forwarding to Java) would want a pthread-key detach on thread exit.
-fn jniEnv() JNIEnvPtr {
+/// Capture the JavaVM from a live env when the library was dlopen'd without
+/// System.load (no JNI_OnLoad) — the framework-JNI registration entry calls
+/// this first so later attached threads can reach the VM.
+pub fn ensureJavaVm(env: JNIEnvPtr) void {
+    if (g_jvm != null) return;
+    var vm: [*c]jni.JavaVM = null;
+    if (env.*.*.GetJavaVM.?(env, &vm) == jni.JNI_OK) g_jvm = @ptrCast(vm);
+}
+
+pub fn jniEnv() JNIEnvPtr {
     const vm: [*c]jni.JavaVM = @ptrCast(@alignCast(g_jvm orelse return null));
     var env: ?*anyopaque = null;
     if (vm.*.*.GetEnv.?(vm, &env, jni.JNI_VERSION_1_6) != jni.JNI_OK) {
@@ -2334,7 +2384,7 @@ fn jniEnv() JNIEnvPtr {
     return @ptrCast(@alignCast(env));
 }
 
-fn findGlobalClass(env: JNIEnvPtr, name: [*:0]const u8) ?jni.jclass {
+pub fn findGlobalClass(env: JNIEnvPtr, name: [*:0]const u8) ?jni.jclass {
     const local = env.*.*.FindClass.?(env, name) orelse return null;
     const global: jni.jclass = @ptrCast(env.*.*.NewGlobalRef.?(env, local));
     env.*.*.DeleteLocalRef.?(env, local);

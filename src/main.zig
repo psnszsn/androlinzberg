@@ -272,6 +272,19 @@ const Headless = struct {
     tree: []const u8,
 };
 
+
+/// Register the framework natives served by libbinder_ndk.so (SystemProperties
+/// for now; the android.os migration grows this). The library also backs the
+/// NDK binder ABI, so it is opened RTLD-global from the install tree — the
+/// same copy the island links and bionic maps by soname.
+fn registerBinderJni(arena: std.mem.Allocator, tree: []const u8, env: *anyopaque) !void {
+    const path = try std.fs.path.join(arena, &.{ tree, "lib", "art", "libbinder_ndk.so" });
+    var lib = try std.DynLib.open(path);
+    const RegisterBinderFn = *const fn (*anyopaque) callconv(.c) c_int;
+    const register = lib.lookup(RegisterBinderFn, "azk_register_binder_jni") orelse return error.SymbolNotFound;
+    if (register(env) != 0) return error.JniRegistrationFailed;
+}
+
 /// Boots ART with the framework jar and the host natives but no window, no
 /// fonts, and no bionic loader: enough for framework Java (Binder, Looper,
 /// AssetManager, PackageParser) in the system process and test peers.
@@ -300,6 +313,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
         try host_natives.register(init.io, @ptrCast(rt.env), hwui);
+        try registerBinderJni(arena, tree, @ptrCast(rt.env));
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -345,6 +359,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
         try host_natives.register(init.io, @ptrCast(rt.env), hwui);
+        try registerBinderJni(arena, tree, @ptrCast(rt.env));
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -458,6 +473,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     if (session) |s| try s.awaitSystemReady();
     if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
     try host_natives.register(init.io, @ptrCast(env), hwui);
+    try registerBinderJni(arena, tree, @ptrCast(env));
     defer host_natives.deinitWakeups();
 
     const e = art.Env{ .env = env };
