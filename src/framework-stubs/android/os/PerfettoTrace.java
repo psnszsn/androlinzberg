@@ -17,6 +17,9 @@ public final class PerfettoTrace {
             new java.util.concurrent.atomic.AtomicInteger();
     /** A process-unique flow id, as the real one hands out. */
     public static int getFlowId() { return sFlowId.incrementAndGet(); }
+    /** Trace.registerWithPerfetto entry points: no SDK backend to initialize. */
+    public static void register(boolean isBackendInProcess) {}
+    public static void registerCategories() { MQ_CATEGORY.register(); }
     /** Fluent no-op standing in for PerfettoTrackEventExtra.Builder. */
     public static final class Builder {
         public Builder setFlow(long id) { return this; }

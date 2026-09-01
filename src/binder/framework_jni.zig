@@ -658,6 +658,45 @@ fn registerProcess(env: JNIEnvPtr) !void {
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }
 
+// ------------------------------------------------------------- Trace
+// android.os.Trace natives in the Ravenwood shape (Trace.java
+// nativeIsTagEnabled$ravenwood & co.): no tag is ever enabled, so every public
+// entry short-circuits before reaching the emitters. atrace/Perfetto have no
+// host sink today; this is the seam for one.
+
+fn traceIsTagEnabled(_: jni.jlong) callconv(.c) jni.jboolean {
+    return jni.JNI_FALSE;
+}
+fn traceSetBool(_: JNIEnvPtr, _: jni.jclass, _: jni.jboolean) callconv(.c) void {}
+fn traceCounter(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jstring, _: jni.jlong) callconv(.c) void {}
+fn traceBegin(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jstring) callconv(.c) void {}
+fn traceEnd(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong) callconv(.c) void {}
+fn traceAsync(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jstring, _: jni.jint) callconv(.c) void {}
+fn traceAsyncTrackBegin(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jstring, _: jni.jstring, _: jni.jint) callconv(.c) void {}
+fn traceAsyncTrackEnd(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jstring, _: jni.jint) callconv(.c) void {}
+fn traceInstantForTrack(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jstring, _: jni.jstring) callconv(.c) void {}
+
+fn registerTrace(env: JNIEnvPtr) !void {
+    const cls = env.*.*.FindClass.?(env, "android/os/Trace") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const S = "Ljava/lang/String;";
+    const methods = [_]jni.JNINativeMethod{
+        method("nativeIsTagEnabled", "(J)Z", &traceIsTagEnabled), // @CriticalNative
+        method("nativeSetAppTracingAllowed", "(Z)V", &traceSetBool),
+        method("nativeSetTracingEnabled", "(Z)V", &traceSetBool),
+        method("nativeTraceCounter", "(J" ++ S ++ "J)V", &traceCounter),
+        method("nativeTraceBegin", "(J" ++ S ++ ")V", &traceBegin),
+        method("nativeTraceEnd", "(J)V", &traceEnd),
+        method("nativeAsyncTraceBegin", "(J" ++ S ++ "I)V", &traceAsync),
+        method("nativeAsyncTraceEnd", "(J" ++ S ++ "I)V", &traceAsync),
+        method("nativeAsyncTraceForTrackBegin", "(J" ++ S ++ S ++ "I)V", &traceAsyncTrackBegin),
+        method("nativeAsyncTraceForTrackEnd", "(J" ++ S ++ "I)V", &traceAsyncTrackEnd),
+        method("nativeInstant", "(J" ++ S ++ ")V", &traceBegin),
+        method("nativeInstantForTrack", "(J" ++ S ++ S ++ ")V", &traceInstantForTrack),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
+
 // ------------------------------------------------------------- registration
 
 fn method(name: [*:0]const u8, signature: [*:0]const u8, ptr: anytype) jni.JNINativeMethod {
@@ -694,6 +733,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerSystemProperties(env) catch return -1;
     registerSharedMemory(env) catch return -1;
     registerProcess(env) catch return -1;
+    registerTrace(env) catch return -1;
     // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
     // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;

@@ -39,6 +39,15 @@ internal object SystemTestHostB {
         // looks up and calls remotely; onTransact enforces the same interface
         // descriptor the native side's prepareTransaction writes as a token.
         ServiceManager.addService("dev.artzig.test.b.ndkprobe", NdkProbeService())
+        // A real android.os.Messenger over the binder stack: replies what+1 /
+        // arg1*2 through msg.replyTo (client A asserts the cross-process round trip).
+        val messengerHandler = android.os.Handler(Looper.getMainLooper()) { msg ->
+            val reply = android.os.Message.obtain(null, msg.what + 1, msg.arg1 * 2, 0)
+            reply.data = android.os.Bundle().apply { putString("from", "b") }
+            msg.replyTo?.send(reply)
+            true
+        }
+        ServiceManager.addService("dev.artzig.test.b.messenger", android.os.Messenger(messengerHandler).binder)
         // Publish the test providers under their parsed ProviderInfos (client
         // A queries them cross-process; the non-exported one asserts the
         // acquisition gate).

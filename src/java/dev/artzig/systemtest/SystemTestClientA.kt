@@ -226,6 +226,28 @@ internal object SystemTestClientA {
         check(service.callerUid() == Process.myUid(), "callee sees this package's uid")
         check(service.selfPid() != Process.myPid(), "service runs in another process")
 
+        // --- android.os.Messenger (real class over IMessenger): cross-process send + reply.
+        val messengerReply = CountDownLatch(1)
+        var messengerWhat = -1
+        var messengerArg = -1
+        var messengerFrom: String? = null
+        val replyTo = android.os.Messenger(android.os.Handler(Looper.getMainLooper()) { msg ->
+            messengerWhat = msg.what
+            messengerArg = msg.arg1
+            messengerFrom = msg.data?.getString("from")
+            messengerReply.countDown()
+            true
+        })
+        val remoteMessenger = android.os.Messenger(ServiceManager.waitForService("dev.artzig.test.b.messenger"))
+        val outbound = android.os.Message.obtain(null, 41, 21, 0)
+        outbound.replyTo = replyTo
+        remoteMessenger.send(outbound)
+        check(messengerReply.await(30, TimeUnit.SECONDS), "Messenger reply delivered")
+        check(messengerWhat == 42 && messengerArg == 42 && messengerFrom == "b", "Messenger reply carries what/arg1/data")
+        check(android.os.UserHandle.myUserId() == 0, "single hosted user: myUserId is 0")
+        check(android.os.UserHandle.getUserId(Process.myUid()) == 0, "broker app uid lies in user 0")
+        check(android.os.UserHandle.isApp(Process.myUid()), "broker uid is an application uid")
+
         // --- broadcasts: cross-process delivery, ordered chain, sticky.
         val pinged = CountDownLatch(1)
         var pingSeq = -1

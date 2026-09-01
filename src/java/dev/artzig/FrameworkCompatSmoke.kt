@@ -199,6 +199,7 @@ public final class FrameworkCompatSmoke {
         public fun main(args: Array<String>) {
         testParcelRoundTrips()
             testSystemProperties()
+            testOsTail()
             testSharedMemory()
             testLocalContentProvider()
             testAospPackageParser(args.firstOrNull())
@@ -539,6 +540,53 @@ public final class FrameworkCompatSmoke {
                     diagnostic.contains("[throwable diagnostic truncated]"),
                 "host throwable diagnostic retains type and truncation marker",
             )
+        }
+
+        /** The android.os tail (real AOSP classes): AsyncTask on the pumped main looper, Trace, UserHandle, LocaleList, CancellationSignal. */
+        @JvmStatic private fun testOsTail() {
+            if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
+            val progress = ArrayList<Int>()
+            var post: String? = null
+            val task = object : android.os.AsyncTask<Int, Int, String>() {
+                override fun doInBackground(vararg params: Int?): String {
+                    for (i in 1..(params[0] ?: 0)) publishProgress(i)
+                    return "done" + params[0]
+                }
+                override fun onProgressUpdate(vararg values: Int?) { progress.add(values[0] ?: -1) }
+                override fun onPostExecute(result: String) { post = result }
+            }
+            require(task.status == android.os.AsyncTask.Status.PENDING, "AsyncTask starts PENDING")
+            task.execute(3)
+            require(task.get(30, java.util.concurrent.TimeUnit.SECONDS) == "done3", "AsyncTask result")
+            val deadline = System.nanoTime() + 5_000_000_000L
+            while (post == null && System.nanoTime() < deadline) { drainMainLooper(); Thread.sleep(5) }
+            require(post == "done3", "AsyncTask.onPostExecute delivered on the main looper")
+            require(progress == listOf(1, 2, 3), "AsyncTask.publishProgress ordered on the main looper: " + progress)
+            require(task.status == android.os.AsyncTask.Status.FINISHED, "AsyncTask ends FINISHED")
+
+            require(!android.os.Trace.isEnabled(), "Trace: no tag enabled on the host")
+            require(!android.os.Trace.isTagEnabled(android.os.Trace.TRACE_TAG_VIEW), "Trace.isTagEnabled(VIEW) false")
+            android.os.Trace.beginSection("azk-smoke")
+            android.os.Trace.endSection()
+            android.os.Trace.traceCounter(android.os.Trace.TRACE_TAG_APP, "azk", 1)
+            require(android.os.Trace.TRACE_TAG_PACKAGE_MANAGER == 1L shl 18, "Trace tag values are AOSP's")
+
+            require(android.os.UserHandle.myUserId() == 0, "UserHandle.myUserId is 0")
+            require(android.os.UserHandle.getUserId(android.os.Process.myUid()) == 0, "app uid maps to user 0")
+            require(android.os.UserHandle.isApp(android.os.Process.myUid()), "app uid isApp")
+            require(android.os.UserHandle.getUid(1, 10005) == 110005, "UserHandle.getUid arithmetic")
+
+            val locales = android.os.LocaleList.forLanguageTags("fr-CA,en-US")
+            require(locales.getFirstMatch(arrayOf("en", "de"))?.language == "en", "LocaleList.getFirstMatch honours the supported set")
+            require(android.os.LocaleList.getDefault().size() > 0, "LocaleList.getDefault populated")
+
+            val signal = android.os.CancellationSignal()
+            val transport = android.os.CancellationSignal.createTransport()
+            signal.setRemote(transport)
+            var cancelled = false
+            android.os.CancellationSignal.fromTransport(transport).setOnCancelListener { cancelled = true }
+            signal.cancel()
+            require(cancelled && signal.isCanceled, "CancellationSignal propagates through its transport")
         }
 
         @JvmStatic private fun drainMainLooper() {
