@@ -45,3 +45,9 @@ android.service.autofill
 android.tracing
 com.android.graphics.surfaceflinger.flags
 com.android.server.backup
+# module-tree packages (tools/import-module-trees.sh, android-16.0.0_r1):
+android.media.audio
+android.media.codec
+com.android.internal.camera.flags
+com.android.internal.telephony.flags
+com.android.ranging.flags

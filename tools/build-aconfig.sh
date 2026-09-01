@@ -12,7 +12,8 @@ OUT=$(realpath -m "${1:-$APP/.cache/aconfig-java}")
 # Vendored trees searched for .aconfig declarations. frameworks-base holds the
 # platform packages; frameworks-native holds a few (input); imported module
 # trees are added here as they land.
-ACONFIG_ROOTS=("$ROOT/extra/frameworks-base" "$ROOT/extra/frameworks-native")
+ACONFIG_ROOTS=("$ROOT/extra/frameworks-base" "$ROOT/extra/frameworks-native"
+              "$ROOT/extra/frameworks-av" "$ROOT/extra/opt-telephony" "$ROOT/extra/modules-uwb")
 ACONFIG="$ROOT/out/host/linux-x86/bin/aconfig"
 LIST="$APP/tools/aconfig-packages.txt"
 

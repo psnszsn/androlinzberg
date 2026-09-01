@@ -146,3 +146,7 @@ d992a222ec28b56efa29f9104db060379298049c artzig/vendor/tools/dexter
 550a85e8491c819771b9736dcd7d19f79dab6fb7 artzig/vendor/tools/metalava
 88aaf9df5107403b278dfa4dcff9b5ec2455bf06 artzig/vendor/tools/platform-compat
 7692f71e056605b72cff7f1f6529ae2096102560 artzig/vendor/tools/tradefederation/core
+4b2111885ff934799e70eddae2527a9848c3be29 artzig/extra/frameworks-av
+3449e9e2cd2738d8cdeb88514498f728622e3a6b artzig/extra/opt-telephony
+adcc2fe7aadac53e67402901e2246af21699749d artzig/extra/modules-uwb
+8022cc37e35d424fb0eab65f79cd272759b5dc54 artzig/extra/modules-statsd
