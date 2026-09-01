@@ -84,7 +84,7 @@ fn genDir(b: *std.Build, o: Options, key: []const u8) std.Build.LazyPath {
     return o.out.path(b, key);
 }
 
-const Root = enum { vendor, out };
+const Root = enum { vendor, out, project };
 const Inc = struct { root: Root, rel: []const u8, kind: []const u8 = "-I" };
 
 /// Flags every compile unit in this target set shares (intersection over all units).
@@ -97,7 +97,7 @@ pub const base_cflags = [_][]const u8{
 };
 
 fn rootDir(o: Options, r: Root) []const u8 {
-    return switch (r) { .vendor => o.vendor_dir, .out => o.out_dir };
+    return switch (r) { .vendor => o.vendor_dir, .out => o.out_dir, .project => o.root_dir };
 }
 fn incSet(b: *std.Build, o: Options, list: []const Inc) []const []const u8 {
     var out: std.ArrayList([]const u8) = .empty;
@@ -1015,7 +1015,7 @@ const inc_38 = [_]Inc{
     .{ .root = .vendor, .rel = "external/expat/lib" },
     .{ .root = .vendor, .rel = "external/expat/lib" },
     .{ .root = .vendor, .rel = "external/expat" },
-    .{ .root = .vendor, .rel = "../build/gen/prelude/include_stdio.h", .kind = "-include" },
+    .{ .root = .project, .rel = "build/gen/prelude/include_stdio.h", .kind = "-include" },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
