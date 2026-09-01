@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Sun, 23 Aug 2026 19:18:59 +0200
-Subject: [PATCH] =?UTF-8?q?jni:=20artzig=5Fset=5Fnative=5Floader()=20?=
+Subject: [PATCH 3/7] =?UTF-8?q?jni:=20artzig=5Fset=5Fnative=5Floader()=20?=
  =?UTF-8?q?=E2=80=94=20pluggable=20dlopen/dlsym=20for=20embedders?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

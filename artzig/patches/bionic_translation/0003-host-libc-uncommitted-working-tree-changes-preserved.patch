@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Tue, 1 Sep 2026 12:02:48 +0200
+Subject: [PATCH 3/3] host libc: uncommitted working-tree changes preserved
+ during android-16.0.0_r1 re-pin (libc.c/libc-misc.c)
+
+---
+ libc/libc-misc.c | 12 +++------
+ libc/libc.c      | 68 ++++++++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 67 insertions(+), 13 deletions(-)
+
+diff --git a/libc/libc-misc.c b/libc/libc-misc.c
+index c46c010..e535385 100644
+--- a/libc/libc-misc.c
++++ b/libc/libc-misc.c
+@@ -14,6 +14,9 @@ struct prop_info {
+ #define PROP_NAME_MAX  32
+ #define PROP_VALUE_MAX 92
+ 
++/* androlinzberg: reads the session property area (see libc.c). */
++extern int azk_prop_area_get(const char *name, char *value);
++
+ const struct prop_info *bionic___system_property_find(const char *name)
+ {
+ 	struct prop_info *ret = malloc(sizeof(struct prop_info));
+@@ -30,14 +33,7 @@ int bionic___system_property_read(const struct prop_info *prop_info, char *name,
+ 	if (!value)
+ 		return 0;
+ 
+-	if (!strcmp(prop_info->name, "ro.build.fingerprint")) {
+-		strncpy(value, "", PROP_VALUE_MAX); // there is no good reason that apps should need this, so just return an empty string
+-	} else {
+-		printf("__system_property_find: >%s< not handled yet\n", prop_info->name);
+-		strncpy(value, "", PROP_VALUE_MAX);
+-	}
+-
+-	return strlen(value);
++	return azk_prop_area_get(prop_info->name, value);
+ }
+ 
+ // actually misc stuff
+diff --git a/libc/libc.c b/libc/libc.c
+index 0f57724..234d364 100644
+--- a/libc/libc.c
++++ b/libc/libc.c
+@@ -15,6 +15,7 @@
+ #include <time.h>
+ #include <unistd.h>
+ 
++#include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <sys/syscall.h>
+ #include <sys/types.h>
+@@ -61,17 +62,74 @@ struct bionic_sigaction {
+ #define PROP_NAME_MAX  32
+ #define PROP_VALUE_MAX 92
+ 
+-int __system_property_get(const char *name, char *value)
++/* androlinzberg: session-wide property area written by the binder broker
++ * (layout: src/binder/prop_area.zig in the androlinzberg tree), mapped
++ * read-only via $AZK_PROP_AREA. The same file backs the JVM's
++ * android.os.SystemProperties, so NDK and Java code agree. */
++#define AZK_PROP_MAGIC 0x504B5A41u
++#define AZK_PROP_HEADER_LEN 32
++#define AZK_PROP_NAME_MAX 128
++#define AZK_PROP_VALUE_MAX 92
++#define AZK_PROP_SLOT_LEN (4 + AZK_PROP_NAME_MAX + AZK_PROP_VALUE_MAX)
++
++static const volatile unsigned char *azk_prop_area(void)
+ {
+-	verbose("%s", name);
+-
+-	if (!strcmp(name, "ro.build.version.sdk"))
+-		return snprintf(value, PROP_VALUE_MAX, "%d", 21);
++	static const volatile unsigned char *area;
++	static int initialized;
++	if (!initialized) {
++		const char *path = getenv("AZK_PROP_AREA");
++		if (path) {
++			int fd = open(path, O_RDONLY | O_CLOEXEC);
++			if (fd >= 0) {
++				struct stat st;
++				if (fstat(fd, &st) == 0 && st.st_size >= AZK_PROP_HEADER_LEN) {
++					void *map = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
++					if (map != MAP_FAILED && *(const unsigned int *)map == AZK_PROP_MAGIC)
++						area = map;
++				}
++				close(fd);
++			}
++		}
++		initialized = 1;
++	}
++	return area;
++}
+ 
++/* Lock-free read with the bionic torn-read serial protocol: the slot serial
++ * is odd while the broker rewrites the value. Returns the value length; the
++ * empty string for a missing area or property. */
++int azk_prop_area_get(const char *name, char *value)
++{
++	const volatile unsigned char *area = azk_prop_area();
+ 	*value = 0;
++	if (!area)
++		return 0;
++	unsigned int count = *(const volatile unsigned int *)(area + 12);
++	for (unsigned int i = 0; i < count; i++) {
++		const volatile unsigned char *slot = area + AZK_PROP_HEADER_LEN + i * (unsigned int)AZK_PROP_SLOT_LEN;
++		if (strncmp((const char *)(slot + 4), name, AZK_PROP_NAME_MAX) != 0)
++			continue;
++		for (;;) {
++			unsigned int before = *(const volatile unsigned int *)slot;
++			if (before & 1)
++				continue;
++			/* The writer NUL-terminates and zero-pads the field. */
++			strncpy(value, (const char *)(slot + 4 + AZK_PROP_NAME_MAX), AZK_PROP_VALUE_MAX);
++			value[AZK_PROP_VALUE_MAX - 1] = 0;
++			if (*(const volatile unsigned int *)slot == before)
++				return strlen(value);
++		}
++	}
+ 	return 0;
+ }
+ 
++int __system_property_get(const char *name, char *value)
++{
++	verbose("%s", name);
++
++	return azk_prop_area_get(name, value);
++}
++
+ pid_t gettid(void)
+ {
+ 	return syscall(SYS_gettid);

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Mon, 24 Aug 2026 17:35:00 +0200
-Subject: [PATCH] add direct Wayland EGL presentation to host HWUI
+Subject: [PATCH 09/14] add direct Wayland EGL presentation to host HWUI
 
 Add a host-only RenderProxy/CanvasContext surface seam so Artzig can bind
 its wl_display and wl_surface directly. The Ganesh pipeline now owns a
@@ -16,24 +16,24 @@ host runtimes without a system server.
 Report the actual nested resource chunk type in LoadedArsc diagnostics so
 host resource-table incompatibilities can be identified accurately.
 ---
- .../java/android/graphics/HardwareRenderer.java    |  6 +-
- libs/androidfw/LoadedArsc.cpp                      |  9 +-
- libs/hwui/hwui/Bitmap.cpp                          | 97 ++++++++++++++--------
- libs/hwui/hwui/Bitmap.h                            | 72 ++++++++--------
- libs/hwui/jni/Bitmap.cpp                           | 43 +++++++++
- .../hwui/jni/android_graphics_HardwareRenderer.cpp |  8 +-
- libs/hwui/platform/host/Readback.cpp               | 57 ++++++++++++-
- .../platform/host/renderthread/RenderThread.cpp    | 21 ++++-
- libs/hwui/renderthread/CanvasContext.cpp           | 61 +++++++++++---
- libs/hwui/renderthread/CanvasContext.h             | 14 +++-
- libs/hwui/renderthread/IRenderPipeline.h           |  6 ++
- libs/hwui/renderthread/RenderProxy.cpp             | 34 ++++++--
- libs/hwui/renderthread/RenderProxy.h               |  6 ++
- libs/hwui/renderthread/RenderThread.h              |  6 ++
- 14 files changed, 339 insertions(+), 101 deletions(-)
+ .../android/graphics/HardwareRenderer.java    |  6 +-
+ libs/androidfw/LoadedArsc.cpp                 |  9 +-
+ libs/hwui/hwui/Bitmap.cpp                     | 86 +++++++++++++------
+ libs/hwui/hwui/Bitmap.h                       | 68 ++++++++-------
+ libs/hwui/jni/Bitmap.cpp                      | 41 +++++++++
+ .../jni/android_graphics_HardwareRenderer.cpp |  8 +-
+ libs/hwui/platform/host/Readback.cpp          | 57 +++++++++++-
+ .../host/renderthread/RenderThread.cpp        | 21 ++++-
+ libs/hwui/renderthread/CanvasContext.cpp      | 61 ++++++++++---
+ libs/hwui/renderthread/CanvasContext.h        | 14 ++-
+ libs/hwui/renderthread/IRenderPipeline.h      |  6 ++
+ libs/hwui/renderthread/RenderProxy.cpp        | 34 ++++++--
+ libs/hwui/renderthread/RenderProxy.h          |  6 ++
+ libs/hwui/renderthread/RenderThread.h         |  6 ++
+ 14 files changed, 331 insertions(+), 92 deletions(-)
 
 diff --git a/graphics/java/android/graphics/HardwareRenderer.java b/graphics/java/android/graphics/HardwareRenderer.java
-index 940cd93c53f2b37d8903c44fd5647a12ccfe0e21..cc43780f29969b6a41ade0f50a1cddb17693cdb6 100644
+index 3444f84c2..e2a4f2032 100644
 --- a/graphics/java/android/graphics/HardwareRenderer.java
 +++ b/graphics/java/android/graphics/HardwareRenderer.java
 @@ -22,6 +22,7 @@ import android.annotation.NonNull;
@@ -44,7 +44,7 @@ index 940cd93c53f2b37d8903c44fd5647a12ccfe0e21..cc43780f29969b6a41ade0f50a1cddb1
  import android.content.Context;
  import android.content.pm.ActivityInfo;
  import android.content.res.Configuration;
-@@ -1325,7 +1326,10 @@ public class HardwareRenderer {
+@@ -1340,7 +1341,10 @@ public class HardwareRenderer {
          private void initSched(long renderProxy) {
              try {
                  int tid = nGetRenderThreadTid(renderProxy);
@@ -57,10 +57,10 @@ index 940cd93c53f2b37d8903c44fd5647a12ccfe0e21..cc43780f29969b6a41ade0f50a1cddb1
                  Log.w(LOG_TAG, "Failed to set scheduler for RenderThread", t);
              }
 diff --git a/libs/androidfw/LoadedArsc.cpp b/libs/androidfw/LoadedArsc.cpp
-index d9166a16cdeae9e1d5bdf7a067bf8ad42f0f559a..f992be2d87db7bba193a85945242335e33bc7c1e 100644
+index 7cebb6d79..687d25aad 100644
 --- a/libs/androidfw/LoadedArsc.cpp
 +++ b/libs/androidfw/LoadedArsc.cpp
-@@ -713,7 +713,8 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
+@@ -717,7 +717,8 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
              }
  
              default:
@@ -70,7 +70,7 @@ index d9166a16cdeae9e1d5bdf7a067bf8ad42f0f559a..f992be2d87db7bba193a85945242335e
                break;
            }
          }
-@@ -779,7 +780,7 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
+@@ -783,7 +784,7 @@ std::unique_ptr<const LoadedPackage> LoadedPackage::Load(const Chunk& chunk,
        } break;
  
        default:
@@ -79,7 +79,7 @@ index d9166a16cdeae9e1d5bdf7a067bf8ad42f0f559a..f992be2d87db7bba193a85945242335e
          break;
      }
    }
-@@ -864,7 +865,7 @@ bool LoadedArsc::LoadTable(const Chunk& chunk, const LoadedIdmap* loaded_idmap,
+@@ -868,7 +869,7 @@ bool LoadedArsc::LoadTable(const Chunk& chunk, const LoadedIdmap* loaded_idmap,
        } break;
  
        default:
@@ -88,7 +88,7 @@ index d9166a16cdeae9e1d5bdf7a067bf8ad42f0f559a..f992be2d87db7bba193a85945242335e
          break;
      }
    }
-@@ -905,7 +906,7 @@ std::unique_ptr<LoadedArsc> LoadedArsc::Load(incfs::map_ptr<void> data,
+@@ -909,7 +910,7 @@ std::unique_ptr<LoadedArsc> LoadedArsc::Load(incfs::map_ptr<void> data,
          break;
  
        default:
@@ -98,22 +98,19 @@ index d9166a16cdeae9e1d5bdf7a067bf8ad42f0f559a..f992be2d87db7bba193a85945242335e
      }
    }
 diff --git a/libs/hwui/hwui/Bitmap.cpp b/libs/hwui/hwui/Bitmap.cpp
-index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283fa0ea6fa8 100644
+index 46dcc1f4c..c839a92ec 100644
 --- a/libs/hwui/hwui/Bitmap.cpp
 +++ b/libs/hwui/hwui/Bitmap.cpp
-@@ -16,18 +16,22 @@
- #include "Bitmap.h"
- 
- #include <android-base/file.h>
-+
+@@ -20,17 +20,20 @@
+ #include "FeatureFlags.h"
  #include "HardwareBitmapUploader.h"
  #include "Properties.h"
--#ifdef __ANDROID__  // Layoutlib does not support render thread
 +#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
 +#include "renderthread/RenderProxy.h"
 +#include "renderthread/RenderThread.h"
 +#endif
-+#ifdef __ANDROID__
+ #ifdef __ANDROID__  // Layoutlib does not support render thread
+ #include <com_android_graphics_surfaceflinger_flags.h>
  #include <private/android/AHardwareBufferHelpers.h>
  #include <ui/GraphicBuffer.h>
  #include <ui/GraphicBufferMapper.h>
@@ -128,7 +125,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
  #ifndef _WIN32
  #include <sys/mman.h>
  #endif
-@@ -64,8 +68,10 @@
+@@ -67,8 +70,10 @@
  namespace hwui_flags = com::android::graphics::hwui::flags;
  #else
  namespace hwui_flags {
@@ -140,7 +137,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
  #endif
  
  namespace android {
-@@ -115,9 +121,8 @@ static uint64_t AHardwareBuffer_getAllocationSize(AHardwareBuffer* aHardwareBuff
+@@ -118,9 +123,8 @@ static uint64_t AHardwareBuffer_getAllocationSize(AHardwareBuffer* aHardwareBuff
  //   and PIDs shown in different tools (mostly in decimal as well).
  uint64_t Bitmap::getId(PixelStorageType type) {
      static std::atomic<uint64_t> idCounter{0};
@@ -152,7 +149,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
  }
  
  bool Bitmap::computeAllocationSize(size_t rowBytes, int height, size_t* size) {
-@@ -151,8 +156,8 @@ static sk_sp<Bitmap> allocateBitmap(SkBitmap* bitmap, AllocPixelRef alloc) {
+@@ -154,8 +158,8 @@ static sk_sp<Bitmap> allocateBitmap(SkBitmap* bitmap, AllocPixelRef alloc) {
      return wrapper;
  }
  
@@ -163,18 +160,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
      if (!hwui_flags::bitmap_ashmem_long_name()) {
          return "bitmap";
      }
-@@ -161,8 +166,8 @@ std::string Bitmap::getAshmemId(const char* tag, uint64_t bitmapId,
-         android::base::ReadFileToString("/proc/self/cmdline", &temp);
-         return temp;
-     }();
--    return std::format("bitmap/{}-id_{}-{}x{}-size_{}-{}",
--                       tag, bitmapId, width, height, size, sCmdline);
-+    return std::format("bitmap/{}-id_{}-{}x{}-size_{}-{}", tag, bitmapId, width, height, size,
-+                       sCmdline);
- }
- 
- sk_sp<Bitmap> Bitmap::allocateAshmemBitmap(SkBitmap* bitmap) {
-@@ -199,8 +204,14 @@ sk_sp<Bitmap> Bitmap::allocateAshmemBitmap(size_t size, const SkImageInfo& info,
+@@ -207,8 +211,14 @@ sk_sp<Bitmap> Bitmap::allocateAshmemBitmap(size_t size, const SkImageInfo& info,
  sk_sp<Bitmap> Bitmap::allocateHardwareBitmap(const SkBitmap& bitmap) {
  #ifdef __ANDROID__  // Layoutlib does not support hardware acceleration
      return uirenderer::HardwareBitmapUploader::allocateHardwareBitmap(bitmap);
@@ -190,7 +176,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
  #endif
  }
  
-@@ -229,8 +240,13 @@ sk_sp<Bitmap> Bitmap::createFrom(const SkImageInfo& info, SkPixelRef& pixelRef)
+@@ -237,8 +247,13 @@ sk_sp<Bitmap> Bitmap::createFrom(const SkImageInfo& info, SkPixelRef& pixelRef)
      return sk_sp<Bitmap>(new Bitmap(pixelRef, info));
  }
  
@@ -205,7 +191,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
  sk_sp<Bitmap> Bitmap::createFrom(AHardwareBuffer* hardwareBuffer, sk_sp<SkColorSpace> colorSpace,
                                   BitmapPalette palette) {
      AHardwareBuffer_Desc bufferDesc;
-@@ -244,8 +260,8 @@ sk_sp<Bitmap> Bitmap::createFrom(AHardwareBuffer* hardwareBuffer, SkColorType co
+@@ -252,8 +267,8 @@ sk_sp<Bitmap> Bitmap::createFrom(AHardwareBuffer* hardwareBuffer, SkColorType co
                                   BitmapPalette palette) {
      AHardwareBuffer_Desc bufferDesc;
      AHardwareBuffer_describe(hardwareBuffer, &bufferDesc);
@@ -216,18 +202,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
      return createFrom(hardwareBuffer, info, bufferDesc, palette);
  }
  
-@@ -260,8 +276,8 @@ sk_sp<Bitmap> Bitmap::createFrom(AHardwareBuffer* hardwareBuffer, const SkImageI
- 
- sk_sp<Bitmap> Bitmap::createFrom(const SkImageInfo& info, size_t rowBytes, int fd, void* addr,
-                                  size_t size, bool readOnly) {
--#ifdef _WIN32 // ashmem not implemented on Windows
--     return nullptr;
-+#ifdef _WIN32  // ashmem not implemented on Windows
-+    return nullptr;
- #else
-     if (info.colorType() == kUnknown_SkColorType) {
-         LOG_ALWAYS_FATAL("unknown bitmap configuration");
-@@ -328,8 +344,8 @@ Bitmap::Bitmap(SkPixelRef& pixelRef, const SkImageInfo& info)
+@@ -336,8 +351,8 @@ Bitmap::Bitmap(SkPixelRef& pixelRef, const SkImageInfo& info)
      traceBitmapCreate();
  }
  
@@ -238,7 +213,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
          : SkPixelRef(info.width(), info.height(), address, rowBytes)
          , mInfo(validateAlpha(info))
          , mPixelStorageType(PixelStorageType::Ashmem)
-@@ -340,7 +356,7 @@ Bitmap::Bitmap(void* address, int fd, size_t mappedSize, const SkImageInfo& info
+@@ -348,7 +363,7 @@ Bitmap::Bitmap(void* address, int fd, size_t mappedSize, const SkImageInfo& info
      traceBitmapCreate();
  }
  
@@ -247,7 +222,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
  Bitmap::Bitmap(AHardwareBuffer* buffer, const SkImageInfo& info, size_t rowBytes,
                 BitmapPalette palette)
          : SkPixelRef(info.width(), info.height(), nullptr, rowBytes)
-@@ -353,8 +369,21 @@ Bitmap::Bitmap(AHardwareBuffer* buffer, const SkImageInfo& info, size_t rowBytes
+@@ -361,8 +376,21 @@ Bitmap::Bitmap(AHardwareBuffer* buffer, const SkImageInfo& info, size_t rowBytes
      mPixelStorage.hardware.size = AHardwareBuffer_getAllocationSize(buffer);
      AHardwareBuffer_acquire(buffer);
      setImmutable();  // HW bitmaps are always immutable
@@ -271,7 +246,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
      traceBitmapCreate();
  }
  #endif
-@@ -366,7 +395,7 @@ Bitmap::~Bitmap() {
+@@ -374,7 +402,7 @@ Bitmap::~Bitmap() {
              mPixelStorage.wrapped.pixelRef->unref();
              break;
          case PixelStorageType::Ashmem:
@@ -280,7 +255,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
              munmap(mPixelStorage.ashmem.address, mPixelStorage.ashmem.size);
  #endif
              close(mPixelStorage.ashmem.fd);
-@@ -378,7 +407,7 @@ Bitmap::~Bitmap() {
+@@ -386,7 +414,7 @@ Bitmap::~Bitmap() {
  #endif
              break;
          case PixelStorageType::Hardware:
@@ -289,7 +264,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
              auto buffer = mPixelStorage.hardware.buffer;
              AHardwareBuffer_release(buffer);
              mPixelStorage.hardware.buffer = nullptr;
-@@ -410,10 +439,11 @@ size_t Bitmap::getAllocationByteCount() const {
+@@ -418,10 +446,11 @@ size_t Bitmap::getAllocationByteCount() const {
              return mPixelStorage.heap.size;
          case PixelStorageType::Ashmem:
              return mPixelStorage.ashmem.size;
@@ -302,7 +277,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
          default:
              return rowBytes() * height();
      }
-@@ -432,7 +462,7 @@ void Bitmap::setAlphaType(SkAlphaType alphaType) {
+@@ -440,7 +469,7 @@ void Bitmap::setAlphaType(SkAlphaType alphaType) {
  }
  
  void Bitmap::getSkBitmap(SkBitmap* outBitmap) {
@@ -311,7 +286,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
      if (isHardware()) {
          outBitmap->allocPixels(mInfo);
          uirenderer::renderthread::RenderProxy::copyHWBitmapInto(this, outBitmap);
-@@ -448,7 +478,7 @@ void Bitmap::getBounds(SkRect* bounds) const {
+@@ -456,7 +485,7 @@ void Bitmap::getBounds(SkRect* bounds) const {
      bounds->setIWH(width(), height());
  }
  
@@ -320,7 +295,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
  AHardwareBuffer* Bitmap::hardwareBuffer() {
      if (isHardware()) {
          return mPixelStorage.hardware.buffer;
-@@ -583,8 +613,8 @@ bool Bitmap::compress(JavaCompressFormat format, int32_t quality, SkWStream* str
+@@ -613,8 +642,8 @@ bool Bitmap::compress(JavaCompressFormat format, int32_t quality, SkWStream* str
      return compress(skbitmap, format, quality, stream);
  }
  
@@ -331,7 +306,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
      if (bitmap.colorType() == kAlpha_8_SkColorType) {
          // None of the JavaCompressFormats have a sensible way to compress an
          // ALPHA_8 Bitmap. SkPngEncoder will compress one, but it uses a non-
-@@ -605,7 +635,7 @@ bool Bitmap::compress(const SkBitmap& bitmap, JavaCompressFormat format,
+@@ -635,7 +664,7 @@ bool Bitmap::compress(const SkBitmap& bitmap, JavaCompressFormat format,
              SkWebpEncoder::Options options;
              if (quality >= 100) {
                  options.fCompression = SkWebpEncoder::Compression::kLossless;
@@ -340,7 +315,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
              } else {
                  options.fCompression = SkWebpEncoder::Compression::kLossy;
                  options.fQuality = quality;
-@@ -616,8 +646,9 @@ bool Bitmap::compress(const SkBitmap& bitmap, JavaCompressFormat format,
+@@ -646,8 +675,9 @@ bool Bitmap::compress(const SkBitmap& bitmap, JavaCompressFormat format,
          case JavaCompressFormat::WebpLossless: {
              SkWebpEncoder::Options options;
              options.fQuality = quality;
@@ -353,7 +328,7 @@ index cc292d9de7b230b803356004ee576d4f8a53f98f..a6f02d94e6e5fa0bfc62d03aa181283f
          }
      }
 diff --git a/libs/hwui/hwui/Bitmap.h b/libs/hwui/hwui/Bitmap.h
-index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42e56ba298 100644
+index 0fe5fe88f..563a98707 100644
 --- a/libs/hwui/hwui/Bitmap.h
 +++ b/libs/hwui/hwui/Bitmap.h
 @@ -28,7 +28,7 @@
@@ -365,7 +340,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
  #include <android/hardware_buffer.h>
  #endif
  
-@@ -56,7 +56,7 @@ class Gainmap;
+@@ -57,7 +57,7 @@ class Gainmap;
  namespace renderthread {
  class RenderThread;
  }
@@ -374,7 +349,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
  
  class PixelStorage;
  
-@@ -79,26 +79,27 @@ public:
+@@ -80,26 +80,27 @@ public:
      static sk_sp<Bitmap> allocateHeapBitmap(const SkImageInfo& info);
      static sk_sp<Bitmap> allocateHeapBitmap(size_t size, const SkImageInfo& i, size_t rowBytes);
  
@@ -402,7 +377,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
                                      BitmapPalette palette);
  #endif
      static sk_sp<Bitmap> createFrom(const SkImageInfo& info, size_t rowBytes, int fd, void* addr,
-                                     size_t size, bool readOnly);
+                                     size_t size, bool readOnly, int64_t id);
      static sk_sp<Bitmap> createFrom(const SkImageInfo&, SkPixelRef&);
 +#ifdef ARTZIG_HOST_GPU
 +    static sk_sp<Bitmap> createFrom(sk_sp<SkImage> image,
@@ -411,7 +386,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
  
      int rowBytesAsPixels() const { return rowBytes() >> mInfo.shiftPerPixel(); }
  
-@@ -107,9 +108,7 @@ public:
+@@ -108,9 +109,7 @@ public:
      void setColorSpace(sk_sp<SkColorSpace> colorSpace);
      void setAlphaType(SkAlphaType alphaType);
  
@@ -422,7 +397,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
  
      void getSkBitmap(SkBitmap* outBitmap);
  
-@@ -140,8 +139,8 @@ public:
+@@ -141,8 +140,8 @@ public:
  
      PixelStorageType pixelStorageType() const { return mPixelStorageType; }
  
@@ -433,7 +408,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
  #endif
  
      /**
-@@ -165,24 +164,25 @@ public:
+@@ -166,21 +165,24 @@ public:
          return mPalette;
      }
  
@@ -443,16 +418,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
 +    // returns true if rowBytes * height can be represented by a positive int32_t value
 +    // and places that value in size.
 +    static bool computeAllocationSize(size_t rowBytes, int height, size_t* size);
- 
--  // These must match the int values of CompressFormat in Bitmap.java, as well as
--  // AndroidBitmapCompressFormat.
--  enum class JavaCompressFormat {
--    Jpeg = 0,
--    Png = 1,
--    Webp = 2,
--    WebpLossy = 3,
--    WebpLossless = 4,
--  };
++
 +    // These must match the int values of CompressFormat in Bitmap.java, as well as
 +    // AndroidBitmapCompressFormat.
 +    enum class JavaCompressFormat {
@@ -463,27 +429,24 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
 +        WebpLossless = 4,
 +    };
  
--  bool compress(JavaCompressFormat format, int32_t quality, SkWStream* stream);
+-  // These must match the int values of CompressFormat in Bitmap.java, as well as
+-  // AndroidBitmapCompressFormat.
+-  enum class JavaCompressFormat {
+-    Jpeg = 0,
+-    Png = 1,
+-    Webp = 2,
+-    WebpLossy = 3,
+-    WebpLossless = 4,
+-  };
 +    bool compress(JavaCompressFormat format, int32_t quality, SkWStream* stream);
-+
+ 
+-  bool compress(JavaCompressFormat format, int32_t quality, SkWStream* stream);
 +    static bool compress(const SkBitmap& bitmap, JavaCompressFormat format, int32_t quality,
 +                         SkWStream* stream);
  
--  static bool compress(const SkBitmap& bitmap, JavaCompressFormat format,
--                       int32_t quality, SkWStream* stream);
- private:
-     static constexpr uint64_t INVALID_BITMAP_ID = 0u;
- 
-@@ -192,7 +192,7 @@ private:
-     Bitmap(SkPixelRef& pixelRef, const SkImageInfo& info);
-     Bitmap(void* address, int fd, size_t mappedSize, const SkImageInfo& info, size_t rowBytes,
-            uint64_t id = INVALID_BITMAP_ID);
--#ifdef __ANDROID__ // Layoutlib does not support hardware acceleration
-+#ifdef __ANDROID__  // Layoutlib does not support hardware acceleration
-     Bitmap(AHardwareBuffer* buffer, const SkImageInfo& info, size_t rowBytes,
-            BitmapPalette palette);
- 
-@@ -201,6 +201,8 @@ private:
+   static bool compress(const SkBitmap& bitmap, JavaCompressFormat format,
+                        int32_t quality, SkWStream* stream);
+@@ -202,6 +204,8 @@ private:
      // bufferDesc is only used to compute rowBytes.
      static sk_sp<Bitmap> createFrom(AHardwareBuffer* hardwareBuffer, const SkImageInfo& info,
                                      const AHardwareBuffer_Desc& bufferDesc, BitmapPalette palette);
@@ -492,7 +455,7 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
  #endif
  
      virtual ~Bitmap();
-@@ -229,17 +231,17 @@ private:
+@@ -230,17 +234,17 @@ private:
              void* address;
              size_t size;
          } heap;
@@ -513,11 +476,77 @@ index 8abe6a8c445abb9d9316b0504674bbcf7fe97e2e..ff8224021300259ce9c597f8b2e55b42
      static uint64_t getId(PixelStorageType type);
  
      // for tracing total number and memory usage of bitmaps
+diff --git a/libs/hwui/jni/Bitmap.cpp b/libs/hwui/jni/Bitmap.cpp
+index 1a258e022..95f90ed8d 100644
+--- a/libs/hwui/jni/Bitmap.cpp
++++ b/libs/hwui/jni/Bitmap.cpp
+@@ -35,6 +35,10 @@
+ #include "android/binder_parcel.h"
+ #endif
+ #include "android_nio_utils.h"
++#ifdef ARTZIG_HOST_GPU
++static jclass gHardwareBuffer_class;
++static jmethodID gHardwareBuffer_constructorMethodID;
++#endif
+ 
+ #define DEBUG_PARCEL 0
+ 
+@@ -1202,6 +1206,37 @@ static jobject Bitmap_getHardwareBuffer(JNIEnv* env, jobject, jlong bitmapPtr) {
+     Bitmap& bitmap = bitmapHandle->bitmap();
+     return uirenderer::HardwareBufferHelpers::AHardwareBuffer_toHardwareBuffer(
+             env, bitmap.hardwareBuffer());
++#elif defined(ARTZIG_HOST_GPU)
++    LocalScopedBitmap bitmapHandle(bitmapPtr);
++    if (!bitmapHandle->isHardware()) {
++        jniThrowException(env, "java/lang/IllegalStateException",
++                          "Hardware config is only supported config in Bitmap_getHardwareBuffer");
++        return nullptr;
++    }
++
++    const Bitmap& bitmap = bitmapHandle->bitmap();
++    jint format;
++    switch (bitmap.info().colorType()) {
++        case kRGBA_F16_SkColorType:
++            format = 0x16;  // HardwareBuffer.RGBA_FP16
++            break;
++        case kRGB_565_SkColorType:
++            format = 4;  // HardwareBuffer.RGB_565
++            break;
++        case kRGBA_1010102_SkColorType:
++            format = 0x2b;  // HardwareBuffer.RGBA_1010102
++            break;
++        case kRGBA_10x6_SkColorType:
++            format = 0x3b;  // HardwareBuffer.RGBA_10101010
++            break;
++        default:
++            format = 1;  // HardwareBuffer.RGBA_8888
++            break;
++    }
++
++    return env->NewObject(gHardwareBuffer_class, gHardwareBuffer_constructorMethodID,
++                          bitmap.width(), bitmap.height(), format,
++                          static_cast<jlong>(bitmap.getId()));
+ #else
+     return nullptr;
+ #endif
+@@ -1314,6 +1349,12 @@ static const JNINativeMethod gBitmapMethods[] = {
+ int register_android_graphics_Bitmap(JNIEnv* env)
+ {
+     gBitmap_class = MakeGlobalRefOrDie(env, FindClassOrDie(env, "android/graphics/Bitmap"));
++#ifdef ARTZIG_HOST_GPU
++    gHardwareBuffer_class = MakeGlobalRefOrDie(
++            env, FindClassOrDie(env, "android/hardware/HardwareBuffer"));
++    gHardwareBuffer_constructorMethodID =
++            GetMethodIDOrDie(env, gHardwareBuffer_class, "<init>", "(IIIJ)V");
++#endif
+     uirenderer::HardwareBufferHelpers::init();
+     return android::RegisterMethodsOrDie(env, "android/graphics/Bitmap", gBitmapMethods,
+                                          NELEM(gBitmapMethods));
 diff --git a/libs/hwui/jni/android_graphics_HardwareRenderer.cpp b/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
-index df9f8303670990d00ede21d42ab72a46578051d0..7cd8551f10be6e857fc7714f16118e9f77bdab9d 100644
+index 009974b3c..701281a7b 100644
 --- a/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
 +++ b/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
-@@ -1108,14 +1108,20 @@ int register_android_view_ThreadedRenderer(JNIEnv* env) {
+@@ -1130,14 +1130,20 @@ int register_android_view_ThreadedRenderer(JNIEnv* env) {
      gCopyRequest.getDestinationBitmap =
              GetMethodIDOrDie(env, copyRequest, "getDestinationBitmap", "(II)J");
  
@@ -540,7 +569,7 @@ index df9f8303670990d00ede21d42ab72a46578051d0..7cd8551f10be6e857fc7714f16118e9f
      return RegisterMethodsOrDie(env, kClassPathName, gMethods, NELEM(gMethods));
  }
 diff --git a/libs/hwui/platform/host/Readback.cpp b/libs/hwui/platform/host/Readback.cpp
-index b024ec02efc3b9c39b4a2c6cdae6f26efb72d199..1124e76781dbd103e2fade198a06ae24a0b3608b 100644
+index b024ec02e..1124e7678 100644
 --- a/libs/hwui/platform/host/Readback.cpp
 +++ b/libs/hwui/platform/host/Readback.cpp
 @@ -16,6 +16,14 @@
@@ -626,7 +655,7 @@ index b024ec02efc3b9c39b4a2c6cdae6f26efb72d199..1124e76781dbd103e2fade198a06ae24
  
  bool Readback::copyLayerInto(Layer* layer, const SkRect* srcRect, const SkRect* dstRect,
 diff --git a/libs/hwui/platform/host/renderthread/RenderThread.cpp b/libs/hwui/platform/host/renderthread/RenderThread.cpp
-index f9d0f4704e0841274f4073f133b3b03627f17b08..6e0d19503860832b2c330bdb613061379c01054f 100644
+index ece45304e..d7aabe525 100644
 --- a/libs/hwui/platform/host/renderthread/RenderThread.cpp
 +++ b/libs/hwui/platform/host/renderthread/RenderThread.cpp
 @@ -16,6 +16,11 @@
@@ -641,7 +670,7 @@ index f9d0f4704e0841274f4073f133b3b03627f17b08..6e0d19503860832b2c330bdb61306137
  #include "Readback.h"
  #include "renderstate/RenderState.h"
  #include "renderthread/VulkanManager.h"
-@@ -67,6 +72,7 @@ RenderThread::RenderThread()
+@@ -65,6 +70,7 @@ RenderThread::RenderThread()
  RenderThread::~RenderThread() {}
  
  void RenderThread::initThreadLocals() {
@@ -649,7 +678,7 @@ index f9d0f4704e0841274f4073f133b3b03627f17b08..6e0d19503860832b2c330bdb61306137
      mRenderState = new RenderState(*this);
      mCacheManager = new CacheManager(*this);
  }
-@@ -95,7 +101,10 @@ Readback& RenderThread::readback() {
+@@ -93,7 +99,10 @@ Readback& RenderThread::readback() {
      return *mReadback;
  }
  
@@ -661,7 +690,7 @@ index f9d0f4704e0841274f4073f133b3b03627f17b08..6e0d19503860832b2c330bdb61306137
  
  sk_sp<GrDirectContext> RenderThread::requireGrContext() {
      return mGrContext;
-@@ -125,11 +134,17 @@ bool RenderThread::removeFrameCallback(IFrameCallback* callback) {
+@@ -123,11 +132,17 @@ bool RenderThread::removeFrameCallback(IFrameCallback* callback) {
  void RenderThread::pushBackFrameCallback(IFrameCallback* callback) {}
  
  sk_sp<Bitmap> RenderThread::allocateHardwareBitmap(SkBitmap& skBitmap) {
@@ -682,10 +711,10 @@ index f9d0f4704e0841274f4073f133b3b03627f17b08..6e0d19503860832b2c330bdb61306137
  
  void RenderThread::preload() {}
 diff --git a/libs/hwui/renderthread/CanvasContext.cpp b/libs/hwui/renderthread/CanvasContext.cpp
-index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebdfa308bca 100644
+index d5ac99389..2a2f4591f 100644
 --- a/libs/hwui/renderthread/CanvasContext.cpp
 +++ b/libs/hwui/renderthread/CanvasContext.cpp
-@@ -36,6 +36,9 @@
+@@ -42,6 +42,9 @@
  #include "RenderThread.h"
  #include "hwui/Canvas.h"
  #include "pipeline/skia/SkiaCpuPipeline.h"
@@ -695,7 +724,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
  #include "pipeline/skia/SkiaGpuPipeline.h"
  #include "pipeline/skia/SkiaOpenGLPipeline.h"
  #include "pipeline/skia/SkiaVulkanPipeline.h"
-@@ -78,9 +81,15 @@ CanvasContext* CanvasContext::create(RenderThread& thread, bool translucent,
+@@ -84,9 +87,15 @@ CanvasContext* CanvasContext::create(RenderThread& thread, bool translucent,
  
      switch (renderType) {
          case RenderPipelineType::SkiaGL:
@@ -711,7 +740,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
          case RenderPipelineType::SkiaVulkan:
              return new CanvasContext(thread, translucent, rootRenderNode, contextFactory,
                                       std::make_unique<skiapipeline::SkiaVulkanPipeline>(thread),
-@@ -182,8 +191,8 @@ static void setBufferCount(ANativeWindow* window) {
+@@ -190,8 +199,8 @@ static void setBufferCount(ANativeWindow* window) {
      }
      auto min_undequeued_buffers = static_cast<uint32_t>(query_value);
  
@@ -722,9 +751,9 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
      int bufferCount = min_undequeued_buffers + 2;
      native_window_set_buffer_count(window, bufferCount);
  }
-@@ -220,6 +229,25 @@ void CanvasContext::setSurface(ANativeWindow* window, bool enableTimeout) {
-     setupPipelineSurface();
+@@ -234,6 +243,25 @@ sp<SurfaceControl> CanvasContext::getSurfaceControl() const {
  }
+ #endif
  
 +#ifdef ARTZIG_HOST_GPU
 +void CanvasContext::setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width,
@@ -745,10 +774,10 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
 +}
 +#endif
 +
- void CanvasContext::setSurfaceControl(ASurfaceControl* surfaceControl) {
+ void CanvasContext::setSurfaceControl(sp<SurfaceControl> surfaceControl) {
+ #ifdef __ANDROID__
      if (surfaceControl == mSurfaceControl) return;
- 
-@@ -507,7 +535,7 @@ void CanvasContext::prepareTree(TreeInfo& info, int64_t* uiFrameInfo, int64_t sy
+@@ -526,7 +554,7 @@ void CanvasContext::prepareTree(TreeInfo& info, int64_t* uiFrameInfo, int64_t sy
          info.out.skippedFrameReason = SkippedFrameReason::NothingToDraw;
      }
  
@@ -757,7 +786,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
          int err = mNativeSurface->reserveNext();
          if (err != OK) {
              info.out.skippedFrameReason = SkippedFrameReason::NoBuffer;
-@@ -660,8 +688,8 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
+@@ -679,8 +707,8 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
              const auto inputEventId =
                      static_cast<int32_t>(mCurrentFrameInfo->get(FrameInfoIndex::InputEventId));
              ATRACE_FORMAT(
@@ -768,7 +797,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
              const ANativeWindowFrameTimelineInfo ftl = {
                      .frameNumber = frameCompleteNr,
                      .frameTimelineVsyncId = vsyncId,
-@@ -739,6 +767,14 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
+@@ -758,6 +786,14 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
      } else {
          mCurrentFrameInfo->set(FrameInfoIndex::DequeueBufferDuration) = 0;
          mCurrentFrameInfo->set(FrameInfoIndex::QueueBufferDuration) = 0;
@@ -783,7 +812,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
      }
  
      mCurrentFrameInfo->markSwapBuffersCompleted();
-@@ -777,8 +813,8 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
+@@ -796,8 +832,8 @@ void CanvasContext::draw(bool solelyTextureViewUpdates) {
              }  // release lock
          } else {
              mCurrentFrameInfo->markFrameCompleted();
@@ -794,7 +823,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
              std::scoped_lock lock(mFrameInfoMutex);
              mJankTracker.finishFrame(*mCurrentFrameInfo, mFrameMetricsReporter, frameCompleteNr,
                                       mSurfaceControlGenerationId);
-@@ -906,8 +942,8 @@ void CanvasContext::onSurfaceStatsAvailable(void* context, int32_t surfaceContro
+@@ -940,8 +976,8 @@ void CanvasContext::onSurfaceStatsAvailable(void* context, int32_t surfaceContro
  
      if (frameInfo != nullptr) {
          std::scoped_lock lock(instance->mFrameInfoMutex);
@@ -805,7 +834,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
          frameInfo->set(FrameInfoIndex::GpuCompleted) = std::max(
                  gpuCompleteTime, frameInfo->get(FrameInfoIndex::CommandSubmissionCompleted));
          instance->mJankTracker.finishFrame(*frameInfo, instance->mFrameMetricsReporter, frameNumber,
-@@ -950,8 +986,8 @@ void CanvasContext::prepareAndDraw(RenderNode* node) {
+@@ -985,8 +1021,8 @@ void CanvasContext::prepareAndDraw(RenderNode* node) {
      int64_t frameInterval = mRenderThread.timeLord().frameIntervalNanos();
      int64_t frameInfo[UI_THREAD_FRAME_INFO_SIZE];
      UiFrameInfoBuilder(frameInfo)
@@ -816,7 +845,7 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
  
      TreeInfo info(TreeInfo::MODE_RT_ONLY, *this);
      prepareTree(info, frameInfo, systemTime(SYSTEM_TIME_MONOTONIC), node);
-@@ -1089,7 +1125,8 @@ SkRect CanvasContext::computeDirtyRect(const Frame& frame, SkRect* dirty) {
+@@ -1124,7 +1160,8 @@ SkRect CanvasContext::computeDirtyRect(const Frame& frame, SkRect* dirty) {
          // New surface needs a full draw
          dirty->setEmpty();
      } else {
@@ -827,17 +856,17 @@ index b36b8be10779511fc4c4eb3d15d67b0684550910..ca309baf322376ad9ff44193c0034ebd
                    frame.width(), frame.height());
              dirty->setEmpty();
 diff --git a/libs/hwui/renderthread/CanvasContext.h b/libs/hwui/renderthread/CanvasContext.h
-index c31d0be74cb6e105248701c9bdf9e44dc6b4b89c..7465f398d833583f10c46f3d990caad0043a1f06 100644
+index 655aebada..c1675774a 100644
 --- a/libs/hwui/renderthread/CanvasContext.h
 +++ b/libs/hwui/renderthread/CanvasContext.h
-@@ -129,11 +129,20 @@ public:
+@@ -134,11 +134,20 @@ public:
  
      void setHardwareBuffer(AHardwareBuffer* buffer);
      void setSurface(ANativeWindow* window, bool enableTimeout = true);
 +#ifdef ARTZIG_HOST_GPU
 +    void setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width, int32_t height);
 +#endif
-     void setSurfaceControl(ASurfaceControl* surfaceControl);
+     void setSurfaceControl(sp<SurfaceControl> surfaceControl);
      bool pauseSurface();
      void setStopped(bool stopped);
      bool isStopped() { return mStopped || !hasOutputTarget(); }
@@ -852,7 +881,7 @@ index c31d0be74cb6e105248701c9bdf9e44dc6b4b89c..7465f398d833583f10c46f3d990caad0
      void allocateBuffers();
  
      void setLightAlpha(uint8_t ambientShadowAlpha, uint8_t spotShadowAlpha);
-@@ -336,8 +345,7 @@ private:
+@@ -343,8 +352,7 @@ private:
  
      // List of data of frames that are awaiting GPU completion reporting. Used to compute frame
      // metrics and determine whether or not to report the metrics.
@@ -863,7 +892,7 @@ index c31d0be74cb6e105248701c9bdf9e44dc6b4b89c..7465f398d833583f10c46f3d990caad0
  
      std::string mName;
 diff --git a/libs/hwui/renderthread/IRenderPipeline.h b/libs/hwui/renderthread/IRenderPipeline.h
-index ee1d1f8789d9848249fc3838957a539b8f89d625..76889edbce61f338a9aeba96b61f236b0e0905fe 100644
+index ee1d1f878..76889edbc 100644
 --- a/libs/hwui/renderthread/IRenderPipeline.h
 +++ b/libs/hwui/renderthread/IRenderPipeline.h
 @@ -76,6 +76,12 @@ public:
@@ -880,10 +909,10 @@ index ee1d1f8789d9848249fc3838957a539b8f89d625..76889edbce61f338a9aeba96b61f236b
      virtual bool isSurfaceReady() = 0;
      virtual bool isContextReady() = 0;
 diff --git a/libs/hwui/renderthread/RenderProxy.cpp b/libs/hwui/renderthread/RenderProxy.cpp
-index 77879cf992b7e958d3aaedcd2b16240e9a7151aa..6e6e85b4e1435f7cc80eb021afbaeacdd9cc77eb 100644
+index e4be5fa8d..3441bd5ce 100644
 --- a/libs/hwui/renderthread/RenderProxy.cpp
 +++ b/libs/hwui/renderthread/RenderProxy.cpp
-@@ -108,13 +108,26 @@ void RenderProxy::setHardwareBuffer(AHardwareBuffer* buffer) {
+@@ -113,13 +113,26 @@ void RenderProxy::setHardwareBuffer(AHardwareBuffer* buffer) {
  }
  
  void RenderProxy::setSurface(ANativeWindow* window, bool enableTimeout) {
@@ -909,9 +938,9 @@ index 77879cf992b7e958d3aaedcd2b16240e9a7151aa..6e6e85b4e1435f7cc80eb021afbaeacd
 +}
 +#endif
 +
- void RenderProxy::setSurfaceControl(ASurfaceControl* surfaceControl) {
-     auto funcs = mRenderThread.getASurfaceControlFunctions();
-     if (surfaceControl) {
+ void RenderProxy::setSurfaceControl(sp<SurfaceControl> surfaceControl) {
+ #ifdef __ANDROID__
+     mRenderThread.queue().post([this, control = std::move(surfaceControl)]() mutable {
 @@ -196,9 +209,8 @@ void RenderProxy::destroyFunctor(int functor) {
  }
  
@@ -944,7 +973,7 @@ index 77879cf992b7e958d3aaedcd2b16240e9a7151aa..6e6e85b4e1435f7cc80eb021afbaeacd
      Properties::disableVsync = true;
  }
 diff --git a/libs/hwui/renderthread/RenderProxy.h b/libs/hwui/renderthread/RenderProxy.h
-index f2d8e94c7bd2aa7e775cba5819cb96019ac59f7f..6676c566a19b1947fb2d183368d96db2ec36869f 100644
+index 23b3ebd4b..77ab29d84 100644
 --- a/libs/hwui/renderthread/RenderProxy.h
 +++ b/libs/hwui/renderthread/RenderProxy.h
 @@ -80,6 +80,9 @@ public:
@@ -954,7 +983,7 @@ index f2d8e94c7bd2aa7e775cba5819cb96019ac59f7f..6676c566a19b1947fb2d183368d96db2
 +#ifdef ARTZIG_HOST_GPU
 +    void setHostSurface(void* nativeDisplay, void* nativeSurface, int32_t width, int32_t height);
 +#endif
-     void setSurfaceControl(ASurfaceControl* surfaceControl);
+     void setSurfaceControl(sp<SurfaceControl> surfaceControl);
      void allocateBuffers();
      bool pause();
 @@ -150,6 +153,9 @@ public:
@@ -968,7 +997,7 @@ index f2d8e94c7bd2aa7e775cba5819cb96019ac59f7f..6676c566a19b1947fb2d183368d96db2
      static void disableVsync();
  
 diff --git a/libs/hwui/renderthread/RenderThread.h b/libs/hwui/renderthread/RenderThread.h
-index 86fddbae08317e8f0962026090a93b4dc6e3c295..c3aa59d83ed4eda1319788344f11a1bb41c2c52a 100644
+index f733c7c58..24fb866a3 100644
 --- a/libs/hwui/renderthread/RenderThread.h
 +++ b/libs/hwui/renderthread/RenderThread.h
 @@ -26,6 +26,9 @@
@@ -981,9 +1010,9 @@ index 86fddbae08317e8f0962026090a93b4dc6e3c295..c3aa59d83ed4eda1319788344f11a1bb
  
  #include "CacheManager.h"
  #include "MemoryPolicy.h"
-@@ -246,6 +249,9 @@ private:
+@@ -198,6 +201,9 @@ private:
+     sp<VulkanManager> mVkManager;
  
-     ASurfaceControlFunctions mASurfaceControlFunctions;
      std::mutex mJankDataMutex;
 +#ifdef ARTZIG_HOST_GPU
 +    std::atomic<pid_t> mHostThreadId{-1};
@@ -991,73 +1020,3 @@ index 86fddbae08317e8f0962026090a93b4dc6e3c295..c3aa59d83ed4eda1319788344f11a1bb
  };
  
  } /* namespace renderthread */
-diff --git a/libs/hwui/jni/Bitmap.cpp b/libs/hwui/jni/Bitmap.cpp
-index 29efd98b46eb0cd4b10f93509315f14af3097d45..c98da8786ce80469820570837363081251434474 100644
---- a/libs/hwui/jni/Bitmap.cpp
-+++ b/libs/hwui/jni/Bitmap.cpp
-@@ -27,7 +27,11 @@
- #include "SkPoint.h"
- #include "SkRefCnt.h"
- #include "SkStream.h"
- #include "SkTypes.h"
- #include "android_nio_utils.h"
-+#ifdef ARTZIG_HOST_GPU
-+static jclass gHardwareBuffer_class;
-+static jmethodID gHardwareBuffer_constructorMethodID;
-+#endif
--
-+
- #define DEBUG_PARCEL 0
-@@ -1173,6 +1177,37 @@ static jobject Bitmap_getHardwareBuffer(JNIEnv* env, jobject, jlong bitmapPtr) {
-     Bitmap& bitmap = bitmapHandle->bitmap();
-     return uirenderer::HardwareBufferHelpers::AHardwareBuffer_toHardwareBuffer(
-             env, bitmap.hardwareBuffer());
-+#elif defined(ARTZIG_HOST_GPU)
-+    LocalScopedBitmap bitmapHandle(bitmapPtr);
-+    if (!bitmapHandle->isHardware()) {
-+        jniThrowException(env, "java/lang/IllegalStateException",
-+                          "Hardware config is only supported config in Bitmap_getHardwareBuffer");
-+        return nullptr;
-+    }
-+
-+    const Bitmap& bitmap = bitmapHandle->bitmap();
-+    jint format;
-+    switch (bitmap.info().colorType()) {
-+        case kRGBA_F16_SkColorType:
-+            format = 0x16;  // HardwareBuffer.RGBA_FP16
-+            break;
-+        case kRGB_565_SkColorType:
-+            format = 4;  // HardwareBuffer.RGB_565
-+            break;
-+        case kRGBA_1010102_SkColorType:
-+            format = 0x2b;  // HardwareBuffer.RGBA_1010102
-+            break;
-+        case kRGBA_10x6_SkColorType:
-+            format = 0x3b;  // HardwareBuffer.RGBA_10101010
-+            break;
-+        default:
-+            format = 1;  // HardwareBuffer.RGBA_8888
-+            break;
-+    }
-+
-+    return env->NewObject(gHardwareBuffer_class, gHardwareBuffer_constructorMethodID,
-+                          bitmap.width(), bitmap.height(), format,
-+                          static_cast<jlong>(bitmap.getId()));
- #else
-     return nullptr;
- #endif
-@@ -1285,6 +1320,12 @@ static const JNINativeMethod gBitmapMethods[] = {
- int register_android_graphics_Bitmap(JNIEnv* env)
- {
-     gBitmap_class = MakeGlobalRefOrDie(env, FindClassOrDie(env, "android/graphics/Bitmap"));
-+#ifdef ARTZIG_HOST_GPU
-+    gHardwareBuffer_class = MakeGlobalRefOrDie(
-+            env, FindClassOrDie(env, "android/hardware/HardwareBuffer"));
-+    gHardwareBuffer_constructorMethodID =
-+            GetMethodIDOrDie(env, gHardwareBuffer_class, "<init>", "(IIIJ)V");
-+#endif
-     uirenderer::HardwareBufferHelpers::init();
-     return android::RegisterMethodsOrDie(env, "android/graphics/Bitmap", gBitmapMethods,
-                                          NELEM(gBitmapMethods));
--- 
-2.51.0

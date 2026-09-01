@@ -1,18 +1,40 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Codex <codex@openai.com>
-Date: Mon, 24 Aug 2026 20:15:00 +0200
-Subject: [PATCH] back host hardware bitmaps with GBM AHardwareBuffers
+From: Vlad Panazan <git@praznet.com>
+Date: Tue, 1 Sep 2026 11:15:23 +0200
+Subject: [PATCH 13/14] host hwui/view: uncommitted working-tree changes
+ preserved before android-16.0.0_r1 re-pin
+ (Bitmap/RenderThread/RenderProxy/ViewGroup host adjustments)
 
-Retain the host AHardwareBuffer inside hardware Bitmaps, return that same
-allocation through Bitmap.getHardwareBuffer(), and upload or import hardware
-bitmaps directly through EGL dma-buf images. Enable the existing HWUI
-HardwareBufferRenderer ownership path for the Artzig host pipeline.
 ---
+ core/java/android/view/ViewGroup.java         |  1 -
+ libs/hwui/hwui/Bitmap.cpp                     | 15 ++++--
+ libs/hwui/hwui/Bitmap.h                       | 10 ++--
+ libs/hwui/jni/Bitmap.cpp                      | 44 ++++-----------
+ libs/hwui/jni/HardwareBufferHelpers.cpp       |  9 +++-
+ .../host/renderthread/RenderThread.cpp        | 54 ++++++++++++++++---
+ libs/hwui/renderthread/CanvasContext.cpp      |  2 +-
+ libs/hwui/renderthread/RenderProxy.cpp        | 17 +++++-
+ libs/hwui/renderthread/RenderProxy.h          |  2 +
+ libs/hwui/renderthread/RenderThread.h         |  4 ++
+ 10 files changed, 103 insertions(+), 55 deletions(-)
+
+diff --git a/core/java/android/view/ViewGroup.java b/core/java/android/view/ViewGroup.java
+index 7e0818a0a..8ebc31420 100644
+--- a/core/java/android/view/ViewGroup.java
++++ b/core/java/android/view/ViewGroup.java
+@@ -2688,7 +2688,6 @@ public abstract class ViewGroup extends View implements ViewParent, ViewManager
+                 // so this view group continues to intercept touches.
+                 intercepted = true;
+             }
+-
+             // If intercepted, start normal event dispatch. Also if there is already
+             // a view that is handling the gesture, do normal event dispatch.
+             if (intercepted || mFirstTouchTarget != null) {
 diff --git a/libs/hwui/hwui/Bitmap.cpp b/libs/hwui/hwui/Bitmap.cpp
-index a6f02d94e6e5fa0bfc62d03aa181283fa0ea6fa8..9ebde74e4d1a9cad191345fe7614b39b4dc7cba3 100644
+index c839a92ec..fbb56d8a6 100644
 --- a/libs/hwui/hwui/Bitmap.cpp
 +++ b/libs/hwui/hwui/Bitmap.cpp
-@@ -241,8 +241,11 @@ sk_sp<Bitmap> Bitmap::createFrom(const SkImageInfo& info, SkPixelRef& pixelRef)
+@@ -248,8 +248,11 @@ sk_sp<Bitmap> Bitmap::createFrom(const SkImageInfo& info, SkPixelRef& pixelRef)
  }
  
  #ifdef ARTZIG_HOST_GPU
@@ -26,7 +48,7 @@ index a6f02d94e6e5fa0bfc62d03aa181283fa0ea6fa8..9ebde74e4d1a9cad191345fe7614b39b
  }
  #endif
  
-@@ -374,7 +377,7 @@ Bitmap::Bitmap(AHardwareBuffer* buffer, const SkImageInfo& info, size_t rowBytes
+@@ -381,7 +384,7 @@ Bitmap::Bitmap(AHardwareBuffer* buffer, const SkImageInfo& info, size_t rowBytes
      traceBitmapCreate();
  }
  #elif defined(ARTZIG_HOST_GPU)
@@ -35,7 +57,7 @@ index a6f02d94e6e5fa0bfc62d03aa181283fa0ea6fa8..9ebde74e4d1a9cad191345fe7614b39b
          : SkPixelRef(image->width(), image->height(), nullptr, image->imageInfo().minRowBytes())
          , mInfo(validateAlpha(image->imageInfo()))
          , mPixelStorageType(PixelStorageType::Hardware)
-@@ -382,7 +385,9 @@ Bitmap::Bitmap(sk_sp<SkImage> image, BitmapPalette palette)
+@@ -389,7 +392,9 @@ Bitmap::Bitmap(sk_sp<SkImage> image, BitmapPalette palette)
          , mPaletteGenerationId(getGenerationID())
          , mImage(std::move(image))
          , mId(getId(mPixelStorageType)) {
@@ -45,7 +67,7 @@ index a6f02d94e6e5fa0bfc62d03aa181283fa0ea6fa8..9ebde74e4d1a9cad191345fe7614b39b
      setImmutable();
      traceBitmapCreate();
  }
-@@ -407,7 +412,7 @@ Bitmap::~Bitmap() {
+@@ -414,7 +419,7 @@ Bitmap::~Bitmap() {
  #endif
              break;
          case PixelStorageType::Hardware:
@@ -54,7 +76,7 @@ index a6f02d94e6e5fa0bfc62d03aa181283fa0ea6fa8..9ebde74e4d1a9cad191345fe7614b39b
              auto buffer = mPixelStorage.hardware.buffer;
              AHardwareBuffer_release(buffer);
              mPixelStorage.hardware.buffer = nullptr;
-@@ -478,7 +483,7 @@ void Bitmap::getBounds(SkRect* bounds) const {
+@@ -485,7 +490,7 @@ void Bitmap::getBounds(SkRect* bounds) const {
      bounds->setIWH(width(), height());
  }
  
@@ -64,7 +86,7 @@ index a6f02d94e6e5fa0bfc62d03aa181283fa0ea6fa8..9ebde74e4d1a9cad191345fe7614b39b
      if (isHardware()) {
          return mPixelStorage.hardware.buffer;
 diff --git a/libs/hwui/hwui/Bitmap.h b/libs/hwui/hwui/Bitmap.h
-index ff8224021300259ce9c597f8b2e55b42e56ba298..63b702563191e28622a511af875a8e0cfae06670 100644
+index 563a98707..902c246cf 100644
 --- a/libs/hwui/hwui/Bitmap.h
 +++ b/libs/hwui/hwui/Bitmap.h
 @@ -28,7 +28,7 @@
@@ -76,8 +98,8 @@ index ff8224021300259ce9c597f8b2e55b42e56ba298..63b702563191e28622a511af875a8e0c
  #include <android/hardware_buffer.h>
  #endif
  
-@@ -97,7 +97,7 @@ public:
-                                     size_t size, bool readOnly);
+@@ -98,7 +98,7 @@ public:
+                                     size_t size, bool readOnly, int64_t id);
      static sk_sp<Bitmap> createFrom(const SkImageInfo&, SkPixelRef&);
  #ifdef ARTZIG_HOST_GPU
 -    static sk_sp<Bitmap> createFrom(sk_sp<SkImage> image,
@@ -85,7 +107,7 @@ index ff8224021300259ce9c597f8b2e55b42e56ba298..63b702563191e28622a511af875a8e0c
                                      BitmapPalette palette = BitmapPalette::Unknown);
  #endif
  
-@@ -139,7 +139,7 @@ public:
+@@ -140,7 +140,7 @@ public:
  
      PixelStorageType pixelStorageType() const { return mPixelStorageType; }
  
@@ -94,7 +116,7 @@ index ff8224021300259ce9c597f8b2e55b42e56ba298..63b702563191e28622a511af875a8e0c
      AHardwareBuffer* hardwareBuffer();
  #endif
  
-@@ -202,7 +202,7 @@ private:
+@@ -205,7 +205,7 @@ private:
      static sk_sp<Bitmap> createFrom(AHardwareBuffer* hardwareBuffer, const SkImageInfo& info,
                                      const AHardwareBuffer_Desc& bufferDesc, BitmapPalette palette);
  #elif defined(ARTZIG_HOST_GPU)
@@ -103,7 +125,7 @@ index ff8224021300259ce9c597f8b2e55b42e56ba298..63b702563191e28622a511af875a8e0c
  #endif
  
      virtual ~Bitmap();
-@@ -232,7 +232,7 @@ private:
+@@ -235,7 +235,7 @@ private:
              size_t size;
          } heap;
          struct {
@@ -113,12 +135,12 @@ index ff8224021300259ce9c597f8b2e55b42e56ba298..63b702563191e28622a511af875a8e0c
  #endif
              uint64_t size;
 diff --git a/libs/hwui/jni/Bitmap.cpp b/libs/hwui/jni/Bitmap.cpp
-index 1d868c20180ab1dc3d6f663eb0550d88461c8863..f196856338ff8771569849b3a15d7cfe9cdfd4bb 100644
+index 95f90ed8d..d884af384 100644
 --- a/libs/hwui/jni/Bitmap.cpp
 +++ b/libs/hwui/jni/Bitmap.cpp
-@@ -29,11 +29,6 @@
- #include "SkStream.h"
- #include "SkTypes.h"
+@@ -35,11 +35,6 @@
+ #include "android/binder_parcel.h"
+ #endif
  #include "android_nio_utils.h"
 -#ifdef ARTZIG_HOST_GPU
 -static jclass gHardwareBuffer_class;
@@ -128,7 +150,7 @@ index 1d868c20180ab1dc3d6f663eb0550d88461c8863..f196856338ff8771569849b3a15d7cfe
  #define DEBUG_PARCEL 0
  
  static jclass   gBitmap_class;
-@@ -1150,11 +1145,16 @@ static jobject Bitmap_copyPreserveInternalConfig(JNIEnv* env, jobject, jlong bit
+@@ -1179,11 +1174,16 @@ static jobject Bitmap_copyPreserveInternalConfig(JNIEnv* env, jobject, jlong bit
  
  static jobject Bitmap_wrapHardwareBufferBitmap(JNIEnv* env, jobject, jobject hardwareBuffer,
                                                 jlong colorSpacePtr) {
@@ -146,7 +168,7 @@ index 1d868c20180ab1dc3d6f663eb0550d88461c8863..f196856338ff8771569849b3a15d7cfe
      if (!bitmap.get()) {
          ALOGW("failed to create hardware bitmap from hardware buffer");
          return NULL;
-@@ -1185,29 +1185,9 @@ static jobject Bitmap_getHardwareBuffer(JNIEnv* env, jobject, jlong bitmapPtr) {
+@@ -1214,29 +1214,9 @@ static jobject Bitmap_getHardwareBuffer(JNIEnv* env, jobject, jlong bitmapPtr) {
          return nullptr;
      }
  
@@ -179,7 +201,7 @@ index 1d868c20180ab1dc3d6f663eb0550d88461c8863..f196856338ff8771569849b3a15d7cfe
  #else
      return nullptr;
  #endif
-@@ -1320,12 +1300,6 @@ static const JNINativeMethod gBitmapMethods[] = {
+@@ -1349,12 +1329,6 @@ static const JNINativeMethod gBitmapMethods[] = {
  int register_android_graphics_Bitmap(JNIEnv* env)
  {
      gBitmap_class = MakeGlobalRefOrDie(env, FindClassOrDie(env, "android/graphics/Bitmap"));
@@ -193,7 +215,7 @@ index 1d868c20180ab1dc3d6f663eb0550d88461c8863..f196856338ff8771569849b3a15d7cfe
      return android::RegisterMethodsOrDie(env, "android/graphics/Bitmap", gBitmapMethods,
                                           NELEM(gBitmapMethods));
 diff --git a/libs/hwui/jni/HardwareBufferHelpers.cpp b/libs/hwui/jni/HardwareBufferHelpers.cpp
-index d3b48d36b677c8db64ce59befeda0a28926e1729..2e1e8df5e2af6c4e3658b27b48f398c42ceaacda 100644
+index d3b48d36b..2e1e8df5e 100644
 --- a/libs/hwui/jni/HardwareBufferHelpers.cpp
 +++ b/libs/hwui/jni/HardwareBufferHelpers.cpp
 @@ -18,6 +18,8 @@
@@ -230,7 +252,7 @@ index d3b48d36b677c8db64ce59befeda0a28926e1729..2e1e8df5e2af6c4e3658b27b48f398c4
 \ No newline at end of file
 +}
 diff --git a/libs/hwui/platform/host/renderthread/RenderThread.cpp b/libs/hwui/platform/host/renderthread/RenderThread.cpp
-index 6e0d19503860832b2c330bdb613061379c01054f..a11f80945270c7159cc0449c0afc051612475066 100644
+index d7aabe525..54e4575f9 100644
 --- a/libs/hwui/platform/host/renderthread/RenderThread.cpp
 +++ b/libs/hwui/platform/host/renderthread/RenderThread.cpp
 @@ -16,7 +16,11 @@
@@ -245,7 +267,7 @@ index 6e0d19503860832b2c330bdb613061379c01054f..a11f80945270c7159cc0449c0afc0516
  #include <include/gpu/ganesh/SkImageGanesh.h>
  #include <unistd.h>
  
-@@ -135,12 +139,50 @@ void RenderThread::pushBackFrameCallback(IFrameCallback* callback) {}
+@@ -133,12 +137,50 @@ void RenderThread::pushBackFrameCallback(IFrameCallback* callback) {}
  
  sk_sp<Bitmap> RenderThread::allocateHardwareBitmap(SkBitmap& skBitmap) {
      if (!mGrContext) return nullptr;
@@ -303,10 +325,10 @@ index 6e0d19503860832b2c330bdb613061379c01054f..a11f80945270c7159cc0449c0afc0516
  
  bool RenderThread::isCurrent() {
 diff --git a/libs/hwui/renderthread/CanvasContext.cpp b/libs/hwui/renderthread/CanvasContext.cpp
-index ca309baf322376ad9ff44193c0034ebdfa308bca..0ac745a275c6820d44c27473549798eb8a637ea2 100644
+index 2a2f4591f..f8e99496b 100644
 --- a/libs/hwui/renderthread/CanvasContext.cpp
 +++ b/libs/hwui/renderthread/CanvasContext.cpp
-@@ -198,7 +198,7 @@ static void setBufferCount(ANativeWindow* window) {
+@@ -206,7 +206,7 @@ static void setBufferCount(ANativeWindow* window) {
  }
  
  void CanvasContext::setHardwareBuffer(AHardwareBuffer* buffer) {
@@ -316,10 +338,10 @@ index ca309baf322376ad9ff44193c0034ebdfa308bca..0ac745a275c6820d44c27473549798eb
          AHardwareBuffer_release(mHardwareBuffer);
          mHardwareBuffer = nullptr;
 diff --git a/libs/hwui/renderthread/RenderProxy.cpp b/libs/hwui/renderthread/RenderProxy.cpp
-index 6e6e85b4e1435f7cc80eb021afbaeacdd9cc77eb..b82fb7a627e575e87e7bb6eab836705b9f1691d3 100644
+index 3441bd5ce..cd638d87a 100644
 --- a/libs/hwui/renderthread/RenderProxy.cpp
 +++ b/libs/hwui/renderthread/RenderProxy.cpp
-@@ -94,7 +94,7 @@ void RenderProxy::setName(const char* name) {
+@@ -99,7 +99,7 @@ void RenderProxy::setName(const char* name) {
  }
  
  void RenderProxy::setHardwareBuffer(AHardwareBuffer* buffer) {
@@ -351,7 +373,7 @@ index 6e6e85b4e1435f7cc80eb021afbaeacdd9cc77eb..b82fb7a627e575e87e7bb6eab836705b
  
  void RenderProxy::disableVsync() {
 diff --git a/libs/hwui/renderthread/RenderProxy.h b/libs/hwui/renderthread/RenderProxy.h
-index 6676c566a19b1947fb2d183368d96db2ec36869f..495ea6ec838fe28f4fdfb5583f1f43c38a581cf4 100644
+index 77ab29d84..1f183ba48 100644
 --- a/libs/hwui/renderthread/RenderProxy.h
 +++ b/libs/hwui/renderthread/RenderProxy.h
 @@ -155,6 +155,8 @@ public:
@@ -364,10 +386,10 @@ index 6676c566a19b1947fb2d183368d96db2ec36869f..495ea6ec838fe28f4fdfb5583f1f43c3
  
      static void disableVsync();
 diff --git a/libs/hwui/renderthread/RenderThread.h b/libs/hwui/renderthread/RenderThread.h
-index c3aa59d83ed4eda1319788344f11a1bb41c2c52a..8c10f9f7b4a9b5e4660348c5554df0fd88c1c594 100644
+index 24fb866a3..12ace3f5e 100644
 --- a/libs/hwui/renderthread/RenderThread.h
 +++ b/libs/hwui/renderthread/RenderThread.h
-@@ -160,6 +160,10 @@ public:
+@@ -117,6 +117,10 @@ public:
      VulkanManager& vulkanManager();
  
      sk_sp<Bitmap> allocateHardwareBitmap(SkBitmap& skBitmap);
@@ -378,7 +400,3 @@ index c3aa59d83ed4eda1319788344f11a1bb41c2c52a..8c10f9f7b4a9b5e4660348c5554df0fd
      void dumpGraphicsMemory(int fd, bool includeProfileData);
      void getMemoryUsage(size_t* cpuUsage, size_t* gpuUsage);
  
-
--- 
-2.46.0
-

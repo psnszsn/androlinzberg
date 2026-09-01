@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 00:37:35 +0200
+Subject: [PATCH 02/14] hwui jni: stock-skia m144 adjustments
+
+Matrix/PathEffect/Paint/Path/fonts: Span API call sites; MaskFilter: emboss (deprecated)
+approximated with plain blur (SkEmbossMaskFilter pulls private skia internals);
+Region: getBoundaryPath/toString stubbed (framework-gated / raster internals).
+---
+ libs/hwui/jni/MaskFilter.cpp              |  6 ++++--
+ libs/hwui/jni/Paint.cpp                   |  2 +-
+ libs/hwui/jni/Path.cpp                    |  2 +-
+ libs/hwui/jni/PathEffect.cpp              |  2 +-
+ libs/hwui/jni/Region.cpp                  |  7 +++++--
+ libs/hwui/jni/android_graphics_Matrix.cpp | 12 ++++++------
+ libs/hwui/jni/fonts/Font.cpp              |  2 +-
+ 7 files changed, 19 insertions(+), 14 deletions(-)
+
+diff --git a/libs/hwui/jni/MaskFilter.cpp b/libs/hwui/jni/MaskFilter.cpp
+index cbd452031..a12350407 100644
+--- a/libs/hwui/jni/MaskFilter.cpp
++++ b/libs/hwui/jni/MaskFilter.cpp
+@@ -41,8 +41,10 @@ public:
+         }
+ 
+         SkScalar sigma = convertRadiusToSigma(radius);
+-        SkMaskFilter* filter =  SkBlurMaskFilter::MakeEmboss(sigma,
+-                direction, ambient, specular).release();
++        // artzig: SkEmbossMaskFilter is deprecated & its impl pulls private skia
++        // internals absent from stock libskia; approximate with a plain blur.
++        (void)ambient; (void)specular;
++        SkMaskFilter* filter = SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, sigma).release();
+         ThrowIAE_IfNull(env, filter);
+         return reinterpret_cast<jlong>(filter);
+     }
+diff --git a/libs/hwui/jni/Paint.cpp b/libs/hwui/jni/Paint.cpp
+index f6fdec1c8..e377049b2 100644
+--- a/libs/hwui/jni/Paint.cpp
++++ b/libs/hwui/jni/Paint.cpp
+@@ -72,7 +72,7 @@ static void getPosTextPath(const SkFont& font, const uint16_t glyphs[], int coun
+         SkPath* fDst;
+         const SkPoint* fPos;
+     } rec = { dst, pos };
+-    font.getPaths(glyphs, count, [](const SkPath* src, const SkMatrix& mx, void* ctx) {
++    font.getPaths(SkSpan<const SkGlyphID>(glyphs, count), [](const SkPath* src, const SkMatrix& mx, void* ctx) { // artzig: m144 Span API
+         Rec* rec = (Rec*)ctx;
+         if (src) {
+             SkMatrix tmp(mx);
+diff --git a/libs/hwui/jni/Path.cpp b/libs/hwui/jni/Path.cpp
+index a5e04763d..2ae255e80 100644
+--- a/libs/hwui/jni/Path.cpp
++++ b/libs/hwui/jni/Path.cpp
+@@ -183,7 +183,7 @@ public:
+         SkPathDirection dir = static_cast<SkPathDirection>(dirHandle);
+         AutoJavaFloatArray  afa(env, array, 8);
+         const float* src = afa.ptr();
+-        obj->addRoundRect(rect, src, dir);
++        obj->addRoundRect(rect, SkSpan<const float>(src, 8), dir); // artzig: m144 Span API (8 radii)
+     }
+ 
+     static void addPath__PathFF(JNIEnv* env, jclass clazz, jlong objHandle, jlong srcHandle,
+diff --git a/libs/hwui/jni/PathEffect.cpp b/libs/hwui/jni/PathEffect.cpp
+index 3dbe1a67f..f7ec76730 100644
+--- a/libs/hwui/jni/PathEffect.cpp
++++ b/libs/hwui/jni/PathEffect.cpp
+@@ -36,7 +36,7 @@ public:
+         AutoJavaFloatArray autoInterval(env, intervalArray);
+         int         count = autoInterval.length() & ~1;  // even number
+         SkScalar* intervals = autoInterval.ptr();
+-        SkPathEffect* effect = SkDashPathEffect::Make(intervals, count, phase).release();
++        SkPathEffect* effect = SkDashPathEffect::Make(SkSpan<const SkScalar>(intervals, count), phase).release(); // artzig: m144 Span API
+         return reinterpret_cast<jlong>(effect);
+     }
+ 
+diff --git a/libs/hwui/jni/Region.cpp b/libs/hwui/jni/Region.cpp
+index 76986eeb0..022f8c01d 100644
+--- a/libs/hwui/jni/Region.cpp
++++ b/libs/hwui/jni/Region.cpp
+@@ -83,7 +83,10 @@ static jboolean Region_getBounds(JNIEnv* env, jobject, jlong regionHandle, jobje
+ static jboolean Region_getBoundaryPath(JNIEnv* env, jobject, jlong regionHandle, jlong pathHandle) {
+     const SkRegion* region = reinterpret_cast<SkRegion*>(regionHandle);
+     SkPath*   path = reinterpret_cast<SkPath*>(pathHandle);
+-    bool result = region->getBoundaryPath(path);
++    // artzig: SkRegion::getBoundaryPath pulls the raster internals absent from
++    // stock libskia; approximate with the bounds rect (API is rarely used).
++    bool result = !region->isEmpty();
++    if (result) path->addRect(SkRect::Make(region->getBounds()));
+     return boolTojboolean(result);
+ }
+ 
+@@ -189,7 +192,7 @@ static void Region_scale(JNIEnv* env, jobject region, jfloat scale, jobject dst)
+ 
+ static jstring Region_toString(JNIEnv* env, jobject clazz, jlong regionHandle) {
+     SkRegion* region = reinterpret_cast<SkRegion*>(regionHandle);
+-    char* str = region->toString();
++    char* str = strdup("SkRegion()"); // artzig: framework-gated toString absent
+     if (str == NULL) {
+         return NULL;
+     }
+diff --git a/libs/hwui/jni/android_graphics_Matrix.cpp b/libs/hwui/jni/android_graphics_Matrix.cpp
+index eedc069ed..420f6cfc4 100644
+--- a/libs/hwui/jni/android_graphics_Matrix.cpp
++++ b/libs/hwui/jni/android_graphics_Matrix.cpp
+@@ -62,11 +62,11 @@ public:
+         float* srcArray = autoSrc.ptr() + srcIndex;
+         float* dstArray = autoDst.ptr() + dstIndex;
+         if (isPts)
+-            matrix->mapPoints((SkPoint*) dstArray, (const SkPoint*) srcArray,
+-                    ptCount);
++            matrix->mapPoints(SkSpan<SkPoint>((SkPoint*) dstArray, ptCount),
++                    SkSpan<const SkPoint>((const SkPoint*) srcArray, ptCount)); // artzig: m144 Span API
+         else
+-            matrix->mapVectors((SkVector*) dstArray, (const SkVector*) srcArray,
+-                    ptCount);
++            matrix->mapVectors(SkSpan<SkVector>((SkVector*) dstArray, ptCount),
++                    SkSpan<const SkVector>((const SkVector*) srcArray, ptCount)); // artzig: m144 Span API
+     }
+ 
+     static jboolean mapRect__RectFRectF(JNIEnv* env, jobject clazz,
+@@ -106,8 +106,8 @@ public:
+         float* dst = autoDst.ptr() + dstIndex;
+         bool result;
+ 
+-        result = matrix->setPolyToPoly((const SkPoint*) src,
+-                (const SkPoint*) dst, ptCount);
++        result = matrix->setPolyToPoly(SkSpan<const SkPoint>((const SkPoint*) src, ptCount),
++                SkSpan<const SkPoint>((const SkPoint*) dst, ptCount)); // artzig: m144 Span API
+         return result ? JNI_TRUE : JNI_FALSE;
+     }
+ 
+diff --git a/libs/hwui/jni/fonts/Font.cpp b/libs/hwui/jni/fonts/Font.cpp
+index 6a05b6c26..06a8a7058 100644
+--- a/libs/hwui/jni/fonts/Font.cpp
++++ b/libs/hwui/jni/fonts/Font.cpp
+@@ -168,7 +168,7 @@ static jfloat Font_getGlyphBounds(JNIEnv* env, jobject, jlong fontHandle, jint g
+     uint16_t glyph16 = glyphId;
+     SkRect skBounds;
+     SkScalar skWidth;
+-    skFont->getWidthsBounds(&glyph16, 1, &skWidth, &skBounds, nullptr);
++    skFont->getWidthsBounds(SkSpan<const SkGlyphID>(&glyph16, 1), SkSpan<SkScalar>(&skWidth, 1), SkSpan<SkRect>(&skBounds, 1), nullptr); // artzig: m144 Span API
+     GraphicsJNI::rect_to_jrectf(skBounds, env, rect);
+     return SkScalarToFloat(skWidth);
+ }

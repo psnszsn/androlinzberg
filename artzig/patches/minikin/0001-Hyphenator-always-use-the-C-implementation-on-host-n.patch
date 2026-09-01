@@ -1,4 +1,4 @@
-From 6a5381925f55842312b8f7cc5dc2154bb5f18b2c Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Mon, 24 Aug 2026 05:08:34 +0200
 Subject: [PATCH] Hyphenator: always use the C++ implementation on host (no
@@ -25,6 +25,3 @@ index bea773c..37d857c 100644
      return HyphenatorCXX::loadBinary(patternData, dataSize, minPrefix, minSuffix, locale);
  }
  
--- 
-2.55.0
-

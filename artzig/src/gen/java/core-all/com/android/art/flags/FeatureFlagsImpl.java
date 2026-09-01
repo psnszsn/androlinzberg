@@ -14,14 +14,14 @@ public final class FeatureFlagsImpl implements FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean artServiceV3() {
-        return true;
+        return false;
     }
 
     @Override
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean executableMethodFileOffsets() {
-        return true;
+        return false;
     }
 
     @Override
@@ -42,7 +42,7 @@ public final class FeatureFlagsImpl implements FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean test() {
-        return true;
+        return false;
     }
 
     @Override
@@ -56,7 +56,7 @@ public final class FeatureFlagsImpl implements FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean virtualThreadImplV1() {
-        return true;
+        return false;
     }
 
 }

@@ -1,8 +1,8 @@
-From 6f7dd5535cff6d7877eb33ed0a80375a46599a20 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Mon, 31 Aug 2026 01:25:58 +0200
-Subject: [PATCH] CursorWindow: always parcel as shared memory on the artzig
- host
+Subject: [PATCH 11/14] CursorWindow: always parcel as shared memory on the
+ artzig host
 
 The host libbinder Parcel is a JNI bridge onto the hosted Java Parcel
 (AospParcelAbi.cpp); it cannot implement writeInplace, whose returned
@@ -14,7 +14,7 @@ over SCM_RIGHTS.
  1 file changed, 8 insertions(+)
 
 diff --git a/libs/androidfw/CursorWindow.cpp b/libs/androidfw/CursorWindow.cpp
-index a592749c5..beef0d6e7 100644
+index 6e11d430c..180727d0a 100644
 --- a/libs/androidfw/CursorWindow.cpp
 +++ b/libs/androidfw/CursorWindow.cpp
 @@ -211,6 +211,14 @@ fail_silent:
@@ -32,6 +32,3 @@ index a592749c5..beef0d6e7 100644
      if (parcel->writeString8(mName)) goto fail;
      if (parcel->writeUint32(mNumRows)) goto fail;
      if (parcel->writeUint32(mNumColumns)) goto fail;
--- 
-2.55.0
-

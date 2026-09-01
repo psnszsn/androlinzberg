@@ -35,7 +35,7 @@ public final class Flags {
         
         return FEATURE_FLAGS.appinfo();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean hpkePublicApi() {
@@ -56,21 +56,21 @@ public final class Flags {
         
         return FEATURE_FLAGS.madviseApi();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean nativeMetrics() {
         
         return FEATURE_FLAGS.nativeMetrics();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean openjdk21Stringconcat() {
         
         return FEATURE_FLAGS.openjdk21Stringconcat();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean openjdk21V1Apis() {
@@ -84,21 +84,21 @@ public final class Flags {
         
         return FEATURE_FLAGS.openjdk21V2Apis();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean postCleanupApis() {
         
         return FEATURE_FLAGS.postCleanupApis();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean readOnlyDynamicCodeLoad() {
         
         return FEATURE_FLAGS.readOnlyDynamicCodeLoad();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean scheduleAtFixedRateNewBehavior() {

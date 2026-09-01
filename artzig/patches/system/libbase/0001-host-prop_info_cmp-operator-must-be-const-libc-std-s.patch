@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Tue, 1 Sep 2026 13:30:11 +0200
+Subject: [PATCH] host: prop_info_cmp operator() must be const (libc++ std::set
+ comparator requirement under recent clang)
+
+---
+ properties.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/properties.cpp b/properties.cpp
+index e217c9e..9fd44a8 100644
+--- a/properties.cpp
++++ b/properties.cpp
+@@ -60,9 +60,9 @@ struct prop_info {
+ 
+ struct prop_info_cmp {
+   using is_transparent = void;
+-  bool operator()(const prop_info& lhs, const prop_info& rhs) { return lhs.key < rhs.key; }
+-  bool operator()(std::string_view lhs, const prop_info& rhs) { return lhs < rhs.key; }
+-  bool operator()(const prop_info& lhs, std::string_view rhs) { return lhs.key < rhs; }
++  bool operator()(const prop_info& lhs, const prop_info& rhs) const { return lhs.key < rhs.key; }
++  bool operator()(std::string_view lhs, const prop_info& rhs) const { return lhs < rhs.key; }
++  bool operator()(const prop_info& lhs, std::string_view rhs) const { return lhs.key < rhs; }
+ };
+ 
+ static auto& g_properties_lock = *new std::mutex;

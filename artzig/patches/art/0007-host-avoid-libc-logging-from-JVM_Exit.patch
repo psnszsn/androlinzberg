@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Sat, 29 Aug 2026 16:10:00 +0200
-Subject: [PATCH] host: avoid libc++ logging from JVM_Exit
+Subject: [PATCH 7/7] host: avoid libc++ logging from JVM_Exit
 
 Hosted APKs can load their own libc++_shared.so. Its symbols may interpose on
 the host libc++ used by android-base, making a late LOG stream unsafe. Grayjay
@@ -30,5 +30,3 @@ index c0f874f..e113063 100644
    art::Runtime::Current()->CallExitHook(status);
    // Unsafe to call exit() while threads may still be running. They would race
    // with static destructors.
--- 
-2.51.0

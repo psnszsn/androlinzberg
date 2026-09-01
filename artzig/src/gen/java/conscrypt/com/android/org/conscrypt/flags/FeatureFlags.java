@@ -4,15 +4,15 @@ import android.compat.annotation.UnsupportedAppUsage;
 /** @hide */
 public interface FeatureFlags {
 
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean certificateTransparencyCheckservertrustedApi();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean certificateTransparencyPlatform();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean spake2plusApi();

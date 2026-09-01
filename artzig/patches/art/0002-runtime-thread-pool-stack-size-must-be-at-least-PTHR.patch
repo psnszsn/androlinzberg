@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Sun, 23 Aug 2026 19:16:27 +0200
-Subject: [PATCH] runtime: thread pool stack size must be at least
+Subject: [PATCH 2/7] runtime: thread pool stack size must be at least
  PTHREAD_STACK_MIN
 
 Ported from art_standalone eb04efa9. On hosts with 64K pages (arm64) PTHREAD_STACK_MIN

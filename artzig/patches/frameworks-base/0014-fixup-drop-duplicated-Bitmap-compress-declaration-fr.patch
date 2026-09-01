@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Tue, 1 Sep 2026 11:20:29 +0200
+Subject: [PATCH 14/14] fixup: drop duplicated Bitmap::compress declaration
+ from the android-16.0.0_r1 rebase resolution
+
+---
+ libs/hwui/hwui/Bitmap.h | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/libs/hwui/hwui/Bitmap.h b/libs/hwui/hwui/Bitmap.h
+index 902c246cf..f453a13a9 100644
+--- a/libs/hwui/hwui/Bitmap.h
++++ b/libs/hwui/hwui/Bitmap.h
+@@ -184,9 +184,6 @@ public:
+     static bool compress(const SkBitmap& bitmap, JavaCompressFormat format, int32_t quality,
+                          SkWStream* stream);
+ 
+-  static bool compress(const SkBitmap& bitmap, JavaCompressFormat format,
+-                       int32_t quality, SkWStream* stream);
+-
+     static constexpr uint64_t UNDEFINED_BITMAP_ID = 0u;
+ private:
+     static sk_sp<Bitmap> allocateAshmemBitmap(size_t size, const SkImageInfo& i, size_t rowBytes);

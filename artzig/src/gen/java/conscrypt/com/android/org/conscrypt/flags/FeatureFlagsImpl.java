@@ -7,21 +7,21 @@ public final class FeatureFlagsImpl implements FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean certificateTransparencyCheckservertrustedApi() {
-        return true;
+        return false;
     }
 
     @Override
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean certificateTransparencyPlatform() {
-        return true;
+        return false;
     }
 
     @Override
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean spake2plusApi() {
-        return true;
+        return false;
     }
 
 }

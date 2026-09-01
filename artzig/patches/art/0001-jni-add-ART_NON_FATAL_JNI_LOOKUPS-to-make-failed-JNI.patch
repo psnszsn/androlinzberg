@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Sun, 23 Aug 2026 17:14:22 +0200
-Subject: [PATCH] jni: add ART_NON_FATAL_JNI_LOOKUPS to make failed JNI lookups
- non-fatal
+Subject: [PATCH 1/7] jni: add ART_NON_FATAL_JNI_LOOKUPS to make failed JNI
+ lookups non-fatal
 
 Ported from art_standalone dfb2ba5d. When the env var is set, FindClass and
 Get[Static]{Method,Field}ID log and clear the pending exception instead of

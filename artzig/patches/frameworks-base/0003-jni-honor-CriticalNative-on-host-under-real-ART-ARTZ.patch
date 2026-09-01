@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 01:21:42 +0200
+Subject: [PATCH 03/14] jni: honor @CriticalNative on host under real ART
+ (ARTZIG_REAL_CRITICAL_NATIVE)
+
+The host (layoutlib) build compiles @CriticalNative implementations with a
+JNIEnv*/jclass prefix because layoutlib's JVM ignores the annotation. artzig
+runs a real device-style ART on the host, which honors @CriticalNative and
+invokes with the bare calling convention -- the prefixed functions then read
+their arguments from the wrong registers and scribble over runtime state
+(observed: Paint.nSetFlags clobbering Thread::tlsPtr_.jni_env).
+Gate the prefix on ARTZIG_REAL_CRITICAL_NATIVE so the Android (bare)
+convention is used.
+---
+ core/jni/core_jni_helpers.h          | 2 +-
+ libs/hwui/jni/PathIterator.cpp       | 2 +-
+ libs/hwui/jni/graphics_jni_helpers.h | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/core/jni/core_jni_helpers.h b/core/jni/core_jni_helpers.h
+index 769fa723c..d1b4ef1bc 100644
+--- a/core/jni/core_jni_helpers.h
++++ b/core/jni/core_jni_helpers.h
+@@ -28,7 +28,7 @@
+ // and they need all the JNI methods to have JNIEnv* and jclass/jobject as their first two arguments.
+ // The following macro allows to have those arguments when compiling for host while omitting them when
+ // compiling for Android.
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_REAL_CRITICAL_NATIVE)
+ #define CRITICAL_JNI_PARAMS
+ #define CRITICAL_JNI_PARAMS_COMMA
+ #else
+diff --git a/libs/hwui/jni/PathIterator.cpp b/libs/hwui/jni/PathIterator.cpp
+index e9de65559..534ef100e 100644
+--- a/libs/hwui/jni/PathIterator.cpp
++++ b/libs/hwui/jni/PathIterator.cpp
+@@ -40,7 +40,7 @@ public:
+     // A variant of 'next' (below) that is compatible with the host JVM.
+     static jint nextHost(JNIEnv* env, jclass clazz, jlong iteratorHandle, jfloatArray pointsArray) {
+         jfloat* points = env->GetFloatArrayElements(pointsArray, 0);
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_REAL_CRITICAL_NATIVE)
+         jint result = next(iteratorHandle, reinterpret_cast<jlong>(points));
+ #else
+         jint result = next(env, clazz, iteratorHandle, reinterpret_cast<jlong>(points));
+diff --git a/libs/hwui/jni/graphics_jni_helpers.h b/libs/hwui/jni/graphics_jni_helpers.h
+index ff26ec177..17bc7822e 100644
+--- a/libs/hwui/jni/graphics_jni_helpers.h
++++ b/libs/hwui/jni/graphics_jni_helpers.h
+@@ -28,7 +28,7 @@
+ // and they need all the JNI methods to have JNIEnv* and jclass/jobject as their first two arguments.
+ // The following macro allows to have those arguments when compiling for host while omitting them when
+ // compiling for Android.
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_REAL_CRITICAL_NATIVE)
+ #define CRITICAL_JNI_PARAMS
+ #define CRITICAL_JNI_PARAMS_COMMA
+ #else

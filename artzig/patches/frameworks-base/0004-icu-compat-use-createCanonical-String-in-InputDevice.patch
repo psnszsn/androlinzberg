@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Mon, 24 Aug 2026 03:03:34 +0200
+Subject: [PATCH 04/14] icu compat: use createCanonical(String) in
+ InputDevice/InputMethodSubtype
+
+artzig's libcore ships an older android.icu without createCanonical(ULocale);
+route through ULocale.getName() (equivalent canonicalization).
+---
+ core/java/android/view/InputDevice.java                    | 2 +-
+ core/java/android/view/inputmethod/InputMethodSubtype.java | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/core/java/android/view/InputDevice.java b/core/java/android/view/InputDevice.java
+index 609ad5bb0..14bce1089 100644
+--- a/core/java/android/view/InputDevice.java
++++ b/core/java/android/view/InputDevice.java
+@@ -519,7 +519,7 @@ public final class InputDevice implements Parcelable {
+         if (!TextUtils.isEmpty(keyboardLanguageTag)) {
+             String langTag;
+             langTag = ULocale
+-                    .createCanonical(ULocale.forLanguageTag(keyboardLanguageTag))
++                    .createCanonical(ULocale.forLanguageTag(keyboardLanguageTag).getName())
+                     .toLanguageTag();
+             mKeyboardLanguageTag = TextUtils.equals(langTag, "und") ? null : langTag;
+         } else {
+diff --git a/core/java/android/view/inputmethod/InputMethodSubtype.java b/core/java/android/view/inputmethod/InputMethodSubtype.java
+index a67ae7c96..fc8a13ae1 100644
+--- a/core/java/android/view/inputmethod/InputMethodSubtype.java
++++ b/core/java/android/view/inputmethod/InputMethodSubtype.java
+@@ -593,7 +593,7 @@ public final class InputMethodSubtype implements Parcelable {
+         if (locale != null) {
+             final String langTag = locale.toLanguageTag();
+             if (!TextUtils.isEmpty(langTag)) {
+-                result = ULocale.createCanonical(ULocale.forLanguageTag(langTag)).toLanguageTag();
++                result = ULocale.createCanonical(ULocale.forLanguageTag(langTag).getName()).toLanguageTag();
+             }
+         }
+         result = TextUtils.emptyIfNull(result);

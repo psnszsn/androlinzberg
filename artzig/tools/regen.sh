@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd); cd "$ROOT"
 I=$ROOT/out/soong/.intermediates
-N=out/combined-silvermont-build-art-host.ninja
+N=out/combined-silvermont.ninja
 python3 tools/ninja2zig.py --name libartbase --ninja $N $I/art/libartbase/libartbase/linux_glibc_x86_64_shared/libartbase.so
 python3 tools/ninja2zig.py --name art --ninja $N \
   $I/art/runtime/libart/linux_glibc_x86_64_shared/libart.so \

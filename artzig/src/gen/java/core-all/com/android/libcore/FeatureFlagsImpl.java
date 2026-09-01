@@ -14,7 +14,7 @@ public final class FeatureFlagsImpl implements FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean hpkePublicApi() {
-        return true;
+        return false;
     }
 
     @Override
@@ -35,21 +35,21 @@ public final class FeatureFlagsImpl implements FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean nativeMetrics() {
-        return true;
+        return false;
     }
 
     @Override
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean openjdk21Stringconcat() {
-        return true;
+        return false;
     }
 
     @Override
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean openjdk21V1Apis() {
-        return true;
+        return false;
     }
 
     @Override
@@ -63,21 +63,21 @@ public final class FeatureFlagsImpl implements FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean postCleanupApis() {
-        return true;
+        return false;
     }
 
     @Override
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean readOnlyDynamicCodeLoad() {
-        return true;
+        return false;
     }
 
     @Override
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public boolean scheduleAtFixedRateNewBehavior() {
-        return true;
+        return false;
     }
 
     @Override

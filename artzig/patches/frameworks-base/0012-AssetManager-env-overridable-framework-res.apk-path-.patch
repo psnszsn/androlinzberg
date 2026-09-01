@@ -1,7 +1,8 @@
-From 721ee3032f42e9000ba764869c698c9eb31ec56e Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Mon, 31 Aug 2026 02:55:45 +0200
-Subject: [PATCH] AssetManager: env-overridable framework-res.apk path for host
+Subject: [PATCH 12/14] AssetManager: env-overridable framework-res.apk path
+ for host
 
 The artzig host installs framework-res.apk in its install tree; honor
 ARTZIG_FRAMEWORK_RES (set by the launcher for every ART process) so the
@@ -12,10 +13,10 @@ DefaultSplitAssetLoader - loads without a /system image.
  1 file changed, 6 insertions(+)
 
 diff --git a/core/java/android/content/res/AssetManager.java b/core/java/android/content/res/AssetManager.java
-index bbfae8117..2b83e4e96 100644
+index 008bf2f52..5ea3c95f5 100644
 --- a/core/java/android/content/res/AssetManager.java
 +++ b/core/java/android/content/res/AssetManager.java
-@@ -219,6 +219,12 @@ public final class AssetManager implements AutoCloseable {
+@@ -220,6 +220,12 @@ public final class AssetManager implements AutoCloseable {
  
      @RavenwoodReplace
      private static String getFrameworkApkPath() {
@@ -28,6 +29,3 @@ index bbfae8117..2b83e4e96 100644
          return FRAMEWORK_APK_PATH_DEVICE;
      }
  
--- 
-2.55.0
-

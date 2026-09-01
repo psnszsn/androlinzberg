@@ -1,7 +1,7 @@
-From a2d920c66684429dc75bb9fa0ff4ca2f79d6bc6c Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Mon, 24 Aug 2026 14:04:52 +0200
-Subject: [PATCH] host fixes for app playback: static Display (null
+Subject: [PATCH 07/14] host fixes for app playback: static Display (null
  DisplayManagerGlobal), Toast without notification service, native-free
  Surface(SurfaceTexture), TypedArray non-fatal unresolved theme attrs,
  Path.getFillType garbage guard, hwui ImageDecoder colorType log removal
@@ -15,7 +15,7 @@ Subject: [PATCH] host fixes for app playback: static Display (null
  5 files changed, 56 insertions(+), 38 deletions(-)
 
 diff --git a/core/java/android/content/res/TypedArray.java b/core/java/android/content/res/TypedArray.java
-index 79185a10..e0843d4a 100644
+index ee7d008cf..cf7a792c6 100644
 --- a/core/java/android/content/res/TypedArray.java
 +++ b/core/java/android/content/res/TypedArray.java
 @@ -533,9 +533,9 @@ public class TypedArray implements AutoCloseable {
@@ -148,7 +148,7 @@ index 79185a10..e0843d4a 100644
              }
  
              if (density > 0) {
-@@ -1052,9 +1052,9 @@ public class TypedArray implements AutoCloseable {
+@@ -1051,9 +1051,9 @@ public class TypedArray implements AutoCloseable {
          final TypedValue value = mValue;
          if (getValueAt(index * STYLE_NUM_ENTRIES, value)) {
              if (value.type == TypedValue.TYPE_ATTRIBUTE) {
@@ -162,10 +162,10 @@ index 79185a10..e0843d4a 100644
              return mResources.getFont(value, value.resourceId);
          }
 diff --git a/core/java/android/view/Display.java b/core/java/android/view/Display.java
-index 802bddd7..2f9a47cd 100644
+index 5c816543e..bf5272f10 100644
 --- a/core/java/android/view/Display.java
 +++ b/core/java/android/view/Display.java
-@@ -2089,6 +2089,8 @@ public final class Display {
+@@ -2138,6 +2138,8 @@ public final class Display {
      }
  
      private void updateDisplayInfoLocked() {
@@ -175,10 +175,10 @@ index 802bddd7..2f9a47cd 100644
          DisplayInfo newInfo = mGlobal.getDisplayInfo(mDisplayId);
          if (newInfo == null) {
 diff --git a/core/java/android/view/Surface.java b/core/java/android/view/Surface.java
-index 6e6e87bb..09165955 100644
+index 4fc1cfc0c..3c1fbaecb 100644
 --- a/core/java/android/view/Surface.java
 +++ b/core/java/android/view/Surface.java
-@@ -380,16 +380,18 @@ public class Surface implements Parcelable {
+@@ -381,16 +381,18 @@ public class Surface implements Parcelable {
       * @throws OutOfResourcesException if the surface could not be created.
       */
      public Surface(SurfaceTexture surfaceTexture) {
@@ -200,7 +200,7 @@ index 6e6e87bb..09165955 100644
  
      /* called from android_view_Surface_createFromIGraphicBufferProducer() */
      @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-@@ -420,6 +422,7 @@ public class Surface implements Parcelable {
+@@ -421,6 +423,7 @@ public class Surface implements Parcelable {
       */
      public void release() {
          synchronized (mLock) {
@@ -208,7 +208,7 @@ index 6e6e87bb..09165955 100644
              if (mHwuiContext != null) {
                  mHwuiContext.destroy();
                  mHwuiContext = null;
-@@ -467,6 +470,7 @@ public class Surface implements Parcelable {
+@@ -468,6 +471,7 @@ public class Surface implements Parcelable {
       */
      public boolean isValid() {
          synchronized (mLock) {
@@ -217,7 +217,7 @@ index 6e6e87bb..09165955 100644
              return nativeIsValid(mNativeObject);
          }
 diff --git a/core/java/android/widget/Toast.java b/core/java/android/widget/Toast.java
-index ead8887f..c6b8628d 100644
+index ead8887fd..c6b8628d1 100644
 --- a/core/java/android/widget/Toast.java
 +++ b/core/java/android/widget/Toast.java
 @@ -205,6 +205,11 @@ public class Toast {
@@ -244,7 +244,7 @@ index ead8887f..c6b8628d 100644
                  // Empty
              }
 diff --git a/libs/hwui/jni/Path.cpp b/libs/hwui/jni/Path.cpp
-index 2ae255e8..dd2af343 100644
+index 2ae255e80..dd2af343e 100644
 --- a/libs/hwui/jni/Path.cpp
 +++ b/libs/hwui/jni/Path.cpp
 @@ -521,7 +521,12 @@ public:
@@ -261,6 +261,3 @@ index 2ae255e8..dd2af343 100644
      }
  
      static void setFillType(CRITICAL_JNI_PARAMS_COMMA jlong pathHandle, jint ftHandle) {;
--- 
-2.55.0
-

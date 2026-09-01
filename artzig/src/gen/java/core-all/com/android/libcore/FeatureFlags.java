@@ -8,7 +8,7 @@ public interface FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean appinfo();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean hpkePublicApi();
@@ -20,15 +20,15 @@ public interface FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean madviseApi();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean nativeMetrics();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean openjdk21Stringconcat();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean openjdk21V1Apis();
@@ -36,15 +36,15 @@ public interface FeatureFlags {
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean openjdk21V2Apis();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean postCleanupApis();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean readOnlyDynamicCodeLoad();
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     boolean scheduleAtFixedRateNewBehavior();

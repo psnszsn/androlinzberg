@@ -1,5 +1,7 @@
-From: artzig host adaptation
-Subject: [PATCH] ART: support hosted selective APK class-loader contexts
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: artzig host adaptation <artzig@localhost>
+Date: Tue, 1 Sep 2026 12:01:30 +0200
+Subject: [PATCH 6/7] ART: support hosted selective APK class-loader contexts
 
 The hosted APK loader subclasses PathClassLoader solely to give APK-bundled
 kotlin.* classes precedence over the host compiler's standard library. ART's
@@ -16,14 +18,14 @@ These changes are limited to artifact context construction and do not change
 ClassLinker's lookup order for custom loaders.
 ---
  dex2oat/dex2oat.cc              | 10 ++++++++++
- runtime/class_loader_context.cc | 12 +++++++++++-
- 2 files changed, 21 insertions(+), 1 deletion(-)
+ runtime/class_loader_context.cc | 14 +++++++++++++-
+ 2 files changed, 23 insertions(+), 1 deletion(-)
 
 diff --git a/dex2oat/dex2oat.cc b/dex2oat/dex2oat.cc
-index 0000000..0000000 100644
+index 5586faf..0129ab3 100644
 --- a/dex2oat/dex2oat.cc
 +++ b/dex2oat/dex2oat.cc
-@@ -1668,6 +1668,16 @@ class Dex2Oat FINAL {
+@@ -1670,6 +1670,16 @@ class Dex2Oat final {
          LOG(WARNING) << "Failed to open classpath dex files";
        }
  
@@ -40,12 +42,11 @@ index 0000000..0000000 100644
        // Store the class loader context in the oat header.
        // TODO: deprecate this since store_class_loader_context should be enough to cover the users
        // of classpath_dir as well.
-
 diff --git a/runtime/class_loader_context.cc b/runtime/class_loader_context.cc
-index 0000000..0000000 100644
+index 6ede202..092fdc5 100644
 --- a/runtime/class_loader_context.cc
 +++ b/runtime/class_loader_context.cc
-@@ -718,7 +718,12 @@ void ClassLoaderContext::EncodeContextInternal(const ClassLoaderInfo& info,
+@@ -717,7 +717,12 @@ void ClassLoaderContext::EncodeContextInternal(const ClassLoaderInfo& info,
  
      // dex2oat does not need the checksums.
      if (!for_dex2oat) {
@@ -59,7 +60,7 @@ index 0000000..0000000 100644
      }
    }
    EncodeClassPath(base_dir, locations, checksums, info.type, out);
-@@ -1118,6 +1118,13 @@ bool ClassLoaderContext::CreateInfoFromClassLoader(
+@@ -1118,6 +1123,13 @@ bool ClassLoaderContext::CreateInfoFromClassLoader(
      type = kDelegateLastClassLoader;
    } else if (IsInMemoryDexClassLoader(class_loader)) {
      type = kInMemoryDexClassLoader;
@@ -73,5 +74,3 @@ index 0000000..0000000 100644
    } else {
      LOG(WARNING) << "Unsupported class loader: "
                   << mirror::Class::PrettyClass(class_loader->GetClass());
--- 
-2.51.0

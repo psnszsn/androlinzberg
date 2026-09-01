@@ -8,7 +8,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT/patches"
 for dir in $(find . -name '*.patch' -printf '%h\n' | sort -u); do
   proj=${dir#./}
-  case "$proj" in bionic_translation*) repo="$ROOT/extra/$proj";; *) repo="$ROOT/vendor/$proj";; esac
+  case "$proj" in
+    bionic_translation*|frameworks-base*|incremental_delivery*|minikin*) repo="$ROOT/extra/$proj";;
+    *) repo="$ROOT/vendor/$proj";;
+  esac
   [ -d "$repo/.git" ] || { echo "missing vendor/$proj (run tools/sync-aosp.py)"; exit 1; }
   if [ "${1:-}" = "-R" ]; then
     git -C "$repo" am --abort 2>/dev/null || true

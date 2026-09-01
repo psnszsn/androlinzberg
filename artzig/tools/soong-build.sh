@@ -15,7 +15,7 @@ exec nix run "$ROOT#aosp-env" -- -c "
   cd '$ROOT/vendor'
   export OUT_DIR=\${OUT_DIR:-$ROOT/out}
   export TARGET_PRODUCT=\${TARGET_PRODUCT:-silvermont}
-  export TARGET_RELEASE=\${TARGET_RELEASE:-trunk_staging}
+  export TARGET_RELEASE=\${TARGET_RELEASE:-bp1a}
   export TARGET_BUILD_VARIANT=\${TARGET_BUILD_VARIANT:-eng}
   export SOONG_ALLOW_MISSING_DEPENDENCIES=true
   export TARGET_BUILD_UNBUNDLED=true

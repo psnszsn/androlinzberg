@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Codex <codex@openai.com>
 Date: Mon, 24 Aug 2026 18:48:00 +0200
-Subject: [PATCH] ART: use relocated boot classpath for resource lookups
+Subject: [PATCH 5/7] ART: use relocated boot classpath for resource lookups
 
 Keep canonical /apex boot-classpath locations for boot-image identity, but
 return the actual opened filenames to VMClassLoader resource lookup when a
@@ -12,7 +12,7 @@ from trying to open nonexistent /apex paths on the host.
  1 file changed, 13 insertions(+), 1 deletion(-)
 
 diff --git a/runtime/native/java_lang_VMClassLoader.cc b/runtime/native/java_lang_VMClassLoader.cc
-index c723a1291acccacd9258cc7b9a8949b54eaef8b4..72a672a396b874c980587f5b6e1d3f0fd3bb368e 100644
+index c723a12..72a672a 100644
 --- a/runtime/native/java_lang_VMClassLoader.cc
 +++ b/runtime/native/java_lang_VMClassLoader.cc
 @@ -134,6 +134,19 @@ static jclass VMClassLoader_findLoadedClass(JNIEnv* env, jclass, jobject javaLoa
@@ -43,5 +43,3 @@ index c723a1291acccacd9258cc7b9a8949b54eaef8b4..72a672a396b874c980587f5b6e1d3f0f
    return soa.AddLocalReference<jobjectArray>(CreateStringArray(
        soa.Self(),
        jar_count,
--- 
-2.51.0

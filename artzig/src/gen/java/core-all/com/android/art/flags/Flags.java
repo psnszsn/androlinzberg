@@ -27,14 +27,14 @@ public final class Flags {
         
         return FEATURE_FLAGS.alwaysEnableProfileCode();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean artServiceV3() {
         
         return FEATURE_FLAGS.artServiceV3();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean executableMethodFileOffsets() {
@@ -55,7 +55,7 @@ public final class Flags {
         
         return FEATURE_FLAGS.fastBaselineCompiler();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean test() {
@@ -69,7 +69,7 @@ public final class Flags {
         
         return FEATURE_FLAGS.useGenerationalCmc();
     }
-    @com.android.aconfig.annotations.AssumeTrueForR8
+    @com.android.aconfig.annotations.AssumeFalseForR8
     @com.android.aconfig.annotations.AconfigFlagAccessor
     @UnsupportedAppUsage
     public static boolean virtualThreadImplV1() {
