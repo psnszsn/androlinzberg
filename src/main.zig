@@ -885,9 +885,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         for (events) |ev| if (isInputEvent(ev)) {
             last_input_ms = monotonicMs();
         };
-        // Android's MessageQueue wakes independently from vsync. Dispatch ordinary Handler work
-        // immediately; only Choreographer traversal callbacks remain frame-paced.
-        looper_timeout_ms = callMainLooperPump(env, cls, pump_main_looper);
+        // Input first, then the looper: Looper.pollOnce services the input channel before it
+        // returns the next due message, so a release that already arrived reaches the view
+        // before a long-press or tap-timeout message becomes due behind a heavy frame.
         for (events) |ev| switch (ev) {
             .fullscreen_changed => |actual_fullscreen| if (host_fullscreen_changed) |mid| {
                 env.*.*.CallStaticVoidMethod.?(env, cls, mid, @as(art.jni.jboolean, @intFromBool(actual_fullscreen)));
@@ -1019,6 +1019,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             },
             else => {},
         };
+        // Android's MessageQueue wakes independently from vsync. Dispatch ordinary Handler work
+        // immediately; only Choreographer traversal callbacks remain frame-paced.
+        looper_timeout_ms = callMainLooperPump(env, cls, pump_main_looper);
         if (hover_frame != 0 and frame_count == hover_frame) {
             if (hover) |mid| {
                 const icon = jenv_call_hover(env, cls, mid, inputX(win, draw_hardware_abi, hov[0]), inputY(win, draw_hardware_abi, hov[1]));
