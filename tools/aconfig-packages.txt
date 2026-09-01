@@ -33,3 +33,15 @@ com.android.server.display.feature.flags
 com.android.text.flags
 com.android.window.flags
 com.android.input.flags
+# platform packages whose declarations were sparse-hidden in the vendored trees (imported 2026-09-01):
+android.companion.virtual.flags
+android.companion.virtualdevice.flags
+android.credentials.flags
+android.nfc
+android.permission.flags
+android.sdk
+android.security
+android.service.autofill
+android.tracing
+com.android.graphics.surfaceflinger.flags
+com.android.server.backup
