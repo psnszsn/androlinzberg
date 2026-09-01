@@ -889,6 +889,9 @@ const Runtime = struct {
         if (target == null or target.?.class == null or target.?.class.?.on_transact == null) {
             status = .failed; // no reachable target: transport-level failure
             binder_status = STATUS_FAILED_TRANSACTION;
+        } else if (answerBinderControl(target.?, in.code, out)) {
+            // INTERFACE_TRANSACTION / PING_TRANSACTION answered for native
+            // objects (a Java Binder answers them itself in execTransact).
         } else if (!token_ok) {
             binder_status = STATUS_BAD_TYPE; // wrong interface descriptor (AOSP)
         } else {
@@ -996,24 +999,6 @@ const Runtime = struct {
         }
         const b = alloc.create(AIBinder) catch @panic("oom");
         b.* = .{ .strong = .init(1), .kind = .remote, .id = global_id, .dead = .init(false), .deliveries = 1 };
-        r.proxies.put(alloc, global_id, b) catch @panic("oom");
-        return b;
-    }
-
-    /// A proxy for a global id this peer did NOT receive a broker delivery for
-    /// (the JNI bridge translating a global id owned by the other same-process
-    /// peer). Routing is by global id, so the proxy transacts fine; but it must
-    /// not count a delivery, or releasing it would send a `release` the broker
-    /// never handed out. Only the strong count moves.
-    fn proxyForBorrowed(r: *Runtime, global_id: u64) *AIBinder {
-        r.mu.lockUncancelable(g_io);
-        defer r.mu.unlock(g_io);
-        if (r.proxies.get(global_id)) |b| {
-            _ = b.strong.fetchAdd(1, .monotonic);
-            return b; // no deliveries bump
-        }
-        const b = alloc.create(AIBinder) catch @panic("oom");
-        b.* = .{ .strong = .init(1), .kind = .remote, .id = global_id, .dead = .init(false), .deliveries = 0 };
         r.proxies.put(alloc, global_id, b) catch @panic("oom");
         return b;
     }
@@ -1249,6 +1234,12 @@ const Runtime = struct {
         const class = target.class orelse return STATUS_UNEXPECTED_NULL;
         const on_transact = class.on_transact orelse return STATUS_UNEXPECTED_NULL;
         in.pos = 0;
+        if (out) |o| {
+            if (answerBinderControl(target, code, o)) {
+                o.pos = 0;
+                return STATUS_OK;
+            }
+        }
         // Consume the interface-descriptor token prepareTransaction wrote, so
         // the direct on_transact sees its first argument (as the remote path's
         // dispatch does before invoking on_transact).
@@ -3463,6 +3454,24 @@ fn bpGetExtension(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jobject {
 }
 /// IBinder.INTERFACE_TRANSACTION ('_NTF'): the callee replies writeString16(descriptor).
 const INTERFACE_TRANSACTION: u32 = ('_' << 24) | ('N' << 16) | ('T' << 8) | 'F';
+/// IBinder.PING_TRANSACTION ('_PNG'): answered with an empty OK reply.
+const PING_TRANSACTION: u32 = ('_' << 24) | ('P' << 16) | ('N' << 8) | 'G';
+
+/// The control transactions BBinder::onTransact answers for every native
+/// object (a Java Binder handles them in execTransact instead). Returns true
+/// when `code` was answered into `out`.
+fn answerBinderControl(target: *AIBinder, code: u32, out: *AParcel) bool {
+    const class = target.class orelse return false;
+    if (class == &g_java_forward_class) return false;
+    switch (code) {
+        INTERFACE_TRANSACTION => {
+            out.writeString(class.descriptor, @intCast(class.descriptor.len));
+            return true;
+        },
+        PING_TRANSACTION => return true,
+        else => return false,
+    }
+}
 
 fn bpGetInterfaceDescriptor(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jni.jstring {
     const nd = proxyData(env, this) orelse return null;

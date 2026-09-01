@@ -765,6 +765,61 @@ test "context object serves the IServiceManager AIDL over the broker" {
         try testing.expect(std.mem.readInt(i32, payload.data[0..4], .little) != 0);
     }
 
+    // registerForNotifications(name, callback): the owner adding that name
+    // later makes the broker call the callback's onRegistration (oneway, from
+    // the service manager) with the service delivered to the callback's owner.
+    const name2 = "dev.artzig.test.smsvc2";
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16(name2);
+        const cb_off: u32 = @intCast(p.bytes.items.len);
+        try p.i32v(1);
+        const entries = [_]ObjectEntry{.{ .offset = cb_off, .kind = .binder_local, .value = 55 }};
+        try client.client.serveTransact(.{ .target = ctx, .code = 7, .request_id = 8, .entries = &entries, .data = p.bytes.items });
+        const msg = try client.next();
+        defer gpa.free(msg.fds);
+        const rep, const payload = try replyBody(msg.body);
+        try testing.expectEqual(Client.Message.Reply.Status.ok, rep.status);
+        try testing.expectEqual(@as(i32, 0), std.mem.readInt(i32, payload.data[0..4], .little));
+    }
+    {
+        var p = ParcelBuf{ .gpa = gpa };
+        defer p.deinit();
+        try p.token();
+        try p.string16(name2);
+        const binder_off: u32 = @intCast(p.bytes.items.len);
+        try p.i32v(1);
+        try p.i32v(0);
+        try p.i32v(0);
+        const entries = [_]ObjectEntry{.{ .offset = binder_off, .kind = .binder_local, .value = 101 }};
+        try owner.client.serveTransact(.{ .target = ctx, .code = 5, .request_id = 9, .entries = &entries, .data = p.bytes.items });
+        const ack = try owner.next();
+        defer gpa.free(ack.fds);
+        try testing.expectEqual(Server.Message.Tag.reply, ack.header.tag);
+        // The callback owner receives onRegistration on its local object 55.
+        const msg = try client.next();
+        defer gpa.free(msg.fds);
+        try testing.expectEqual(Server.Message.Tag.transact, msg.header.tag);
+        const t, const payload = try transactBody(msg.body);
+        try testing.expectEqual(ObjectRef.Kind.local, t.target.kind);
+        try testing.expectEqual(@as(u64, 55), t.target.value);
+        try testing.expectEqual(@as(u32, 1), t.code);
+        try testing.expectEqual(@as(u32, 1), t.flags & 1);
+        try testing.expectEqual(@as(u32, 1000), t.caller_uid);
+        try testing.expectEqual(@as(usize, 1), payload.entries.len);
+        try testing.expectEqual(ObjectEntry.Kind.binder_remote, payload.entry(0).kind);
+        // token (3 ints + descriptor) then the name, then the binder placeholder.
+        const desc, var pos = try readString16Ascii(gpa, payload.data, 12);
+        defer gpa.free(desc);
+        try testing.expectEqualStrings("android.os.IServiceCallback", desc);
+        const got, pos = try readString16Ascii(gpa, payload.data, pos);
+        defer gpa.free(got);
+        try testing.expectEqualStrings(name2, got);
+        try testing.expectEqual(pos, payload.entry(0).offset);
+    }
+
     // Cross-path: a native lookup_service now sees the AIDL-registered service.
     {
         try client.client.serveLookupService(7, name, false);

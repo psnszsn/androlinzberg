@@ -56,6 +56,10 @@ next_object_id: u64 = Client.context_object_id + 1,
 local_index: std.AutoHashMapUnmanaged(LocalKey, u64) = .empty,
 services: std.StringHashMapUnmanaged(u64) = .empty,
 waiters: std.ArrayList(Waiter) = .empty,
+/// IServiceManager.registerForNotifications: service name -> the global ids of
+/// the IServiceCallback objects to notify (each holds a `service_refs` on its
+/// object so the callback stays exported until unregistered or its owner dies).
+service_callbacks: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(u64)) = .empty,
 calls: std.AutoHashMapUnmanaged(u64, Call) = .empty,
 next_routing_id: u64 = 1,
 
@@ -284,6 +288,12 @@ pub fn deinit(b: *Broker) void {
     var names = b.services.keyIterator();
     while (names.next()) |name| gpa.free(name.*);
     b.services.deinit(gpa);
+    var cbs = b.service_callbacks.iterator();
+    while (cbs.next()) |entry| {
+        gpa.free(entry.key_ptr.*);
+        entry.value_ptr.deinit(gpa);
+    }
+    b.service_callbacks.deinit(gpa);
     for (b.waiters.items) |w| gpa.free(w.name);
     b.waiters.deinit(gpa);
     b.calls.deinit(gpa);
@@ -974,7 +984,71 @@ fn registerService(b: *Broker, peer: *Peer, object: *Object, name: []const u8) S
         gpa.free(w.name);
         _ = b.waiters.swapRemove(i);
     }
+    try b.notifyServiceCallbacks(name, object);
     return .ok;
+}
+
+/// IServiceCallback.onRegistration(name, binder) to every callback registered
+/// for `name`: a oneway transaction from the service manager (uid 1000) to the
+/// callback's owner, carrying the service delivered to that peer. Requires `b.mutex`.
+fn notifyServiceCallbacks(b: *Broker, name: []const u8, object: *Object) ServeError!void {
+    const gpa = b.gpa;
+    const list = b.service_callbacks.getPtr(name) orelse return;
+    for (list.items) |cb_gid| {
+        const cb = b.objects.get(cb_gid) orelse continue;
+        const owner = b.peers.get(cb.owner) orelse continue;
+        if (!owner.alive or cb.dead) continue;
+        var data: std.ArrayList(u8) = .empty;
+        defer data.deinit(gpa);
+        var entries: std.ArrayList(ObjectEntry) = .empty;
+        defer entries.deinit(gpa);
+        // Interface token, then onRegistration(String name, IBinder binder).
+        try smWriteI32(&data, gpa, 0); // strict-mode policy
+        try smWriteI32(&data, gpa, -1); // work source
+        try smWriteI32(&data, gpa, 0x53595354); // 'SYST'
+        try smWriteString16(&data, gpa, "android.os.IServiceCallback");
+        try smWriteString16(&data, gpa, name);
+        const ref = try b.deliverRef(owner, object);
+        const off: u32 = @intCast(data.items.len);
+        try smWriteI32(&data, gpa, 1);
+        try entries.append(gpa, .{ .offset = off, .kind = binderEntryKind(ref.kind), .value = ref.value });
+        const frame = try b.encode(Server.serveTransact, .{Server.TransactOptions{
+            .target = ObjectRef.local(cb.local_id),
+            .code = 1, // IServiceCallback.TRANSACTION_onRegistration
+            .flags = 1, // FLAG_ONEWAY
+            .caller_pid = 0,
+            .caller_uid = 1000, // the service manager's identity
+            .routing_id = 0,
+            .entries = entries.items,
+            .data = data.items,
+            .fd_count = 0,
+        }});
+        owner.enqueue(frame);
+    }
+}
+
+/// Drops the callback registrations owned by a departing peer. Requires `b.mutex`.
+fn purgeServiceCallbacks(b: *Broker, peer_id: u32) void {
+    const gpa = b.gpa;
+    var emptied: std.ArrayList([]const u8) = .empty;
+    defer emptied.deinit(gpa);
+    var it = b.service_callbacks.iterator();
+    while (it.next()) |entry| {
+        var i: usize = 0;
+        while (i < entry.value_ptr.items.len) {
+            const cb = b.objects.get(entry.value_ptr.items[i]);
+            if (cb == null or cb.?.owner == peer_id) {
+                _ = entry.value_ptr.swapRemove(i);
+            } else i += 1;
+        }
+        if (entry.value_ptr.items.len == 0) emptied.append(gpa, entry.key_ptr.*) catch {};
+    }
+    for (emptied.items) |name| {
+        const kv = b.service_callbacks.fetchRemove(name).?;
+        var list = kv.value;
+        list.deinit(gpa);
+        gpa.free(kv.key);
+    }
 }
 
 fn handleLookup(peer: *Peer, header: Client.Message.Header, body: []const u8) ServeError!void {
@@ -1175,10 +1249,54 @@ fn handleServiceManagerTransact(
             try smWriteI32(&data, gpa, 0); // empty ServiceDebugInfo[]
             try smReply(peer, header, data.items, entries.items);
         },
-        SM.registerForNotifications, SM.unregisterForNotifications, SM.registerClientCallback, SM.tryUnregisterService => {
-            // Void methods. Notifications/client callbacks are accepted but not
-            // yet delivered (onRegistration firing is a follow-up); callers do
-            // not block on the callback, so a plain success is safe.
+        SM.registerForNotifications, SM.unregisterForNotifications => {
+            // registerForNotifications(name, IServiceCallback) /
+            // unregisterForNotifications(name, IServiceCallback): void.
+            const name = r.readString16(gpa) catch return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "bad service name");
+            defer gpa.free(name);
+            const binder_off: u32 = @intCast(r.pos);
+            _ = r.readI32();
+            const cb_ref = smFindBinder(payload, binder_off) orelse
+                return smReplyException(peer, header, EX_ILLEGAL_ARGUMENT, "notification callback missing");
+            const cb = resolveRef(peer, cb_ref) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Invalid => return protocolError(peer, "service callback the peer does not hold"),
+            };
+            if (t.code == SM.registerForNotifications) {
+                if (cb.dead) return smReplyException(peer, header, EX_ILLEGAL_STATE, "callback object is dead");
+                const gop = try b.service_callbacks.getOrPut(gpa, name);
+                if (!gop.found_existing) {
+                    gop.key_ptr.* = try gpa.dupe(u8, name);
+                    gop.value_ptr.* = .empty;
+                }
+                var known = false;
+                for (gop.value_ptr.items) |gid| known = known or gid == cb.id;
+                if (!known) {
+                    try gop.value_ptr.append(gpa, cb.id);
+                    cb.service_refs += 1; // keep the callback exported while registered
+                }
+            } else if (b.service_callbacks.getPtr(name)) |list| {
+                var i: usize = 0;
+                while (i < list.items.len) : (i += 1) {
+                    if (list.items[i] != cb.id) continue;
+                    _ = list.swapRemove(i);
+                    cb.service_refs -= 1;
+                    try b.maybeReleaseObject(cb);
+                    break;
+                }
+                if (list.items.len == 0) {
+                    const kv = b.service_callbacks.fetchRemove(name).?;
+                    var l = kv.value;
+                    l.deinit(gpa);
+                    gpa.free(kv.key);
+                }
+            }
+            try smWriteI32(&data, gpa, 0); // no exception
+            try smReply(peer, header, data.items, entries.items);
+        },
+        SM.registerClientCallback, SM.tryUnregisterService => {
+            // Void methods: client-count callbacks (lazy services) are accepted
+            // but never delivered on this host; callers do not block on them.
             try smWriteI32(&data, gpa, 0); // no exception
             try smReply(peer, header, data.items, entries.items);
         },
@@ -1421,7 +1539,8 @@ fn removePeer(b: *Broker, peer: *Peer) void {
     }
     for (dead_calls.items) |id| _ = b.calls.remove(id);
 
-    // Registry names and waiters.
+    // Registry names, waiters and notification callbacks.
+    b.purgeServiceCallbacks(peer.id);
     var removed_names: std.ArrayList([]const u8) = .empty;
     defer removed_names.deinit(gpa);
     var services = b.services.iterator();
