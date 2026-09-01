@@ -391,6 +391,18 @@ file('$CJ/android/os/Build.java')
 file('$CJ/android/os/StrictMode.java')
 file('$CJ/android/os/FileUriExposedException.java')
 add('$CJ/android/os/strictmode')
+# Real android.net.Uri + android.content.Intent (one unit: Intent parcels its
+# data Uri through Uri.writeToParcel) and Intent's import closure. Service
+# facades without a host service (ContactsContract, StatusBarManager,
+# IncidentManager, PhoneAccount) are stubs in src/framework-stubs.
+file('$CJ/android/net/Uri.java')
+file('$CJ/android/net/UriCodec.java')
+file('$CJ/android/content/Intent.java')
+file('$CJ/android/os/BundleMerger.java')
+file('$CJ/android/provider/OpenableColumns.java')
+file('$CJ/android/service/chooser/AdditionalContentContract.java')
+file('$CJ/android/service/chooser/ChooserAction.java')
+file('$CJ/android/service/chooser/ChooserResult.java')
 file('$CJ/android/os/SimpleClock.java')
 file('$CJ/android/os/WorkSource.java')
 file('$CJ/android/os/ShellCommand.java')

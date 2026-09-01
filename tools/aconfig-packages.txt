@@ -53,3 +53,4 @@ android.media.codec
 com.android.internal.camera.flags
 com.android.internal.telephony.flags
 com.android.ranging.flags
+android.content.flags

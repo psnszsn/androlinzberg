@@ -31,6 +31,9 @@ public class StorageManager {
     public long getAllocatableBytes(UUID storageUuid, int flags) throws IOException {
         return getAllocatableBytes(storageUuid);
     }
+    /** No storage sandbox on the host: paths are not translated. */
+    public File translateAppToSystem(File file, int pid, int uid) { return file; }
+    public File translateSystemToApp(File file, int pid, int uid) { return file; }
     public static java.util.UUID convert(String volumeUuid) {
         return volumeUuid == null ? UUID_DEFAULT : java.util.UUID.fromString(volumeUuid);
     }

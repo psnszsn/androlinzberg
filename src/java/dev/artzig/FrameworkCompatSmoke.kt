@@ -597,6 +597,42 @@ public final class FrameworkCompatSmoke {
             android.os.StrictMode.onFileUriExposed(android.net.Uri.parse("file:///tmp/x"), "smoke")
             android.os.StrictMode.setVmPolicy(oldVm)
             require(!android.os.StrictMode.vmImplicitDirectBootEnabled() || true, "StrictMode direct-boot query")
+            // Real android.net.Uri + Intent: hierarchical/opaque parsing, toUri/parseUri, parcel wire format.
+            val h = android.net.Uri.parse("content://dev.artzig/item/1?x=1&y=two#frag")
+            require(h.isHierarchical && !h.isOpaque && h.authority == "dev.artzig" && h.pathSegments == listOf("item", "1"), "Uri hierarchical parts")
+            require(h.getQueryParameter("y") == "two" && h.queryParameterNames == setOf("x", "y") && h.fragment == "frag", "Uri query/fragment")
+            val o = android.net.Uri.parse("mailto:someone@example.com")
+            require(o.isOpaque && o.schemeSpecificPart == "someone@example.com", "Uri opaque")
+            require(android.net.Uri.fromFile(java.io.File("/tmp/a b")).toString() == "file:///tmp/a%20b", "Uri.fromFile encodes")
+            // AOSP: a selector and an explicit package are mutually exclusive.
+            val full = Intent(Intent.ACTION_VIEW, h).addCategory(Intent.CATEGORY_BROWSABLE).putExtra("n", 7)
+            full.setSelector(Intent(Intent.ACTION_MAIN))
+            full.setSourceBounds(android.graphics.Rect(1, 2, 3, 4))
+            var selectorRejected = false
+            try { full.setPackage("org.example") } catch (e: IllegalArgumentException) { selectorRejected = true }
+            require(selectorRejected, "Intent.setPackage rejects a selector-carrying intent")
+            val uriForm = full.toUri(Intent.URI_INTENT_SCHEME)
+            val parsed = Intent.parseUri(uriForm, Intent.URI_INTENT_SCHEME)
+            require(parsed.action == Intent.ACTION_VIEW && parsed.data == h && parsed.getIntExtra("n", 0) == 7 && parsed.selector?.action == Intent.ACTION_MAIN, "Intent.toUri/parseUri round trip: " + uriForm)
+            val pIntent = android.os.Parcel.obtain()
+            try {
+                full.writeToParcel(pIntent, 0)
+                pIntent.setDataPosition(0)
+                val back = Intent.CREATOR.createFromParcel(pIntent)
+                require(back.filterEquals(full) && back.data == h && back.selector?.action == Intent.ACTION_MAIN && back.sourceBounds == android.graphics.Rect(1, 2, 3, 4) && back.getIntExtra("n", 0) == 7, "Intent parcel round trip keeps data/selector/sourceBounds/extras")
+                require(pIntent.dataAvail() == 0, "Intent parcel fully consumed")
+            } finally {
+                pIntent.recycle()
+            }
+            val uriParcel = android.os.Parcel.obtain()
+            try {
+                android.net.Uri.writeToParcel(uriParcel, o)
+                android.net.Uri.writeToParcel(uriParcel, null)
+                uriParcel.setDataPosition(0)
+                require(android.net.Uri.CREATOR.createFromParcel(uriParcel) == o && android.net.Uri.CREATOR.createFromParcel(uriParcel) == null, "Uri parcel round trip (opaque + null)")
+            } finally {
+                uriParcel.recycle()
+            }
             require(!android.os.Trace.isEnabled(), "Trace: no tag enabled on the host")
             require(!android.os.Trace.isTagEnabled(android.os.Trace.TRACE_TAG_VIEW), "Trace.isTagEnabled(VIEW) false")
             android.os.Trace.beginSection("azk-smoke")

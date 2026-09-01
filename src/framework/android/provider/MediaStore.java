@@ -26,6 +26,14 @@ public final class MediaStore {
     private static final String TAG = "MediaStore";
 
     public static final String AUTHORITY = "media";
+    public static final String ACTION_IMAGE_CAPTURE = "android.media.action.IMAGE_CAPTURE";
+    public static final String ACTION_IMAGE_CAPTURE_SECURE = "android.media.action.IMAGE_CAPTURE_SECURE";
+    public static final String ACTION_VIDEO_CAPTURE = "android.media.action.VIDEO_CAPTURE";
+    public static final String ACTION_MOTION_PHOTO_CAPTURE = "android.provider.action.MOTION_PHOTO_CAPTURE";
+    public static final String ACTION_MOTION_PHOTO_CAPTURE_SECURE = "android.provider.action.MOTION_PHOTO_CAPTURE_SECURE";
+    public static final String EXTRA_OUTPUT = "output";
+    /** AOSP asks the media provider to scan the file; no media provider is hosted, so no Uri. */
+    public static Uri scanFile(android.content.ContentResolver resolver, java.io.File file) { return null; }
     public static final Uri AUTHORITY_URI = Uri.parse("content://" + AUTHORITY);
     public static final String VOLUME_INTERNAL = "internal";
     public static final String VOLUME_EXTERNAL = "external";

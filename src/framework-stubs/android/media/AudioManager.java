@@ -1,6 +1,7 @@
 /* artzig stub (auto-generated placeholder; members added on demand). */
 package android.media;
 public class AudioManager {
+    public static final String ACTION_HEADSET_PLUG = "android.intent.action.HEADSET_PLUG";
     public static final int PLAYBACK_OFFLOAD_NOT_SUPPORTED = 0;
     public static final int PLAYBACK_OFFLOAD_SUPPORTED = 1;
     public static final int PLAYBACK_OFFLOAD_GAPLESS_SUPPORTED = 2;

@@ -20,6 +20,8 @@ public class Environment {
     public static File getExternalStorageDirectory() { return new File(dataDir(), "external"); }
     public static File getDownloadCacheDirectory() { return new File(dataDir(), "cache"); }
     public static File getStorageDirectory() { return getExternalStorageDirectory(); }
+    /** AOSP: the pre-scoped-storage shared root; one emulated volume here. */
+    public static File getLegacyExternalStorageDirectory() { return getExternalStorageDirectory(); }
     public static String getExternalStorageState() { return MEDIA_MOUNTED; }
     public static String getExternalStorageState(File f) { return MEDIA_MOUNTED; }
     public static boolean isExternalStorageEmulated() { return true; }

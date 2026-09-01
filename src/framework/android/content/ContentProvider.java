@@ -203,25 +203,53 @@ public abstract class ContentProvider {
      * enforceReadPermissionInner). Runs on binder threads; sets the
      * calling-uid thread-local around each dispatch.
      */
+    /** AOSP ContentProvider.attachInfoForTesting: attach without the process-wide registration. */
+    public void attachInfoForTesting(Context context, ProviderInfo info) {
+        attachInfo(context, info);
+    }
+
+    /**
+     * AOSP ContentProvider.enforceReadPermissionInner: the calling uid (the
+     * broker's, authoritative here; the attribution source is informational)
+     * must hold the provider's read permission. Returns PERMISSION_GRANTED or
+     * throws SecurityException, as AOSP does for the caller's own checks.
+     */
+    protected int enforceReadPermissionInner(Uri uri, AttributionSource attributionSource)
+            throws SecurityException {
+        enforcePermissionInner(false, "read " + uri);
+        return PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** AOSP ContentProvider.enforceWritePermissionInner; see enforceReadPermissionInner. */
+    protected int enforceWritePermissionInner(Uri uri, AttributionSource attributionSource)
+            throws SecurityException {
+        enforcePermissionInner(true, "write " + uri);
+        return PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void enforcePermissionInner(boolean write, String what) {
+        int uid = Binder.getCallingUid();
+        if (uid == Process.myUid() || uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) return;
+        ProviderInfo info = mInfo;
+        if (info == null) return;
+        if (!info.exported) {
+            throw new SecurityException("Provider " + mAuthority
+                    + " is not exported (uid " + uid + ", " + what + ")");
+        }
+        String permission = write ? info.writePermission : info.readPermission;
+        if (permission == null) return;
+        if (android.app.HostedServiceClient.checkUidPermission(permission, uid)
+                != PackageManager.PERMISSION_GRANTED) {
+            throw new SecurityException("Provider " + mAuthority + " requires "
+                    + permission + " for " + what + " (uid " + uid + ")");
+        }
+    }
+
     final class Transport extends dev.artzig.system.IHostedContentProvider.Stub {
         ContentProvider provider() { return ContentProvider.this; }
 
         private void enforcePermission(boolean write, String what) {
-            int uid = Binder.getCallingUid();
-            if (uid == Process.myUid() || uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) return;
-            ProviderInfo info = mInfo;
-            if (info == null) return;
-            if (!info.exported) {
-                throw new SecurityException("Provider " + mAuthority
-                        + " is not exported (uid " + uid + ", " + what + ")");
-            }
-            String permission = write ? info.writePermission : info.readPermission;
-            if (permission == null) return;
-            if (android.app.HostedServiceClient.checkUidPermission(permission, uid)
-                    != PackageManager.PERMISSION_GRANTED) {
-                throw new SecurityException("Provider " + mAuthority + " requires "
-                        + permission + " for " + what + " (uid " + uid + ")");
-            }
+            enforcePermissionInner(write, what);
         }
 
         /** Exported-ness alone (AOSP serves mime types without a read
