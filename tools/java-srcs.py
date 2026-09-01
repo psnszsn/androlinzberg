@@ -352,6 +352,15 @@ file('$CJ/com/android/internal/util/StatLogger.java')
 file('$CJ/android/os/Bundle.java')
 file('$CJ/android/os/BaseBundle.java')
 file('$CJ/android/os/PersistableBundle.java')
+# Real Looper/MessageQueue/Handler/Message over the Zig epoll natives
+# (src/platform/message_queue.zig). MessageQueue is the Combined variant AOSP's
+# messagequeue-gen genrule copies to android/os/MessageQueue.java; javac takes the
+# explicit path (package android.os) as-is.
+file('$CJ/android/os/Looper.java')
+file('$CJ/android/os/CombinedMessageQueue/MessageQueue.java')
+file('$CJ/android/os/Handler.java')
+file('$CJ/android/os/Message.java')
+file('$CJ/android/os/ParcelFileDescriptor.java')
 file('$CJ/android/util/JsonReader.java')
 file('$CJ/android/util/JsonScope.java')
 file('$CJ/android/util/JsonToken.java')

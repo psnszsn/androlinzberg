@@ -1062,7 +1062,7 @@ internal object FrameworkModuleSmoke {
         try {
             asyncMessage.target.dispatchMessage(asyncMessage)
         } finally {
-            asyncMessage.recycle()
+            android.os.MessageQueue.`recycleDispatched$artzig`(asyncMessage)
         }
         check(observed == listOf("async")) { "unexpected barrier delivery: $observed" }
         check(queue.`pollDueMessage$artzig`() == null) {
@@ -1153,7 +1153,7 @@ internal object FrameworkModuleSmoke {
             try {
                 message.target.dispatchMessage(message)
             } finally {
-                message.recycle()
+                android.os.MessageQueue.`recycleDispatched$artzig`(message)
             }
         }
         check(wakeMessages <= 1) {
@@ -1252,7 +1252,7 @@ internal object FrameworkModuleSmoke {
                 message.target.dispatchMessage(message)
                 count++
             } finally {
-                message.recycle()
+                android.os.MessageQueue.`recycleDispatched$artzig`(message)
             }
         }
     }

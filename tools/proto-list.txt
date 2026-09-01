@@ -37,3 +37,6 @@ frameworks/proto_logging/stats/enums/view/inputmethod/enums.proto
 frameworks/base/core/proto/android/server/statlogger.proto
 frameworks/base/core/proto/android/os/bundle.proto
 frameworks/base/core/proto/android/os/persistablebundle.proto
+frameworks/base/core/proto/android/os/looper.proto
+frameworks/base/core/proto/android/os/message.proto
+frameworks/base/core/proto/android/os/messagequeue.proto

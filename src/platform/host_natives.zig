@@ -5,24 +5,24 @@ const art = @import("art");
 const audio = @import("audio");
 const codec_jni = @import("codec_jni");
 const host_renderer = @import("host_renderer");
-const looper_wakeup = @import("looper_wakeup");
+const message_queue = @import("message_queue");
 
 pub const HwuiBridges = host_renderer.Bridges;
 
 pub fn register(io: std.Io, env: [*c]art.jni.JNIEnv, hwui: HwuiBridges) !void {
-    try looper_wakeup.register(io, env);
+    try message_queue.register(io, env);
     try host_renderer.register(io, env, hwui);
     try audio.register(io, env);
     try codec_jni.register(env);
 }
 
 pub const bindWayland = host_renderer.bindWayland;
-pub const looperWakeupFd = looper_wakeup.wakeupFd;
-pub const consumeLooperWakeup = looper_wakeup.consume;
+pub const looperWakeupFd = message_queue.hostQueueFd;
+pub const consumeLooperWakeup = message_queue.consumeHostWake;
 pub const rendererWakeupFd = host_renderer.wakeupFd;
 pub const consumeRendererWakeup = host_renderer.consumeWakeup;
 
 pub fn deinitWakeups() void {
     host_renderer.deinitWakeup();
-    looper_wakeup.deinit();
+    message_queue.deinit();
 }

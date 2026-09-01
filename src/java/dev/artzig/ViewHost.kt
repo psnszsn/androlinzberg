@@ -266,7 +266,7 @@ public final class ViewHost {
                 val msg: android.os.Message? = nextMessageNow(queue)
                 if (msg == null) break
                 msg.getTarget().dispatchMessage(msg)
-                msg.recycle()
+                android.os.MessageQueue.`recycleDispatched$artzig`(msg)
             }
             if (guard > 500 && queue.`nextPollDelayMillis$artzig`() == 0L) {
                 queue.`wakeHost$artzig`()

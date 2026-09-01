@@ -5,6 +5,15 @@ public class Process {
             SYSTEM_UID = 1000, ROOT_UID = 0, SHELL_UID = 2000, MY_UID = 10001,
             NOBODY_UID = 9999,
             INVALID_UID = -1, INVALID_PID = -1;
+    /** AOSP thread/process scheduling groups (Process.THREAD_GROUP_*). */
+    public static final int THREAD_GROUP_DEFAULT = -1, THREAD_GROUP_BACKGROUND = 0,
+            THREAD_GROUP_FOREGROUND = 1, THREAD_GROUP_SYSTEM = 2, THREAD_GROUP_AUDIO_APP = 3,
+            THREAD_GROUP_AUDIO_SYS = 4, THREAD_GROUP_TOP_APP = 5, THREAD_GROUP_RT_APP = 6,
+            THREAD_GROUP_RESTRICTED = 7;
+    /** No isolated-uid sandboxing on this host. */
+    public static boolean isIsolated() { return false; }
+    /** No cgroup scheduling groups on this host: every thread reports the default group. */
+    public static int getProcessGroup(int tid) { return THREAD_GROUP_DEFAULT; }
     public static final int THREAD_PRIORITY_DEFAULT = 0, THREAD_PRIORITY_LOWEST = 19,
             THREAD_PRIORITY_BACKGROUND = 10, THREAD_PRIORITY_FOREGROUND = -2,
             THREAD_PRIORITY_DISPLAY = -4, THREAD_PRIORITY_URGENT_DISPLAY = -8,

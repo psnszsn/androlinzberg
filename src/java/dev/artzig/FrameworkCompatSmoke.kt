@@ -545,7 +545,7 @@ public final class FrameworkCompatSmoke {
             var message: Message
             while ((Looper.myQueue().`pollDueMessage$artzig`().also { message = it }) != null) {
                 message.getTarget().dispatchMessage(message)
-                message.recycle()
+                android.os.MessageQueue.`recycleDispatched$artzig`(message)
             }
         }
 

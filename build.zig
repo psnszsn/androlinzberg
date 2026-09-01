@@ -364,8 +364,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "event_fd", .module = event_fd_mod },
         },
     });
-    const looper_wakeup_mod = b.createModule(.{
-        .root_source_file = b.path("src/platform/looper_wakeup.zig"),
+    const message_queue_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/message_queue.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -390,7 +390,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "audio", .module = audio_mod },
             .{ .name = "codec_jni", .module = codec_jni_mod },
             .{ .name = "host_renderer", .module = host_renderer_mod },
-            .{ .name = "looper_wakeup", .module = looper_wakeup_mod },
+            .{ .name = "message_queue", .module = message_queue_mod },
         },
     });
     exe.root_module.addImport("host_natives", host_natives_mod);
@@ -413,8 +413,8 @@ pub fn build(b: *std.Build) void {
     const run_wayland_tests = b.addRunArtifact(wayland_tests);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
-    const looper_wakeup_check = b.addTest(.{ .root_module = looper_wakeup_mod });
-    const run_looper_wakeup_tests = b.addRunArtifact(looper_wakeup_check);
+    const message_queue_check = b.addTest(.{ .root_module = message_queue_mod });
+    const run_message_queue_tests = b.addRunArtifact(message_queue_check);
     const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
     const run_apk_optimizer_tests = b.addRunArtifact(apk_optimizer_check);
     const dexopt_transaction_test = b.addSystemCommand(&.{ "bash", "tools/test-dexopt-apk.sh" });
@@ -493,7 +493,7 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
     native_test_step.dependOn(&host_renderer_check.step);
-    native_test_step.dependOn(&run_looper_wakeup_tests.step);
+    native_test_step.dependOn(&run_message_queue_tests.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);

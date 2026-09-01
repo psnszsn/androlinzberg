@@ -956,7 +956,7 @@ public final class ApkHost {
                     System.err.print("E/ApkHost: message dispatch and diagnostic failed: ")
                     System.err.println(loggingFailure.javaClass.name)
                 } finally {
-                    msg.recycle()
+                    android.os.MessageQueue.`recycleDispatched$artzig`(msg)
                 }
             }
             if (guard > 500 && queue.`nextPollDelayMillis$artzig`() == 0L) {

@@ -47,6 +47,7 @@ android/os/ICancellationSignal.aidl
 android/os/IUserManager.aidl
 android/os/IUserRestrictionsListener.aidl
 android/os/IInputConstants.aidl
+android/os/IMessenger.aidl
 android/os/IRemoteCallback.aidl
 android/os/IVibratorStateListener.aidl
 android/os/MotionEventFlag.aidl

@@ -22,4 +22,43 @@ public class FileUtils {
         if (name == null || name.isEmpty() || name.equals(".") || name.equals("..")) return false;
         return name.indexOf('/') < 0 && name.indexOf('\0') < 0;
     }
+    // AOSP FileUtils mode translation (ParcelFileDescriptor.open/parseMode).
+    public static int translateModeStringToPosix(String mode) {
+        for (int i = 0; i < mode.length(); i++) {
+            switch (mode.charAt(i)) {
+                case 'r': case 'w': case 't': case 'a': break;
+                default: throw new IllegalArgumentException("Bad mode: " + mode);
+            }
+        }
+        int res;
+        if (mode.startsWith("rw")) res = android.system.OsConstants.O_RDWR | android.system.OsConstants.O_CREAT;
+        else if (mode.startsWith("w")) res = android.system.OsConstants.O_WRONLY | android.system.OsConstants.O_CREAT;
+        else if (mode.startsWith("r")) res = android.system.OsConstants.O_RDONLY;
+        else throw new IllegalArgumentException("Bad mode: " + mode);
+        if (mode.indexOf('t') != -1) res |= android.system.OsConstants.O_TRUNC;
+        if (mode.indexOf('a') != -1) res |= android.system.OsConstants.O_APPEND;
+        return res;
+    }
+    public static int translateModePfdToPosix(int mode) {
+        int res;
+        if ((mode & ParcelFileDescriptor.MODE_READ_WRITE) == ParcelFileDescriptor.MODE_READ_WRITE) res = android.system.OsConstants.O_RDWR;
+        else if ((mode & ParcelFileDescriptor.MODE_WRITE_ONLY) == ParcelFileDescriptor.MODE_WRITE_ONLY) res = android.system.OsConstants.O_WRONLY;
+        else if ((mode & ParcelFileDescriptor.MODE_READ_ONLY) == ParcelFileDescriptor.MODE_READ_ONLY) res = android.system.OsConstants.O_RDONLY;
+        else throw new IllegalArgumentException("Bad mode: " + mode);
+        if ((mode & ParcelFileDescriptor.MODE_CREATE) == ParcelFileDescriptor.MODE_CREATE) res |= android.system.OsConstants.O_CREAT;
+        if ((mode & ParcelFileDescriptor.MODE_TRUNCATE) == ParcelFileDescriptor.MODE_TRUNCATE) res |= android.system.OsConstants.O_TRUNC;
+        if ((mode & ParcelFileDescriptor.MODE_APPEND) == ParcelFileDescriptor.MODE_APPEND) res |= android.system.OsConstants.O_APPEND;
+        return res;
+    }
+    public static int translateModePosixToPfd(int mode) {
+        int res;
+        if ((mode & android.system.OsConstants.O_ACCMODE) == android.system.OsConstants.O_RDWR) res = ParcelFileDescriptor.MODE_READ_WRITE;
+        else if ((mode & android.system.OsConstants.O_ACCMODE) == android.system.OsConstants.O_WRONLY) res = ParcelFileDescriptor.MODE_WRITE_ONLY;
+        else if ((mode & android.system.OsConstants.O_ACCMODE) == android.system.OsConstants.O_RDONLY) res = ParcelFileDescriptor.MODE_READ_ONLY;
+        else throw new IllegalArgumentException("Bad mode: " + mode);
+        if ((mode & android.system.OsConstants.O_CREAT) == android.system.OsConstants.O_CREAT) res |= ParcelFileDescriptor.MODE_CREATE;
+        if ((mode & android.system.OsConstants.O_TRUNC) == android.system.OsConstants.O_TRUNC) res |= ParcelFileDescriptor.MODE_TRUNCATE;
+        if ((mode & android.system.OsConstants.O_APPEND) == android.system.OsConstants.O_APPEND) res |= ParcelFileDescriptor.MODE_APPEND;
+        return res;
+    }
 }
