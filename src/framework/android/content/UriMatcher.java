@@ -1,3 +1,4 @@
+/* artzig host seam: compatible reimplementation of AOSP android.content.UriMatcher (the hosted provider path needs only authority/path matching). */
 package android.content;
 
 import android.net.Uri;

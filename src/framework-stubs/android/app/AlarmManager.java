@@ -1,3 +1,4 @@
+/* artzig host seam: in-process AlarmManager facade (no AlarmManagerService in the hosted runtime). */
 package android.app;
 
 import android.app.PendingIntent;

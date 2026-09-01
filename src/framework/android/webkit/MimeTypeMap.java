@@ -1,3 +1,4 @@
+/* artzig host seam: AOSP android.webkit.MimeTypeMap without the WebView glue; backed by the same libcore MimeMap. */
 /*
  * Copyright (C) 2007 The Android Open Source Project
  *

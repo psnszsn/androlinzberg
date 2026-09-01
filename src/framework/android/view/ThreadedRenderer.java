@@ -1,3 +1,4 @@
+/* artzig host seam: AOSP ThreadedRenderer is the RenderThread client; this one drives the hosted HardwareRenderer (Ganesh/GL on the Wayland EGL surface) directly. */
 package android.view;
 
 import android.content.Context;

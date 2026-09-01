@@ -97,6 +97,32 @@ for root in src/framework-stubs src/framework; do
     done < <(cd "$root" && git ls-files '*.java' '*.kt' 2>/dev/null)
 done
 
+# --- 2b. no unmarked duplicate of a vendored AOSP class ----------------------
+# A repo-owned android.*/com.android.* class whose FQN also exists in a vendored
+# AOSP source tree must either be generated/reused (rule 2) or be a declared
+# host adaptation: its first 20 lines must carry an `artzig` marker or the
+# `Hosted adaptation of AOSP` header. Index = the java-bearing pinned trees the
+# framework compiles from (extend as more trees carry reused source).
+aosp_index=$(mktemp)
+trap 'rm -f "$forbidden" "$aosp_index"' EXIT
+{
+    git -C artzig/extra/frameworks-base ls-tree -r --name-only HEAD
+    git -C artzig/extra/modules-utils ls-tree -r --name-only HEAD
+    git -C artzig/extra/modules-statsd ls-tree -r --name-only HEAD
+} 2>/dev/null | grep -E '\.(java|kt)$' | grep -vE '/tests?/|/androidTest/' > "$aosp_index"
+
+for root in src/framework-stubs src/framework; do
+    while IFS= read -r rel; do
+        case "$rel" in android/*|com/android/*) ;; *) continue ;; esac
+        esc=$(printf '%s' "$rel" | sed 's/[.[\*^$]/\\&/g')
+        grep -qE "(^|/)$esc$" "$aosp_index" || continue
+        head -20 "$root/$rel" | grep -qE 'artzig|Hosted adaptation of AOSP' && continue
+        printf 'unmarked duplicate of a vendored AOSP class (reuse it, or mark the host seam): %s/%s
+' "$root" "$rel" >&2
+        status=1
+    done < <(cd "$root" && git ls-files '*.java' '*.kt' 2>/dev/null)
+done
+
 # --- 3. pin-provenance: vendored trees must match provenance/pins.lock -------
 if [ -f provenance/pins.lock ]; then
     while read -r sha rel; do

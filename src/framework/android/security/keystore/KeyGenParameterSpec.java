@@ -1,3 +1,4 @@
+/* artzig host seam: hosted subset of AOSP KeyGenParameterSpec (no keystore daemon; application key generation runs on the JVM providers). */
 package android.security.keystore;
 
 import java.security.spec.AlgorithmParameterSpec;
