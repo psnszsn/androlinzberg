@@ -209,6 +209,135 @@ fn nativeReportSyspropChange(env: JNIEnvPtr, _: jni.jclass) callconv(.c) void {
     callChangeCallbacks(env);
 }
 
+// ------------------------------------------------ SharedMemory / MemoryFile
+//
+// AOSP backs these with ashmem (/dev/ashmem), absent on a host. memfd is the
+// faithful substitute: an anonymous, sealable, fstat-sizable, dup/SCM_RIGHTS-
+// shareable region. nCreate seals SHRINK|GROW so the size is fixed like an
+// ashmem region; nSetProt maps a read-only request to F_SEAL_FUTURE_WRITE (the
+// closest per-fd write restriction memfd offers).
+
+// Raw Linux syscalls for the memfd region ops (no std.Io equivalent for memfd
+// creation/sealing/statx). Same carve-out as ndk.zig: this code is in the
+// dlopen'd libbinder_ndk that provides its own Io; fds it hands to Java are
+// owned by libcore thereafter.
+const linux = std.os.linux;
+const MFD_ALLOW_SEALING: c_uint = 0x0002;
+const MFD_CLOEXEC: c_uint = 0x0001;
+const F_ADD_SEALS: i32 = 1033;
+const F_SEAL_SHRINK: usize = 0x0002;
+const F_SEAL_GROW: usize = 0x0004;
+const F_SEAL_FUTURE_WRITE: usize = 0x0010;
+const AT_EMPTY_PATH: u32 = 0x1000;
+const PROT_WRITE: jni.jint = 0x2;
+
+/// -errno for a failed syscall (usize result), else 0.
+fn errnoOf(rc: usize) i32 {
+    const signed: isize = @bitCast(rc);
+    return if (signed < 0) @intCast(-signed) else 0;
+}
+
+var g_fd_class: jni.jclass = null;
+var g_fd_ctor: jni.jmethodID = null;
+var g_fd_setint: jni.jmethodID = null;
+var g_fd_getint: jni.jmethodID = null;
+
+fn newFileDescriptor(env: JNIEnvPtr, fd: i32) jni.jobject {
+    const obj = env.*.*.NewObject.?(env, g_fd_class, g_fd_ctor) orelse return null;
+    env.*.*.CallVoidMethod.?(env, obj, g_fd_setint, @as(jni.jint, fd));
+    return obj;
+}
+
+fn fdInt(env: JNIEnvPtr, fdobj: jni.jobject) i32 {
+    return env.*.*.CallIntMethod.?(env, fdobj, g_fd_getint);
+}
+
+fn throwErrno(env: JNIEnvPtr, func: [*:0]const u8, errno: c_int) void {
+    // android.system.ErrnoException(String, int)
+    const cls = env.*.*.FindClass.?(env, "android/system/ErrnoException") orelse return;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const ctor = env.*.*.GetMethodID.?(env, cls, "<init>", "(Ljava/lang/String;I)V") orelse return;
+    const msg = env.*.*.NewStringUTF.?(env, func);
+    const ex = env.*.*.NewObject.?(env, cls, ctor, msg, @as(jni.jint, errno));
+    _ = env.*.*.Throw.?(env, @ptrCast(ex));
+}
+
+fn sharedMemoryCreate(env: JNIEnvPtr, _: jni.jclass, name: jni.jstring, size: jni.jint) callconv(.c) jni.jobject {
+    var nbuf: [prop_area.name_max]u8 = undefined;
+    const nm = if (name == null) "SharedMemory" else jstringSlice(env, name, &nbuf) orelse "SharedMemory";
+    var zname: [prop_area.name_max + 1]u8 = undefined;
+    @memcpy(zname[0..nm.len], nm);
+    zname[nm.len] = 0;
+    const rc = linux.memfd_create(@ptrCast(&zname), MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    const cerr = errnoOf(rc);
+    if (cerr != 0) {
+        throwErrno(env, "SharedMemory_create", cerr);
+        return null;
+    }
+    const fd: i32 = @intCast(rc);
+    const terr = errnoOf(linux.ftruncate(fd, size));
+    if (terr != 0) {
+        _ = linux.close(fd);
+        throwErrno(env, "SharedMemory_create", terr);
+        return null;
+    }
+    // Fix the size (ashmem regions cannot be resized after creation).
+    _ = linux.fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_GROW);
+    return newFileDescriptor(env, fd);
+}
+
+fn sharedMemoryGetSize(env: JNIEnvPtr, _: jni.jclass, fdobj: jni.jobject) callconv(.c) jni.jint {
+    // statx with AT_EMPTY_PATH queries the fd itself without touching the
+    // shared file position (a dup'd/SCM_RIGHTS'd memfd shares its offset).
+    var stx: linux.Statx = undefined;
+    const rc = linux.statx(fdInt(env, fdobj), "", AT_EMPTY_PATH, .{ .SIZE = true }, &stx);
+    if (errnoOf(rc) != 0) return -1;
+    return @intCast(stx.size);
+}
+
+fn sharedMemorySetProt(env: JNIEnvPtr, _: jni.jclass, fdobj: jni.jobject, prot: jni.jint) callconv(.c) jni.jint {
+    // Dropping PROT_WRITE seals future writes; nothing to do when write stays.
+    if (prot & PROT_WRITE == 0) {
+        if (errnoOf(linux.fcntl(fdInt(env, fdobj), F_ADD_SEALS, F_SEAL_FUTURE_WRITE)) != 0) return -1;
+    }
+    return 0;
+}
+
+fn memoryFilePin(env: JNIEnvPtr, _: jni.jclass, _: jni.jobject, _: jni.jboolean) callconv(.c) jni.jboolean {
+    // memfd pages are never purged; pin/unpin is a no-op and the region is
+    // always "still present" (AOSP returns true = was purged only for ashmem).
+    _ = env;
+    return jni.JNI_FALSE;
+}
+
+fn memoryFileGetSize(env: JNIEnvPtr, cls: jni.jclass, fdobj: jni.jobject) callconv(.c) jni.jint {
+    return sharedMemoryGetSize(env, cls, fdobj);
+}
+
+fn registerSharedMemory(env: JNIEnvPtr) !void {
+    g_fd_class = ndk.findGlobalClass(env, "java/io/FileDescriptor") orelse return error.NoClass;
+    g_fd_ctor = env.*.*.GetMethodID.?(env, g_fd_class, "<init>", "()V") orelse return error.NoMethod;
+    g_fd_setint = env.*.*.GetMethodID.?(env, g_fd_class, "setInt$", "(I)V") orelse return error.NoMethod;
+    g_fd_getint = env.*.*.GetMethodID.?(env, g_fd_class, "getInt$", "()I") orelse return error.NoMethod;
+
+    const sm = env.*.*.FindClass.?(env, "android/os/SharedMemory") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, sm);
+    const sm_methods = [_]jni.JNINativeMethod{
+        method("nCreate", "(Ljava/lang/String;I)Ljava/io/FileDescriptor;", &sharedMemoryCreate),
+        method("nGetSize", "(Ljava/io/FileDescriptor;)I", &sharedMemoryGetSize),
+        method("nSetProt", "(Ljava/io/FileDescriptor;I)I", &sharedMemorySetProt),
+    };
+    if (env.*.*.RegisterNatives.?(env, sm, &sm_methods, sm_methods.len) != 0) return error.RegisterFailed;
+
+    const mf = env.*.*.FindClass.?(env, "android/os/MemoryFile") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, mf);
+    const mf_methods = [_]jni.JNINativeMethod{
+        method("native_pin", "(Ljava/io/FileDescriptor;Z)Z", &memoryFilePin),
+        method("native_get_size", "(Ljava/io/FileDescriptor;)I", &memoryFileGetSize),
+    };
+    if (env.*.*.RegisterNatives.?(env, mf, &mf_methods, mf_methods.len) != 0) return error.RegisterFailed;
+}
+
 // ------------------------------------------------------------- registration
 
 fn method(name: [*:0]const u8, signature: [*:0]const u8, ptr: anytype) jni.JNINativeMethod {
@@ -243,5 +372,6 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return -1));
     ndk.ensureJavaVm(env);
     registerSystemProperties(env) catch return -1;
+    registerSharedMemory(env) catch return -1;
     return 0;
 }

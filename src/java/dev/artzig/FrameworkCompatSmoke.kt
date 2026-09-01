@@ -73,7 +73,27 @@ public final class FrameworkCompatSmoke {
          * short-circuit (no cursor marshalling), and exercise the modern
          * overload delegation. */
         @JvmStatic
-        private fun testLocalContentProvider() {
+        /** SharedMemory over the host memfd natives (SharedMemory/MemoryFile JNI). */
+    private fun testSharedMemory() {
+        val shm = android.os.SharedMemory.create("azk-smoke", 4096)
+        try {
+            require(shm.size == 4096, "SharedMemory.size")
+            val rw = shm.mapReadWrite()
+            rw.put(0, 0x42.toByte())
+            rw.put(4095, 0x7f.toByte())
+            android.os.SharedMemory.unmap(rw)
+            shm.setProtect(android.system.OsConstants.PROT_READ)
+            val ro = shm.mapReadOnly()
+            require(ro.get(0) == 0x42.toByte(), "SharedMemory read back [0]")
+            require(ro.get(4095) == 0x7f.toByte(), "SharedMemory read back [last]")
+            android.os.SharedMemory.unmap(ro)
+        } finally {
+            shm.close()
+        }
+        android.util.Log.i("FrameworkCompatSmoke", "shared memory ok")
+    }
+
+    private fun testLocalContentProvider() {
             var lastCursor: android.database.Cursor? = null
             val provider = object : android.content.ContentProvider() {
                 override fun onCreate(): Boolean = true
@@ -179,6 +199,7 @@ public final class FrameworkCompatSmoke {
         public fun main(args: Array<String>) {
         testParcelRoundTrips()
             testSystemProperties()
+            testSharedMemory()
             testLocalContentProvider()
             testAospPackageParser(args.firstOrNull())
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
