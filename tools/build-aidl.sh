@@ -10,6 +10,8 @@ FB="$ROOT/extra/frameworks-base"
 FN_INPUT="$ROOT/extra/frameworks-native/libs/input"
 # android-16 moved the app-ops callback AIDL into the native permission lib.
 FN_PERM="$ROOT/extra/frameworks-native/libs/permission/aidl"
+# The stable libbinder AIDL (IServiceManager and friends) lives in its own root.
+FN_BINDER="$ROOT/extra/frameworks-native/libs/binder/aidl"
 mkdir -p "$OUT"
 AIDL="$ROOT/vendor/prebuilts/sdk/tools/linux/bin/aidl"
 mapfile -t AIDL_RUN < <(bash "$APP/tools/aosp-run.sh" "$AIDL")
@@ -29,6 +31,9 @@ while IFS= read -r rel; do
   if [ ! -f "$src" ]; then
     src="$FN_INPUT/$rel"
   fi
+  if [ ! -f "$src" ] && [ -f "$FN_BINDER/$rel" ]; then
+    src="$FN_BINDER/$rel"
+  fi
   if [ ! -f "$src" ] && [ -f "$FN_PERM/$rel" ]; then
     # Stage rather than -I the whole permission lib: it re-declares parcelables
     # (AttributionSourceState) that already live in core/java.
@@ -41,6 +46,6 @@ while IFS= read -r rel; do
   fi
   [ -f "$src" ] || { echo "missing aidl: $rel" >&2; exit 1; }
   "${AIDL_RUN[@]}" -I"$FB/core/java" -I"$FB/graphics/java" -I"$COMPAT" \
-    -I"$FB/media/java" -I"$FN_INPUT" -o "$OUT" "$src"
+    -I"$FB/media/java" -I"$FN_INPUT" -I"$FN_BINDER" -o "$OUT" "$src"
 done < "$LIST"
 echo "== $OUT"

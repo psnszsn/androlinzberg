@@ -76,6 +76,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("tools/build-aidl.sh"),
         b.path("aidl-compat"),
         dep.path("extra/frameworks-native/libs/input/android/os"),
+        dep.path("extra/frameworks-native/libs/binder/aidl/android/os"),
     });
     const stamp_logtags = stamp(b, "logtags.stamp", &.{
         b.path("tools/logtags-list.txt"),

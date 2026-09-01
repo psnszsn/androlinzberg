@@ -51,6 +51,16 @@ android/os/IRemoteCallback.aidl
 android/os/IVibratorStateListener.aidl
 android/os/MotionEventFlag.aidl
 android/os/InputConfig.aidl
+# libbinder stable AIDL (frameworks/native/libs/binder/aidl): IServiceManager
+# and its dependency closure. The broker serves IServiceManager at the reserved
+# context object; the framework talks to it through the generated proxy.
+android/os/IServiceCallback.aidl
+android/os/IClientCallback.aidl
+android/os/ServiceWithMetadata.aidl
+android/os/Service.aidl
+android/os/ConnectionInfo.aidl
+android/os/ServiceDebugInfo.aidl
+android/os/IServiceManager.aidl
 android/service/textclassifier/ITextClassifierCallback.aidl
 android/service/textclassifier/ITextClassifierService.aidl
 android/service/translation/ITranslationCallback.aidl
