@@ -77,7 +77,7 @@ file('$FB/services/core/java/com/android/server/SystemServiceManager.java')
 file('$FB/services/core/java/com/android/server/utils/TimingsTraceAndSlog.java')
 # Reused AOSP clipboard: the service plus the real manager client. The two AOSP
 # monitors talk to qemu/ChromeOS pipes; the hosted EmulatorClipboardMonitor in
-# src/framework-stubs bridges the Wayland clipboard instead.
+# src/framework-stubs is an inert linkage-compatible replacement.
 add('$FB/services/core/java/com/android/server/clipboard', not_name=['EmulatorClipboardMonitor.java', 'ArcClipboardMonitor.java'])
 file('$CJ/android/content/ClipboardManager.java')
 file('$CJ/android/text/ClipboardManager.java')

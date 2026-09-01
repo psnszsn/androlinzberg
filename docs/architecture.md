@@ -95,14 +95,15 @@ matching receiver in the session, ordered broadcasts chain result state
 through receivers by descending filter priority, sticky broadcasts are
 retained, and delivery lands on the registering process's chosen `Handler`.
 The clipboard is the real AOSP `ClipboardService` running in the system
-process (with the unchanged `ClipboardManager` client), and its emulator
-clipboard monitor is a hosted replacement that syncs with the Wayland
-clipboard through `wl-copy`/`wl-paste`. System properties are session-wide,
-following Android's model: the broker owns a shared property area file in the
-session directory (`src/binder/prop_area.zig`, the `__system_property_area__`
-analogue) that every process — the JVM `SystemProperties` and NDK code through
-the bionic shim alike — maps read-only and reads lock-free with the bionic
-torn-read serial protocol; `SystemProperties.set` is a broker message checked
+process (with the unchanged `ClipboardManager` client). Its host monitor is
+deliberately inert, so clipboard state is shared within the Android session
+but is not read from or written to the Wayland clipboard. System properties
+are session-wide, following Android's model: the broker owns a shared property
+area file in the session directory (`src/binder/prop_area.zig`, the
+`__system_property_area__` analogue) that every process — the JVM
+`SystemProperties` and NDK code through the bionic shim alike — maps read-only
+and reads lock-free with the bionic torn-read serial protocol;
+`SystemProperties.set` is a broker message checked
 against a property-service-shaped policy (only the system process may set
 non-`debug.*`/`log.*` names, `ro.*` is write-once), and the broker pushes a
 `property_changed` notification that drives `addChangeCallback`.

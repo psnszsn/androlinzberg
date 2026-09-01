@@ -21,12 +21,6 @@ import kotlin.concurrent.thread
 internal object SystemServer {
     @JvmStatic
     fun main(args: Array<String>) {
-        // Before any framework class loads: turns on Build.IS_EMULATOR in this
-        // process only, so the reused ClipboardService constructs the hosted
-        // (Wayland) clipboard monitor. A JVM system property is process-local
-        // by nature; the session-wide Android property area must never carry
-        // ro.boot.qemu, or apps would think they run on an emulator.
-        System.setProperty("azk.emulator", "true")
         Looper.prepareMainLooper()
         // Identity first: uid 1000, the only peer allowed to claim system names.
         BinderSession.setIdentity("android", true)

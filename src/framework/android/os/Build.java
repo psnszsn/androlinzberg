@@ -13,11 +13,9 @@ public class Build {
     public static final String CPU_ABI = "x86_64", CPU_ABI2 = "";
     public static boolean IS_DEBUGGABLE = false;
     public static final boolean IS_ENG = false, IS_USER = true, IS_USERDEBUG = false;
-    /** AOSP: ro.boot.qemu. Read from a process-local JVM property (set by the
-     * system process before framework classes load) so the reused
-     * ClipboardService constructs the hosted Wayland EmulatorClipboardMonitor
-     * there while app processes — and the session-wide property area — never
-     * see an emulator flag. */
+    /** AOSP: ro.boot.qemu. Hosted processes are not Android emulators; the
+     * optional JVM property remains useful for compatibility probes without
+     * contaminating the session-wide Android property area. */
     public static final boolean IS_EMULATOR = Boolean.getBoolean("azk.emulator");
     public static final boolean IS_ARC = false;
     public static final int HW_TIMEOUT_MULTIPLIER = 1;
