@@ -56,6 +56,10 @@ class HostedAppOpsService : IAppOpsService.Stub() {
     override fun startOperation(clientId: android.os.IBinder?, code: Int, uid: Int, packageName: String?, attributionTag: String?, startIfModeDefault: Boolean, shouldCollectAsyncNotedOp: Boolean, message: String?, shouldCollectMessage: Boolean, attributionFlags: Int, attributionChainId: Int): android.app.SyncNotedAppOp? =
         android.app.SyncNotedAppOp(mode(code, uid), code, attributionTag, packageName)
     override fun finishOperation(clientId: android.os.IBinder?, code: Int, uid: Int, packageName: String?, attributionTag: String?) {}
+    // Batched note flush (android 16). Hosted shouldCollectNotes() is false, so
+    // clients never batch; accepting and dropping a batch is observationally
+    // equivalent (notes feed async collection this service does not implement).
+    override fun noteOperationsInBatch(batchedNoteOps: MutableMap<Any?, Any?>?) {}
     override fun startWatchingMode(op: Int, packageName: String?, callback: com.android.internal.app.IAppOpsCallback?) =
         addWatcher(op, callback)
     override fun stopWatchingMode(callback: com.android.internal.app.IAppOpsCallback?) {

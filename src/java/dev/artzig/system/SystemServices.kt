@@ -122,6 +122,10 @@ internal object SystemServices {
         LocalServices.addService(
             android.app.ActivityManagerInternal::class.java,
             object : android.app.ActivityManagerInternal() {
+                // android 16: process-state query; hosted apps run foreground.
+                override fun getUidProcessState(uid: Int): Int =
+                    2 // ActivityManager.PROCESS_STATE_TOP (@hide, not in the hosted surface)
+
                 override fun handleIncomingUser(
                     callingPid: Int,
                     callingUid: Int,

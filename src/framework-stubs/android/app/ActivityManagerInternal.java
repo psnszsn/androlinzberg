@@ -9,4 +9,6 @@ public abstract class ActivityManagerInternal {
     public static final int ALLOW_FULL_ONLY = 2;
     public abstract int handleIncomingUser(int callingPid, int callingUid, int userId,
             boolean allowAll, int allowMode, String name, String callerPackage);
+    /** android 16: uid process-state query (clipboard service logging). */
+    public abstract int getUidProcessState(int uid);
 }

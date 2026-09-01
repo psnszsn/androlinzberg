@@ -779,6 +779,25 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         if (mView != null) mView.dispatchPointerCaptureChanged(hasCapture);
     }
     public void notifyRendererOfExpensiveFrame() {}
+    /** android 16: tracing wrapper over notifyRendererOfExpensiveFrame(). */
+    public void notifyRendererOfExpensiveFrame(String reason) { notifyRendererOfExpensiveFrame(); }
+    /** android 16: AOSP drops its cached vibrator; the hosted root caches none. */
+    public void clearSystemVibrator() {}
+    /** android 16: insets animating-type bookkeeping rides the WM session, absent here. */
+    public void updateAnimatingTypes(int animatingTypes, android.view.inputmethod.ImeTracker.Token statsToken) {}
+    /** android 16 (AOSP ViewRootImpl.categoryToString). */
+    static String categoryToString(int frameRateCategory) {
+        switch (frameRateCategory) {
+            case Surface.FRAME_RATE_CATEGORY_NO_PREFERENCE: return "no preference";
+            case Surface.FRAME_RATE_CATEGORY_LOW: return "low";
+            case Surface.FRAME_RATE_CATEGORY_NORMAL: return "normal";
+            case Surface.FRAME_RATE_CATEGORY_HIGH_HINT: return "high hint";
+            case Surface.FRAME_RATE_CATEGORY_HIGH: return "high";
+            default: return "default";
+        }
+    }
+    /** android 16: the hosted root never changes the default compatibility. */
+    public int getFrameRateCompatibility() { return Surface.FRAME_RATE_COMPATIBILITY_DEFAULT; }
     public void notifyRendererOfFramePause() {}
     public void setDragStartedViewForAccessibility(View view) {}
     public static void outputDisplayList(View view) {}

@@ -3,6 +3,8 @@ package android.app;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 public class ResourcesManager {
+    /** android 16 (AOSP ResourcesManager.RESOURCE_CACHE_DIR): idmap cache path prefix. */
+    public static final String RESOURCE_CACHE_DIR = "/data/resource-cache/";
     private static ResourcesManager sInstance;
     private final Configuration mConfig = new Configuration();
     public static ResourcesManager getInstance() {

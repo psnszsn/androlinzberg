@@ -13,6 +13,12 @@ public final class NativeLibraryHelper {
                 boolean extractNativeLibs, boolean debuggable) throws IOException {
             throw new IOException("native library extraction is not hosted");
         }
+        /** android 16 adds pageSizeAppCompatFlags. */
+        public static Handle create(java.util.List<String> codePaths, boolean multiArch,
+                boolean extractNativeLibs, boolean debuggable, boolean pageSizeAppCompat)
+                throws IOException {
+            throw new IOException("native library extraction is not hosted");
+        }
         @Override public void close() {}
     }
 }

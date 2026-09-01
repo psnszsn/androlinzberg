@@ -67,7 +67,7 @@ internal class HostedDisplayManagerService :
             try {
                 registration.callback.onDisplayEvent(
                     Display.DEFAULT_DISPLAY,
-                    android.hardware.display.DisplayManagerGlobal.EVENT_DISPLAY_CHANGED,
+                    android.hardware.display.DisplayManagerGlobal.EVENT_DISPLAY_BASIC_CHANGED,
                 )
             } catch (t: Throwable) {
                 Log.w(TAG, "display callback failed", t)

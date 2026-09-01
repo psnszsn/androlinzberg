@@ -10,6 +10,7 @@ APP=$(cd "$(dirname "$0")/.." && pwd)
 PLUGIN=$(realpath "${1:?usage: build-proto.sh <plugin-exe> <out-dir>}")
 OUT=$(realpath -m "${2:?usage: build-proto.sh <plugin-exe> <out-dir>}")
 FB="$APP/artzig/extra/frameworks-base"
+PL="$APP/artzig/extra/proto-logging"
 PB="$APP/artzig/vendor/external/protobuf/src"
 PROTOC="$APP/artzig/out/host/linux-x86/bin/aprotoc"
 LIST="$APP/tools/proto-list.txt"
@@ -21,6 +22,7 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/frameworks"
 ln -s "$FB" "$STAGE/frameworks/base"
+ln -s "$PL" "$STAGE/frameworks/proto_logging"
 
 mapfile -t PROTOS < <(grep -vE '^\s*#|^\s*$' "$LIST")
 mapfile -t RUN < <(bash "$APP/tools/aosp-run.sh" "$PROTOC")

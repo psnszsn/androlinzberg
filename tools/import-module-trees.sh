@@ -37,6 +37,6 @@ git -C "$EXTRA/frameworks-base" sparse-checkout add \
     core/java/android/tracing services/autofill services/backup \
     proto/src/metrics_constants \
     tools/streaming_proto
-git -C "$EXTRA/frameworks-native" sparse-checkout add services/surfaceflinger
+git -C "$EXTRA/frameworks-native" sparse-checkout add services/surfaceflinger libs/permission/aidl
 git -C "$APP/artzig/vendor/system/tools/sysprop" checkout HEAD -- include 2>/dev/null || true
 echo "module trees provisioned"

@@ -10,6 +10,8 @@ pub const Options = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     skia: *std.Build.Step.Compile,
+    /// libbinder_ndk.so — the hwui parcel JNI (android 16) calls its AParcel ABI.
+    binder_ndk: *std.Build.Step.Compile,
     art: *std.Build.Module,
     /// output dir of tools/gen-aidl-cpp.sh (build step); contains gen/
     aidl_cpp: std.Build.LazyPath,
@@ -137,6 +139,14 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         }
     }.i;
     const binder_inc = I(b, b.pathJoin(&.{ r.az, "extra/frameworks-native/libs/binder/include" }));
+    // NDK binder C headers (AParcel): the ABI itself is our zig libbinder_ndk,
+    // linked below; installed at lib/art, reached from bin via the rpath.
+    mod.linkLibrary(o.binder_ndk);
+    mod.addRPathSpecial("$ORIGIN/../lib/art");
+    mod.addIncludePath(b.path("artzig/extra/frameworks-native/libs/binder/ndk/include_ndk"));
+    mod.addIncludePath(b.path("artzig/extra/frameworks-native/libs/binder/ndk/include_platform"));
+    mod.addIncludePath(b.path("artzig/extra/frameworks-native/libs/binder/ndk/include_cpp"));
+    mod.addIncludePath(b.path("src/native/input-compat"));
     const zip_inc = I(b, b.pathJoin(&.{ r.v, "system/libziparchive/include" }));
     const zip_incfs_inc = I(b, b.pathJoin(&.{ r.v, "system/libziparchive/incfs_support/include" }));
     // generated AIDL C++ headers come from a build step (LazyPath), so they go

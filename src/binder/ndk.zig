@@ -1767,6 +1767,12 @@ export fn AParcel_reset(parcel: *AParcel) callconv(.c) i32 {
     parcel.clearContents();
     return STATUS_OK;
 }
+export fn AParcel_getAllowFds(parcel: *const AParcel) callconv(.c) bool {
+    _ = parcel;
+    // Hosted parcels always carry FDs (the broker's SCM_RIGHTS path); the
+    // platform "no FDs allowed" parcel restriction has no hosted equivalent.
+    return true;
+}
 export fn AParcel_getDataSize(parcel: *const AParcel) callconv(.c) i32 {
     return @intCast(parcel.data.items.len);
 }

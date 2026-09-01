@@ -72,33 +72,40 @@ pub fn build(b: *std.Build, o: Options) Result {
     });
     const stamp_aidl = stamp(b, "aidl.stamp", &.{
         b.path("tools/aidl-list.txt"),
+        b.path("provenance/pins.lock"),
         b.path("tools/build-aidl.sh"),
         b.path("aidl-compat"),
         dep.path("extra/frameworks-native/libs/input/android/os"),
     });
     const stamp_logtags = stamp(b, "logtags.stamp", &.{
         b.path("tools/logtags-list.txt"),
+        b.path("provenance/pins.lock"),
         b.path("tools/build-logtags.sh"),
     });
     const stamp_sysprop = stamp(b, "sysprop.stamp", &.{
         b.path("tools/sysprop-list.txt"),
+        b.path("provenance/pins.lock"),
         b.path("tools/build-sysprop.sh"),
     });
     const stamp_proto = stamp(b, "proto.stamp", &.{
         b.path("tools/proto-list.txt"),
+        b.path("provenance/pins.lock"),
         b.path("tools/build-proto.sh"),
         dep.path("extra/frameworks-base/core/proto"),
     });
     const stamp_nano = stamp(b, "nano.stamp", &.{
         b.path("tools/nano-list.txt"),
+        b.path("provenance/pins.lock"),
         b.path("tools/build-nano.sh"),
     });
     const stamp_stats = stamp(b, "stats.stamp", &.{
         b.path("tools/build-stats.sh"),
         b.path("tools/build-stats-tool.sh"),
+        b.path("provenance/pins.lock"),
     });
     const stamp_aconfig = stamp(b, "aconfig.stamp", &.{
         b.path("tools/aconfig-packages.txt"),
+        b.path("provenance/pins.lock"),
         b.path("tools/build-aconfig.sh"),
     });
 

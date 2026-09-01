@@ -1,6 +1,8 @@
 /* artzig shim: android.app.ActivityThread — minimal statics (full hand-written version in M2). */
 package android.app;
 public final class ActivityThread {
+    /** android 16: PropertyInvalidatedCache test gate; the host never instruments. */
+    public Instrumentation getInstrumentation() { return null; }
     private static Application sApplication;
     private static ActivityThread sThread;
     private static String sPackageName;

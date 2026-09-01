@@ -82,6 +82,8 @@ add('$FB/services/core/java/com/android/server/clipboard', not_name=['EmulatorCl
 file('$CJ/android/content/ClipboardManager.java')
 file('$CJ/android/text/ClipboardManager.java')
 file('$CJ/android/util/SparseArrayMap.java')
+file('$CJ/android/util/SystemPropertySetter.java')
+file('$CJ/android/content/pm/SystemFeaturesCache.java')
 file('$CJ/android/util/SafetyProtectionUtils.java')
 file('$CJ/com/android/server/LocalServices.java')
 file('$CJ/android/util/TimingsTraceLog.java')

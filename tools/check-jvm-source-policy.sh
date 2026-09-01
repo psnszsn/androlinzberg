@@ -78,7 +78,11 @@ printf '%s\n' com/android/internal/logging/nano/MetricsProto.java \
 # lands at <package>/<Message>.java.
 while IFS= read -r rel; do
     case "$rel" in \#*|'') continue ;; esac
-    src="artzig/extra/frameworks-base/${rel#frameworks/base/}"
+    case "$rel" in
+        frameworks/base/*) src="artzig/extra/frameworks-base/${rel#frameworks/base/}" ;;
+        frameworks/proto_logging/*) src="artzig/extra/proto-logging/${rel#frameworks/proto_logging/}" ;;
+        *) continue ;;
+    esac
     [ -f "$src" ] || continue
     pkg=$(sed -n 's/^package[[:space:]]\+\([A-Za-z0-9_.]*\);.*/\1/p' "$src" | head -1)
     [ -n "$pkg" ] || continue

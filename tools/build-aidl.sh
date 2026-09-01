@@ -8,6 +8,8 @@ OUT=$(realpath -m "${1:-$APP/.cache/aidl-java}")
 LIST="$APP/tools/aidl-list.txt"
 FB="$ROOT/extra/frameworks-base"
 FN_INPUT="$ROOT/extra/frameworks-native/libs/input"
+# android-16 moved the app-ops callback AIDL into the native permission lib.
+FN_PERM="$ROOT/extra/frameworks-native/libs/permission/aidl"
 mkdir -p "$OUT"
 AIDL="$ROOT/vendor/prebuilts/sdk/tools/linux/bin/aidl"
 mapfile -t AIDL_RUN < <(bash "$APP/tools/aosp-run.sh" "$AIDL")
@@ -26,6 +28,12 @@ while IFS= read -r rel; do
   src="$FB/core/java/$rel"
   if [ ! -f "$src" ]; then
     src="$FN_INPUT/$rel"
+  fi
+  if [ ! -f "$src" ] && [ -f "$FN_PERM/$rel" ]; then
+    # Stage rather than -I the whole permission lib: it re-declares parcelables
+    # (AttributionSourceState) that already live in core/java.
+    mkdir -p "$COMPAT/$(dirname "$rel")"
+    cp "$FN_PERM/$rel" "$COMPAT/$rel"
   fi
   if [ ! -f "$src" ]; then
     # Repository-owned interfaces (hosted test and host-seam AIDL).

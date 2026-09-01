@@ -1,14 +1,14 @@
 # provenance/pins.lock — resolved revision of each vendored AOSP tree.
-# Recorded 2026-08-31T20:39:58Z. Base = shallow-clone root (pre-patch).
+# Recorded 2026-08-31; extra/ platform trees re-pinned to android-16.0.0_r1 on 2026-09-01. Base = shallow-clone root (pre-patch).
 # The pin-provenance check (Gen G8) verifies these against the working trees.
 428ff9fa2802cb339e219c3924e40a2d94fa9001 artzig/extra/bionic_translation
-8127ce2b902c2c19e9938afb09b795cf15c0b98e artzig/extra/frameworks-base
-4f463a6b1de9198963dc6aff74154a504ba3f8f6 artzig/extra/frameworks-native
-9d2e586bd1ad1a8e0bd8d2ab72357a3e7356b5c3 artzig/extra/incremental_delivery
-7e08958a6cbe2b02c9d80a66fba68fd8a864d73d artzig/extra/libhardware
-8cc222cd3e79fa5190f3aa039a03a4cbea6cfbe7 artzig/extra/libpng
-05a978c36b4c81b8618fcc2c0f40f050053c8022 artzig/extra/minikin
-b5f632eb359176c3ccb281c70ce13f035a303d66 artzig/extra/modules-utils
+99b01a65cc4c104933788b3143285ab6bae65827 artzig/extra/frameworks-base
+2827a4a16b0340ecd07c2d5a6c89991799b362bb artzig/extra/frameworks-native
+c999e3e207ec7633a172d773dda162746b6eaf18 artzig/extra/incremental_delivery
+cd2b68d71a1dd9a45668ddd9a507000ccd7ff114 artzig/extra/libhardware
+6dd415783321a0c670387f0a5d51776b2c1f629a artzig/extra/libpng
+1e1d5d137d487df875d7db69b5ff24e7d0291612 artzig/extra/minikin
+7f0ae25f0e410849caf643da36c9a1ba161caca7 artzig/extra/modules-utils
 0992cc2d1131a95352a30be90c728e073f7aed4f artzig/vendor/art
 6232e90c629557ac5639a3adf1fe879f67425d0d artzig/vendor/build/bazel
 b1a2840cb13746f94e4c88e7e28d308f51f87804 artzig/vendor/build/bazel_common_rules

@@ -42,6 +42,7 @@ android/hardware/input/IKeyboardBacklightListener.aidl
 android/hardware/input/IKeyboardBacklightState.aidl
 android/hardware/input/IStickyModifierStateListener.aidl
 android/hardware/input/ITabletModeChangedListener.aidl
+android/hardware/input/IKeyEventActivityListener.aidl
 android/os/ICancellationSignal.aidl
 android/os/IUserManager.aidl
 android/os/IUserRestrictionsListener.aidl
@@ -49,6 +50,7 @@ android/os/IInputConstants.aidl
 android/os/IRemoteCallback.aidl
 android/os/IVibratorStateListener.aidl
 android/os/MotionEventFlag.aidl
+android/os/InputConfig.aidl
 android/service/textclassifier/ITextClassifierCallback.aidl
 android/service/textclassifier/ITextClassifierService.aidl
 android/service/translation/ITranslationCallback.aidl
@@ -77,6 +79,7 @@ android/view/accessibility/IMagnificationConnection.aidl
 android/view/accessibility/IMagnificationConnectionCallback.aidl
 android/view/accessibility/IRemoteMagnificationAnimationCallback.aidl
 android/view/accessibility/IUserInitializationCompleteCallback.aidl
+android/view/accessibility/IWindowSurfaceInfoCallback.aidl
 android/view/autofill/IAugmentedAutofillManagerClient.aidl
 android/view/autofill/IAutoFillManager.aidl
 android/view/autofill/IAutoFillManagerClient.aidl

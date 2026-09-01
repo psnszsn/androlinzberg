@@ -64,6 +64,10 @@ class HostedUserManagerService : IUserManager.Stub() {
     override fun getUserCreationTime(userId: Int): Long = 0
     override fun getUserSwitchability(userId: Int): Int = 0
     override fun isUserSwitcherEnabled(showEvenIfNotActionable: Boolean, mUserId: Int): Boolean = false
+    // android 16: the hosted session runs as the (single) system user, which
+    // AOSP itself cannot log out.
+    override fun getUserLogoutability(userId: Int): Int =
+        1 // UserManager.LOGOUTABILITY_STATUS_CANNOT_LOGOUT_SYSTEM_USER (class not in the curated set)
     override fun isRestricted(userId: Int): Boolean = false
     override fun canHaveRestrictedProfile(userId: Int): Boolean = false
     override fun canAddPrivateProfile(userId: Int): Boolean = false

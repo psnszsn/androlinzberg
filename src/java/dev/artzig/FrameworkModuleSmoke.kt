@@ -281,7 +281,9 @@ internal object FrameworkModuleSmoke {
         check(params.sourceRectHint == Rect(10, 20, 170, 110))
         check(params.actions == listOf(action))
         check(params.isAutoEnterEnabled)
-        check(params.isSeamlessResizeEnabled)
+        // android 16: unset seamless-resize now reads false (AOSP
+        // PictureInPictureParams.isSeamlessResizeEnabled).
+        check(!params.isSeamlessResizeEnabled)
 
         val activity = Activity().apply { attach(context) }
         activity.setPictureInPictureParams(params)

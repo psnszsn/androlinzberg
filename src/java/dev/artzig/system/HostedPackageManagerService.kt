@@ -618,6 +618,11 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         return queryServicesInternal(intent, resolvedType, flags, userId).firstOrNull()
     }
 
+    // android 16: uid-scoped provider resolution; the hosted session has a
+    // single app uid, so visibility equals the caller's own resolve.
+    override fun resolveContentProviderForUid(authority: String?, flags: Long, userId: Int, callingUid: Int): ProviderInfo? =
+        resolveContentProvider(authority, flags, userId)
+
     override fun resolveContentProvider(name: String?, flags: Long, userId: Int): ProviderInfo? {
         val authority = name ?: return null
         synchronized(lock) {

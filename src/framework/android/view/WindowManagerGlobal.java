@@ -19,6 +19,10 @@ public final class WindowManagerGlobal {
     public ArrayList<ViewRootImpl> getRootViews() { return mRoots; }
     public ArrayList<ViewRootImpl> getRootViews(android.os.IBinder token) { return mRoots; }
     public ArrayList<View> getWindowViews() { return new ArrayList<>(); }
+    /** android 16: WindowInspector debug listeners; the hosted global tracks no window views. */
+    public void addWindowViewsListener(java.util.concurrent.Executor executor,
+            java.util.function.Consumer<java.util.List<View>> consumer) {}
+    public void removeWindowViewsListener(java.util.function.Consumer<java.util.List<View>> consumer) {}
     public static boolean useBLAST() { return false; }
     public View getWindowView(android.os.IBinder windowToken) { return null; }
 }

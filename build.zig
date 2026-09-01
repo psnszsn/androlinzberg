@@ -127,6 +127,30 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // --- libbinder_ndk.so: the NDK binder C ABI in Zig over the AZKB protocol.
+    // Installed under lib/art so the bionic linker resolves the soname; the
+    // .cfg above maps `libbinder_ndk.so` to it.
+    const binder_ndk = b.addLibrary(.{
+        .name = "binder_ndk",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/ndk.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            // JNI type bindings for the true-sharing bridge (compile-time only;
+            // no runtime dependency in a standalone, non-JVM process).
+            .imports = &.{.{ .name = "art", .module = art_mod }},
+        }),
+    });
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
+        binder_ndk.getEmittedBin(),
+        .{ .custom = "lib/art" },
+        "libbinder_ndk.so",
+    ).step);
+    b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
+        .dependOn(&b.addInstallFileWithDir(binder_ndk.getEmittedBin(), .{ .custom = "lib/art" }, "libbinder_ndk.so").step);
+
     // --- native island: hwui + JNI + our shims, linked against static Skia
     // --- C++ headers for the libs/input enum AIDLs (AOSP prebuilt aidl in aosp-env)
     const aidl_cpp = blk: {
@@ -144,6 +168,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .skia = skia_lib,
+        .binder_ndk = binder_ndk,
         .art = art_mod,
         .aidl_cpp = aidl_cpp,
     });
@@ -190,29 +215,6 @@ pub fn build(b: *std.Build) void {
         "bionic_translation.cfg",
     ).step);
 
-    // --- libbinder_ndk.so: the NDK binder C ABI in Zig over the AZKB protocol.
-    // Installed under lib/art so the bionic linker resolves the soname; the
-    // .cfg above maps `libbinder_ndk.so` to it.
-    const binder_ndk = b.addLibrary(.{
-        .name = "binder_ndk",
-        .linkage = .dynamic,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/binder/ndk.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-            // JNI type bindings for the true-sharing bridge (compile-time only;
-            // no runtime dependency in a standalone, non-JVM process).
-            .imports = &.{.{ .name = "art", .module = art_mod }},
-        }),
-    });
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        binder_ndk.getEmittedBin(),
-        .{ .custom = "lib/art" },
-        "libbinder_ndk.so",
-    ).step);
-    b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
-        .dependOn(&b.addInstallFileWithDir(binder_ndk.getEmittedBin(), .{ .custom = "lib/art" }, "libbinder_ndk.so").step);
 
     // ABI-conformance check: the installed .so must export every A* symbol the
     // prebuilt libbinder_ndk.so does, so unmodified NDK/AIDL clients resolve.

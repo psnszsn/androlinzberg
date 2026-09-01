@@ -132,6 +132,13 @@ status_t Parcel::writeString8(const String8& s) {
     return gBridge.env->ExceptionCheck() ? BAD_VALUE : OK;
 }
 
+// android 16: CursorWindow uses the value-returning overload.
+String8 Parcel::readString8() const {
+    String8 out;
+    (void)readString8(&out);
+    return out;
+}
+
 status_t Parcel::readString8(String8* out) const {
     if (bridgeBroken(gBridge)) return BAD_VALUE;
     const ParcelJni* jni = parcelJni(gBridge.env);
