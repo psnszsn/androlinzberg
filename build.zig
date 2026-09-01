@@ -99,6 +99,16 @@ pub fn build(b: *std.Build) void {
     b.step("javastream-tool", "Build the protoc-gen-javastream plugin")
         .dependOn(&b.addInstallArtifact(javastream_tool, .{}).step);
 
+    // --- protoc-gen-javanano: nano message classes (MetricsProto), built from
+    // the vendored protobuf fork's javanano generator.
+    const javanano_tool = @import("build/javanano.zig").build(b, .{
+        .root = b.path("artzig/vendor/external/protobuf"),
+        .target = target,
+        .protobuf = protobuf_lib,
+    });
+    b.step("javanano-tool", "Build the protoc-gen-javanano plugin")
+        .dependOn(&b.addInstallArtifact(javanano_tool, .{}).step);
+
     // --- stats-log-api-gen: built from the pinned frameworks/proto_logging source
     // (atoms compiled in); the vendored mainline prebuilt's atoms are too old.
     const stats_tool = blk: {
@@ -145,6 +155,7 @@ pub fn build(b: *std.Build) void {
         .artzig = artzig_dep,
         .sysprop_tool = sysprop_tool,
         .javastream_tool = javastream_tool,
+        .javanano_tool = javanano_tool,
         .stats_tool = stats_tool,
     });
     b.getInstallStep().dependOn(java.java_step);

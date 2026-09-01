@@ -64,6 +64,9 @@ add('$ACONFIG')
 add('$SYSPROP')
 add('$PROTO')
 add('$STATS')
+add('$NANO')
+# Reused javanano runtime for the nano message classes (pure Java, vendored).
+add('$NRT')
 # Reused StatsD-module source: the real StatsEvent encoder (android.util.StatsLog
 # is the host-seam sink in src/framework).
 file('$SD/framework/java/android/util/StatsEvent.java')

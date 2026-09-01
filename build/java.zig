@@ -14,6 +14,8 @@ pub const Options = struct {
     sysprop_tool: *std.Build.Step.Compile,
     /// The protoc-gen-javastream plugin (build/javastream.zig).
     javastream_tool: *std.Build.Step.Compile,
+    /// The protoc-gen-javanano plugin (build/javanano.zig).
+    javanano_tool: *std.Build.Step.Compile,
     /// The stats-log-api-gen executable (tools/build-stats-tool.sh).
     stats_tool: LazyPath,
 };
@@ -87,6 +89,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("tools/build-proto.sh"),
         dep.path("extra/frameworks-base/core/proto"),
     });
+    const stamp_nano = stamp(b, "nano.stamp", &.{
+        b.path("tools/nano-list.txt"),
+        b.path("tools/build-nano.sh"),
+    });
     const stamp_stats = stamp(b, "stats.stamp", &.{
         b.path("tools/build-stats.sh"),
         b.path("tools/build-stats-tool.sh"),
@@ -132,6 +138,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     const sysprop_dir = sysprop.addOutputDirectoryArg("sysprop-java");
     sysprop.addFileInput(stamp_sysprop);
 
+    // nano message classes (MetricsProto) from the protoc-gen-javanano plugin.
+    const nano = b.addSystemCommand(&.{ "bash", "tools/build-nano.sh" });
+    nano.addFileArg(o.javanano_tool.getEmittedBin());
+    const nano_dir = nano.addOutputDirectoryArg("nano-java");
+    nano.addFileInput(stamp_nano);
+
     // FrameworkStatsLog from the AOSP stats-log-api-gen prebuilt (atoms built in).
     const stats = b.addSystemCommand(&.{ "bash", "tools/build-stats.sh" });
     stats.addFileArg(o.stats_tool);
@@ -168,6 +180,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("SYSPROP=", sysprop_dir);
     srcs.addPrefixedDirectoryArg("PROTO=", proto_dir);
     srcs.addPrefixedDirectoryArg("STATS=", stats_dir);
+    srcs.addPrefixedDirectoryArg("NANO=", nano_dir);
+    srcs.addPrefixedDirectoryArg("NRT=", dep.path("vendor/external/protobuf/javanano/src/main/java"));
     srcs.addPrefixedDirectoryArg("SD=", dep.path("extra/modules-statsd"));
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);

@@ -35,6 +35,7 @@ git -C "$EXTRA/frameworks-base" sparse-checkout add \
     core/java/android/companion/virtual core/java/android/credentials \
     core/java/android/permission core/java/android/security \
     core/java/android/tracing services/autofill services/backup \
+    proto/src/metrics_constants \
     tools/streaming_proto
 git -C "$EXTRA/frameworks-native" sparse-checkout add services/surfaceflinger
 git -C "$APP/artzig/vendor/system/tools/sysprop" checkout HEAD -- include 2>/dev/null || true
