@@ -188,15 +188,41 @@ public class ContextImpl extends Context {
         if (mContentResolver == null) mContentResolver = new ApplicationContentResolver(this);
         return mContentResolver;
     }
-    /** Source note: ActivityThread.ApplicationContentResolver — authorities
-     * resolve through the session's activity manager. */
+    /** AOSP ContextImpl.ApplicationContentResolver: the process's ActivityThread
+     * owns provider connections (hosted: through the session activity manager). */
     private static final class ApplicationContentResolver extends android.content.ContentResolver {
-        private final ContextImpl mContext;
-        ApplicationContentResolver(ContextImpl context) { mContext = context; }
-        @Override public android.content.IContentProvider acquireProvider(String authority) {
-            return HostedServiceClient.acquireContentProvider(mContext, authority);
+        private final ActivityThread mMainThread;
+        ApplicationContentResolver(android.content.Context context) {
+            super(context);
+            mMainThread = ActivityThread.currentActivityThread();
         }
-        @Override public String getPackageName() { return mContext.getPackageName(); }
+        @Override protected android.content.IContentProvider acquireProvider(android.content.Context context, String auth) {
+            return mMainThread.acquireProvider(context, android.content.ContentProvider.getAuthorityWithoutUserId(auth),
+                    resolveUserIdFromAuthority(auth), true);
+        }
+        @Override protected android.content.IContentProvider acquireExistingProvider(android.content.Context context, String auth) {
+            return mMainThread.acquireExistingProvider(context, android.content.ContentProvider.getAuthorityWithoutUserId(auth),
+                    resolveUserIdFromAuthority(auth), true);
+        }
+        @Override public boolean releaseProvider(android.content.IContentProvider provider) {
+            return mMainThread.releaseProvider(provider, true);
+        }
+        @Override protected android.content.IContentProvider acquireUnstableProvider(android.content.Context c, String auth) {
+            return mMainThread.acquireProvider(c, android.content.ContentProvider.getAuthorityWithoutUserId(auth),
+                    resolveUserIdFromAuthority(auth), false);
+        }
+        @Override public boolean releaseUnstableProvider(android.content.IContentProvider icp) {
+            return mMainThread.releaseProvider(icp, false);
+        }
+        @Override public void unstableProviderDied(android.content.IContentProvider icp) {
+            mMainThread.handleUnstableProviderDied(icp.asBinder(), true);
+        }
+        @Override public void appNotRespondingViaProvider(android.content.IContentProvider icp) {
+            mMainThread.appNotRespondingViaProvider(icp.asBinder());
+        }
+        private int resolveUserIdFromAuthority(String auth) {
+            return android.content.ContentProvider.getUserIdFromAuthority(auth, getUserId());
+        }
     }
     /** Per-context service cache; slots are assigned by HostedSystemServiceRegistry. */
     private Object[] mServiceCache = new Object[0];

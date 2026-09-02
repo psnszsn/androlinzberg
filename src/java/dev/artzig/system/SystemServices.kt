@@ -142,6 +142,7 @@ internal object SystemServices {
         // Observer registry and the settings provider, registered before any
         // service that reads settings during startup.
         android.os.ServiceManager.addService("content", HostedContentService())
+        android.os.ServiceManager.addService("uri_grants", HostedUriGrantsService())
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name

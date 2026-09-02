@@ -132,13 +132,23 @@ public final class FrameworkCompatSmoke {
                 requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
             )
             provider.attachInfo(providerContext, info)
-            val resolver = object : android.content.ContentResolver() {
-                override fun acquireProvider(authority: String): android.content.IContentProvider? =
+            val resolver = object : android.content.ContentResolver(providerContext) {
+                override fun acquireProvider(c: android.content.Context, authority: String): android.content.IContentProvider? =
                     if (authority == "org.example.local") provider.getIContentProvider() else null
+                override fun acquireExistingProvider(c: android.content.Context, authority: String) = acquireProvider(c, authority)
+                override fun acquireUnstableProvider(c: android.content.Context, authority: String) = acquireProvider(c, authority)
+                override fun releaseProvider(icp: android.content.IContentProvider): Boolean = true
+                override fun releaseUnstableProvider(icp: android.content.IContentProvider): Boolean = true
+                override fun unstableProviderDied(icp: android.content.IContentProvider) {}
             }
             val uri = android.net.Uri.parse("content://org.example.local/table")
             val cursor = resolver.query(uri, null, "name=?", arrayOf("x"), null)
-            require(cursor != null && cursor === lastCursor, "local provider short-circuit returns the provider's own cursor")
+            // AOSP ContentResolver.query wraps every result (CursorWrapperInner) so
+            // the provider connection is released with the cursor.
+            require(
+                cursor is android.database.CursorWrapper && cursor.wrappedCursor === lastCursor,
+                "query wraps the provider's own cursor: " + cursor,
+            )
             cursor!!.moveToFirst()
             require(cursor.getString(1) == "name=?", "classic query overload received the selection")
             cursor.close()
@@ -558,8 +568,13 @@ public final class FrameworkCompatSmoke {
             val thumbnailSize: Array<Size?> = arrayOfNulls(1)
             val expected: Bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
             val resolver: ContentResolver =
-                object : ContentResolver() {
-                    override fun acquireProvider(authority: String): android.content.IContentProvider? = null
+                object : ContentResolver(null) {
+                    override fun acquireProvider(c: android.content.Context, authority: String): android.content.IContentProvider? = null
+                    override fun acquireExistingProvider(c: android.content.Context, authority: String): android.content.IContentProvider? = null
+                    override fun acquireUnstableProvider(c: android.content.Context, authority: String): android.content.IContentProvider? = null
+                    override fun releaseProvider(icp: android.content.IContentProvider): Boolean = true
+                    override fun releaseUnstableProvider(icp: android.content.IContentProvider): Boolean = true
+                    override fun unstableProviderDied(icp: android.content.IContentProvider) {}
                     override fun loadThumbnail(
                         uri: android.net.Uri,
                         size: Size,

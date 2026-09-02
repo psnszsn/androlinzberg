@@ -2,21 +2,22 @@ package dev.artzig.system
 
 import android.database.IContentObserver
 import android.net.Uri
+import android.os.Bundle
 import android.os.IBinder
 import android.os.RemoteException
 import android.util.Log
 
 /**
- * Session-wide ContentObserver registry, published as `"content"`.
- *
- * Source note: `com.android.server.content.ContentService.ObserverNode`
- * flattened to a list — the AOSP service is inseparable from SyncManager, and
- * observer counts here are small. Matching follows the ObserverNode contract:
- * an observer of X fires for a change to Y when X == Y, when X is a proper
- * ancestor of Y and it registered with notifyForDescendants, and always when
- * Y is an ancestor of X (a parent change implies the subtree changed).
+ * The session's `android.content.IContentService` (`"content"`): the
+ * ContentObserver registry and the per-package cache the real ContentResolver
+ * uses. Source note: `com.android.server.content.ContentService` — its
+ * ObserverNode tree flattened to a list (observer counts here are small) and
+ * the SyncManager surface left unsupported (no sync adapters, no accounts on
+ * this host). Matching follows the ObserverNode contract: an observer of X
+ * fires for a change to Y when X == Y, when X is a proper ancestor of Y and it
+ * registered with notifyForDescendants, and always when Y is an ancestor of X.
  */
-class HostedContentService : IHostedContentService.Stub() {
+class HostedContentService : UnsupportedContentService() {
     private class Registration(
         val segments: List<String>,
         val notifyForDescendants: Boolean,
@@ -28,6 +29,7 @@ class HostedContentService : IHostedContentService.Stub() {
 
     private val lock = Any()
     private val registrations = ArrayList<Registration>()
+    private val caches = HashMap<String, HashMap<Uri, Bundle>>()
 
     private fun segmentsOf(uri: Uri): List<String> {
         val segments = ArrayList<String>()
@@ -36,8 +38,14 @@ class HostedContentService : IHostedContentService.Stub() {
         return segments
     }
 
-    override fun registerContentObserver(uri: Uri, notifyForDescendants: Boolean, observer: IContentObserver) {
-        val registration = Registration(segmentsOf(uri), notifyForDescendants, observer)
+    override fun registerContentObserver(
+        uri: Uri?,
+        notifyForDescendants: Boolean,
+        observer: IContentObserver?,
+        userHandle: Int,
+        targetSdkVersion: Int,
+    ) {
+        val registration = Registration(segmentsOf(checkNotNull(uri)), notifyForDescendants, checkNotNull(observer))
         registration.owner = this
         synchronized(lock) { registrations.add(registration) }
         try {
@@ -47,8 +55,8 @@ class HostedContentService : IHostedContentService.Stub() {
         }
     }
 
-    override fun unregisterContentObserver(observer: IContentObserver) {
-        remove(observer.asBinder())
+    override fun unregisterContentObserver(observer: IContentObserver?) {
+        remove(checkNotNull(observer).asBinder())
     }
 
     private fun remove(binder: IBinder) {
@@ -65,13 +73,25 @@ class HostedContentService : IHostedContentService.Stub() {
         }
     }
 
-    override fun notifyChange(uri: Uri, skipObserver: IContentObserver?, flags: Int) {
+    override fun notifyChange(
+        uris: Array<Uri?>?,
+        observer: IContentObserver?,
+        observerWantsSelfNotifications: Boolean,
+        flags: Int,
+        userHandle: Int,
+        targetSdkVersion: Int,
+        callingPackage: String?,
+    ) {
+        for (uri in checkNotNull(uris)) notifyOne(checkNotNull(uri), observer, observerWantsSelfNotifications, flags)
+    }
+
+    private fun notifyOne(uri: Uri, observer: IContentObserver?, selfChange: Boolean, flags: Int) {
         val changed = segmentsOf(uri)
         val targets: List<Registration>
         synchronized(lock) {
             targets = registrations.filter { registration ->
-                if (skipObserver != null &&
-                    registration.observer.asBinder() == skipObserver.asBinder()
+                if (observer != null && !selfChange &&
+                    registration.observer.asBinder() == observer.asBinder()
                 ) {
                     return@filter false
                 }
@@ -79,8 +99,9 @@ class HostedContentService : IHostedContentService.Stub() {
             }
         }
         for (registration in targets) {
+            val self = observer != null && registration.observer.asBinder() == observer.asBinder()
             try {
-                registration.observer.onChange(false, uri, 0)
+                registration.observer.onChange(self, uri, 0)
             } catch (e: RemoteException) {
                 remove(registration.observer.asBinder())
             }
@@ -102,6 +123,28 @@ class HostedContentService : IHostedContentService.Stub() {
             else -> true
         }
     }
+
+    /** ContentService.putCache/getCache: a per-package in-memory cache (AOSP clears it on package change). */
+    override fun putCache(packageName: String?, key: Uri?, value: Bundle?, userId: Int) {
+        synchronized(lock) {
+            val cache = caches.getOrPut(checkNotNull(packageName)) { HashMap() }
+            if (value == null) cache.remove(checkNotNull(key)) else cache[checkNotNull(key)] = value
+        }
+    }
+
+    override fun getCache(packageName: String?, key: Uri?, userId: Int): Bundle? =
+        synchronized(lock) { caches[checkNotNull(packageName)]?.get(checkNotNull(key)) }
+
+    override fun onDbCorruption(tag: String?, message: String?, stacktrace: String?) {
+        Log.e(TAG, "database corruption (" + tag + "): " + message + "\n" + stacktrace)
+    }
+
+    override fun getMasterSyncAutomatically(): Boolean = false
+    override fun getMasterSyncAutomaticallyAsUser(userId: Int): Boolean = false
+    override fun getSyncAdapterTypes(): Array<android.content.SyncAdapterType?>? = arrayOfNulls(0)
+    override fun getSyncAdapterTypesAsUser(userId: Int): Array<android.content.SyncAdapterType?>? = arrayOfNulls(0)
+    override fun getCurrentSyncs(): MutableList<android.content.SyncInfo?>? = ArrayList()
+    override fun getCurrentSyncsAsUser(userId: Int): MutableList<android.content.SyncInfo?>? = ArrayList()
 
     private companion object {
         const val TAG = "HostedContentService"

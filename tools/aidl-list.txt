@@ -140,7 +140,6 @@ aosp|frameworks/base/core/java/com/android/internal/app/IAppOpsStartedCallback.a
 aosp|frameworks/base/core/java/com/android/internal/widget/IRemoteViewsFactory.aidl
 repo|aidl-compat/dev/artzig/binder/IBinderTestCallback.aidl
 repo|aidl-compat/dev/artzig/binder/IBinderTestService.aidl
-repo|aidl-compat/dev/artzig/system/IHostedContentService.aidl
 aosp|frameworks/base/apex/jobscheduler/framework/java/android/app/IAlarmManager.aidl
 aosp|frameworks/base/apex/jobscheduler/framework/java/android/app/IAlarmListener.aidl
 aosp|frameworks/base/apex/jobscheduler/framework/java/android/app/IAlarmCompleteListener.aidl
@@ -186,3 +185,8 @@ aosp|frameworks/base/core/java/android/app/IAppTraceRetriever.aidl
 aosp|frameworks/base/core/java/android/window/ITaskFragmentOrganizer.aidl
 aosp|frameworks/base/core/java/android/window/IWindowContainerToken.aidl
 repo|aidl-compat/dev/artzig/system/IHostedInstaller.aidl
+aosp|frameworks/base/core/java/android/content/IContentService.aidl
+aosp|frameworks/base/core/java/android/content/ISyncStatusObserver.aidl
+aosp|frameworks/base/core/java/android/accounts/IAccountManager.aidl
+aosp|frameworks/base/core/java/android/accounts/IAccountManagerResponse.aidl
+aosp|frameworks/base/core/java/android/app/IUriGrantsManager.aidl

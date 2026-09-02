@@ -408,6 +408,28 @@ internal object SystemTestClientA {
             "unknown authority yields null",
         )
 
+        // --- real ContentResolver surface: ContentProviderClient and persisted URI grants.
+        val client = checkNotNull(resolver.acquireContentProviderClient("dev.artzig.test.b.provider"))
+        client.use { c ->
+            val clientCursor = checkNotNull(c.query(providerUri, null, null, null, null))
+            check(clientCursor.count >= 2, "ContentProviderClient.query rides the acquired provider")
+            clientCursor.close()
+            check(c.getType(providerUri) == "vnd.android.cursor.dir/vnd.artzig.row", "ContentProviderClient.getType")
+            check(c.localContentProvider == null, "remote provider has no local ContentProvider")
+        }
+        val unstable = checkNotNull(resolver.acquireUnstableContentProviderClient(providerUri))
+        check(unstable.call("ping", "u", null)?.getString("echo") == "ping:u", "unstable client call")
+        unstable.release()
+        check(resolver.persistedUriPermissions.isEmpty(), "no persisted grants initially")
+        resolver.takePersistableUriPermission(providerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val persisted = resolver.persistedUriPermissions
+        check(
+            persisted.size == 1 && persisted[0].uri == providerUri && persisted[0].isReadPermission && !persisted[0].isWritePermission,
+            "takePersistableUriPermission recorded through IUriGrantsManager: " + persisted,
+        )
+        resolver.releasePersistableUriPermission(providerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        check(resolver.persistedUriPermissions.isEmpty(), "releasePersistableUriPermission clears the grant")
+
         // --- settings through the verbatim AOSP client + hosted SettingsProvider.
         // The fixture requests WRITE_SECURE_SETTINGS (granted at install via
         // the platform-signature match) but not WRITE_SETTINGS, so the system

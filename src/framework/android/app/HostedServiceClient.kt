@@ -102,6 +102,22 @@ object HostedServiceClient {
     private val providerLock = Any()
     private val providerCache = HashMap<String, android.content.IContentProvider>()
 
+    /** AOSP ActivityThread.acquireExistingProvider: only what this process already holds. */
+    @JvmStatic
+    fun existingContentProvider(authority: String): android.content.IContentProvider? {
+        HostedApplicationRuntime.localProvider(authority)?.let { return it.getIContentProvider() }
+        synchronized(providerLock) { return providerCache[authority] }
+    }
+
+    /** AOSP ActivityThread.handleUnstableProviderDied: drop the dead connection so
+     * the next acquire goes back to the activity manager. */
+    @JvmStatic
+    fun forgetContentProvider(binder: android.os.IBinder) {
+        synchronized(providerLock) {
+            providerCache.entries.removeIf { it.value.asBinder() == binder }
+        }
+    }
+
     /**
      * Authority -> provider connection (source note: ActivityThread.acquireProvider):
      * this process's own installed providers first, then the per-process cache,

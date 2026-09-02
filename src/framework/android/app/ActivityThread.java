@@ -58,6 +58,23 @@ public final class ActivityThread extends ClientTransactionHandler {
     }
     void addApplication(Application app) { if (sApplication == null) sApplication = app; }
 
+    // ---------------------------------------------------------- providers (AOSP ActivityThread.acquireProvider family)
+    /** Hosted: HostedServiceClient keeps one connection per authority for the
+     * process lifetime (no ProviderRefCount release timers); the activity
+     * manager spawns the owning package on demand. */
+    public final android.content.IContentProvider acquireProvider(android.content.Context c, String auth, int userId, boolean stable) {
+        return HostedServiceClient.acquireContentProvider(c, auth);
+    }
+    public final android.content.IContentProvider acquireExistingProvider(android.content.Context c, String auth, int userId, boolean stable) {
+        return HostedServiceClient.existingContentProvider(auth);
+    }
+    /** AOSP returns whether the last reference was dropped; hosted connections stay. */
+    public final boolean releaseProvider(android.content.IContentProvider provider, boolean stable) { return false; }
+    public final void handleUnstableProviderDied(android.os.IBinder provider, boolean fromClient) {
+        HostedServiceClient.forgetContentProvider(provider);
+    }
+    public final void appNotRespondingViaProvider(android.os.IBinder provider) {}
+
     // ---------------------------------------------------------- LoadedApk cache (AOSP ActivityThread.getPackageInfo)
     public final LoadedApk getPackageInfo(android.content.pm.ApplicationInfo ai,
             android.content.res.CompatibilityInfo compatInfo, int flags) {

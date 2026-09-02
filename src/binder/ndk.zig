@@ -578,6 +578,9 @@ const Runtime = struct {
     var instance: ?*Runtime = null;
     var connect_mu: Io.Mutex = .init;
     threadlocal var current_routing: u64 = 0;
+    /// True while this thread runs an incoming on_transact (IPCThreadState::isServingCall):
+    /// the calling identity is the caller's, even for oneway calls that carry no routing id.
+    threadlocal var current_in_transaction: bool = false;
     /// Caller identity of the transaction the current thread is servicing
     /// (AIBinder_getCallingUid/Pid), valid only inside an onTransact callback.
     threadlocal var current_caller_uid: u32 = 0;
@@ -898,11 +901,14 @@ const Runtime = struct {
             const prev_routing = current_routing;
             const prev_uid = current_caller_uid;
             const prev_pid = current_caller_pid;
+            const prev_in_transaction = current_in_transaction;
             current_routing = in.routing_id;
+            current_in_transaction = true;
             current_caller_uid = in.caller_uid;
             // Oneway transactions have no waiting caller; AOSP reports pid 0.
             current_caller_pid = if (oneway) 0 else in.caller_pid;
             binder_status = target.?.class.?.on_transact.?(target.?, in.code, in.parcel, out);
+            current_in_transaction = prev_in_transaction;
             current_routing = prev_routing;
             current_caller_uid = prev_uid;
             current_caller_pid = prev_pid;
@@ -1252,7 +1258,9 @@ const Runtime = struct {
         const prev_routing = current_routing;
         const prev_uid = current_caller_uid;
         const prev_pid = current_caller_pid;
+        const prev_in_transaction = current_in_transaction;
         current_routing = std.math.maxInt(u64); // nonzero: "handling a transaction"
+        current_in_transaction = true;
         // Self identity: the connected runtime's uid if there is one, else this
         // process's own (a bridge-only process may never connect). v1 limitation:
         // when only the Java runtime is connected, the native side cannot see its
@@ -1261,6 +1269,7 @@ const Runtime = struct {
         current_caller_uid = if (Runtime.instance) |r| r.uid else std.os.linux.getuid();
         current_caller_pid = if (Runtime.instance) |r| r.pid else @intCast(std.os.linux.getpid());
         const rc = on_transact(target, code, in, reply);
+        current_in_transaction = prev_in_transaction;
         current_routing = prev_routing;
         current_caller_uid = prev_uid;
         current_caller_pid = prev_pid;
@@ -2136,15 +2145,15 @@ export fn AIBinder_ping(binder: *AIBinder) callconv(.c) i32 {
 export fn AIBinder_getCallingUid() callconv(.c) i32 {
     // Inside an onTransact callback, the incoming caller's uid; otherwise this
     // process's own (routing==0 means not servicing a transaction).
-    if (Runtime.current_routing != 0) return @intCast(Runtime.current_caller_uid);
+    if (Runtime.current_in_transaction) return @intCast(Runtime.current_caller_uid);
     return @intCast(Runtime.get().uid);
 }
 export fn AIBinder_getCallingPid() callconv(.c) i32 {
-    if (Runtime.current_routing != 0) return Runtime.current_caller_pid;
+    if (Runtime.current_in_transaction) return Runtime.current_caller_pid;
     return Runtime.get().pid;
 }
 export fn AIBinder_isHandlingTransaction() callconv(.c) bool {
-    return Runtime.current_routing != 0;
+    return Runtime.current_in_transaction;
 }
 
 export fn AIBinder_DeathRecipient_new(onBinderDied: ?*const fn (?*anyopaque) callconv(.c) void) callconv(.c) *AIBinder_DeathRecipient {
@@ -3340,22 +3349,22 @@ fn binderHolderFinalize(ptr: ?*anyopaque) callconv(.c) void {
 // ----- Binder @CriticalNative --------------------------------------------
 
 fn bGetCallingPid() callconv(.c) jni.jint {
-    if (Runtime.current_routing != 0) return Runtime.current_caller_pid;
+    if (Runtime.current_in_transaction) return Runtime.current_caller_pid;
     return Runtime.get().pid;
 }
 fn bGetCallingUid() callconv(.c) jni.jint {
-    if (Runtime.current_routing != 0) return @intCast(Runtime.current_caller_uid);
+    if (Runtime.current_in_transaction) return @intCast(Runtime.current_caller_uid);
     return @intCast(Runtime.get().uid);
 }
 fn bIsDirectlyHandlingTransaction() callconv(.c) jni.jboolean {
-    return if (Runtime.current_routing != 0) jni.JNI_TRUE else jni.JNI_FALSE;
+    return if (Runtime.current_in_transaction) jni.JNI_TRUE else jni.JNI_FALSE;
 }
 fn bHasExplicitIdentity() callconv(.c) jni.jboolean {
     return if (tl_has_identity) jni.JNI_TRUE else jni.JNI_FALSE;
 }
 fn bClearCallingIdentity() callconv(.c) jni.jlong {
-    const uid: u64 = if (Runtime.current_routing != 0) Runtime.current_caller_uid else Runtime.get().uid;
-    const pid_u: u32 = @bitCast(if (Runtime.current_routing != 0) Runtime.current_caller_pid else Runtime.get().pid);
+    const uid: u64 = if (Runtime.current_in_transaction) Runtime.current_caller_uid else Runtime.get().uid;
+    const pid_u: u32 = @bitCast(if (Runtime.current_in_transaction) Runtime.current_caller_pid else Runtime.get().pid);
     const token: i64 = @bitCast((uid << 32) | pid_u);
     Runtime.current_caller_uid = Runtime.get().uid;
     Runtime.current_caller_pid = Runtime.get().pid;
