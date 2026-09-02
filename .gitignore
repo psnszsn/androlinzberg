@@ -4,5 +4,6 @@ zig-pkg/
 .cache/
 .native-cache/
 .direnv/
+aosp/
 vendor/*
 javac.*.args

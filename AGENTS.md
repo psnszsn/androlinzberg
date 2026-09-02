@@ -1,7 +1,8 @@
 # Repository agent instructions
 
-- Always run Zig build/run commands with `-j10` (for example,
-  `zig build -j10 run`) to avoid overwhelming the system.
+- Always pass an explicit job limit to Zig build/run commands. Use at most
+  `-j10` (for example, `zig build -j10 run`), and choose a lower value when
+  system load or build memory usage requires it.
 
 ## Zig I/O policy
 
