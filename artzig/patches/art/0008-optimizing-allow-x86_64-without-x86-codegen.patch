@@ -8,11 +8,18 @@ x86-only PC-relative instruction classes even when ART_ENABLE_CODEGEN_x86 is
 disabled. Their instruction kinds are correctly omitted by nodes.h in that
 configuration, so a pure x86_64 compiler fails to compile the class bodies.
 
+The x86 memory operand generation pass is also shared and is part of the
+x86_64 default optimization pipeline, but its construction and name lookup
+are incorrectly guarded by ART_ENABLE_CODEGEN_x86. Keep that shared pass
+available when either backend is enabled, and expose the x86_64 simplifier to
+the pass-name lookup alongside the other architecture-specific passes.
+
 Keep the genuinely shared BMI instruction nodes available to both backends and
 guard the x86-only classes consistently with their instruction-kind list.
 ---
- compiler/optimizing/nodes_x86.h | 8 ++++++++
- 1 file changed, 8 insertions(+)
+ compiler/optimizing/nodes_x86.h    |  8 ++++++++
+ compiler/optimizing/optimization.cc | 17 ++++++++++++-----
+ 2 files changed, 20 insertions(+), 5 deletions(-)
 
 diff --git a/compiler/optimizing/nodes_x86.h b/compiler/optimizing/nodes_x86.h
 index 4ce5a77..a9c8e6b 100644
@@ -40,6 +47,51 @@ index 4ce5a77..a9c8e6b 100644
  class HX86AndNot final : public HBinaryOperation {
   public:
    HX86AndNot(DataType::Type result_type,
+diff --git a/compiler/optimizing/optimization.cc b/compiler/optimizing/optimization.cc
+--- a/compiler/optimizing/optimization.cc
++++ b/compiler/optimizing/optimization.cc
+@@ -171,10 +171,15 @@ OptimizationPass OptimizationPassByName(const std::string& pass_name) {
+ #ifdef ART_ENABLE_CODEGEN_riscv64
+   X(OptimizationPass::kCriticalNativeAbiFixupRiscv64);
+   X(OptimizationPass::kInstructionSimplifierRiscv64);
+ #endif
+ #ifdef ART_ENABLE_CODEGEN_x86
+   X(OptimizationPass::kPcRelativeFixupsX86);
+-  X(OptimizationPass::kX86MemoryOperandGeneration);
++#endif
++#ifdef ART_ENABLE_CODEGEN_x86_64
++  X(OptimizationPass::kInstructionSimplifierX86_64);
++#endif
++#if defined(ART_ENABLE_CODEGEN_x86) || defined(ART_ENABLE_CODEGEN_x86_64)
++  X(OptimizationPass::kX86MemoryOperandGeneration);
+ #endif
+   LOG(FATAL) << "Cannot find optimization " << pass_name;
+   UNREACHABLE();
+@@ -335,19 +340,21 @@ ArenaVector<HOptimization*> ConstructOptimizations(
+       case OptimizationPass::kPcRelativeFixupsX86:
+         DCHECK(alt_name == nullptr) << "arch-specific pass does not support alternative name";
+         opt = new (allocator) x86::PcRelativeFixups(graph, codegen, stats);
+         break;
+-      case OptimizationPass::kX86MemoryOperandGeneration:
+-        DCHECK(alt_name == nullptr) << "arch-specific pass does not support alternative name";
+-        opt = new (allocator) x86::X86MemoryOperandGeneration(graph, codegen, stats);
+-        break;
+       case OptimizationPass::kInstructionSimplifierX86:
+         opt = new (allocator) x86::InstructionSimplifierX86(graph, codegen, stats);
+         break;
+ #endif
+ #ifdef ART_ENABLE_CODEGEN_x86_64
+       case OptimizationPass::kInstructionSimplifierX86_64:
+         opt = new (allocator) x86_64::InstructionSimplifierX86_64(graph, codegen, stats);
+         break;
++#endif
++#if defined(ART_ENABLE_CODEGEN_x86) || defined(ART_ENABLE_CODEGEN_x86_64)
++      case OptimizationPass::kX86MemoryOperandGeneration:
++        DCHECK(alt_name == nullptr) << "arch-specific pass does not support alternative name";
++        opt = new (allocator) x86::X86MemoryOperandGeneration(graph, codegen, stats);
++        break;
+ #endif
+       case OptimizationPass::kNone:
+         LOG(FATAL) << "kNone does not represent an actual pass";
 -- 
 2.51.0
-
