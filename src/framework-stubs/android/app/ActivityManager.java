@@ -64,6 +64,13 @@ public class ActivityManager {
         sService = s;
         return s;
     }
+    /** AOSP IActivityManager start result codes (ActivityManager.START_*). */
+    public static final int START_SUCCESS = 0, START_INTENT_NOT_RESOLVED = -1, START_CLASS_NOT_FOUND = -2,
+            START_FORWARD_AND_REQUEST_CONFLICT = -3, START_PERMISSION_DENIED = -4, START_NOT_ACTIVITY = -5,
+            START_CANCELED = -6, START_NOT_VOICE_COMPATIBLE = -7, START_VOICE_NOT_ACTIVE_SESSION = -8,
+            START_VOICE_HIDDEN_SESSION = -9, START_ASSISTANT_NOT_ACTIVE_SESSION = -10, START_ASSISTANT_HIDDEN_SESSION = -11,
+            START_RETURN_INTENT_TO_CALLER = 1, START_TASK_TO_FRONT = 2, START_DELIVERED_TO_TOP = 3,
+            START_SWITCHES_CANCELED = 4, START_RETURN_LOCK_TASK_MODE_VIOLATION = 5, START_ABORTED = 102;
     /** AOSP ProcessStateEnum.UNKNOWN. */
     public static final int PROCESS_STATE_UNKNOWN = -1;
     public static final int PROCESS_STATE_TOP = 2;

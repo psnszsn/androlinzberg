@@ -1,6 +1,15 @@
 /* artzig stub (auto-generated placeholder; members added on demand). */
 package android.os;
 public class FileUtils {
+    /** AOSP FileUtils.contains(String dir, String file): whether file lies under dir (path-wise). */
+    public static boolean contains(String dirPath, String filePath) {
+        if (dirPath == null || filePath == null) return false;
+        if (dirPath.equals(filePath)) return true;
+        if (!dirPath.endsWith("/")) dirPath += "/";
+        return filePath.startsWith(dirPath);
+    }
+    /** AOSP FileUtils.newFileOrNull. */
+    public static java.io.File newFileOrNull(String path) { return path != null ? new java.io.File(path) : null; }
     /** AOSP FileUtils.listFilesOrEmpty. */
     public static java.io.File[] listFilesOrEmpty(java.io.File dir) {
         java.io.File[] files = dir != null ? dir.listFiles() : null;

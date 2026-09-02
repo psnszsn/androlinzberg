@@ -27,7 +27,9 @@ mkdir -p "$OUT"
 if [[ -s "$KOTLIN_SOURCES" ]]; then
     # Keep kotlinc off C2. OpenJDK 21.0.12 has crashed reproducibly while C2
     # compiles Kotlin FIR data-flow analysis for this mixed source set.
-    JAVA_OPTS="-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1" "$KOTLIN_HOME/bin/kotlinc" \
+    # C1-only code fills the code cache faster: size it for the whole tree
+    # ("Out of space in CodeCache for method handle intrinsic" at the default).
+    JAVA_OPTS="-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=512m" "$KOTLIN_HOME/bin/kotlinc" \
         -no-jdk -no-stdlib -no-reflect \
         -language-version 2.0 -api-version 2.0 -jvm-target 21 \
         -java-parameters -Xsam-conversions=class -Xstring-concat=inline \

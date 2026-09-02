@@ -7,7 +7,8 @@ class HostedInstallerService(
     private val packages: HostedPackageManagerService,
     private val activityManager: HostedActivityManagerService,
 ) : IHostedInstaller.Stub() {
-    override fun installPackage(apkPath: String?): String = packages.installPackage(checkNotNull(apkPath))
+    override fun installPackage(apkPath: String?, nativeLibraryDir: String?): String =
+        packages.installPackage(checkNotNull(apkPath), nativeLibraryDir)
 
     override fun bindProcessPackage(packageName: String?, processName: String?) {
         val uid = Binder.getCallingUid()

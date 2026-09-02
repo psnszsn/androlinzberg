@@ -752,6 +752,8 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
     override fun removeContentProvider(connection: IBinder?, stable: Boolean) {}
     override fun killApplication(pkg: String?, appId: Int, userId: Int, reason: String?, exitInfoReason: Int) {}
     override fun noteWakeupAlarm(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, sourcePkg: String?, tag: String?) {}
+    /** AOSP AMS pins the render thread to the app's scheduling group; no scheduler on this host. */
+    override fun setRenderThread(tid: Int) {}
     override fun noteAlarmStart(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, tag: String?) {}
     override fun noteAlarmFinish(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, tag: String?) {}
     // URI grants are not tracked yet (android.app core Phase 4 seam): nothing is granted.

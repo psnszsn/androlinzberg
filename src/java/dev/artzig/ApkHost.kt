@@ -369,7 +369,7 @@ public final class ApkHost {
             val pkg: String = parseApkLitePackageName(apkPath)
             dev.artzig.BinderSession.setIdentity(pkg, false)
             android.os.Process.setArgV0(pkg)
-            installOwnPackage(apkPath, pkg)
+            installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =
                 checkNotNull(pm.getApplicationInfo(pkg, 0L, 0)) { "no ApplicationInfo for " + pkg }
@@ -383,11 +383,11 @@ public final class ApkHost {
                     Integer.toHexString(appThemeRes),
             )
 
-            // --- classloader over the apk (+ bundled native libs)
-            val libPath: String = extractNativeLibraries(apkPath)
-            val cl: HostedApkClassLoader =
-                HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
-            sClassLoader = cl;
+            // --- classloader over the apk (+ bundled native libs): the real
+            // LoadedApk builds it (ApplicationLoaders -> ClassLoaderFactory ->
+            // HostedApkClassLoader) from sourceDir and nativeLibraryDir.
+            val cl: HostedApkClassLoader = loadedApkClassLoader(appInfo)
+            sClassLoader = cl
             // The real AOSP Parcel has no default-classloader hook; Parcelables
             // are read with an explicit loader (Bundle.setClassLoader) at the
             // call sites. sClassLoader holds the APK loader for that routing.
@@ -481,12 +481,23 @@ public final class ApkHost {
         /** Installs this process's APK through the activity manager (parsing
          * happens only in the system process). */
         @JvmStatic
-        private fun installOwnPackage(apkPath: String, pkg: String) {
+        private fun installOwnPackage(apkPath: String, pkg: String, nativeLibraryDir: String) {
             val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull()) {
                 "no hosted installer in this session"
             }
-            val installed = installer.installPackage(apkPath)
+            val installed = installer.installPackage(apkPath, nativeLibraryDir)
             check(installed == pkg) { "installed as " + installed + ", expected " + pkg }
+        }
+
+        /** AOSP ActivityThread.handleBindApplication: the process's LoadedApk
+         * (CONTEXT_INCLUDE_CODE) owns the APK class loader. */
+        @JvmStatic
+        private fun loadedApkClassLoader(appInfo: android.content.pm.ApplicationInfo): HostedApkClassLoader {
+            val apk: android.app.LoadedApk = android.app.ActivityThread.currentActivityThread().getPackageInfoNoCheck(
+                appInfo,
+                android.content.res.CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO,
+            )
+            return apk.classLoader as HostedApkClassLoader
         }
 
         /** The MAIN/LAUNCHER activity via the real resolver. */
@@ -534,12 +545,11 @@ public final class ApkHost {
             val pkg: String = parseApkLitePackageName(apkPath)
             dev.artzig.BinderSession.setIdentity(pkg, false)
             android.os.Process.setArgV0(pkg)
-            installOwnPackage(apkPath, pkg)
+            installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =
                 checkNotNull(pm.getApplicationInfo(pkg, 0L, 0)) { "no ApplicationInfo for " + pkg }
-            val libPath: String = extractNativeLibraries(apkPath)
-            val cl: HostedApkClassLoader = HostedApkClassLoader(apkPath, libPath, ClassLoader.getSystemClassLoader())
+            val cl: HostedApkClassLoader = loadedApkClassLoader(appInfo)
             sClassLoader = cl
             // The real AOSP Parcel has no default-classloader hook; Parcelables
             // are read with an explicit loader (Bundle.setClassLoader) at the

@@ -207,6 +207,60 @@ public final class FrameworkCompatSmoke {
             require(!android.os.Build.IS_DEBUGGABLE && android.os.Build.IS_USER, "Build type user, not debuggable")
         }
 
+        /** The real LoadedApk over the installed fixture: the AOSP
+         * ActivityThread.getPackageInfo cache, the class loader
+         * (ApplicationLoaders -> patched ClassLoaderFactory ->
+         * HostedApkClassLoader under the system loader), resources through the
+         * real ResourcesManager, the per-package data directory installd's role
+         * created at install, and makeApplication ordering (instantiate, then
+         * attach; onCreate is the bind step's). */
+        @JvmStatic
+        private fun testLoadedApk() {
+            val thread = android.app.ActivityThread.currentActivityThread()
+            val appInfo = requireNotNull(
+                android.app.ActivityThread.getPackageManager().getApplicationInfo("org.example", 0L, 0),
+            )
+            appInfo.className = "dev.artzig.SmokeApplication"
+            val compat = android.content.res.CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO
+            // AOSP: code from another uid needs CONTEXT_IGNORE_SECURITY unless
+            // this process is bound to that package.
+            require(
+                runCatching { thread.getPackageInfo(appInfo, compat, android.content.Context.CONTEXT_INCLUDE_CODE) }
+                    .exceptionOrNull() is SecurityException,
+                "foreign code without CONTEXT_IGNORE_SECURITY is refused",
+            )
+            val flags = android.content.Context.CONTEXT_INCLUDE_CODE or android.content.Context.CONTEXT_IGNORE_SECURITY
+            val apk = thread.getPackageInfo(appInfo, compat, flags)
+            require(apk === thread.getPackageInfo(appInfo, compat, flags), "LoadedApk cached per package")
+            require(apk === thread.peekPackageInfo("org.example", true), "peekPackageInfo")
+            require(apk.packageName == "org.example" && apk.appDir == appInfo.sourceDir, "LoadedApk identity")
+            // The fixture is resources-only (no FLAG_HAS_CODE): AOSP then builds
+            // the default loader over an empty code path rather than the
+            // manifest class loader (an APK with code gets HostedApkClassLoader;
+            // ApkHost's boot casts to it).
+            require(appInfo.flags and android.content.pm.ApplicationInfo.FLAG_HAS_CODE == 0, "fixture has no code")
+            val cl = apk.classLoader
+            require(cl is dalvik.system.PathClassLoader && cl !is HostedApkClassLoader, "no-code package gets the default loader: " + cl)
+            require(cl.parent === ClassLoader.getSystemClassLoader(), "APK loader parent is the system loader: " + cl.parent + " vs " + ClassLoader.getSystemClassLoader() + " (ctx " + Thread.currentThread().contextClassLoader + ")")
+            require(cl.loadClass("android.app.Activity") === android.app.Activity::class.java, "framework parent-first")
+            val ceDir = android.os.Environment.getDataUserCePackageDirectory(null, 0, "org.example")
+            require(apk.dataDirFile == ceDir, "per-package data dir: " + apk.dataDirFile + " vs " + ceDir)
+            require(ceDir.isDirectory, "install created the package data dir")
+            require(ceDir.parentFile.startsWith(android.os.Environment.getDataDirectory()), "data dir under the session data root")
+            val res = requireNotNull(apk.resources)
+            require(res.getString(android.R.string.ok).isNotEmpty(), "LoadedApk resources see framework-res")
+            require(apk.resources === res, "ResourcesManager caches per LoadedApk")
+            SmokeApplication.attachedAtConstruction = null
+            val app = apk.makeApplication(false, null)
+            require(app is SmokeApplication, "AppComponentFactory instantiated the manifest class: " + app)
+            require(SmokeApplication.attachedAtConstruction == false, "attach happens after instantiation")
+            require(!(app as SmokeApplication).created, "makeApplication does not call onCreate (bindApplication does)")
+            require(app.baseContext != null && app.packageName == "org.example", "Application attached to the app context")
+            require(app.filesDir == java.io.File(ceDir, "files"), "app context files dir per package: " + app.filesDir)
+            require(app.getDir("x", 0).startsWith(ceDir), "getDir per package")
+            require(apk.makeApplication(false, null) === app, "LoadedApk keeps its Application")
+        }
+
         @Throws(Exception::class)
         @JvmStatic
         public fun main(args: Array<String>) {
@@ -233,7 +287,8 @@ public final class FrameworkCompatSmoke {
             // assertions below resolve through real IntentFilters.
             val fixtureDir: String = requireNotNull(args.getOrNull(1)) { "fixture APK directory argument missing" }
             val installer = requireNotNull(android.app.HostedServiceClient.installerOrNull())
-            require(installer.installPackage("$fixtureDir/org.example.apk") == "org.example", "fixture install")
+            require(installer.installPackage("$fixtureDir/org.example.apk", null) == "org.example", "fixture install")
+            testLoadedApk()
 
             val packageManager: PackageManager = android.app.ContextImpl.createSystemContext(
                 requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
@@ -813,4 +868,12 @@ public final class FrameworkCompatSmoke {
         android.util.Log.i("FrameworkCompatSmoke", "parcel round trips ok")
         }
     }
+}
+
+/** Manifest Application class for testLoadedApk (loaded through the APK loader's parent). */
+class SmokeApplication : Application() {
+    var created: Boolean = false
+    init { attachedAtConstruction = baseContext != null }
+    override fun onCreate() { super.onCreate(); created = true }
+    companion object { @JvmStatic var attachedAtConstruction: Boolean? = null }
 }

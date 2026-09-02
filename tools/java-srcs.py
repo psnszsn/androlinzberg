@@ -401,6 +401,15 @@ file('$CJ/android/permission/PermissionCheckerManager.java')
 # implements the handler), the AMS-facing parcelables, VoiceInteractor.
 file('$CJ/android/app/ActivityClient.java')
 file('$CJ/android/app/ServiceStartArgs.java')
+# Real LoadedApk/ResourcesManager/Instrumentation (+ ApplicationLoaders, AppComponentFactory);
+# the hosted ActivityThread carries the members they use.
+file('$CJ/android/app/LoadedApk.java')
+file('$CJ/android/app/ApplicationLoaders.java')
+file('$CJ/android/app/AppComponentFactory.java')
+file('$CJ/android/app/ResourcesManager.java')
+file('$CJ/android/app/ComponentCaller.java')
+file('$CJ/android/app/DexLoadReporter.java')
+file('$CJ/android/app/LocaleConfig.java')
 file('$CJ/android/app/ApplicationErrorReport.java')
 file('$CJ/android/app/ApplicationExitInfo.java')
 file('$CJ/android/app/ApplicationStartInfo.java')

@@ -1,0 +1,52 @@
+From 0286b6c1c6ba9286c83bf8c14698d72f694eae28 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Wed, 2 Sep 2026 14:36:49 +0200
+Subject: [PATCH] ClassLoaderFactory: the hosted APK class loader on the artzig
+ host
+
+The framework rides the app classpath on this host, so an APK's bundled
+Kotlin runtime must win over the host's; packages install with
+dev.artzig.HostedApkClassLoader as their class loader name and the factory
+instantiates it.
+
+Change-Id: Ic837078542fcf31eac2d6a5cb0f9c22cca5aae53
+---
+ .../com/android/internal/os/ClassLoaderFactory.java | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/core/java/com/android/internal/os/ClassLoaderFactory.java b/core/java/com/android/internal/os/ClassLoaderFactory.java
+index 8f5e97d40..b6f1c336a 100644
+--- a/core/java/com/android/internal/os/ClassLoaderFactory.java
++++ b/core/java/com/android/internal/os/ClassLoaderFactory.java
+@@ -54,9 +54,13 @@ public class ClassLoaderFactory {
+      */
+     public static boolean isValidClassLoaderName(String name) {
+         // This method is used to parse package data and does not accept null names.
+-        return name != null && (isPathClassLoaderName(name) || isDelegateLastClassLoaderName(name));
++        return name != null && (isPathClassLoaderName(name) || isDelegateLastClassLoaderName(name)
++                || HOSTED_APK_CLASS_LOADER_NAME.equals(name));
+     }
+ 
++    /** Host adaptation (artzig): see createClassLoader. */
++    private static final String HOSTED_APK_CLASS_LOADER_NAME = "dev.artzig.HostedApkClassLoader";
++
+     /**
+      * Returns true if {@code name} is the encoding for either PathClassLoader or DexClassLoader.
+      * The two class loaders are grouped together because they have the same behaviour.
+@@ -89,7 +93,12 @@ public class ClassLoaderFactory {
+                 ? null
+                 : sharedLibrariesLoadedAfter.toArray(
+                         new ClassLoader[sharedLibrariesLoadedAfter.size()]);
+-        if (isPathClassLoaderName(classloaderName)) {
++        if (HOSTED_APK_CLASS_LOADER_NAME.equals(classloaderName)) {
++            // Host adaptation (artzig): the framework rides the app classpath
++            // (no boot classpath), so an APK's bundled Kotlin runtime must win
++            // over the host's; the hosted loader gives kotlin.* child-first.
++            return new dev.artzig.HostedApkClassLoader(dexPath, librarySearchPath, parent);
++        } else if (isPathClassLoaderName(classloaderName)) {
+             return new PathClassLoader(dexPath, librarySearchPath, parent, arrayOfSharedLibraries,
+                     arrayOfSharedLibrariesLoadedAfterApp);
+         } else if (isDelegateLastClassLoaderName(classloaderName)) {
+-- 
+2.55.0
+

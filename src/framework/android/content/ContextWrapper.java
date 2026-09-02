@@ -10,6 +10,8 @@ public class ContextWrapper extends Context {
         mBase = base;
     }
     public Context getBaseContext() { return mBase; }
+    /** AOSP ContextWrapper.getDataDir: the wrapped context's package data root. */
+    @Override public java.io.File getDataDir() { return getBaseContext().getDataDir(); }
     @Override public Resources getResources() { return mBase.getResources(); }
     @Override public AssetManager getAssets() { return mBase.getAssets(); }
     @Override public Resources.Theme getTheme() { return mBase.getTheme(); }

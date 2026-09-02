@@ -5,9 +5,97 @@
  * transactions are not hosted yet (HostedActivityRuntime runs the activity
  * lifecycle in-process); the handlers throw UnsupportedOperationException. */
 package android.app;
+import android.os.Bundle;
 public final class ActivityThread extends ClientTransactionHandler {
+    public static final boolean DEBUG = false;
+    public static final boolean DEBUG_CONFIGURATION = false;
     public static final boolean DEBUG_MEMORY_TRIM = false;
     public static final boolean DEBUG_ORDER = false;
+    /** AOSP AppBindData: the parts LoadedApk/Instrumentation read. */
+    static final class AppBindData {
+        android.content.pm.ApplicationInfo appInfo;
+        String processName;
+        boolean isSdkInSandbox;
+    }
+    AppBindData mBoundApplication;
+    /** Instrumented-package fields LoadedApk reads (no instrumentation on this host). */
+    String mInstrumentationPackageName, mInstrumentationAppDir, mInstrumentationLibDir,
+            mInstrumentedAppDir, mInstrumentedLibDir;
+    String[] mInstrumentationSplitAppDirs, mInstrumentedSplitAppDirs;
+    /** The process's Instrumentation (AOSP: created in handleBindApplication; here at first use). */
+    Instrumentation mInstrumentation;
+    final ResourcesManager mResourcesManager = ResourcesManager.getInstance();
+    final android.content.res.CompatibilityInfo mCompatibilityInfo =
+            android.content.res.CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO;
+    private final android.util.ArrayMap<String, java.lang.ref.WeakReference<LoadedApk>> mPackages = new android.util.ArrayMap<>();
+    private final android.util.ArrayMap<String, java.lang.ref.WeakReference<LoadedApk>> mResourcePackages = new android.util.ArrayMap<>();
+    private final android.os.Handler mH = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Bundle mCoreSettings = new Bundle();
+
+    private ActivityThread() {
+        mInstrumentation = new Instrumentation();
+        mInstrumentation.basicInit(this);
+    }
+    public android.os.Handler getHandler() { return mH; }
+    public android.os.Looper getLooper() { return android.os.Looper.getMainLooper(); }
+    /** AOSP ActivityThread.post: main-looper delivery for LoadedApk's receiver/service dispatchers. */
+    final boolean post(Runnable r) { return mH.post(r); }
+    public IApplicationThread getApplicationThread() { return HostedServiceClient.applicationThread(); }
+    public String getProcessName() { return sProcessName != null ? sProcessName : "android"; }
+    public boolean isProfiling() { return false; }
+    public String getProfileFilePath() { return null; }
+    /*package*/ final void finishInstrumentation(int resultCode, Bundle results) {}
+    Bundle getCoreSettings() { synchronized (mCoreSettings) { return mCoreSettings; } }
+    public String getStringCoreSetting(String key, String defaultValue) {
+        synchronized (mCoreSettings) { return mCoreSettings.getString(key, defaultValue); }
+    }
+    /** AOSP: the unsafe-intent-launch protected-broadcast query; StrictMode gates it. */
+    public static boolean isProtectedBroadcast(android.content.Intent intent) {
+        if (!android.os.StrictMode.vmUnsafeIntentLaunchEnabled()) return false;
+        try { return getPackageManager().isProtectedBroadcast(intent.getAction()); }
+        catch (android.os.RemoteException ignored) { }
+        return false;
+    }
+    void addApplication(Application app) { if (sApplication == null) sApplication = app; }
+
+    // ---------------------------------------------------------- LoadedApk cache (AOSP ActivityThread.getPackageInfo)
+    public final LoadedApk getPackageInfo(android.content.pm.ApplicationInfo ai,
+            android.content.res.CompatibilityInfo compatInfo, int flags) {
+        boolean includeCode = (flags & android.content.Context.CONTEXT_INCLUDE_CODE) != 0;
+        boolean securityViolation = includeCode && ai.uid != 0
+                && ai.uid != android.os.Process.SYSTEM_UID && (mBoundApplication != null
+                        ? !android.os.UserHandle.isSameApp(ai.uid, mBoundApplication.appInfo.uid) : true);
+        boolean registerPackage = includeCode && (flags & android.content.Context.CONTEXT_REGISTER_PACKAGE) != 0;
+        if ((flags & (android.content.Context.CONTEXT_INCLUDE_CODE | android.content.Context.CONTEXT_IGNORE_SECURITY))
+                == android.content.Context.CONTEXT_INCLUDE_CODE && securityViolation) {
+            throw new SecurityException("Requesting code from " + ai.packageName + " (with uid " + ai.uid + ")");
+        }
+        return getPackageInfo(ai, compatInfo, null, securityViolation, includeCode, registerPackage);
+    }
+    public final LoadedApk getPackageInfoNoCheck(android.content.pm.ApplicationInfo ai,
+            android.content.res.CompatibilityInfo compatInfo) {
+        return getPackageInfo(ai, compatInfo, null, false, true, false);
+    }
+    public final LoadedApk peekPackageInfo(String packageName, boolean includeCode) {
+        synchronized (mResourcesManager) {
+            java.lang.ref.WeakReference<LoadedApk> ref = includeCode ? mPackages.get(packageName) : mResourcePackages.get(packageName);
+            return ref != null ? ref.get() : null;
+        }
+    }
+    private LoadedApk getPackageInfo(android.content.pm.ApplicationInfo aInfo,
+            android.content.res.CompatibilityInfo compatInfo, ClassLoader baseLoader,
+            boolean securityViolation, boolean includeCode, boolean registerPackage) {
+        synchronized (mResourcesManager) {
+            java.lang.ref.WeakReference<LoadedApk> ref = includeCode ? mPackages.get(aInfo.packageName) : mResourcePackages.get(aInfo.packageName);
+            LoadedApk packageInfo = ref != null ? ref.get() : null;
+            if (packageInfo != null) return packageInfo;
+            packageInfo = new LoadedApk(this, aInfo, compatInfo, baseLoader, securityViolation,
+                    includeCode && (aInfo.flags & android.content.pm.ApplicationInfo.FLAG_HAS_CODE) != 0, registerPackage);
+            if (includeCode) mPackages.put(aInfo.packageName, new java.lang.ref.WeakReference<>(packageInfo));
+            else mResourcePackages.put(aInfo.packageName, new java.lang.ref.WeakReference<>(packageInfo));
+            return packageInfo;
+        }
+    }
     /** AOSP ActivityThread.H message ids the transaction handler uses. */
     public static final class H {
         public static final int EXECUTE_TRANSACTION = 159;
@@ -53,7 +141,7 @@ public final class ActivityThread extends ClientTransactionHandler {
     @Override public void handleAttachSplashScreenView(ActivityClientRecord r, android.window.SplashScreenView.SplashScreenViewParcelable parcelable, android.view.SurfaceControl startingWindowLeash) { throw notHosted("handleAttachSplashScreenView"); }
     @Override public Activity handleLaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, int deviceId, android.content.Intent customIntent) { throw notHosted("handleLaunchActivity"); }
     @Override public void handleStartActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, ActivityOptions.SceneTransitionInfo sceneTransitionInfo) { throw notHosted("handleStartActivity"); }
-    @Override public LoadedApk getPackageInfoNoCheck(android.content.pm.ApplicationInfo ai) { return new LoadedApk(); }
+    @Override public LoadedApk getPackageInfoNoCheck(android.content.pm.ApplicationInfo ai) { return getPackageInfo(ai, mCompatibilityInfo, null, false, true, false); }
     @Override public void handleConfigurationChanged(android.content.res.Configuration config, int deviceId) { throw notHosted("handleConfigurationChanged"); }
     @Override public ActivityClientRecord prepareRelaunchActivity(android.os.IBinder token, java.util.List<ResultInfo> pendingResults, java.util.List<com.android.internal.content.ReferrerIntent> pendingNewIntents, int configChanges, android.util.MergedConfiguration config, boolean preserveWindow, android.window.ActivityWindowInfo activityWindowInfo) { throw notHosted("prepareRelaunchActivity"); }
     @Override public void handleRelaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions) { throw notHosted("handleRelaunchActivity"); }

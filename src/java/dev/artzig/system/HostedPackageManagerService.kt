@@ -89,7 +89,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
      * package authentication is the standing follow-up). A system caller may
      * install any number (respawn, platform).
      */
-    fun installPackage(apkPath: String): String {
+    fun installPackage(apkPath: String, nativeLibraryDir: String? = null): String {
         val callingUid = Binder.getCallingUid()
         val file = File(apkPath)
         require(file.isFile) { "no APK at $apkPath" }
@@ -104,7 +104,23 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
             throw SecurityException("cannot verify " + apkPath + ": " + signing.errorMessage)
         }
         parsed.setSigningDetails(signing.result)
+        // Host seam (source note: installd creates the app data directories at
+        // install; ContextImpl only creates subdirectories underneath). The
+        // framework rides the app classpath here rather than the boot
+        // classpath, so an APK's bundled Kotlin runtime must win over the
+        // host's: packages load through HostedApkClassLoader unless the
+        // manifest chose a class loader (ClassLoaderFactory knows the name).
+        if (parsed.classLoaderName == null) {
+            (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setClassLoaderName("dev.artzig.HostedApkClassLoader")
+        }
+        // Host seam (source note: PackageManagerService.setNativeLibraryPaths
+        // derives nativeLibraryDir from the code path; here the installing
+        // process already extracted lib/<abi> to the launcher's directory).
+        if (nativeLibraryDir != null) {
+            (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setNativeLibraryDir(nativeLibraryDir)
+        }
         val pkg = parsed.hideAsFinal()
+        createDataDirectories(pkg.packageName)
         val app = callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID
         synchronized(lock) {
             packages[pkg.packageName]?.let { existing ->
@@ -165,6 +181,17 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
             "platform installed: " + permissionDefs.size + " permissions, " +
                 permissionGroups.size + " groups",
         )
+    }
+
+    /** installd's job: the CE/DE package directories (Environment layout) exist after install. */
+    private fun createDataDirectories(packageName: String) {
+        val userId = android.os.UserHandle.USER_SYSTEM
+        for (dir in listOf(
+            android.os.Environment.getDataUserCePackageDirectory(null, userId, packageName),
+            android.os.Environment.getDataUserDePackageDirectory(null, userId, packageName),
+        )) {
+            if (!dir.isDirectory && !dir.mkdirs()) Log.w(TAG, "cannot create " + dir)
+        }
     }
 
     private fun installLocked(pkg: AndroidPackageInternal, apkPath: String, system: Boolean) {

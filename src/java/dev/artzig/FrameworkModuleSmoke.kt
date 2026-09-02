@@ -143,7 +143,7 @@ internal object FrameworkModuleSmoke {
         // granted at install, CAMERA (dangerous) is not.
         val fixtures = checkNotNull(fixtureApkDir) { "fixture APK directory argument missing" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(installer.installPackage("$fixtures/org.example.permissions.apk") == "org.example.permissions")
+        check(installer.installPackage("$fixtures/org.example.permissions.apk", null) == "org.example.permissions")
 
         val wakeLock = "android.permission.WAKE_LOCK"
         val camera = "android.permission.CAMERA"

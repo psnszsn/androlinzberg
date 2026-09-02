@@ -52,7 +52,7 @@ internal object SystemTestClientA {
         // grants it at install.
         val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(installer.installPackage("$fixtures/dev.artzig.test.a.apk") == "dev.artzig.test.a")
+        check(installer.installPackage("$fixtures/dev.artzig.test.a.apk", null) == "dev.artzig.test.a")
         ActivityThread.attachApplicationHosted("dev.artzig.test.a")
         thread(name = "system-test", isDaemon = true) {
             try {

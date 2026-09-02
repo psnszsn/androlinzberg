@@ -1507,3 +1507,14 @@ F aosp frameworks/base/core/java/android/window/SizeConfigurationBuckets.aidl
 F aosp frameworks/base/core/java/android/window/WindowContainerToken.java
 F aosp frameworks/base/core/java/android/window/IWindowContainerToken.aidl
 F aosp frameworks/base/core/java/android/app/ServiceStartArgs.java
+F aosp frameworks/base/core/java/android/app/LoadedApk.java
+F aosp frameworks/base/core/java/android/app/ApplicationLoaders.java
+F aosp frameworks/base/core/java/android/app/AppComponentFactory.java
+F aosp frameworks/base/core/java/android/app/ResourcesManager.java
+F aosp frameworks/base/core/java/android/app/Instrumentation.java
+F aosp frameworks/base/core/java/android/os/PerformanceCollector.java
+F aosp frameworks/base/core/java/android/os/TestLooperManager.java
+F aosp frameworks/base/core/java/android/app/UiAutomation.java
+F aosp frameworks/base/core/java/android/app/ComponentCaller.java
+F aosp frameworks/base/core/java/android/app/LocaleConfig.java
+F aosp frameworks/base/core/java/android/app/DexLoadReporter.java

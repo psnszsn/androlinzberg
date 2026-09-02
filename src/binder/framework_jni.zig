@@ -751,6 +751,39 @@ fn registerTrace(env: JNIEnvPtr) !void {
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }
 
+// ---------------------------------------------------- ClassLoaderFactory
+// AOSP com_android_internal_os_ClassLoaderFactory.cpp asks libnativeloader for
+// a linker namespace per app class loader. The bionic bridge on this host has
+// no namespaces: every loader searches its librarySearchPath directly, so the
+// native returns null ("no error"), the value AOSP callers treat as success.
+fn classLoaderCreateNamespace(
+    _: JNIEnvPtr,
+    _: jni.jclass,
+    _: jni.jobject,
+    _: jni.jint,
+    _: jni.jstring,
+    _: jni.jstring,
+    _: jni.jboolean,
+    _: jni.jstring,
+    _: jni.jstring,
+) callconv(.c) jni.jstring {
+    return null;
+}
+
+fn registerClassLoaderFactory(env: JNIEnvPtr) !void {
+    const cls = env.*.*.FindClass.?(env, "com/android/internal/os/ClassLoaderFactory") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const S = "Ljava/lang/String;";
+    const methods = [_]jni.JNINativeMethod{
+        method(
+            "createClassloaderNamespace",
+            "(Ljava/lang/ClassLoader;I" ++ S ++ S ++ "Z" ++ S ++ S ++ ")" ++ S,
+            &classLoaderCreateNamespace,
+        ),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
+
 // ------------------------------------------------------------- registration
 
 fn method(name: [*:0]const u8, signature: [*:0]const u8, ptr: anytype) jni.JNINativeMethod {
@@ -789,6 +822,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerProcess(env) catch return -1;
     registerTrace(env) catch return -1;
     registerSystemClock(env) catch return -1;
+    registerClassLoaderFactory(env) catch return -1;
     // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
     // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;

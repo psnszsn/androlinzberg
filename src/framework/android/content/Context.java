@@ -63,7 +63,7 @@ public abstract class Context {
             throws IntentSender.SendIntentException {}
     public void startIntentSender(IntentSender intent, Intent fillInIntent, int flagsMask,
             int flagsValues, int extraFlags) throws IntentSender.SendIntentException {}
-    public static final int CONTEXT_INCLUDE_CODE = 0x0001, CONTEXT_IGNORE_SECURITY = 0x0002,
+    public static final int CONTEXT_INCLUDE_CODE = 0x0001, CONTEXT_IGNORE_SECURITY = 0x0002, CONTEXT_REGISTER_PACKAGE = 0x40000000,
             CONTEXT_RESTRICTED = 0x0004, CONTEXT_DEVICE_PROTECTED_STORAGE = 0x0008;
     public Context createPackageContext(String packageName, int flags) throws android.content.pm.PackageManager.NameNotFoundException {
         throw new android.content.pm.PackageManager.NameNotFoundException(packageName);
@@ -89,13 +89,14 @@ public abstract class Context {
     public ContentResolver getContentResolver() { return null; }
     public Looper getMainLooper() { return Looper.getMainLooper(); }
     public Executor getMainExecutor() { return new Handler(getMainLooper())::post; }
-    public File getFilesDir() { return new File(android.os.Environment.getDataDirectory(), "files"); }
-    public File getCacheDir() { return new File(android.os.Environment.getDataDirectory(), "cache"); }
+    public File getFilesDir() { return new File(getDataDir(), "files"); }
+    public File getCacheDir() { return new File(getDataDir(), "cache"); }
     public File getDir(String name, int mode) {
-        File f = new File(android.os.Environment.getDataDirectory(), "app_" + name);
+        File f = new File(getDataDir(), "app_" + name);
         f.mkdirs();
         return f;
     }
+    /** The package data root; ContextImpl roots it at LoadedApk.getDataDirFile(). */
     public File getDataDir() { return android.os.Environment.getDataDirectory(); }
     public File getExternalFilesDir(String type) { return getFilesDir(); }
     public File getNoBackupFilesDir() { return getFilesDir(); }
@@ -103,8 +104,8 @@ public abstract class Context {
     public File[] getExternalCacheDirs() { return new File[] { getExternalCacheDir() }; }
     public File[] getExternalFilesDirs(String type) { return new File[] { getExternalFilesDir(type) }; }
     public File[] getExternalMediaDirs() { return new File[] { getExternalFilesDir("media") }; }
-    public File getCodeCacheDir() { return mkdirsOf(new File(android.os.Environment.getDataDirectory(), "code_cache")); }
-    public File getObbDir() { return mkdirsOf(new File(android.os.Environment.getDataDirectory(), "obb")); }
+    public File getCodeCacheDir() { return mkdirsOf(new File(getDataDir(), "code_cache")); }
+    public File getObbDir() { return mkdirsOf(new File(getDataDir(), "obb")); }
     public File[] getObbDirs() { return new File[] { getObbDir() }; }
     public File getFileStreamPath(String name) { return new File(getFilesDir(), name); }
     public java.io.FileInputStream openFileInput(String name) throws java.io.FileNotFoundException {
@@ -242,7 +243,7 @@ public abstract class Context {
     public void sendBroadcast(Intent intent) { ArtzigBroadcastManager.send(this, intent, null); }
     public void unregisterComponentCallbacks(ComponentCallbacks callback) {}
     public SharedPreferences getSharedPreferences(String name, int mode) {
-        java.io.File dir = new java.io.File(android.os.Environment.getDataDirectory(), "shared_prefs");
+        java.io.File dir = new java.io.File(getDataDir(), "shared_prefs");
         return android.app.ArtzigSharedPreferences.get(dir, name);
     }
     public SharedPreferences getSharedPreferences(java.io.File file, int mode) {
@@ -254,7 +255,7 @@ public abstract class Context {
                 getDatabasePath(name), factory);
     }
     public java.io.File getDatabasePath(String name) {
-        java.io.File dir = new java.io.File(android.os.Environment.getDataDirectory(), "databases");
+        java.io.File dir = new java.io.File(getDataDir(), "databases");
         dir.mkdirs();
         return new java.io.File(dir, name);
     }

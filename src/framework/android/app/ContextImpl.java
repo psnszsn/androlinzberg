@@ -16,12 +16,23 @@ public class ContextImpl extends Context {
     // ApplicationPackageManager reaches these (AOSP field names): the hosted
     // process's single ActivityThread and its one loaded APK.
     final ActivityThread mMainThread = ActivityThread.currentActivityThread();
-    final LoadedApk mPackageInfo = new LoadedApk();
+    /** Null until a context is built from a LoadedApk (createAppContext). */
+    final LoadedApk mPackageInfo;
     public ContextImpl(Resources resources, String packageName, int themeResId) {
+        this(resources, packageName, themeResId, null);
+    }
+    ContextImpl(Resources resources, String packageName, int themeResId, LoadedApk packageInfo) {
+        mPackageInfo = packageInfo;
         mResources = resources;
         mPackageName = packageName;
         mTheme = resources.newTheme();
         if (themeResId != 0) mTheme.applyStyle(themeResId, true);
+    }
+    /** AOSP ContextImpl.createAppContext(ActivityThread, LoadedApk): the hosted
+     * context over the LoadedApk's resources (real ResourcesManager) until the
+     * real ContextImpl lands. */
+    static ContextImpl createAppContext(ActivityThread mainThread, LoadedApk packageInfo) {
+        return new ContextImpl(packageInfo.getResources(), packageInfo.getPackageName(), 0, packageInfo);
     }
     /** Boot-time factory: framework-res only (app apk added when APKs load, M4). */
     public static ContextImpl createSystemContext(String frameworkResPath, int width, int height,
@@ -132,6 +143,10 @@ public class ContextImpl extends Context {
     }
     private ClassLoader mClassLoader;
     public void setClassLoaderOverride(ClassLoader cl) { mClassLoader = cl; }
+    /** AOSP ContextImpl.getDataDir: the LoadedApk's per-package data dir. */
+    @Override public java.io.File getDataDir() {
+        return mPackageInfo != null ? mPackageInfo.getDataDirFile() : super.getDataDir();
+    }
     @Override public ClassLoader getClassLoader() {
         return mClassLoader != null ? mClassLoader : getClass().getClassLoader();
     }

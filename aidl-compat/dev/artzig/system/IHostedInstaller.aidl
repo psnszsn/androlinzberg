@@ -5,6 +5,9 @@ package dev.artzig.system;
  * process announces the package it hosts before attachApplication because no
  * zygote spawned it for that package (bindProcessPackage). */
 interface IHostedInstaller {
-    String installPackage(String apkPath);
+    /** nativeLibraryDir: where the installing process extracted the APK's
+     * lib/x86_64 (NativeLibraryHelper role; the launcher picks the directory
+     * bionic sees), or null for a resources-only package. */
+    String installPackage(String apkPath, @nullable String nativeLibraryDir);
     void bindProcessPackage(String packageName, String processName);
 }

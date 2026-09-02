@@ -33,7 +33,7 @@ internal object SystemTestHostB {
         // parses the real manifest (client A asserts the parsed values).
         val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(installer.installPackage("$fixtures/dev.artzig.test.b.apk") == "dev.artzig.test.b")
+        check(installer.installPackage("$fixtures/dev.artzig.test.b.apk", null) == "dev.artzig.test.b")
         val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
         ActivityThread.attachApplicationHosted("dev.artzig.test.b")
         // A plain Binder service the cross-language native client (libbinder_ndk)
