@@ -1,8 +1,9 @@
 # Repository agent instructions
 
 - Always pass an explicit job limit to Zig build/run commands. Use at most
-  `-j10` (for example, `zig build -j10 run`), and choose a lower value when
-  system load or build memory usage requires it.
+  `nproc - 2` jobs (for example, use `-j30` when `nproc` reports 32), with a
+  minimum of `-j1` on systems where `nproc` reports two or fewer processors.
+  Choose a lower value when system load or build memory usage requires it.
 
 ## Zig I/O policy
 
