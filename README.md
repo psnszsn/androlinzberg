@@ -54,9 +54,10 @@ it needs an Android service that the host does not implement.
 The repository supplies a Nix development shell for x86_64 Linux. The shell
 contains Zig, OpenJDK, and the required native libraries.
 
-The Git repository does not contain all large source dependencies. Use a
-prepared source tree that contains the required `vendor/` and `artzig/extra/`
-content.
+The Git repository records the selected AOSP projects and files, but does not
+contain the large source archives themselves. Follow
+[`aosp/README.md`](aosp/README.md) to create the selective Repo checkout and
+generate the Artzig and Androlinzberg source tarballs before the first build.
 
 Enter the development shell:
 

@@ -7,18 +7,18 @@
 //!   2. tools/make-system-modules.sh → a java.base system-module image
 //!   3. javac each module against it (mirrors Soong's per-module compiles;
 //!      the intra-core-API stub system modules Soong uses are a subset of ours)
-//!   4. d8 (r8.jar from vendor/prebuilts/r8) with the same flags Soong passes
+//!   4. d8 (r8.jar from the AOSP package) with the same flags Soong passes
 //!      (--debug --min-api 31, record/permitted-subclasses annotations in dex)
 //!   5. jar: classes.dex + java resources → the boot jar
 //!
-//! Source lists and resources are extracted from Soong's ninja graph by
-//! tools/ninja2java.py (build/gen/java/*.rsp|.res, src/gen/java/**).
+//! Source lists and resources extracted from the pinned Soong graph are
+//! committed under build/gen/ and src/gen/java/.
 const std = @import("std");
 const table = @import("gen/java.zig");
 
 pub const Options = struct {
     vendor: std.Build.LazyPath,
-    /// dir containing libcrypto headers for NativeConstants (vendor boringssl)
+    /// AOSP package containing the BoringSSL headers for NativeConstants.
     python: []const u8 = "python3",
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,

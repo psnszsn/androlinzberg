@@ -23,11 +23,12 @@ migration requirements.
 
 ## AOSP reuse policy
 
-Treat the vendored AOSP tree under `artzig/extra/frameworks-base` as the
-reference implementation for Android framework behavior. For work in
-`android.*` or `com.android.internal.*`, do not begin with a new shim method.
+Treat the pinned AOSP checkout described by `aosp/README.md` and selected by
+`aosp/androlinzberg-files.txt` as the reference implementation for Android
+framework behavior. For work in `android.*` or `com.android.internal.*`, do not
+begin with a new shim method.
 
-1. Locate the corresponding class and method in the vendored AOSP version and
+1. Locate the corresponding class and method in the pinned AOSP version and
    trace the behavior far enough to identify its ordering, state, collaborators,
    and observable failure modes. Use the vendored version, not an arbitrary
    newer Android branch.
@@ -58,15 +59,15 @@ framework contract explains the behavior.
 
 Do not hand-write a class that Soong generates. aconfig `Flags`/`FeatureFlags`,
 logtags `EventLogTags`, `*Proto` message classes, sysprop accessors, and
-`FrameworkStatsLog` come from the generators wired into `build/java.zig`
-(`tools/build-{aidl,logtags,aconfig,…}.sh`), driven by the declaration files
-(`.aconfig`/`.logtags`/`.proto`/`.sysprop`, stats atoms) in the vendored trees.
-Add the package to the generator's input list rather than writing a placeholder;
+`FrameworkStatsLog` come from the Run steps wired through `build/generators.zig`
+and `build/java.zig`, driven by the declaration files and explicit input lists
+under `tools/`. Add the package to the generator's input list rather than
+writing a placeholder;
 `tools/check-jvm-source-policy.sh` rejects a repo-owned class whose package
 matches a generated artifact (`.java` and `.kt`). A package whose declaration is
 not yet in a vendored tree may stay hand-stubbed until its module tree is
-imported. `provenance/pins.lock` records the vendored trees' revisions; the same
-check verifies they have not drifted.
+imported. The `.aosp` dependency hash in `build.zig.zon` pins the extracted AOSP
+package contents.
 
 Prefer deep modules at the AOSP/host seam: callers should provide an Android
 operation such as “apply this configuration” or “launch this activity,” while

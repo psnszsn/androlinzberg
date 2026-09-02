@@ -6,14 +6,14 @@ main androlinzberg build uses artzig as an embedded Zig dependency.
 artzig uses pinned AOSP sources. The normal build uses Zig and the system JDK.
 It does not use Soong output.
 
-## Source tree
+## Source package
 
-The build needs the pinned source content in `vendor/` and `extra/`. These large
-directories are not part of a normal Git checkout. Use the prepared project
-source tree before you run the build.
+The build consumes its pinned AOSP subset through the `.aosp` dependency in
+`build.zig.zon`. From the parent Androlinzberg repository, follow
+[`aosp/README.md`](../aosp/README.md) to initialize the selective Repo checkout
+and regenerate `aosp/artzig-aosp-android-16.0.0_r1.tar.gz`.
 
-The `vendor/manifest.xml` file records the AOSP manifest. The generated files in
-`build/gen/` record the native and Java build graphs.
+The committed files in `build/gen/` record the native and Java build graphs.
 
 ## Development shell
 
@@ -52,7 +52,6 @@ zig build -j10 -Doptimize=fast run
 - `zig build -j10 gen-art` builds the native ART runtime.
 - `zig build -j10 java` builds the boot class-path JAR files.
 - `zig build -j10 bionic` builds the Bionic compatibility libraries.
-- `zig build -j10 androidfw` builds the Android resource library.
 - `zig build -j10 dist` assembles the complete runtime tree.
 
 Use `zig build -j10 --help` to show all build steps.

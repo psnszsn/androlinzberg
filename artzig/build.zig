@@ -1,7 +1,6 @@
 const std = @import("std");
 
 // artzig build:
-//   zig build soong     — build host ART with Soong (needs vendor/ synced; NixOS: runs in FHS env)
 //   zig build dist      — assemble the relocatable runtime tree into zig-out/dist/art
 //   zig build example   — build examples/hello (Zig host embedding ART) into zig-out/
 //   zig build run       — run it
@@ -33,51 +32,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     art_mod.addImport("jni_c", jni_mod);
-
-    // --- soong / dist steps (shell out to tools/)
-    const soong = b.addSystemCommand(&.{ "tools/soong-build.sh", "build-art-host", "generate-boot-image-host", "d8-host" });
-    soong.setCwd(b.path("."));
-    b.step("soong", "Build host ART with Soong (writes out/)").dependOn(&soong.step);
-
-    const dist_soong = b.addSystemCommand(&.{ "nix", "run", ".#aosp-env", "--", "-c", "tools/install.sh dist/art" });
-    dist_soong.setCwd(b.path("."));
-    b.step("dist-soong", "Assemble dist/art from Soong output (legacy; see `zig build dist`)").dependOn(&dist_soong.step);
-
-    // --- libandroidfw built by Zig (static) + its C API
-    const androidfw = @import("build/androidfw.zig").build(b, .{
-        .target = target,
-        .optimize = optimize,
-        .vendor = aosp,
-        .extra = b.path("extra"),
-    });
-    b.installArtifact(androidfw);
-    b.step("androidfw", "Build libandroidfw with Zig").dependOn(&b.addInstallArtifact(androidfw, .{}).step);
-
-    const androidfw_tc = b.addTranslateC(.{
-        .root_source_file = b.path("src/androidfw/include/androidfw/androidfw_c_api.h"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    androidfw_tc.defineCMacro("_GNU_SOURCE", "1"); // off64_t
-    androidfw_tc.defineCMacro("_LARGEFILE64_SOURCE", "1");
-    const androidfw_mod = androidfw_tc.createModule();
-    androidfw_mod.linkLibrary(androidfw);
-    _ = b.addModule("androidfw", .{ .root_source_file = androidfw_tc.getOutput(), .target = target, .optimize = optimize }).linkLibrary(androidfw);
-
-    const res_exe = b.addExecutable(.{
-        .name = "resources",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/resources/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{.{ .name = "androidfw", .module = androidfw_mod }},
-        }),
-    });
-    b.installArtifact(res_exe);
-    const run_res = b.addRunArtifact(res_exe);
-    run_res.addPassthruArgs();
-    b.step("run-resources", "Run examples/resources (args: <apk> [type/name...])").dependOn(&run_res.step);
 
     const vendor_dir = aosp_dep.builder.root.toString(b.allocator) catch @panic("OOM");
     const out_dir = (b.root.join(b.allocator, "out") catch @panic("OOM")).toString(b.allocator) catch @panic("OOM");

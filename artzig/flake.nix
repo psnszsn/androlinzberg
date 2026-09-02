@@ -1,5 +1,5 @@
 {
-  description = "artzig: ART from AOSP main, built on a Linux host";
+  description = "artzig: ART from pinned AOSP sources, built on a Linux host";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -11,31 +11,9 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
       zigPinned = zig-overlay.packages.${system}."master-2026-08-25";
-      # AOSP's prebuilts (clang, ninja, jdk, python, rust, ...) are dynamically
-      # linked FHS binaries, so Soong has to run inside an FHS sandbox on NixOS.
-      fhs = pkgs.buildFHSEnv {
-        name = "aosp-env";
-        targetPkgs = p: (with p; [
-          # what soong_ui/ninja/clang expect from the host
-          bash coreutils findutils gnugrep gnused gawk diffutils which file
-          git python3 curl unzip zip rsync
-          gcc.cc.lib glibc zlib ncurses5 ncurses libxml2 libxcrypt-legacy
-          openssl libtool util-linux gnumake pkg-config
-          # system deps we want to build against instead of the vendored copies
-          expat lz4 zstd icu
-        ]) ++ [ zigPinned ];
-        multiPkgs = p: with p; [ zlib ncurses5 ];
-        profile = ''
-          export USE_CCACHE=0
-          export ALLOW_NINJA_ENV=true
-          # don't let Soong try to use host go/python from PATH over prebuilts
-          export ANDROID_BUILD_TOP="$PWD"
-        '';
-        runScript = "bash";
-      };
     in {
-      # Normal dev shell: zig + a JDK for javac/d8 (system JDK by decision).
-      # Soong itself needs the FHS env: `nix run .#aosp-env` or `nix develop .#aosp`.
+      # Zig + a JDK for javac/d8, Repo for refreshing the AOSP source packages,
+      # and the native dependencies used by Artzig and Androlinzberg.
       devShells.${system} = {
         default = pkgs.mkShell {
           packages = [ zigPinned ] ++ (with pkgs; [ openjdk21_headless python3 git-repo zlib libpng libcap icu pkg-config e2fsprogs unzip libglvnd elfutils libunwind libbsd libmd
@@ -46,10 +24,8 @@
             ffmpeg-full libva libdrm libgbm ]);
           JAVA_HOME = "${pkgs.openjdk21_headless}/lib/openjdk";
         };
-        aosp = fhs.env;
       };
       packages.${system} = {
-        aosp-env = fhs;
         zig = zigPinned;
       };
     };

@@ -1,9 +1,8 @@
 //! artzig — embed the Android Runtime (ART) in a Zig program.
 //!
-//! Phase A: `libart.so` and friends come from a runtime tree produced by
-//! `tools/install.sh` (Soong output); this module locates the tree, sets up
-//! the environment ART expects, dlopen()s libart and creates the VM through
-//! the JNI invocation API.
+//! `libart.so` and friends come from the relocatable runtime tree assembled by
+//! `zig build dist`; this module locates the tree, sets up the environment ART
+//! expects, dlopen()s libart and creates the VM through the JNI invocation API.
 
 const std = @import("std");
 pub const jni = @import("jni_c");
@@ -28,7 +27,7 @@ pub const Error = error{
     OutOfMemory,
 };
 
-/// Boot classpath as laid out by tools/install.sh (relative to the tree root)
+/// Boot classpath in the relocatable runtime tree (relative to the tree root)
 /// and the canonical locations the boot image was compiled with.
 pub const boot_jars = [_][]const u8{
     "com.android.art/javalib/core-oj.jar",
@@ -40,7 +39,7 @@ pub const boot_jars = [_][]const u8{
     "com.android.conscrypt/javalib/conscrypt.jar",
 };
 
-/// Pluggable native-library loader (see vendor/art/runtime/jni/artzig_native_loader.h).
+/// Pluggable native-library loader (see AOSP art/runtime/jni/artzig_native_loader.h).
 /// Install with `Runtime.setNativeLoader` before `create`, e.g. to route
 /// System.loadLibrary() through bionic_translation's linker.
 pub const NativeLoader = extern struct {

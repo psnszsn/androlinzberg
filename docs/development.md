@@ -14,8 +14,9 @@ nix develop ./artzig
 The shell contains the supported Zig compiler, OpenJDK 21, build tools, and
 native library headers.
 
-The build also needs the prepared `vendor/` and `artzig/extra/` source trees.
-These trees contain pinned AOSP and Skia sources.
+The build consumes pinned AOSP source tarballs through the Zig package manager.
+Follow [the AOSP package instructions](../aosp/README.md) to initialize the
+selective Repo checkout and regenerate those archives.
 
 ## Build
 
