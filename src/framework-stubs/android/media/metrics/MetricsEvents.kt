@@ -414,5 +414,7 @@ class TrackChangeEvent private constructor(
 private fun <T> creator(defaultValue: () -> T): Parcelable.Creator<T> =
     object : Parcelable.Creator<T> {
         override fun createFromParcel(source: Parcel): T = defaultValue()
+
+        @Suppress("UNCHECKED_CAST")
         override fun newArray(size: Int): Array<T?> = arrayOfNulls<Any?>(size) as Array<T?>
     }

@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package android.webkit
 
 import java.io.InputStream

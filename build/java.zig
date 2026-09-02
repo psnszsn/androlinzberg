@@ -1,6 +1,6 @@
 //! Framework JVM: the vendored AOSP subset + our Java/Kotlin replacements ->
 //! a multidex framework.jar, plus framework-res.apk (aapt2) and generated Java. Replaces
-//! tools/build-java.sh; the curated source list lives in tools/java-srcs.py.
+//! tools/build-java.sh; the curated source list lives in build/java_sources.zig.
 //!
 //! zig's Run step does not hash directory contents, so steps that depend on
 //! whole source trees take a configure-time "tree stamp" (tools/tree-stamp.py)
@@ -47,7 +47,6 @@ pub fn build(b: *std.Build, o: Options) Result {
         fb.path(b, "libs/hwui/apex/java"), aosp.path("frameworks/libs/modules-utils/java"),
         b.path("src/framework"),           b.path("src/framework-stubs"),
         b.path("src/annotation-runtime"),  b.path("src/java"),
-        b.path("tools/java-srcs.py"),      b.path("tools/compile-jvm.sh"),
     });
     const stamp_kotlinc = stamp(b, "kotlinc.stamp", &.{
         aosp.path("external/kotlinc/bin"),
@@ -83,9 +82,21 @@ pub fn build(b: *std.Build, o: Options) Result {
     const res_apk = o.generated.res_apk;
     const fixture_apks_dir = o.generated.fixture_apks_dir;
 
-    // 3. curated source list
-    const srcs = b.addSystemCommand(&.{ "python3", "tools/java-srcs.py" });
-    const srcs_txt = srcs.addOutputFileArg("framework-srcs.txt");
+    // 3. Curated Java, Kotlin, and runtime-annotation source lists. This must
+    // run after generated directories exist, so it is a host tool rather than
+    // configure-time build.zig traversal.
+    const source_lister = b.addExecutable(.{
+        .name = "java-sources",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("build/java_sources.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const srcs = b.addRunArtifact(source_lister);
+    const java_srcs = srcs.addOutputFileArg("framework-java-sources.rsp");
+    const kotlin_srcs = srcs.addOutputFileArg("framework-kotlin-sources.rsp");
+    const annotation_srcs = srcs.addOutputFileArg("framework-annotation-sources.rsp");
     srcs.addPrefixedDirectoryArg("FB=", fb);
     srcs.addPrefixedDirectoryArg("MU=", aosp.path("frameworks/libs/modules-utils"));
     srcs.addPrefixedDirectoryArg("APP=", b.path("."));
@@ -100,25 +111,69 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("SD=", aosp.path("packages/modules/StatsD"));
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);
+    srcs.step.dependOn(&source_policy.step);
 
-    // 4. mixed Kotlin/Java compile against the Android system-modules image.
-    // The helper owns Kotlin-first/Java-second ordering and their classpaths.
-    const compile = b.addSystemCommand(&.{"bash"});
-    compile.addFileArg(b.path("tools/compile-jvm.sh"));
-    compile.addFileArg(core_plus);
-    compile.addDirectoryArg(sysmod_dir);
-    compile.addFileArg(srcs_txt);
-    compile.addDirectoryArg(aosp.path("external/kotlinc"));
-    const classes_dir = compile.addOutputDirectoryArg("classes");
-    compile.addFileInput(stamp_jvm);
-    compile.addFileInput(stamp_kotlinc);
-    compile.step.dependOn(&source_policy.step);
+    // 4. Kotlin first, then Java, matching AOSP Soong's mixed-source ordering.
+    // Each compiler owns its output directory; the only shell logic joins
+    // generated LazyPaths into the single classpath argument the JVM tools require.
+    const kotlin_stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
+    const kotlinc = b.addSystemCommand(&.{
+        "sh",
+        "-c",
+        \\exec "$1" -no-jdk -no-stdlib -no-reflect -language-version 2.0 -api-version 2.0 -jvm-target 21 -java-parameters -Xsam-conversions=class -Xstring-concat=inline -classpath "$2:$3" -d "$4" "@$5" "@$6"
+        ,
+        "sh",
+    });
+    kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
+    kotlinc.addFileArg(core_plus);
+    kotlinc.addFileArg(kotlin_stdlib);
+    const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
+    kotlinc.addFileArg(java_srcs);
+    kotlinc.addFileArg(kotlin_srcs);
+    kotlinc.addFileInput(stamp_jvm);
+    kotlinc.addFileInput(stamp_kotlinc);
+    // C1-only code fills the code cache faster; size it for the whole tree.
+    kotlinc.setEnvironmentVariable("JAVA_OPTS", "-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=512m");
+    kotlinc.setName("compile framework Kotlin");
 
-    // 5. d8 (via a classes jar; the r8 CLI takes jars, not directories)
+    // android.annotation belongs to the system-module image, so runtime copies
+    // of annotation classes need a separate module-free javac pass.
+    const annotation_javac = b.addSystemCommand(&.{
+        "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-d",
+    });
+    const annotation_classes = annotation_javac.addOutputDirectoryArg("annotation-classes");
+    annotation_javac.addPrefixedFileArg("@", annotation_srcs);
+    annotation_javac.addFileInput(stamp_jvm);
+    annotation_javac.setName("compile runtime annotations");
+
+    const javac = b.addSystemCommand(&.{
+        "bash",
+        "-c",
+        \\exec javac --system="$1" -source 21 -target 21 -encoding UTF-8 -g -parameters -XDstringConcat=inline -Xmaxerrs 2000 -nowarn -Xlint:none -classpath "$2:$3:$4" -d "$5" "@$6" 2> >(grep -F -v -e 'Note: Some input files use or override a deprecated API.' -e 'Note: Recompile with -Xlint:deprecation for details.' -e 'Note: Some input files use unchecked or unsafe operations.' -e 'Note: Recompile with -Xlint:unchecked for details.' >&2)
+        ,
+        "bash",
+    });
+    javac.addDirectoryArg(sysmod_dir);
+    javac.addDirectoryArg(kotlin_classes);
+    javac.addDirectoryArg(annotation_classes);
+    javac.addFileArg(kotlin_stdlib);
+    const java_classes = javac.addOutputDirectoryArg("java-classes");
+    javac.addFileArg(java_srcs);
+    javac.addFileInput(stamp_jvm);
+    javac.setName("compile framework Java");
+
+    // 5. Package each compiler's directory directly, with no intermediate
+    // class-tree copies. The r8 CLI takes jars rather than directories.
     const jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
     const classes_jar = jar.addOutputFileArg("framework-classes.jar");
     jar.addArg("-C");
-    jar.addDirectoryArg(classes_dir);
+    jar.addDirectoryArg(kotlin_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(annotation_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(java_classes);
     jar.addArg(".");
 
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });

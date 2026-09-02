@@ -32,7 +32,7 @@ begin with a new shim method.
    trace the behavior far enough to identify its ordering, state, collaborators,
    and observable failure modes. Use the vendored version, not an arbitrary
    newer Android branch.
-2. Check `tools/java-srcs.py` to determine whether the AOSP class is already
+2. Check `build/java_sources.zig` to determine whether the AOSP class is already
    compiled, deliberately excluded, or replaced by a file in `src/framework`
    or `src/framework-stubs`. Never compile both the AOSP class and a replacement
    with the same fully-qualified name.

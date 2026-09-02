@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.artzig.system
 
 import android.app.AppOpsManager

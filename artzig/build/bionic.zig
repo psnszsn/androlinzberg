@@ -55,8 +55,9 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     dl_bio.root_module.addCSourceFiles(.{
         .root = o.src,
         .files = &(wrapper_srcs ++ [_][]const u8{
-            "linker/dlfcn.c", "linker/linker_environ.c",
-            "linker/linker_tls.c", "linker/rt.c", "linker/strlcpy.c",
+            "linker/dlfcn.c",      "linker/linker_environ.c",
+            "linker/linker_tls.c", "linker/rt.c",
+            "linker/strlcpy.c",
         }),
         .flags = &(c_common ++ [_][]const u8{ "-D_LARGEFILE64_SOURCE", "-DLINKER_DEBUG=0", "-Wno-parentheses" }),
     });
@@ -66,8 +67,8 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     // assembler takes the section name literally, so this one TU is built with
     // the system gcc and linked in as an object.
     dl_bio.root_module.addObjectFile(gccObject(b, o, "linker/linker.c", &.{
-        "-fPIC", "-D_GNU_SOURCE", "-D_LARGEFILE64_SOURCE", "-DLINKER_DEBUG=0",
-        "-Wno-parentheses",
+        "-fPIC",            "-D_GNU_SOURCE",                 "-D_LARGEFILE64_SOURCE",        "-DLINKER_DEBUG=0",
+        "-Wno-parentheses", "-DR_AARCH64_TLS_DTPREL32=1031", "-DR_AARCH64_TLS_TPREL64=1030",
     }));
     dl_bio.root_module.linkSystemLibrary("EGL", .{ .needed = true });
     linkByPath(b, dl_bio.root_module, "libelf", &.{"libelf.so"});
@@ -84,9 +85,9 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     c_bio.root_module.addCSourceFiles(.{
         .root = o.src,
         .files = &(wrapper_srcs ++ [_][]const u8{
-            "libc/libc.c",       "libc/libc-chk.c",    "libc/libc-math.c",
-            "libc/libc-misc.c",  "libc/libc-musl.c",   "libc/libc-signal.c",
-            "libc/libc-stdio.c", "libc/libc-sha1.c",   "libc/libc-open-overrides.c",
+            "libc/libc.c",       "libc/libc-chk.c",  "libc/libc-math.c",
+            "libc/libc-misc.c",  "libc/libc-musl.c", "libc/libc-signal.c",
+            "libc/libc-stdio.c", "libc/libc-sha1.c", "libc/libc-open-overrides.c",
         }),
         .flags = &(c_common ++ [_][]const u8{"-DPAGESIZE=4096"}),
     });

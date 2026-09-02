@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package android.webkit
 
 open class SslErrorHandler : android.os.Handler() {

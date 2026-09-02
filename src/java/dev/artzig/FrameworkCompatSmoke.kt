@@ -1,4 +1,6 @@
 // artzig: focused smoke checks for hosted-package framework behavior.
+@file:Suppress("DEPRECATION")
+
 package dev.artzig
 
 import android.app.AlarmManager

@@ -1,0 +1,745 @@
+//! Curated framework JVM source selection.
+//!
+//! This host tool runs after generated source directories exist. It writes
+//! deterministic javac, kotlinc, and runtime-annotation response files.
+const std = @import("std");
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
+
+const AddOptions = struct {
+    max_depth: ?usize = null,
+    not_paths: []const []const u8 = &.{},
+    not_names: []const []const u8 = &.{},
+};
+
+fn globMatch(pattern: []const u8, text: []const u8) bool {
+    var pattern_index: usize = 0;
+    var text_index: usize = 0;
+    var star_index: ?usize = null;
+    var retry_text_index: usize = 0;
+
+    while (text_index < text.len) {
+        if (pattern_index < pattern.len and
+            (pattern[pattern_index] == text[text_index] or pattern[pattern_index] == '?'))
+        {
+            pattern_index += 1;
+            text_index += 1;
+        } else if (pattern_index < pattern.len and pattern[pattern_index] == '*') {
+            star_index = pattern_index;
+            pattern_index += 1;
+            retry_text_index = text_index;
+        } else if (star_index) |star| {
+            pattern_index = star + 1;
+            retry_text_index += 1;
+            text_index = retry_text_index;
+        } else {
+            return false;
+        }
+    }
+    while (pattern_index < pattern.len and pattern[pattern_index] == '*') pattern_index += 1;
+    return pattern_index == pattern.len;
+}
+
+fn matchesAny(patterns: []const []const u8, text: []const u8) bool {
+    for (patterns) |pattern| {
+        if (globMatch(pattern, text)) return true;
+    }
+    return false;
+}
+
+const Collector = struct {
+    allocator: Allocator,
+    io: Io,
+    roots: *const std.StringHashMapUnmanaged([]const u8),
+    paths: std.StringHashMapUnmanaged(void) = .empty,
+
+    fn deinit(c: *Collector) void {
+        var keys = c.paths.keyIterator();
+        while (keys.next()) |path| c.allocator.free(path.*);
+        c.paths.deinit(c.allocator);
+    }
+
+    fn resolve(c: *Collector, spec: []const u8) ![]u8 {
+        if (spec.len < 2 or spec[0] != '$') return error.InvalidSourceRoot;
+        const slash = std.mem.indexOfScalar(u8, spec, '/') orelse spec.len;
+        const root = c.roots.get(spec[1..slash]) orelse return error.UnknownSourceRoot;
+        if (slash == spec.len) return c.allocator.dupe(u8, root);
+        return Io.Dir.path.join(c.allocator, &.{ root, spec[slash + 1 ..] });
+    }
+
+    fn insert(c: *Collector, path: []u8) !void {
+        const result = try c.paths.getOrPut(c.allocator, path);
+        if (result.found_existing) {
+            c.allocator.free(path);
+        } else {
+            result.key_ptr.* = path;
+            result.value_ptr.* = {};
+        }
+    }
+
+    fn file(c: *Collector, spec: []const u8) !void {
+        try c.insert(try c.resolve(spec));
+    }
+
+    fn add(c: *Collector, spec: []const u8, options: AddOptions) !void {
+        const root_path = try c.resolve(spec);
+        defer c.allocator.free(root_path);
+
+        var dir = try Io.Dir.cwd().openDir(c.io, root_path, .{ .iterate = true });
+        defer dir.close(c.io);
+        var walker = try dir.walk(c.allocator);
+        defer walker.deinit();
+
+        while (try walker.next(c.io)) |entry| {
+            if (entry.kind == .directory) {
+                if (options.max_depth) |max_depth| {
+                    if (entry.depth() >= max_depth) walker.leave(c.io);
+                }
+                continue;
+            }
+            if (entry.kind != .file and entry.kind != .sym_link) continue;
+            if (options.max_depth) |max_depth| {
+                if (entry.depth() > max_depth) continue;
+            }
+            if (!std.mem.endsWith(u8, entry.basename, ".java") and
+                !std.mem.endsWith(u8, entry.basename, ".kt")) continue;
+            if (matchesAny(options.not_names, entry.basename)) continue;
+
+            const path = try Io.Dir.path.join(c.allocator, &.{ root_path, entry.path });
+            if (matchesAny(options.not_paths, path)) {
+                c.allocator.free(path);
+                continue;
+            }
+            try c.insert(path);
+        }
+    }
+};
+
+fn collect(c: *Collector) !void {
+    try c.file("$MU/java/com/android/internal/util/Preconditions.java");
+    try c.add("$MU/java/com/android/internal/annotations", .{});
+    try c.add("$FB/core/java/com/android/internal/util/function", .{});
+    try c.add("$FB/graphics/java/android/graphics", .{ .not_paths = &.{"*/pdf/*"}, .not_names = &.{ "GraphicsStatsService.java", "GraphicBuffer.java", "SurfaceTexture.java", "SurfaceControl*.java", "Renderer*.java" } });
+    try c.add("$FB/libs/hwui/apex/java", .{});
+    try c.add("$FB/core/java/android/content/res", .{ .not_names = &.{ "ObbInfo.java", "ObbScanner.java" } });
+    try c.add("$FB/core/java/android/text", .{ .not_paths = &.{ "*/method/*", "*/util/*", "*/format/*" }, .not_names = &.{ "Html.java", "NoWritingToolsSpan.java", "SuggestionSpan.java", "AccessibilityClickableSpan.java", "AccessibilityReplacementSpan.java", "AccessibilityURLSpan.java", "EasyEditSpan.java", "TranslationTransformationMethod.java" } });
+    try c.add("$FB/core/java/android/text/format", .{ .not_names = &.{ "Formatter.java", "Time.java", "TimeFormatter.java", "DateFormat.java", "TimeMigrationUtils.java" } });
+    try c.add("$FB/core/java/android/view", .{ .max_depth = 1, .not_names = &.{ "ViewRootImpl.java", "WindowManagerGlobal.java", "WindowManagerImpl.java", "Choreographer.java", "ThreadedRenderer.java", "SurfaceControl.java", "SurfaceControlRegistry.java", "SurfaceControlInputReceiver.java", "SurfaceControlViewHost.java", "SurfaceView.java", "SurfaceSession.java", "TextureView.java", "WindowlessWindowManager.java", "WindowlessWindowLayout.java", "AccessibilityInteractionController.java", "HandwritingInitiator.java" } });
+    try c.add("$FB/core/java/android/view/accessibility", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/view/autofill", .{ .max_depth = 1, .not_names = &.{"AutofillClientController.java"} });
+    try c.add("$FB/core/java/android/view/contentcapture", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/view/inputmethod", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/view/translation", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/view/inspector", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/widget", .{ .max_depth = 1, .not_names = &.{ "RemoteViews.java", "VideoView.java", "RemoteViewsAdapter.java", "RemoteViewsService.java", "MediaController.java", "QuickContactBadge.java", "DayPicker*.java", "DatePicker*.java", "TimePicker*.java", "RadialTimePickerView.java", "SimpleMonthView.java", "CalendarView*.java", "YearPickerView.java", "TextViewWithCircularIndicator.java", "DateTimeView.java", "TextInputTimePickerView.java", "RemoteCollectionItemsAdapter.java", "RemoteViewsSerializers.java", "SearchView.java", "SuggestionsAdapter.java", "ActivityChooserModel.java", "ActivityChooserView.java", "ShareActionProvider.java" } });
+    try c.add("$FB/core/java/android/text/method", .{});
+    try c.add("$FB/core/java/android/window", .{ .max_depth = 1, .not_names = &.{ "SurfaceSyncGroup.java", "TransitionInfo.java", "WindowContainerTransaction.java", "TaskFragment*.java", "RemoteTransition.java", "WindowContainerToken.java", "TransitionRequestInfo.java", "WindowOrganizer.java", "TaskOrganizer.java", "DisplayAreaOrganizer.java", "BackAnimation*.java", "WindowTokenClient.java", "TransitionFilter.java", "WindowAnimationState.java", "StartingWindowInfo.java", "TaskAppearedInfo.java", "WindowTokenClientController.java", "WindowContext.java", "WindowContextController.java", "RemoteTransitionStub.java", "DisplayAreaInfo.java", "SplashScreen.java", "DisplayAreaAppearedInfo.java", "TransitionMetrics.java", "TaskSnapshot.java", "PictureInPicture*.java", "SnapshotDrawerUtils.java", "SplashScreenView.java", "WindowProviderService.java" } });
+    try c.add("$FB/core/java/android/database", .{});
+    try c.add("$FB/core/java/android/transition", .{});
+    try c.add("$FB/core/java/com/android/internal/policy", .{ .max_depth = 1, .not_names = &.{ "TransitionAnimation.java", "PhoneFallbackEventHandler.java", "FoldLockSettingsObserver.java", "ForceShowNavBarSettingsObserver.java", "GestureNavigationSettingsObserver.java", "KeyguardDismissCallback.java", "AttributeCache.java" } });
+    try c.add("$FB/core/java/com/android/internal/view", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/com/android/internal/view/menu", .{});
+    try c.add("$FB/core/java/com/android/internal/inputmethod", .{ .max_depth = 1, .not_names = &.{ "ImeTracingPerfettoImpl.java", "ImeTracingServerImpl.java" } });
+    try c.add("$FB/core/java/com/android/internal/protolog/common", .{});
+    try c.file("$FB/core/java/com/android/internal/protolog/ProtoLogGroup.java");
+    try c.add("$FB/core/java/com/android/internal/infra", .{ .max_depth = 1, .not_names = &.{ "AbstractRemoteService.java", "ServiceConnector.java", "AbstractMultiplePendingRequestsRemoteService.java", "AbstractSinglePendingRequestRemoteService.java" } });
+    try c.add("$FB/core/java/android/app/assist", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/accessibilityservice", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/view/textclassifier", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/view/textservice", .{ .max_depth = 1 });
+    try c.add("$FB/core/java/android/hardware/input", .{ .max_depth = 1, .not_names = &.{ "Virtual*.java", "InputDeviceSensorManager.java", "InputDeviceLights.java", "InputDeviceLightsManager.java", "InputDeviceVibrator.java", "InputDeviceVibratorManager.java", "InputDeviceBatteryState.java" } });
+    try c.add("$FB/core/java/android/hardware/display", .{ .max_depth = 1, .not_names = &.{"ColorDisplayManager.java"} });
+    try c.add("$AIDL", .{});
+    try c.add("$LOGTAGS", .{});
+    try c.add("$ACONFIG", .{});
+    try c.add("$SYSPROP", .{});
+    try c.add("$PROTO", .{});
+    try c.add("$STATS", .{});
+    try c.add("$NANO", .{});
+    // Reused javanano runtime for the nano message classes (pure Java, vendored).
+    try c.add("$NRT", .{});
+    // Reused StatsD-module source: the real StatsEvent encoder (android.util.StatsLog
+    // is the host-seam sink in src/framework).
+    try c.file("$SD/framework/java/android/util/StatsEvent.java");
+    try c.add("$APP/src/framework-stubs", .{});
+    // AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
+    try c.file("$FB/services/core/java/com/android/server/SystemService.java");
+    try c.file("$FB/services/core/java/com/android/server/SystemServiceManager.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/TimingsTraceAndSlog.java");
+    // Reused AOSP clipboard: the service plus the real manager client. The two AOSP
+    // monitors talk to qemu/ChromeOS pipes; the hosted EmulatorClipboardMonitor in
+    // src/framework-stubs is an inert linkage-compatible replacement.
+    try c.add("$FB/services/core/java/com/android/server/clipboard", .{ .not_names = &.{ "EmulatorClipboardMonitor.java", "ArcClipboardMonitor.java" } });
+    try c.file("$CJ/android/content/ClipboardManager.java");
+    try c.file("$CJ/android/text/ClipboardManager.java");
+    try c.file("$CJ/android/util/SparseArrayMap.java");
+    try c.file("$CJ/android/util/SystemPropertySetter.java");
+    try c.file("$CJ/android/content/pm/SystemFeaturesCache.java");
+    try c.file("$CJ/android/util/SafetyProtectionUtils.java");
+    try c.file("$CJ/com/android/server/LocalServices.java");
+    try c.file("$CJ/android/util/TimingsTraceLog.java");
+    try c.add("$FB/core/java/android/text/util", .{});
+    try c.add("$FB/core/java/android/view/displayhash", .{});
+    try c.add("$FB/core/java/com/android/internal/dynamicanimation", .{});
+    try c.add("$FB/core/java/com/google/android/collect", .{});
+    try c.add("$FB/core/java/android/view/animation", .{});
+    try c.add("$FB/core/java/android/content/om", .{ .not_names = &.{ "FabricatedOverlay.java", "OverlayManager.java", "OverlayManagerTransaction.java" } });
+    try c.file("$FB/core/java/com/android/internal/graphics/ColorUtils.java");
+    try c.add("$FB/core/java/com/android/internal/graphics/cam", .{});
+    try c.add("$FB/core/java/android/animation", .{});
+    try c.add("$RES/java", .{});
+    try c.add("$APP/src/framework", .{});
+    try c.add("$APP/src/java", .{});
+    try c.file("$CJ/android/util/AttributeSet.java");
+    try c.file("$CJ/android/util/DisplayMetrics.java");
+    try c.file("$CJ/android/util/TypedValue.java");
+    try c.file("$CJ/android/util/ArrayMap.java");
+    try c.file("$CJ/android/util/MapCollections.java");
+    try c.file("$CJ/android/util/ContainerHelpers.java");
+    try c.file("$CJ/android/util/SparseArray.java");
+    try c.file("$CJ/android/util/SparseIntArray.java");
+    try c.file("$CJ/android/util/SparseLongArray.java");
+    try c.file("$CJ/android/util/LongSparseArray.java");
+    try c.file("$CJ/android/util/LongSparseLongArray.java");
+    try c.file("$CJ/android/util/LongArray.java");
+    try c.file("$CJ/android/util/IntArray.java");
+    try c.file("$CJ/android/util/ArraySet.java");
+    try c.file("$CJ/android/util/Pools.java");
+    try c.file("$CJ/android/util/Pair.java");
+    try c.file("$CJ/android/util/Half.java");
+    try c.file("$CJ/android/util/MathUtils.java");
+    try c.file("$CJ/android/util/FloatProperty.java");
+    try c.file("$CJ/android/util/IntProperty.java");
+    try c.file("$CJ/android/util/Property.java");
+    try c.file("$CJ/android/util/StateSet.java");
+    try c.file("$CJ/android/util/LayoutDirection.java");
+    try c.file("$CJ/android/util/Size.java");
+    try c.file("$CJ/android/util/SizeF.java");
+    try c.file("$CJ/android/util/LruCache.java");
+    try c.file("$CJ/android/util/Base64.java");
+    try c.file("$CJ/android/util/PathParser.java");
+    try c.file("$CJ/android/util/AndroidException.java");
+    try c.file("$CJ/android/util/AndroidRuntimeException.java");
+    try c.file("$CJ/android/util/Printer.java");
+    try c.file("$CJ/android/util/EmptyArray.java");
+    try c.file("$CJ/android/util/UtilConfig.java");
+    try c.file("$CJ/android/util/Slog.java");
+    try c.file("$CJ/android/util/Dumpable.java");
+    try c.file("$CJ/android/os/Parcelable.java");
+    try c.file("$CJ/android/os/HandlerThread.java");
+    try c.file("$CJ/android/os/BadParcelableException.java");
+    try c.file("$CJ/android/os/ServiceSpecificException.java");
+    try c.file("$CJ/android/os/NetworkOnMainThreadException.java");
+    try c.file("$CJ/android/os/ParcelFormatException.java");
+    try c.file("$CJ/android/text/FontConfig.java");
+    try c.file("$CJ/android/text/GraphicsOperations.java");
+    try c.file("$CJ/android/hardware/DataSpace.java");
+    try c.file("$CJ/android/content/res/FontScaleConverter.java");
+    try c.file("$CJ/android/content/res/FontScaleConverterFactory.java");
+    try c.file("$CJ/android/os/HandlerExecutor.java");
+    try c.file("$CJ/android/util/ReflectiveProperty.java");
+    try c.file("$CJ/com/android/internal/util/CollectionUtils.java");
+    try c.file("$CJ/android/text/TextPaint.java");
+    try c.file("$CJ/android/text/TextDirectionHeuristic.java");
+    try c.file("$CJ/android/text/TextDirectionHeuristics.java");
+    try c.file("$CJ/android/content/res/FontScaleConverterImpl.java");
+    try c.file("$CJ/android/util/NoSuchPropertyException.java");
+    try c.file("$CJ/android/util/ExceptionUtils.java");
+    try c.file("$CJ/android/os/ParcelableException.java");
+    try c.file("$CJ/com/android/internal/util/FunctionalUtils.java");
+    try c.file("$CJ/com/android/internal/util/Parcelling.java");
+    try c.file("$CJ/com/android/internal/util/ArrayUtils.java");
+    try c.file("$CJ/com/android/internal/util/GrowingArrayUtils.java");
+    try c.file("$CJ/com/android/internal/util/VirtualRefBasePtr.java");
+    try c.file("$CJ/com/android/internal/util/FastMath.java");
+    try c.file("$CJ/android/hardware/DataSpace.java");
+    try c.file("$CJ/android/os/HandlerExecutor.java");
+    try c.file("$CJ/android/app/WindowConfiguration.java");
+    try c.file("$CJ/android/app/RemoteAction.java");
+    try c.file("$CJ/android/app/PictureInPictureParams.java");
+    try c.file("$CJ/android/view/Gravity.java");
+    try c.file("$CJ/android/view/InflateException.java");
+    try c.file("$CJ/android/view/DisplayAdjustments.java");
+    try c.file("$CJ/android/text/method/OffsetMapping.java");
+    try c.file("$CJ/android/util/TimeFormatException.java");
+    try c.file("$CJ/android/util/MergedConfiguration.java");
+    try c.file("$CJ/android/os/TraceNameSupplier.java");
+    try c.file("$CJ/com/android/internal/util/XmlUtils.java");
+    try c.file("$CJ/com/android/internal/util/HexDump.java");
+    try c.file("$CJ/com/android/internal/util/FastPrintWriter.java");
+    try c.file("$CJ/com/android/internal/util/BitUtils.java");
+    try c.file("$CJ/com/android/internal/util/IntPair.java");
+    try c.file("$CJ/com/android/internal/util/RingBuffer.java");
+    try c.file("$CJ/com/android/internal/util/IndentingPrintWriter.java");
+    try c.file("$CJ/android/util/SparseBooleanArray.java");
+    try c.file("$CJ/android/util/SparseSetArray.java");
+    try c.file("$CJ/android/util/Range.java");
+    try c.file("$CJ/android/util/Rational.java");
+    try c.file("$CJ/android/util/DebugUtils.java");
+    try c.file("$CJ/android/util/DisplayUtils.java");
+    try c.file("$CJ/android/util/IndentingPrintWriter.java");
+    try c.file("$CJ/android/util/KeyValueListParser.java");
+    try c.file("$CJ/android/util/LocalLog.java");
+    try c.file("$CJ/android/util/LogPrinter.java");
+    try c.file("$CJ/android/util/PrefixPrinter.java");
+    try c.file("$CJ/android/util/PrintWriterPrinter.java");
+    try c.file("$CJ/android/util/RotationUtils.java");
+    try c.file("$CJ/android/util/SequenceUtils.java");
+    try c.file("$CJ/android/util/SuperNotCalledException.java");
+    try c.file("$CJ/android/util/CloseGuard.java");
+    try c.file("$CJ/android/util/Patterns.java");
+    try c.file("$CJ/android/util/Singleton.java");
+    try c.file("$CJ/android/content/ComponentName.java");
+    try c.file("$CJ/android/content/ComponentCallbacks.java");
+    try c.file("$CJ/android/content/DialogInterface.java");
+    try c.file("$CJ/android/content/ComponentCallbacks2.java");
+    try c.file("$CJ/android/content/ContentValues.java");
+    try c.file("$CJ/android/content/ClipData.java");
+    try c.file("$CJ/android/content/ClipDescription.java");
+    try c.file("$CJ/android/content/LocusId.java");
+    try c.file("$CJ/android/content/ServiceConnection.java");
+    try c.file("$CJ/android/content/SharedPreferences.java");
+    try c.file("$CJ/android/content/UndoManager.java");
+    try c.file("$CJ/android/content/UndoOperation.java");
+    try c.file("$CJ/android/content/UndoOwner.java");
+    try c.file("$CJ/android/content/OperationApplicationException.java");
+    try c.file("$CJ/android/content/IContentProvider.java");
+    try c.file("$CJ/android/provider/Settings.java");
+    try c.file("$CJ/android/app/AsyncNotedAppOp.java");
+    try c.file("$CJ/android/app/SyncNotedAppOp.java");
+    try c.file("$CJ/android/app/RuntimeAppOpAccessMessage.java");
+    try c.file("$CJ/android/os/PackageTagsList.java");
+    try c.file("$CJ/android/content/pm/UserProperties.java");
+    try c.file("$CJ/android/content/RestrictionEntry.java");
+    try c.file("$CJ/com/android/internal/app/MessageSamplingConfig.java");
+
+    // Phase 5a: AOSP manifest parsing stack (PackageParser2/ParsingPackageUtils/
+    // PackageImpl) + the real android.content.pm value types it hydrates. The
+    // hosted trimmed value types and IntentFilter stub are deleted with this.
+    try c.add("$CJ/com/android/internal/pm", .{ .not_names = &.{"AconfigFlags.java"} });
+    try c.add("$CJ/android/content/pm/parsing", .{});
+    try c.add("$CJ/android/content/pm/pkg", .{});
+    try c.add("$CJ/android/content/pm/split", .{});
+    try c.add("$CJ/android/util/apk", .{});
+    try c.file("$CJ/android/content/IntentFilter.java");
+    try c.file("$CJ/android/content/UriRelativeFilter.java");
+    try c.file("$CJ/android/content/UriRelativeFilterGroup.java");
+    try c.file("$CJ/android/os/PatternMatcher.java");
+    try c.file("$CJ/android/content/pm/ActivityInfo.java");
+    try c.file("$CJ/android/content/pm/ApplicationInfo.java");
+    try c.file("$CJ/android/content/pm/ComponentInfo.java");
+    try c.file("$CJ/android/content/pm/PackageInfo.java");
+    try c.file("$CJ/android/content/pm/PackageItemInfo.java");
+    try c.file("$CJ/android/content/pm/PathPermission.java");
+    try c.file("$CJ/android/content/pm/ProviderInfo.java");
+    try c.file("$CJ/android/content/pm/ServiceInfo.java");
+    try c.file("$CJ/android/content/pm/ResolveInfo.java");
+    try c.file("$CJ/android/content/pm/FeatureInfo.java");
+    try c.file("$CJ/android/content/pm/Signature.java");
+    try c.file("$CJ/android/content/pm/SigningInfo.java");
+    try c.file("$CJ/android/content/pm/SigningDetails.java");
+    try c.file("$CJ/android/content/pm/PermissionInfo.java");
+    try c.file("$CJ/android/content/pm/PermissionGroupInfo.java");
+    try c.file("$CJ/android/content/pm/ConfigurationInfo.java");
+    try c.file("$CJ/android/content/pm/InstrumentationInfo.java");
+    try c.file("$CJ/android/content/pm/SharedLibraryInfo.java");
+    try c.file("$CJ/android/content/pm/VersionedPackage.java");
+    try c.file("$CJ/android/content/pm/Attribution.java");
+    try c.file("$CJ/android/content/pm/VerifierInfo.java");
+    try c.file("$CJ/android/content/pm/FeatureGroupInfo.java");
+    try c.file("$CJ/android/content/pm/overlay/OverlayPaths.java");
+    try c.file("$CJ/android/util/PackageUtils.java");
+    try c.add("$CJ/com/android/server/pm/pkg", .{});
+    try c.file("$CJ/android/os/incremental/V4Signature.java");
+    try c.file("$CJ/android/content/pm/ConstrainDisplayApisConfig.java");
+    try c.file("$CJ/android/content/pm/AuxiliaryResolveInfo.java");
+    try c.file("$CJ/com/android/internal/os/ClassLoaderFactory.java");
+    try c.file("$CJ/android/content/pm/FallbackCategoryProvider.java");
+    try c.file("$CJ/android/content/pm/ChangedPackages.java");
+    try c.file("$CJ/android/content/pm/InstantAppInfo.java");
+    try c.file("$CJ/android/content/pm/KeySet.java");
+    try c.file("$CJ/android/content/pm/ModuleInfo.java");
+    try c.file("$CJ/android/content/pm/SuspendDialogInfo.java");
+    try c.file("$CJ/android/content/pm/VerifierDeviceIdentity.java");
+    try c.file("$CJ/android/content/pm/IntentFilterVerificationInfo.java");
+    try c.file("$CJ/android/content/pm/InstallSourceInfo.java");
+    try c.file("$CJ/android/content/pm/Checksum.java");
+    try c.file("$CJ/android/content/pm/ApkChecksum.java");
+    try c.file("$CJ/android/content/pm/PackageStats.java");
+    try c.file("$CJ/android/content/pm/InstantAppResolveInfo.java");
+    try c.file("$CJ/android/content/pm/InstantAppIntentFilter.java");
+
+    // Phase 5b: the hosted package manager service runs on the real server
+    // classes — ComponentResolver/IntentResolver resolution, PackageInfoUtils
+    // info generation, and the PackageStateInternal state surface they consume
+    // (Computer/UserManagerService/PackageManagerService/SystemConfig/
+    // PackageArchiver/Installer/PackageSetting are minimal stubs).
+    try c.file("$FB/services/core/java/com/android/server/IntentResolver.java");
+    try c.add("$FB/services/core/java/com/android/server/pm/resolution", .{});
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/PackageInfoUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/pkg/AndroidPackageUtils.java");
+    try c.add("$FB/services/core/java/com/android/server/pm/pkg", .{ .max_depth = 1 });
+    try c.file("$FB/services/core/java/com/android/server/pm/DumpState.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerException.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageManagerTracedLock.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/UserNeedsBadgingCache.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/snapshot/PackageDataSnapshot.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/Watchable.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchableImpl.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/Watcher.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/Watched.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/Snappable.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/SnapshotCache.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/Snapshots.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedArrayMap.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedArrayList.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedArraySet.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseArray.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseIntArray.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedSparseBooleanArray.java");
+    try c.file("$FB/services/core/java/com/android/server/utils/WatchedLongSparseArray.java");
+    try c.file("$CJ/android/content/pm/UserPackage.java");
+    // Phase 5c: the real AOSP PackageManager + ApplicationPackageManager client.
+    try c.file("$CJ/android/content/pm/PackageManager.java");
+    try c.file("$FB/core/java/android/app/ApplicationPackageManager.java");
+    try c.file("$CJ/android/app/AppDetailsActivity.java");
+    try c.file("$CJ/android/app/PackageDeleteObserver.java");
+    try c.file("$CJ/android/app/PackageInstallObserver.java");
+    try c.file("$CJ/android/content/pm/ArchivedPackageInfo.java");
+    try c.file("$CJ/android/content/pm/ArchivedActivityInfo.java");
+    try c.file("$CJ/android/content/pm/dex/ArtManager.java");
+    try c.file("$CJ/android/util/LauncherIcons.java");
+    try c.file("$CJ/com/android/internal/util/UserIcons.java");
+    // Phase 5d: the real PropertyInvalidatedCache over session-wide SystemProperties
+    // (sysprop nonces; the shared-memory backend is flagged off and stubbed).
+    try c.file("$CJ/android/app/PropertyInvalidatedCache.java");
+    try c.file("$CJ/android/content/pm/SigningInfoException.java");
+    try c.file("$CJ/android/app/ApplicationThreadConstants.java");
+    try c.file("$CJ/android/content/pm/ProcessInfo.java");
+    try c.file("$CJ/android/content/pm/dex/DexMetadataHelper.java");
+    try c.file("$CJ/android/util/FastImmutableArraySet.java");
+    try c.file("$CJ/android/util/MutableInt.java");
+    try c.file("$CJ/android/os/SystemProperties.java");
+    try c.file("$CJ/android/os/SharedMemory.java");
+    try c.file("$CJ/android/os/MemoryFile.java");
+    // Real AOSP binder stack (natives from libbinder_ndk via framework_jni.zig),
+    // replacing the hosted Parcel/Binder/ServiceManager and HostedBinderRuntime.
+    try c.file("$CJ/android/os/Parcel.java");
+    try c.file("$CJ/android/os/Binder.java");
+    try c.file("$CJ/android/os/BinderProxy.java");
+    try c.file("$CJ/android/os/IBinder.java");
+    try c.file("$CJ/android/os/ServiceManager.java");
+    try c.file("$CJ/android/os/ServiceManagerNative.java");
+    try c.file("$CJ/com/android/internal/os/BinderInternal.java");
+    // Closure of the real binder stack (observability/shell helpers, real Bundle stack).
+    try c.file("$CJ/android/os/BadTypeParcelableException.java");
+    try c.file("$CJ/android/os/ThreadLocalWorkSource.java");
+    try c.file("$CJ/android/os/IBinderCallback.java");
+    try c.file("$CJ/android/os/ShellCallback.java");
+    try c.file("$CJ/android/os/TransactionTracker.java");
+    try c.file("$CJ/com/android/internal/os/BinderCallHeavyHitterWatcher.java");
+    try c.file("$CJ/com/android/internal/util/HeavyHitterSketch.java");
+    try c.file("$CJ/com/android/internal/util/StatLogger.java");
+    try c.file("$CJ/android/os/Bundle.java");
+    try c.file("$CJ/android/os/BaseBundle.java");
+    try c.file("$CJ/android/os/PersistableBundle.java");
+    // Real Looper/MessageQueue/Handler/Message over the Zig epoll natives
+    // (src/platform/message_queue.zig). MessageQueue is the Combined variant AOSP's
+    // messagequeue-gen genrule copies to android/os/MessageQueue.java; javac takes the
+    // explicit path (package android.os) as-is.
+    try c.file("$CJ/android/os/Looper.java");
+    try c.file("$CJ/android/os/CombinedMessageQueue/MessageQueue.java");
+    try c.file("$CJ/android/os/Handler.java");
+    try c.file("$CJ/android/os/Message.java");
+    try c.file("$CJ/android/os/ParcelFileDescriptor.java");
+    // Real Process (vendored patch: myUid = broker uid, no zygote); natives in framework_jni.zig.
+    try c.file("$CJ/android/os/Process.java");
+    // android.os/android.content tail: the remaining hosted shims replaced by the
+    // verbatim AOSP classes (Trace natives are the Ravenwood no-op shape, in
+    // framework_jni.zig).
+    try c.file("$CJ/android/os/IInterface.java");
+    try c.file("$CJ/android/os/OperationCanceledException.java");
+    try c.file("$CJ/android/os/DeadObjectException.java");
+    try c.file("$CJ/android/os/RemoteException.java");
+    try c.file("$CJ/android/os/DeadSystemRuntimeException.java");
+    try c.file("$CJ/android/os/DeadSystemException.java");
+    try c.file("$CJ/android/os/AsyncTask.java");
+    try c.file("$CJ/android/os/CancellationSignal.java");
+    try c.file("$CJ/android/os/Messenger.java");
+    try c.file("$CJ/android/os/LocaleList.java");
+    try c.file("$CJ/android/os/UserHandle.java");
+    // Real Environment (vendored patch: data root from ARTZIG_DATA_DIR) over the
+    // StorageManager stub's single emulated volume.
+    try c.file("$CJ/android/os/Environment.java");
+    try c.file("$CJ/android/os/storage/StorageVolume.java");
+    // Real BroadcastReceiver; ArtzigBroadcastManager.Args extends its PendingResult (LoadedApk.ReceiverDispatcher.Args).
+    try c.file("$CJ/android/content/BroadcastReceiver.java");
+    // Real ContentProvider over ContentProviderNative (the AOSP provider transport)
+    // with the real AttributionSource/PermissionChecker; the permission-checker
+    // service is hosted (HostedPermissionCheckerService).
+    try c.file("$CJ/android/content/ContentProvider.java");
+    try c.file("$CJ/android/content/ContentProviderNative.java");
+    // Real ContentResolver + ContentProviderClient over the real IContentService (sync
+    // surface unsupported in the hosted content service); accounts.Account for the AIDL.
+    try c.file("$CJ/android/content/ContentResolver.java");
+    // Real DocumentsContract/DocumentsProvider/ExifInterface (android.app core 6).
+    try c.file("$CJ/android/provider/DocumentsContract.java");
+    try c.file("$CJ/android/provider/DocumentsProvider.java");
+    try c.file("$CJ/android/app/AuthenticationRequiredException.java");
+    try c.file("$FB/media/java/android/media/ExifInterface.java");
+    try c.file("$FB/media/java/android/media/ExifInterfaceUtils.java");
+    try c.file("$FB/media/java/android/media/MediaDataSource.java");
+    // Real Context/ContextWrapper/ContextImpl/Application/Service (android.app core 5):
+    // SystemServiceRegistry stays a host adaptation (src/framework/android/app/SystemServiceRegistry.kt).
+    try c.file("$CJ/android/content/Context.java");
+    try c.file("$CJ/android/content/ContextWrapper.java");
+    try c.file("$CJ/android/content/ReceiverCallNotAllowedException.java");
+    try c.file("$CJ/android/app/ContextImpl.java");
+    try c.file("$CJ/android/app/Application.java");
+    try c.file("$CJ/android/app/Service.java");
+    try c.file("$CJ/android/app/SharedPreferencesImpl.java");
+    try c.file("$CJ/android/app/BroadcastOptions.java");
+    try c.file("$CJ/android/app/ComponentOptions.java");
+    try c.file("$CJ/android/app/BroadcastStickyCache.java");
+    try c.file("$CJ/android/app/StackTrace.java");
+    try c.file("$CJ/android/app/ServiceStartNotAllowedException.java");
+    try c.file("$CJ/android/app/BackgroundServiceStartNotAllowedException.java");
+    try c.file("$CJ/android/app/ForegroundServiceStartNotAllowedException.java");
+    try c.file("$CJ/android/app/InvalidForegroundServiceTypeException.java");
+    try c.file("$CJ/android/app/MissingForegroundServiceTypeException.java");
+    try c.file("$CJ/android/os/IpcDataCache.java");
+    try c.file("$CJ/android/os/FileUtils.java");
+    try c.file("$CJ/com/android/internal/util/SizedInputStream.java");
+    try c.file("$CJ/android/util/DataUnit.java");
+    try c.file("$CJ/android/app/ForegroundServiceTypeException.java");
+    try c.file("$CJ/android/app/UriGrantsManager.java");
+    try c.file("$CJ/android/content/ContentProviderClient.java");
+    try c.file("$CJ/android/content/MimeTypeFilter.java");
+    try c.file("$CJ/android/content/SyncRequest.java");
+    try c.file("$CJ/android/content/SyncAdapterType.java");
+    try c.file("$CJ/android/content/SyncInfo.java");
+    try c.file("$CJ/android/content/SyncStatusInfo.java");
+    try c.file("$CJ/android/content/PeriodicSync.java");
+    try c.file("$CJ/android/content/SyncResult.java");
+    try c.file("$CJ/android/content/SyncStats.java");
+    try c.file("$CJ/android/content/SyncStatusObserver.java");
+    try c.file("$CJ/android/accounts/Account.java");
+    try c.file("$CJ/android/accounts/AuthenticatorDescription.java");
+    try c.file("$CJ/com/android/internal/util/MimeIconUtils.java");
+    try c.file("$CJ/android/content/ContentInterface.java");
+    try c.file("$CJ/android/content/LoggingContentInterface.java");
+    try c.file("$CJ/android/content/AttributionSource.java");
+    try c.file("$CJ/android/content/Attributable.java");
+    try c.file("$CJ/android/content/ContextParams.java");
+    try c.file("$CJ/android/content/UriPermission.java");
+    try c.file("$CJ/android/content/PermissionChecker.java");
+    try c.file("$CJ/android/permission/PermissionCheckerManager.java");
+    // Real IActivityManager/IApplicationThread contract (generated AIDL) and its
+    // closure: ClientTransactionHandler + servertransaction (the hosted ActivityThread
+    // implements the handler), the AMS-facing parcelables, VoiceInteractor.
+    try c.file("$CJ/android/app/ActivityClient.java");
+    try c.file("$CJ/android/app/ServiceStartArgs.java");
+    // Real LoadedApk/ResourcesManager/Instrumentation (+ ApplicationLoaders, AppComponentFactory);
+    // the hosted ActivityThread carries the members they use.
+    try c.file("$CJ/android/app/LoadedApk.java");
+    try c.file("$CJ/android/app/ApplicationLoaders.java");
+    try c.file("$CJ/android/app/AppComponentFactory.java");
+    try c.file("$CJ/android/app/ResourcesManager.java");
+    try c.file("$CJ/android/app/ComponentCaller.java");
+    try c.file("$CJ/android/app/DexLoadReporter.java");
+    try c.file("$CJ/android/app/LocaleConfig.java");
+    try c.file("$CJ/android/app/ApplicationErrorReport.java");
+    try c.file("$CJ/android/app/ApplicationExitInfo.java");
+    try c.file("$CJ/android/app/ApplicationStartInfo.java");
+    try c.file("$CJ/android/app/ClientTransactionHandler.java");
+    try c.file("$CJ/android/app/ContentProviderHolder.java");
+    try c.file("$CJ/android/app/GrantedUriPermission.java");
+    try c.file("$CJ/android/app/ProfilerInfo.java");
+    try c.file("$CJ/android/app/ResultInfo.java");
+    try c.file("$CJ/android/app/VoiceInteractor.java");
+    try c.file("$CJ/android/app/WaitResult.java");
+    try c.file("$CJ/android/content/pm/ProviderInfoList.java");
+    try c.file("$CJ/android/os/TransactionTooLargeException.java");
+    try c.file("$CJ/android/window/TaskFragmentTransaction.java");
+    try c.file("$CJ/android/window/TaskFragmentInfo.java");
+    try c.file("$CJ/android/window/TaskFragmentParentInfo.java");
+    try c.file("$CJ/android/window/WindowContainerToken.java");
+    try c.file("$CJ/android/app/PictureInPictureUiState.java");
+    try c.file("$CJ/com/android/internal/content/ReferrerIntent.java");
+    try c.file("$CJ/com/android/internal/os/HandlerCaller.java");
+    try c.add("$CJ/android/app/servertransaction", .{ .not_names = &.{ "ClientTransactionListenerController.java", "WindowContextInfoChangeItem.java", "WindowContextWindowRemovalItem.java" } });
+    try c.file("$CJ/android/app/QueuedWork.java");
+    try c.file("$CJ/com/android/internal/os/DebugStore.java");
+    try c.file("$CJ/com/android/internal/util/ExponentiallyBucketedHistogram.java");
+    try c.file("$CJ/android/os/Trace.java");
+    try c.file("$CJ/android/content/ActivityNotFoundException.java");
+    try c.file("$CJ/android/content/UriMatcher.java");
+    try c.file("$CJ/android/content/ContentUris.java");
+    // Real SystemClock (7 @CriticalNative clocks in framework_jni.zig) and its
+    // alarm/time-detector/GNSS closure; the services are absent, the client paths
+    // handle a null service as AOSP does.
+    try c.file("$CJ/android/os/SystemClock.java");
+    // Real Build: every value is a session property the broker seeds (Broker.zig seedProperties).
+    try c.file("$CJ/android/os/Build.java");
+    // Real StrictMode + its violation types; the AMS/WM/mount/netd touch points are stubbed services.
+    try c.file("$CJ/android/os/StrictMode.java");
+    try c.file("$CJ/android/os/FileUriExposedException.java");
+    try c.add("$CJ/android/os/strictmode", .{});
+    // Real android.net.Uri + android.content.Intent (one unit: Intent parcels its
+    // data Uri through Uri.writeToParcel) and Intent's import closure. Service
+    // facades without a host service (ContactsContract, StatusBarManager,
+    // IncidentManager, PhoneAccount) are stubs in src/framework-stubs.
+    try c.file("$CJ/android/net/Uri.java");
+    try c.file("$CJ/android/net/UriCodec.java");
+    try c.file("$CJ/android/content/Intent.java");
+    try c.file("$CJ/android/os/BundleMerger.java");
+    try c.file("$CJ/android/provider/OpenableColumns.java");
+    try c.file("$CJ/android/service/chooser/AdditionalContentContract.java");
+    try c.file("$CJ/android/service/chooser/ChooserAction.java");
+    try c.file("$CJ/android/service/chooser/ChooserResult.java");
+    try c.file("$CJ/android/os/SimpleClock.java");
+    try c.file("$CJ/android/os/WorkSource.java");
+    try c.file("$CJ/android/os/ShellCommand.java");
+    try c.file("$MU/java/com/android/modules/utils/BasicShellCommandHandler.java");
+    try c.file("$CJ/android/location/LocationTime.java");
+    try c.file("$CJ/android/app/time/Capabilities.java");
+    try c.file("$CJ/android/app/time/ExternalTimeSuggestion.java");
+    try c.file("$CJ/android/app/time/TimeCapabilities.java");
+    try c.file("$CJ/android/app/time/TimeCapabilitiesAndConfig.java");
+    try c.file("$CJ/android/app/time/TimeConfiguration.java");
+    try c.file("$CJ/android/app/time/TimeZoneConfiguration.java");
+    try c.file("$CJ/android/app/time/TimeState.java");
+    try c.file("$CJ/android/app/time/UnixEpochTime.java");
+    try c.file("$CJ/android/app/timedetector/ManualTimeSuggestion.java");
+    try c.file("$CJ/android/app/timedetector/TelephonyTimeSuggestion.java");
+    try c.file("$CJ/android/app/timedetector/TimeSuggestionHelper.java");
+    try c.file("$CJ/android/util/JsonReader.java");
+    try c.file("$CJ/android/util/JsonScope.java");
+    try c.file("$CJ/android/util/JsonToken.java");
+    try c.file("$CJ/android/util/MalformedJsonException.java");
+    try c.file("$CJ/com/android/internal/util/StringPool.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/parsing/ParsedComponentStateUtils.java");
+
+    try c.file("$CJ/android/content/ContentProviderOperation.java");
+    try c.file("$CJ/android/content/ContentProviderResult.java");
+    try c.file("$CJ/android/content/ComponentCallbacksController.java");
+    try c.file("$CJ/android/content/pm/ParceledListSlice.java");
+    try c.file("$CJ/android/content/pm/BaseParceledListSlice.java");
+    try c.file("$CJ/android/os/OutcomeReceiver.java");
+    try c.file("$CJ/android/os/ParcelableParcel.java");
+    try c.file("$CJ/android/os/RemoteCallbackList.java");
+    try c.file("$CJ/android/os/ConditionVariable.java");
+    try c.file("$CJ/android/os/PooledStringWriter.java");
+    try c.file("$CJ/android/os/PooledStringReader.java");
+    try c.file("$CJ/com/android/internal/util/SyncResultReceiver.java");
+    try c.file("$CJ/com/android/internal/widget/ScrollBarUtils.java");
+    try c.file("$CJ/com/android/internal/widget/AbsActionBarView.java");
+    try c.file("$CJ/com/android/internal/widget/ActionBarContextView.java");
+    try c.file("$CJ/com/android/internal/widget/DecorToolbar.java");
+    try c.file("$CJ/com/android/internal/widget/ToolbarWidgetWrapper.java");
+    try c.file("$CJ/com/android/internal/widget/AutoScrollHelper.java");
+    try c.file("$CJ/com/android/internal/policy/PhoneLayoutInflater.java");
+    try c.file("$CJ/com/android/internal/widget/DecorContentParent.java");
+    try c.file("$CJ/com/android/internal/widget/BackgroundFallback.java");
+    try c.file("$CJ/com/android/internal/graphics/drawable/BackgroundBlurDrawable.java");
+    try c.file("$CJ/com/android/internal/graphics/drawable/AnimationScaleListDrawable.java");
+    try c.file("$CJ/com/android/internal/widget/ScrollingTabContainerView.java");
+    try c.file("$CJ/android/util/PluralsMessageFormatter.java");
+    try c.file("$CJ/android/os/ResultReceiver.java");
+    try c.file("$CJ/android/os/RemoteCallback.java");
+    try c.file("$CJ/android/provider/BaseColumns.java");
+    try c.file("$CJ/android/metrics/LogMaker.java");
+    try c.file("$CJ/com/android/internal/os/SomeArgs.java");
+    try c.file("$CJ/com/android/internal/os/BackgroundThread.java");
+    try c.file("$CJ/com/android/internal/accessibility/common/ShortcutConstants.java");
+    try c.file("$CJ/com/android/internal/accessibility/util/AccessibilityUtils.java");
+    try c.file("$CJ/com/android/internal/util/XmlSerializerWrapper.java");
+    try c.file("$CJ/com/android/internal/util/XmlPullParserWrapper.java");
+    try c.file("$CJ/android/text/method/WordIterator.java");
+    try c.file("$MU/java/com/android/modules/utils/TypedXmlPullParser.java");
+    try c.file("$MU/java/com/android/modules/utils/TypedXmlSerializer.java");
+    try c.file("$MU/java/com/android/internal/util/FastXmlSerializer.java");
+}
+
+fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+    return std.mem.order(u8, lhs, rhs) == .lt;
+}
+
+fn writeList(
+    io: Io,
+    allocator: Allocator,
+    output_path: []const u8,
+    paths: *const std.StringHashMapUnmanaged(void),
+    extension: []const u8,
+) !usize {
+    var selected: std.ArrayList([]const u8) = .empty;
+    defer selected.deinit(allocator);
+    var keys = paths.keyIterator();
+    while (keys.next()) |path| {
+        if (std.mem.endsWith(u8, path.*, extension)) try selected.append(allocator, path.*);
+    }
+    std.mem.sortUnstable([]const u8, selected.items, {}, lessThan);
+
+    const output = try Io.Dir.cwd().createFile(io, output_path, .{});
+    defer output.close(io);
+    for (selected.items) |path| {
+        try output.writeStreamingAll(io, path);
+        try output.writeStreamingAll(io, "\n");
+    }
+    return selected.items.len;
+}
+
+pub fn main(init: std.process.Init) !void {
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len < 5) {
+        try Io.File.stderr().writeStreamingAll(
+            init.io,
+            "usage: java-sources <java.rsp> <kotlin.rsp> <annotations.rsp> ROOT=<dir>...\n",
+        );
+        return error.InvalidArguments;
+    }
+
+    var roots: std.StringHashMapUnmanaged([]const u8) = .empty;
+    defer roots.deinit(init.gpa);
+    for (args[4..]) |arg| {
+        const equals = std.mem.indexOfScalar(u8, arg, '=') orelse return error.InvalidRootArgument;
+        try roots.put(init.gpa, arg[0..equals], arg[equals + 1 ..]);
+    }
+    const fb = roots.get("FB") orelse return error.MissingFrameworksBaseRoot;
+    try roots.put(
+        init.gpa,
+        "CJ",
+        try Io.Dir.path.join(init.arena.allocator(), &.{ fb, "core/java" }),
+    );
+    try roots.put(
+        init.gpa,
+        "HW",
+        try Io.Dir.path.join(init.arena.allocator(), &.{ fb, "libs/hwui" }),
+    );
+
+    var framework: Collector = .{
+        .allocator = init.gpa,
+        .io = init.io,
+        .roots = &roots,
+    };
+    defer framework.deinit();
+    try collect(&framework);
+
+    var annotations: Collector = .{
+        .allocator = init.gpa,
+        .io = init.io,
+        .roots = &roots,
+    };
+    defer annotations.deinit();
+    try annotations.add("$APP/src/annotation-runtime", .{});
+
+    const java_count = try writeList(init.io, init.gpa, args[1], &framework.paths, ".java");
+    const kotlin_count = try writeList(init.io, init.gpa, args[2], &framework.paths, ".kt");
+    const annotation_count = try writeList(init.io, init.gpa, args[3], &annotations.paths, ".java");
+    const summary = try std.fmt.allocPrint(
+        init.arena.allocator(),
+        "{d} Java, {d} Kotlin, {d} runtime annotation sources\n",
+        .{ java_count, kotlin_count, annotation_count },
+    );
+    try Io.File.stdout().writeStreamingAll(init.io, summary);
+}

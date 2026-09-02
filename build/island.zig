@@ -86,19 +86,22 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         .imports = &.{.{ .name = "art", .module = o.art }},
     });
     const lib = b.addLibrary(.{ .name = "android_platform", .linkage = .dynamic, .root_module = mod });
+    // Fail while linking instead of deferring missing static-library symbols
+    // until libandroid_platform.so is loaded by the JVM.
+    lib.link_z_defs = true;
 
     for (gen.include_dirs) |d| mod.addIncludePath(.{ .cwd_relative = r.subst(b, d) });
 
     // common flags
     var cxx = std.ArrayList([]const u8).empty;
     cxx.appendSlice(b.allocator, &.{
-        "-std=gnu++23",            "-fno-exceptions",             "-fno-rtti", "-w",                                          "-D_GNU_SOURCE", "-DNDEBUG",
+        "-std=gnu++23",            "-fno-exceptions",             "-fno-rtti",                                     "-w",       "-D_GNU_SOURCE",                               "-DNDEBUG",
         // zig enables UBSan for C/C++ in Debug; AOSP code trips it (null memcpy of 0 bytes)
         "-fno-sanitize=undefined",
         // math/half.h specializes std::is_floating_point; libc++ marks that an error
         "-Wno-invalid-specialization",
         // zig hashes `-include` files into the C cache, so it must be a real path
-        "-include",  b.pathResolve(&.{"src/native/azk_prelude.h"}),
+        "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}),
     }) catch @panic("oom");
     var cc = std.ArrayList([]const u8).empty;
     cc.appendSlice(b.allocator, &.{ "-std=gnu17", "-w", "-D_GNU_SOURCE", "-DNDEBUG", "-fno-sanitize=undefined" }) catch @panic("oom");

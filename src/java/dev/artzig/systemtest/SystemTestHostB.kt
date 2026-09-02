@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.artzig.systemtest
 
 import android.app.ActivityThread

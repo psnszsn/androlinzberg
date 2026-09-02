@@ -28,6 +28,9 @@ pub fn build(b: *std.Build, o: Options) []const art.GenDir {
             run.setCwd(o.vendor);
             run.addFileInput(o.vendor.path(b, hdr));
             run.addFileInput(o.vendor.path(b, "art/tools/generate_operator_out.py"));
+            // Python 3.14 warns about the pinned AOSP script's codecs.open().
+            // Keep other warning classes and all stderr visible.
+            run.setEnvironmentVariable("PYTHONWARNINGS", "ignore::DeprecationWarning");
             const out = run.captureStdOut(.{});
             const name = b.fmt("gensrcs/{s}.operator_out.cc", .{hdr[0 .. hdr.len - 2]});
             _ = wf.addCopyFile(out, name);

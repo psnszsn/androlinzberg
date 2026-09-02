@@ -357,7 +357,13 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
     const compiled = compile.addOutputFileArg("framework-res-compiled.zip");
     compile.setName("aapt2 compile framework resources");
 
-    const link = b.addSystemCommand(&.{ "aapt2", "link", "-o" });
+    const link = b.addSystemCommand(&.{
+        "bash",                 "-c",
+        \\exec "$@" 2> >(grep -F -v -e 'warn: removing resource android:string/user_switched without required default value.' -e "warn: duplicate definitions of 'SET_DEFAULT_ACCOUNT_FOR_CONTACTS', overriding previous." -e "warn: duplicate definitions of 'SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE', overriding previous." -e "warn: duplicate definitions of 'READ_BLOCKED_NUMBERS', overriding previous." -e "warn: duplicate definitions of 'ACCESS_SHARED_LIBRARIES', overriding previous." >&2)
+        ,
+        "framework-aapt2-link", "aapt2",
+        "link",                 "-o",
+    });
     const unsigned = link.addOutputFileArg("framework-res-unsigned.apk");
     link.addArgs(&.{ "--feature-flags", resource_flags.csv, "--manifest" });
     link.addFileArg(res.path(b, "AndroidManifest.xml"));

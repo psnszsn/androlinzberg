@@ -252,7 +252,7 @@ private object HostedDownloadBackend {
             .sortedByDescending { it.lastModified }
             .forEach { record ->
                 val localUri = Uri.fromFile(record.destination).toString()
-                cursor.addRow(arrayOf(
+                cursor.addRow(arrayOf<Any?>(
                     record.id,
                     record.source.toString(),
                     record.status,

@@ -14,7 +14,10 @@ mkdir -p "$output_dir"
 bcp="$runtime_root/apex/com.android.art/javalib/core-oj.jar:$runtime_root/apex/com.android.art/javalib/core-libart.jar:$runtime_root/apex/com.android.art/javalib/okhttp.jar:$runtime_root/apex/com.android.art/javalib/bouncycastle.jar:$runtime_root/apex/com.android.art/javalib/apache-xml.jar:$runtime_root/apex/com.android.i18n/javalib/core-icu4j.jar:$runtime_root/apex/com.android.conscrypt/javalib/conscrypt.jar"
 bcpl="/apex/com.android.art/javalib/core-oj.jar:/apex/com.android.art/javalib/core-libart.jar:/apex/com.android.art/javalib/okhttp.jar:/apex/com.android.art/javalib/bouncycastle.jar:/apex/com.android.art/javalib/apache-xml.jar:/apex/com.android.i18n/javalib/core-icu4j.jar:/apex/com.android.conscrypt/javalib/conscrypt.jar"
 
+# Cold builds can cross dex2oat's per-method timing threshold. Suppress only
+# those performance measurements; retain every other warning and error.
 env \
+  ANDROID_LOG_TAGS="*:w" \
   ANDROID_ROOT="$runtime_root" \
   ANDROID_ART_ROOT="$runtime_root/apex/com.android.art" \
   ANDROID_I18N_ROOT="$runtime_root/com.android.i18n" \
@@ -33,4 +36,5 @@ env \
   --runtime-arg "-Xbootclasspath:$bcp" \
   --runtime-arg "-Xbootclasspath-locations:$bcpl" \
   --no-generate-mini-debug-info \
-  "-j$dex2oat_jobs"
+  "-j$dex2oat_jobs" \
+  2> >(grep -E -v ' W dex2oat64: compiler_driver\.cc:[0-9]+ Compilation of .* took [0-9]+(\.[0-9]+)?ms$' >&2)

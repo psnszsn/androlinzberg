@@ -19,8 +19,8 @@ internal open class TestProvider : ContentProvider() {
         sortOrder: String?,
     ): Cursor {
         val cursor = MatrixCursor(arrayOf("_id", "name", "value"))
-        cursor.addRow(arrayOf(1L, "alpha", 10L))
-        cursor.addRow(arrayOf(2L, "beta", 20L))
+        cursor.addRow(arrayOf<Any>(1L, "alpha", 10L))
+        cursor.addRow(arrayOf<Any>(2L, "beta", 20L))
         return cursor
     }
 

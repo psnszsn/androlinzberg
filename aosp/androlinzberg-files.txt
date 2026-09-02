@@ -3,7 +3,7 @@
 #   D = all Git-tracked entries recursively; F = exact tracked file
 # Source: aosp is the Repo checkout initialized at android-16.0.0_r1.
 # Derived from build/gen/{island,skia,protobuf}_sources.zig,
-# tools/java-srcs.py, the generator input lists under tools/, and direct
+# build/java_sources.zig, the generator input lists under tools/, and direct
 # AOSP paths in build.zig/build/*.zig and tools/*.sh.
 # Directory compaction uses >=80% coverage by tracked count and bytes,
 # plus cohesive trees whose build consumes broad include/resource closure.

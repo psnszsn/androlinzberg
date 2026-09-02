@@ -25,7 +25,13 @@ fn protoPaths(b: *std.Build) []const []const u8 {
 
 pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     const protos = protoPaths(b);
-    const generate = b.addRunArtifact(o.protoc);
+    const generate = b.addSystemCommand(&.{
+        "bash",         "-c",
+        \\exec "$@" 2> >(grep -F -v 'frameworks/proto_logging/stats/atoms/display/display_atoms.proto:22:1: warning: Import frameworks/proto_logging/stats/enums/display/display_enums.proto is unused.' >&2)
+        ,
+        "stats-protoc",
+    });
+    generate.addArtifactArg(o.protoc);
     generate.addPrefixedDirectoryArg("-I", o.aosp);
     generate.addPrefixedDirectoryArg("-I", o.aosp.path(b, "external/protobuf/src"));
     const generated = generate.addPrefixedOutputDirectoryArg("--cpp_out=", "stats-proto-cpp");

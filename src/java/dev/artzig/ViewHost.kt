@@ -1,5 +1,7 @@
 /* artzig M2 gate: a bare Activity with one colored View painting through the
  * real Canvas/Drawable/Resources and HWUI display-list stack. */
+@file:Suppress("DEPRECATION")
+
 package dev.artzig
 
 import android.app.Activity

@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package dev.artzig
 
 import android.app.Activity
