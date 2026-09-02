@@ -195,6 +195,7 @@ public final class FrameworkCompatSmoke {
             require(android.os.Build.VERSION.SDK_INT == 35, "Build.VERSION.SDK_INT from ro.build.version.sdk")
             require(android.os.Build.VERSION.SDK_INT_FULL == 35 * 100000, "Build.VERSION.SDK_INT_FULL from ro.build.version.sdk_full")
             require(android.os.Build.VERSION.RELEASE == "15" && android.os.Build.VERSION.CODENAME == "REL", "Build.VERSION release/codename")
+            require(android.os.Build.VERSION.KNOWN_CODENAMES.contains("VanillaIceCream"), "Build.VERSION known codenames from long ro property")
             require(android.os.Build.VERSION.SECURITY_PATCH == "2026-08-01", "Build.VERSION.SECURITY_PATCH seeded")
             require(android.os.Build.SUPPORTED_ABIS.toList() == listOf("x86_64", "arm64-v8a"), "Build.SUPPORTED_ABIS from ro.product.cpu.abilist")
             require(android.os.Build.SUPPORTED_32_BIT_ABIS.isEmpty(), "Build.SUPPORTED_32_BIT_ABIS empty")

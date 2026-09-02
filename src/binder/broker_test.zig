@@ -534,18 +534,23 @@ test "session-wide properties: policy, area contents, change push" {
 
     var reader = try prop_area.Reader.open(io, h.prop_path);
     defer reader.deinit();
-    var buf: [prop_area.value_max]u8 = undefined;
+    var buf: [prop_area.long_value_max]u8 = undefined;
     // Broker-seeded defaults are visible before any set.
     try testing.expectEqualStrings("35", reader.get("ro.build.version.sdk", &buf).?);
+    try testing.expectEqual(@as(usize, 301), reader.get("ro.build.version.known_codenames", &buf).?.len);
+
+    const long_value: [prop_area.value_max]u8 = @splat('x');
 
     const cases = [_]struct { peer: *Peer, name: []const u8, value: []const u8, status: Server.Message.ServiceResult.Status }{
         .{ .peer = &sys, .name = "sys.session", .value = "up", .status = .ok },
         .{ .peer = &sys, .name = "ro.boot.once", .value = "1", .status = .ok },
+        .{ .peer = &sys, .name = "ro.boot.long", .value = &long_value, .status = .ok },
         // ro.* is write-once even for the system.
         .{ .peer = &sys, .name = "ro.boot.once", .value = "2", .status = .denied },
         .{ .peer = &sys, .name = "ro.build.version.sdk", .value = "36", .status = .denied },
         .{ .peer = &app, .name = "debug.example", .value = "on", .status = .ok },
         .{ .peer = &app, .name = "log.tag.Example", .value = "V", .status = .ok },
+        .{ .peer = &app, .name = "debug.too_long", .value = &long_value, .status = .denied },
         .{ .peer = &app, .name = "sys.session", .value = "spoof", .status = .denied },
         .{ .peer = &app, .name = "ro.app", .value = "x", .status = .denied },
     };
@@ -567,6 +572,7 @@ test "session-wide properties: policy, area contents, change push" {
         }
     }
     try testing.expectEqualStrings("1", reader.get("ro.boot.once", &buf).?);
+    try testing.expectEqualStrings(&long_value, reader.get("ro.boot.long", &buf).?);
     try testing.expectEqualStrings("up", reader.get("sys.session", &buf).?);
 
     // After its own drains, sys has exactly the pushes for app's two

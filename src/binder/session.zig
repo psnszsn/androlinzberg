@@ -95,8 +95,8 @@ pub const Session = struct {
             .stderr = .inherit,
         });
         errdefer {
+            // In this std.process API kill is idempotent and reaps the child.
             child.kill(io);
-            _ = child.wait(io) catch {};
         }
         // Readiness: the broker prints one line once it listens.
         var line: [64]u8 = undefined;

@@ -45,7 +45,7 @@ fn props() ?*const prop_area.Reader {
     };
 }
 
-fn readHandle(handle: i64, buf: *[prop_area.value_max]u8) ?[]const u8 {
+fn readHandle(handle: i64, buf: *[prop_area.long_value_max]u8) ?[]const u8 {
     if (handle <= 0) return null;
     const r = props() orelse return null;
     return r.getAt(@intCast(handle), buf);
@@ -80,7 +80,7 @@ fn jstringSlice(env: JNIEnvPtr, s: jni.jstring, buf: []u8) ?[]const u8 {
 }
 
 fn newString(env: JNIEnvPtr, text: []const u8) jni.jstring {
-    var zbuf: [prop_area.value_max + 1]u8 = undefined;
+    var zbuf: [prop_area.long_value_max + 1]u8 = undefined;
     @memcpy(zbuf[0..text.len], text);
     zbuf[text.len] = 0;
     return env.*.*.NewStringUTF.?(env, @ptrCast(&zbuf));
@@ -98,7 +98,7 @@ fn findByJstring(env: JNIEnvPtr, key: jni.jstring) i64 {
 /// native_get(String, String): AOSP returns def only for a missing/empty
 /// value with a non-null default; otherwise the (possibly empty) value.
 fn nativeGetSS(env: JNIEnvPtr, _: jni.jclass, key: jni.jstring, def: jni.jstring) callconv(.c) jni.jstring {
-    var vbuf: [prop_area.value_max]u8 = undefined;
+    var vbuf: [prop_area.long_value_max]u8 = undefined;
     const value = readHandle(findByJstring(env, key), &vbuf) orelse "";
     if (value.len == 0 and def != null) return def;
     return newString(env, value);
@@ -121,25 +121,25 @@ fn nativeFind(env: JNIEnvPtr, _: jni.jclass, key: jni.jstring) callconv(.c) jni.
 }
 
 fn nativeGetH(env: JNIEnvPtr, _: jni.jclass, handle: jni.jlong) callconv(.c) jni.jstring {
-    var vbuf: [prop_area.value_max]u8 = undefined;
+    var vbuf: [prop_area.long_value_max]u8 = undefined;
     return newString(env, readHandle(handle, &vbuf) orelse "");
 }
 
 // The three handle reads are @CriticalNative: no JNIEnv/jclass parameters.
 fn nativeGetIntH(handle: jni.jlong, def: jni.jint) callconv(.c) jni.jint {
-    var vbuf: [prop_area.value_max]u8 = undefined;
+    var vbuf: [prop_area.long_value_max]u8 = undefined;
     const v = readHandle(handle, &vbuf) orelse return def;
     return parseInt(jni.jint, v, def);
 }
 
 fn nativeGetLongH(handle: jni.jlong, def: jni.jlong) callconv(.c) jni.jlong {
-    var vbuf: [prop_area.value_max]u8 = undefined;
+    var vbuf: [prop_area.long_value_max]u8 = undefined;
     const v = readHandle(handle, &vbuf) orelse return def;
     return parseInt(jni.jlong, v, def);
 }
 
 fn nativeGetBooleanH(handle: jni.jlong, def: jni.jboolean) callconv(.c) jni.jboolean {
-    var vbuf: [prop_area.value_max]u8 = undefined;
+    var vbuf: [prop_area.long_value_max]u8 = undefined;
     const v = readHandle(handle, &vbuf) orelse return def;
     return if (parseBool(v, def != 0)) 1 else 0;
 }
@@ -152,7 +152,7 @@ fn throwRuntime(env: JNIEnvPtr, message: [*:0]const u8) void {
 
 fn nativeSet(env: JNIEnvPtr, _: jni.jclass, key: jni.jstring, value: jni.jstring) callconv(.c) void {
     var kbuf: [prop_area.name_max]u8 = undefined;
-    var vbuf: [prop_area.value_max]u8 = undefined;
+    var vbuf: [prop_area.long_value_max]u8 = undefined;
     const name = jstringSlice(env, key, &kbuf) orelse {
         throwRuntime(env, "SystemProperties.set: bad key");
         return;

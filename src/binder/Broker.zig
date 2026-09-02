@@ -187,7 +187,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
     errdefer gpa.free(system_cookie);
     var props = try prop_area.Area.create(io, options.prop_area_path);
     errdefer props.deinit();
-    seedProperties(&props);
+    try seedProperties(&props);
     const address = try net.UnixAddress.init(socket_path);
     const listener = try address.listen(io, .{ .kernel_backlog = options.kernel_backlog });
     b.* = .{
@@ -206,7 +206,7 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
 /// Boot-time defaults: the session's build identity, read by the real
 /// `android.os.Build` (values previously hard-coded in the hosted shim).
 /// `ro.boot.qemu` stays unset: hosted processes are not emulators.
-fn seedProperties(props: *prop_area.Area) void {
+fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
     const seeds = [_][2][]const u8{
         .{ "ro.build.version.sdk", "35" },
         .{ "ro.build.version.sdk_full", "35.0" },
@@ -244,7 +244,7 @@ fn seedProperties(props: *prop_area.Area) void {
         .{ "ro.hw_timeout_multiplier", "1" },
         .{ "debug.force_rtl", "0" },
     };
-    for (seeds) |seed| props.set(seed[0], seed[1]) catch unreachable;
+    for (seeds) |seed| try props.set(seed[0], seed[1]);
 }
 
 /// Accepts peers until `shutdown` is called, then tears every peer down.
@@ -1500,7 +1500,7 @@ fn maySetProperty(peer: *const Peer, name: []const u8) bool {
     const b = peer.broker;
     if (peer.role == .system) {
         if (!std.mem.startsWith(u8, name, "ro.")) return true;
-        var buf: [prop_area.value_max]u8 = undefined;
+        var buf: [prop_area.long_value_max]u8 = undefined;
         return b.props.get(name, &buf) == null;
     }
     return std.mem.startsWith(u8, name, "debug.") or std.mem.startsWith(u8, name, "log.");
@@ -1512,7 +1512,7 @@ fn handleSetProperty(peer: *Peer, header: Client.Message.Header, body: []const u
     const msg = takeStruct(Client.Message.SetProperty, body) catch return protocolError(peer, "malformed set_property");
     const rest = body[@sizeOf(Client.Message.SetProperty)..];
     if (@as(usize, msg.name_len) + msg.value_len != rest.len or msg.name_len == 0 or
-        msg.name_len > limits.max_name_len or msg.value_len > limits.max_name_len)
+        msg.name_len > limits.max_name_len or msg.value_len >= prop_area.long_value_max)
         return protocolError(peer, "malformed set_property");
     const name = rest[0..msg.name_len];
     const value = rest[msg.name_len..];
@@ -1522,6 +1522,11 @@ fn handleSetProperty(peer: *Peer, header: Client.Message.Header, body: []const u
     defer b.mutex.unlock(io);
     if (!maySetProperty(peer, name)) {
         log.warn("peer {d} ({s}) may not set property '{s}'", .{ peer.id, peer.package, name });
+        peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .denied, ObjectRef.null_ref, "" }));
+        return;
+    }
+    if (!std.mem.startsWith(u8, name, "ro.") and value.len >= prop_area.value_max) {
+        log.warn("property '{s}' exceeds PROP_VALUE_MAX", .{name});
         peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .denied, ObjectRef.null_ref, "" }));
         return;
     }
