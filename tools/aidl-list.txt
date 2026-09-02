@@ -190,3 +190,4 @@ aosp|frameworks/base/core/java/android/content/ISyncStatusObserver.aidl
 aosp|frameworks/base/core/java/android/accounts/IAccountManager.aidl
 aosp|frameworks/base/core/java/android/accounts/IAccountManagerResponse.aidl
 aosp|frameworks/base/core/java/android/app/IUriGrantsManager.aidl
+aosp|frameworks/base/native/android/aidl/com/android/internal/compat/IPlatformCompatNative.aidl

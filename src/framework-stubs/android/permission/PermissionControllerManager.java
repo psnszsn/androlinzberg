@@ -14,4 +14,6 @@ public class PermissionControllerManager {
             Consumer<String> callback) {
         executor.execute(() -> callback.accept(null));
     }
+    /** AOSP: the permission controller revokes on kill; no controller on this host. */
+    public void revokeSelfPermissionsOnKill(String packageName, java.util.List<String> permissions) {}
 }

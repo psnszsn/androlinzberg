@@ -2,7 +2,6 @@
 package dev.artzig
 
 import android.app.Activity
-import android.app.ContextImpl
 import android.content.res.ApkAssets
 import android.content.res.AssetManager
 import android.content.res.Configuration
@@ -35,7 +34,7 @@ public final class ApkHost {
         private var sProcessInitialized: Boolean = false
         private lateinit var sActivity: Activity
         private var sActivityActive: Boolean = false
-        private lateinit var sContext: ContextImpl
+        private lateinit var sContext: android.content.Context
         private lateinit var sRoot: android.view.ViewRootImpl
         private var sRootActive: Boolean = false
         private lateinit var sClassLoader: HostedApkClassLoader
@@ -295,33 +294,18 @@ public final class ApkHost {
             android.view.HostedInputDispatcher.dispatchMouse(sRoot, action, buttonState, actionButton, x, y)
         }
 
-        @Throws(Exception::class)
-        @JvmName("makeContext")
+        /** The window geometry as the process's display and resource configuration
+         * (AOSP: the configuration AMS hands bindApplication). */
         @JvmStatic
-        internal fun makeContext(
-            frameworkRes: String,
-            apkPath: String,
-            width: Int,
-            height: Int,
-            scale120: Int,
-            themeResId: Int,
-            packageName: String,
-        ): ContextImpl {
-            AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
-            val b: AssetManager.Builder = AssetManager.Builder()
-            b.addApkAssets(ApkAssets.loadFromPath(frameworkRes, ApkAssets.PROPERTY_SYSTEM))
-            b.addApkAssets(ApkAssets.loadFromPath(apkPath))
-            val am: AssetManager = b.build()
-            val dm: DisplayMetrics = DisplayMetrics()
-            dm.setToDefaults()
+        private fun applyWindowConfiguration(displayWidth: Int, displayHeight: Int, scale120: Int) {
             val base: Configuration = Configuration()
             base.setToDefaults()
             val windowConfig: android.content.res.HostedWindowConfiguration =
                 android.content.res.HostedConfigurationController.calculate(
                     base,
                     android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
-                    width,
-                    height,
+                    displayWidth,
+                    displayHeight,
                     scale120,
                 )
             android.view.ArtzigDisplay.configure(
@@ -329,16 +313,7 @@ public final class ApkHost {
                 windowConfig.displayHeight,
                 windowConfig.densityDpi,
             )
-            dm.widthPixels = windowConfig.displayWidth.also { dm.noncompatWidthPixels = it }
-            dm.heightPixels = windowConfig.displayHeight.also { dm.noncompatHeightPixels = it }
-            dm.densityDpi = windowConfig.densityDpi.also { dm.noncompatDensityDpi = it }
-            dm.density = windowConfig.density.also { dm.noncompatDensity = it }
-            dm.noncompatScaledDensity = dm.density
-            dm.xdpi = windowConfig.densityDpi.toFloat().also { dm.noncompatXdpi = it }
-            dm.ydpi = windowConfig.densityDpi.toFloat().also { dm.noncompatYdpi = it }
-            val res: Resources =
-                android.content.res.HostedResources.create(am, dm, windowConfig.configuration)
-            return ContextImpl(res, packageName, themeResId)
+            android.app.ResourcesManager.getInstance().applyConfigurationToResources(windowConfig.configuration, null)
         }
 
 /** Boot the APK: returns after Application.onCreate + MainActivity.onCreate. */
@@ -419,24 +394,13 @@ public final class ApkHost {
                     .resolveLandscape(initialOrientation, width, height)
             val displayWidth: Int = if (initialLandscape) Math.max(width, height) else Math.min(width, height)
             val displayHeight: Int = if (initialLandscape) Math.min(width, height) else Math.max(width, height)
-            sContext =
-                makeContext(
-                    frameworkRes,
-                    apkPath,
-                    displayWidth,
-                    displayHeight,
-                    scale120,
-                    appThemeRes,
-                    pkg,
-                )
-            sContext.setClassLoaderOverride(cl)
+            HostContexts.bootstrap(frameworkRes)
+            applyWindowConfiguration(displayWidth, displayHeight, scale120)
             if (Thread.getDefaultUncaughtExceptionHandler() == null) {
                 Thread.setDefaultUncaughtExceptionHandler({ thread, throwable ->
                     Log.e(TAG, "uncaught exception on " + thread.getName(), throwable)
                 })
             }
-            android.app.ActivityThread.configureServiceHost(sContext, cl)
-            installActivityHost(pm, pkg)
 
             // A hosted process has no keystore daemon. Install the compatible,
             // persistent provider before Application.onCreate initializes its
@@ -445,10 +409,13 @@ public final class ApkHost {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
             }
 
-            // AOSP ordering: attach first, then install providers + publish +
-            // Application.onCreate (bindApplicationInProcess).
+            // AOSP ordering: attachApplication, then bindApplication (LoadedApk,
+            // Application.attach, providers installed + published, onCreate).
             android.app.ActivityThread.attachApplicationHosted(pkg)
-            android.app.ActivityThread.bindApplicationInProcess(sContext, cl, appClass, providers)
+            val app: android.app.Application = android.app.ActivityThread.currentActivityThread()
+                .`handleBindApplication$artzig`(appInfo, providers)
+            sContext = app
+            installActivityHost(pm, pkg)
             sProcessInitialized = true
 
             // --- MainActivity
@@ -565,22 +532,16 @@ public final class ApkHost {
                 android.content.Context.DISPLAY_SERVICE,
                 dev.artzig.system.HostedDisplayManagerService(),
             )
-            sContext =
-                makeContext(frameworkRes, apkPath, 640, 480, 120, appInfo.theme, pkg)
-            sContext.setClassLoaderOverride(cl)
-            android.app.ActivityThread.configureServiceHost(sContext, cl)
+            HostContexts.bootstrap(frameworkRes)
+            applyWindowConfiguration(640, 480, 120)
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
             }
-            // AOSP ordering: attach first, then install providers + publish +
-            // Application.onCreate.
+            // AOSP ordering: attach first, then bindApplication (providers
+            // installed + published before Application.onCreate).
             android.app.ActivityThread.attachApplicationHosted(pkg)
-            android.app.ActivityThread.bindApplicationInProcess(
-                sContext,
-                cl,
-                appInfo.className,
-                providersForProcess(pm, pkg),
-            )
+            sContext = android.app.ActivityThread.currentActivityThread()
+                .`handleBindApplication$artzig`(appInfo, providersForProcess(pm, pkg))
             Log.i(TAG, "headless app process up: " + pkg)
         }
 
@@ -686,7 +647,7 @@ public final class ApkHost {
             Log.i(TAG, "shutdown")
 
             // Services first: they may own decoder/audio workers and native layers.
-            android.app.ActivityThread.shutdownServicesInProcess()
+            android.app.ActivityThread.currentActivityThread().`shutdownServices$artzig`()
             Log.i(TAG, "services stopped")
 
             try {
@@ -711,7 +672,7 @@ public final class ApkHost {
             sComposite.discardDisplayList()
 
             try {
-                android.app.ActivityThread.shutdownApplicationInProcess()
+                android.app.ActivityThread.currentActivityThread().`shutdownApplication$artzig`()
             } catch (t: Throwable) {
                 Log.w(TAG, "application shutdown failed", t)
             }
@@ -907,7 +868,6 @@ public final class ApkHost {
             sScale120 = scale120
             try {
                 val res: Resources = sContext.getResources()
-                val dm: DisplayMetrics = res.getDisplayMetrics()
                 val oldConfig: Configuration = Configuration(res.getConfiguration())
                 val requestedOrientation: Int =
                     if (sActivityActive) {
@@ -924,15 +884,10 @@ public final class ApkHost {
                     windowConfig.displayHeight,
                     windowConfig.densityDpi,
                 )
-                dm.widthPixels = windowConfig.displayWidth.also { dm.noncompatWidthPixels = it }
-                dm.heightPixels = windowConfig.displayHeight.also { dm.noncompatHeightPixels = it }
-                dm.densityDpi = windowConfig.densityDpi.also { dm.noncompatDensityDpi = it }
-                dm.density = windowConfig.density.also { dm.noncompatDensity = it }
-                dm.noncompatScaledDensity = windowConfig.density
-                dm.xdpi = windowConfig.densityDpi.toFloat().also { dm.noncompatXdpi = it }
-                dm.ydpi = windowConfig.densityDpi.toFloat().also { dm.noncompatYdpi = it }
                 val config: Configuration = windowConfig.configuration
-                android.content.res.HostedResources.update(res, config, dm)
+                // AOSP ActivityThread.handleConfigurationChanged: ResourcesManager applies the
+                // configuration to every Resources; the metrics come from the display service.
+                android.app.ResourcesManager.getInstance().applyConfigurationToResources(config, null)
                 android.app.ActivityThread.applyConfigurationInProcess(config, windowConfig.changes, width, height)
             } catch (t: Throwable) {
                 Log.w(TAG, "resize failed", t)

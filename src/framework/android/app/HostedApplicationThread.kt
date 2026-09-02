@@ -1,6 +1,5 @@
 package android.app
 
-import android.content.ComponentName
 import android.content.Intent
 import android.os.Handler
 import android.os.IBinder
@@ -10,14 +9,15 @@ import android.os.Looper
  * This process's IApplicationThread given to the activity manager.
  *
  * Source note: follows `ActivityThread.ApplicationThread` — every schedule*
- * posts to the main looper and runs the matching `handle*` on
- * [HostedServiceRuntime] (AOSP: `H.CREATE_SERVICE` -> `handleCreateService`,
+ * builds the AOSP data record, posts to the main looper and runs the matching
+ * `ActivityThread.handle*` (AOSP: `H.CREATE_SERVICE` -> `handleCreateService`,
  * etc.), so lifecycle ordering matches Android's main-thread execution.
  * Activity transactions go to the hosted ActivityThread's TransactionExecutor.
  * Everything else the activity manager could schedule is not hosted.
  */
 internal class HostedApplicationThread : UnsupportedApplicationThread() {
     private val handler = Handler(Looper.getMainLooper())
+    private val thread: ActivityThread get() = ActivityThread.currentActivityThread()
 
     override fun scheduleCreateService(
         token: IBinder?,
@@ -25,35 +25,51 @@ internal class HostedApplicationThread : UnsupportedApplicationThread() {
         compatInfo: android.content.res.CompatibilityInfo?,
         processState: Int,
     ) {
-        val name = ComponentName(checkNotNull(info).packageName, info.name)
-        handler.post { HostedServiceRuntime.handleCreateService(checkNotNull(token), name) }
+        val data = ActivityThread.CreateServiceData()
+        data.token = checkNotNull(token)
+        data.info = checkNotNull(info)
+        data.compatInfo = compatInfo
+        handler.post { thread.handleCreateService(data) }
     }
 
     override fun scheduleBindService(token: IBinder?, intent: Intent?, rebind: Boolean, processState: Int, bindSeq: Long) {
-        handler.post { HostedServiceRuntime.handleBindService(checkNotNull(token), checkNotNull(intent), rebind) }
+        val data = ActivityThread.BindServiceData()
+        data.token = checkNotNull(token)
+        data.intent = checkNotNull(intent)
+        data.rebind = rebind
+        data.bindSeq = bindSeq
+        handler.post { thread.handleBindService(data) }
     }
 
     override fun scheduleUnbindService(token: IBinder?, intent: Intent?) {
-        handler.post { HostedServiceRuntime.handleUnbindService(checkNotNull(token), checkNotNull(intent)) }
+        val data = ActivityThread.BindServiceData()
+        data.token = checkNotNull(token)
+        data.intent = checkNotNull(intent)
+        handler.post { thread.handleUnbindService(data) }
     }
 
     override fun scheduleServiceArgs(token: IBinder?, args: android.content.pm.ParceledListSlice<*>?) {
         val list = args?.list ?: return
-        handler.post {
-            for (item in list) {
-                val start = item as ServiceStartArgs
-                HostedServiceRuntime.handleServiceArgs(checkNotNull(token), start.startId, start.flags, start.args)
-            }
+        for (item in list) {
+            val start = item as ServiceStartArgs
+            val data = ActivityThread.ServiceArgsData()
+            data.token = checkNotNull(token)
+            data.taskRemoved = start.taskRemoved
+            data.startId = start.startId
+            data.flags = start.flags
+            data.args = start.args
+            handler.post { thread.handleServiceArgs(data) }
         }
     }
 
     override fun scheduleStopService(token: IBinder?) {
-        handler.post { HostedServiceRuntime.handleStopService(checkNotNull(token)) }
+        val t = checkNotNull(token)
+        handler.post { thread.handleStopService(t) }
     }
 
     override fun scheduleExit() {
         handler.post {
-            HostedServiceRuntime.shutdown()
+            thread.`shutdownServices$artzig`()
             Runtime.getRuntime().exit(0)
         }
     }

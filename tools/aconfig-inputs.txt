@@ -49,3 +49,7 @@ android.media.codec|system|aosp|frameworks/av/media/aconfig/codec_fwk.aconfig
 com.android.internal.camera.flags|system|aosp|frameworks/av/camera/camera_platform.aconfig
 com.android.internal.telephony.flags|system|aosp|frameworks/opt/telephony/flags/calling.aconfig|frameworks/opt/telephony/flags/carrier.aconfig|frameworks/opt/telephony/flags/data.aconfig|frameworks/opt/telephony/flags/domainselection.aconfig|frameworks/opt/telephony/flags/ims.aconfig|frameworks/opt/telephony/flags/iwlan.aconfig|frameworks/opt/telephony/flags/messaging.aconfig|frameworks/opt/telephony/flags/misc.aconfig|frameworks/opt/telephony/flags/network.aconfig|frameworks/opt/telephony/flags/satellite.aconfig|frameworks/opt/telephony/flags/subscription.aconfig|frameworks/opt/telephony/flags/uicc.aconfig
 com.android.ranging.flags|com.android.uwb|aosp|packages/modules/Uwb/ranging/flags/ranging_flags.aconfig
+android.media.tv.flags|system|aosp|frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig
+android.app.supervision.flags|system|aosp|frameworks/base/core/java/android/app/supervision/flags.aconfig
+android.net.wifi.flags|system|aosp|frameworks/base/wifi/wifi.aconfig
+android.webkit|system|aosp|frameworks/base/core/java/android/webkit/flags.aconfig

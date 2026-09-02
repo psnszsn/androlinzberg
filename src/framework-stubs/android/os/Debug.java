@@ -2,6 +2,7 @@
 package android.os;
 public class Debug {
     public static String getCallers(final int depth) { return ""; }
+    public static String getCallers(final int start, final int depth) { return ""; }
     public static String getCaller() { return ""; }
     public static long threadCpuTimeNanos() { return System.nanoTime(); }
     public static void startMethodTracing(String traceName) {}

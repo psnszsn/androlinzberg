@@ -3,7 +3,6 @@ package dev.artzig
 import android.app.Activity
 import android.app.ActivityManager
 import android.app.ActivityThread
-import android.app.ContextImpl
 import android.app.DownloadManager
 import android.app.Notification
 import android.app.Person
@@ -147,19 +146,23 @@ internal object FrameworkModuleSmoke {
 
         val wakeLock = "android.permission.WAKE_LOCK"
         val camera = "android.permission.CAMERA"
-        val base = ContextImpl(
-            ContextImpl.createSystemContext(frameworkResources, 200, 200, 120, 0).resources,
-            "org.example.permissions",
-            0,
-        )
+        // AOSP checks the calling uid's grants: this process is bound to the
+        // fixture package, so its package context answers for it.
+        ActivityThread.attachApplicationHosted("org.example.permissions")
+        val base = HostContexts.systemContext(frameworkResources, 200, 200, 120, 0)
+            .createPackageContext("org.example.permissions", 0)
         val wrapped = ContextWrapper(base)
         check(base.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)
         check(wrapped.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)
         check(base.checkSelfPermission(camera) == PackageManager.PERMISSION_DENIED)
         check(base.checkSelfPermission("android.permission.NOT_DECLARED") ==
             PackageManager.PERMISSION_DENIED)
-        check(runCatching { base.checkSelfPermission(null) }.exceptionOrNull() is
-            IllegalArgumentException)
+        // AOSP ContextImpl.checkSelfPermission(null) throws (the Kotlin overload is @NonNull).
+        val nullPermission = runCatching {
+            android.content.Context::class.java.getMethod("checkSelfPermission", String::class.java)
+                .invoke(base, *arrayOf<Any?>(null))
+        }.exceptionOrNull()
+        check((nullPermission as? java.lang.reflect.InvocationTargetException)?.cause is IllegalArgumentException)
 
         val packageInfo = base.packageManager.getPackageInfo(
             "org.example.permissions",
@@ -212,7 +215,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testRemoteActionContract() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -255,7 +258,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testPictureInPictureContracts() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -293,7 +296,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testConfigurationContexts() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -356,7 +359,7 @@ internal object FrameworkModuleSmoke {
 
     private fun testHostedSystemServices() {
         run {
-            val context = ContextImpl.createSystemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
+            val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
             android.os.ServiceManager.addProcessLocalService(
                 Context.DISPLAY_SERVICE,
                 dev.artzig.system.HostedDisplayManagerService(),
@@ -381,7 +384,7 @@ internal object FrameworkModuleSmoke {
             checkNotNull(android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))
             check(context.getSystemService("no.such.service") == null) { "unknown service must be null" }
         }
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -428,10 +431,18 @@ internal object FrameworkModuleSmoke {
             "name:framework-smoke", "Framework smoke",
         )) { "Notification.Builder must publish people into notification extras: $people" }
 
+        // AOSP: the download table lives in the application's data directory; a
+        // system context has none, so the block runs against a package context
+        // of the installed fixture (this process is bound to that package).
+        val fixtures = checkNotNull(fixtureApkDir) { "fixture APK directory argument missing" }
+        val fixtureInstaller = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        check(fixtureInstaller.installPackage("$fixtures/org.example.permissions.apk", null) == "org.example.permissions")
+        ActivityThread.attachApplicationHosted("org.example.permissions")
+        val appContext = context.createPackageContext("org.example.permissions", 0)
         // The hosted provider table is deliberately kept under filesDir, where the APK can alter
         // it. Verify that restoring a forged successful record cannot turn provider APIs into a
         // read/delete primitive for paths outside application-owned storage.
-        val stateDirectory = File(context.filesDir, "hosted-download-manager")
+        val stateDirectory = File(appContext.filesDir, "hosted-download-manager")
         check(stateDirectory.isDirectory || stateDirectory.mkdirs())
         listOf("state.bin", "state.bin.bak", "state.bin.tmp").forEach {
             File(stateDirectory, it).delete()
@@ -461,8 +472,8 @@ internal object FrameworkModuleSmoke {
             output.writeBoolean(true)
         }
 
-        val byName = context.getSystemService(Context.DOWNLOAD_SERVICE)
-        val downloadManager = context.getSystemService(DownloadManager::class.java)
+        val byName = appContext.getSystemService(Context.DOWNLOAD_SERVICE)
+        val downloadManager = appContext.getSystemService(DownloadManager::class.java)
         check(downloadManager != null && downloadManager === byName)
         downloadManager.query(DownloadManager.Query().setFilterById(1)).use { cursor ->
             check(!cursor.moveToFirst()) { "unsafe persisted DownloadManager record was restored" }
@@ -491,7 +502,7 @@ internal object FrameworkModuleSmoke {
             isDaemon = true
             start()
         }
-        val destination = File(context.filesDir, "hosted-download-manager-smoke.bin")
+        val destination = File(appContext.filesDir, "hosted-download-manager-smoke.bin")
         destination.delete()
         val unsafeRequest = DownloadManager.Request(
             Uri.parse("http://127.0.0.1/unsafe"),
@@ -501,7 +512,7 @@ internal object FrameworkModuleSmoke {
         }
         val traversalRequest = DownloadManager.Request(
             Uri.parse("http://127.0.0.1/traversal"),
-        ).setDestinationInExternalFilesDir(context, null, "../../hosted-download-manager-escape.bin")
+        ).setDestinationInExternalFilesDir(appContext, null, "../../hosted-download-manager-escape.bin")
         check(runCatching { downloadManager.enqueue(traversalRequest) }.exceptionOrNull() is SecurityException) {
             "hosted DownloadManager must reject external-files traversal"
         }
@@ -549,13 +560,13 @@ internal object FrameworkModuleSmoke {
             ).use { it.readBytes() }
             check(downloaded.contentEquals(payload))
 
-            val restoredManager = DownloadManager(context)
+            val restoredManager = DownloadManager(appContext)
             restoredManager.query(DownloadManager.Query().setFilterById(id)).use { cursor ->
                 check(cursor.moveToFirst())
                 check(cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) ==
                     DownloadManager.STATUS_SUCCESSFUL)
             }
-            check(File(context.filesDir, "hosted-download-manager/state.bin").isFile) {
+            check(File(appContext.filesDir, "hosted-download-manager/state.bin").isFile) {
                 "DownloadManager request table was not persisted"
             }
 
@@ -586,7 +597,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedAudioCapabilities() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -658,7 +669,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testEditableTextSavedStateRoundTrips() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             320,
             180,
@@ -769,7 +780,7 @@ internal object FrameworkModuleSmoke {
         check(client.shouldOverrideUrlLoading(null, request))
         check(client.shouldInterceptRequest(null, request) === response)
 
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -856,7 +867,7 @@ internal object FrameworkModuleSmoke {
         val backend = InMemoryHostedNsdBackend()
         HostedNsdBackends.installForTests(backend)
         try {
-            val context = ContextImpl.createSystemContext(
+            val context = HostContexts.systemContext(
                 System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
                 200,
                 200,
@@ -936,7 +947,7 @@ internal object FrameworkModuleSmoke {
 
     private fun testSurfaceViewLifecycle() {
         ArtzigVideoLayer.setNativeCallsEnabledForTests(false)
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -1007,7 +1018,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testPostedCallbackRunsAfterPendingTraversal() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -1176,7 +1187,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testTraversalRescheduleAndSharedQueue() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -1311,7 +1322,7 @@ internal object FrameworkModuleSmoke {
     private fun testHostedInputDispatch() {
         val frameworkResources = System.getenv("ARTZIG_FRAMEWORK_RES")
             ?: "zig-out/res/framework-res.apk"
-        val context = ContextImpl.createSystemContext(frameworkResources, 200, 200, 120, 0)
+        val context = HostContexts.systemContext(frameworkResources, 200, 200, 120, 0)
         val observed = mutableListOf<String>()
         val view = object : View(context) {
             init {
@@ -1441,7 +1452,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedPhysicalInputLifecycle() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -1561,7 +1572,7 @@ internal object FrameworkModuleSmoke {
 
 
     private fun testHostedInputHierarchyDispatch() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -1602,7 +1613,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedMouseSeekBarDrag() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             100,
@@ -1645,7 +1656,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedInputCancelOnInterception() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -1685,7 +1696,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedInputWindowRouting() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,
@@ -1771,7 +1782,7 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testHostedInputSiblingDispatch() {
-        val context = ContextImpl.createSystemContext(
+        val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             200,
             200,

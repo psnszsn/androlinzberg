@@ -3,7 +3,6 @@
 package dev.artzig
 
 import android.app.Activity
-import android.app.ContextImpl
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -92,7 +91,7 @@ public final class ViewHost {
 
     companion object {
         private lateinit var sActivity: Activity
-        private lateinit var sContext: ContextImpl
+        private lateinit var sContext: android.content.Context
         private lateinit var sRoot: android.view.ViewRootImpl
         private lateinit var sStatusText: TextView
         private var sDownTime: Long = 0L
@@ -129,24 +128,18 @@ public final class ViewHost {
             if (Looper.myLooper() == null) Looper.prepareMainLooper()
             android.graphics.Typeface.loadPreinstalledSystemFontMap()
             val resPath: String = System.getenv("ARTZIG_FRAMEWORK_RES")
-            sContext =
-                ContextImpl.createSystemContext(
-                    resPath,
-                    width,
-                    height,
-                    scale120,
-                    android.R.style.Theme_DeviceDefault_NoActionBar,
-                )
-            // AOSP ActivityThread.handleBindApplication installs the process
-            // Application before any Activity creates or lays out views. The
-            // demo host has no manifest/providers, but framework code still
-            // relies on currentApplication() for process configuration.
-            android.app.ActivityThread.bindApplicationInProcess(
-                sContext,
-                sContext.classLoader,
-                null,
-                emptyList(),
+            sContext = HostContexts.systemContext(
+                resPath,
+                width,
+                height,
+                scale120,
+                android.R.style.Theme_DeviceDefault_NoActionBar,
             )
+            // AOSP ActivityThread.attach(system) installs the process Application
+            // before any Activity creates or lays out views. The demo host has
+            // no manifest/providers, but framework code still relies on
+            // currentApplication() for process configuration.
+            android.app.ActivityThread.currentActivityThread().`bindSystemApplication$artzig`()
             sActivity = DemoActivity()
             sActivity.attach(sContext)
             sActivity.performCreate(null)
@@ -225,32 +218,11 @@ public final class ViewHost {
             sWidth = width
             sHeight = height
             sScale120 = scale120
-            val res: android.content.res.Resources = sContext.getResources()
-            val dm: android.util.DisplayMetrics = res.getDisplayMetrics()
             val density: Float = scale120 / 120f
             android.view.WindowManagerImpl.configureWindowMetrics(width, height, density)
-            val densityDpi: Int = Math.round(160f * density)
-            android.view.ArtzigDisplay.configure(width, height, densityDpi)
-            dm.widthPixels = width.also { dm.noncompatWidthPixels = it }
-            dm.heightPixels = height.also { dm.noncompatHeightPixels = it }
-            dm.densityDpi = densityDpi.also { dm.noncompatDensityDpi = it }
-            dm.density = density.also { dm.noncompatDensity = it }
-            dm.noncompatScaledDensity = density
-            dm.xdpi = densityDpi.toFloat().also { dm.noncompatXdpi = it }
-            dm.ydpi = densityDpi.toFloat().also { dm.noncompatYdpi = it }
+            HostContexts.configureDisplay(width, height, scale120)
             val config: android.content.res.Configuration =
-                android.content.res.Configuration(res.getConfiguration())
-            config.densityDpi = densityDpi
-            config.screenWidthDp = (width / density).toInt()
-            config.screenHeightDp = (height / density).toInt()
-            config.smallestScreenWidthDp = Math.min(config.screenWidthDp, config.screenHeightDp)
-            config.orientation =
-                if (width >= height) {
-                    android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                } else {
-                    android.content.res.Configuration.ORIENTATION_PORTRAIT
-                }
-            android.content.res.HostedResources.update(res, config, dm)
+                android.content.res.Configuration(sContext.getResources().getConfiguration())
             sRoot.setSize(width, height)
             sActivity.onConfigurationChanged(config)
         }

@@ -19,6 +19,7 @@ public class PendingIntent implements android.os.Parcelable {
         creatorPackage = null;
     }
     public PendingIntent(android.os.IBinder target) { this(); }
+    public PendingIntent(android.content.IIntentSender target) { this(); }
     public PendingIntent(android.content.IntentSender sender) { this(); }
     private PendingIntent(android.content.Context context, int requestCode,
             android.content.Intent intent, int kind) {

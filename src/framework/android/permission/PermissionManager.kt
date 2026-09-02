@@ -31,6 +31,7 @@ class PermissionManager {
 
     private fun service(): IPackageManager = android.app.ActivityThread.getPackageManager()
 
+
     /** AOSP registers attribution sources with PermissionManagerService so a
      * receiver can trust a chain; the session's broker uid is the identity here,
      * so every source a process presents for itself is registered. */
@@ -105,6 +106,8 @@ class PermissionManager {
     // ----- fixed defaults: no restricted-permission or policy machinery -----
 
     fun isPermissionRevokedByPolicy(pkgName: String?, permName: String?): Boolean = false
+    /** AOSP PermissionManager.getPermissionRequestState: requestable (no policy denies it here). */
+    fun getPermissionRequestState(packageName: String?, permissionName: String?, deviceId: Int): Int = 0
     fun addPermission(info: PermissionInfo?, async: Boolean): Boolean = false
     fun removePermission(name: String?) {}
     fun getPermissionFlags(packageName: String?, permName: String?, user: UserHandle?): Int = 0
@@ -125,6 +128,28 @@ class PermissionManager {
     fun removeOnPermissionsChangeListener(listener: PackageManager.OnPermissionsChangedListener?) {}
 
     companion object {
+        /** AOSP PermissionManager.checkPermission (ContextImpl.checkPermission): the uid's grant
+         * state from the session package manager (root and system hold every permission). */
+        @JvmStatic
+        fun checkPermission(permission: String?, pid: Int, uid: Int): Int {
+            if (permission == null) return PackageManager.PERMISSION_DENIED
+            return try {
+                android.app.ActivityThread.getPackageManager().checkUidPermission(permission, uid)
+            } catch (e: android.os.RemoteException) {
+                PackageManager.PERMISSION_DENIED
+            }
+        }
+
+        /** AOSP overload with a device id: one default device on this host. */
+        @JvmStatic
+        fun checkPermission(permission: String?, pid: Int, uid: Int, deviceId: Int): Int =
+            checkPermission(permission, pid, uid)
+
+        /** AOSP: the device id a permission check should use (virtual devices are absent). */
+        @JvmStatic
+        fun resolveDeviceIdForPermissionCheck(context: android.content.Context?, deviceId: Int, permission: String?): Int =
+            android.content.Context.DEVICE_ID_DEFAULT
+
         /** No split-permission table on this host. */
         @JvmStatic
         fun getSplitPermissions(): List<SplitPermissionInfo> = emptyList()

@@ -646,7 +646,7 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
         filter ?: return null
         val notExported = (flags and android.content.Context.RECEIVER_NOT_EXPORTED) != 0
         return broadcasts.registerReceiver(
-            receiver, filter, callerPackage, Binder.getCallingUid(), requiredPermission, notExported,
+            receiver, caller?.asBinder(), filter, callerPackage, Binder.getCallingUid(), requiredPermission, notExported,
         )
     }
 

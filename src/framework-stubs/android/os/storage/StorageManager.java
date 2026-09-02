@@ -86,4 +86,7 @@ public class StorageManager {
     public static String convert(java.util.UUID storageUuid) {
         return UUID_DEFAULT.equals(storageUuid) ? null : storageUuid.toString();
     }
+    /** AOSP StorageManager.mkdirs/fixupAppDir go through vold; the host creates plain directories. */
+    public void mkdirs(java.io.File file) { file.mkdirs(); }
+    public void fixupAppDir(java.io.File file) {}
 }

@@ -27,19 +27,33 @@ public class Xml {
     public static XmlSerializer newSerializer() {
         return new com.android.org.kxml2.io.KXmlSerializer();
     }
-    public static TypedXmlPullParser newFastPullParser() { throw ArtzigTestDiagnostics.unsupported(
-            "android.util.Xml", "newFastPullParser", null); }
+    /** AOSP Xml.newFastPullParser: the typed wrapper over the pull parser. */
+    public static TypedXmlPullParser newFastPullParser() {
+        return com.android.internal.util.XmlUtils.makeTyped(newPullParser());
+    }
     public static TypedXmlPullParser newBinaryPullParser() { throw ArtzigTestDiagnostics.unsupported(
             "android.util.Xml", "newBinaryPullParser", null); }
+    /** AOSP Xml.resolvePullParser without the binary-XML branch (no ART binary chain here). */
     public static TypedXmlPullParser resolvePullParser(InputStream in) throws IOException {
-        throw ArtzigTestDiagnostics.unsupported("android.util.Xml", "resolvePullParser", null);
+        final TypedXmlPullParser xml = newFastPullParser();
+        try {
+            xml.setInput(in, java.nio.charset.StandardCharsets.UTF_8.name());
+        } catch (XmlPullParserException e) {
+            throw new IOException(e);
+        }
+        return xml;
     }
-    public static TypedXmlSerializer newFastSerializer() { throw ArtzigTestDiagnostics.unsupported(
-            "android.util.Xml", "newFastSerializer", null); }
+    /** AOSP Xml.newFastSerializer: the typed wrapper over FastXmlSerializer. */
+    public static TypedXmlSerializer newFastSerializer() {
+        return com.android.internal.util.XmlUtils.makeTyped(new com.android.internal.util.FastXmlSerializer());
+    }
     public static TypedXmlSerializer newBinarySerializer() { throw ArtzigTestDiagnostics.unsupported(
             "android.util.Xml", "newBinarySerializer", null); }
+    /** AOSP Xml.resolveSerializer without the binary-XML branch. */
     public static TypedXmlSerializer resolveSerializer(OutputStream out) throws IOException {
-        throw ArtzigTestDiagnostics.unsupported("android.util.Xml", "resolveSerializer", null);
+        final TypedXmlSerializer xml = newFastSerializer();
+        xml.setOutput(out, java.nio.charset.StandardCharsets.UTF_8.name());
+        return xml;
     }
     public static void parse(String xml, org.xml.sax.ContentHandler contentHandler) throws SAXException {
         try {

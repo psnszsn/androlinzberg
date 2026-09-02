@@ -128,7 +128,7 @@ public final class FrameworkCompatSmoke {
             info.authority = "org.example.local"
             info.exported = false
             // AOSP attachInfo needs a Context (validateIncomingUri reads its user id).
-            val providerContext = android.app.ContextImpl.createSystemContext(
+            val providerContext = HostContexts.systemContext(
                 requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
             )
             provider.attachInfo(providerContext, info)
@@ -300,7 +300,7 @@ public final class FrameworkCompatSmoke {
             require(installer.installPackage("$fixtureDir/org.example.apk", null) == "org.example", "fixture install")
             testLoadedApk()
 
-            val packageManager: PackageManager = android.app.ContextImpl.createSystemContext(
+            val packageManager: PackageManager = HostContexts.systemContext(
                 requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
             ).packageManager
             val launch: Intent? = packageManager.getLaunchIntentForPackage("org.example")
@@ -567,8 +567,12 @@ public final class FrameworkCompatSmoke {
             val thumbnailUri: Array<android.net.Uri?> = arrayOfNulls(1)
             val thumbnailSize: Array<Size?> = arrayOfNulls(1)
             val expected: Bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+            // AOSP ContentResolver needs its Context (attribution source, package name).
+            val resolverContext = HostContexts.systemContext(
+                requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
+            )
             val resolver: ContentResolver =
-                object : ContentResolver(null) {
+                object : ContentResolver(resolverContext) {
                     override fun acquireProvider(c: android.content.Context, authority: String): android.content.IContentProvider? = null
                     override fun acquireExistingProvider(c: android.content.Context, authority: String): android.content.IContentProvider? = null
                     override fun acquireUnstableProvider(c: android.content.Context, authority: String): android.content.IContentProvider? = null

@@ -1,7 +1,6 @@
 package dev.artzig.systemtest
 
 import android.app.ActivityThread
-import android.app.ContextImpl
 import android.os.Binder
 import android.os.Looper
 import android.os.Parcel
@@ -23,19 +22,26 @@ internal object SystemTestHostB {
         val frameworkRes = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
         // Own package identity (the clipboard's AppOps checkPackage verifies
         // the calling package against this process's uid).
-        val context = ContextImpl(
-            ContextImpl.createSystemContext(frameworkRes, 640, 480, 120, 0).resources,
-            "dev.artzig.test.b",
-            0,
-        )
-        ActivityThread.configureServiceHost(context, SystemTestHostB::class.java.classLoader)
+        dev.artzig.HostContexts.systemContext(frameworkRes, 640, 480, 120, 0)
         // Install this package's fixture APK: the session's package manager
         // parses the real manifest (client A asserts the parsed values).
         val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
         check(installer.installPackage("$fixtures/dev.artzig.test.b.apk", null) == "dev.artzig.test.b")
-        val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
         ActivityThread.attachApplicationHosted("dev.artzig.test.b")
+        // AOSP handleBindApplication: the test providers are installed from their
+        // parsed ProviderInfos and published before Application.onCreate (client
+        // A queries them cross-process; the non-exported one asserts the gate).
+        val ipm = ActivityThread.getPackageManager()
+        val providerInfo = checkNotNull(ipm.getProviderInfo(
+            android.content.ComponentName("dev.artzig.test.b", TestProvider::class.java.name), 0L, 0,
+        ))
+        val secretInfo = checkNotNull(ipm.getProviderInfo(
+            android.content.ComponentName("dev.artzig.test.b", SecretProvider::class.java.name), 0L, 0,
+        ))
+        val appInfo = checkNotNull(ipm.getApplicationInfo("dev.artzig.test.b", 0L, 0))
+        val context: android.content.Context = ActivityThread.currentActivityThread()
+            .`handleBindApplication$artzig`(appInfo, listOf(providerInfo, secretInfo))
         // A plain Binder service the cross-language native client (libbinder_ndk)
         // looks up and calls remotely; onTransact enforces the same interface
         // descriptor the native side's prepareTransaction writes as a token.
@@ -49,25 +55,6 @@ internal object SystemTestHostB {
             true
         }
         ServiceManager.addService("dev.artzig.test.b.messenger", android.os.Messenger(messengerHandler).binder)
-        // Publish the test providers under their parsed ProviderInfos (client
-        // A queries them cross-process; the non-exported one asserts the
-        // acquisition gate).
-        val pm = context.packageManager
-        val providerInfo = pm.getProviderInfo(
-            android.content.ComponentName("dev.artzig.test.b", TestProvider::class.java.name), 0,
-        )
-        val secretInfo = pm.getProviderInfo(
-            android.content.ComponentName("dev.artzig.test.b", SecretProvider::class.java.name), 0,
-        )
-        val provider = TestProvider().also { it.attachInfo(context, providerInfo) }
-        val secret = SecretProvider().also { it.attachInfo(context, secretInfo) }
-        am.publishContentProviders(
-            android.app.HostedServiceClient.applicationThread(),
-            listOf(
-                android.app.ContentProviderHolder(providerInfo).also { it.provider = provider.getIContentProvider() },
-                android.app.ContentProviderHolder(secretInfo).also { it.provider = secret.getIContentProvider() },
-            ),
-        )
         System.err.println("system-test-host-b: attached pid=" + Process.myPid() + " uid=" + Process.myUid())
         Thread {
             val exited = EchoService.exitLatch.await(120, java.util.concurrent.TimeUnit.SECONDS)

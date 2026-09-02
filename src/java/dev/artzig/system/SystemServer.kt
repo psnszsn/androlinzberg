@@ -1,7 +1,6 @@
 package dev.artzig.system
 
 import android.app.ActivityThread
-import android.app.ContextImpl
 import dev.artzig.BinderSession
 import android.os.Looper
 import android.os.Process
@@ -31,8 +30,7 @@ internal object SystemServer {
         check(!android.os.Build.IS_EMULATOR) { "hosted sessions are not emulators" }
         val frameworkRes = System.getenv("ARTZIG_FRAMEWORK_RES")
             ?: throw IllegalStateException("ARTZIG_FRAMEWORK_RES is not set")
-        val context = ContextImpl.createSystemContext(frameworkRes, 800, 600, 120, 0)
-        ActivityThread.markSystem()
+        val context = dev.artzig.HostContexts.systemContext(frameworkRes, 800, 600, 120, 0)
         // Reused services read @hide settings; the verbatim AOSP Settings
         // client exempts the system server from the @Readable restriction.
         android.provider.Settings.setInSystemServer()

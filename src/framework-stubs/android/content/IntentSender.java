@@ -10,7 +10,7 @@ public class IntentSender implements Parcelable {
     }
     public void sendIntent(Context context, int code, Intent intent, Object onFinished, android.os.Handler handler)
             throws SendIntentException {}
-    public android.os.IBinder getTarget() { return null; }
+    public IIntentSender getTarget() { return null; }
     public boolean isImmutable() { return false; }
     @Override public int describeContents() { return 0; }
     @Override public void writeToParcel(Parcel out, int flags) {}
@@ -18,4 +18,6 @@ public class IntentSender implements Parcelable {
         public IntentSender createFromParcel(Parcel in) { return new IntentSender(); }
         public IntentSender[] newArray(int size) { return new IntentSender[size]; }
     };
+    /** AOSP IntentSender.getWhitelistToken: no temp-allowlist token on this host. */
+    public android.os.IBinder getWhitelistToken() { return null; }
 }

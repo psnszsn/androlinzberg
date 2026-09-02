@@ -313,6 +313,25 @@ fn registerBinderJni(arena: std.mem.Allocator, tree: []const u8, env: *anyopaque
 /// Boots ART with the framework jar and the host natives but no window, no
 /// fonts, and no bionic loader: enough for framework Java (Binder, Looper,
 /// AssetManager, PackageParser) in the system process and test peers.
+/// System fonts: unless the user points ARTZIG_FONT_FALLBACK_XML at a
+/// hand-made config, generate one from fontconfig (must precede ART boot:
+/// SystemFonts reads the env at class init). Every ART process needs it, the
+/// headless ones included: the real Context's theme resolves a Typeface as
+/// soon as a TextView is inflated.
+fn configureFonts(init: std.process.Init) void {
+    if (init.minimal.environ.getPosix("ARTZIG_FONT_FALLBACK_XML") != null) return;
+    const t0 = monotonicMs();
+    defer std.debug.print("azk: fonts: fontconfig query took {d} ms\n", .{monotonicMs() - t0});
+    if (fonts.generate(init.gpa, init.minimal.environ)) |xml| {
+        defer init.gpa.free(xml);
+        _ = setenv("ARTZIG_FONT_FALLBACK_XML", xml, 1);
+        _ = setenv("ARTZIG_FONTS_XML", xml, 1);
+        _ = setenv("ARTZIG_FONT_DIR", "/", 1);
+    } else {
+        std.debug.print("azk: fonts: fontconfig query failed; set ARTZIG_FONT_FALLBACK_XML\n", .{});
+    }
+}
+
 fn bootHeadless(init: std.process.Init) !Headless {
     const arena = init.arena.allocator();
     const tree = try installTree(init);
@@ -326,6 +345,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     if (init.minimal.environ.getPosix("ARTZIG_FRAMEWORK_RES") == null) {
         _ = setenv("ARTZIG_FRAMEWORK_RES", try std.fs.path.joinZ(arena, &.{ tree, "res", "framework-res.apk" }), 1);
     }
+    configureFonts(init);
     // Stock runtime libart and default library search path: the overlay
     // libart in lib/art has no sibling JNI libraries (libicu_jni.so, ...), and
     // without the bionic loader there is no <root>/lib64 fallback.
@@ -371,6 +391,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
 
+    configureFonts(init);
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
         .library_path = &.{runtime_overlay_dir},
@@ -458,21 +479,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
 
-    // System fonts: unless the user points ARTZIG_FONT_FALLBACK_XML at a
-    // hand-made config, generate one from fontconfig (must precede ART boot:
-    // SystemFonts reads the env at class init).
-    if (init.minimal.environ.getPosix("ARTZIG_FONT_FALLBACK_XML") == null) {
-        const t0 = monotonicMs();
-        defer std.debug.print("azk: fonts: fontconfig query took {d} ms\n", .{monotonicMs() - t0});
-        if (fonts.generate(gpa, init.minimal.environ)) |xml| {
-            defer gpa.free(xml);
-            _ = setenv("ARTZIG_FONT_FALLBACK_XML", xml, 1);
-            _ = setenv("ARTZIG_FONTS_XML", xml, 1);
-            _ = setenv("ARTZIG_FONT_DIR", "/", 1);
-        } else {
-            std.debug.print("azk: fonts: fontconfig query failed; set ARTZIG_FONT_FALLBACK_XML\n", .{});
-        }
-    }
+    configureFonts(init);
 
     // Boot ART with the multidex framework jar.
     const art_extra_options: []const []const u8 =

@@ -88,6 +88,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/native/libs/input",
         "frameworks/native/libs/binder/aidl",
         "frameworks/base/apex/jobscheduler/framework/java",
+        "frameworks/base/native/android/aidl",
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
 }
 

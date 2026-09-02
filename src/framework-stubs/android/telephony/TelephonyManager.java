@@ -6,4 +6,5 @@ public class TelephonyManager {
     public boolean isVoiceCapable() { return false; }
     public String getSimCountryIso() { return ""; }
     public String getNetworkCountryIso() { return ""; }
+    public static final String ACTION_SERVICE_PROVIDERS_UPDATED = "android.telephony.action.SERVICE_PROVIDERS_UPDATED";
 }

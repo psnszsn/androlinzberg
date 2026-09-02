@@ -31,6 +31,8 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
     /** AOSP ReceiverList: one entry per IIntentReceiver binder, many filters. */
     private class Registration(
         val receiver: IIntentReceiver,
+        /** The registering process's IApplicationThread binder: AOSP finishReceiver names it, not the receiver. */
+        val callerBinder: IBinder?,
         val packageName: String?,
         val uid: Int,
         /** Permission a sender must hold to reach this receiver (AOSP requiredPermission on register). */
@@ -72,6 +74,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
     /** A null receiver is the sticky-query form: return the first match, register nothing. */
     fun registerReceiver(
         receiver: IIntentReceiver?,
+        caller: IBinder?,
         filter: IntentFilter,
         callingPackage: String?,
         callerUid: Int,
@@ -87,7 +90,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         val matching = ArrayList<Intent>()
         synchronized(lock) {
             val registration = registrations[binder] ?: run {
-                val fresh = Registration(receiver, callingPackage, callerUid, broadcastPermission, notExported)
+                val fresh = Registration(receiver, caller, callingPackage, callerUid, broadcastPermission, notExported)
                 fresh.queue = this
                 try {
                     binder.linkToDeath(fresh, 0)
@@ -182,7 +185,9 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         finishCurrent(who.asBinder(), resultCode, resultData, resultExtras, abort)
     }
 
-    /** IActivityManager.finishReceiver keys the receiver by its binder. */
+    /** IActivityManager.finishReceiver: `who` is the finishing process's IApplicationThread
+     * binder for registered receivers (LoadedApk.ReceiverDispatcher.Args) — AOSP resolves the
+     * process's current ordered receiver — or the receiver binder itself. */
     fun finishReceiver(who: IBinder, resultCode: Int, resultData: String?, resultExtras: Bundle?, abort: Boolean) {
         finishCurrent(who, resultCode, resultData, resultExtras, abort)
     }
@@ -192,11 +197,9 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
     private fun finishCurrent(binder: IBinder, resultCode: Int?, resultData: String?, resultExtras: Bundle?, abort: Boolean) {
         synchronized(lock) {
             val record = current ?: return
-            if (record.index !in record.receivers.indices ||
-                record.receivers[record.index].binder != binder
-            ) {
-                return
-            }
+            if (record.index !in record.receivers.indices) return
+            val target = record.receivers[record.index]
+            if (target.binder != binder && target.callerBinder != binder) return
             record.timeout?.cancel(false)
             record.timeout = null
             if (resultCode != null) {

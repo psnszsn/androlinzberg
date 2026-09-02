@@ -85,4 +85,8 @@ public class AppOpsManager {
     public static void resumeNotedAppOpsCollection(PausedNotedAppOpsCollection c) {}
     public static boolean isListeningForOpNoted() { return false; }
     public static void readAndLogNotedAppops(android.os.Parcel p) {}
+    /** AOSP AppOpsManager.toReceiverId: the receiver's identity for the activity manager. */
+    public static String toReceiverId(Object obj) {
+        return obj == null ? null : obj.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(obj));
+    }
 }

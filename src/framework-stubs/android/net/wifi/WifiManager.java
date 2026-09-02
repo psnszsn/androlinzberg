@@ -22,4 +22,9 @@ public class WifiManager {
     public MulticastLock createMulticastLock(String tag) { return new MulticastLock(); }
     public boolean isWifiEnabled() { return true; }
     public int getWifiState() { return 3; }
+    /** Broadcast actions BroadcastStickyCache keys on (AOSP values). */
+    public static final String ACTION_WIFI_SCAN_AVAILABILITY_CHANGED = "android.net.wifi.action.WIFI_SCAN_AVAILABILITY_CHANGED";
+    public static final String NETWORK_STATE_CHANGED_ACTION = "android.net.wifi.STATE_CHANGE";
+    public static final String SUPPLICANT_STATE_CHANGED_ACTION = "android.net.wifi.supplicant.STATE_CHANGE";
+    public static final String WIFI_STATE_CHANGED_ACTION = "android.net.wifi.WIFI_STATE_CHANGED";
 }

@@ -73,7 +73,12 @@ public class ActivityManager {
             START_SWITCHES_CANCELED = 4, START_RETURN_LOCK_TASK_MODE_VIOLATION = 5, START_ABORTED = 102;
     /** AOSP ProcessStateEnum.UNKNOWN. */
     public static final int PROCESS_STATE_UNKNOWN = -1;
+    public static final int PROCESS_STATE_PERSISTENT = 0, PROCESS_STATE_PERSISTENT_UI = 1;
     public static final int PROCESS_STATE_TOP = 2;
+    public static final int PROCESS_STATE_BOUND_TOP = 3, PROCESS_STATE_FOREGROUND_SERVICE = 4,
+            PROCESS_STATE_BOUND_FOREGROUND_SERVICE = 5;
+    /** AOSP ActivityManager.isStartResultFatalError: START_* codes in [-100, -1]. */
+    public static boolean isStartResultFatalError(int result) { return -100 <= result && result <= -1; }
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface ProcessState {}
     /** AOSP ActivityManager.RunningServiceInfo (data shape; IActivityManager parcels it). */

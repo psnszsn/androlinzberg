@@ -1,21 +1,18 @@
 package android.app
 
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
 import android.os.RemoteException
 import android.os.ServiceManager
 import android.util.Log
 import dev.artzig.system.IHostedInstaller
 
 /**
- * This process's client side of the activity manager: the real
- * `IActivityManager` proxy, the process's `IApplicationThread`, and the
- * `ServiceConnection` dispatch (via [ServiceDispatcher]).
- *
- * Source note: the `ContextImpl.bindServiceCommon` / `startService` path in
- * AOSP, reduced to the hosted interface.
+ * This process's client side of the session's activity manager: the real
+ * `IActivityManager` proxy, the process's `IApplicationThread`, the host
+ * bootstrap (installer, attach), and the per-authority provider connections
+ * the hosted ActivityThread.acquireProvider family rides on. Components,
+ * receivers and broadcasts go through the real ContextImpl directly.
  */
 object HostedServiceClient {
     private const val TAG = "HostedServiceClient"
@@ -74,21 +71,6 @@ object HostedServiceClient {
         }
     }
 
-    /** Publishes this process's installed providers (AOSP ordering: attach ->
-     * install -> publish -> Application.onCreate; the application runtime
-     * calls this between install and onCreate). */
-    @JvmStatic
-    fun publishInstalledProviders() {
-        val am = activityManagerOrNull() ?: return
-        val holders = HostedApplicationRuntime.installedProviderHolders()
-        if (holders.isEmpty()) return
-        try {
-            am.publishContentProviders(thread, holders)
-        } catch (e: RemoteException) {
-            Log.w(TAG, "publishContentProviders failed", e)
-        }
-    }
-
     /** Cross-uid permission state, answered by the session's package manager
      * (AOSP shape: PermissionManager.checkUidPermission). */
     @JvmStatic
@@ -105,7 +87,7 @@ object HostedServiceClient {
     /** AOSP ActivityThread.acquireExistingProvider: only what this process already holds. */
     @JvmStatic
     fun existingContentProvider(authority: String): android.content.IContentProvider? {
-        HostedApplicationRuntime.localProvider(authority)?.let { return it.getIContentProvider() }
+        ActivityThread.currentActivityThread().localProvider(authority)?.let { return it.getIContentProvider() }
         synchronized(providerLock) { return providerCache[authority] }
     }
 
@@ -126,7 +108,7 @@ object HostedServiceClient {
      */
     @JvmStatic
     fun acquireContentProvider(context: Context, authority: String): android.content.IContentProvider? {
-        HostedApplicationRuntime.localProvider(authority)?.let { return it.getIContentProvider() }
+        ActivityThread.currentActivityThread().localProvider(authority)?.let { return it.getIContentProvider() }
         synchronized(providerLock) { providerCache[authority]?.let { return it } }
         val am = activityManagerOrNull() ?: return null
         val holder = try {
@@ -152,119 +134,5 @@ object HostedServiceClient {
             synchronized(providerLock) { providerCache.remove(authority) }
         }
         return proxy
-    }
-
-    @JvmStatic
-    fun startService(intent: Intent): ComponentName? {
-        val am = activityManagerOrNull() ?: return null
-        return try {
-            am.startService(thread, intent, null, false, ActivityThread.currentPackageName(), null, 0)
-        } catch (e: RemoteException) {
-            Log.w(TAG, "startService failed", e)
-            null
-        }
-    }
-
-    @JvmStatic
-    fun stopService(intent: Intent): Boolean {
-        val am = activityManagerOrNull() ?: return false
-        return try {
-            am.stopService(thread, intent, null, 0) != 0
-        } catch (e: RemoteException) {
-            false
-        }
-    }
-
-    @JvmStatic
-    fun bindService(context: Context, intent: Intent, connection: ServiceConnection, flags: Int): Boolean {
-        val am = activityManagerOrNull() ?: return false
-        val dispatcher = ServiceDispatcher.forConnection(connection, context)
-        return try {
-            val res = am.bindServiceInstance(
-                thread, null, intent, null, dispatcher.stub, flags.toLong(), null, ActivityThread.currentPackageName(), 0,
-            )
-            if (res < 0) throw SecurityException("Not allowed to bind to service " + intent)
-            res != 0
-        } catch (e: RemoteException) {
-            Log.w(TAG, "bindService failed", e)
-            false
-        }
-    }
-
-    @JvmStatic
-    fun unbindService(connection: ServiceConnection) {
-        val dispatcher = ServiceDispatcher.forget(connection) ?: return
-        val am = activityManagerOrNull() ?: return
-        try {
-            am.unbindService(dispatcher.stub)
-        } catch (e: RemoteException) {
-        }
-    }
-
-    // ---------------------------------------------------------- broadcasts
-
-    /** Null receiver is the sticky-query form; returns the first matching sticky. */
-    @JvmStatic
-    fun registerReceiver(
-        receiver: android.content.IIntentReceiver?,
-        filter: android.content.IntentFilter,
-        broadcastPermission: String?,
-        flags: Int,
-    ): Intent? {
-        val am = activityManagerOrNull() ?: return null
-        return try {
-            am.registerReceiverWithFeature(
-                thread, ActivityThread.currentPackageName(), null, null, receiver, filter, broadcastPermission, 0, flags,
-            )
-        } catch (e: RemoteException) {
-            Log.w(TAG, "registerReceiver failed", e)
-            null
-        }
-    }
-
-    @JvmStatic
-    fun unregisterReceiver(receiver: android.content.IIntentReceiver) {
-        val am = activityManagerOrNull() ?: return
-        try {
-            am.unregisterReceiver(receiver)
-        } catch (e: RemoteException) {
-        }
-    }
-
-    @JvmStatic
-    fun broadcastIntent(intent: Intent, requiredPermission: String?, ordered: Boolean, sticky: Boolean) {
-        val am = activityManagerOrNull() ?: return
-        try {
-            am.broadcastIntentWithFeature(
-                thread, null, intent, null, null, 0, null, null,
-                requiredPermission?.let { arrayOf<String?>(it) }, null, null, AppOpsManager.OP_NONE, null, ordered, sticky, 0,
-            )
-        } catch (e: RemoteException) {
-            Log.w(TAG, "broadcastIntent failed", e)
-        }
-    }
-
-    @JvmStatic
-    fun finishReceiver(
-        who: android.content.IIntentReceiver,
-        resultCode: Int,
-        resultData: String?,
-        resultExtras: android.os.Bundle?,
-        abortBroadcast: Boolean,
-    ) {
-        val am = activityManagerOrNull() ?: return
-        try {
-            am.finishReceiver(who.asBinder(), resultCode, resultData, resultExtras, abortBroadcast, 0)
-        } catch (e: RemoteException) {
-        }
-    }
-
-    @JvmStatic
-    fun removeStickyBroadcast(intent: Intent) {
-        val am = activityManagerOrNull() ?: return
-        try {
-            am.unbroadcastIntent(thread, intent, 0)
-        } catch (e: RemoteException) {
-        }
     }
 }

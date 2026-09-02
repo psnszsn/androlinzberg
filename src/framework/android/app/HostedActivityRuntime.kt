@@ -178,7 +178,9 @@ object HostedActivityRuntime {
                 packageName = adapter.activityContext.packageName
                 applicationInfo = adapter.activityContext.applicationInfo
             }
-            activity.attach(adapter.activityContext, info)
+            // AOSP performLaunchActivity: every Activity gets its own base context
+            // (ContextImpl.createActivityContext) over the package's LoadedApk.
+            activity.attach(ActivityThread.currentActivityThread().createActivityContext(info), info)
             // AOSP ActivityRecord owns requested orientation across an ActivityThread relaunch.
             // system_server is absent, so the in-process lifecycle seam carries that state.
             activity.setRequestedOrientation(requestedOrientation ?: info.screenOrientation)

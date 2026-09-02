@@ -121,4 +121,10 @@ public class AudioManager {
     public void addOnModeChangedListener(java.util.concurrent.Executor executor, OnModeChangedListener listener) {}
     public void removeOnModeChangedListener(OnModeChangedListener listener) {}
     public int getRingerMode() { return RINGER_MODE_NORMAL; }
+    /** Broadcast actions BroadcastStickyCache keys on (AOSP values). */
+    public static final String ACTION_HDMI_AUDIO_PLUG = "android.media.action.HDMI_AUDIO_PLUG";
+    public static final String ACTION_SCO_AUDIO_STATE_CHANGED = "android.media.SCO_AUDIO_STATE_CHANGED";
+    public static final String ACTION_SCO_AUDIO_STATE_UPDATED = "android.media.ACTION_SCO_AUDIO_STATE_UPDATED";
+    public static final String INTERNAL_RINGER_MODE_CHANGED_ACTION = "android.media.INTERNAL_RINGER_MODE_CHANGED_ACTION";
+    public static final String RINGER_MODE_CHANGED_ACTION = "android.media.RINGER_MODE_CHANGED";
 }

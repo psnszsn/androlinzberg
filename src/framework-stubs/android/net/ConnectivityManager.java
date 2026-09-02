@@ -19,4 +19,5 @@ public class ConnectivityManager {
         public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {}
         public void onLinkPropertiesChanged(Network network, LinkProperties properties) {}
     }
+    public static final String CONNECTIVITY_ACTION = "android.net.conn.CONNECTIVITY_CHANGE";
 }

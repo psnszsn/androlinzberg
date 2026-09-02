@@ -88,8 +88,18 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public boolean shouldShowRequestPermissionRationale(String permission) { return false; }
     public void requestPermissions(String[] permissions, int requestCode) {}
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {}
-    public void startActivityForResult(Intent intent, int requestCode) { startActivity(intent); }
-    public void startActivityForResult(Intent intent, int requestCode, Bundle options) { startActivity(intent); }
+    /** AOSP Activity.startActivity -> startActivityForResult -> Instrumentation.execStartActivity
+     * (an Activity context launches without FLAG_ACTIVITY_NEW_TASK, unlike ContextImpl). */
+    @Override public void startActivity(Intent intent) { startActivityForResult(intent, -1); }
+    @Override public void startActivity(Intent intent, Bundle options) { startActivityForResult(intent, -1, options); }
+    @Override public void startActivities(Intent[] intents) { for (Intent i : intents) startActivity(i); }
+    @Override public void startActivities(Intent[] intents, Bundle options) { startActivities(intents); }
+    public void startActivityForResult(Intent intent, int requestCode) { startActivityForResult(intent, requestCode, null); }
+    public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
+        ActivityThread.currentActivityThread().getInstrumentation().execStartActivity(
+                this, ActivityThread.currentActivityThread().getApplicationThread().asBinder(),
+                getActivityToken(), this, intent, requestCode, options);
+    }
     public void setResult(int resultCode) {}
     public void setResult(int resultCode, Intent data) {}
     public boolean isActivityTransitionRunning() { return false; }
@@ -138,13 +148,14 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void unregisterActivityLifecycleCallbacks(Application.ActivityLifecycleCallbacks callback) {
         synchronized (mLifecycleCallbacks) { mLifecycleCallbacks.remove(callback); }
     }
+    /** The activity-level callbacks (AOSP Activity.mActivityLifecycleCallbacks); the
+     * Application's are dispatched through Application.dispatchActivity*. */
     private Application.ActivityLifecycleCallbacks[] collectLifecycleCallbacks() {
-        java.util.ArrayList<Application.ActivityLifecycleCallbacks> all = new java.util.ArrayList<>();
-        Application app = getApplication();
-        if (app != null) java.util.Collections.addAll(all, app.collectActivityLifecycleCallbacks());
-        synchronized (mLifecycleCallbacks) { all.addAll(mLifecycleCallbacks); }
-        return all.toArray(new Application.ActivityLifecycleCallbacks[0]);
+        synchronized (mLifecycleCallbacks) {
+            return mLifecycleCallbacks.toArray(new Application.ActivityLifecycleCallbacks[0]);
+        }
     }
+    private Application appOrNull() { return getApplication(); }
     public void registerComponentCallbacks(android.content.ComponentCallbacks callback) {}
     public void unregisterComponentCallbacks(android.content.ComponentCallbacks callback) {}
     private int mThemeRes;
@@ -253,62 +264,76 @@ public class Activity extends ContextWrapper implements Window.Callback,
     protected void onSaveInstanceState(Bundle outState) {}
     protected void onRestoreInstanceState(Bundle savedInstanceState) {}
     public final void performCreate(Bundle state) {
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityPreCreated(this, state);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreCreated(this, state);
         onCreate(state);
-        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
-            cb.onActivityCreated(this, state);
-            cb.onActivityPostCreated(this, state);
-        }
+        if (app != null) app.dispatchActivityCreated(this, state);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityCreated(this, state);
+        if (app != null) app.dispatchActivityPostCreated(this, state);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostCreated(this, state);
         onPostCreate(state);
     }
     public final void performStart() {
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityPreStarted(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreStarted(this);
         onStart();
-        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
-            cb.onActivityStarted(this);
-            cb.onActivityPostStarted(this);
-        }
+        if (app != null) app.dispatchActivityStarted(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityStarted(this);
+        if (app != null) app.dispatchActivityPostStarted(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostStarted(this);
     }
     public final void performResume() {
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityPreResumed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreResumed(this);
         onResume();
+        if (app != null) app.dispatchActivityResumed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityResumed(this);
         onPostResume();
+        if (app != null) app.dispatchActivityPostResumed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostResumed(this);
     }
     public final void performPause() {
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityPrePaused(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPrePaused(this);
         onPause();
-        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
-            cb.onActivityPaused(this);
-            cb.onActivityPostPaused(this);
-        }
+        if (app != null) app.dispatchActivityPaused(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPaused(this);
+        if (app != null) app.dispatchActivityPostPaused(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostPaused(this);
     }
     public final void performStop() {
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityPreStopped(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreStopped(this);
         onStop();
-        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
-            cb.onActivityStopped(this);
-            cb.onActivityPostStopped(this);
-        }
+        if (app != null) app.dispatchActivityStopped(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityStopped(this);
+        if (app != null) app.dispatchActivityPostStopped(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostStopped(this);
     }
     public final void performDestroy() {
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityPreDestroyed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreDestroyed(this);
         onDestroy();
-        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
-            cb.onActivityDestroyed(this);
-            cb.onActivityPostDestroyed(this);
-        }
+        if (app != null) app.dispatchActivityDestroyed(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityDestroyed(this);
+        if (app != null) app.dispatchActivityPostDestroyed(this);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostDestroyed(this);
     }
     public final void performSaveInstanceState(Bundle outState) {
-        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
-            cb.onActivityPreSaveInstanceState(this, outState);
-        }
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityPreSaveInstanceState(this, outState);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreSaveInstanceState(this, outState);
         onSaveInstanceState(outState);
-        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) {
-            cb.onActivitySaveInstanceState(this, outState);
-            cb.onActivityPostSaveInstanceState(this, outState);
-        }
+        if (app != null) app.dispatchActivitySaveInstanceState(this, outState);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivitySaveInstanceState(this, outState);
+        if (app != null) app.dispatchActivityPostSaveInstanceState(this, outState);
+        for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostSaveInstanceState(this, outState);
     }
     public final void performRestoreInstanceState(Bundle savedInstanceState) {
         onRestoreInstanceState(savedInstanceState);

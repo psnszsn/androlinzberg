@@ -1,7 +1,6 @@
 package dev.artzig.systemtest
 
 import android.app.ActivityThread
-import android.app.ContextImpl
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -40,20 +39,19 @@ internal object SystemTestClientA {
         // This process's context carries its own package identity: services
         // like the clipboard verify the calling package against the uid
         // (AppOpsService.checkPackage), so "android" would be a spoofed claim.
-        val context = ContextImpl(
-            ContextImpl.createSystemContext(frameworkRes, 640, 480, 120, 0).resources,
-            "dev.artzig.test.a",
-            0,
-        )
-        ActivityThread.configureServiceHost(context, SystemTestClientA::class.java.classLoader)
-        // Server-side install of this package's fixture APK, then attach.
-        // The fixture requests WRITE_SECURE_SETTINGS; the signature match
-        // with framework-res.apk (both signed by the azk-platform test key)
-        // grants it at install.
+        dev.artzig.HostContexts.systemContext(frameworkRes, 640, 480, 120, 0)
+        // Server-side install of this package's fixture APK, then attach and
+        // bind (AOSP handleBindApplication: the process context is the
+        // package's Application). The fixture requests WRITE_SECURE_SETTINGS;
+        // the signature match with framework-res.apk (both signed by the
+        // azk-platform test key) grants it at install.
         val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
         check(installer.installPackage("$fixtures/dev.artzig.test.a.apk", null) == "dev.artzig.test.a")
         ActivityThread.attachApplicationHosted("dev.artzig.test.a")
+        val appInfo = checkNotNull(ActivityThread.getPackageManager().getApplicationInfo("dev.artzig.test.a", 0L, 0))
+        val context: android.content.Context =
+            ActivityThread.currentActivityThread().`handleBindApplication$artzig`(appInfo, emptyList())
         thread(name = "system-test", isDaemon = true) {
             try {
                 run(context)

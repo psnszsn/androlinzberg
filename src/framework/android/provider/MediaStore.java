@@ -280,4 +280,9 @@ public final class MediaStore {
         for (String segment : path) builder.appendPath(segment);
         return builder.build();
     }
+    /** AOSP asks the media provider to transcode; no media provider here, the original rides through. */
+    public static android.os.ParcelFileDescriptor getOriginalMediaFormatFileDescriptor(android.content.Context context, android.os.ParcelFileDescriptor fileDescriptor)
+            throws java.io.IOException {
+        return fileDescriptor.dup();
+    }
 }

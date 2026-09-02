@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
-import android.content.res.HostedResources
 
 /**
  * In-process substitute for the UiModeManagerService application-night-mode
@@ -65,7 +64,8 @@ object HostedUiModeController {
         if (changes and ActivityInfo.CONFIG_UI_MODE == 0) return
 
         val metrics = resources.displayMetrics
-        HostedResources.update(resources, next, metrics)
+        // AOSP ActivityThread.handleConfigurationChanged: the process-wide ResourcesManager applies it.
+        ResourcesManager.getInstance().applyConfigurationToResources(next, null)
         ActivityThread.applyConfigurationInProcess(
             next,
             changes,
@@ -94,11 +94,18 @@ object HostedUiModeController {
         else -> error("validated night mode became invalid: $requestedMode")
     }
 
-    private fun preferences(context: Context): SharedPreferences =
-        context.getSharedPreferences(
-            PREFERENCES_PREFIX + context.packageName,
-            Context.MODE_PRIVATE,
-        )
+    /** The per-package night-mode record (AOSP keeps it in UiModeManagerService's
+     * settings). A system context has no package data directory (AOSP throws), so
+     * the record lives under the system data directory instead. */
+    private fun preferences(context: Context): SharedPreferences {
+        val dataDir = try {
+            context.dataDir
+        } catch (e: RuntimeException) {
+            android.os.Environment.getDataSystemDirectory()
+        }
+        val file = java.io.File(java.io.File(dataDir, "shared_prefs"), PREFERENCES_PREFIX + context.packageName + ".xml")
+        return context.getSharedPreferences(file, Context.MODE_PRIVATE)
+    }
 
     private fun requireValidNightMode(mode: Int) {
         require(isValidNightMode(mode)) { "Unknown night mode: $mode" }

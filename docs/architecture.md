@@ -21,10 +21,33 @@ not need Linux-specific branches.
 `android.os` is the real AOSP package (Parcel, Binder, ServiceManager, Looper,
 MessageQueue, Process, SystemProperties, SystemClock, Build, StrictMode,
 Environment, …) over natives in Zig; `src/framework/android/os/` holds no
-replacements. Likewise `android.net.Uri`, `android.content.Intent`, and
-`BroadcastReceiver` are verbatim; the hosted seams left in `android.content`
-are Context/ContextWrapper, ContentResolver/ContentProvider, and the receiver
-dispatcher (`ArtzigBroadcastManager`, the LoadedApk role).
+replacements. The application context core is real as well: `Context`,
+`ContextWrapper`, `ContextImpl`, `Application`, `Service`, `ContentResolver`,
+`ContentProvider`, `LoadedApk`, `ResourcesManager`, `SharedPreferencesImpl`,
+`Uri`, `Intent`, and `BroadcastReceiver` are the verbatim AOSP classes, so
+receivers, service connections and provider connections are the AOSP
+`LoadedApk` dispatchers talking to the session's activity manager over the
+real `IActivityManager`/`IApplicationThread` AIDL. The hosted seams in
+`android.app` are `ActivityThread` (the AOSP instance surface — package
+cache, provider connections, service handlers, bind-application ordering,
+system context — with the activity lifecycle still driven in-process by
+`HostedActivityRuntime`), `SystemServiceRegistry` (the AOSP static API over
+the managers this host backs), `Instrumentation` (the application half), and
+`Activity` (real `Activity`/`ActivityThread` are the activity-core
+milestone).
+
+A process is bound to its package the way `handleBindApplication` does it:
+the package's `LoadedApk` builds the class loader (`ApplicationLoaders` →
+`ClassLoaderFactory` → the hosted APK loader, over `sourceDir` and the
+`nativeLibraryDir` the installing process extracted `lib/x86_64` into), the
+`Application` is created through the package's `AppComponentFactory`,
+providers are installed and published, then `Application.onCreate` runs.
+Every package has the AOSP data layout (`Environment.getDataUserCePackage
+Directory`, created at install), and each Activity gets its own
+`ContextImpl.createActivityContext` base context. `dev.artzig.HostContexts`
+is the host bootstrap that replaces the zygote/SystemServer handshake: system
+assets, the "android" ApplicationInfo, the font map, and the desktop window as
+the default display whose metrics the `ResourcesManager` derives.
 
 The launcher owns the session's Android data root and exports it to every
 process it starts: `ARTZIG_DATA_DIR` (default `$XDG_DATA_HOME/artzig`, else
@@ -124,21 +147,24 @@ and reads lock-free with the bionic torn-read serial protocol;
 against a property-service-shaped policy (only the system process may set
 non-`debug.*`/`log.*` names, `ro.*` is write-once), and the broker pushes a
 `property_changed` notification that drives `addChangeCallback`.
-Content providers work across processes: `ContentResolver` acquires
-providers by authority through the activity manager
-(`getContentProvider`/`publishContentProviders`, following AOSP
-`getContentProviderImpl`), the transport is the verbatim AOSP
-`android.content.IContentProvider` interface over a hosted stub, permission
+Content providers work across processes: the real `ContentResolver` acquires
+providers by authority through the hosted `ActivityThread` and the activity
+manager (`getContentProvider`/`publishContentProviders`, following AOSP
+`getContentProviderImpl`; one connection per authority for the process
+lifetime), the transport is the verbatim `ContentProviderNative`/
+`IContentProvider` pair with real `AttributionSource` identity, permission
 gates follow `ContentProvider.enforceReadPermissionInner`, and `query()`
 results ride real `CursorWindow` shared memory through the unchanged AOSP
 BulkCursor machinery (the `android::Parcel` members CursorWindow needs are a
-JNI bridge onto the hosted Java Parcel). Settings are real: the verbatim AOSP
+JNI bridge onto the hosted Java Parcel). Persistable URI grants are served by
+`HostedUriGrantsService` on the real `IUriGrantsManager` AIDL. Settings are real: the verbatim AOSP
 `android.provider.Settings` client talks to a hosted `SettingsProvider` in the
 system process (authority `settings`, write-through XML in the session
 directory, `WRITE_SETTINGS`/`WRITE_SECURE_SETTINGS` enforced), and
 `ContentObserver` registration routes through a session-wide observer registry
-(`HostedContentService`, published as `content`, following AOSP
-`ContentService.ObserverNode` semantics).
+(`HostedContentService`, published as `content` on the real
+`IContentService` AIDL, following AOSP `ContentService.ObserverNode`
+semantics; the sync surface is unsupported).
 The identity/policy services speak their real AOSP AIDL surfaces:
 `HostedUserManagerService` implements `android.os.IUserManager` (single
 always-on user 0) as `Context.USER_SERVICE`, `HostedAppOpsService` implements
@@ -147,10 +173,11 @@ to allowed, mutable only by the system) as `"appops"`, and the package manager
 carries a runtime grant/revoke overlay on the install-time permission grants —
 so reused `com.android.server` code linking against those interfaces works
 unchanged.
-`ContextImpl.getSystemService` resolves through a
-`SystemServiceRegistry`-shaped table, and the per-process display and input
-services are Binder objects (`IDisplayManager`/`IInputManager`) registered
-under process-local names, so the unchanged AOSP manager clients work. See
+`ContextImpl.getSystemService` resolves through the hosted
+`SystemServiceRegistry` (the AOSP static API and fetcher kinds over the
+managers this host backs), and the per-process display and input services
+are Binder objects (`IDisplayManager`/`IInputManager`) registered under
+process-local names, so the unchanged AOSP manager clients work. See
 `src/binder/` for the Zig broker and protocol and `src/java/dev/artzig/system/`
 for the system process and its services.
 

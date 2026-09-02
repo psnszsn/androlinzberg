@@ -61,4 +61,9 @@ public final class DocumentsContract {
         if (paths.size() >= 2 && PATH_ROOT.equals(paths.get(0))) return paths.get(1);
         throw new IllegalArgumentException("Invalid URI: " + rootUri);
     }
+    /** AOSP DocumentsContract.Document: the directory MIME type FileUtils keys on. */
+    public static final class Document {
+        public static final String MIME_TYPE_DIR = "vnd.android.document/directory";
+        private Document() {}
+    }
 }
