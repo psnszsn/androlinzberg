@@ -23,13 +23,10 @@ object HostedApplicationRuntime {
 
     /** Holders for the activity manager, built from the installed providers. */
     @JvmStatic
-    fun installedProviderHolders(): List<dev.artzig.system.HostedContentProviderHolder> =
+    fun installedProviderHolders(): List<ContentProviderHolder> =
         synchronized(providers) {
             providers.map { (provider, info) ->
-                dev.artzig.system.HostedContentProviderHolder(
-                    info,
-                    provider.getIContentProvider().asBinder(),
-                )
+                ContentProviderHolder(info).also { it.provider = provider.getIContentProvider() }
             }
         }
 

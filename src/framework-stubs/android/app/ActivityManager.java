@@ -7,11 +7,37 @@ public class ActivityManager {
         public void moveToFront() {}
     }
     public java.util.List<AppTask> getAppTasks() { return new java.util.ArrayList<>(); }
-    public static class TaskDescription {
+    /** AOSP ActivityManager.TaskDescription (label/icon only). */
+    public static class TaskDescription implements android.os.Parcelable {
+        private String mLabel; private int mIconRes;
         public TaskDescription() {}
-        public TaskDescription(String label) {}
-        public TaskDescription(String label, int iconRes) {}
-        public String getLabel() { return null; }
+        public TaskDescription(String label) { mLabel = label; }
+        public TaskDescription(String label, int iconRes) { mLabel = label; mIconRes = iconRes; }
+        public String getLabel() { return mLabel; }
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) { dest.writeString(mLabel); dest.writeInt(mIconRes); }
+        public void readFromParcel(android.os.Parcel source) { mLabel = source.readString(); mIconRes = source.readInt(); }
+        public static final Creator<TaskDescription> CREATOR = new Creator<TaskDescription>() {
+            @Override public TaskDescription createFromParcel(android.os.Parcel source) { TaskDescription t = new TaskDescription(); t.readFromParcel(source); return t; }
+            @Override public TaskDescription[] newArray(int size) { return new TaskDescription[size]; }
+        };
+    }
+    /** AOSP ActivityManager.PendingIntentInfo. */
+    public static final class PendingIntentInfo implements android.os.Parcelable {
+        private final String mCreatorPackage; private final int mCreatorUid; private final boolean mImmutable; private final int mIntentSenderType;
+        public PendingIntentInfo(String creatorPackage, int creatorUid, boolean immutable, int intentSenderType) {
+            mCreatorPackage = creatorPackage; mCreatorUid = creatorUid; mImmutable = immutable; mIntentSenderType = intentSenderType;
+        }
+        public String getCreatorPackage() { return mCreatorPackage; }
+        public int getCreatorUid() { return mCreatorUid; }
+        public boolean isImmutable() { return mImmutable; }
+        public int getIntentSenderType() { return mIntentSenderType; }
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) { dest.writeString(mCreatorPackage); dest.writeInt(mCreatorUid); dest.writeBoolean(mImmutable); dest.writeInt(mIntentSenderType); }
+        public static final Creator<PendingIntentInfo> CREATOR = new Creator<PendingIntentInfo>() {
+            @Override public PendingIntentInfo createFromParcel(android.os.Parcel in) { return new PendingIntentInfo(in.readString(), in.readInt(), in.readBoolean(), in.readInt()); }
+            @Override public PendingIntentInfo[] newArray(int size) { return new PendingIntentInfo[size]; }
+        };
     }
     public int getMemoryClass() { return 256; }
     public int getLargeMemoryClass() { return 512; }
@@ -27,7 +53,82 @@ public class ActivityManager {
     public static boolean isHighEndGfx() { return true; }
     public static boolean isLowRamDeviceStatic() { return false; }
     public static int getCurrentUser() { return 0; }
-    public static IActivityManager getService() { return null; }
+    /** AOSP: the activity manager binder ("activity"), cached once resolved. */
+    private static volatile IActivityManager sService;
+    public static IActivityManager getService() {
+        IActivityManager s = sService;
+        if (s != null) return s;
+        android.os.IBinder b = android.os.ServiceManager.getService(android.content.Context.ACTIVITY_SERVICE);
+        if (b == null) return null;
+        s = IActivityManager.Stub.asInterface(b);
+        sService = s;
+        return s;
+    }
+    /** AOSP ProcessStateEnum.UNKNOWN. */
+    public static final int PROCESS_STATE_UNKNOWN = -1;
+    public static final int PROCESS_STATE_TOP = 2;
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface ProcessState {}
+    /** AOSP ActivityManager.RunningServiceInfo (data shape; IActivityManager parcels it). */
+    public static class RunningServiceInfo implements android.os.Parcelable {
+        public android.content.ComponentName service;
+        public int pid, uid;
+        public String process;
+        public boolean foreground, started;
+        public int clientCount, crashCount;
+        public long activeSince, lastActivityTime, restarting;
+        public int flags, clientLabel;
+        public String clientPackage;
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            android.content.ComponentName.writeToParcel(service, dest);
+            dest.writeInt(pid); dest.writeInt(uid); dest.writeString(process);
+            dest.writeInt(foreground ? 1 : 0); dest.writeInt(started ? 1 : 0);
+            dest.writeInt(clientCount); dest.writeInt(crashCount);
+            dest.writeLong(activeSince); dest.writeLong(lastActivityTime); dest.writeLong(restarting);
+            dest.writeInt(this.flags); dest.writeInt(clientLabel); dest.writeString(clientPackage);
+        }
+        public void readFromParcel(android.os.Parcel source) {
+            service = android.content.ComponentName.readFromParcel(source);
+            pid = source.readInt(); uid = source.readInt(); process = source.readString();
+            foreground = source.readInt() != 0; started = source.readInt() != 0;
+            clientCount = source.readInt(); crashCount = source.readInt();
+            activeSince = source.readLong(); lastActivityTime = source.readLong(); restarting = source.readLong();
+            flags = source.readInt(); clientLabel = source.readInt(); clientPackage = source.readString();
+        }
+        public static final Creator<RunningServiceInfo> CREATOR = new Creator<RunningServiceInfo>() {
+            @Override public RunningServiceInfo createFromParcel(android.os.Parcel source) { RunningServiceInfo r = new RunningServiceInfo(); r.readFromParcel(source); return r; }
+            @Override public RunningServiceInfo[] newArray(int size) { return new RunningServiceInfo[size]; }
+        };
+    }
+    /** AOSP ActivityManager.ProcessErrorStateInfo. */
+    public static class ProcessErrorStateInfo implements android.os.Parcelable {
+        public static final int NO_ERROR = 0, CRASHED = 1, NOT_RESPONDING = 2;
+        public int condition, pid, uid;
+        public String processName, tag, shortMsg, longMsg, stackTrace;
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeInt(condition); dest.writeString(processName); dest.writeInt(pid); dest.writeInt(uid);
+            dest.writeString(tag); dest.writeString(shortMsg); dest.writeString(longMsg); dest.writeString(stackTrace);
+        }
+        public void readFromParcel(android.os.Parcel source) {
+            condition = source.readInt(); processName = source.readString(); pid = source.readInt(); uid = source.readInt();
+            tag = source.readString(); shortMsg = source.readString(); longMsg = source.readString(); stackTrace = source.readString();
+        }
+        public static final Creator<ProcessErrorStateInfo> CREATOR = new Creator<ProcessErrorStateInfo>() {
+            @Override public ProcessErrorStateInfo createFromParcel(android.os.Parcel source) { ProcessErrorStateInfo r = new ProcessErrorStateInfo(); r.readFromParcel(source); return r; }
+            @Override public ProcessErrorStateInfo[] newArray(int size) { return new ProcessErrorStateInfo[size]; }
+        };
+    }
+    /** AOSP ActivityManager.RecentTaskInfo. */
+    public static class RecentTaskInfo extends TaskInfo implements android.os.Parcelable {
+        public int id, persistentId;
+        public static final Creator<RecentTaskInfo> CREATOR = new Creator<RecentTaskInfo>() {
+            @Override public RecentTaskInfo createFromParcel(android.os.Parcel source) { RecentTaskInfo r = new RecentTaskInfo(); r.id = source.readInt(); r.persistentId = source.readInt(); return r; }
+            @Override public RecentTaskInfo[] newArray(int size) { return new RecentTaskInfo[size]; }
+        };
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) { dest.writeInt(id); dest.writeInt(persistentId); }
+    }
     public static boolean isSystemReady() { return true; }
     public boolean isLowRamDevice() { return false; }
     public int getLauncherLargeIconDensity() { return 160; }
@@ -39,7 +140,16 @@ public class ActivityManager {
             public RunningTaskInfo[] newArray(int size) { return new RunningTaskInfo[size]; }
         };
     }
-    public static class RunningAppProcessInfo {
+    public static class RunningAppProcessInfo implements android.os.Parcelable {
+        @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+        public @interface Importance {}
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) { dest.writeString(processName); dest.writeInt(pid); dest.writeInt(uid); dest.writeInt(importance); }
+        public void readFromParcel(android.os.Parcel source) { processName = source.readString(); pid = source.readInt(); uid = source.readInt(); importance = source.readInt(); }
+        public static final Creator<RunningAppProcessInfo> CREATOR = new Creator<RunningAppProcessInfo>() {
+            @Override public RunningAppProcessInfo createFromParcel(android.os.Parcel in) { RunningAppProcessInfo r = new RunningAppProcessInfo(); r.processName = in.readString(); r.pid = in.readInt(); r.uid = in.readInt(); r.importance = in.readInt(); return r; }
+            @Override public RunningAppProcessInfo[] newArray(int size) { return new RunningAppProcessInfo[size]; }
+        };
         public String processName;
         public int pid, uid;
         public int importance = 100;
@@ -61,9 +171,16 @@ public class ActivityManager {
             String packageName, int pid, int maxNum) {
         return new java.util.ArrayList();
     }
-    public static class MemoryInfo {
+    public static class MemoryInfo implements android.os.Parcelable {
         public long availMem, totalMem, threshold;
         public boolean lowMemory;
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) { dest.writeLong(availMem); dest.writeLong(totalMem); dest.writeLong(threshold); dest.writeBoolean(lowMemory); }
+        public void readFromParcel(android.os.Parcel source) { availMem = source.readLong(); totalMem = source.readLong(); threshold = source.readLong(); lowMemory = source.readBoolean(); }
+        public static final Creator<MemoryInfo> CREATOR = new Creator<MemoryInfo>() {
+            @Override public MemoryInfo createFromParcel(android.os.Parcel source) { MemoryInfo m = new MemoryInfo(); m.readFromParcel(source); return m; }
+            @Override public MemoryInfo[] newArray(int size) { return new MemoryInfo[size]; }
+        };
     }
     public void getMemoryInfo(MemoryInfo outInfo) {
         outInfo.availMem = 1L << 31; outInfo.totalMem = 1L << 32; outInfo.threshold = 1L << 28;

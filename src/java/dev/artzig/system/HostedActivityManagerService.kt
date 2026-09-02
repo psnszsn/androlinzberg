@@ -1,5 +1,7 @@
 package dev.artzig.system
 
+import android.app.ContentProviderHolder
+import android.app.IApplicationThread
 import android.app.IServiceConnection
 import android.content.ComponentName
 import android.content.Intent
@@ -23,7 +25,7 @@ import android.util.Log
  * main looper, which preserves AOSP ordering: onCreate before onBind before
  * onServiceConnected.
  */
-class HostedActivityManagerService : IHostedActivityManager.Stub() {
+class HostedActivityManagerService : UnsupportedActivityManager() {
     /** Launches a process for a package that is not attached (production: the launcher's --app-process). */
     fun interface ProcessLauncher {
         /** Returns false when the package cannot be launched. */
@@ -31,7 +33,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
     }
 
     private inner class ProcessRecord(
-        val thread: IHostedApplicationThread,
+        val thread: IApplicationThread,
         val pid: Int,
         val uid: Int,
         val packageName: String,
@@ -74,7 +76,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
     }
 
     private class ContentProviderRecord(
-        val holder: HostedContentProviderHolder,
+        val holder: ContentProviderHolder,
         /** Null for providers the system process installed in-process. */
         val app: ProcessRecord?,
     )
@@ -108,26 +110,22 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
 
     // ------------------------------------------------------------- attach
 
-    /** Parses and installs an APK in the system process (the package manager
-     * is the only parser in the session); returns the package name. */
-    override fun installPackage(apkPath: String): String =
-        checkNotNull(packageService) { "no package service" }.installPackage(apkPath)
+    /** uid -> (package, process name) announced through IHostedInstaller.bindProcessPackage
+     * (AOSP learns both from the zygote fork it requested; no zygote here). */
+    private val announced = HashMap<Int, Pair<String, String>>()
 
-    override fun attachApplication(
-        thread: IHostedApplicationThread,
-        packageName: String,
-        processName: String?,
-    ) {
+    internal fun noteProcessPackage(uid: Int, packageName: String, processName: String) {
+        synchronized(lock) { announced[uid] = packageName to processName }
+    }
+
+    override fun attachApplication(app: IApplicationThread?, startSeq: Long) {
+        val thread = checkNotNull(app) { "attachApplication without a thread" }
         val callingUid = Binder.getCallingUid()
-        // Identity: the package record binds to the first attaching broker
-        // uid; the package manager rejects a uid claiming a second package or
-        // a package already bound to another uid (interim gate until
-        // per-connection credential auth).
-        if (callingUid != android.os.Process.SYSTEM_UID) {
-            packageService?.bindPackageUid(packageName, callingUid)
-        }
+        val (packageName, processName) = synchronized(lock) { announced[callingUid] }
+            ?: if (callingUid == android.os.Process.SYSTEM_UID) ("android" to "system_server")
+            else throw SecurityException("uid " + callingUid + " attached without announcing its package")
         val record = ProcessRecord(
-            thread, Binder.getCallingPid(), callingUid, packageName, processName ?: packageName,
+            thread, Binder.getCallingPid(), callingUid, packageName, processName,
         )
         val drained: List<() -> Unit>
         // Insert before linking so a death in the window between the two runs
@@ -241,7 +239,16 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
     // status: 1 running, 0 unresolved, -1 denied, 2 pending a spawn.
     private class PostStart(val schedule: (() -> Unit)?, val name: ComponentName?, val status: Int)
 
-    override fun startService(service: Intent, callingPackage: String?): ComponentName? {
+    override fun startService(
+        caller: IApplicationThread?,
+        service: Intent?,
+        resolvedType: String?,
+        requireForeground: Boolean,
+        callingPackage: String?,
+        callingFeatureId: String?,
+        userId: Int,
+    ): ComponentName? {
+        service ?: return null
         val callingUid = Binder.getCallingUid()
         val post = synchronized(lock) { doStartLocked(callingUid, service, callingPackage) }
         if (post.status == -1) throw SecurityException("startService denied")
@@ -280,12 +287,16 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         val create = !record.created
         record.created = true
         return PostStart({
-            if (create) process.thread.scheduleCreateService(record.token, record.name)
-            process.thread.scheduleServiceArgs(record.token, startId, 0, service)
+            if (create) process.thread.scheduleCreateService(record.token, entry, null, 0)
+            process.thread.scheduleServiceArgs(
+                record.token,
+                android.content.pm.ParceledListSlice(listOf(android.app.ServiceStartArgs(false, startId, 0, service))),
+            )
         }, record.name, 1)
     }
 
-    override fun stopService(service: Intent): Int {
+    override fun stopService(caller: IApplicationThread?, service: Intent?, resolvedType: String?, userId: Int): Int {
+        service ?: return 0
         var schedule: (() -> Unit)? = null
         synchronized(lock) {
             val component = service.component
@@ -299,10 +310,10 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         return 1
     }
 
-    override fun stopServiceToken(className: ComponentName, token: IBinder?, startId: Int): Boolean {
+    override fun stopServiceToken(className: ComponentName?, token: IBinder?, startId: Int): Boolean {
         var schedule: (() -> Unit)? = null
         synchronized(lock) {
-            val record = servicesByComponent[className] ?: return false
+            val record = servicesByComponent[className ?: return false] ?: return false
             if (startId >= 0 && startId != record.lastStartId) return false
             record.startRequested = false
             schedule = bringDownIfNeededLocked(record)
@@ -320,13 +331,20 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         val status: Int,
     )
 
-    override fun bindService(
-        caller: IHostedApplicationThread?,
-        service: Intent,
-        connection: IServiceConnection,
-        flags: Int,
+    override fun bindServiceInstance(
+        caller: IApplicationThread?,
+        token: IBinder?,
+        service: Intent?,
+        resolvedType: String?,
+        connection: IServiceConnection?,
+        flags: Long,
+        instanceName: String?,
         callingPackage: String?,
+        userId: Int,
     ): Int {
+        service ?: return 0
+        connection ?: return 0
+        val flags = flags.toInt()
         val callingUid = Binder.getCallingUid()
         val post = synchronized(lock) {
             val client = caller?.asBinder()?.let { processes[it] } ?: run {
@@ -386,7 +404,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
             if (binding.doRebind && !binding.requested && record.created) {
                 binding.requested = true
                 binding.doRebind = false
-                schedule = { process.thread.scheduleBindService(record.token, binding.intent, true) }
+                schedule = { process.thread.scheduleBindService(record.token, binding.intent, true, 0, 0) }
             }
             return PostBind(schedule, record.name, true, binding.binder, 1)
         }
@@ -395,8 +413,8 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
             val rebind = binding.doRebind
             binding.doRebind = false
             return PostBind({
-                if (create) process.thread.scheduleCreateService(record.token, record.name)
-                process.thread.scheduleBindService(record.token, binding.intent, rebind)
+                if (create) process.thread.scheduleCreateService(record.token, entry, null, 0)
+                process.thread.scheduleBindService(record.token, binding.intent, rebind, 0, 0)
             }, record.name, false, null, 1)
         }
         // Bound but the service is not up yet (no BIND_AUTO_CREATE): waits for creation.
@@ -414,7 +432,8 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         }
     }
 
-    override fun unbindService(connection: IServiceConnection): Boolean {
+    override fun unbindService(connection: IServiceConnection?): Boolean {
+        connection ?: return false
         var schedule: (() -> Unit)? = null
         synchronized(lock) {
             val record = servicesByComponent.values.firstOrNull { it.connections.containsKey(connection.asBinder()) }
@@ -462,7 +481,9 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         }
     }
 
-    override fun publishService(token: IBinder, intent: Intent, service: IBinder?) {
+    override fun publishService(token: IBinder?, intent: Intent?, service: IBinder?) {
+        token ?: return
+        intent ?: return
         val deliveries = ArrayList<Pair<IServiceConnection, ComponentName>>()
         synchronized(lock) {
             val record = servicesByToken[token] ?: return
@@ -484,14 +505,15 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         }
     }
 
-    override fun unbindFinished(token: IBinder, intent: Intent) {
+    override fun unbindFinished(token: IBinder?, intent: Intent?) {
         synchronized(lock) {
-            val record = servicesByToken[token] ?: return
+            val record = servicesByToken[token ?: return] ?: return
+            intent ?: return
             record.bindings[FilterComparison(intent)]?.doRebind = true
         }
     }
 
-    override fun serviceDoneExecuting(token: IBinder?, type: Int, startId: Int, res: Int) {
+    override fun serviceDoneExecuting(token: IBinder?, type: Int, startId: Int, res: Int, intent: Intent?) {
         // Bookkeeping only in v1 (no ANR timers, no START_NOT_STICKY policy).
     }
 
@@ -506,7 +528,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
     // ------------------------------------------------------------ providers
 
     /** In-process publication for providers the system process hosts. */
-    fun addSystemProvider(holder: HostedContentProviderHolder) {
+    fun addSystemProvider(holder: ContentProviderHolder) {
         val released = ArrayList<ProviderWaiter>()
         synchronized(lock) {
             for (authority in holder.info.authority?.split(";") ?: return) {
@@ -542,7 +564,14 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         )
     }
 
-    override fun getContentProvider(authority: String, callingPackage: String?): HostedContentProviderHolder? {
+    override fun getContentProvider(
+        caller: IApplicationThread?,
+        callingPackage: String?,
+        name: String?,
+        userId: Int,
+        stable: Boolean,
+    ): ContentProviderHolder? {
+        val authority = name ?: return null
         val callingUid = Binder.getCallingUid()
         val waiter: ProviderWaiter
         synchronized(lock) {
@@ -571,7 +600,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         }
     }
 
-    override fun publishContentProviders(providers: List<HostedContentProviderHolder>?) {
+    override fun publishContentProviders(caller: IApplicationThread?, providers: MutableList<ContentProviderHolder?>?) {
         if (providers == null) return
         val callingUid = Binder.getCallingUid()
         val callingPid = Binder.getCallingPid()
@@ -586,7 +615,7 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
                 return
             }
             for (holder in providers) {
-                if (holder.provider == null) continue
+                if (holder?.provider == null) continue
                 // A process may only publish authorities of its own package
                 // (same interim identity model as attachApplication).
                 val ownerUid = packageService?.getPackageUidInternal(holder.info.packageName) ?: -1
@@ -603,43 +632,137 @@ class HostedActivityManagerService : IHostedActivityManager.Stub() {
         for (waiter in released) waiter.latch.countDown()
     }
 
-    override fun registerReceiver(
+    override fun registerReceiverWithFeature(
+        caller: IApplicationThread?,
+        callerPackage: String?,
+        callingFeatureId: String?,
+        receiverId: String?,
         receiver: android.content.IIntentReceiver?,
-        filter: android.content.IntentFilter,
-        callingPackage: String?,
-        broadcastPermission: String?,
+        filter: android.content.IntentFilter?,
+        requiredPermission: String?,
+        userId: Int,
         flags: Int,
     ): Intent? {
+        filter ?: return null
         val notExported = (flags and android.content.Context.RECEIVER_NOT_EXPORTED) != 0
         return broadcasts.registerReceiver(
-            receiver, filter, callingPackage, Binder.getCallingUid(), broadcastPermission, notExported,
+            receiver, filter, callerPackage, Binder.getCallingUid(), requiredPermission, notExported,
         )
     }
 
-    override fun unregisterReceiver(receiver: android.content.IIntentReceiver) =
-        broadcasts.unregisterReceiver(receiver)
+    override fun unregisterReceiver(receiver: android.content.IIntentReceiver?) {
+        broadcasts.unregisterReceiver(receiver ?: return)
+    }
 
-    override fun broadcastIntent(
-        intent: Intent,
+    override fun broadcastIntentWithFeature(
+        caller: IApplicationThread?,
+        callingFeatureId: String?,
+        intent: Intent?,
+        resolvedType: String?,
         resultTo: android.content.IIntentReceiver?,
         resultCode: Int,
-        requiredPermission: String?,
-        ordered: Boolean,
+        resultData: String?,
+        map: android.os.Bundle?,
+        requiredPermissions: Array<String?>?,
+        excludePermissions: Array<String?>?,
+        excludePackages: Array<String?>?,
+        appOp: Int,
+        options: android.os.Bundle?,
+        serialized: Boolean,
         sticky: Boolean,
-        callingPackage: String?,
-    ): Int = broadcasts.broadcastIntent(
-        intent, resultTo, resultCode, requiredPermission, ordered, sticky, callingPackage, Binder.getCallingUid(),
-    )
+        userId: Int,
+    ): Int {
+        intent ?: return -1
+        val callingPackage = synchronized(lock) { caller?.asBinder()?.let { processes[it] }?.packageName }
+        return broadcasts.broadcastIntent(
+            intent, resultTo, resultCode, requiredPermissions?.firstOrNull(), serialized, sticky,
+            callingPackage, Binder.getCallingUid(),
+        )
+    }
 
     override fun finishReceiver(
-        who: android.content.IIntentReceiver,
+        who: IBinder?,
         resultCode: Int,
         resultData: String?,
-        resultExtras: android.os.Bundle?,
+        map: android.os.Bundle?,
         abortBroadcast: Boolean,
-    ) = broadcasts.finishReceiver(who, resultCode, resultData, resultExtras, abortBroadcast)
+        flags: Int,
+    ) {
+        broadcasts.finishReceiver(who ?: return, resultCode, resultData, map, abortBroadcast)
+    }
 
-    override fun removeStickyBroadcast(intent: Intent) = broadcasts.removeSticky(intent)
+    override fun unbroadcastIntent(caller: IApplicationThread?, intent: Intent?, userId: Int) {
+        broadcasts.removeSticky(intent ?: return)
+    }
+
+    // ------------------------------------------------- process/user queries
+
+    override fun getRunningAppProcesses(): MutableList<android.app.ActivityManager.RunningAppProcessInfo?>? =
+        synchronized(lock) {
+            processes.values.map { p ->
+                android.app.ActivityManager.RunningAppProcessInfo().apply {
+                    processName = p.processName; pid = p.pid; uid = p.uid
+                    importance = android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                }
+            }.toMutableList<android.app.ActivityManager.RunningAppProcessInfo?>()
+        }
+
+    override fun getProcessesInErrorState(): MutableList<android.app.ActivityManager.ProcessErrorStateInfo?>? = null
+
+    override fun getRunningExternalApplications(): MutableList<android.content.pm.ApplicationInfo?>? = mutableListOf()
+
+    override fun getServices(maxNum: Int, flags: Int): MutableList<android.app.ActivityManager.RunningServiceInfo?>? =
+        synchronized(lock) {
+            servicesByComponent.values.take(maxNum).map { r ->
+                android.app.ActivityManager.RunningServiceInfo().apply {
+                    service = r.name; pid = r.app?.pid ?: 0; uid = r.app?.uid ?: 0
+                    process = r.app?.processName; started = r.startRequested; clientCount = r.connections.size
+                }
+            }.toMutableList<android.app.ActivityManager.RunningServiceInfo?>()
+        }
+
+    override fun getMemoryInfo(outInfo: android.app.ActivityManager.MemoryInfo?) {
+        outInfo ?: return
+        outInfo.availMem = 1L shl 31; outInfo.totalMem = 1L shl 32; outInfo.threshold = 1L shl 28; outInfo.lowMemory = false
+    }
+
+    override fun isUserRunning(userid: Int, flags: Int): Boolean = userid == android.os.UserHandle.USER_SYSTEM
+    override fun getRunningUserIds(): IntArray? = intArrayOf(android.os.UserHandle.USER_SYSTEM)
+    override fun getCurrentUser(): android.content.pm.UserInfo? = android.content.pm.UserInfo(
+        android.os.UserHandle.USER_SYSTEM, "host",
+        android.content.pm.UserInfo.FLAG_PRIMARY or android.content.pm.UserInfo.FLAG_ADMIN or android.content.pm.UserInfo.FLAG_FULL,
+    )
+    override fun getPackageProcessState(packageName: String?, callingPackage: String?): Int =
+        android.app.ActivityManager.PROCESS_STATE_TOP
+    override fun isBackgroundRestricted(packageName: String?): Boolean = false
+    override fun isTopOfTask(token: IBinder?): Boolean = true
+    override fun getLaunchedFromUid(activityToken: IBinder?): Int = -1
+    override fun getLaunchedFromPackage(activityToken: IBinder?): String? = null
+    override fun isAppFreezerSupported(): Boolean = false
+    override fun isAppFreezerEnabled(): Boolean = false
+    override fun enableAppFreezer(enable: Boolean): Boolean = false
+    override fun registerStrictModeCallback(binder: IBinder?) {}
+    override fun handleApplicationStrictModeViolation(app: IBinder?, penaltyMask: Int, crashInfo: android.os.StrictMode.ViolationInfo?) {}
+    override fun addPackageDependency(packageName: String?) {}
+    override fun updateServiceGroup(connection: IServiceConnection?, group: Int, importance: Int) {}
+    /** Foreground state is a notification concern; the host has no notification shade. */
+    override fun setServiceForeground(className: ComponentName?, token: IBinder?, id: Int, notification: android.app.Notification?, flags: Int, foregroundServiceType: Int) {}
+    override fun getForegroundServiceType(className: ComponentName?, token: IBinder?): Int = 0
+    override fun refContentProvider(connection: IBinder?, stableDelta: Int, unstableDelta: Int): Boolean = true
+    override fun removeContentProvider(connection: IBinder?, stable: Boolean) {}
+    override fun killApplication(pkg: String?, appId: Int, userId: Int, reason: String?, exitInfoReason: Int) {}
+    override fun noteWakeupAlarm(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, sourcePkg: String?, tag: String?) {}
+    override fun noteAlarmStart(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, tag: String?) {}
+    override fun noteAlarmFinish(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, tag: String?) {}
+    // URI grants are not tracked yet (android.app core Phase 4 seam): nothing is granted.
+    override fun checkUriPermission(uri: android.net.Uri?, pid: Int, uid: Int, mode: Int, userId: Int, callerToken: IBinder?): Int =
+        android.content.pm.PackageManager.PERMISSION_DENIED
+    override fun checkContentUriPermissionFull(uri: android.net.Uri?, pid: Int, uid: Int, mode: Int, userId: Int): Int =
+        android.content.pm.PackageManager.PERMISSION_DENIED
+    override fun checkUriPermissions(uris: MutableList<android.net.Uri?>?, pid: Int, uid: Int, mode: Int, userId: Int, callerToken: IBinder?): IntArray? =
+        IntArray(uris?.size ?: 0) { android.content.pm.PackageManager.PERMISSION_DENIED }
+    override fun grantUriPermission(caller: IApplicationThread?, targetPkg: String?, uri: android.net.Uri?, mode: Int, userId: Int) {}
+    override fun revokeUriPermission(caller: IApplicationThread?, targetPkg: String?, uri: android.net.Uri?, mode: Int, userId: Int) {}
 
     private companion object {
         const val TAG = "HostedActivityManager"

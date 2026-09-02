@@ -4,7 +4,6 @@ import android.content.ComponentName
 import android.content.Intent
 import android.os.IBinder
 import android.util.Log
-import dev.artzig.system.IHostedActivityManager
 
 /**
  * Token-keyed executor for the activity manager's service callbacks in this
@@ -41,7 +40,7 @@ object HostedServiceRuntime {
     @JvmStatic
     fun isConfigured(): Boolean = context != null && classLoader != null
 
-    private fun activityManager(): IHostedActivityManager? = HostedServiceClient.activityManagerOrNull()
+    private fun activityManager(): IActivityManager? = HostedServiceClient.activityManagerOrNull()
 
     @JvmStatic
     fun handleCreateService(token: IBinder, name: ComponentName) {
@@ -55,7 +54,7 @@ object HostedServiceRuntime {
             service.onCreate()
             services[token] = ServiceState(service, name)
             Log.i(TAG, "service created: " + name.className)
-            activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_ANON, 0, 0)
+            activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_ANON, 0, 0, null)
         } catch (t: Throwable) {
             Log.w(TAG, "unable to create service " + name.className, t)
         }
@@ -78,7 +77,7 @@ object HostedServiceRuntime {
                 activityManager()?.publishService(token, intent, binder)
             } else {
                 state.service.onRebind(intent)
-                activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_ANON, 0, 0)
+                activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_ANON, 0, 0, null)
             }
         } catch (t: Throwable) {
             Log.w(TAG, "onBind failed: " + state.name, t)
@@ -102,7 +101,7 @@ object HostedServiceRuntime {
             if (doRebind) {
                 activityManager()?.unbindFinished(token, intent)
             } else {
-                activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_ANON, 0, 0)
+                activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_ANON, 0, 0, null)
             }
         } catch (t: Throwable) {
             Log.w(TAG, "onUnbind failed: " + state.name, t)
@@ -116,7 +115,7 @@ object HostedServiceRuntime {
         val state = services[token] ?: return
         try {
             val res = state.service.onStartCommand(args, flags, startId)
-            activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_START, startId, res)
+            activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_START, startId, res, args)
         } catch (t: Throwable) {
             Log.w(TAG, "onStartCommand failed: " + state.name, t)
         }
@@ -131,7 +130,7 @@ object HostedServiceRuntime {
             Log.w(TAG, "service onDestroy failed: " + state.name, t)
         }
         Log.i(TAG, "service stopped: " + state.name.className)
-        activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_STOP, 0, 0)
+        activityManager()?.serviceDoneExecuting(token, SERVICE_DONE_EXECUTING_STOP, 0, 0, null)
     }
 
     @JvmStatic

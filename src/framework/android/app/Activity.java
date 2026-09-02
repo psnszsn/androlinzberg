@@ -195,6 +195,12 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public ActivityInfo getActivityInfo() { return mActivityInfo; }
     public void runOnUiThread(Runnable action) { action.run(); }
     public int getTaskId() { return 0; }
+    /** AOSP: the assist token the activity manager issued; a process-local binder here. */
+    private final android.os.IBinder mAssistToken = new android.os.Binder();
+    public final android.os.IBinder getAssistToken() { return mAssistToken; }
+    private com.android.internal.app.IVoiceInteractor mVoiceInteractor;
+    public void setVoiceInteractor(com.android.internal.app.IVoiceInteractor voiceInteractor) { mVoiceInteractor = voiceInteractor; }
+    public VoiceInteractor getVoiceInteractor() { return null; }
     public android.content.ComponentName getComponentName() {
         return new android.content.ComponentName("dev.artzig", getClass().getName());
     }

@@ -32,8 +32,9 @@ internal object SystemTestHostB {
         // Install this package's fixture APK: the session's package manager
         // parses the real manifest (client A asserts the parsed values).
         val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
+        val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        check(installer.installPackage("$fixtures/dev.artzig.test.b.apk") == "dev.artzig.test.b")
         val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
-        check(am.installPackage("$fixtures/dev.artzig.test.b.apk") == "dev.artzig.test.b")
         ActivityThread.attachApplicationHosted("dev.artzig.test.b")
         // A plain Binder service the cross-language native client (libbinder_ndk)
         // looks up and calls remotely; onTransact enforces the same interface
@@ -61,15 +62,10 @@ internal object SystemTestHostB {
         val provider = TestProvider().also { it.attachInfo(context, providerInfo) }
         val secret = SecretProvider().also { it.attachInfo(context, secretInfo) }
         am.publishContentProviders(
+            android.app.HostedServiceClient.applicationThread(),
             listOf(
-                dev.artzig.system.HostedContentProviderHolder(
-                    providerInfo,
-                    provider.getIContentProvider().asBinder(),
-                ),
-                dev.artzig.system.HostedContentProviderHolder(
-                    secretInfo,
-                    secret.getIContentProvider().asBinder(),
-                ),
+                android.app.ContentProviderHolder(providerInfo).also { it.provider = provider.getIContentProvider() },
+                android.app.ContentProviderHolder(secretInfo).also { it.provider = secret.getIContentProvider() },
             ),
         )
         System.err.println("system-test-host-b: attached pid=" + Process.myPid() + " uid=" + Process.myUid())

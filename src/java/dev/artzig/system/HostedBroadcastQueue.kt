@@ -182,6 +182,11 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         finishCurrent(who.asBinder(), resultCode, resultData, resultExtras, abort)
     }
 
+    /** IActivityManager.finishReceiver keys the receiver by its binder. */
+    fun finishReceiver(who: IBinder, resultCode: Int, resultData: String?, resultExtras: Bundle?, abort: Boolean) {
+        finishCurrent(who, resultCode, resultData, resultExtras, abort)
+    }
+
     // ------------------------------------------------------------------ ordered
 
     private fun finishCurrent(binder: IBinder, resultCode: Int?, resultData: String?, resultExtras: Bundle?, abort: Boolean) {

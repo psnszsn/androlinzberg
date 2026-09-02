@@ -7,12 +7,12 @@ import android.content.ServiceConnection
 import android.os.RemoteException
 import android.os.ServiceManager
 import android.util.Log
-import dev.artzig.system.IHostedActivityManager
+import dev.artzig.system.IHostedInstaller
 
 /**
- * This process's client side of the hosted activity manager: the
- * `IHostedActivityManager` proxy, the process's `IHostedApplicationThread`,
- * and the `ServiceConnection` dispatch (via [ServiceDispatcher]).
+ * This process's client side of the activity manager: the real
+ * `IActivityManager` proxy, the process's `IApplicationThread`, and the
+ * `ServiceConnection` dispatch (via [ServiceDispatcher]).
  *
  * Source note: the `ContextImpl.bindServiceCommon` / `startService` path in
  * AOSP, reduced to the hosted interface.
@@ -21,11 +21,16 @@ object HostedServiceClient {
     private const val TAG = "HostedServiceClient"
 
     private val thread = HostedApplicationThread()
-    @Volatile private var activityManager: IHostedActivityManager? = null
+    @Volatile private var activityManager: IActivityManager? = null
+    @Volatile private var installer: IHostedInstaller? = null
     @Volatile private var attached = false
 
+    /** This process's IApplicationThread (AOSP ActivityThread.getApplicationThread). */
     @JvmStatic
-    fun activityManagerOrNull(): IHostedActivityManager? {
+    fun applicationThread(): IApplicationThread = thread
+
+    @JvmStatic
+    fun activityManagerOrNull(): IActivityManager? {
         activityManager?.let { return it }
         synchronized(this) {
             activityManager?.let { return it }
@@ -33,21 +38,36 @@ object HostedServiceClient {
                 Log.w(TAG, "activity manager unavailable")
                 return null
             }
-            val proxy = IHostedActivityManager.Stub.asInterface(binder)
+            val proxy = IActivityManager.Stub.asInterface(binder)
             activityManager = proxy
             return proxy
         }
     }
 
+    /** The host bootstrap service (APK install, process-package announcement). */
+    @JvmStatic
+    fun installerOrNull(): IHostedInstaller? {
+        installer?.let { return it }
+        synchronized(this) {
+            installer?.let { return it }
+            val binder = ServiceManager.waitForService("hosted_installer") ?: return null
+            val proxy = IHostedInstaller.Stub.asInterface(binder)
+            installer = proxy
+            return proxy
+        }
+    }
+
     /** Registers this process with the activity manager as a running process
-     * of the given (already installed) package. */
+     * of the given (already installed) package: announce the package (no
+     * zygote knows it), then AOSP attachApplication. */
     @JvmStatic
     @JvmOverloads
     fun attachApplication(packageName: String, processName: String = packageName) {
         if (attached) return
         val am = activityManagerOrNull() ?: return
         try {
-            am.attachApplication(thread, packageName, processName)
+            installerOrNull()?.bindProcessPackage(packageName, processName)
+            am.attachApplication(thread, 0)
             attached = true
         } catch (e: RemoteException) {
             Log.w(TAG, "attachApplication failed", e)
@@ -63,7 +83,7 @@ object HostedServiceClient {
         val holders = HostedApplicationRuntime.installedProviderHolders()
         if (holders.isEmpty()) return
         try {
-            am.publishContentProviders(holders)
+            am.publishContentProviders(thread, holders)
         } catch (e: RemoteException) {
             Log.w(TAG, "publishContentProviders failed", e)
         }
@@ -94,15 +114,15 @@ object HostedServiceClient {
         synchronized(providerLock) { providerCache[authority]?.let { return it } }
         val am = activityManagerOrNull() ?: return null
         val holder = try {
-            am.getContentProvider(authority, context.packageName)
+            am.getContentProvider(thread, context.packageName, authority, 0, true)
         } catch (e: RemoteException) {
             Log.w(TAG, "getContentProvider failed for " + authority, e)
             null
         } ?: return null
-        val binder = holder.provider ?: return null
-        // The real provider transport (ContentProviderNative.asInterface hands
-        // back the local Transport when the binder lives in this process).
-        val proxy = android.content.ContentProviderNative.asInterface(binder)
+        // The holder carries the real provider transport (ContentProviderNative
+        // hands back the local Transport when the binder lives in this process).
+        val proxy = holder.provider ?: return null
+        val binder = proxy.asBinder()
         synchronized(providerLock) {
             providerCache[authority]?.let { return it }
             providerCache[authority] = proxy
@@ -122,7 +142,7 @@ object HostedServiceClient {
     fun startService(intent: Intent): ComponentName? {
         val am = activityManagerOrNull() ?: return null
         return try {
-            am.startService(intent, ActivityThread.currentPackageName())
+            am.startService(thread, intent, null, false, ActivityThread.currentPackageName(), null, 0)
         } catch (e: RemoteException) {
             Log.w(TAG, "startService failed", e)
             null
@@ -133,7 +153,7 @@ object HostedServiceClient {
     fun stopService(intent: Intent): Boolean {
         val am = activityManagerOrNull() ?: return false
         return try {
-            am.stopService(intent) != 0
+            am.stopService(thread, intent, null, 0) != 0
         } catch (e: RemoteException) {
             false
         }
@@ -144,7 +164,9 @@ object HostedServiceClient {
         val am = activityManagerOrNull() ?: return false
         val dispatcher = ServiceDispatcher.forConnection(connection, context)
         return try {
-            val res = am.bindService(thread, intent, dispatcher.stub, flags, ActivityThread.currentPackageName())
+            val res = am.bindServiceInstance(
+                thread, null, intent, null, dispatcher.stub, flags.toLong(), null, ActivityThread.currentPackageName(), 0,
+            )
             if (res < 0) throw SecurityException("Not allowed to bind to service " + intent)
             res != 0
         } catch (e: RemoteException) {
@@ -175,7 +197,9 @@ object HostedServiceClient {
     ): Intent? {
         val am = activityManagerOrNull() ?: return null
         return try {
-            am.registerReceiver(receiver, filter, ActivityThread.currentPackageName(), broadcastPermission, flags)
+            am.registerReceiverWithFeature(
+                thread, ActivityThread.currentPackageName(), null, null, receiver, filter, broadcastPermission, 0, flags,
+            )
         } catch (e: RemoteException) {
             Log.w(TAG, "registerReceiver failed", e)
             null
@@ -195,7 +219,10 @@ object HostedServiceClient {
     fun broadcastIntent(intent: Intent, requiredPermission: String?, ordered: Boolean, sticky: Boolean) {
         val am = activityManagerOrNull() ?: return
         try {
-            am.broadcastIntent(intent, null, 0, requiredPermission, ordered, sticky, ActivityThread.currentPackageName())
+            am.broadcastIntentWithFeature(
+                thread, null, intent, null, null, 0, null, null,
+                requiredPermission?.let { arrayOf<String?>(it) }, null, null, AppOpsManager.OP_NONE, null, ordered, sticky, 0,
+            )
         } catch (e: RemoteException) {
             Log.w(TAG, "broadcastIntent failed", e)
         }
@@ -211,7 +238,7 @@ object HostedServiceClient {
     ) {
         val am = activityManagerOrNull() ?: return
         try {
-            am.finishReceiver(who, resultCode, resultData, resultExtras, abortBroadcast)
+            am.finishReceiver(who.asBinder(), resultCode, resultData, resultExtras, abortBroadcast, 0)
         } catch (e: RemoteException) {
         }
     }
@@ -220,7 +247,7 @@ object HostedServiceClient {
     fun removeStickyBroadcast(intent: Intent) {
         val am = activityManagerOrNull() ?: return
         try {
-            am.removeStickyBroadcast(intent)
+            am.unbroadcastIntent(thread, intent, 0)
         } catch (e: RemoteException) {
         }
     }

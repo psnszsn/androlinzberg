@@ -119,6 +119,7 @@ internal object SystemServices {
         activityManager.packageService = packageManager
         appOps.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
+        android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
         // Reused services resolve users through ActivityManagerInternal.
         LocalServices.addService(
             android.app.ActivityManagerInternal::class.java,
@@ -154,7 +155,7 @@ internal object SystemServices {
         val settingsProvider = SettingsProvider()
         settingsProvider.attachInfo(context, settingsInfo)
         activityManager.addSystemProvider(
-            HostedContentProviderHolder(settingsInfo, settingsProvider.getIContentProvider().asBinder()),
+            android.app.ContentProviderHolder(settingsInfo).also { it.provider = settingsProvider.getIContentProvider() },
         )
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)

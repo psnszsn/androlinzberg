@@ -142,8 +142,8 @@ internal object FrameworkModuleSmoke {
         // Server-side install of the fixture APK: WAKE_LOCK (normal) is
         // granted at install, CAMERA (dangerous) is not.
         val fixtures = checkNotNull(fixtureApkDir) { "fixture APK directory argument missing" }
-        val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull())
-        check(am.installPackage("$fixtures/org.example.permissions.apk") == "org.example.permissions")
+        val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        check(installer.installPackage("$fixtures/org.example.permissions.apk") == "org.example.permissions")
 
         val wakeLock = "android.permission.WAKE_LOCK"
         val camera = "android.permission.CAMERA"

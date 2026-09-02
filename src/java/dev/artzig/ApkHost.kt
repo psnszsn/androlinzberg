@@ -482,10 +482,10 @@ public final class ApkHost {
          * happens only in the system process). */
         @JvmStatic
         private fun installOwnPackage(apkPath: String, pkg: String) {
-            val am = checkNotNull(android.app.HostedServiceClient.activityManagerOrNull()) {
-                "no activity manager in this session"
+            val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull()) {
+                "no hosted installer in this session"
             }
-            val installed = am.installPackage(apkPath)
+            val installed = installer.installPackage(apkPath)
             check(installed == pkg) { "installed as " + installed + ", expected " + pkg }
         }
 

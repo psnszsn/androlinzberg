@@ -232,8 +232,8 @@ public final class FrameworkCompatSmoke {
             // declares the launcher activity and the PLAYBACK service the
             // assertions below resolve through real IntentFilters.
             val fixtureDir: String = requireNotNull(args.getOrNull(1)) { "fixture APK directory argument missing" }
-            val am = requireNotNull(android.app.HostedServiceClient.activityManagerOrNull())
-            require(am.installPackage("$fixtureDir/org.example.apk") == "org.example", "fixture install")
+            val installer = requireNotNull(android.app.HostedServiceClient.installerOrNull())
+            require(installer.installPackage("$fixtureDir/org.example.apk") == "org.example", "fixture install")
 
             val packageManager: PackageManager = android.app.ContextImpl.createSystemContext(
                 requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
