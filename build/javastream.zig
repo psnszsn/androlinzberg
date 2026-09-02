@@ -1,15 +1,15 @@
 //! Build the AOSP `protoc-gen-javastream` protoc plugin
 //! (frameworks-base/tools/streaming_proto) as a zig c++ executable. Run as a
-//! protoc plugin (build/java.zig, tools/build-proto.sh) it generates the
+//! protoc plugin by build/generators.zig, it generates the
 //! framework `*Proto` message classes (android.util.proto stream style) —
 //! replacing the hand-written *Proto stubs. Links our zig-built libprotoc
 //! (build/protobuf.zig, with_protoc), one libc++ stdlib across tool and library.
 const std = @import("std");
 
 pub const Options = struct {
-    /// artzig/extra/frameworks-base/tools/streaming_proto
+    /// frameworks/base/tools/streaming_proto in the root AOSP dependency.
     root: std.Build.LazyPath,
-    /// artzig/vendor/external/protobuf
+    /// external/protobuf in the root AOSP dependency.
     protobuf_src: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode = .ReleaseFast,

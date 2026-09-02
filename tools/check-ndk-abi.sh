@@ -4,11 +4,11 @@
 # A generated ndk-cpp/AIDL client linked against the prebuilt's soname must find
 # every symbol it references at load time, so a missing export is a hard error.
 #
-# Usage: check-ndk-abi.sh <path-to-installed-libbinder_ndk.so>
+# Usage: check-ndk-abi.sh <installed-libbinder_ndk.so> <reference-libbinder_ndk.so>
 set -euo pipefail
 
-MINE=${1:?usage: check-ndk-abi.sh <installed libbinder_ndk.so>}
-PRE=artzig/vendor/prebuilts/runtime/mainline/platform/sdk/x86_64/lib/libbinder_ndk.so
+MINE=${1:?usage: check-ndk-abi.sh <installed-libbinder_ndk.so> <reference-libbinder_ndk.so>}
+PRE=${2:?usage: check-ndk-abi.sh <installed-libbinder_ndk.so> <reference-libbinder_ndk.so>}
 
 if [[ ! -f "$PRE" ]]; then
     echo "check-ndk-abi: prebuilt not found: $PRE" >&2

@@ -1,6 +1,7 @@
 //! Island source lists for build/island.zig — hand-maintained (originally
 //! extracted from the retired tools/build-native.sh). Path roots: $APP $AZ $FB
-//! $HW $V $MINIKIN $SKS $AIDL are resolved in build/island.zig.
+//! $HW $V $MINIKIN and $SKS are resolved in build/island.zig. `$AZ` is the
+//! packaged AOSP root retained as a compatibility name for this generated list.
 
 pub const include_dirs = [_][]const u8{
     "$APP/src/native",
@@ -8,6 +9,8 @@ pub const include_dirs = [_][]const u8{
     "$HW/platform/host",
     "$FB/libs/hostgraphics/include",
     "$SKS",
+    "$SKS/linux",
+    "$SKS/linux/include/config",
     "$SKS/include/core",
     "$SKS/include/config",
     "$SKS/include/effects",
@@ -35,20 +38,20 @@ pub const include_dirs = [_][]const u8{
     "$V/system/core/libprocessgroup/include",
     "$V/external/fmtlib/include",
     "$FB/libs/androidfw/include",
-    "$AZ/extra/frameworks-native/include",
-    "$AZ/extra/frameworks-native/libs/ui/include",
-    "$AZ/extra/frameworks-native/libs/ui/include_types",
-    "$AZ/extra/frameworks-native/libs/math/include",
-    "$AZ/extra/frameworks-native/libs/gui/include",
-    "$AZ/extra/frameworks-native/libs/nativewindow/include",
-    "$AZ/extra/frameworks-native/libs/nativebase/include",
-    "$AZ/extra/frameworks-native/libs/nativedisplay/include",
-    "$AZ/extra/frameworks-native/include",
-    "$AZ/extra/frameworks-native/include/private",
-    "$AZ/extra/incremental_delivery/incfs/util/include",
-    "$AZ/extra/frameworks-native/libs/arect/include",
-    "$AZ/extra/libhardware/include_all",
-    "$AZ/extra/libhardware/include",
+    "$AZ/frameworks/native/include",
+    "$AZ/frameworks/native/libs/ui/include",
+    "$AZ/frameworks/native/libs/ui/include_types",
+    "$AZ/frameworks/native/libs/math/include",
+    "$AZ/frameworks/native/libs/gui/include",
+    "$AZ/frameworks/native/libs/nativewindow/include",
+    "$AZ/frameworks/native/libs/nativebase/include",
+    "$AZ/frameworks/native/libs/nativedisplay/include",
+    "$AZ/frameworks/native/include",
+    "$AZ/frameworks/native/include/private",
+    "$AZ/system/incremental_delivery/incfs/util/include",
+    "$AZ/frameworks/native/libs/arect/include",
+    "$AZ/hardware/libhardware/include_all",
+    "$AZ/hardware/libhardware/include",
     "$MINIKIN/include",
     "$V/libnativehelper/include_jni",
     "$V/libnativehelper/include",

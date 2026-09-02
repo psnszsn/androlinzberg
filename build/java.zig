@@ -10,14 +10,8 @@ const LazyPath = std.Build.LazyPath;
 
 pub const Options = struct {
     artzig: *std.Build.Dependency,
-    /// The sysprop_java host generator (build/sysprop.zig).
-    sysprop_tool: *std.Build.Step.Compile,
-    /// The protoc-gen-javastream plugin (build/javastream.zig).
-    javastream_tool: *std.Build.Step.Compile,
-    /// The protoc-gen-javanano plugin (build/javanano.zig).
-    javanano_tool: *std.Build.Step.Compile,
-    /// The stats-log-api-gen executable (tools/build-stats-tool.sh).
-    stats_tool: LazyPath,
+    aosp: *std.Build.Dependency,
+    generated: @import("generators.zig").Result,
 };
 
 pub const Result = struct {
@@ -45,73 +39,24 @@ fn stamp(b: *std.Build, name: []const u8, paths: []const LazyPath) LazyPath {
 
 pub fn build(b: *std.Build, o: Options) Result {
     const dep = o.artzig;
-    const fb = dep.path("extra/frameworks-base");
+    const aosp = o.aosp;
+    const fb = aosp.path("frameworks/base");
     const core_all = dep.namedLazyPath("core-all-jar");
     const stamp_jvm = stamp(b, "jvm.stamp", &.{
         fb.path(b, "core/java"),           fb.path(b, "graphics/java"),
-        fb.path(b, "libs/hwui/apex/java"), dep.path("extra/modules-utils/java"),
+        fb.path(b, "libs/hwui/apex/java"), aosp.path("frameworks/libs/modules-utils/java"),
         b.path("src/framework"),           b.path("src/framework-stubs"),
-        b.path("src/annotation-runtime"),
-        b.path("src/java"),                b.path("tools/java-srcs.py"),
-        b.path("tools/compile-jvm.sh"),
+        b.path("src/annotation-runtime"),  b.path("src/java"),
+        b.path("tools/java-srcs.py"),      b.path("tools/compile-jvm.sh"),
     });
     const stamp_kotlinc = stamp(b, "kotlinc.stamp", &.{
-        dep.path("vendor/external/kotlinc/bin"),
-        dep.path("vendor/external/kotlinc/lib"),
-        dep.path("vendor/external/kotlinc/build.txt"),
+        aosp.path("external/kotlinc/bin"),
+        aosp.path("external/kotlinc/lib"),
+        aosp.path("external/kotlinc/build.txt"),
     });
-    const stamp_res = stamp(b, "res.stamp", &.{
-        fb.path(b, "core/res"),
-        b.path("tools/build-res.sh"),
-        b.path("tools/signing"),
-    });
-    const stamp_fixture_apks = stamp(b, "fixture-apks.stamp", &.{
-        b.path("testdata/fixture-apks"),
-        b.path("tools/build-fixture-apks.sh"),
-        b.path("tools/signing"),
-    });
-    const stamp_aidl = stamp(b, "aidl.stamp", &.{
-        b.path("tools/aidl-list.txt"),
-        b.path("provenance/pins.lock"),
-        b.path("tools/build-aidl.sh"),
-        b.path("aidl-compat"),
-        dep.path("extra/frameworks-native/libs/input/android/os"),
-        dep.path("extra/frameworks-native/libs/binder/aidl/android/os"),
-    });
-    const stamp_logtags = stamp(b, "logtags.stamp", &.{
-        b.path("tools/logtags-list.txt"),
-        b.path("provenance/pins.lock"),
-        b.path("tools/build-logtags.sh"),
-    });
-    const stamp_sysprop = stamp(b, "sysprop.stamp", &.{
-        b.path("tools/sysprop-list.txt"),
-        b.path("provenance/pins.lock"),
-        b.path("tools/build-sysprop.sh"),
-    });
-    const stamp_proto = stamp(b, "proto.stamp", &.{
-        b.path("tools/proto-list.txt"),
-        b.path("provenance/pins.lock"),
-        b.path("tools/build-proto.sh"),
-        dep.path("extra/frameworks-base/core/proto"),
-    });
-    const stamp_nano = stamp(b, "nano.stamp", &.{
-        b.path("tools/nano-list.txt"),
-        b.path("provenance/pins.lock"),
-        b.path("tools/build-nano.sh"),
-    });
-    const stamp_stats = stamp(b, "stats.stamp", &.{
-        b.path("tools/build-stats.sh"),
-        b.path("tools/build-stats-tool.sh"),
-        b.path("provenance/pins.lock"),
-    });
-    const stamp_aconfig = stamp(b, "aconfig.stamp", &.{
-        b.path("tools/aconfig-packages.txt"),
-        b.path("provenance/pins.lock"),
-        b.path("tools/build-aconfig.sh"),
-    });
-
     const source_policy = b.addSystemCommand(&.{ "bash", "tools/check-jvm-source-policy.sh" });
     source_policy.addFileInput(stamp_jvm);
+    source_policy.addDirectoryArg(aosp.path(""));
 
     // 1. core-all + annotation classes -> compile-time "JDK" (system modules)
     const plus = b.addSystemCommand(&.{ "bash", "tools/make-core-plus.sh" });
@@ -123,64 +68,26 @@ pub fn build(b: *std.Build, o: Options) Result {
     sysmod.addFileArg(dep.path("tools/make-system-modules.sh"));
     sysmod.addFileArg(core_plus);
     const sysmod_dir = sysmod.addOutputDirectoryArg("sysmodules");
-    sysmod.addDirectoryArg(dep.path("vendor"));
+    sysmod.addDirectoryArg(aosp.path(""));
 
-    // 2. generated Java: AIDL interfaces and android.R / framework-res.apk
-    const aidl = b.addSystemCommand(&.{ "bash", "tools/build-aidl.sh" });
-    const aidl_dir = aidl.addOutputDirectoryArg("aidl-java");
-    aidl.addFileInput(stamp_aidl);
-
-    // EventLogTags Java from the AOSP java-event-log-tags.py tool.
-    const logtags = b.addSystemCommand(&.{ "bash", "tools/build-logtags.sh" });
-    const logtags_dir = logtags.addOutputDirectoryArg("logtags-java");
-    logtags.addFileInput(stamp_logtags);
-
-    // aconfig flag classes (Flags/FeatureFlags/…) from the AOSP aconfig tool.
-    const aconfig = b.addSystemCommand(&.{ "bash", "tools/build-aconfig.sh" });
-    const aconfig_dir = aconfig.addOutputDirectoryArg("aconfig-java");
-    aconfig.addFileInput(stamp_aconfig);
-
-    // sysprop accessor classes (android.sysprop.*) from the sysprop_java host tool.
-    const sysprop = b.addSystemCommand(&.{ "bash", "tools/build-sysprop.sh" });
-    sysprop.addFileArg(o.sysprop_tool.getEmittedBin());
-    const sysprop_dir = sysprop.addOutputDirectoryArg("sysprop-java");
-    sysprop.addFileInput(stamp_sysprop);
-
-    // nano message classes (MetricsProto) from the protoc-gen-javanano plugin.
-    const nano = b.addSystemCommand(&.{ "bash", "tools/build-nano.sh" });
-    nano.addFileArg(o.javanano_tool.getEmittedBin());
-    const nano_dir = nano.addOutputDirectoryArg("nano-java");
-    nano.addFileInput(stamp_nano);
-
-    // FrameworkStatsLog from the AOSP stats-log-api-gen prebuilt (atoms built in).
-    const stats = b.addSystemCommand(&.{ "bash", "tools/build-stats.sh" });
-    stats.addFileArg(o.stats_tool);
-    const stats_dir = stats.addOutputDirectoryArg("stats-java");
-    stats.addFileInput(stamp_stats);
-
-    // *Proto stream constant classes from the protoc-gen-javastream plugin.
-    const proto = b.addSystemCommand(&.{ "bash", "tools/build-proto.sh" });
-    proto.addFileArg(o.javastream_tool.getEmittedBin());
-    const proto_dir = proto.addOutputDirectoryArg("proto-java");
-    proto.addFileInput(stamp_proto);
-
-    const res = b.addSystemCommand(&.{ "bash", "tools/build-res.sh" });
-    const res_dir = res.addOutputDirectoryArg("res");
-    res.addFileInput(stamp_res);
-    const res_apk = res_dir.path(b, "framework-res.apk");
-
-    // Resources-only test packages, parsed server-side by the hosted package
-    // manager (signed with the same azk-platform key as framework-res.apk).
-    const fixture_apks = b.addSystemCommand(&.{ "bash", "tools/build-fixture-apks.sh" });
-    fixture_apks.addFileArg(res_apk);
-    const fixture_apks_dir = fixture_apks.addOutputDirectoryArg("fixture-apks");
-    fixture_apks.addFileInput(stamp_fixture_apks);
+    // 2. Generated Java, framework resources, and fixture APKs are cacheable
+    // Run/WriteFiles nodes owned by build/generators.zig.
+    const aidl_dir = o.generated.aidl_java;
+    const logtags_dir = o.generated.logtags_java;
+    const aconfig_dir = o.generated.aconfig_java;
+    const sysprop_dir = o.generated.sysprop_java;
+    const nano_dir = o.generated.nano_java;
+    const stats_dir = o.generated.stats_java;
+    const proto_dir = o.generated.proto_java;
+    const res_dir = o.generated.res_dir;
+    const res_apk = o.generated.res_apk;
+    const fixture_apks_dir = o.generated.fixture_apks_dir;
 
     // 3. curated source list
     const srcs = b.addSystemCommand(&.{ "python3", "tools/java-srcs.py" });
     const srcs_txt = srcs.addOutputFileArg("framework-srcs.txt");
     srcs.addPrefixedDirectoryArg("FB=", fb);
-    srcs.addPrefixedDirectoryArg("MU=", dep.path("extra/modules-utils"));
+    srcs.addPrefixedDirectoryArg("MU=", aosp.path("frameworks/libs/modules-utils"));
     srcs.addPrefixedDirectoryArg("APP=", b.path("."));
     srcs.addPrefixedDirectoryArg("AIDL=", aidl_dir);
     srcs.addPrefixedDirectoryArg("LOGTAGS=", logtags_dir);
@@ -189,8 +96,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     srcs.addPrefixedDirectoryArg("PROTO=", proto_dir);
     srcs.addPrefixedDirectoryArg("STATS=", stats_dir);
     srcs.addPrefixedDirectoryArg("NANO=", nano_dir);
-    srcs.addPrefixedDirectoryArg("NRT=", dep.path("vendor/external/protobuf/javanano/src/main/java"));
-    srcs.addPrefixedDirectoryArg("SD=", dep.path("extra/modules-statsd"));
+    srcs.addPrefixedDirectoryArg("NRT=", aosp.path("external/protobuf/javanano/src/main/java"));
+    srcs.addPrefixedDirectoryArg("SD=", aosp.path("packages/modules/StatsD"));
     srcs.addPrefixedDirectoryArg("RES=", res_dir);
     srcs.addFileInput(stamp_jvm);
 
@@ -201,7 +108,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     compile.addFileArg(core_plus);
     compile.addDirectoryArg(sysmod_dir);
     compile.addFileArg(srcs_txt);
-    compile.addDirectoryArg(dep.path("vendor/external/kotlinc"));
+    compile.addDirectoryArg(aosp.path("external/kotlinc"));
     const classes_dir = compile.addOutputDirectoryArg("classes");
     compile.addFileInput(stamp_jvm);
     compile.addFileInput(stamp_kotlinc);
@@ -215,7 +122,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addArg(".");
 
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
-    d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
+    d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     d8.addFileArg(core_plus);
     d8.addArg("--output");
@@ -227,11 +134,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     // dex2oat that same compiler view; the full framework.jar remains the
     // stored runtime context used for freshness validation.
     const app_context_d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
-    app_context_d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
+    app_context_d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     app_context_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     app_context_d8.addFileArg(core_plus);
     app_context_d8.addArg("--lib");
-    app_context_d8.addFileArg(dep.path("vendor/external/kotlinc/lib/kotlin-stdlib.jar"));
+    app_context_d8.addFileArg(aosp.path("external/kotlinc/lib/kotlin-stdlib.jar"));
     app_context_d8.addArg("--output");
     const app_context_jar = app_context_d8.addOutputFileArg("framework-app-context.jar");
     app_context_d8.addFileArg(classes_jar);
@@ -245,7 +152,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     dexopt.addFileArg(b.graph.path(.install_prefix, "framework/framework.jar"));
     const framework_oat = dexopt.addOutputDirectoryArg("framework-oat");
     dexopt.setName("dex2oat framework.jar (speed)");
-    d8.addFileArg(dep.path("vendor/external/kotlinc/lib/kotlin-stdlib.jar"));
+    d8.addFileArg(aosp.path("external/kotlinc/lib/kotlin-stdlib.jar"));
 
     // A tiny app dex used to verify that APK-bundled kotlin.* classes win over
     // the host's pinned stdlib without making the rest of the APK child-first.
@@ -263,7 +170,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     fixture_jar.addArg(".");
 
     const fixture_d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
-    fixture_d8.addFileArg(dep.path("vendor/prebuilts/r8/r8.jar"));
+    fixture_d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     fixture_d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     fixture_d8.addFileArg(core_plus);
     fixture_d8.addArg("--output");

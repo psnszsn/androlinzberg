@@ -1,4 +1,4 @@
-//! Build Skia (vendor/skia-src, pinned rev) as a static library with zig c++.
+//! Build the packaged AOSP Skia as a static library with zig c++.
 //! Source groups/defines come from build/gen/skia_sources.zig, generated from
 //! skia's own GN build by tools/regen-skia.sh — the same technique skia uses to
 //! produce AOSP's Android.bp (gn/gn_to_bp.py). Building it ourselves means the
@@ -8,11 +8,11 @@ const std = @import("std");
 const gen = @import("gen/skia_sources.zig");
 
 pub const Options = struct {
-    /// vendor/skia-src
+    /// external/skia in the root AOSP dependency.
     root: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
     /// extra include dirs (framework mode needs cutils/trace.h + log/log.h)
-    include_dirs: []const []const u8 = &.{},
+    include_dirs: []const std.Build.LazyPath = &.{},
 };
 
 /// zig pins the target CPU features explicitly, so a per-file `-march=` is
@@ -28,10 +28,10 @@ fn cpuForFlags(flags: []const []const u8) ?*const std.Target.Cpu.Model {
 /// pkg-config names for the system libs skia's GN "libs" refer to.
 fn pkgConfigName(lib: []const u8) ?[]const u8 {
     const map = .{
-        .{ "fontconfig", "fontconfig" }, .{ "expat", "expat" },
-        .{ "freetype", "freetype2" },    .{ "png", "libpng" },
-        .{ "EGL", "egl" },               .{ "jpeg", "libjpeg" },
-        .{ "GLESv2", "glesv2" },         .{ "webp", "libwebp" },
+        .{ "fontconfig", "fontconfig" },  .{ "expat", "expat" },
+        .{ "freetype", "freetype2" },     .{ "png", "libpng" },
+        .{ "EGL", "egl" },                .{ "jpeg", "libjpeg" },
+        .{ "GLESv2", "glesv2" },          .{ "webp", "libwebp" },
         .{ "webpdemux", "libwebpdemux" }, .{ "webpmux", "libwebpmux" },
     };
     inline for (map) |m| {
@@ -50,20 +50,30 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     });
     const lib = b.addLibrary(.{ .name = "skia", .linkage = .static, .root_module = mod });
     mod.addIncludePath(o.root);
-    for (o.include_dirs) |d| mod.addIncludePath(.{ .cwd_relative = d });
+    // AOSP keeps platform SkUserConfig.h files outside the public include
+    // tree. This is a Linux host build with Android-framework extensions.
+    mod.addIncludePath(o.root.path(b, "linux"));
+    mod.addIncludePath(o.root.path(b, "linux/include/config"));
+    mod.addIncludePath(o.root.path(b, "include/config"));
+    for (o.include_dirs) |d| mod.addIncludePath(d);
 
     var base_flags = std.ArrayList([]const u8).empty;
     base_flags.appendSlice(b.allocator, &.{
-        "-std=c++20",             "-fno-exceptions",  "-fno-rtti",
-        "-fvisibility=hidden",    "-fvisibility-inlines-hidden",
-        "-fstrict-aliasing",      "-ffunction-sections", "-fdata-sections",
-        "-Wno-attributes",        "-w",
+        "-std=c++20",          "-fno-exceptions",             "-fno-rtti",
+        "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fstrict-aliasing",
+        "-ffunction-sections", "-fdata-sections",             "-Wno-attributes",
+        "-w",
     }) catch @panic("oom");
     for (gen.defines) |d| base_flags.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
 
     for (gen.groups) |g| {
         var flags = std.ArrayList([]const u8).empty;
         flags.appendSlice(b.allocator, base_flags.items) catch @panic("oom");
+        flags.appendSlice(b.allocator, g.flags) catch @panic("oom");
+        // Zig's bundled Clang does not expose __builtin_ia32_vcvtph2ps256;
+        // retain skcms' own baseline-forwarding implementation for this TU.
+        if (std.mem.eql(u8, g.name, "//modules/skcms:skcms_TransformHsw"))
+            flags.append(b.allocator, "-DSKCMS_DISABLE_HSW") catch @panic("oom");
         if (cpuForFlags(g.flags)) |cpu| {
             var q = o.target.query;
             q.cpu_model = .{ .explicit = cpu };
@@ -74,7 +84,10 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
                 .link_libcpp = true,
             });
             simd_mod.addIncludePath(o.root);
-            for (o.include_dirs) |d| simd_mod.addIncludePath(.{ .cwd_relative = d });
+            simd_mod.addIncludePath(o.root.path(b, "linux"));
+            simd_mod.addIncludePath(o.root.path(b, "linux/include/config"));
+            simd_mod.addIncludePath(o.root.path(b, "include/config"));
+            for (o.include_dirs) |d| simd_mod.addIncludePath(d);
             // object name: "//modules/skcms:skcms_TransformHsw" -> "skia_skcms_TransformHsw"
             const short = g.name[(std.mem.lastIndexOfScalar(u8, g.name, ':') orelse 0) + 1 ..];
             const obj = b.addObject(.{ .name = b.fmt("skia_{s}", .{short}), .root_module = simd_mod });
@@ -90,7 +103,6 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
             mod.addObject(obj);
             continue;
         }
-        flags.appendSlice(b.allocator, g.flags) catch @panic("oom");
         // skcms is C++ but lives outside src/; C sources need C flags
         var cpp: std.ArrayList([]const u8) = .empty;
         var c: std.ArrayList([]const u8) = .empty;

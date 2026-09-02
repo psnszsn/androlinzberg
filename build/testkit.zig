@@ -14,22 +14,22 @@ fn stamp(b: *std.Build, name: []const u8, paths: []const std.Build.LazyPath) std
     return out;
 }
 
-pub fn build(b: *std.Build, artzig: *std.Build.Dependency) Result {
+pub fn build(b: *std.Build, aosp: *std.Build.Dependency) Result {
     const inputs = stamp(b, "testkit.stamp", &.{
         b.path("src/testkit/kotlin"),
         b.path("tests/testkit/kotlin"),
         b.path("tests/integration/kotlin"),
         b.path("tools/build-testkit.sh"),
-        artzig.path("vendor/external/junit/src/main/java"),
-        artzig.path("vendor/external/hamcrest/hamcrest-core/src/main/java"),
+        aosp.path("external/junit/src/main/java"),
+        aosp.path("external/hamcrest/hamcrest-core/src/main/java"),
     });
 
     const run = b.addSystemCommand(&.{"bash"});
     run.addFileArg(b.path("tools/build-testkit.sh"));
-    run.addDirectoryArg(artzig.path("vendor/external/kotlinc"));
-    run.addDirectoryArg(artzig.path("vendor/external/junit"));
-    run.addDirectoryArg(artzig.path("vendor/external/hamcrest"));
-    run.addFileArg(artzig.path("vendor/prebuilts/tools/common/m2/repository/com/google/code/gson/gson/2.9.1/gson-2.9.1.jar"));
+    run.addDirectoryArg(aosp.path("external/kotlinc"));
+    run.addDirectoryArg(aosp.path("external/junit"));
+    run.addDirectoryArg(aosp.path("external/hamcrest"));
+    run.addFileArg(aosp.path("prebuilts/tools/common/m2/repository/com/google/code/gson/gson/2.9.1/gson-2.9.1.jar"));
     run.addDirectoryArg(b.path("src/testkit/kotlin"));
     run.addDirectoryArg(b.path("tests/testkit/kotlin"));
     run.addDirectoryArg(b.path("tests/integration/kotlin"));

@@ -4,6 +4,10 @@
     .fingerprint = 0x8503f76f1f09d06e,
     .minimum_zig_version = "0.17.0-dev.1884+841dd0eb8",
     .dependencies = .{
+        .aosp = .{
+            .url = "file:///mnt/code/proj/androlinzberg/aosp/androlinzberg-aosp-android-16.0.0_r1.tar.gz",
+            .hash = "N-V-__8AAGjUXR7Vry2ROHuUA157jWjZjnUi-cdeGQ41aEMN",
+        },
         .artzig = .{ .path = "artzig" },
         .wayland = .{
             .url = "https://codeberg.org/ifreund/zig-wayland/archive/3b5004a124b399839865f28ae99425a2dd4815f3.tar.gz",

@@ -45,6 +45,11 @@ pub fn build(b: *std.Build) void {
     scanner.generate("zwlr_virtual_pointer_manager_v1", 2);
     scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
     // --- embedded artzig runtime (ART) module
+    // The root AOSP archive supplies framework/native/Skia/generator sources. Its
+    // current Android 16 r1 local URL is content-addressed by build.zig.zon's
+    // package hash, which changes whenever the selected source closure changes.
+    const aosp_dep = b.dependency("aosp", .{});
+    const aosp = aosp_dep.path("");
     const artzig_dep = b.dependency("artzig", .{ .target = target, .optimize = optimize });
     const art_mod = artzig_dep.module("art");
     @import("artzig").installRuntime(b, artzig_dep, b.getInstallStep());
@@ -57,69 +62,69 @@ pub fn build(b: *std.Build) void {
         .{ artzig_dep.namedLazyPath("libstdcpp-bio-so"), "libstdc++_bio.so" },
     };
 
-    // --- Skia: static, built with zig c++ from the pinned skia-src (build/skia.zig)
+    // --- Skia: static, built with zig c++ from the pinned AOSP tree.
     const skia_lib = @import("build/skia.zig").build(b, .{
-        .root = b.path("vendor/skia-src"),
+        .root = aosp.path(b, "external/skia"),
         .target = target,
         .include_dirs = &.{
-            "artzig/vendor/system/core/libcutils/include",
-            "artzig/vendor/system/logging/liblog/include",
+            aosp.path(b, "system/core/libcutils/include"),
+            aosp.path(b, "system/logging/liblog/include"),
         },
     });
     b.step("skia", "Build static Skia").dependOn(&b.addInstallArtifact(skia_lib, .{}).step);
 
-    // --- protobuf: static, built with zig c++ from the vendored source, so the
+    // --- protobuf: static, built with zig c++ from the packaged AOSP source, so the
     // host codegen tools (sysprop_java/javastream) link it with one C++ stdlib.
-    const protobuf_lib = @import("build/protobuf.zig").build(b, .{
-        .root = b.path("artzig/vendor/external/protobuf"),
+    const protobuf = @import("build/protobuf.zig").build(b, .{
+        .root = aosp.path(b, "external/protobuf"),
         .target = target,
         .with_protoc = true, // libprotoc: needed by the protoc-gen-javastream plugin.
     });
-    b.step("protobuf", "Build static protobuf (vendored source)")
-        .dependOn(&b.addInstallArtifact(protobuf_lib, .{}).step);
+    b.step("protobuf", "Build static protobuf from packaged AOSP sources")
+        .dependOn(&b.addInstallArtifact(protobuf.library, .{}).step);
+    b.step("protoc", "Build protoc from packaged AOSP sources")
+        .dependOn(&b.addInstallArtifact(protobuf.protoc, .{}).step);
 
-    // --- sysprop_java: the AOSP sysprop host generator, built from vendored
+    // --- sysprop_java: the AOSP sysprop host generator, built from packaged
     // source against libprotobuf (no prebuilt exists). Generates android.sysprop.*.
     const sysprop_tool = @import("build/sysprop.zig").build(b, .{
-        .vendor = b.path("artzig/vendor"),
+        .vendor = aosp,
         .target = target,
-        .protobuf = protobuf_lib,
+        .protobuf = protobuf.library,
+        .protoc = protobuf.protoc,
     });
     b.step("sysprop-tool", "Build the sysprop_java host generator")
         .dependOn(&b.addInstallArtifact(sysprop_tool, .{}).step);
 
     // --- protoc-gen-javastream: the AOSP protoc plugin that emits the framework
-    // *Proto stream classes, built from vendored source against libprotoc.
+    // *Proto stream classes, built from packaged source against libprotoc.
     const javastream_tool = @import("build/javastream.zig").build(b, .{
-        .root = b.path("artzig/extra/frameworks-base/tools/streaming_proto"),
-        .protobuf_src = b.path("artzig/vendor/external/protobuf"),
+        .root = aosp.path(b, "frameworks/base/tools/streaming_proto"),
+        .protobuf_src = aosp.path(b, "external/protobuf"),
         .target = target,
-        .protobuf = protobuf_lib,
+        .protobuf = protobuf.library,
     });
     b.step("javastream-tool", "Build the protoc-gen-javastream plugin")
         .dependOn(&b.addInstallArtifact(javastream_tool, .{}).step);
 
     // --- protoc-gen-javanano: nano message classes (MetricsProto), built from
-    // the vendored protobuf fork's javanano generator.
+    // the packaged protobuf fork's javanano generator.
     const javanano_tool = @import("build/javanano.zig").build(b, .{
-        .root = b.path("artzig/vendor/external/protobuf"),
+        .root = aosp.path(b, "external/protobuf"),
         .target = target,
-        .protobuf = protobuf_lib,
+        .protobuf = protobuf.library,
     });
     b.step("javanano-tool", "Build the protoc-gen-javanano plugin")
         .dependOn(&b.addInstallArtifact(javanano_tool, .{}).step);
 
-    // --- stats-log-api-gen: built from the pinned frameworks/proto_logging source
-    // (atoms compiled in); the vendored mainline prebuilt's atoms are too old.
-    const stats_tool = blk: {
-        const r = b.addSystemCommand(&.{ "bash", "tools/build-stats-tool.sh" });
-        r.addFileArg(protobuf_lib.getEmittedBin());
-        const exe = r.addOutputFileArg("stats-log-api-gen");
-        r.addFileInput(b.path("tools/build-stats-tool.sh"));
-        r.addFileInput(b.path("tools/aosp-run.sh"));
-        r.setName("build stats-log-api-gen (zig c++)");
-        break :blk exe;
-    };
+    const generated = @import("build/generators.zig").build(b, .{
+        .aosp = aosp_dep,
+        .protobuf = protobuf.library,
+        .protoc = protobuf.protoc,
+        .sysprop_tool = sysprop_tool,
+        .javastream_tool = javastream_tool,
+        .javanano_tool = javanano_tool,
+    });
 
     const wayland_mod = b.createModule(.{
         .root_source_file = scanner.result,
@@ -152,25 +157,14 @@ pub fn build(b: *std.Build) void {
         .dependOn(&b.addInstallFileWithDir(binder_ndk.getEmittedBin(), .{ .custom = "lib/art" }, "libbinder_ndk.so").step);
 
     // --- native island: hwui + JNI + our shims, linked against static Skia
-    // --- C++ headers for the libs/input enum AIDLs (AOSP prebuilt aidl in aosp-env)
-    const aidl_cpp = blk: {
-        const r = b.addSystemCommand(&.{ "bash", "tools/gen-aidl-cpp.sh" });
-        const out = r.addOutputDirectoryArg("aidl-cpp");
-        r.addFileInput(b.path("tools/gen-aidl-cpp.sh"));
-        inline for (.{ "IInputConstants", "InputConfig", "MotionEventFlag", "PointerIconType", "InputEventInjectionSync", "InputEventInjectionResult" }) |n| {
-            r.addFileInput(artzig_dep.path("extra/frameworks-native/libs/input/android/os/" ++ n ++ ".aidl"));
-        }
-        r.setName("aidl --lang=cpp (libs/input enums)");
-        break :blk out;
-    };
-
     const island = @import("build/island.zig").build(b, .{
         .target = target,
         .optimize = optimize,
         .skia = skia_lib,
         .binder_ndk = binder_ndk,
         .art = art_mod,
-        .aidl_cpp = aidl_cpp,
+        .aidl_cpp = generated.aidl_cpp,
+        .aosp_dir = aosp_dep.builder.root.toString(b.allocator) catch @panic("OOM"),
     });
     b.installArtifact(island);
     b.step("island", "Build libandroid_platform.so").dependOn(&b.addInstallArtifact(island, .{}).step);
@@ -178,13 +172,11 @@ pub fn build(b: *std.Build) void {
     // --- framework JVM jar (Java + Kotlin), framework-res.apk, generated Java
     const java = @import("build/java.zig").build(b, .{
         .artzig = artzig_dep,
-        .sysprop_tool = sysprop_tool,
-        .javastream_tool = javastream_tool,
-        .javanano_tool = javanano_tool,
-        .stats_tool = stats_tool,
+        .aosp = aosp_dep,
+        .generated = generated,
     });
     b.getInstallStep().dependOn(java.java_step);
-    const testkit = @import("build/testkit.zig").build(b, artzig_dep);
+    const testkit = @import("build/testkit.zig").build(b, aosp_dep);
     b.getInstallStep().dependOn(testkit.install_step);
     b.installBinFile("tools/azk-test", "azk-test");
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(
@@ -215,11 +207,11 @@ pub fn build(b: *std.Build) void {
         "bionic_translation.cfg",
     ).step);
 
-
     // ABI-conformance check: the installed .so must export every A* symbol the
     // prebuilt libbinder_ndk.so does, so unmodified NDK/AIDL clients resolve.
     const ndk_abi_check = b.addSystemCommand(&.{ "bash", "tools/check-ndk-abi.sh" });
     ndk_abi_check.addFileArg(b.graph.path(.install_prefix, "lib/art/libbinder_ndk.so"));
+    ndk_abi_check.addFileArg(aosp.path(b, "prebuilts/runtime/mainline/platform/sdk/x86_64/lib/libbinder_ndk.so"));
     ndk_abi_check.step.dependOn(b.getInstallStep());
     b.step("ndk-abi", "Check libbinder_ndk exports the full prebuilt ABI").dependOn(&ndk_abi_check.step);
 
@@ -540,7 +532,7 @@ pub fn build(b: *std.Build) void {
     // Absolute fixture paths on argv (the smoke must not depend on the CWD):
     // the androidfw parser fixture, then the fixture-APK directory.
     framework_compat_smoke.addFileArg(
-        b.path("artzig/extra/frameworks-base/libs/androidfw/tests/data/app/app.apk"),
+        aosp.path(b, "frameworks/base/libs/androidfw/tests/data/app/app.apk"),
     );
     framework_compat_smoke.addDirectoryArg(java.fixture_apks_dir);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard

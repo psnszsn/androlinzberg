@@ -3,7 +3,7 @@
 # (needs `gn`; run inside `nix shell nixpkgs#gn` or the dev shell).
 set -euo pipefail
 APP=$(cd "$(dirname "$0")/.." && pwd)
-SKS=$APP/vendor/skia-src
+SKS=${1:?usage: tools/regen-skia.sh /path/to/aosp/external/skia}
 OUT=$(mktemp -d)
 (cd "$SKS" && gn gen "$OUT" --ide=json --args='
 target_os="linux" target_cpu="x64" is_official_build=true is_debug=false is_component_build=false
