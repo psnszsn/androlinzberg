@@ -114,6 +114,7 @@ pub fn build(b: *std.Build) void {
     jvm_source_audit.addArg("jvm-source");
     jvm_source_audit.addDirectoryArg(b.path(""));
     jvm_source_audit.addDirectoryArg(aosp);
+    jvm_source_audit.addFileArg(b.path("tools/stub-audit.txt"));
     for (project_jvm_files.items) |file| jvm_source_audit.addFileArg(file.path);
     project_jvm_files.addInputs(jvm_source_audit);
     jvm_source_audit.setName("audit JVM source provenance");

@@ -7,8 +7,8 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) return usage(init.io);
     if (std.mem.eql(u8, args[1], "jvm-source")) {
-        if (args.len < 5) return usage(init.io);
-        try jvmSource(init, args[2], args[3], args[4..]);
+        if (args.len < 6) return usage(init.io);
+        try jvmSource(init, args[2], args[3], args[4], args[5..]);
     } else if (std.mem.eql(u8, args[1], "cpp-boundary")) {
         try cppBoundary(init.io, args[2..]);
     } else if (std.mem.eql(u8, args[1], "ndk-abi")) {
@@ -21,7 +21,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn usage(io: Io) error{InvalidArguments}!void {
-    Io.File.stderr().writeStreamingAll(io, "usage: build-audit jvm-source <repo> <aosp> <files...> | cpp-boundary <files...> | ndk-abi <library> <reference> | graph <build-files...>\n") catch {};
+    Io.File.stderr().writeStreamingAll(io, "usage: build-audit jvm-source <repo> <aosp> <stub-audit> <files...> | cpp-boundary <files...> | ndk-abi <library> <reference> | graph <build-files...>\n") catch {};
     return error.InvalidArguments;
 }
 
@@ -99,9 +99,9 @@ fn moduleName(contents: []const u8) ?[]const u8 {
     return null;
 }
 
-fn jvmSource(init: std.process.Init, repo_root: []const u8, aosp_root: []const u8, files: []const []const u8) !void {
+fn jvmSource(init: std.process.Init, repo_root: []const u8, aosp_root: []const u8, stub_audit: []const u8, files: []const []const u8) !void {
     var forbidden = try generatedClasses(init.io, init.arena.allocator(), aosp_root);
-    var failed = false;
+    var failed = !(try stubAudit(init, repo_root, stub_audit, files));
     for (files) |file| {
         const relative = relativeTo(repo_root, file) orelse {
             std.debug.print("JVM source is outside repository root: {s}\n", .{file});
@@ -136,6 +136,70 @@ fn jvmSource(init: std.process.Init, repo_root: []const u8, aosp_root: []const u
         }
     }
     if (failed) return error.AuditFailed;
+}
+
+/// The stub ratchet: every stub under src/framework-stubs is listed in
+/// tools/stub-audit.txt with a family it is pending replacement in or a
+/// `survivor:` reason, every listed path still exists, and the number of
+/// pending (non-survivor) entries stays within the file's `pending-budget`.
+/// The budget only goes down as stubs are replaced by the real AOSP classes.
+fn stubAudit(init: std.process.Init, repo_root: []const u8, audit_path: []const u8, files: []const []const u8) !bool {
+    const allocator = init.arena.allocator();
+    const contents = try Io.Dir.cwd().readFileAlloc(init.io, audit_path, allocator, .limited(4 * 1024 * 1024));
+    var listed: std.StringHashMapUnmanaged(void) = .empty;
+    var budget: ?usize = null;
+    var pending: usize = 0;
+    var ok = true;
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trimEnd(u8, raw, "\r");
+        if (line.len == 0) continue;
+        if (line[0] == '#') {
+            const marker = "# pending-budget:";
+            if (std.mem.startsWith(u8, line, marker))
+                budget = std.fmt.parseInt(usize, std.mem.trim(u8, line[marker.len..], " \t"), 10) catch null;
+            continue;
+        }
+        var fields = std.mem.splitScalar(u8, line, '|');
+        const path = fields.next() orelse continue;
+        _ = fields.next();
+        const family = fields.next() orelse "";
+        try listed.put(allocator, path, {});
+        const full = try std.fs.path.join(allocator, &.{ repo_root, path });
+        const exists = if (std.fs.path.isAbsolute(full)) blk: {
+            Io.Dir.accessAbsolute(init.io, full, .{}) catch break :blk false;
+            break :blk true;
+        } else blk: {
+            Io.Dir.cwd().access(init.io, full, .{}) catch break :blk false;
+            break :blk true;
+        };
+        if (!exists) {
+            std.debug.print("stub audit names a file that no longer exists (remove the line): {s}\n", .{path});
+            ok = false;
+        }
+        if (family.len == 0) {
+            std.debug.print("stub audit entry has no family or survivor reason: {s}\n", .{path});
+            ok = false;
+        }
+        if (!std.mem.startsWith(u8, family, "survivor:")) pending += 1;
+    }
+    if (budget == null) {
+        std.debug.print("{s}: missing \"# pending-budget:\" line\n", .{audit_path});
+        ok = false;
+    }
+    for (files) |file| {
+        const relative = relativeTo(repo_root, file) orelse continue;
+        if (!std.mem.startsWith(u8, relative, "src/framework-stubs/")) continue;
+        if (!std.mem.endsWith(u8, relative, ".java") and !std.mem.endsWith(u8, relative, ".kt")) continue;
+        if (listed.contains(relative)) continue;
+        std.debug.print("stub is not in {s} (run tools/aosp-closure.py audit --update {s} and assign a family or survivor reason): {s}\n", .{ audit_path, audit_path, relative });
+        ok = false;
+    }
+    if (budget) |limit| if (pending > limit) {
+        std.debug.print("{s}: {d} pending stubs exceed the budget of {d} (replace stubs; never raise the budget)\n", .{ audit_path, pending, limit });
+        ok = false;
+    };
+    return ok;
 }
 
 fn firstLines(contents: []const u8, count: usize) []const u8 {
