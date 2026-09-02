@@ -127,7 +127,11 @@ public final class FrameworkCompatSmoke {
             info.name = "org.example.LocalProvider"
             info.authority = "org.example.local"
             info.exported = false
-            provider.attachInfo(null, info)
+            // AOSP attachInfo needs a Context (validateIncomingUri reads its user id).
+            val providerContext = android.app.ContextImpl.createSystemContext(
+                requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
+            )
+            provider.attachInfo(providerContext, info)
             val resolver = object : android.content.ContentResolver() {
                 override fun acquireProvider(authority: String): android.content.IContentProvider? =
                     if (authority == "org.example.local") provider.getIContentProvider() else null

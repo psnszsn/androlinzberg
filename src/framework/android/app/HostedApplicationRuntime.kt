@@ -12,7 +12,8 @@ import android.util.Log
  */
 object HostedApplicationRuntime {
     private const val TAG = "HostedApplicationRuntime"
-    private val providers = mutableListOf<ContentProvider>()
+    /** Installed providers with their ProviderInfo (AOSP ActivityThread.installProvider keeps both). */
+    private val providers = mutableListOf<Pair<ContentProvider, android.content.pm.ProviderInfo>>()
     private val providersByAuthority = HashMap<String, ContentProvider>()
 
     /** A provider installed in this process, keyed by one of its authorities. */
@@ -24,8 +25,7 @@ object HostedApplicationRuntime {
     @JvmStatic
     fun installedProviderHolders(): List<dev.artzig.system.HostedContentProviderHolder> =
         synchronized(providers) {
-            providers.mapNotNull { provider ->
-                val info = provider.providerInfo() ?: return@mapNotNull null
+            providers.map { (provider, info) ->
                 dev.artzig.system.HostedContentProviderHolder(
                     info,
                     provider.getIContentProvider().asBinder(),
@@ -64,7 +64,7 @@ object HostedApplicationRuntime {
                 .newInstance() as ContentProvider
             provider.attachInfo(context, info)
             synchronized(providers) {
-                providers += provider
+                providers += provider to info
                 info.authority?.split(";")?.forEach { authority ->
                     providersByAuthority[authority] = provider
                 }

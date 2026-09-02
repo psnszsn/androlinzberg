@@ -151,6 +151,10 @@ public final class ActivityThread {
     }
     public ActivityClientRecord getActivityClient(android.os.IBinder token) { return null; }
     public static String currentPackageName() { return sPackageName; }
+    /** AOSP ActivityThread.currentAttributionSource: this process's identity (broker uid, bound package). */
+    public static android.content.AttributionSource currentAttributionSource() {
+        return new android.content.AttributionSource(android.os.Process.myUid(), sPackageName, null);
+    }
     public static String currentProcessName() { return sProcessName; }
     private static boolean sSystem;
     /** Called once by the session's system process before any Context exists. */

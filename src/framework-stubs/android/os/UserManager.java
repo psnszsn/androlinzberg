@@ -6,6 +6,11 @@ import android.content.pm.UserInfo;
 import java.util.ArrayList;
 import java.util.List;
 public class UserManager {
+    /** Single hosted user: no profile parent, default user properties. */
+    public UserHandle getProfileParent(UserHandle user) { return null; }
+    public android.content.pm.UserProperties getUserProperties(UserHandle user) {
+        return new android.content.pm.UserProperties.Builder().build();
+    }
     // ApplicationPackageManager badging/direct-boot surface: the single
     // hosted user is unlocked and carries no badge.
     public boolean hasBadge(int userId) { return false; }

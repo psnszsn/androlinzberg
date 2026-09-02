@@ -1404,3 +1404,13 @@ F aosp prebuilts/runtime/mainline/platform/sdk/x86_64/lib/libbinder_ndk.so
 F aosp prebuilts/sdk/tools/linux/bin/aidl
 F aosp prebuilts/sdk/tools/linux/lib/apksigner.jar
 F aosp prebuilts/tools/common/m2/repository/com/google/code/gson/gson/2.9.1/gson-2.9.1.jar
+F aosp frameworks/base/core/java/android/content/AttributionSource.java
+F aosp frameworks/base/core/java/android/content/ContentProviderNative.java
+F aosp frameworks/base/core/java/android/content/ContentProvider.java
+F aosp frameworks/base/core/java/android/content/ContentInterface.java
+F aosp frameworks/base/core/java/android/content/UriPermission.java
+F aosp frameworks/base/core/java/android/content/ContextParams.java
+F aosp frameworks/base/core/java/android/content/Attributable.java
+F aosp frameworks/base/core/java/android/content/PermissionChecker.java
+F aosp frameworks/base/core/java/android/permission/PermissionCheckerManager.java
+F aosp frameworks/base/core/java/android/content/LoggingContentInterface.java

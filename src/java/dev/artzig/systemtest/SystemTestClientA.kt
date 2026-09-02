@@ -373,6 +373,36 @@ internal object SystemTestClientA {
             true
         }
         check(deniedProvider, "non-exported provider denied across uids")
+
+        // --- the real provider transport (ContentProviderNative): batch, cancellation, uri permission.
+        val remoteProvider = checkNotNull(resolver.acquireProvider("dev.artzig.test.b.provider"))
+        val source = context.attributionSource
+        val ops = arrayListOf(
+            android.content.ContentProviderOperation.newInsert(providerUri).withValue("name", "delta").build(),
+            android.content.ContentProviderOperation.newDelete(providerUri).build(),
+        )
+        val results = remoteProvider.applyBatch(source, "dev.artzig.test.b.provider", ops)
+        check(
+            results.size == 2 && results[0].uri.toString() == "content://dev.artzig.test.b.provider/rows/delta" && results[1].count == 1,
+            "applyBatch crosses the process boundary with typed results",
+        )
+        val remoteSignal = checkNotNull(remoteProvider.createCancellationSignal())
+        thread(name = "cancel-slow-query", isDaemon = true) {
+            Thread.sleep(300)
+            try { remoteSignal.cancel() } catch (ignored: android.os.RemoteException) {}
+        }
+        val cancelled = try {
+            remoteProvider.query(source, android.net.Uri.parse("content://dev.artzig.test.b.provider/slow"), null, null, remoteSignal)
+            false
+        } catch (expected: android.os.OperationCanceledException) {
+            true
+        }
+        check(cancelled, "a CancellationSignal cancels a query running in another process")
+        check(
+            remoteProvider.checkUriPermission(source, providerUri, Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
+                android.content.pm.PackageManager.PERMISSION_DENIED,
+            "checkUriPermission reaches the provider (default denies)",
+        )
         check(
             resolver.query(android.net.Uri.parse("content://no.such.authority/x"), null, null, null, null) == null,
             "unknown authority yields null",

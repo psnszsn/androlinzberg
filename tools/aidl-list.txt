@@ -143,7 +143,6 @@ repo|aidl-compat/dev/artzig/binder/IBinderTestService.aidl
 repo|aidl-compat/dev/artzig/system/HostedContentProviderHolder.aidl
 repo|aidl-compat/dev/artzig/system/IHostedActivityManager.aidl
 repo|aidl-compat/dev/artzig/system/IHostedApplicationThread.aidl
-repo|aidl-compat/dev/artzig/system/IHostedContentProvider.aidl
 repo|aidl-compat/dev/artzig/system/IHostedContentService.aidl
 aosp|frameworks/base/apex/jobscheduler/framework/java/android/app/IAlarmManager.aidl
 aosp|frameworks/base/apex/jobscheduler/framework/java/android/app/IAlarmListener.aidl
@@ -153,3 +152,5 @@ aosp|frameworks/base/core/java/android/app/time/ITimeDetectorListener.aidl
 aosp|frameworks/base/core/java/android/os/IDeviceIdentifiersPolicyService.aidl
 aosp|frameworks/base/core/java/android/app/IUnsafeIntentStrictModeCallback.aidl
 aosp|frameworks/base/core/java/android/app/IBackgroundActivityLaunchCallback.aidl
+aosp|frameworks/native/libs/permission/aidl/android/content/AttributionSourceState.aidl
+aosp|frameworks/native/libs/permission/aidl/android/permission/IPermissionChecker.aidl

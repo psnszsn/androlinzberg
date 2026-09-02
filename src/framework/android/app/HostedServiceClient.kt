@@ -100,9 +100,9 @@ object HostedServiceClient {
             null
         } ?: return null
         val binder = holder.provider ?: return null
-        val proxy = android.content.HostedContentProviderProxy(
-            dev.artzig.system.IHostedContentProvider.Stub.asInterface(binder),
-        )
+        // The real provider transport (ContentProviderNative.asInterface hands
+        // back the local Transport when the binder lives in this process).
+        val proxy = android.content.ContentProviderNative.asInterface(binder)
         synchronized(providerLock) {
             providerCache[authority]?.let { return it }
             providerCache[authority] = proxy

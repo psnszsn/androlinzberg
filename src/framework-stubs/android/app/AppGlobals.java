@@ -6,5 +6,6 @@ public class AppGlobals {
     public static String getInitialPackage() { return null; }
     /** The process's Application (AOSP: ActivityThread.currentApplication). */
     public static Application getInitialApplication() { return ActivityThread.currentApplication(); }
-    public static android.content.pm.PackageManager getPackageManager() { return null; }
+    /** AOSP: the session's IPackageManager (ActivityThread.getPackageManager). */
+    public static android.content.pm.IPackageManager getPackageManager() { return ActivityThread.getPackageManager(); }
 }

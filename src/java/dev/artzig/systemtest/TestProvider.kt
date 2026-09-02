@@ -24,6 +24,24 @@ internal open class TestProvider : ContentProvider() {
         return cursor
     }
 
+    /** `.../slow` waits for the caller's CancellationSignal (cross-process cancellation test). */
+    override fun query(
+        uri: Uri,
+        projection: Array<String>?,
+        queryArgs: Bundle?,
+        cancellationSignal: android.os.CancellationSignal?,
+    ): Cursor? {
+        if (uri.lastPathSegment == "slow") {
+            val deadline = System.nanoTime() + 10_000_000_000L
+            while (System.nanoTime() < deadline) {
+                cancellationSignal?.throwIfCanceled()
+                Thread.sleep(20)
+            }
+            throw IllegalStateException("slow query was never cancelled")
+        }
+        return super.query(uri, projection, queryArgs, cancellationSignal)
+    }
+
     override fun getType(uri: Uri): String = "vnd.android.cursor.dir/vnd.artzig.row"
 
     override fun insert(uri: Uri, values: ContentValues?): Uri =

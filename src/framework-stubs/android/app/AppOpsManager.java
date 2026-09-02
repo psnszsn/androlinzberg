@@ -14,6 +14,14 @@ public class AppOpsManager {
     public static final int _NUM_OP = 148;
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface SamplingStrategy {}
+    /** AOSP maps runtime permissions to app-op codes through its op table;
+     * app-ops are not an enforcement layer on this host, so no permission has
+     * an op: providers and PermissionChecker fall through to the permission check. */
+    public static int permissionToOpCode(String permission) { return OP_NONE; }
+    public static String permissionToOp(String permission) { return null; }
+    public static String opToPermission(int op) { return null; }
+    /** AOSP throws for an unknown op string; every string is unknown here. */
+    public static int strOpToOp(String op) { throw new IllegalArgumentException("Unknown operation string: " + op); }
     /** AOSP maps op codes to public op names; this host has no table. */
     public static String opToPublicName(int op) { return "op:" + op; }
     public static final int OP_SYSTEM_ALERT_WINDOW = 24;

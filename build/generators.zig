@@ -96,10 +96,13 @@ fn aidlJava(
     aosp: *std.Build.Dependency,
     runner: *std.Build.Step.Compile,
 ) LazyPath {
-    const app_ops_callback = "frameworks/native/libs/permission/aidl/com/android/internal/app/IAppOpsCallback.aidl";
+    // The native permission AIDL lib (AttributionSourceState, IAppOpsCallback,
+    // IPermissionChecker) is staged into the compat root rather than added as
+    // an -I root, so its parcelable declarations resolve after core/java's.
+    const permission_aidl = "frameworks/native/libs/permission/aidl/";
     const compat = b.addWriteFiles();
     _ = compat.addCopyDirectory(b.path("aidl-compat"), "", .{});
-    _ = compat.addCopyFile(aosp.path(app_ops_callback), "com/android/internal/app/IAppOpsCallback.aidl");
+    _ = compat.addCopyDirectory(aosp.path(permission_aidl), "", .{ .include_extensions = &.{".aidl"} });
     const compat_dir = compat.getDirectory();
 
     const merged = b.addWriteFiles();
@@ -118,8 +121,8 @@ fn aidlJava(
             const prefix = "aidl-compat/";
             if (!std.mem.startsWith(u8, input.path, prefix)) @panic("repository AIDL must be under aidl-compat");
             run.addFileArg(compat_dir.path(b, input.path[prefix.len..]));
-        } else if (std.mem.eql(u8, input.path, app_ops_callback)) {
-            run.addFileArg(compat_dir.path(b, "com/android/internal/app/IAppOpsCallback.aidl"));
+        } else if (std.mem.startsWith(u8, input.path, permission_aidl)) {
+            run.addFileArg(compat_dir.path(b, input.path[permission_aidl.len..]));
         } else {
             run.addFileArg(sourcePath(b, aosp, input));
         }

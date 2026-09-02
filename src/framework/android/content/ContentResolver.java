@@ -23,6 +23,38 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Objects;
 public abstract class ContentResolver {
+    // AOSP query-argument and remote-callback contract constants (ContentProvider links against them).
+    public static final String QUERY_ARG_SQL_SORT_ORDER = "android:query-arg-sql-sort-order";
+    public static final String QUERY_ARG_SORT_COLUMNS = "android:query-arg-sort-columns";
+    public static final String QUERY_ARG_SORT_DIRECTION = "android:query-arg-sort-direction";
+    public static final String QUERY_ARG_SORT_COLLATION = "android:query-arg-sort-collation";
+    public static final int QUERY_SORT_DIRECTION_ASCENDING = 0;
+    public static final int QUERY_SORT_DIRECTION_DESCENDING = 1;
+    public static final String REMOTE_CALLBACK_RESULT = "result";
+    public static final String REMOTE_CALLBACK_ERROR = "error";
+
+    /** AOSP ContentResolver.createSqlSortClause (verbatim). */
+    public static String createSqlSortClause(android.os.Bundle queryArgs) {
+        String[] columns = queryArgs.getStringArray(QUERY_ARG_SORT_COLUMNS);
+        if (columns == null || columns.length == 0) {
+            throw new IllegalArgumentException("Can't create sort clause without columns.");
+        }
+        String query = android.text.TextUtils.join(", ", columns);
+        int collation = queryArgs.getInt(QUERY_ARG_SORT_COLLATION, java.text.Collator.IDENTICAL);
+        if (collation == java.text.Collator.PRIMARY || collation == java.text.Collator.SECONDARY) {
+            query += " COLLATE NOCASE";
+        }
+        int sortDir = queryArgs.getInt(QUERY_ARG_SORT_DIRECTION, Integer.MIN_VALUE);
+        if (sortDir != Integer.MIN_VALUE) {
+            switch (sortDir) {
+                case QUERY_SORT_DIRECTION_ASCENDING: query += " ASC"; break;
+                case QUERY_SORT_DIRECTION_DESCENDING: query += " DESC"; break;
+                default: throw new IllegalArgumentException("Unsupported sort direction value."
+                        + " See ContentResolver documentation for details.");
+            }
+        }
+        return query;
+    }
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface NotifyFlags {}
     public static final String SCHEME_CONTENT = "content", SCHEME_ANDROID_RESOURCE = "android.resource", SCHEME_FILE = "file";
@@ -30,7 +62,6 @@ public abstract class ContentResolver {
             NOTIFY_INSERT = 4, NOTIFY_UPDATE = 8, NOTIFY_DELETE = 16;
     public static final String QUERY_ARG_SQL_SELECTION = "android:query-arg-sql-selection";
     public static final String QUERY_ARG_SQL_SELECTION_ARGS = "android:query-arg-sql-selection-args";
-    public static final String QUERY_ARG_SQL_SORT_ORDER = "android:query-arg-sql-sort-order";
     public static final String QUERY_ARG_LIMIT = "android:query-arg-limit";
     public static final String EXTRA_HONORED_ARGS = "android.content.extra.HONORED_ARGS";
 

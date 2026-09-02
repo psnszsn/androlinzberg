@@ -31,6 +31,12 @@ class PermissionManager {
 
     private fun service(): IPackageManager = android.app.ActivityThread.getPackageManager()
 
+    /** AOSP registers attribution sources with PermissionManagerService so a
+     * receiver can trust a chain; the session's broker uid is the identity here,
+     * so every source a process presents for itself is registered. */
+    fun isRegisteredAttributionSource(source: android.content.AttributionSource?): Boolean = source != null
+    fun registerAttributionSource(source: android.content.AttributionSource): android.content.AttributionSource = source
+
     /** Every installed package's permission definitions — the platform's (from
      * framework-res) and any declared by hosted apps. AOSP serves these from
      * PermissionManagerService's registry; the hosted service records them per

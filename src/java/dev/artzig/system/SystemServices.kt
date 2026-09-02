@@ -100,6 +100,7 @@ internal object SystemServices {
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
         )
         android.os.ServiceManager.addService("package", packageManager)
+        android.os.ServiceManager.addService("permission_checker", HostedPermissionCheckerService(packageManager))
         LocalServices.addService(
             android.content.pm.PackageManagerInternal::class.java,
             object : android.content.pm.PackageManagerInternal() {
