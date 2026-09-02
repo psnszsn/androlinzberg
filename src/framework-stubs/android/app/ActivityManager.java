@@ -64,6 +64,9 @@ public class ActivityManager {
         sService = s;
         return s;
     }
+    /** AOSP ActivityManager.INTENT_SENDER_* (PendingIntent kinds). */
+    public static final int INTENT_SENDER_BROADCAST = 1, INTENT_SENDER_ACTIVITY = 2, INTENT_SENDER_ACTIVITY_RESULT = 3,
+            INTENT_SENDER_SERVICE = 4, INTENT_SENDER_FOREGROUND_SERVICE = 5;
     /** AOSP IActivityManager start result codes (ActivityManager.START_*). */
     public static final int START_SUCCESS = 0, START_INTENT_NOT_RESOLVED = -1, START_CLASS_NOT_FOUND = -2,
             START_FORWARD_AND_REQUEST_CONFLICT = -3, START_PERMISSION_DENIED = -4, START_NOT_ACTIVITY = -5,

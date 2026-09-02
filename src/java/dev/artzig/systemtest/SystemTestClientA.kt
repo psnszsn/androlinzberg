@@ -316,6 +316,43 @@ internal object SystemTestClientA {
         val stickyBack = context.registerReceiver(null, android.content.IntentFilter("dev.artzig.test.STICKY"))
         check(stickyBack?.getIntExtra("k", -1) == 5, "sticky broadcast retained")
 
+        // --- PendingIntent over the real IIntentSender (AOSP PendingIntentController semantics).
+        val pendingLatch = CountDownLatch(1)
+        var pendingExtra = -1
+        val pendingReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, received: Intent?) {
+                pendingExtra = received?.getIntExtra("k", -1) ?: -1
+                pendingLatch.countDown()
+            }
+        }
+        context.registerReceiver(pendingReceiver, android.content.IntentFilter("dev.artzig.test.PENDING"))
+        val pending = android.app.PendingIntent.getBroadcast(
+            context, 3, Intent("dev.artzig.test.PENDING").putExtra("k", 9), android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val samePending = android.app.PendingIntent.getBroadcast(
+            context, 3, Intent("dev.artzig.test.PENDING"), android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        check(pending == samePending, "an equal request returns the same IIntentSender record")
+        check(
+            android.app.PendingIntent.getBroadcast(
+                context, 4, Intent("dev.artzig.test.OTHER"),
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_NO_CREATE,
+            ) == null,
+            "FLAG_NO_CREATE returns null for an unknown request",
+        )
+        check(
+            pending.creatorPackage == "dev.artzig.test.a" && pending.isBroadcast && pending.isImmutable,
+            "PendingIntentInfo comes from the activity manager",
+        )
+        pending.send()
+        check(pendingLatch.await(30, TimeUnit.SECONDS) && pendingExtra == 9, "PendingIntent.send delivers the broadcast")
+        pending.cancel()
+        check(
+            runCatching { pending.send() }.exceptionOrNull() is android.app.PendingIntent.CanceledException,
+            "a canceled PendingIntent throws CanceledException",
+        )
+        context.unregisterReceiver(pendingReceiver)
+
         // --- clipboard through the reused AOSP ClipboardService.
         val clipboard = checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         val clipChanged = CountDownLatch(1)

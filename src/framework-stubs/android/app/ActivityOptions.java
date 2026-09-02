@@ -10,7 +10,11 @@ public class ActivityOptions {
     public static final int MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS = 3;
     public static final int MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE = 4;
     public static final int MODE_BACKGROUND_ACTIVITY_START_COMPAT = -1;
+    public ActivityOptions() {}
+    /** AOSP: options ride a Bundle; nothing in it is interpreted on this host. */
+    public ActivityOptions(android.os.Bundle opts) {}
     public static ActivityOptions makeBasic() { return new ActivityOptions(); }
+    public ActivityOptions setCallerDisplayId(int callerDisplayId) { return this; }
     /** AOSP: options ride a Bundle; this host keeps no launch display/task state in them. */
     public static ActivityOptions fromBundle(android.os.Bundle bOptions) { return bOptions != null ? new ActivityOptions() : null; }
     public static boolean hasLaunchTargetContainer(ActivityOptions options) { return false; }

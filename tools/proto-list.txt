@@ -41,3 +41,4 @@ aosp|frameworks/base/core/proto/android/os/worksource.proto
 aosp|frameworks/base/core/proto/android/app/appexitinfo.proto
 aosp|frameworks/base/core/proto/android/app/appstartinfo.proto
 aosp|frameworks/base/core/proto/android/app/profilerinfo.proto
+aosp|frameworks/base/core/proto/android/app/pendingintent.proto

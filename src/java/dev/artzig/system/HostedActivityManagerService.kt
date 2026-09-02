@@ -521,6 +521,76 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
 
     private val broadcasts = HostedBroadcastQueue(this)
 
+    // ---------------------------------------------------------- pending intents (AOSP PendingIntentController)
+
+    private val pendingIntents = HostedPendingIntentController(this)
+
+    override fun getIntentSenderWithFeature(
+        type: Int, packageName: String?, featureId: String?, token: IBinder?, resultWho: String?,
+        requestCode: Int, intents: Array<Intent?>?, resolvedTypes: Array<String?>?, flags: Int,
+        options: android.os.Bundle?, userId: Int,
+    ): android.content.IIntentSender? =
+        pendingIntents.getIntentSender(type, packageName, Binder.getCallingUid(), requestCode, intents, resolvedTypes, flags)
+
+    override fun getIntentSender(
+        type: Int, packageName: String?, token: IBinder?, resultWho: String?, requestCode: Int,
+        intents: Array<Intent?>?, resolvedTypes: Array<String?>?, flags: Int, options: android.os.Bundle?, userId: Int,
+    ): android.content.IIntentSender? =
+        getIntentSenderWithFeature(type, packageName, null, token, resultWho, requestCode, intents, resolvedTypes, flags, options, userId)
+
+    override fun sendIntentSender(
+        caller: IApplicationThread?, target: android.content.IIntentSender?, whitelistToken: IBinder?, code: Int,
+        intent: Intent?, resolvedType: String?, finishedReceiver: android.content.IIntentReceiver?,
+        requiredPermission: String?, options: android.os.Bundle?,
+    ): Int {
+        val record = pendingIntents.record(target) ?: return android.app.ActivityManager.START_CANCELED
+        return pendingIntents.sendInner(record, code, intent, resolvedType, finishedReceiver, requiredPermission, options)
+    }
+
+    override fun cancelIntentSender(sender: android.content.IIntentSender?) = pendingIntents.cancel(sender)
+
+    override fun getInfoForIntentSender(sender: android.content.IIntentSender?): android.app.ActivityManager.PendingIntentInfo? {
+        val record = pendingIntents.record(sender) ?: return null
+        return android.app.ActivityManager.PendingIntentInfo(record.key.packageName, record.key.uid, record.immutable, record.key.type)
+    }
+
+    override fun getIntentForIntentSender(sender: android.content.IIntentSender?): Intent? =
+        pendingIntents.record(sender)?.key?.requestIntent?.let { Intent(it) }
+
+    override fun getTagForIntentSender(sender: android.content.IIntentSender?, prefix: String?): String? = null
+
+    override fun isIntentSenderTargetedToPackage(sender: android.content.IIntentSender?): Boolean {
+        val intent = pendingIntents.record(sender)?.key?.requestIntent ?: return false
+        return intent.getPackage() != null || intent.component != null
+    }
+
+    override fun isIntentSenderAnActivity(sender: android.content.IIntentSender?): Boolean =
+        pendingIntents.record(sender)?.key?.type == android.app.ActivityManager.INTENT_SENDER_ACTIVITY
+
+    override fun registerIntentSenderCancelListenerEx(sender: android.content.IIntentSender?, receiver: com.android.internal.os.IResultReceiver?): Boolean =
+        pendingIntents.registerCancelListener(sender, receiver)
+
+    override fun unregisterIntentSenderCancelListener(sender: android.content.IIntentSender?, receiver: com.android.internal.os.IResultReceiver?) =
+        pendingIntents.unregisterCancelListener(sender, receiver)
+
+    override fun queryIntentComponentsForIntentSender(sender: android.content.IIntentSender?, matchFlags: Int): android.content.pm.ParceledListSlice<*>? =
+        android.content.pm.ParceledListSlice(ArrayList<android.content.pm.ResolveInfo>())
+
+    /** A broadcast PendingIntent sends as its creator (PendingIntentRecord.sendInner, broadcast branch). */
+    internal fun broadcastFromPendingIntent(
+        packageName: String?, uid: Int, intent: Intent, requiredPermission: String?,
+        finishedReceiver: android.content.IIntentReceiver?, code: Int,
+    ) {
+        broadcasts.broadcastIntent(intent, finishedReceiver, code, requiredPermission, finishedReceiver != null, false, packageName, uid)
+    }
+
+    /** A service PendingIntent starts the service as its creator. */
+    internal fun startServiceFromPendingIntent(packageName: String?, uid: Int, intent: Intent) {
+        val post = synchronized(lock) { doStartLocked(uid, intent, packageName) }
+        if (post.status == -1) throw SecurityException("startService denied")
+        post.schedule?.invoke()
+    }
+
     internal fun checkUidPermission(permission: String, uid: Int): Int =
         packageService?.checkUidPermission(permission, uid)
             ?: android.content.pm.PackageManager.PERMISSION_DENIED

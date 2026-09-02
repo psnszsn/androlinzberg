@@ -402,10 +402,10 @@ public final class FrameworkCompatSmoke {
             verifyBoundedHostThrowableDiagnostic()
             require(
                 PendingIntent.getActivities(
-                    null,
+                    HostContexts.systemContext(requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0),
                     7,
                     arrayOf<Intent>(Intent()),
-                    0,
+                    PendingIntent.FLAG_IMMUTABLE,
                     Bundle(),
                 ) != null,
                 "PendingIntent.getActivities options overload",

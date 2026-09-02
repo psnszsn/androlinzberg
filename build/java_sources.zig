@@ -453,6 +453,42 @@ fn collectStatic(c: *StaticCollector) !void {
     // Real ContentResolver + ContentProviderClient over the real IContentService (sync
     // surface unsupported in the hosted content service); accounts.Account for the AIDL.
     try c.file("$CJ/android/content/ContentResolver.java");
+    // Real clients the host previously stubbed (closure = AIDL generation + value types).
+    try c.file("$FB/apex/jobscheduler/framework/java/android/os/DeviceIdleManager.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/os/PowerExemptionManager.java");
+    try c.file("$CJ/android/app/GameManager.java");
+    try c.file("$CJ/android/app/GameModeConfiguration.java");
+    try c.file("$CJ/android/app/GameModeInfo.java");
+    try c.file("$CJ/android/app/GameState.java");
+    try c.file("$CJ/android/app/LocaleManager.java");
+    try c.file("$CJ/android/app/PendingIntent.java");
+    try c.file("$CJ/android/app/Vr2dDisplayProperties.java");
+    try c.file("$CJ/android/app/VrManager.java");
+    try c.file("$CJ/android/app/VrStateCallback.java");
+    try c.file("$CJ/android/app/ambientcontext/AmbientContextCallback.java");
+    try c.file("$CJ/android/app/ambientcontext/AmbientContextEvent.java");
+    try c.file("$CJ/android/app/ambientcontext/AmbientContextEventRequest.java");
+    try c.file("$CJ/android/app/ambientcontext/AmbientContextManager.java");
+    try c.file("$CJ/android/app/people/ConversationChannel.java");
+    try c.file("$CJ/android/app/people/ConversationStatus.java");
+    try c.file("$CJ/android/app/people/PeopleManager.java");
+    try c.file("$CJ/android/app/time/DetectorStatusTypes.java");
+    try c.file("$CJ/android/app/time/LocationTimeZoneAlgorithmStatus.java");
+    try c.file("$CJ/android/app/time/TelephonyTimeZoneAlgorithmStatus.java");
+    try c.file("$CJ/android/app/time/TimeManager.java");
+    try c.file("$CJ/android/app/time/TimeZoneCapabilities.java");
+    try c.file("$CJ/android/app/time/TimeZoneCapabilitiesAndConfig.java");
+    try c.file("$CJ/android/app/time/TimeZoneDetectorStatus.java");
+    try c.file("$CJ/android/app/time/TimeZoneState.java");
+    try c.file("$CJ/android/app/timezonedetector/ManualTimeZoneSuggestion.java");
+    try c.file("$CJ/android/app/timezonedetector/TelephonyTimeZoneSuggestion.java");
+    try c.file("$CJ/android/content/IntentSender.java");
+    try c.file("$CJ/android/os/UpdateLock.java");
+    try c.file("$CJ/android/provider/E2eeContactKeysManager.java");
+    try c.file("$CJ/android/service/timezone/TimeZoneProviderEvent.java");
+    try c.file("$CJ/android/service/timezone/TimeZoneProviderService.java");
+    try c.file("$CJ/android/service/timezone/TimeZoneProviderStatus.java");
+    try c.file("$CJ/android/service/timezone/TimeZoneProviderSuggestion.java");
     // Real DocumentsContract/DocumentsProvider/ExifInterface (android.app core 6).
     try c.file("$CJ/android/provider/DocumentsContract.java");
     try c.file("$CJ/android/provider/DocumentsProvider.java");

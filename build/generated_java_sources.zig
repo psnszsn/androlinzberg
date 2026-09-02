@@ -3,6 +3,7 @@
 pub const proto = [_][]const u8{
     "android/app/ApplicationExitInfoProto.java",
     "android/app/ApplicationStartInfoProto.java",
+    "android/app/PendingIntentProto.java",
     "android/app/ProfilerInfoProto.java",
     "android/app/WindowConfigurationProto.java",
     "android/content/AuthorityEntryProto.java",
