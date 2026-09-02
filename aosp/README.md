@@ -65,6 +65,10 @@ Each non-comment line has the form `<kind> aosp <path>`:
 - `P` includes a file created by one of the package's patches. It must not exist
   before patching.
 
+`artzig-files.txt` additionally accepts `X` to exclude all Git-tracked files
+below a file or directory selected by a broader rule. Exclusions are applied
+after all inclusions.
+
 Prefer exact `F`/`L` entries unless a directory is a cohesive source closure or
 most of its files and bytes are used. Paths are checkout paths such as
 `frameworks/base/...`, not manifest project names.
@@ -81,6 +85,9 @@ Run the packagers from the repository root, one after the other:
 python3 aosp/package-artzig-aosp.py
 python3 aosp/package-androlinzberg-aosp.py
 ```
+
+From a worktree without its own Repo checkout, point the Artzig packager at the
+shared pinned checkout with `ARTZIG_AOSP_ROOT=/absolute/path/to/aosp`.
 
 Do not run the packagers concurrently: their patch sets overlap. Each script:
 

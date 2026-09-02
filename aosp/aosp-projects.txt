@@ -91,7 +91,6 @@ platform/external/starlark-go
 platform/external/testng
 platform/external/tinyxml2
 platform/external/turbine
-platform/external/vixl
 platform/external/zlib
 platform/external/zopfli
 platform/external/zstd

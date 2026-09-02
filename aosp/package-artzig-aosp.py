@@ -18,8 +18,8 @@ import tempfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-AOSP_ROOT = PROJECT_ROOT / "aosp"
-SOURCE_MANIFEST = AOSP_ROOT / "artzig-files.txt"
+AOSP_ROOT = Path(os.environ.get("ARTZIG_AOSP_ROOT", PROJECT_ROOT / "aosp")).resolve()
+SOURCE_MANIFEST = PROJECT_ROOT / "aosp" / "artzig-files.txt"
 PACKAGE_NAME = "artzig"
 PROJECT_LIST = AOSP_ROOT / ".repo" / "project.list"
 MANIFEST_REPOSITORY = AOSP_ROOT / ".repo" / "manifests"
@@ -111,7 +111,7 @@ def read_manifest() -> list[tuple[str, str]]:
                 f"{SOURCE_MANIFEST}:{line_number}: expected '<kind> <source> <path>'"
             )
         kind, source, raw_path = fields
-        if kind not in {"D", "F", "L", "P"}:
+        if kind not in {"D", "F", "L", "P", "X"}:
             raise PackagingError(
                 f"{SOURCE_MANIFEST}:{line_number}: unknown rule kind: {kind}"
             )
@@ -190,10 +190,11 @@ def expand_manifest(
     tracked = {project: tracked_files(project) for project in used_projects}
 
     files: set[str] = set()
+    excluded: set[str] = set()
     patch_created: set[str] = set()
     for kind, path, project, relative in resolved:
         project_files = tracked[project]
-        if kind == "D":
+        if kind in {"D", "X"}:
             if relative == ".":
                 matches = {f"{project}/{entry}" for entry in project_files}
             else:
@@ -205,7 +206,10 @@ def expand_manifest(
                 }
             if not matches:
                 raise PackagingError(f"directory rule matched no tracked files: {path}")
-            files.update(matches)
+            if kind == "D":
+                files.update(matches)
+            else:
+                excluded.update(matches)
         elif kind in {"F", "L"}:
             if relative not in project_files:
                 raise PackagingError(f"exact rule is not tracked by Git: {path}")
@@ -221,6 +225,7 @@ def expand_manifest(
             patch_created.add(path)
 
     files.update(patch_created)
+    files.difference_update(excluded)
     return sorted(files), used_projects, patch_created
 
 

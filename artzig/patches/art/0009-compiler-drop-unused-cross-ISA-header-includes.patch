@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Wed, 2 Sep 2026 22:10:00 +0200
+Subject: [PATCH 9/9] compiler: drop unused cross-ISA header includes
+
+The generic assembler interface does not use the ARM or x86 constants, and the
+generic JNI compiler does not use the architecture-specific managed-register
+types it includes. Remove these stale includes so a single-ISA source package
+does not need to retain declarations for disabled compiler backends.
+---
+ compiler/jni/quick/jni_compiler.cc | 3 ---
+ compiler/utils/assembler.h         | 2 --
+ 2 files changed, 5 deletions(-)
+
+diff --git a/compiler/jni/quick/jni_compiler.cc b/compiler/jni/quick/jni_compiler.cc
+index 92b4f7d..6f0475d 100644
+--- a/compiler/jni/quick/jni_compiler.cc
++++ b/compiler/jni/quick/jni_compiler.cc
+@@ -40,11 +40,8 @@
+ #include "runtime.h"
+ #include "thread.h"
+-#include "utils/arm/managed_register_arm.h"
+-#include "utils/arm64/managed_register_arm64.h"
+ #include "utils/assembler.h"
+ #include "utils/jni_macro_assembler.h"
+ #include "utils/managed_register.h"
+-#include "utils/x86/managed_register_x86.h"
+ 
+ #define __ jni_asm->
+ 
+diff --git a/compiler/utils/assembler.h b/compiler/utils/assembler.h
+index b8fb5f3..c0dc845 100644
+--- a/compiler/utils/assembler.h
++++ b/compiler/utils/assembler.h
+@@ -23,7 +23,6 @@
+ 
+ #include "arch/instruction_set.h"
+ #include "arch/instruction_set_features.h"
+-#include "arm/constants_arm.h"
+ #include "base/arena_allocator.h"
+ #include "base/arena_object.h"
+ #include "base/array_ref.h"
+@@ -34,7 +33,6 @@
+ #include "label.h"
+ #include "managed_register.h"
+ #include "offsets.h"
+-#include "x86/constants_x86.h"
+ #include "x86_64/constants_x86_64.h"
+ 
+ namespace art HIDDEN {
+-- 
+2.51.0

@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Wed, 2 Sep 2026 10:00:00 +0200
+Subject: [PATCH 8/8] optimizing: allow x86_64 without x86 codegen
+
+nodes_x86.h is shared by the x86 and x86_64 backends, but it defines the four
+x86-only PC-relative instruction classes even when ART_ENABLE_CODEGEN_x86 is
+disabled. Their instruction kinds are correctly omitted by nodes.h in that
+configuration, so a pure x86_64 compiler fails to compile the class bodies.
+
+Keep the genuinely shared BMI instruction nodes available to both backends and
+guard the x86-only classes consistently with their instruction-kind list.
+---
+ compiler/optimizing/nodes_x86.h | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/compiler/optimizing/nodes_x86.h b/compiler/optimizing/nodes_x86.h
+index 4ce5a77..a9c8e6b 100644
+--- a/compiler/optimizing/nodes_x86.h
++++ b/compiler/optimizing/nodes_x86.h
+@@ -19,6 +19,12 @@
+ 
+ namespace art HIDDEN {
+ 
++// Artzig's x86_64-only configuration does not build CodeGeneratorX86. These
++// classes correspond to FOR_EACH_CONCRETE_INSTRUCTION_X86() in nodes.h and are
++// used only by the 32-bit x86 PC-relative fixups and code generator. Upstream
++// ART normally enables x86 alongside x86_64, so it does not guard the class
++// definitions separately.
++#ifdef ART_ENABLE_CODEGEN_x86
+ // Compute the address of the method for X86 Constant area support.
+ class HX86ComputeBaseMethodAddress final : public HExpression<0> {
+  public:
+@@ -128,6 +134,8 @@ class HX86PackedSwitch final : public HExpression<2> {
+   const int32_t num_entries_;
+ };
+ 
++#endif  // ART_ENABLE_CODEGEN_x86
++
+ class HX86AndNot final : public HBinaryOperation {
+  public:
+   HX86AndNot(DataType::Type result_type,
+-- 
+2.51.0
+
