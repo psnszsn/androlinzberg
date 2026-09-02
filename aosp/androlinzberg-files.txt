@@ -1573,3 +1573,9 @@ F aosp frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig
 F aosp frameworks/base/core/java/android/app/supervision/flags.aconfig
 F aosp frameworks/base/wifi/wifi.aconfig
 F aosp frameworks/base/core/java/android/webkit/flags.aconfig
+F aosp frameworks/base/core/java/android/provider/DocumentsContract.java
+F aosp frameworks/base/core/java/android/provider/DocumentsProvider.java
+F aosp frameworks/base/media/java/android/media/ExifInterface.java
+F aosp frameworks/base/media/java/android/media/ExifInterfaceUtils.java
+F aosp frameworks/base/core/java/android/app/AuthenticationRequiredException.java
+F aosp frameworks/base/media/java/android/media/MediaDataSource.java

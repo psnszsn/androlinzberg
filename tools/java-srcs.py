@@ -391,6 +391,13 @@ file('$CJ/android/content/ContentProviderNative.java')
 # Real ContentResolver + ContentProviderClient over the real IContentService (sync
 # surface unsupported in the hosted content service); accounts.Account for the AIDL.
 file('$CJ/android/content/ContentResolver.java')
+# Real DocumentsContract/DocumentsProvider/ExifInterface (android.app core 6).
+file('$CJ/android/provider/DocumentsContract.java')
+file('$CJ/android/provider/DocumentsProvider.java')
+file('$CJ/android/app/AuthenticationRequiredException.java')
+file('$FB/media/java/android/media/ExifInterface.java')
+file('$FB/media/java/android/media/ExifInterfaceUtils.java')
+file('$FB/media/java/android/media/MediaDataSource.java')
 # Real Context/ContextWrapper/ContextImpl/Application/Service (android.app core 5):
 # SystemServiceRegistry stays a host adaptation (src/framework/android/app/SystemServiceRegistry.kt).
 file('$CJ/android/content/Context.java')
