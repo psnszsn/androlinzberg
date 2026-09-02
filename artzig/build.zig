@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const SourceFiles = @import("build/source_files.zig");
+
 // artzig build:
 //   zig build dist      — assemble the relocatable runtime tree into zig-out/dist/art
 //   zig build example   — build examples/hello (Zig host embedding ART) into zig-out/
@@ -90,6 +92,7 @@ pub fn build(b: *std.Build) void {
     // --- boot classpath jars built with the system JDK (no Soong)
     const javalib = @import("build/javalib.zig").build(b, .{
         .vendor = aosp,
+        .vendor_dir = SourceFiles.Root.dependency(b, aosp_dep, "").absolute,
         .target = target,
         .optimize = optimize,
     });

@@ -1,12 +1,10 @@
 //! Framework JVM: the vendored AOSP subset + our Java/Kotlin replacements ->
 //! a multidex framework.jar, plus framework-res.apk (aapt2) and generated Java. Replaces
 //! tools/build-java.sh; the curated source list lives in build/java_sources.zig.
-//!
-//! zig's Run step does not hash directory contents, so steps that depend on
-//! whole source trees take a configure-time "tree stamp" (tools/tree-stamp.py)
-//! as a file input: the stamp changes iff any file in the trees changed.
 const std = @import("std");
 const LazyPath = std.Build.LazyPath;
+const SourceFiles = @import("artzig").SourceFiles;
+const java_sources = @import("java_sources.zig");
 
 pub const Options = struct {
     artzig: *std.Build.Dependency,
@@ -25,36 +23,21 @@ pub const Result = struct {
     java_step: *std.Build.Step,
 };
 
-/// Always-run step writing a content stamp of the given trees; consumers take
-/// it with addFileInput so they re-run iff something in the trees changed.
-/// (A configure-time stamp would not work: build.zig configuration is cached.)
-fn stamp(b: *std.Build, name: []const u8, paths: []const LazyPath) LazyPath {
-    const r = b.addSystemCommand(&.{ "python3", "tools/tree-stamp.py" });
-    const out = r.addOutputFileArg(name);
-    for (paths) |p| r.addDirectoryArg(p);
-    r.has_side_effects = true;
-    r.setName(b.fmt("tree-stamp {s}", .{name}));
-    return out;
-}
-
 pub fn build(b: *std.Build, o: Options) Result {
     const dep = o.artzig;
     const aosp = o.aosp;
     const fb = aosp.path("frameworks/base");
     const core_all = dep.namedLazyPath("core-all-jar");
-    const stamp_jvm = stamp(b, "jvm.stamp", &.{
-        fb.path(b, "core/java"),           fb.path(b, "graphics/java"),
-        fb.path(b, "libs/hwui/apex/java"), aosp.path("frameworks/libs/modules-utils/java"),
-        b.path("src/framework"),           b.path("src/framework-stubs"),
-        b.path("src/annotation-runtime"),  b.path("src/java"),
-    });
-    const stamp_kotlinc = stamp(b, "kotlinc.stamp", &.{
-        aosp.path("external/kotlinc/bin"),
-        aosp.path("external/kotlinc/lib"),
-        aosp.path("external/kotlinc/build.txt"),
-    });
-    const source_policy = b.addSystemCommand(&.{ "bash", "tools/check-jvm-source-policy.sh" });
-    source_policy.addFileInput(stamp_jvm);
+    const sources = java_sources.configure(b, aosp);
+    var kotlinc_input_collector = SourceFiles.Collector.init(b);
+    const kotlinc_root = SourceFiles.Root.dependency(b, aosp, "external/kotlinc");
+    kotlinc_input_collector.addTree(kotlinc_root.child(b, "bin"), .{ .extensions = &.{""} });
+    kotlinc_input_collector.addTree(kotlinc_root.child(b, "lib"), .{ .extensions = &.{""} });
+    kotlinc_input_collector.addFile(kotlinc_root, "build.txt");
+    const kotlinc_inputs = kotlinc_input_collector.select(null);
+
+    const source_policy = b.addSystemCommand(&.{"bash"});
+    source_policy.addFileArg(b.path("tools/check-jvm-source-policy.sh"));
     source_policy.addDirectoryArg(aosp.path(""));
 
     // 1. core-all + annotation classes -> compile-time "JDK" (system modules)
@@ -71,56 +54,19 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     // 2. Generated Java, framework resources, and fixture APKs are cacheable
     // Run/WriteFiles nodes owned by build/generators.zig.
-    const aidl_dir = o.generated.aidl_java;
-    const logtags_dir = o.generated.logtags_java;
-    const aconfig_dir = o.generated.aconfig_java;
-    const sysprop_dir = o.generated.sysprop_java;
-    const nano_dir = o.generated.nano_java;
-    const stats_dir = o.generated.stats_java;
-    const proto_dir = o.generated.proto_java;
-    const res_dir = o.generated.res_dir;
     const res_apk = o.generated.res_apk;
     const fixture_apks_dir = o.generated.fixture_apks_dir;
 
-    // 3. Curated Java, Kotlin, and runtime-annotation source lists. This must
-    // run after generated directories exist, so it is a host tool rather than
-    // configure-time build.zig traversal.
-    const source_lister = b.addExecutable(.{
-        .name = "java-sources",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("build/java_sources.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-        }),
-    });
-    const srcs = b.addRunArtifact(source_lister);
-    const java_srcs = srcs.addOutputFileArg("framework-java-sources.rsp");
-    const kotlin_srcs = srcs.addOutputFileArg("framework-kotlin-sources.rsp");
-    const annotation_srcs = srcs.addOutputFileArg("framework-annotation-sources.rsp");
-    srcs.addPrefixedDirectoryArg("FB=", fb);
-    srcs.addPrefixedDirectoryArg("MU=", aosp.path("frameworks/libs/modules-utils"));
-    srcs.addPrefixedDirectoryArg("APP=", b.path("."));
-    srcs.addPrefixedDirectoryArg("AIDL=", aidl_dir);
-    srcs.addPrefixedDirectoryArg("LOGTAGS=", logtags_dir);
-    srcs.addPrefixedDirectoryArg("ACONFIG=", aconfig_dir);
-    srcs.addPrefixedDirectoryArg("SYSPROP=", sysprop_dir);
-    srcs.addPrefixedDirectoryArg("PROTO=", proto_dir);
-    srcs.addPrefixedDirectoryArg("STATS=", stats_dir);
-    srcs.addPrefixedDirectoryArg("NANO=", nano_dir);
-    srcs.addPrefixedDirectoryArg("NRT=", aosp.path("external/protobuf/javanano/src/main/java"));
-    srcs.addPrefixedDirectoryArg("SD=", aosp.path("packages/modules/StatsD"));
-    srcs.addPrefixedDirectoryArg("RES=", res_dir);
-    srcs.addFileInput(stamp_jvm);
-    srcs.step.dependOn(&source_policy.step);
-
-    // 4. Kotlin first, then Java, matching AOSP Soong's mixed-source ordering.
+    // 3. Kotlin first, then Java, matching AOSP Soong's mixed-source ordering.
     // Each compiler owns its output directory; the only shell logic joins
-    // generated LazyPaths into the single classpath argument the JVM tools require.
+    // LazyPaths into classpath arguments and shifts the fixed arguments before
+    // forwarding every generated Java file directly.
     const kotlin_stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
     const kotlinc = b.addSystemCommand(&.{
         "sh",
         "-c",
-        \\exec "$1" -no-jdk -no-stdlib -no-reflect -language-version 2.0 -api-version 2.0 -jvm-target 21 -java-parameters -Xsam-conversions=class -Xstring-concat=inline -classpath "$2:$3" -d "$4" "@$5" "@$6"
+        \\compiler="$1"; classpath="$2:$3"; output="$4"; java_sources="$5"; kotlin_sources="$6"; shift 6
+        \\exec "$compiler" -no-jdk -no-stdlib -no-reflect -language-version 2.0 -api-version 2.0 -jvm-target 21 -java-parameters -Xsam-conversions=class -Xstring-concat=inline -classpath "$classpath" -d "$output" "@$java_sources" "@$kotlin_sources" "$@"
         ,
         "sh",
     });
@@ -128,10 +74,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     kotlinc.addFileArg(core_plus);
     kotlinc.addFileArg(kotlin_stdlib);
     const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
-    kotlinc.addFileArg(java_srcs);
-    kotlinc.addFileArg(kotlin_srcs);
-    kotlinc.addFileInput(stamp_jvm);
-    kotlinc.addFileInput(stamp_kotlinc);
+    kotlinc.addFileArg(sources.java_rsp);
+    kotlinc.addFileArg(sources.kotlin_rsp);
+    for (o.generated.java_files) |file| kotlinc.addFileArg(file);
+    sources.addKotlincInputs(kotlinc);
+    kotlinc_inputs.addInputs(kotlinc);
+    kotlinc.step.dependOn(&source_policy.step);
     // C1-only code fills the code cache faster; size it for the whole tree.
     kotlinc.setEnvironmentVariable("JAVA_OPTS", "-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=512m");
     kotlinc.setName("compile framework Kotlin");
@@ -142,14 +90,15 @@ pub fn build(b: *std.Build, o: Options) Result {
         "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-d",
     });
     const annotation_classes = annotation_javac.addOutputDirectoryArg("annotation-classes");
-    annotation_javac.addPrefixedFileArg("@", annotation_srcs);
-    annotation_javac.addFileInput(stamp_jvm);
+    annotation_javac.addPrefixedFileArg("@", sources.annotations_rsp);
+    sources.addAnnotationInputs(annotation_javac);
     annotation_javac.setName("compile runtime annotations");
 
     const javac = b.addSystemCommand(&.{
         "bash",
         "-c",
-        \\exec javac --system="$1" -source 21 -target 21 -encoding UTF-8 -g -parameters -XDstringConcat=inline -Xmaxerrs 2000 -nowarn -Xlint:none -classpath "$2:$3:$4" -d "$5" "@$6" 2> >(grep -F -v -e 'Note: Some input files use or override a deprecated API.' -e 'Note: Recompile with -Xlint:deprecation for details.' -e 'Note: Some input files use unchecked or unsafe operations.' -e 'Note: Recompile with -Xlint:unchecked for details.' >&2)
+        \\system="$1"; classpath="$2:$3:$4"; output="$5"; sources="$6"; shift 6
+        \\exec javac --system="$system" -source 21 -target 21 -encoding UTF-8 -g -parameters -XDstringConcat=inline -Xmaxerrs 2000 -nowarn -Xlint:none -classpath "$classpath" -d "$output" "@$sources" "$@" 2> >(grep -F -v -e 'Note: Some input files use or override a deprecated API.' -e 'Note: Recompile with -Xlint:deprecation for details.' -e 'Note: Some input files use unchecked or unsafe operations.' -e 'Note: Recompile with -Xlint:unchecked for details.' >&2)
         ,
         "bash",
     });
@@ -158,8 +107,10 @@ pub fn build(b: *std.Build, o: Options) Result {
     javac.addDirectoryArg(annotation_classes);
     javac.addFileArg(kotlin_stdlib);
     const java_classes = javac.addOutputDirectoryArg("java-classes");
-    javac.addFileArg(java_srcs);
-    javac.addFileInput(stamp_jvm);
+    javac.addFileArg(sources.java_rsp);
+    for (o.generated.java_files) |file| javac.addFileArg(file);
+    sources.addJavacInputs(javac);
+    javac.step.dependOn(&source_policy.step);
     javac.setName("compile framework Java");
 
     // 5. Package each compiler's directory directly, with no intermediate

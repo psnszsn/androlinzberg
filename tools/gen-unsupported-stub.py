@@ -75,7 +75,8 @@ def split_params(s):
         params.append((typ.strip(), name))
     return params
 
-lines = [f'package {pkg}', '',
+lines = ['@file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")', '',
+         f'package {pkg}', '',
          f'/** Every {iface} method throws UnsupportedOperationException; the hosted',
          ' * service overrides what it serves (generated from the AIDL interface by',
          ' * tools/gen-unsupported-stub.py; regenerate when the interface changes). */',

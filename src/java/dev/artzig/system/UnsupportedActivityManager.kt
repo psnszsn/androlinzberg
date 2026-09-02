@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+
 package dev.artzig.system
 
 /** Every IActivityManager method throws UnsupportedOperationException; the hosted

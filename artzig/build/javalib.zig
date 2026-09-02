@@ -15,11 +15,11 @@
 //! committed under build/gen/ and src/gen/java/.
 const std = @import("std");
 const table = @import("gen/java.zig");
+const SourceFiles = @import("source_files.zig");
 
 pub const Options = struct {
     vendor: std.Build.LazyPath,
-    /// AOSP package containing the BoringSSL headers for NativeConstants.
-    python: []const u8 = "python3",
+    vendor_dir: []const u8,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 };
@@ -83,22 +83,31 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (&table.modules) |*m| {
         const javac = javacBase(b, o, m.source);
 
-        // sources: the vendor-relative rsp + a build-time listing of generated dirs
-        javac.addPrefixedFileArg("@", b.path(b.fmt("build/gen/java/{s}.rsp", .{m.name})));
-        if (std.mem.eql(u8, m.name, "conscrypt")) {
-            // This host adapter is patched downstream and referenced through
-            // the response file, whose contents alone would not invalidate it.
-            javac.addFileInput(o.vendor.path(b, "external/conscrypt/repackaged/platform/src/main/java/com/android/org/conscrypt/Platform.java"));
+        // The response files keep argv short; every source they name is also
+        // registered as an explicit Zig input for content-based invalidation.
+        const rsp_path = b.fmt("build/gen/java/{s}.rsp", .{m.name});
+        const rsp = SourceFiles.Root.project(b, rsp_path);
+        var module_sources = SourceFiles.Collector.init(b);
+        module_sources.addResponseFile(
+            .{ .path = o.vendor, .absolute = o.vendor_dir },
+            rsp,
+        );
+        const vendored_sources = module_sources.select(".java");
+        javac.addPrefixedFileArg("@", rsp.path);
+        vendored_sources.addInputs(javac);
+
+        if (m.has_gen_src) {
+            var generated_sources = SourceFiles.Collector.init(b);
+            generated_sources.addTree(
+                SourceFiles.Root.project(b, b.fmt("src/gen/java/{s}", .{m.name})),
+                .{ .extensions = &.{".java"} },
+            );
+            const files = generated_sources.select(".java");
+            javac.addPrefixedFileArg("@", files.responseFile(b, b.fmt("{s}-gen.rsp", .{m.name})));
+            files.addInputs(javac);
         }
-        var gen_dirs: std.ArrayList(std.Build.LazyPath) = .empty;
-        if (m.has_gen_src) gen_dirs.append(b.allocator, b.path(b.fmt("src/gen/java/{s}", .{m.name}))) catch @panic("OOM");
-        if (std.mem.eql(u8, m.name, "conscrypt")) gen_dirs.append(b.allocator, natconst_dir) catch @panic("OOM");
-        if (gen_dirs.items.len > 0) {
-            const list = b.addSystemCommand(&.{ o.python, b.pathJoin(&.{ b.root.toString(b.allocator) catch @panic("OOM"), "tools/list-java.py" }) });
-            list.has_side_effects = true; // zig does not content-hash source directories
-            const rsp = list.addOutputFileArg(b.fmt("{s}-gen.rsp", .{m.name}));
-            for (gen_dirs.items) |d| list.addDirectoryArg(d);
-            javac.addPrefixedFileArg("@", rsp);
+        if (std.mem.eql(u8, m.name, "conscrypt")) {
+            javac.addFileArg(natconst_dir.path(b, "com/android/org/conscrypt/NativeConstants.java"));
         }
 
         if (std.mem.eql(u8, m.name, "core-all")) {

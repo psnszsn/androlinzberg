@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+
 package android.app
 
 /** Every IApplicationThread method throws UnsupportedOperationException; the hosted

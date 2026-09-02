@@ -1,121 +1,103 @@
 //! Curated framework JVM source selection.
 //!
-//! This host tool runs after generated source directories exist. It writes
-//! deterministic javac, kotlinc, and runtime-annotation response files.
+//! Vendored and project-owned sources are selected while configuring the graph
+//! so each one is an explicit compiler input. Generated sources are exposed as
+//! exact LazyPaths by build/generators.zig.
 const std = @import("std");
-const Io = std.Io;
-const Allocator = std.mem.Allocator;
+const SourceFiles = @import("artzig").SourceFiles;
+const project_sources = @import("project_jvm_sources.zig");
 
-const AddOptions = struct {
-    max_depth: ?usize = null,
-    not_paths: []const []const u8 = &.{},
-    not_names: []const []const u8 = &.{},
-};
+const AddOptions = SourceFiles.AddOptions;
 
-fn globMatch(pattern: []const u8, text: []const u8) bool {
-    var pattern_index: usize = 0;
-    var text_index: usize = 0;
-    var star_index: ?usize = null;
-    var retry_text_index: usize = 0;
+const StaticCollector = struct {
+    b: *std.Build,
+    roots: std.StringHashMapUnmanaged(SourceFiles.Root) = .empty,
+    files: SourceFiles.Collector,
 
-    while (text_index < text.len) {
-        if (pattern_index < pattern.len and
-            (pattern[pattern_index] == text[text_index] or pattern[pattern_index] == '?'))
-        {
-            pattern_index += 1;
-            text_index += 1;
-        } else if (pattern_index < pattern.len and pattern[pattern_index] == '*') {
-            star_index = pattern_index;
-            pattern_index += 1;
-            retry_text_index = text_index;
-        } else if (star_index) |star| {
-            pattern_index = star + 1;
-            retry_text_index += 1;
-            text_index = retry_text_index;
-        } else {
-            return false;
-        }
-    }
-    while (pattern_index < pattern.len and pattern[pattern_index] == '*') pattern_index += 1;
-    return pattern_index == pattern.len;
-}
+    const Resolved = struct {
+        root: SourceFiles.Root,
+        relative_path: []const u8,
+    };
 
-fn matchesAny(patterns: []const []const u8, text: []const u8) bool {
-    for (patterns) |pattern| {
-        if (globMatch(pattern, text)) return true;
-    }
-    return false;
-}
-
-const Collector = struct {
-    allocator: Allocator,
-    io: Io,
-    roots: *const std.StringHashMapUnmanaged([]const u8),
-    paths: std.StringHashMapUnmanaged(void) = .empty,
-
-    fn deinit(c: *Collector) void {
-        var keys = c.paths.keyIterator();
-        while (keys.next()) |path| c.allocator.free(path.*);
-        c.paths.deinit(c.allocator);
+    fn init(b: *std.Build) StaticCollector {
+        return .{ .b = b, .files = .init(b) };
     }
 
-    fn resolve(c: *Collector, spec: []const u8) ![]u8 {
+    fn addRoot(c: *StaticCollector, name: []const u8, root: SourceFiles.Root) void {
+        c.roots.put(c.b.allocator, name, root) catch @panic("OOM");
+    }
+
+    fn resolve(c: *StaticCollector, spec: []const u8) !Resolved {
         if (spec.len < 2 or spec[0] != '$') return error.InvalidSourceRoot;
         const slash = std.mem.indexOfScalar(u8, spec, '/') orelse spec.len;
-        const root = c.roots.get(spec[1..slash]) orelse return error.UnknownSourceRoot;
-        if (slash == spec.len) return c.allocator.dupe(u8, root);
-        return Io.Dir.path.join(c.allocator, &.{ root, spec[slash + 1 ..] });
+        return .{
+            .root = c.roots.get(spec[1..slash]) orelse return error.UnknownSourceRoot,
+            .relative_path = if (slash == spec.len) "" else spec[slash + 1 ..],
+        };
     }
 
-    fn insert(c: *Collector, path: []u8) !void {
-        const result = try c.paths.getOrPut(c.allocator, path);
-        if (result.found_existing) {
-            c.allocator.free(path);
-        } else {
-            result.key_ptr.* = path;
-            result.value_ptr.* = {};
-        }
+    fn file(c: *StaticCollector, spec: []const u8) !void {
+        const resolved = try c.resolve(spec);
+        c.files.addFile(resolved.root, resolved.relative_path);
     }
 
-    fn file(c: *Collector, spec: []const u8) !void {
-        try c.insert(try c.resolve(spec));
-    }
-
-    fn add(c: *Collector, spec: []const u8, options: AddOptions) !void {
-        const root_path = try c.resolve(spec);
-        defer c.allocator.free(root_path);
-
-        var dir = try Io.Dir.cwd().openDir(c.io, root_path, .{ .iterate = true });
-        defer dir.close(c.io);
-        var walker = try dir.walk(c.allocator);
-        defer walker.deinit();
-
-        while (try walker.next(c.io)) |entry| {
-            if (entry.kind == .directory) {
-                if (options.max_depth) |max_depth| {
-                    if (entry.depth() >= max_depth) walker.leave(c.io);
-                }
-                continue;
-            }
-            if (entry.kind != .file and entry.kind != .sym_link) continue;
-            if (options.max_depth) |max_depth| {
-                if (entry.depth() > max_depth) continue;
-            }
-            if (!std.mem.endsWith(u8, entry.basename, ".java") and
-                !std.mem.endsWith(u8, entry.basename, ".kt")) continue;
-            if (matchesAny(options.not_names, entry.basename)) continue;
-
-            const path = try Io.Dir.path.join(c.allocator, &.{ root_path, entry.path });
-            if (matchesAny(options.not_paths, path)) {
-                c.allocator.free(path);
-                continue;
-            }
-            try c.insert(path);
-        }
+    fn add(c: *StaticCollector, spec: []const u8, options: AddOptions) !void {
+        const resolved = try c.resolve(spec);
+        c.files.addTree(resolved.root.child(c.b, resolved.relative_path), options);
     }
 };
 
-fn collect(c: *Collector) !void {
+pub const Set = struct {
+    java: SourceFiles.Files,
+    kotlin: SourceFiles.Files,
+    annotations: SourceFiles.Files,
+    java_rsp: std.Build.LazyPath,
+    kotlin_rsp: std.Build.LazyPath,
+    annotations_rsp: std.Build.LazyPath,
+
+    pub fn addKotlincInputs(s: Set, run: *std.Build.Step.Run) void {
+        s.java.addInputs(run);
+        s.kotlin.addInputs(run);
+    }
+
+    pub fn addJavacInputs(s: Set, run: *std.Build.Step.Run) void {
+        s.java.addInputs(run);
+    }
+
+    pub fn addAnnotationInputs(s: Set, run: *std.Build.Step.Run) void {
+        s.annotations.addInputs(run);
+    }
+};
+
+pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
+    var framework = StaticCollector.init(b);
+    const fb = SourceFiles.Root.dependency(b, aosp, "frameworks/base");
+    framework.addRoot("FB", fb);
+    framework.addRoot("CJ", fb.child(b, "core/java"));
+    framework.addRoot("MU", SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils"));
+    framework.addRoot("NRT", SourceFiles.Root.dependency(b, aosp, "external/protobuf/javanano/src/main/java"));
+    framework.addRoot("SD", SourceFiles.Root.dependency(b, aosp, "packages/modules/StatsD"));
+    collectStatic(&framework) catch |err| std.debug.panic("unable to collect framework JVM sources: {t}", .{err});
+    const project_root = SourceFiles.Root.project(b, "");
+    for (project_sources.framework) |path| framework.files.addFile(project_root, path);
+
+    var annotations = SourceFiles.Collector.init(b);
+    for (project_sources.annotations) |path| annotations.addFile(project_root, path);
+
+    const java = framework.files.select(".java");
+    const kotlin = framework.files.select(".kt");
+    const annotation_files = annotations.select(".java");
+    return .{
+        .java = java,
+        .kotlin = kotlin,
+        .annotations = annotation_files,
+        .java_rsp = java.responseFile(b, "framework-static-java-sources.rsp"),
+        .kotlin_rsp = kotlin.responseFile(b, "framework-static-kotlin-sources.rsp"),
+        .annotations_rsp = annotation_files.responseFile(b, "framework-annotation-sources.rsp"),
+    };
+}
+
+fn collectStatic(c: *StaticCollector) !void {
     try c.file("$MU/java/com/android/internal/util/Preconditions.java");
     try c.add("$MU/java/com/android/internal/annotations", .{});
     try c.add("$FB/core/java/com/android/internal/util/function", .{});
@@ -149,19 +131,11 @@ fn collect(c: *Collector) !void {
     try c.add("$FB/core/java/android/view/textservice", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/hardware/input", .{ .max_depth = 1, .not_names = &.{ "Virtual*.java", "InputDeviceSensorManager.java", "InputDeviceLights.java", "InputDeviceLightsManager.java", "InputDeviceVibrator.java", "InputDeviceVibratorManager.java", "InputDeviceBatteryState.java" } });
     try c.add("$FB/core/java/android/hardware/display", .{ .max_depth = 1, .not_names = &.{"ColorDisplayManager.java"} });
-    try c.add("$AIDL", .{});
-    try c.add("$LOGTAGS", .{});
-    try c.add("$ACONFIG", .{});
-    try c.add("$SYSPROP", .{});
-    try c.add("$PROTO", .{});
-    try c.add("$STATS", .{});
-    try c.add("$NANO", .{});
     // Reused javanano runtime for the nano message classes (pure Java, vendored).
     try c.add("$NRT", .{});
     // Reused StatsD-module source: the real StatsEvent encoder (android.util.StatsLog
     // is the host-seam sink in src/framework).
     try c.file("$SD/framework/java/android/util/StatsEvent.java");
-    try c.add("$APP/src/framework-stubs", .{});
     // AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
     try c.file("$FB/services/core/java/com/android/server/SystemService.java");
     try c.file("$FB/services/core/java/com/android/server/SystemServiceManager.java");
@@ -187,9 +161,6 @@ fn collect(c: *Collector) !void {
     try c.file("$FB/core/java/com/android/internal/graphics/ColorUtils.java");
     try c.add("$FB/core/java/com/android/internal/graphics/cam", .{});
     try c.add("$FB/core/java/android/animation", .{});
-    try c.add("$RES/java", .{});
-    try c.add("$APP/src/framework", .{});
-    try c.add("$APP/src/java", .{});
     try c.file("$CJ/android/util/AttributeSet.java");
     try c.file("$CJ/android/util/DisplayMetrics.java");
     try c.file("$CJ/android/util/TypedValue.java");
@@ -659,87 +630,4 @@ fn collect(c: *Collector) !void {
     try c.file("$MU/java/com/android/modules/utils/TypedXmlPullParser.java");
     try c.file("$MU/java/com/android/modules/utils/TypedXmlSerializer.java");
     try c.file("$MU/java/com/android/internal/util/FastXmlSerializer.java");
-}
-
-fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
-    return std.mem.order(u8, lhs, rhs) == .lt;
-}
-
-fn writeList(
-    io: Io,
-    allocator: Allocator,
-    output_path: []const u8,
-    paths: *const std.StringHashMapUnmanaged(void),
-    extension: []const u8,
-) !usize {
-    var selected: std.ArrayList([]const u8) = .empty;
-    defer selected.deinit(allocator);
-    var keys = paths.keyIterator();
-    while (keys.next()) |path| {
-        if (std.mem.endsWith(u8, path.*, extension)) try selected.append(allocator, path.*);
-    }
-    std.mem.sortUnstable([]const u8, selected.items, {}, lessThan);
-
-    const output = try Io.Dir.cwd().createFile(io, output_path, .{});
-    defer output.close(io);
-    for (selected.items) |path| {
-        try output.writeStreamingAll(io, path);
-        try output.writeStreamingAll(io, "\n");
-    }
-    return selected.items.len;
-}
-
-pub fn main(init: std.process.Init) !void {
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len < 5) {
-        try Io.File.stderr().writeStreamingAll(
-            init.io,
-            "usage: java-sources <java.rsp> <kotlin.rsp> <annotations.rsp> ROOT=<dir>...\n",
-        );
-        return error.InvalidArguments;
-    }
-
-    var roots: std.StringHashMapUnmanaged([]const u8) = .empty;
-    defer roots.deinit(init.gpa);
-    for (args[4..]) |arg| {
-        const equals = std.mem.indexOfScalar(u8, arg, '=') orelse return error.InvalidRootArgument;
-        try roots.put(init.gpa, arg[0..equals], arg[equals + 1 ..]);
-    }
-    const fb = roots.get("FB") orelse return error.MissingFrameworksBaseRoot;
-    try roots.put(
-        init.gpa,
-        "CJ",
-        try Io.Dir.path.join(init.arena.allocator(), &.{ fb, "core/java" }),
-    );
-    try roots.put(
-        init.gpa,
-        "HW",
-        try Io.Dir.path.join(init.arena.allocator(), &.{ fb, "libs/hwui" }),
-    );
-
-    var framework: Collector = .{
-        .allocator = init.gpa,
-        .io = init.io,
-        .roots = &roots,
-    };
-    defer framework.deinit();
-    try collect(&framework);
-
-    var annotations: Collector = .{
-        .allocator = init.gpa,
-        .io = init.io,
-        .roots = &roots,
-    };
-    defer annotations.deinit();
-    try annotations.add("$APP/src/annotation-runtime", .{});
-
-    const java_count = try writeList(init.io, init.gpa, args[1], &framework.paths, ".java");
-    const kotlin_count = try writeList(init.io, init.gpa, args[2], &framework.paths, ".kt");
-    const annotation_count = try writeList(init.io, init.gpa, args[3], &annotations.paths, ".java");
-    const summary = try std.fmt.allocPrint(
-        init.arena.allocator(),
-        "{d} Java, {d} Kotlin, {d} runtime annotation sources\n",
-        .{ java_count, kotlin_count, annotation_count },
-    );
-    try Io.File.stdout().writeStreamingAll(init.io, summary);
 }

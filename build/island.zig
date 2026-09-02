@@ -95,13 +95,13 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     // common flags
     var cxx = std.ArrayList([]const u8).empty;
     cxx.appendSlice(b.allocator, &.{
-        "-std=gnu++23",            "-fno-exceptions",             "-fno-rtti",                                     "-w",       "-D_GNU_SOURCE",                               "-DNDEBUG",
+        "-std=gnu++23",            "-fno-exceptions",             "-fno-rtti", "-w",                                          "-D_GNU_SOURCE", "-DNDEBUG",
         // zig enables UBSan for C/C++ in Debug; AOSP code trips it (null memcpy of 0 bytes)
         "-fno-sanitize=undefined",
         // math/half.h specializes std::is_floating_point; libc++ marks that an error
         "-Wno-invalid-specialization",
         // zig hashes `-include` files into the C cache, so it must be a real path
-        "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}),
+        "-include",  b.pathResolve(&.{"src/native/azk_prelude.h"}),
     }) catch @panic("oom");
     var cc = std.ArrayList([]const u8).empty;
     cc.appendSlice(b.allocator, &.{ "-std=gnu17", "-w", "-D_GNU_SOURCE", "-DNDEBUG", "-fno-sanitize=undefined" }) catch @panic("oom");

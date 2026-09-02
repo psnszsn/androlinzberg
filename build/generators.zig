@@ -1,6 +1,7 @@
 //! Cacheable Java, native-header, resource, and fixture generators.
 const std = @import("std");
 const resource_flags = @import("gen/resource_flags.zig");
+const generated_sources = @import("generated_java_sources.zig");
 
 const LazyPath = std.Build.LazyPath;
 
@@ -25,6 +26,7 @@ pub const Result = struct {
     res_dir: LazyPath,
     res_apk: LazyPath,
     fixture_apks_dir: LazyPath,
+    java_files: []const LazyPath,
     aggregate_step: *std.Build.Step,
 };
 
@@ -58,6 +60,92 @@ fn sourceDir(b: *std.Build, aosp: *std.Build.Dependency, input: SourcePath) Lazy
 
 fn lines(comptime text: []const u8) std.mem.TokenIterator(u8, .scalar) {
     return std.mem.tokenizeScalar(u8, text, '\n');
+}
+
+fn replaceExtension(b: *std.Build, path: []const u8, extension: []const u8) []const u8 {
+    const stem = path[0 .. path.len - std.fs.path.extension(path).len];
+    return b.fmt("{s}{s}", .{ stem, extension });
+}
+
+fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
+    inline for (.{
+        "aidl-compat/",
+        "frameworks/base/core/java/",
+        "frameworks/base/graphics/java/",
+        "frameworks/base/media/java/",
+        "frameworks/base/apex/jobscheduler/framework/java/",
+        "frameworks/base/native/android/aidl/",
+        "frameworks/native/libs/input/",
+        "frameworks/native/libs/binder/aidl/",
+        "frameworks/native/libs/permission/aidl/",
+    }) |prefix| {
+        if (std.mem.startsWith(u8, input, prefix)) {
+            return replaceExtension(b, input[prefix.len..], ".java");
+        }
+    }
+    std.debug.panic("no Java output mapping for AIDL input {s}", .{input});
+}
+
+fn generatedJavaFiles(
+    b: *std.Build,
+    aidl: LazyPath,
+    logtags: LazyPath,
+    aconfig: LazyPath,
+    sysprop: LazyPath,
+    nano: LazyPath,
+    proto: LazyPath,
+    stats: LazyPath,
+    resources_dir: LazyPath,
+) []const LazyPath {
+    var files: std.ArrayList(LazyPath) = .empty;
+
+    var aidl_lines = lines(@embedFile("../tools/aidl-list.txt"));
+    while (aidl_lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        files.append(b.allocator, aidl.path(b, aidlOutputPath(b, parseSourcePath(line).path))) catch @panic("OOM");
+    }
+
+    var logtag_lines = lines(@embedFile("../tools/logtags-list.txt"));
+    while (logtag_lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        var fields = std.mem.splitScalar(u8, line, '|');
+        _ = fields.next();
+        _ = fields.next();
+        const output_path = fields.next() orelse @panic("missing logtags output");
+        files.append(b.allocator, logtags.path(b, output_path)) catch @panic("OOM");
+    }
+
+    var aconfig_lines = lines(@embedFile("../tools/aconfig-inputs.txt"));
+    while (aconfig_lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const package = std.mem.sliceTo(line, '|');
+        const package_path = std.mem.replaceOwned(u8, b.allocator, package, ".", "/") catch @panic("OOM");
+        inline for (.{ "CustomFeatureFlags", "FakeFeatureFlagsImpl", "FeatureFlags", "FeatureFlagsImpl", "Flags" }) |class| {
+            files.append(b.allocator, aconfig.path(b, b.fmt("{s}/{s}.java", .{ package_path, class }))) catch @panic("OOM");
+        }
+    }
+
+    var sysprop_lines = lines(@embedFile("../tools/sysprop-list.txt"));
+    while (sysprop_lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        var fields = std.mem.splitScalar(u8, line, '|');
+        _ = fields.next();
+        _ = fields.next();
+        const input_path = fields.next() orelse @panic("missing sysprop input");
+        files.append(b.allocator, sysprop.path(b, b.fmt("android/sysprop/{s}", .{replaceExtension(b, std.fs.path.basename(input_path), ".java")}))) catch @panic("OOM");
+    }
+
+    files.append(b.allocator, nano.path(b, "com/android/internal/logging/nano/MetricsProto.java")) catch @panic("OOM");
+    for (generated_sources.proto) |path| files.append(b.allocator, proto.path(b, path)) catch @panic("OOM");
+    files.append(b.allocator, stats.path(b, "com/android/internal/util/FrameworkStatsLog.java")) catch @panic("OOM");
+    inline for (.{ "android/Manifest.java", "android/R.java", "com/android/internal/R.java" }) |path| {
+        files.append(b.allocator, resources_dir.path(b, "java/" ++ path)) catch @panic("OOM");
+    }
+    return files.toOwnedSlice(b.allocator) catch @panic("OOM");
 }
 
 fn expose(b: *std.Build, name: []const u8, description: []const u8, dependency: *std.Build.Step) *std.Build.Step {
@@ -442,6 +530,17 @@ pub fn build(b: *std.Build, o: Options) Result {
     const stats_java = statsJava(b, o.aosp, stats_tool);
     const res = resources(b, o.aosp, filter);
     const fixture_apks_dir = fixtureApks(b, o.aosp, res.apk);
+    const java_files = generatedJavaFiles(
+        b,
+        aidl_java,
+        logtags_java,
+        aconfig_java,
+        sysprop_java,
+        nano_java,
+        proto_java,
+        stats_java,
+        res.directory,
+    );
 
     const aggregate = b.step("generators", "Generate all framework sources, resources, and fixture APKs");
     inline for (.{
@@ -461,6 +560,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .res_dir = res.directory,
         .res_apk = res.apk,
         .fixture_apks_dir = fixture_apks_dir,
+        .java_files = java_files,
         .aggregate_step = aggregate,
     };
 }

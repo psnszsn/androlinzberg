@@ -59,9 +59,9 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
 
     var base_flags = std.ArrayList([]const u8).empty;
     base_flags.appendSlice(b.allocator, &.{
-        "-std=c++20",                                    "-fno-exceptions",             "-fno-rtti",
-        "-fvisibility=hidden",                           "-fvisibility-inlines-hidden", "-fstrict-aliasing",
-        "-ffunction-sections",                           "-fdata-sections",             "-Wno-attributes",
+        "-std=c++20",          "-fno-exceptions",             "-fno-rtti",
+        "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fstrict-aliasing",
+        "-ffunction-sections", "-fdata-sections",             "-Wno-attributes",
         "-w",
     }) catch @panic("oom");
     for (gen.defines) |d| base_flags.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
