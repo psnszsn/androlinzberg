@@ -36,6 +36,8 @@ framework_patches = tuple(
         (15, "-ServiceManager-process-local-service-overlay-for-the.patch"),
         (16, "-MessageQueue-host-pump-slice-for-the-Wayland-owner-l.patch"),
         (17, "-Process-broker-assigned-uid-no-zygote-on-the-host-ar.patch"),
+        (18, "-StrictMode-tolerate-a-missing-activity-manager-on-th.patch"),
+        (19, "-Environment-session-data-root-from-ARTZIG_DATA_DIR-o.patch"),
     )
 )
 
@@ -49,6 +51,10 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "system/incremental_delivery",
         patch_root / "incremental_delivery" / "0001-map_ptr-complete-the-random-access-iterator-operator.patch",
+    ),
+    (
+        "external/skia",
+        patch_root / "external" / "skia" / "0001-linux-SkUserConfig-no-GIF-RAW-codecs-on-the-artzig-h.patch",
     ),
     (
         "frameworks/minikin",
