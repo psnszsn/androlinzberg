@@ -175,6 +175,11 @@ pub const AParcel = struct {
     /// (Parcel.pushAllowFds/restoreAllowFds). Defaults to allowed, matching a
     /// fresh AOSP Parcel.
     allow_fds: bool = true,
+    /// Created by a Java android.os.Parcel (nativeCreate) and freed by its
+    /// nativeDestroy. AOSP's AParcel_fromJavaParcel hands NDK callers a
+    /// disposable wrapper over such a parcel; here the pointer is shared, so
+    /// AParcel_delete on it is the wrapper's no-op delete, not the parcel's.
+    java_owned: bool = false,
 
     fn create() *AParcel {
         const p = alloc.create(AParcel) catch @panic("oom");
@@ -382,8 +387,22 @@ pub const AParcel = struct {
                 const new_off = base + (e.offset - @as(u32, @intCast(offset)));
                 var copy = e;
                 copy.offset = new_off;
-                // A copied fd entry must dup so both parcels can close it.
-                if (e.kind == .file_descriptor and e.fd >= 0) copy.fd = dupFd(e.fd);
+                // A copied fd entry must dup so both parcels can close it. A
+                // received parcel keeps its descriptors in `fds` and the entry
+                // holds the ordinal; the copy has no table, so it takes a dup as
+                // an owned entry (Bundle.unparcel copies a received parcel and
+                // reads the fd later, e.g. an ashmem-backed Bitmap in metadata).
+                if (e.kind == .file_descriptor) {
+                    if (e.fd >= 0) {
+                        copy.fd = dupFd(e.fd);
+                    } else {
+                        const ordinal: usize = @intCast(e.value);
+                        if (ordinal < other.fds.items.len and other.fds.items[ordinal] >= 0) {
+                            copy.fd = dupFd(other.fds.items[ordinal]);
+                            copy.value = 0;
+                        }
+                    }
+                }
                 p.entries.append(alloc, copy) catch @panic("oom");
             }
         }
@@ -1409,6 +1428,7 @@ export fn AStatus_delete(status: *AStatus) callconv(.c) void {
 // ----- AParcel
 
 export fn AParcel_delete(parcel: *AParcel) callconv(.c) void {
+    if (parcel.java_owned) return; // the wrapper AOSP would free; the Java Parcel owns the data
     parcel.destroy();
 }
 export fn AParcel_setDataPosition(parcel: *const AParcel, position: i32) callconv(.c) i32 {
@@ -2702,16 +2722,34 @@ export fn AIBinder_toJavaBinder(env_opaque: ?*anyopaque, binder: ?*AIBinder) cal
     return proxy;
 }
 
+/// Parcel.mNativePtr's field id. The launcher's copy of this code caches it when
+/// it registers the Parcel natives; the libbinder_ndk.so copy that NDK clients
+/// (HWUI's ScopedParcel, app native libraries) call never registers anything, so
+/// it resolves the id from the caller's env on first use.
+var g_parcel_native_ptr_field: ?jni.jfieldID = null;
+fn parcelNativePtrField(env: JNIEnvPtr) ?jni.jfieldID {
+    if (g_fw) |fw| return fw.parcel_native_ptr;
+    if (g_parcel_native_ptr_field) |f| return f;
+    ensureJavaVm(env);
+    const cls = env.*.*.FindClass.?(env, "android/os/Parcel") orelse return null;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const field = env.*.*.GetFieldID.?(env, cls, "mNativePtr", "J") orelse return null;
+    g_parcel_native_ptr_field = field;
+    return field;
+}
+
 export fn AParcel_fromJavaParcel(env_opaque: ?*anyopaque, parcel: ?*anyopaque) callconv(.c) ?*AParcel {
     // True sharing: the Java Parcel's mNativePtr IS the AParcel. The returned
     // pointer is borrowed (owned by the Java Parcel); the NDK caller must not
     // delete it.
     const obj: jni.jobject = @ptrCast(parcel orelse return null);
     const env: JNIEnvPtr = @ptrCast(@alignCast(env_opaque orelse return null));
-    const fw = g_fw orelse return null;
-    const ptr = env.*.*.GetLongField.?(env, obj, fw.parcel_native_ptr);
+    const field = parcelNativePtrField(env) orelse return null;
+    const ptr = env.*.*.GetLongField.?(env, obj, field);
     if (ptr == 0) return null;
-    return parcelOf(ptr);
+    const p = parcelOf(ptr);
+    p.java_owned = true;
+    return p;
 }
 
 // ----- JNI bridge self-test entries (dev.artzig.NdkBridgeTest). Exercised only
@@ -2848,18 +2886,22 @@ fn pRestoreAllowFds(handle: jni.jlong, last: jni.jboolean) callconv(.c) void {
     parcelOf(handle).allow_fds = last != jni.JNI_FALSE;
 }
 fn pWriteInt(handle: jni.jlong, val: jni.jint) callconv(.c) jni.jint {
+    if (handle == 0) return STATUS_BAD_VALUE; // android_os_Parcel.cpp: a recycled parcel writes nothing
     parcelOf(handle).writeI32(val);
     return STATUS_OK;
 }
 fn pWriteLong(handle: jni.jlong, val: jni.jlong) callconv(.c) jni.jint {
+    if (handle == 0) return STATUS_BAD_VALUE; // android_os_Parcel.cpp: a recycled parcel writes nothing
     parcelOf(handle).writeI64(val);
     return STATUS_OK;
 }
 fn pWriteFloat(handle: jni.jlong, val: jni.jfloat) callconv(.c) jni.jint {
+    if (handle == 0) return STATUS_BAD_VALUE; // android_os_Parcel.cpp: a recycled parcel writes nothing
     parcelOf(handle).writeI32(@bitCast(val));
     return STATUS_OK;
 }
 fn pWriteDouble(handle: jni.jlong, val: jni.jdouble) callconv(.c) jni.jint {
+    if (handle == 0) return STATUS_BAD_VALUE; // android_os_Parcel.cpp: a recycled parcel writes nothing
     parcelOf(handle).writeI64(@bitCast(val));
     return STATUS_OK;
 }
@@ -3135,7 +3177,9 @@ fn pSignalExceptionForError(env: JNIEnvPtr, cls: jni.jclass, err: jni.jint) call
 fn pCreate(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jlong {
     _ = env;
     _ = cls;
-    return @intCast(@intFromPtr(AParcel.create()));
+    const p = AParcel.create();
+    p.java_owned = true;
+    return @intCast(@intFromPtr(p));
 }
 fn pFreeBuffer(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong) callconv(.c) void {
     _ = env;
