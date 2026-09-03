@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 116 (budget 116). Survivors: 120. Total: 236.
+Pending: 113 (budget 113). Survivors: 120. Total: 233.
 
 ## Survivors
 
@@ -217,7 +217,6 @@ Pending: 116 (budget 116). Survivors: 120. Total: 236.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/content/ContentCaptureOptions.java` | replaceable | frameworks/base/core/java/android/content/ContentCaptureOptions.java (1 to add), not vendored |
 | `android/service/contentcapture/ContentCaptureService.java` | replaceable | frameworks/base/core/java/android/service/contentcapture/ContentCaptureService.java (12 to add), not vendored |
 | `android/view/contentprotection/ContentProtectionEventProcessor.java` | replaceable | frameworks/base/core/java/android/view/contentprotection/ContentProtectionEventProcessor.java (2 to add), not vendored |
 | `com/android/server/contentcapture/ContentCaptureManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/contentcapture/ContentCaptureManagerInternal.java (2 to add), not vendored |
@@ -359,9 +358,7 @@ Pending: 116 (budget 116). Survivors: 120. Total: 236.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/service/textclassifier/TextClassifierService.java` | replaceable | frameworks/base/core/java/android/service/textclassifier/TextClassifierService.java (1 to add), not vendored |
 | `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (328 to add); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AidlConversion < ConversionUtil < SoundTrigger < IVoiceInteractionManagerService < VoiceInteractionSessio |
-| `android/service/voice/VisualQueryDetectedResult.java` | replaceable | frameworks/base/core/java/android/service/voice/VisualQueryDetectedResult.java (1 to add), not vendored |
 | `android/speech/tts/TextToSpeech.java` | replaceable | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (10 to add), not vendored |
 
 ### ui

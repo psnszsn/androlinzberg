@@ -43,6 +43,8 @@ import com.android.internal.pm.pkg.parsing.ParsingUtils
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.Parcelable
+import android.service.textclassifier.TextClassifierService
+import android.service.voice.VisualQueryDetectedResult
 import android.net.Uri
 import android.net.nsd.HostedNsdBackends
 import android.net.nsd.InMemoryHostedNsdBackend
@@ -96,6 +98,7 @@ internal object FrameworkModuleSmoke {
         permissionsFixtureApk = args.firstOrNull()
         testPackageNames()
         testAccessibilityHtmlFiltering()
+        testFrameworkServiceValueContracts()
         testIntentTypedExtras()
         testRemoteActionContract()
         testPictureInPictureContracts()
@@ -144,6 +147,63 @@ internal object FrameworkModuleSmoke {
         check(filter("<img alt=\"bad\" src=\"elsewhere\"/>").startsWith("<invalidtag "))
         check(filter("<img src=\"R.drawable.preview\"/>") ==
             "<img src=\"R.drawable.preview\"/>")
+    }
+
+    private fun testFrameworkServiceValueContracts() {
+        val visualResult = VisualQueryDetectedResult.Builder()
+            .setPartialQuery("weather tomorrow")
+            .setSpeakerId(3)
+            .setAccessibilityDetectionData(*byteArrayOf(1, 2, 3))
+            .build()
+        check(visualResult.partialQuery == "weather tomorrow")
+        check(visualResult.speakerId == 3)
+        check(visualResult.accessibilityDetectionData.contentEquals(byteArrayOf(1, 2, 3)))
+        check(runCatching {
+            VisualQueryDetectedResult.Builder()
+                .setSpeakerId(VisualQueryDetectedResult.getMaxSpeakerId() + 1)
+                .build()
+        }.exceptionOrNull() is IllegalArgumentException)
+
+        val response = Bundle()
+        TextClassifierService.putResponse(response, visualResult)
+        val restoredResponse = TextClassifierService.getResponse<VisualQueryDetectedResult>(response)
+        check(restoredResponse == visualResult)
+
+        val captureOptions = android.content.ContentCaptureOptions(
+            1000,
+            1001,
+            1002,
+            1003,
+            1004,
+            true,
+            false,
+            android.content.ContentCaptureOptions.ContentProtectionOptions(
+                true,
+                2001,
+                listOf(listOf("required")),
+                listOf(listOf("optional")),
+                1,
+            ),
+            android.util.ArraySet<ComponentName>().apply {
+                add(ComponentName("dev.artzig", "CapturedActivity"))
+            },
+        )
+        val parcel = Parcel.obtain()
+        val restoredOptions = try {
+            captureOptions.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            android.content.ContentCaptureOptions.CREATOR.createFromParcel(parcel)
+        } finally {
+            parcel.recycle()
+        }
+        check(restoredOptions.loggingLevel == 1000)
+        check(restoredOptions.maxBufferSize == 1001)
+        check(restoredOptions.disableFlushForViewTreeAppearing)
+        check(!restoredOptions.enableReceiver)
+        check(restoredOptions.contentProtectionOptions.bufferSize == 2001)
+        check(restoredOptions.contentProtectionOptions.requiredGroups ==
+            listOf(listOf("required")))
+        check(restoredOptions.whitelistedComponents == captureOptions.whitelistedComponents)
     }
 
     private fun testHostedPermissionGrants() {
