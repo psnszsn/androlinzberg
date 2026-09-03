@@ -163,9 +163,9 @@ public final class SystemServiceRegistry {
                 return new android.telephony.MmsManager(ctx.getOuterContext());
             }});
         registerService(Context.INPUT_METHOD_SERVICE, android.view.inputmethod.InputMethodManager.class,
-                new CachedServiceFetcher<android.view.inputmethod.InputMethodManager>() {
-            @Override public android.view.inputmethod.InputMethodManager createService(ContextImpl ctx) throws ServiceNotFoundException {
-                return android.view.inputmethod.InputMethodManager.createStubInstance(ctx.getDisplayId(), ctx.getMainLooper());
+                new ServiceFetcher<android.view.inputmethod.InputMethodManager>() {
+            @Override public android.view.inputmethod.InputMethodManager getService(ContextImpl ctx) {
+                return android.view.inputmethod.InputMethodManager.forContext(ctx.getOuterContext());
             }});
         registerService(Context.POWER_SERVICE, android.os.PowerManager.class,
                 new CachedServiceFetcher<android.os.PowerManager>() {

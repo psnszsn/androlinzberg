@@ -384,6 +384,11 @@ internal object FrameworkModuleSmoke {
                 "unexpected input devices"
             }
             checkNotNull(android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))
+            val inputMethods = checkNotNull(
+                context.getSystemService(android.view.inputmethod.InputMethodManager::class.java),
+            )
+            check(inputMethods.inputMethodList.isEmpty()) { "host must expose no software IMEs" }
+            check(inputMethods.enabledInputMethodList.isEmpty()) { "host must enable no software IMEs" }
             check(context.getSystemService("no.such.service") == null) { "unknown service must be null" }
         }
         val context = HostContexts.systemContext(

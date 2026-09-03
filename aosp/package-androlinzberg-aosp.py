@@ -28,7 +28,6 @@ framework_patches = tuple(
         (7, "-host-fixes-for-app-playback-static-Display-null-Disp.patch"),
         (8, "-Surface-no-op-setFrameRate-on-artzig-fake-released-s.patch"),
         (9, "-add-direct-Wayland-EGL-presentation-to-host-HWUI.patch"),
-        (10, "-Expose-no-IPC-input-method-manager-for-host-contexts.patch"),
         (11, "-CursorWindow-always-parcel-as-shared-memory-on-the-a.patch"),
         (12, "-AssetManager-env-overridable-framework-res.apk-path-.patch"),
         (13, "-host-hwui-view-uncommitted-working-tree-changes-pres.patch"),

@@ -374,6 +374,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedDropBoxManagerService.kt",
     "src/java/dev/artzig/system/HostedGrammaticalInflectionService.kt",
     "src/java/dev/artzig/system/HostedInputManagerService.kt",
+    "src/java/dev/artzig/system/HostedInputMethodManagerService.kt",
     "src/java/dev/artzig/system/HostedInstallerService.kt",
     "src/java/dev/artzig/system/HostedJobSchedulerService.kt",
     "src/java/dev/artzig/system/HostedLauncherAppsService.kt",
