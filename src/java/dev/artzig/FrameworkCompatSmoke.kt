@@ -283,6 +283,7 @@ public final class FrameworkCompatSmoke {
             }
             testStockInternalUtilMetadata()
             testStockCompatChanges()
+            testGeneratedAppProtoEnums()
             testStockFontRequest()
             testStockTextSpans()
             testStockHtml()
@@ -925,6 +926,17 @@ public final class FrameworkCompatSmoke {
             require(range.evaluate(1L) == android.app.compat.PackageOverride.VALUE_UNDEFINED, "override lower bound")
             require(range.evaluate(3L) == android.app.compat.PackageOverride.VALUE_DISABLED, "override range value")
             android.util.Log.i("FrameworkCompatSmoke", "stock compat changes ok")
+        }
+
+        /** AppProtoEnums is generated from the pinned AOSP app enum declaration. */
+        @JvmStatic
+        private fun testGeneratedAppProtoEnums() {
+            require(android.app.AppProtoEnums.PROCESS_STATE_TOP == 1002, "generated process state")
+            require(
+                android.app.AppProtoEnums.RESOURCE_API_RETRIEVE_ATTRIBUTES == 2,
+                "generated resource API",
+            )
+            android.util.Log.i("FrameworkCompatSmoke", "generated app proto enums ok")
         }
 
         /** Stock AOSP FontRequest: validation, identity key and certificate rendering. */

@@ -645,6 +645,7 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/notification_channel.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/notification.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/alarmmanager.proto" },
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app_shared/app_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app/job/job_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/os/enums.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/powermanager.proto" },
@@ -652,6 +653,7 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/app/AppProtoEnums.java",
     "android/app/ApplicationExitInfoProto.java",
     "android/app/ApplicationStartInfoProto.java",
     "android/app/PendingIntentProto.java",
