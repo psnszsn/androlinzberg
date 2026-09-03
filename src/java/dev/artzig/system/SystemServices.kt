@@ -144,6 +144,21 @@ internal object SystemServices {
         // service that reads settings during startup.
         android.os.ServiceManager.addService("content", HostedContentService())
         android.os.ServiceManager.addService("uri_grants", HostedUriGrantsService())
+        val settingsInfo = android.content.pm.ProviderInfo()
+        settingsInfo.packageName = "android"
+        settingsInfo.name = SettingsProvider::class.java.name
+        settingsInfo.authority = "settings"
+        settingsInfo.exported = true
+        // The real AOSP ComponentInfo parcels applicationInfo.
+        settingsInfo.applicationInfo = android.content.pm.ApplicationInfo().apply {
+            packageName = "android"
+            processName = "android"
+        }
+        val settingsProvider = SettingsProvider()
+        settingsProvider.attachInfo(context, settingsInfo)
+        activityManager.addSystemProvider(
+            android.app.ContentProviderHolder(settingsInfo).also { it.provider = settingsProvider.getIContentProvider() },
+        )
         // The system process is an attached process of its own activity manager
         // (ActivityManagerService.setSystemProcess) so system services bind app
         // services through the real Context, as JobServiceContext does.
@@ -223,21 +238,6 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.SHORTCUT_SERVICE, HostedShortcutService(context, hostedPermissions))
         android.os.ServiceManager.addService(Context.LAUNCHER_APPS_SERVICE, HostedLauncherAppsService(context, packageManager, hostedPermissions))
         android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
-        val settingsInfo = android.content.pm.ProviderInfo()
-        settingsInfo.packageName = "android"
-        settingsInfo.name = SettingsProvider::class.java.name
-        settingsInfo.authority = "settings"
-        settingsInfo.exported = true
-        // The real AOSP ComponentInfo parcels applicationInfo.
-        settingsInfo.applicationInfo = android.content.pm.ApplicationInfo().apply {
-            packageName = "android"
-            processName = "android"
-        }
-        val settingsProvider = SettingsProvider()
-        settingsProvider.attachInfo(context, settingsInfo)
-        activityManager.addSystemProvider(
-            android.app.ContentProviderHolder(settingsInfo).also { it.provider = settingsProvider.getIContentProvider() },
-        )
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
         manager.preSystemReady()

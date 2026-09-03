@@ -14,11 +14,17 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=90 F=2293 total=2383
+# Rules: D=118 F=2384 total=2502
 D aosp external/fmtlib
 D aosp external/hamcrest/hamcrest-core/src/main/java
+D aosp external/jspecify/src/main/java
 D aosp external/junit/src/main/java
+D aosp external/jsilver/src
+D aosp external/javapoet/src/main/java
 D aosp external/kotlinc
+D aosp external/libphonenumber/repackaged/geocoder/src
+D aosp external/libphonenumber/repackaged/internal/prefixmapper/src
+D aosp external/libphonenumber/repackaged/libphonenumber/src
 D aosp external/protobuf
 D aosp external/skia
 D aosp external/tagsoup/src/org/ccil/cowan/tagsoup
@@ -26,6 +32,14 @@ D aosp frameworks/av/media/aconfig
 D aosp frameworks/av/media/audio/aconfig
 D aosp frameworks/base/android-sdk-flags
 D aosp frameworks/base/core/java/android/animation
+D aosp frameworks/base/core/java/android/app/appfunctions
+F aosp frameworks/base/core/java/android/net/MatchAllNetworkSpecifier.java
+F aosp frameworks/base/core/java/android/net/TelephonyNetworkSpecifier.java
+F aosp frameworks/base/core/java/android/provider/DeviceConfigInitializer.java
+F aosp frameworks/base/core/java/android/provider/DeviceConfigServiceManager.java
+F aosp frameworks/base/core/java/com/android/internal/infra/ServiceConnector.java
+F aosp frameworks/base/core/java/android/os/ParcelableException.aidl
+F aosp frameworks/base/core/java/android/os/ParcelableHolder.java
 D aosp frameworks/base/core/java/android/app/compat
 D aosp frameworks/base/core/java/android/content/pm/overlay
 D aosp frameworks/base/core/java/android/content/pm/parsing
@@ -66,6 +80,7 @@ D aosp frameworks/base/tools/streaming_proto
 D aosp frameworks/libs/modules-utils/java
 D aosp frameworks/minikin
 D aosp frameworks/native/include
+D aosp frameworks/native/aidl/binder
 D aosp frameworks/native/libs/arect/include
 D aosp frameworks/native/libs/attestation
 D aosp frameworks/native/libs/binder/aidl
@@ -83,12 +98,33 @@ D aosp frameworks/native/libs/permission/aidl
 D aosp frameworks/native/libs/ui
 D aosp frameworks/opt/telephony/flags
 D aosp frameworks/proto_logging/stats
+D aosp hardware/interfaces/gnss/aidl
+D aosp hardware/interfaces/graphics/common/aidl
+D aosp hardware/interfaces/radio/aidl
+D aosp hardware/interfaces/thermal/aidl
+D aosp hardware/interfaces/vibrator/aidl
 D aosp hardware/libhardware/include
 D aosp hardware/libhardware/include_all
 D aosp libnativehelper
+D aosp packages/modules/AppSearch/flags
+D aosp packages/modules/AppSearch/framework/java
+D aosp packages/modules/AppSearch/safeparcel-processor
+D aosp packages/modules/ConfigInfrastructure/framework
+D aosp packages/modules/Connectivity/common
+D aosp packages/modules/Connectivity/framework
+D aosp packages/modules/Connectivity/framework-t
+D aosp packages/modules/Connectivity/staticlibs/framework
+D aosp packages/modules/Media/apex/aidl/private
+D aosp packages/modules/Media/apex/aidl/stable
+D aosp packages/modules/Media/apex/framework/java
+D aosp packages/modules/Permission/flags
+D aosp packages/modules/Permission/framework-s/java
+D aosp packages/modules/SdkExtensions/java
 D aosp packages/modules/StatsD/framework/java
 D aosp packages/modules/Uwb/ranging/flags
+D aosp packages/services/Telecomm/flags
 D aosp prebuilts/sdk/tools/linux/lib64
+F aosp prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar
 D aosp system/core/libcutils
 D aosp system/core/libprocessgroup/include
 D aosp system/core/libsystem/include

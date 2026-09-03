@@ -14,8 +14,8 @@ import java.io.File
 /**
  * The session's settings provider, authority `"settings"`, hosted in the
  * system process (source note: `com.android.providers.settings.SettingsProvider`
- * reduced to the system/secure/global name-value tables — no per-user split,
- * no generation trackers, no config namespace).
+ * reduced to the system/secure/global/config name-value tables — no per-user
+ * split and no generation trackers).
  *
  * The verbatim AOSP `Settings` client talks to it through
  * `IContentProvider.call` (`GET_*`/`PUT_*`/`DELETE_*`) with the `name=?`
@@ -30,7 +30,9 @@ class SettingsProvider : ContentProvider() {
         "system" to LinkedHashMap<String, String>(),
         "secure" to LinkedHashMap<String, String>(),
         "global" to LinkedHashMap<String, String>(),
+        "config" to LinkedHashMap<String, String>(),
     )
+    private var configSyncDisabledMode = Settings.Config.SYNC_DISABLED_MODE_NONE
     private val store: File? = System.getenv("AZK_BINDER_SESSION_DIR")?.let { File(it, "settings.xml") }
 
     override fun onCreate(): Boolean {
@@ -41,6 +43,7 @@ class SettingsProvider : ContentProvider() {
     // ------------------------------------------------------------- call()
 
     override fun call(method: String, name: String?, extras: Bundle?): Bundle? {
+        if (method.endsWith("_config")) return callConfig(method, name, extras)
         val (op, table) = method.split('_', limit = 2).let {
             if (it.size == 2) it[0] to it[1] else return super.call(method, name, extras)
         }
@@ -70,6 +73,82 @@ class SettingsProvider : ContentProvider() {
                 if (removed) notifyRow(table, name)
                 Bundle()
             }
+            else -> super.call(method, name, extras)
+        }
+    }
+
+    private fun callConfig(method: String, name: String?, extras: Bundle?): Bundle? {
+        val values = checkNotNull(synchronized(lock) { tables["config"] })
+        return when (method) {
+            Settings.CALL_METHOD_GET_CONFIG -> Bundle().apply {
+                putString(Settings.NameValueTable.VALUE, synchronized(lock) { values[name] })
+            }
+            Settings.CALL_METHOD_PUT_CONFIG -> {
+                enforceWrite("config")
+                val value = extras?.getString(Settings.NameValueTable.VALUE)
+                synchronized(lock) {
+                    if (value == null) values.remove(name) else values[checkNotNull(name)] = value
+                    persistLocked()
+                }
+                notifyRow("config", name)
+                Bundle()
+            }
+            Settings.CALL_METHOD_DELETE_CONFIG -> {
+                enforceWrite("config")
+                synchronized(lock) {
+                    values.remove(name)
+                    persistLocked()
+                }
+                notifyRow("config", name)
+                Bundle()
+            }
+            Settings.CALL_METHOD_LIST_CONFIG -> Bundle().apply {
+                val prefix = extras?.getString(Settings.CALL_METHOD_PREFIX_KEY).orEmpty()
+                val selected = synchronized(lock) {
+                    HashMap(values.filterKeys { it.startsWith(prefix) })
+                }
+                putSerializable(Settings.NameValueTable.VALUE, selected)
+            }
+            Settings.CALL_METHOD_LIST_NAMESPACES_CONFIG -> Bundle().apply {
+                val namespaces = synchronized(lock) {
+                    HashSet(values.keys.mapNotNull { it.substringBefore('/', "").takeIf(String::isNotEmpty) })
+                }
+                putSerializable(Settings.NameValueTable.VALUE, namespaces)
+            }
+            Settings.CALL_METHOD_SET_ALL_CONFIG -> {
+                enforceWrite("config")
+                val prefix = extras?.getString(Settings.CALL_METHOD_PREFIX_KEY).orEmpty()
+                @Suppress("DEPRECATION", "UNCHECKED_CAST")
+                val replacements = extras?.getSerializable(Settings.CALL_METHOD_FLAGS_KEY) as? Map<String, String>
+                    ?: emptyMap()
+                synchronized(lock) {
+                    values.keys.removeIf { it.startsWith(prefix) }
+                    values.putAll(replacements)
+                    persistLocked()
+                }
+                Bundle().apply {
+                    putInt(Settings.KEY_CONFIG_SET_ALL_RETURN, Settings.SET_ALL_RESULT_SUCCESS)
+                }
+            }
+            Settings.CALL_METHOD_RESET_CONFIG -> {
+                enforceWrite("config")
+                val prefix = extras?.getString(Settings.CALL_METHOD_PREFIX_KEY)
+                synchronized(lock) {
+                    if (prefix == null) values.clear() else values.keys.removeIf { it.startsWith(prefix) }
+                    persistLocked()
+                }
+                Bundle()
+            }
+            Settings.CALL_METHOD_SET_SYNC_DISABLED_MODE_CONFIG -> Bundle().also {
+                enforceWrite("config")
+                configSyncDisabledMode = extras?.getInt(Settings.CALL_METHOD_SYNC_DISABLED_MODE_KEY)
+                    ?: Settings.Config.SYNC_DISABLED_MODE_NONE
+            }
+            Settings.CALL_METHOD_GET_SYNC_DISABLED_MODE_CONFIG -> Bundle().apply {
+                putInt(Settings.KEY_CONFIG_GET_SYNC_DISABLED_MODE_RETURN, configSyncDisabledMode)
+            }
+            Settings.CALL_METHOD_REGISTER_MONITOR_CALLBACK_CONFIG,
+            Settings.CALL_METHOD_UNREGISTER_MONITOR_CALLBACK_CONFIG -> Bundle()
             else -> super.call(method, name, extras)
         }
     }

@@ -36,6 +36,9 @@ import android.media.AudioRouting
 import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.net.InetAddresses
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -113,6 +116,7 @@ internal object FrameworkModuleSmoke {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
         permissionsFixtureApk = args.firstOrNull()
         testPackageNames()
+        testStockModuleClientContracts()
         testAccessibilityHtmlFiltering()
         testFrameworkServiceValueContracts()
         testContentCaptureContracts()
@@ -159,6 +163,27 @@ internal object FrameworkModuleSmoke {
             "org.example.MainActivity")
         check(ParsingUtils.buildClassName("org.example", "other.MainActivity") ==
             "other.MainActivity")
+    }
+
+    private fun testStockModuleClientContracts() {
+        check(InetAddresses.parseNumericAddress("192.0.2.1").hostAddress == "192.0.2.1")
+
+        val capabilities = NetworkCapabilities.Builder.withoutDefaultCapabilities()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        check(capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+        check(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+
+        val request = NetworkRequest.Builder()
+            .clearCapabilities()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        check(request.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
+        check(!request.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+
+        check(android.hardware.thermal.TemperatureType.CPU == 0)
+        check(android.hardware.vibrator.Braking.CLAB == 1)
     }
 
     private fun testAccessibilityHtmlFiltering() {

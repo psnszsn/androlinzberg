@@ -38,6 +38,7 @@ framework_patches = tuple(
         (20, "-ClassLoaderFactory-the-hosted-APK-class-loader-on-th.patch"),
         (21, "-ApplicationLoaders-the-system-class-loader-is-the-ba.patch"),
         (22, "-AlarmManager-time-zone-validation-without-ZoneInfoDb.patch"),
+        (23, "-resources-make-early-RRO-constraint-flag-read-only.patch"),
     )
 )
 

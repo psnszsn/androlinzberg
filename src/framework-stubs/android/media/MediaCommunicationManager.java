@@ -11,4 +11,7 @@ public class MediaCommunicationManager {
     public void dispatchMediaKeyEvent(android.view.KeyEvent keyEvent, boolean needWakeLock) {}
     /** No MediaSession2 exists in a hosted session. */
     public java.util.List<Session2Token> getSession2Tokens() { return new java.util.ArrayList<>(); }
+    /** With no hosted media-communication service, no remote caller is trusted. */
+    public boolean isTrustedForMediaControl(
+            android.media.session.MediaSessionManager.RemoteUserInfo userInfo) { return false; }
 }

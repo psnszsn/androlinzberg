@@ -139,9 +139,55 @@ pub fn build(b: *std.Build, o: Options) Result {
         "com/google/errorprone/annotations/*",
         "error-prone-annotation-classes",
     );
+    const guava_host_jar = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
+    var safeparcel_sources = SourceFiles.Collector.init(b);
+    const jsilver_root = SourceFiles.Root.dependency(b, aosp, "external/jsilver/src");
+    const javapoet_root = SourceFiles.Root.dependency(b, aosp, "external/javapoet/src/main/java");
+    const safeparcel_root = SourceFiles.Root.dependency(b, aosp, "packages/modules/AppSearch/safeparcel-processor");
+    safeparcel_sources.addTree(jsilver_root, .{});
+    safeparcel_sources.addTree(javapoet_root, .{});
+    safeparcel_sources.addTree(safeparcel_root.child(b, "src"), .{});
+    const safeparcel_java = safeparcel_sources.select(".java");
+    const safeparcel_rsp = safeparcel_java.responseFile(b, "safeparcel-processor-sources.rsp");
+
+    const safeparcel_javac = command.create(b);
+    safeparcel_javac.addArgs(&.{ "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-classpath" });
+    safeparcel_javac.addJoinedPathInputs(":", &.{
+        .{ .file = guava_host_jar },
+        .{ .directory = androidx_annotation_classes },
+    });
+    safeparcel_javac.addArg("-d");
+    const safeparcel_classes = safeparcel_javac.addOutputDirectoryArg("safeparcel-processor-classes");
+    safeparcel_javac.addPrefixedFileArg("@", safeparcel_rsp);
+    inline for (.{
+        "Note: Some input files use or override a deprecated API.",
+        "Note: Recompile with -Xlint:deprecation for details.",
+        "Note: Some input files use or override a deprecated API that is marked for removal.",
+        "Note: Recompile with -Xlint:removal for details.",
+        "uses unchecked or unsafe operations.",
+        "Note: Recompile with -Xlint:unchecked for details.",
+    }) |pattern| safeparcel_javac.filterStderr(pattern);
+    safeparcel_java.addInputs(safeparcel_javac.run);
+    safeparcel_javac.run.setName("compile AppSearch SafeParcel processor");
+
+    const safeparcel_jar_cmd = b.addSystemCommand(&.{ "jar", "--create", "--file" });
+    const safeparcel_jar = safeparcel_jar_cmd.addOutputFileArg("safeparcel-processor.jar");
+    safeparcel_jar_cmd.addArg("-C");
+    safeparcel_jar_cmd.addDirectoryArg(safeparcel_classes);
+    safeparcel_jar_cmd.addArg(".");
+    safeparcel_jar_cmd.addArg("-C");
+    safeparcel_jar_cmd.addDirectoryArg(safeparcel_root.child(b, "resources").path);
+    safeparcel_jar_cmd.addArg(".");
+    safeparcel_jar_cmd.addArg("-C");
+    safeparcel_jar_cmd.addDirectoryArg(jsilver_root.path);
+    safeparcel_jar_cmd.addArg(".");
+    safeparcel_jar_cmd.setName("package AppSearch SafeParcel processor");
+    b.step("safeparcel-processor", "Build the AppSearch SafeParcel annotation processor")
+        .dependOn(&safeparcel_jar_cmd.step);
+
     const kotlinc = command.create(b);
     kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
-    inline for (.{ "-no-jdk", "-no-stdlib", "-no-reflect", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters", "-Xsam-conversions=class", "-Xstring-concat=inline", "-classpath" }) |arg| kotlinc.addArg(arg);
+    inline for (.{ "-no-jdk", "-no-stdlib", "-no-reflect", "-nowarn", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters", "-Xsam-conversions=class", "-Xstring-concat=inline", "-classpath" }) |arg| kotlinc.addArg(arg);
     kotlinc.addJoinedPathInputs(":", &.{
         .{ .file = core_plus },
         .{ .file = kotlin_stdlib },
@@ -172,6 +218,13 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = error_prone_annotation_classes },
         .{ .file = kotlin_stdlib },
     });
+    javac.addArg("-processorpath");
+    javac.addJoinedPathInputs(":", &.{
+        .{ .file = safeparcel_jar },
+        .{ .file = guava_host_jar },
+        .{ .directory = androidx_annotation_classes },
+    });
+    javac.addArgs(&.{ "-processor", "android.app.appsearch.safeparcel.SafeParcelProcessor" });
     javac.addArg("-d");
     const java_classes = javac.addOutputDirectoryArg("java-classes");
     javac.addPrefixedFileArg("@", sources.java_rsp);

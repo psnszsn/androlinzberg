@@ -1,7 +1,13 @@
 /* artzig stub: pretend to be online via the default network. */
 package android.net;
 public class ConnectivityManager {
-    public NetworkInfo getActiveNetworkInfo() { return new NetworkInfo(); }
+    public static final int TYPE_NONE = -1;
+    public static final int TYPE_WIFI = 1;
+    public static final int REQUEST_ID_UNSET = 0;
+    public static boolean isNetworkTypeValid(int networkType) {
+        return networkType >= 0 && networkType <= 17;
+    }
+    public NetworkInfo getActiveNetworkInfo() { return new NetworkInfo(TYPE_WIFI, 0, "WIFI", ""); }
     public Network getActiveNetwork() { return new Network(100); }
     public NetworkCapabilities getNetworkCapabilities(Network network) { return new NetworkCapabilities(); }
     public LinkProperties getLinkProperties(Network network) { return new LinkProperties(); }

@@ -68,6 +68,9 @@ object HostContexts {
         info.credentialProtectedDataDir = info.dataDir
         info.deviceProtectedDataDir = info.dataDir
         thread.installSystemApplicationInfo(info, ClassLoader.getSystemClassLoader())
+        // AOSP ActivityThread.attach(system=true) creates the system Application before
+        // SystemServer starts services. DeviceConfig's Settings-backed store relies on it.
+        thread.`bindSystemApplication$artzig`()
         return thread
     }
 

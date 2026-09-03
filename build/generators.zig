@@ -87,6 +87,24 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/base/telephony/java/",
         "frameworks/base/telecomm/java/",
         "frameworks/base/mms/java/",
+        "hardware/interfaces/gnss/aidl/",
+        "hardware/interfaces/graphics/common/aidl/",
+        "hardware/interfaces/health/aidl/",
+        "hardware/interfaces/radio/aidl/",
+        "hardware/interfaces/thermal/aidl/",
+        "hardware/interfaces/usb/aidl/",
+        "hardware/interfaces/vibrator/aidl/",
+        "packages/modules/AppSearch/framework/java/",
+        "packages/modules/Bluetooth/android/app/aidl/",
+        "packages/modules/Bluetooth/common/bluetooth/constants/",
+        "packages/modules/Bluetooth/service/aidl/",
+        "packages/modules/ConfigInfrastructure/framework/java/",
+        "packages/modules/Connectivity/Tethering/common/TetheringLib/src/",
+        "packages/modules/Connectivity/framework-t/src/",
+        "packages/modules/Connectivity/framework/src/",
+        "packages/modules/Media/apex/aidl/private/",
+        "packages/modules/Permission/framework-s/java/",
+        "packages/modules/Wifi/framework/java/",
     }) |prefix| {
         if (std.mem.startsWith(u8, input, prefix)) {
             return replaceExtension(b, input[prefix.len..], ".java");
@@ -127,6 +145,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
     inline for (.{
         "frameworks/base/media/java",
         "frameworks/native/libs/input",
+        "frameworks/native/aidl/binder",
         "frameworks/native/libs/binder/aidl",
         "packages/modules/StatsD/aidl",
         "frameworks/base/apex/jobscheduler/framework/java",
@@ -136,6 +155,24 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/telephony/java",
         "frameworks/base/telecomm/java",
         "frameworks/base/mms/java",
+        "hardware/interfaces/gnss/aidl",
+        "hardware/interfaces/graphics/common/aidl",
+        "hardware/interfaces/health/aidl",
+        "hardware/interfaces/radio/aidl",
+        "hardware/interfaces/thermal/aidl",
+        "hardware/interfaces/usb/aidl",
+        "hardware/interfaces/vibrator/aidl",
+        "packages/modules/AppSearch/framework/java",
+        "packages/modules/Bluetooth/android/app/aidl",
+        "packages/modules/Bluetooth/common/bluetooth/constants",
+        "packages/modules/Bluetooth/service/aidl",
+        "packages/modules/ConfigInfrastructure/framework/java",
+        "packages/modules/Connectivity/Tethering/common/TetheringLib/src",
+        "packages/modules/Connectivity/framework-t/src",
+        "packages/modules/Connectivity/framework/src",
+        "packages/modules/Media/apex/aidl/private",
+        "packages/modules/Permission/framework-s/java",
+        "packages/modules/Wifi/framework/java",
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
 }
 
@@ -158,6 +195,9 @@ fn aidlJava(
     for (declarations.aidl) |input| {
         const run = b.addRunArtifact(runner);
         run.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
+        if (input.source == .aosp and std.mem.startsWith(u8, input.path, "hardware/interfaces/")) {
+            run.addArgs(&.{ "--structured", "--stability", "vintf", "--min_sdk_version=35" });
+        }
         addAidlIncludes(run, aosp, compat_dir);
         run.addArg("-o");
         const output = run.addOutputDirectoryArg(b.fmt("aidl-java-{d}", .{index}));
