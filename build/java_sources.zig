@@ -161,11 +161,12 @@ fn collectStatic(c: *StaticCollector) !void {
     // AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
     try c.file("$FB/services/core/java/com/android/server/SystemService.java");
     try c.file("$FB/services/core/java/com/android/server/SystemServiceManager.java");
+    try c.file("$CJ/com/android/server/ServiceThread.java");
+    try c.file("$FB/services/core/java/com/android/server/UiThread.java");
     try c.file("$FB/services/core/java/com/android/server/utils/TimingsTraceAndSlog.java");
-    // Reused AOSP clipboard: the service plus the real manager client. The two AOSP
-    // monitors talk to qemu/ChromeOS pipes; the hosted EmulatorClipboardMonitor in
-    // src/framework-stubs is an inert linkage-compatible replacement.
-    try c.add("$FB/services/core/java/com/android/server/clipboard", .{ .not_names = &.{ "EmulatorClipboardMonitor.java", "ArcClipboardMonitor.java" } });
+    // Reused AOSP clipboard. The qemu monitor stays an inert host seam because hosted
+    // sessions have no goldfish/vsock clipboard endpoint; the ARC bridge is stock.
+    try c.add("$FB/services/core/java/com/android/server/clipboard", .{ .not_names = &.{"EmulatorClipboardMonitor.java"} });
     try c.file("$CJ/android/content/ClipboardManager.java");
     try c.file("$CJ/android/text/ClipboardManager.java");
     try c.file("$CJ/android/util/SparseArrayMap.java");

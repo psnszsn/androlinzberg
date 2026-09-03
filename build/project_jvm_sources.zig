@@ -212,8 +212,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/com/android/modules/utils/build/UnboundedSdkLevel.java",
     "src/framework-stubs/com/android/server/SystemConfig.java",
     "src/framework-stubs/com/android/server/SystemServerInitThreadPool.java",
-    "src/framework-stubs/com/android/server/UiThread.java",
-    "src/framework-stubs/com/android/server/clipboard/ArcClipboardMonitor.java",
     "src/framework-stubs/com/android/server/clipboard/EmulatorClipboardMonitor.java",
     "src/framework-stubs/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java",
     "src/framework-stubs/com/android/server/contentcapture/ContentCaptureManagerInternal.java",

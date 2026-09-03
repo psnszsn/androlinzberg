@@ -1636,6 +1636,9 @@ F aosp frameworks/base/core/java/com/android/internal/protolog/IProtoLogConfigur
 F aosp frameworks/base/core/java/com/android/internal/protolog/ProtoLogConfigurationService.java
 F aosp frameworks/base/core/java/com/android/internal/util/LatencyTracker.java
 F aosp frameworks/base/core/java/com/android/internal/util/PerfettoTrigger.java
+F aosp frameworks/base/core/java/com/android/server/ServiceThread.java
+F aosp frameworks/base/services/core/java/com/android/server/UiThread.java
+F aosp frameworks/base/services/core/java/com/android/server/clipboard/ArcClipboardMonitor.java
 F aosp frameworks/base/core/java/android/provider/DocumentsContract.java
 F aosp frameworks/base/core/java/android/provider/DocumentsProvider.java
 F aosp frameworks/base/media/java/android/media/ExifInterface.java
