@@ -1,213 +1,270 @@
-# Stock Client Migration
+# Stock client migration: bulk instructions
 
-> ANDROLINZBERG · CLIENT FRAMEWORK
->
-> Source: [Claude artifact](https://claude.ai/code/artifact/d079bfe1-1d37-4c69-b548-e31ce6df48fc)
+Goal: every class an application process runs on is the verbatim AOSP class,
+except the seam that talks to PipeWire, Wayland, FFmpeg and EGL. That seam
+stays exactly as it is until everything else is stock. The hosted services in
+`src/java/dev/artzig/system` are the server side and remain host-owned.
 
-Replace every hand-written or patched client-side framework class with the verbatim AOSP class, one family per commit, while the PipeWire, Wayland, FFmpeg and EGL seam stays untouched until everything else is stock.
-
-- `main @ d57e214`
-- AOSP `android-16.0.0_r1`
-- stub budget 142 · 3 Sep 2026
-
-| Count | Scope |
-| ---: | --- |
-| 45 | hand-written replacements in `src/framework` outside the media seam |
-| 117 | pending stubs in non-media families (72 replaceable today, 44 blocked, 1 no source) |
-| 17 | `frameworks/base` patches that change stock client behaviour |
-| ≈95 | survivor stubs waiting on an unsynced AOSP module tree |
-| 25 + 48 | seam classes and stubs kept in place (media, window, opengl) |
-
-“Client” means the framework jar an application process runs on: `src/framework`, `src/framework-stubs`, and the AOSP patches applied at package time. The hosted services in `dev.artzig.system` are the server side and stay host-owned; each phase below ends with a stock client talking to one of them over the real AIDL, the pattern the managers milestone established.
+Read `AGENTS.md` first; every rule there applies. This document only says what
+to do, in what order, and where the traps are. State of the tree when this was
+written: 225 stubs, pending budget 105, `docs/stubs.md` regenerated.
 
 ## The fence
 
-**STAYS UNTIL LAST.** Anything wired to PipeWire, Wayland, FFmpeg or EGL. These files are not touched by any phase below, and a phase that would have to change one of them stops and reports instead.
+Do not modify, delete, or replace any of these. A batch that would need to
+touch one of them stops at that class and records it instead.
 
-- AudioTrack, AudioFormat, AudioTimestamp, PlaybackParams
-- MediaCodec, MediaCodecInfo, MediaCodecList, MediaFormat
-- SurfaceTexture, HardwareBuffer, SurfaceView, ArtzigSurface, ArtzigVideoLayer
-- ViewRootImpl, WindowManagerGlobal, WindowManagerImpl, ArtzigWindowStack, ArtzigDisplay
-- Choreographer, ThreadedRenderer, HostedWindowPresentation, HostedSystemUiController
-- HostedInputDispatcher, HostedConfigurationController, HostedResources
-- stub families `audio` (13), `opengl` (8), `media` (3), 24 window-seam survivors
-- patches 7, 8, 9, 13, 16 (Display, Surface, Wayland EGL presentation, HWUI, message pump)
+- `src/framework/android/media/*`, `android/view/*`, `android/graphics/*`,
+  `android/hardware/HardwareBuffer.java`,
+  `android/content/res/Hosted*.kt`.
+- stub families `audio`, `opengl`, `media`, and every survivor whose reason
+  starts with `window seam`.
+- patches 7, 8, 9, 13, 16 in `aosp/package-androlinzberg-aosp.py`.
 
-## Order and dependencies
+## Rules that are easy to get wrong
 
-Phases are ordered by what unblocks what. Phase 1 is cheap and independent. Phase 2 is the largest single deviation and everything androidx does with lifecycle sits on it, so it goes before the remaining managers. Phase 5 is mostly a manifest change, and it also removes blockers that phases 3 and 4 would otherwise have to cut around, so it can run in parallel with them on a second branch.
+- A hosted service never delegates to `IFoo.Default()`. Unserved methods must
+  fail loudly so the integration tests record them as `unimplemented`. Use the
+  generated `Unsupported*` base, or after batch 0 the `unsupported<T>()`
+  delegate. `HostedInputMethodManagerService` currently violates this; batch 0
+  fixes it.
+- Framework natives are written in Zig (`src/binder/framework_jni.zig` is the
+  pattern), never in `src/native/*.cpp`. C++ is only for HWUI, Skia and AOSP
+  C++ interfaces (`docs/native-boundary.md`). The `android.util.Log` sink was
+  added in C++; batch 0 moves it.
+- Never raise `pending-budget`. Delete a stub and its audit line together.
+  A stub that cannot go yet gets a `survivor: <reason>` the closure tool can
+  confirm, not a family.
+- Every repository JVM file is Kotlin unless it is a directly reused AOSP or
+  generated source.
+- No attribution lines in commit messages.
+- A commit that changes `aosp/androlinzberg-files.txt` must repackage and bump
+  the `.aosp` hash in `build.zig.zon` in the same commit. The archive is
+  reproducible: anyone can run `python3 aosp/package-androlinzberg-aosp.py`
+  and get the committed hash, so never commit a hash you did not obtain from
+  the packager on the committed manifest.
+- The APK integration suite is mandatory for every batch, not only
+  `jvm-test`.
 
-| Phase | Moves | Stubs closed | Needs synced first |
-| --- | --- | ---: | --- |
-| 1 Small classes and patches | 28 pure-Java replacements, 17 patches reviewed | 0 | `external/tagsoup` |
-| 2 Activity core | Activity, Dialog, Instrumentation, ActivityThread activity half, activity + ui families | 18 | — |
-| 3 Client managers | PermissionManager, Nsd, DownloadManager, MediaStore, sensors, 13 manager families | 39 | `packages/modules/Permission` |
-| 4 Framework internals | webkit, runtime, logging, systemserver, textclassifier, inputmethod, contentcapture, accessibility, autofill | 55 | — |
-| 5 Module trees | Connectivity, radio HAL enums, libphonenumber, Wifi, Bluetooth, Media, and the rest of the survivors | ≈95 | see table in phase 5 |
-| 6 Test seams | ArtzigAccessibilityBridge, ArtzigTestDiagnostics out of `android.*` | 0 | — |
+## Per-batch workflow
 
-## Phase 1: Small classes and the patch review
+1. Build once so a current classes jar exists:
+   `zig build -j<n> java` (add `--system zig-pkg` on the machine described in
+   the section at the end). The jar is the newest
+   `.zig-cache/o/*/framework-classes.jar`.
+2. Run the closure tool with every stub the batch deletes as a seed:
 
-Each item is a few dozen lines, independent of the others, and has a stock class that compiles once its closure is present. Work through them in the order below; each replacement is a closure run, a source-list edit, a deleted file and a lowered budget.
+   ```sh
+   tools/aosp-closure.py --classes <jar> closure \
+     --assume-present <known false positives> <fqn> <fqn> ...
+   ```
 
-### Pure Java, compile as is
+   Seed with all of them at once: the tool counts classes in the jar as
+   present, so a stub you forget to seed hides the closure of the ones you
+   did seed. It prints the `aosp/androlinzberg-files.txt` lines,
+   `build/java_sources.zig` lines, and `build/generator_sources.zig` entries
+   (AIDL, aconfig) the real classes need, and names every blocker.
+3. Apply those lines. New AIDL include roots go in both `addAidlIncludes` and
+   `aidlOutputPath` in `build/generators.zig` and in the tool's `AIDL_ROOTS`.
+   Proto outputs go in `proto_outputs`.
+4. Delete the stubs, remove them from `build/project_jvm_sources.zig`, delete
+   their lines from `tools/stub-audit.txt`, lower `pending-budget` by the
+   number of pending stubs deleted.
+5. Repackage, bump the hash, `zig build -j<n> gen-aidl`.
+6. Write or extend hosted services where a real class needs one.
+7. Verify, in this order, and fix before moving on:
 
-- The six `android.text.style` spans, `Browser`, `FontRequest`, `EpicenterTranslateClipReveal`, `AnnotationValidations`, `DataClass`, `KeyGenParameterSpec` (with the rest of `android.security.keystore`).
-- `android.util.proto`: ProtoOutputStream, ProtoInputStream, ProtoUtils, WireTypeMismatchException. The real ones are pure Java and unlock the proto dump paths the stubs currently swallow.
-- `OverlayConfig`; keep `OverlayManagerImpl` as the idmap2 adapter it already is, with a source note.
-- `MimeTypeMap`: the real class is libcore `MimeMap` behind a WebView-neutral API. Verify with the closure tool; if it drags `WebViewFactory`, defer to phase 4.
+   ```sh
+   zig build -j<n> build-tools-test graph-audit cpp-audit
+   zig build -j<n> native-test binder-test system-test jvm-test
+   zig build -j<n> integration-test -- --class NewPipeTest --method launchesHomeWithoutRuntimeIssues
+   zig build -j<n> integration-test
+   ```
 
-### Need one dependency
+   `jvm-test` runs the JVM-source audit (stub ratchet, generated-class
+   shadowing) through the java step.
+8. Regenerate the audit and the doc:
+   `tools/aosp-closure.py --classes <jar> audit --update tools/stub-audit.txt --markdown docs/stubs.md`.
+9. One commit per batch, subject `framework: ...`, body stating what moved and
+   what was cut.
 
-- `Html`: real `fromHtml` needs TagSoup. **SYNC** `platform/external/tagsoup`, add it to the manifest and the framework source set.
-- `SslCertificate`, `SslError`: the stock closure reaches the repackaged BouncyCastle X509Name. `external/bouncycastle` is already synced; add the `com.android.org.bouncycastle.asn1.x509` sources it needs instead of the Kotlin adaptation.
-- `Xml`: the real class needs libcore's KXml plus `BinaryXmlPullParser`/`BinaryXmlSerializer` from `com.android.internal.util`. Both are pure Java; the ART binary-XML chain the note mentions is optional.
-- `DateFormat`, `Time`, `TimeUtils`: check what the vendored libcore ICU exposes. If `getBestPattern` is missing, keep them as survivors with that reason; do not extend the shims.
-- `androidx.annotation`, `CompileTimeConstant`: vendor the annotation sources from `prebuilts/sdk` and `external/error_prone` (both synced) rather than keeping copies.
+## Batch 0: pay down the two review findings
 
-### Need a hosted service or generator
+Small, independent, do it first so the later batches are cleaner.
 
-- `CompatChanges`: real class calls `IPlatformCompat`. Add a hosted PlatformCompat service (all changes enabled) and drop the stub together with the runtime-family `IPlatformCompat` stub.
-- `GrammaticalInflectionManager`: real manager over a hosted `IGrammaticalInflectionManager`.
-- `AppProtoEnums`: belongs to the proto enum generator; wire `frameworks/proto_logging/stats/enums/app/enums.proto` and delete the hand copy.
-- `StatsLog`, `Log`: both are JNI-backed. Register the two native sinks in the launcher (liblog is synced under `system/logging`) and compile the real classes.
+1. Add a reflective delegate and drop the generated bases:
 
-### Patch review
+   ```kotlin
+   inline fun <reified T : IInterface> unsupported(): T = Proxy.newProxyInstance(
+       T::class.java.classLoader, arrayOf(T::class.java),
+   ) { _, method, _ -> throw ArtzigTestDiagnostics.unsupported(T::class.java.simpleName, method.name, "not hosted") } as T
 
-Seventeen of the twenty-two package-time patches change stock client behaviour. For each, decide: drop (a hosted service now covers it), keep as host seam (document why), or move into a build-time patch. Start with 15 (ServiceManager process-local overlay) and 10 (no-IPC InputMethodManager), which the broker and hosted services already make unnecessary. Patches 5, 12, 19 (env-overridable paths) and 17, 20, 21 (broker uid, class loaders) are host seams and stay, with the reason recorded in the patch header.
+   class HostedPowerManagerService : IPowerManager.Stub(), IPowerManager by unsupported<IPowerManager>() {
+       override fun asBinder(): IBinder = this
+       // served subset only
+   }
+   ```
 
-#### Verify
+   Convert all 37 services, delete `src/java/dev/artzig/system/Unsupported*.kt`
+   and `tools/gen-unsupported-stub.py`, and fix the comments in the services
+   that say they were generated. `asBinder` must be overridden in every
+   service.
+2. Rewrite `HostedInputMethodManagerService` on the delegate instead of
+   `IInputMethodManager.Default()`, keeping only the empty-IME-list methods it
+   serves.
+3. Move the `android.util.Log` natives (`isLoggable`, `println_native`,
+   `logger_entry_max_payload_native`) from `src/native/AospJniBridge.cpp` to
+   Zig next to the other framework natives, keeping the liblog write and the
+   `ArtzigTestDiagnostics.recordLog` call. `std.Io` policy applies.
 
-- unit chain: `native-test binder-test system-test jvm-test`
-- `build-tools-test`, `graph-audit`, jvm-source audit through the java step
-- NewPipe launch test, then the full suite
-- budget lowered in `tools/stub-audit.txt`, `docs/stubs.md` regenerated
+## Batch 1: every replaceable stub outside the fence and the activity family
 
-#### Exit
+The audit lists 59 pending stubs and 18 survivors as `replaceable`. Take all
+of them except:
 
-- `src/framework` holds only the fence, the activity/registry seams and the manager adaptations phase 3 removes
-- every remaining patch has a written reason
+- families `audio`, `opengl`, `media`, window-seam survivors (fence);
+- families `activity` and `ui` (batch 3: the real `Fragment`, `AlertDialog`,
+  `ActivityOptions`, `TaskInfo`, `IActivityTaskManager` expect the real
+  `Activity`).
 
-## Phase 2: Activity core
+That leaves roughly 50 classes: webkit leaves and `WebViewClient`, runtime
+utilities (`CancellationSignalBeamer`, `PermissionEnforcer`,
+`SynchronousResultReceiver`, `Immutable`, `BrightnessSynchronizer`,
+`IPlatformCompat`), jank and metrics logging, `UiThread`, clipboard monitors,
+textclassifier and voice contracts, `AbstractInputMethodService`,
+`InlineContentView`, `HandwritingInitiator`, `PackageInstaller` and
+`IPackageInstaller`, `PackageManagerInternal`, `UserManager` and
+`UserManagerInternal`, `PermissionControllerManager`, `PreferenceManager`,
+`TextToSpeech`, `VirtualDeviceParams`, the `com.android.server.pm` value
+classes, `Counter`, `UnboundedSdkLevel`, and the hand-written
+`src/framework` replacements that are pure Java: `Browser`, `FontsContract`,
+`KeyGenParameterSpec`, `MimeTypeMap`, `OverlayConfig`, `Xml`, `ProtoUtils`,
+`SslCertificate`, `SslError` (add the BouncyCastle X509Name sources; the
+project is synced).
 
-The Activity shim is a hand-written ContextWrapper, Dialog is hand-written, Instrumentation carries only the application half, and the lifecycle runs in HostedActivityRuntime behind the ActivityThread host adapter. The hosted ActivityThread already implements the ClientTransactionHandler contract, so the stock path is within reach: real `Activity`, `Dialog`, `Instrumentation` and the AOSP `performLaunchActivity` chain, driven by `LaunchActivityItem`/`ResumeActivityItem` transactions from the hosted activity manager.
+Expect these to need more than deletion:
 
-### Steps
+- `UserManager`: the real class depends on `UserManagerCache` from the
+  `property_cache` annotation processor. `external/guava` is synced; wire the
+  processor into the javac step in `build/java.zig` instead of stubbing.
+- `IPlatformCompat` is served by `HostedPlatformCompatService` already; just
+  delete the stub.
+- `DateFormat`, `Time`, `TimeUtils`: replace only if the vendored libcore ICU
+  provides what they need; otherwise leave them and record the reason as a
+  survivor. Do not extend the shims.
+- `TextToSpeech`, `PreferenceManager`, `PermissionControllerManager` may
+  reach a service at runtime that nobody hosts. The integration suite decides:
+  a `ServiceNotFoundException` or an `unimplemented` issue in `steps.jsonl` on
+  a NewPipe path means a hosted service is needed in this batch.
 
-1. Hosted `IActivityTaskManager` and `IActivityClientController` in the system process: start, finish, result delivery, config-change relaunch decisions, task info for the single desktop task. Closes the activity-family stubs (ActivityManager, ActivityOptions, ActivityTaskManager, TaskInfo, AppGlobals, LocalActivityManager, ClientTransactionListenerController).
-2. Fill the `notHosted` handlers in ActivityThread with the AOSP bodies: handleLaunchActivity, handleStartActivity, handleResumeActivity, handlePauseActivity, handleStopActivity, handleDestroyActivity, handleSendResult, handleNewIntent, handleActivityConfigurationChanged, prepareRelaunchActivity.
-3. Real `Activity`. It attaches its PhoneWindow through the hosted WindowManagerImpl and ViewRootImpl, so the fence is untouched; the shim's request-window-feature and result plumbing go away with it.
-4. Real `Instrumentation` (the execStartActivity half) and real `Dialog` over the same window manager.
-5. Delete HostedActivityRuntime; ApkHost drives the first launch through the activity manager like a launcher would.
-6. ui family: AlertDialog, Fragment, FragmentManager, FragmentTransaction, ActionBar, Presentation, DatePicker, TimePicker, FloatingToolbar. All replaceable today.
+If the first compile shows a class whose closure the tool did not predict,
+seed it and rerun the tool rather than hand-fixing the source list.
 
-Tests must cover callback ordering, handled versus unhandled configuration changes, saved-state restore and result delivery, as the AOSP reuse policy requires. The full APK suite is mandatory for every commit in this phase.
+## Batch 2: module trees
 
-#### Stubs closed
-
-- activity 9
-- ui 9
-
-#### Risk
-
-- The real Activity expects `WindowManagerGlobal.getWindowSession()`; today it returns `IWindowSession.Default()`, which is enough for attach but not for relayout. Keep that inside the fenced WindowManagerGlobal.
-- NewPipe's fragments and the desktop fullscreen test are the regression surface.
-
-## Phase 3: Client managers
-
-Same recipe as the managers milestone: closure run, real manager, `Unsupported*` base from `tools/gen-unsupported-stub.py`, a hosted service serving the subset, an AOSP fetcher in the hosted SystemServiceRegistry.
-
-### Hand-written managers still in `src/framework`
-
-- `PermissionManager`: vendor the `android.permission` package from frameworks/base and back it with the hosted permission checker. The `PermissionControllerManager` stub goes with it. **SYNC** `platform/packages/modules/Permission` for the framework-s classes the closure reaches.
-- `NsdManager`, `NsdServiceInfo`: real classes over a hosted NsdService on the nsd AIDL; the current `HostedNsdBackend` becomes that service's host adapter.
-- `DownloadManager`: real manager over a hosted DownloadProvider; the Kotlin adaptation's transfer code moves into the provider.
-- `MediaStore`: real contract over a hosted MediaProvider that serves the session's data root.
-- `SystemSensorManager`: the real class is JNI over libsensor. Register the native seam in Zig with zero sensors and compile the real class.
-
-### Pending manager families
-
-| Family | Stubs | Blocker today | Approach |
-| --- | ---: | --- | --- |
-| packagemanager | 17 | installd/vold AIDL, ApexInfo, PackageProto, aconfigd | real PackageInstaller and IPackageInstaller now; server-side classes (Computer, PackageManagerService, Settings) become survivors named as server code, not client |
-| storage | 4 | vold AIDL, ObbScanner JNI | hosted IStorageManager over the emulated volume; ObbScanner native seam |
-| devicepolicy | 3 | biometrics HAL, SecurityLog JNI | after phase 5 syncs hardware/interfaces; SecurityLog native seam |
-| virtualdevice | 4 | camera/audio AIDL | after phase 5; VirtualDeviceParams is replaceable now |
-| user | 1 | property_cache annotation processor | guava is synced: wire the processor into the javac step, real UserManager |
-| statusbar, shortcut, appops, companion, biometrics, battery, incident, preference, provider, connectivity | 12 | mixed | replaceable ones first (PreferenceManager, Downloads, NetworkSecurityConfigProvider, X509TrustManagerExtensions), the rest after phase 5 |
-
-#### Stubs closed
-
-- 39 across the families listed
-- plus 4 hand-written manager files
-
-#### Known gotchas
-
-- The closure tool counts jar classes as present: seed it with every stub being replaced.
-- AIDL roots go into `addAidlIncludes` and `aidlOutputPath` in `build/generators.zig` and the tool's `AIDL_ROOTS`.
-- Generator inputs live in `build/generator_sources.zig`; the tool prints entries for it.
-
-## Phase 4: Framework internals
-
-- **webkit (16).** Twelve are one-line replaceable interfaces. CookieManager, WebSettings and WebChromeClient are blocked on the WebView provider closure: add a hosted `WebViewFactory` seam that reports no provider, then compile the real abstract classes.
-- **runtime (10).** CancellationSignalBeamer, PermissionEnforcer, SynchronousResultReceiver, Immutable, BrightnessSynchronizer are replaceable now. BinderCallsStats needs the BinderLatencyProto output listed in `proto_outputs`; INetworkManagementService waits for Connectivity (phase 5); SystemServerClassLoaderFactory and UnboundedSdkLevel become server-side survivors.
-- **logging (9).** Jank, Cuj, InteractionJankMonitor, MetricsLogger, Counter and ProtoLogConfigurationService are replaceable. ProtoLog needs the perfetto proto Java (perfetto is synced; add the protos to the generator). LatencyTracker needs the internal logging EventLogTags in the logtags list.
-- **systemserver (6), textclassifier (4), inputmethod (4), contentcapture (4), accessibility (2), autofill (1).** Replaceable except InputMethodService (InputMethodServiceProto in `proto_outputs`), ImeTracingPerfettoImpl (perfetto protos again) and AccessibilityShortcutController (audio family, stays behind the fence).
-
-#### Stubs closed
-
-- 55, of which 41 are replaceable today
-
-## Phase 5: Module trees
-
-About 95 survivors exist only because their module tree is not in `aosp/aosp-projects.txt`. This phase is manifest work: sync the project, select its framework sources in `aosp/androlinzberg-files.txt`, repackage with `python3 aosp/package-androlinzberg-aosp.py`, bump the hash in `build.zig.zon` and extract the new tree under `zig-pkg/`. The HAL enums are AIDL and come out of the existing generator once `hardware/interfaces` is an include root.
-
-| Project to sync | Survivors freed | Notes |
-| --- | ---: | --- |
-| `platform/packages/modules/Connectivity` | 13 | framework/src and framework-t; also unblocks INetworkManagementService, NetworkPolicyManager, NetworkScoreManager |
-| `platform/hardware/interfaces` | 27 | radio, thermal, vibrator, usb, health, gnss, graphics: AIDL enums generated, HIDL constants compiled from the checked-in Java |
-| `platform/external/libphonenumber` | 6 | replaces the phonenumbers stubs telephony carries |
-| `platform/packages/modules/Wifi` | 3 | framework/java value types only |
-| `platform/packages/modules/Media` | 3 | MediaSession2, Session2Token, MediaCommunicationManager |
-| `platform/packages/modules/Permission` | 2 | also needed by phase 3 |
-| `platform/packages/modules/Bluetooth` | 1 + audio closure | BluetoothDevice now; the codec-config types the audio family needs later |
-| Tethering, SdkExtensions, IPsec, ConfigInfrastructure, AppSearch | 5 | one class each |
-| `platform/packages/services/Telecomm` | 3 | telecom aconfig declarations, generated instead of hand-written |
-
-Keep the packaged archive selective: add the framework source directories, not whole module trees, and let `tools/aosp-closure.py` name the files. The ART archive is out of scope here; its hash question is a separate upstream fix.
-
-#### Stays a survivor
-
-- JNI-only classes with no host meaning: StrictJarFile, incfs, fs-verity, ashmem, GraphicsEnvironment, PerformanceHintManager, Debug
-- Chromium WebView provider
-- camera stack, DRM (MediaCrypto), ToneGenerator
-
-#### Sync command
+68 survivors exist only because their project is not in
+`aosp/aosp-projects.txt`. Sync, in `aosp/`:
 
 ```sh
-cd aosp
-repo sync -c -j5 platform/packages/modules/Connectivity
+for p in platform/packages/modules/Connectivity platform/hardware/interfaces \
+         platform/external/libphonenumber platform/packages/modules/Wifi \
+         platform/packages/modules/Media platform/packages/modules/Permission \
+         platform/packages/modules/Bluetooth platform/packages/modules/Tethering \
+         platform/packages/modules/SdkExtensions platform/packages/modules/IPsec \
+         platform/packages/modules/ConfigInfrastructure platform/packages/modules/AppSearch \
+         platform/packages/services/Telecomm; do repo sync -c -j5 $p; done
 ```
 
-## Phase 6: Test seams out of `android.*`
+Add each to `aosp-projects.txt`, keep it sorted. Then:
 
-- `ArtzigAccessibilityBridge` becomes the real `AccessibilityManager` over a hosted AccessibilityManagerService; the headless test interface reads the tree through `AccessibilityNodeInfo` like an accessibility service would. The accessibility spans from phase 1 then carry real ids.
-- `ArtzigTestDiagnostics` moves to `dev.artzig`; the framework logs through the real `Log` and the launcher's liblog sink feeds the diagnostics journal.
-- The ravenwood annotation copies and `RavenwoodEnvironment` are replaced by the vendored `frameworks/base/ravenwood` sources.
+1. Run the closure tool with all 68 survivors as seeds. Add only the framework
+   source directories it names (`framework/src`, `framework/java`,
+   `framework-t/src`), never a whole module tree; the packager prunes by the
+   manifest and the archive should stay a few hundred megabytes.
+2. HAL enums (`android.hardware.radio.*`, `thermal`, `vibrator`, `usb`,
+   `health`, `gnss`, `graphics.common`) are AIDL under
+   `hardware/interfaces/<hal>/aidl/...`. Add those directories as AIDL include
+   roots and list the `.aidl` files in `generator_sources.aidl`; the existing
+   generator produces the Java. The `V1_0`/`V2_1` HIDL constant classes are
+   checked-in Java under the same tree.
+3. Telecom `Flags`/`FeatureFlags`: add the aconfig declaration from
+   `packages/services/Telecomm` to `generator_sources.aconfig` and delete the
+   three hand-written flag classes.
+4. Delete the survivors, change nothing else in their audit lines except
+   removing them, repackage, bump the hash.
+5. The classes that stay survivors after this batch: JNI-only classes with no
+   host meaning, the WebView provider, camera, DRM, `ToneGenerator`, and the
+   window seam. Their reasons already say so.
 
-#### Exit criteria for the whole plan
+This batch is manifest work and can run on a second branch in parallel with
+batch 1; merge conflicts are confined to the source lists and the audit file.
 
-- `src/framework` contains only the fence and the hosted SystemServiceRegistry/ActivityThread seams
-- every stub in `tools/stub-audit.txt` is a survivor with a reason; the pending budget is 0 outside audio, opengl, media and window
-- every remaining patch is documented as a host seam
-- the full APK suite passes on the GPU harness after each phase
+## Batch 3: activity core
 
-## Per-phase workflow
+The largest deviation and real code, not deletion. Order matters.
 
-1. `tools/aosp-closure.py --classes <framework-classes.jar> closure --assume-present <cuts> <seeds>`; seed with every stub the phase deletes.
-2. Apply its manifest lines, `build/java_sources.zig` lines and `build/generator_sources.zig` entries; repackage and bump the hash when the manifest changed.
-3. `zig build --system zig-pkg -j16 gen-aidl`, generate `Unsupported*` bases, write the hosted service, register it.
-4. Delete the stubs and their audit lines, lower `pending-budget`, drop them from `build/project_jvm_sources.zig`.
-5. Unit chain, audits, launch test, full suite; regenerate `docs/stubs.md`; one commit, no attribution lines.
+1. Hosted `IActivityTaskManager` and `IActivityClientController` in
+   `SystemServices.kt`: start, finish, result delivery, relaunch decisions on
+   configuration changes, task info for the single desktop task. Serve them
+   on the delegate; override only what the client path exercises.
+2. Fill the handlers in `src/framework/android/app/ActivityThread.java` that
+   throw `notHosted` with the AOSP bodies: `handleLaunchActivity`,
+   `handleStartActivity`, `handleResumeActivity`, `handlePauseActivity`,
+   `handleStopActivity`, `handleDestroyActivity`, `handleSendResult`,
+   `handleNewIntent`, `handleActivityConfigurationChanged`,
+   `prepareRelaunchActivity`. Keep the source notes naming the AOSP method.
+3. Real `Activity`. It attaches its `PhoneWindow` through the hosted
+   `WindowManagerImpl` and `ViewRootImpl`; both are fenced and stay. The
+   shim's `requestWindowFeature` and result plumbing disappear with it.
+4. Real `Instrumentation` (the `execStartActivity` half) and real `Dialog`.
+5. Delete `HostedActivityRuntime.kt`; `ApkHost` starts the main activity
+   through the activity manager like a launcher.
+6. Delete the `activity` and `ui` families: `ActivityManager`,
+   `ActivityOptions`, `ActivityTaskManager`, `IActivityTaskManager`,
+   `TaskInfo`, `AppGlobals`, `LocalActivityManager`,
+   `ClientTransactionListenerController`, `AlertDialog`, `Fragment`,
+   `FragmentManager`, `FragmentTransaction`, `ActionBar`, `Presentation`,
+   `DatePicker`, `TimePicker`, `FloatingToolbar`.
 
-Gates: `build-tools-test` · `graph-audit` · `jvm-source` audit (java step) · `cpp-audit` · `integration-test`
+Tests for this batch must cover callback ordering, handled versus unhandled
+configuration changes, saved-state restore and result delivery
+(`src/java/dev/artzig/FrameworkModuleSmoke.kt` is where the module tests
+live). Run the full APK suite after every commit here; the NewPipe fragment
+navigation and desktop fullscreen tests are the regression surface.
+
+## After the batches
+
+What remains pending is per-seam work, one commit each: `StorageManager`
+(hosted `IStorageManager` over the emulated volume), `DevicePolicyManager`
+(needs the biometrics HAL from batch 2 and a `SecurityLog` native seam),
+`StatusBarManager`, `IncidentManager`, `VirtualDeviceManager`, `BatteryStats`
+(proto outputs), `ProtoLog` and `ImeTracingPerfettoImpl` (perfetto protos;
+`external/perfetto` is synced), and the remaining patches, each of which
+needs a written reason in its header or a deletion.
+
+Then the test seams leave `android.*`: `ArtzigAccessibilityBridge` becomes
+the real `AccessibilityManager` over a hosted service, and
+`ArtzigTestDiagnostics` moves to `dev.artzig` with the launcher's liblog sink
+feeding it.
+
+## Machine notes
+
+- Build steps that must see the invoking shell's environment (the APK
+  harness) pass their variables through `Command.setEnvironment`, never
+  `Step.Run.setEnvironmentVariable`: this zig caches the build configuration
+  and a step that owns an environment map replays the environment captured
+  at cache time.
+- On the LXC host with the Radeon render node, the suite needs Mesa from the
+  nix store exported before `zig build`:
+  `__EGL_VENDOR_LIBRARY_DIRS=$M/share/glvnd/egl_vendor.d LIBGL_DRIVERS_PATH=$M/lib/dri GBM_BACKENDS_PATH=$M/lib/gbm LIBVA_DRIVERS_PATH=$M/lib/dri LD_LIBRARY_PATH=$M/lib XDG_RUNTIME_DIR=/run/user/1000`
+  with `M` the mesa store path, plus `AZK_APK_NEWPIPE_0_29_1`. Builds there
+  use `--system zig-pkg` and need the archive extracted under
+  `zig-pkg/<hash>` (`tar xzf <archive> --strip-components=1 -C zig-pkg/<hash>`).
+- Every archive bump leaves a full application tree in `.zig-cache/o`, which
+  zig never collects. Check `df` before a batch; delete `zig-pkg` trees whose
+  hash no zon file references, and remove `.zig-cache` entirely when the
+  disk passes 90%.
+- The ART archive hash in `artzig/build.zig.zon` does not reproduce from the
+  committed patch series (patch 0008 overlaps the build-time
+  `art-x86_64-memory-optimization.patch`). Leave it alone; it is a separate
+  fix.
