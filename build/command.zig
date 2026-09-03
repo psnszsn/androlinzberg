@@ -101,6 +101,16 @@ pub const Command = struct {
         for (values) |value| command.run.addFileArg(value);
     }
 
+    /// Sets a plain environment variable through the wrapper instead of
+    /// Step.Run.setEnvironmentVariable: a Run step that owns an environment
+    /// map clones the one captured in Zig's configuration cache, so the child
+    /// would stop seeing variables exported for the current invocation (the
+    /// Mesa paths the Wayland test harness needs). Through the wrapper the
+    /// step inherits the live environment and adds only this entry.
+    pub fn setEnvironment(command: Command, name: []const u8, value: []const u8) void {
+        command.run.addArgs(&.{ "--env", name, value });
+    }
+
     pub fn setPathEnvironment(command: Command, name: []const u8, value: LazyPath) void {
         command.run.addArgs(&.{ "--env-path", name });
         command.run.addDirectoryArg(value);

@@ -698,10 +698,12 @@ pub fn build(b: *std.Build) void {
     const integration_run = @import("build/command.zig").create(b);
     integration_run.setFileEnvironment("AZK_LAUNCHER", application_tree.path(b, "bin/androlinzberg"));
     setApplicationEnvironment(integration_run, application_tree);
-    integration_run.run.setEnvironmentVariable("WLR_RENDERER", "gles2");
-    integration_run.run.setEnvironmentVariable("AZK_APK_REGISTRY", "tests/apks.json");
-    integration_run.run.setEnvironmentVariable("AZK_ARTIFACT_ROOT", "zig-out/test-results/integration");
-    integration_run.run.setEnvironmentVariable("AZK_SHARED_CACHE", "zig-out/test-cache/integration");
+    // Through the wrapper, not Step.Run.setEnvironmentVariable: the harness must
+    // inherit the invoking shell's live environment (Mesa for Cage, the APK paths).
+    integration_run.setEnvironment("WLR_RENDERER", "gles2");
+    integration_run.setEnvironment("AZK_APK_REGISTRY", "tests/apks.json");
+    integration_run.setEnvironment("AZK_ARTIFACT_ROOT", "zig-out/test-results/integration");
+    integration_run.setEnvironment("AZK_SHARED_CACHE", "zig-out/test-cache/integration");
     integration_run.addArg("bash");
     integration_run.addFileArg(b.path("tools/shot.sh"));
     integration_run.addArgs(&.{ "zig-out/test-results/integration/suite.png", "--runner", "--" });
