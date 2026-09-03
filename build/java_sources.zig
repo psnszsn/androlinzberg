@@ -485,6 +485,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/content/IntentSender.java");
     try c.file("$CJ/android/os/UpdateLock.java");
     try c.file("$CJ/android/provider/E2eeContactKeysManager.java");
+    try c.file("$CJ/android/provider/FontRequest.java");
     try c.file("$CJ/android/service/timezone/TimeZoneProviderEvent.java");
     try c.file("$CJ/android/service/timezone/TimeZoneProviderService.java");
     try c.file("$CJ/android/service/timezone/TimeZoneProviderStatus.java");

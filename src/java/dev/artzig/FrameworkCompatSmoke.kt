@@ -275,6 +275,7 @@ public final class FrameworkCompatSmoke {
         @Throws(Exception::class)
         @JvmStatic
         public fun main(args: Array<String>) {
+            testStockFontRequest()
             testStockTextSpans()
             testParcelRoundTrips()
             testSystemProperties()
@@ -721,6 +722,38 @@ public final class FrameworkCompatSmoke {
             android.os.CancellationSignal.fromTransport(transport).setOnCancelListener { cancelled = true }
             signal.cancel()
             require(cancelled && signal.isCanceled, "CancellationSignal propagates through its transport")
+        }
+
+        /** Stock AOSP FontRequest: validation, identity key and certificate rendering. */
+        @JvmStatic
+        private fun testStockFontRequest() {
+            val certificate = byteArrayOf(1, 2, 3)
+            val request = android.provider.FontRequest(
+                "fonts.example",
+                "org.example.fonts",
+                "name=Inter",
+                listOf(listOf(certificate)),
+            )
+            require(request.providerAuthority == "fonts.example", "font provider authority")
+            require(request.providerPackage == "org.example.fonts", "font provider package")
+            require(request.query == "name=Inter", "font query")
+            require(request.certificates.single().single() === certificate, "font certificates retained")
+            require(
+                request.identifier == "fonts.example-org.example.fonts-name=Inter",
+                "font request identifier",
+            )
+            require(request.toString().contains("AQID"), "font certificate rendered as base64")
+
+            val nullFailure = runCatching {
+                android.provider.FontRequest::class.java
+                    .getConstructor(String::class.java, String::class.java, String::class.java)
+                    .newInstance(null, "org.example.fonts", "name=Inter")
+            }.exceptionOrNull()
+            require(
+                (nullFailure as? java.lang.reflect.InvocationTargetException)?.cause is NullPointerException,
+                "font request rejects a null authority",
+            )
+            android.util.Log.i("FrameworkCompatSmoke", "stock font request ok")
         }
 
         /** Stock AOSP text spans: identity lookup, failure modes, mutation and parcel state. */

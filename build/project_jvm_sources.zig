@@ -295,7 +295,6 @@ pub const framework = [_][]const u8{
     "src/framework/android/net/nsd/NsdServiceInfo.kt",
     "src/framework/android/permission/PermissionManager.kt",
     "src/framework/android/provider/Browser.java",
-    "src/framework/android/provider/FontRequest.java",
     "src/framework/android/provider/FontsContract.java",
     "src/framework/android/provider/MediaStore.java",
     "src/framework/android/ravenwood/annotation/RavenwoodClassLoadHook.java",
