@@ -12,9 +12,8 @@
 # fails when more than `pending-budget` entries are not survivors; lower the budget as
 # stubs are replaced, never raise it.
 
-# pending-budget: 117
+# pending-budget: 116
 
-src/framework-stubs/android/accessibilityservice/util/AccessibilityUtils.java|replaceable|accessibility|frameworks/base/core/java/android/accessibilityservice/util/AccessibilityUtils.java (1 to add), not vendored
 src/framework-stubs/android/app/ActionBar.java|replaceable|ui|frameworks/base/core/java/android/app/ActionBar.java (1 to add), not vendored
 src/framework-stubs/android/app/ActivityManager.java|blocked|activity|frameworks/base/core/java/android/app/ActivityManager.java (65 to add), not vendored; android.app.backup.BackupDataInput: JNI natives (via BackupDataInput < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.app.backup.BackupDataOutput: JNI natives (via BackupDataOutput < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.app.backup.FullBackup: JNI natives (via FullBackup < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.service.procstats.PackageAssociationProcessStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageAssociationProcessStatsProto < AssociationState < ProcessStats < ActivityManager); android.service.procstats.PackageAssociationSourceProcessStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageAssociationSourceProcessStatsProto < AssociationState < ProcessStats < ActivityManager); android.service.procstats.PackageServiceOperationStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceOperationStatsProto < ServiceState < ProcessStats < ActivityManager)
 src/framework-stubs/android/app/ActivityManagerInternal.java|replaceable|activity|frameworks/base/core/java/android/app/ActivityManagerInternal.java (9 to add), not vendored

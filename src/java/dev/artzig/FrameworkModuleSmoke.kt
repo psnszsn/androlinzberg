@@ -95,6 +95,7 @@ internal object FrameworkModuleSmoke {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
         permissionsFixtureApk = args.firstOrNull()
         testPackageNames()
+        testAccessibilityHtmlFiltering()
         testIntentTypedExtras()
         testRemoteActionContract()
         testPictureInPictureContracts()
@@ -135,6 +136,14 @@ internal object FrameworkModuleSmoke {
             "org.example.MainActivity")
         check(ParsingUtils.buildClassName("org.example", "other.MainActivity") ==
             "other.MainActivity")
+    }
+
+    private fun testAccessibilityHtmlFiltering() {
+        val filter = android.accessibilityservice.util.AccessibilityUtils::getFilteredHtmlText
+        check(filter("<a>link</a>") == "<invalidtag link</invalidtag>")
+        check(filter("<img alt=\"bad\" src=\"elsewhere\"/>").startsWith("<invalidtag "))
+        check(filter("<img src=\"R.drawable.preview\"/>") ==
+            "<img src=\"R.drawable.preview\"/>")
     }
 
     private fun testHostedPermissionGrants() {

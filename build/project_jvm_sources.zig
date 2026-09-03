@@ -1,7 +1,6 @@
 //! Explicit repository-owned JVM source declarations.
 //! Add new sources here so graph membership changes with this Zig file.
 pub const framework = [_][]const u8{
-    "src/framework-stubs/android/accessibilityservice/util/AccessibilityUtils.java",
     "src/framework-stubs/android/app/ActionBar.java",
     "src/framework-stubs/android/app/ActivityManager.java",
     "src/framework-stubs/android/app/ActivityManagerInternal.java",

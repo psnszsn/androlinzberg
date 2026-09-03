@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 117 (budget 117). Survivors: 120. Total: 237.
+Pending: 116 (budget 116). Survivors: 120. Total: 236.
 
 ## Survivors
 
@@ -142,7 +142,6 @@ Pending: 117 (budget 117). Survivors: 120. Total: 237.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/accessibilityservice/util/AccessibilityUtils.java` | replaceable | frameworks/base/core/java/android/accessibilityservice/util/AccessibilityUtils.java (1 to add), not vendored |
 | `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (322 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < MediaPlayer < Ringtone < AccessibilityShortcutController); android |
 
 ### activity
