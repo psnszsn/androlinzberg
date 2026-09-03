@@ -14,7 +14,9 @@ import android.os.Process
  * allowlisting is accepted and has no effect, and the mutating calls keep the
  * AOSP DEVICE_POWER permission check.
  */
-class HostedDeviceIdleController : UnsupportedDeviceIdleController() {
+class HostedDeviceIdleController : android.os.IDeviceIdleController.Stub(), android.os.IDeviceIdleController by unsupported<android.os.IDeviceIdleController>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private fun enforceDevicePower(what: String) {
         if (Binder.getCallingUid() != Process.SYSTEM_UID) {
             throw SecurityException("$what requires android.permission.DEVICE_POWER")

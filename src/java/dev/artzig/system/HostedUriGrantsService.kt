@@ -13,7 +13,9 @@ import android.os.Binder
  * checkGrantUriPermission path reports "no grant needed" (-1) like AOSP does
  * for a target that already holds the provider permission.
  */
-class HostedUriGrantsService : UnsupportedUriGrantsManager() {
+class HostedUriGrantsService : android.app.IUriGrantsManager.Stub(), android.app.IUriGrantsManager by unsupported<android.app.IUriGrantsManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private class Grant(val uri: Uri, var modeFlags: Int, val time: Long)
 
     private val lock = Any()

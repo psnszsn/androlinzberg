@@ -17,7 +17,9 @@ import android.util.Log
  * fires for a change to Y when X == Y, when X is a proper ancestor of Y and it
  * registered with notifyForDescendants, and always when Y is an ancestor of X.
  */
-class HostedContentService : UnsupportedContentService() {
+class HostedContentService : android.content.IContentService.Stub(), android.content.IContentService by unsupported<android.content.IContentService>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private class Registration(
         val segments: List<String>,
         val notifyForDescendants: Boolean,

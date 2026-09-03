@@ -27,7 +27,9 @@ import android.util.Log
  * main looper, which preserves AOSP ordering: onCreate before onBind before
  * onServiceConnected.
  */
-class HostedActivityManagerService : UnsupportedActivityManager() {
+class HostedActivityManagerService : android.app.IActivityManager.Stub(), android.app.IActivityManager by unsupported<android.app.IActivityManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     /** Launches a process for a package that is not attached (production: the launcher's --app-process). */
     fun interface ProcessLauncher {
         /** Returns false when the package cannot be launched. */

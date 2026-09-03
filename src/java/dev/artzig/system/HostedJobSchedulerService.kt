@@ -45,7 +45,9 @@ import java.util.concurrent.TimeUnit
  * execute by binding the app's JobService through the activity manager from
  * the system context, exactly as `JobServiceContext` does.
  */
-class HostedJobSchedulerService(private val context: Context) : UnsupportedJobScheduler() {
+class HostedJobSchedulerService(private val context: Context) : android.app.job.IJobScheduler.Stub(), android.app.job.IJobScheduler by unsupported<android.app.job.IJobScheduler>() {
+    override fun asBinder(): android.os.IBinder = this
+
     @Volatile var packageService: HostedPackageManagerService? = null
     @Volatile var notificationService: HostedNotificationManagerService? = null
 

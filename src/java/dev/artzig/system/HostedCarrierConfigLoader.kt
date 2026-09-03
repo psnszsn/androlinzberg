@@ -15,7 +15,9 @@ import android.telephony.SubscriptionManager
  * carrier service package, and the mutators keep AOSP's MODIFY_PHONE_STATE gate
  * and its IllegalArgumentException for an invalid phone id.
  */
-class HostedCarrierConfigLoader(private val permissions: HostedTelephonyPermissions) : UnsupportedCarrierConfigLoader() {
+class HostedCarrierConfigLoader(private val permissions: HostedTelephonyPermissions) : com.android.internal.telephony.ICarrierConfigLoader.Stub(), com.android.internal.telephony.ICarrierConfigLoader by unsupported<com.android.internal.telephony.ICarrierConfigLoader>() {
+    override fun asBinder(): android.os.IBinder = this
+
     override fun getConfigForSubId(subId: Int, callingPackage: String?): PersistableBundle? = getConfigForSubIdWithFeature(subId, callingPackage, null)
 
     override fun getConfigForSubIdWithFeature(subId: Int, callingPackage: String?, callingFeatureId: String?): PersistableBundle? {

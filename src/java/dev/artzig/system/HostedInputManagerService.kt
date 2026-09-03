@@ -17,12 +17,12 @@ import android.view.KeyCharacterMap
  * device queries the framework makes (`InputDevice.getDevice`,
  * `KeyCharacterMap.load`, `VelocityTracker`). The host exposes one virtual
  * keyboard; pointer input arrives through the Wayland dispatcher, not through
- * an input device. The rest of the 76-method surface keeps the generated
- * `IInputManager.Default` no-op answers.
+ * an input device. Unserved methods fail through the shared unsupported Binder
+ * delegate.
  */
 internal class HostedInputManagerService :
     IInputManager.Stub(),
-    IInputManager by IInputManager.Default() {
+    IInputManager by unsupported<IInputManager>() {
     // Interface delegation must not shadow the Binder identity.
     override fun asBinder(): android.os.IBinder = this
 

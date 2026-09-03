@@ -2,9 +2,9 @@
 
 package android.app
 
-/** Every IApplicationThread method throws UnsupportedOperationException; the hosted
- * service overrides what it serves (generated from the AIDL interface by
- * tools/gen-unsupported-stub.py; regenerate when the interface changes). */
+/** Every IApplicationThread method throws UnsupportedOperationException; the
+ * hosted application thread overrides the subset used by the current activity
+ * runtime. This temporary base disappears with the activity-core migration. */
 abstract class UnsupportedApplicationThread : IApplicationThread.Stub() {
     override fun scheduleReceiver(intent: android.content.Intent?, info: android.content.pm.ActivityInfo?, compatInfo: android.content.res.CompatibilityInfo?, resultCode: Int, data: String?, extras: android.os.Bundle?, ordered: Boolean, assumeDelivered: Boolean, sendingUser: Int, processState: Int, sentFromUid: Int, sentFromPackage: String?) { throw UnsupportedOperationException("IApplicationThread.scheduleReceiver is not hosted") }
     override fun scheduleReceiverList(info: MutableList<android.app.ReceiverInfo?>?) { throw UnsupportedOperationException("IApplicationThread.scheduleReceiverList is not hosted") }

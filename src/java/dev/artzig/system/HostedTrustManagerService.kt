@@ -17,7 +17,9 @@ import com.android.internal.policy.IDeviceLockedStateListener
  * state on registration; the keyguard reports keep their ACCESS_KEYGUARD_SECURE_STORAGE
  * gate and are recorded only as the locked flag.
  */
-class HostedTrustManagerService(private val permissions: HostedPermissions) : UnsupportedTrustManager() {
+class HostedTrustManagerService(private val permissions: HostedPermissions) : android.app.trust.ITrustManager.Stub(), android.app.trust.ITrustManager by unsupported<android.app.trust.ITrustManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val trustListeners = LinkedHashMap<IBinder, ITrustListener>()
     private val lockedListeners = LinkedHashMap<IBinder, IDeviceLockedStateListener>()

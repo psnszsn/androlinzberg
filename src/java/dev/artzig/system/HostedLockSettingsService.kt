@@ -22,7 +22,9 @@ import com.android.internal.widget.VerifyCredentialResponse
  * credential needs gatekeeper and keystore, which this host does not run, so it
  * and the escrow/recovery surface stay unserved.
  */
-class HostedLockSettingsService(private val permissions: HostedPermissions) : UnsupportedLockSettings() {
+class HostedLockSettingsService(private val permissions: HostedPermissions) : com.android.internal.widget.ILockSettings.Stub(), com.android.internal.widget.ILockSettings by unsupported<com.android.internal.widget.ILockSettings>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val values = HashMap<Int, HashMap<String, String>>()
     private val trackers = LinkedHashMap<IBinder, IStrongAuthTracker>()

@@ -15,7 +15,9 @@ import android.telephony.SubscriptionManager
  * declared READ_PHONE_STATE gets the SecurityException); the mutators that would
  * write the subscription database stay unserved.
  */
-class HostedSubscriptionService(private val permissions: HostedTelephonyPermissions, private val activeModemCount: Int) : UnsupportedSub() {
+class HostedSubscriptionService(private val permissions: HostedTelephonyPermissions, private val activeModemCount: Int) : com.android.internal.telephony.ISub.Stub(), com.android.internal.telephony.ISub by unsupported<com.android.internal.telephony.ISub>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private fun emptySubscriptions(): MutableList<SubscriptionInfo?> = ArrayList()
 
     override fun getAllSubInfoList(callingPackage: String?, callingFeatureId: String?): MutableList<SubscriptionInfo?>? {

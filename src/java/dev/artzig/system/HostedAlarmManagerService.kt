@@ -32,7 +32,9 @@ import java.util.concurrent.TimeUnit
  * completion callback exactly as `DeliveryTracker` does. Exact alarms are
  * always permitted (no SCHEDULE_EXACT_ALARM policy without a shade).
  */
-class HostedAlarmManagerService(private val context: Context) : UnsupportedAlarmManager() {
+class HostedAlarmManagerService(private val context: Context) : android.app.IAlarmManager.Stub(), android.app.IAlarmManager by unsupported<android.app.IAlarmManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     /** The package manager binds calling packages to uids (AlarmManagerService checks the same). */
     @Volatile var packageService: HostedPackageManagerService? = null
 

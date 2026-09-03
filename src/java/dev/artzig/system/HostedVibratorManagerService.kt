@@ -19,7 +19,9 @@ import android.util.Log
  * what the AOSP service does when no vibrator can play it. Listeners for an
  * unknown vibrator id are refused as in AOSP.
  */
-class HostedVibratorManagerService : UnsupportedVibratorManagerService() {
+class HostedVibratorManagerService : android.os.IVibratorManagerService.Stub(), android.os.IVibratorManagerService by unsupported<android.os.IVibratorManagerService>() {
+    override fun asBinder(): android.os.IBinder = this
+
     override fun getVibratorIds(): IntArray? = IntArray(0)
     override fun getCapabilities(): Int = 0
     override fun getVibratorInfo(vibratorId: Int): VibratorInfo? = null

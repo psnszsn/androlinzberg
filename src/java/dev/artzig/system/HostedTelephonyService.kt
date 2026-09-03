@@ -26,7 +26,9 @@ import android.telephony.VisualVoicemailSmsFilterSettings
  * their default instead. Anything that would drive the radio (calls, SIM I/O,
  * network selection, modem power) stays unserved.
  */
-class HostedTelephonyService(private val permissions: HostedTelephonyPermissions) : UnsupportedTelephony() {
+class HostedTelephonyService(private val permissions: HostedTelephonyPermissions) : com.android.internal.telephony.ITelephony.Stub(), com.android.internal.telephony.ITelephony by unsupported<com.android.internal.telephony.ITelephony>() {
+    override fun asBinder(): android.os.IBinder = this
+
     // ------------------------------------------------------------ SIM, slots, identifiers
 
     override fun getSimStateForSlotIndex(slotIndex: Int): Int = TelephonyManager.SIM_STATE_ABSENT

@@ -19,13 +19,13 @@ import android.view.DisplayInfo
  * Source note: follows `com.android.server.display.DisplayManagerService.BinderService`
  * for the queries `DisplayManagerGlobal` makes; there is exactly one logical
  * display here — this process's Wayland window, whose bounds live in
- * [ArtzigDisplay]. The rest of the 60-method surface keeps the generated
- * `IDisplayManager.Default` no-op answers (wifi display, HDR, brightness and
- * virtual displays do not exist on this host).
+ * [ArtzigDisplay]. Wifi display, HDR, brightness and virtual displays are not
+ * hosted; calls to those methods fail through the shared unsupported Binder
+ * delegate.
  */
 internal class HostedDisplayManagerService :
     IDisplayManager.Stub(),
-    IDisplayManager by IDisplayManager.Default() {
+    IDisplayManager by unsupported<IDisplayManager>() {
     // Interface delegation must not shadow the Binder identity.
     override fun asBinder(): android.os.IBinder = this
 

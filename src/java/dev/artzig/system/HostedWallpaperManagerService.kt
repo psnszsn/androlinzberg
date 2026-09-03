@@ -27,7 +27,9 @@ import android.os.ParcelFileDescriptor
  * treats as "nothing written"), the hint and dim setters keep their permission
  * gates, and the colors callbacks are registered and never fire.
  */
-class HostedWallpaperManagerService(private val permissions: HostedPermissions) : UnsupportedWallpaperManager() {
+class HostedWallpaperManagerService(private val permissions: HostedPermissions) : android.app.IWallpaperManager.Stub(), android.app.IWallpaperManager by unsupported<android.app.IWallpaperManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val colorsCallbacks = LinkedHashMap<IBinder, IWallpaperManagerCallback>()
 

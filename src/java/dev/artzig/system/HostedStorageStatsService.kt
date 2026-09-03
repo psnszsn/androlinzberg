@@ -21,7 +21,9 @@ import java.io.File
  * cache), exactly the directories the hosted package manager assigns. Quota and
  * reserved space are not supported, as on a device without project quotas.
  */
-class HostedStorageStatsService : UnsupportedStorageStatsManager() {
+class HostedStorageStatsService : android.app.usage.IStorageStatsManager.Stub(), android.app.usage.IStorageStatsManager by unsupported<android.app.usage.IStorageStatsManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     @Volatile var packageService: HostedPackageManagerService? = null
 
     private fun enforceCallerIsSystemOrSameApp(packageName: String?, callingPackage: String?) {

@@ -18,7 +18,9 @@ import android.provider.Settings
  * capped at the AOSP default quota of files; nothing else in the session reads
  * them, so the ENTRY_ADDED broadcast is not sent.
  */
-class HostedDropBoxManagerService(private val context: Context, private val permissions: HostedPermissions) : UnsupportedDropBoxManagerService() {
+class HostedDropBoxManagerService(private val context: Context, private val permissions: HostedPermissions) : com.android.internal.os.IDropBoxManagerService.Stub(), com.android.internal.os.IDropBoxManagerService by unsupported<com.android.internal.os.IDropBoxManagerService>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private class Record(val tag: String, val time: Long, val data: ByteArray, val flags: Int)
 
     private val lock = Any()

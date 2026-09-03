@@ -38,7 +38,9 @@ import com.android.internal.telephony.ISatelliteStateChangeListener
  * the registered callbacks. The phone count is TelephonyManager's active modem
  * count, as in AOSP.
  */
-class HostedTelephonyRegistry(private val permissions: HostedTelephonyPermissions, private val numPhones: Int) : UnsupportedTelephonyRegistry() {
+class HostedTelephonyRegistry(private val permissions: HostedTelephonyPermissions, private val numPhones: Int) : com.android.internal.telephony.ITelephonyRegistry.Stub(), com.android.internal.telephony.ITelephonyRegistry by unsupported<com.android.internal.telephony.ITelephonyRegistry>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private class Record(
         val binder: IBinder,
         val callback: IPhoneStateListener,

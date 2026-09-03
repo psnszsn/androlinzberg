@@ -13,7 +13,9 @@ import android.telephony.ImsiEncryptionInfo
  * line numbers keep the phone-number gate, the rest keep READ_PHONE_STATE or the
  * privileged permission as AOSP annotates them.
  */
-class HostedPhoneSubInfoService(private val permissions: HostedTelephonyPermissions) : UnsupportedPhoneSubInfo() {
+class HostedPhoneSubInfoService(private val permissions: HostedTelephonyPermissions) : com.android.internal.telephony.IPhoneSubInfo.Stub(), com.android.internal.telephony.IPhoneSubInfo by unsupported<com.android.internal.telephony.IPhoneSubInfo>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private fun identifier(callingPackage: String?, what: String): String? {
         permissions.enforceDeviceIdentifiers(callingPackage, what)
         return null

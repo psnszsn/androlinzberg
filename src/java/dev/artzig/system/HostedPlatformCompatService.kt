@@ -11,7 +11,9 @@ import android.content.pm.ApplicationInfo
  * stock client caching, Binder identity, and permission enforcement. Reporting is observationally
  * irrelevant without statsd; override/configuration operations remain explicitly unsupported.
  */
-class HostedPlatformCompatService : UnsupportedPlatformCompat() {
+class HostedPlatformCompatService : com.android.internal.compat.IPlatformCompat.Stub(), com.android.internal.compat.IPlatformCompat by unsupported<com.android.internal.compat.IPlatformCompat>() {
+    override fun asBinder(): android.os.IBinder = this
+
     override fun reportChange(changeId: Long, appInfo: ApplicationInfo?) {}
 
     override fun reportChangeByPackageName(changeId: Long, packageName: String?, userId: Int) {}

@@ -26,7 +26,9 @@ import com.android.internal.appwidget.IAppWidgetHost
  * and updates from providers have no bound widget to reach. RemoteViews service
  * binding needs a bound widget and stays unserved.
  */
-class HostedAppWidgetService(private val context: Context, private val permissions: HostedPermissions) : UnsupportedAppWidgetService() {
+class HostedAppWidgetService(private val context: Context, private val permissions: HostedPermissions) : com.android.internal.appwidget.IAppWidgetService.Stub(), com.android.internal.appwidget.IAppWidgetService by unsupported<com.android.internal.appwidget.IAppWidgetService>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private class Host(val packageName: String, val hostId: Int) {
         val widgetIds = LinkedHashSet<Int>()
         var listening: IAppWidgetHost? = null

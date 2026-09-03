@@ -35,7 +35,9 @@ class HostedTelecomService(
     private val context: Context,
     private val permissions: HostedTelephonyPermissions,
     private val packages: HostedPackageManagerService,
-) : UnsupportedTelecomService() {
+) : com.android.internal.telecom.ITelecomService.Stub(), com.android.internal.telecom.ITelecomService by unsupported<com.android.internal.telecom.ITelecomService>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val accounts = LinkedHashMap<PhoneAccountHandle, PhoneAccount>()
 

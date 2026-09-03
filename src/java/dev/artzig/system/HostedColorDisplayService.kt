@@ -17,7 +17,9 @@ import java.time.LocalTime
  * CONTROL_DISPLAY_COLOR_TRANSFORMS check and, for the system, record the value
  * so the getters agree with what was set (the AOSP settings round trip).
  */
-class HostedColorDisplayService : UnsupportedColorDisplayManager() {
+class HostedColorDisplayService : android.hardware.display.IColorDisplayManager.Stub(), android.hardware.display.IColorDisplayManager by unsupported<android.hardware.display.IColorDisplayManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private var nightDisplayActivated = false
     private var nightDisplayTemperature = DEFAULT_NIGHT_DISPLAY_TEMPERATURE

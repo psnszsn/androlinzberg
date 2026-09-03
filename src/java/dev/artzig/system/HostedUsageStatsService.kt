@@ -24,7 +24,9 @@ import android.os.UserHandle
  * aggregated from those spans over the queried interval. App standby is disabled: every
  * package is `STANDBY_BUCKET_ACTIVE`, nothing is inactive.
  */
-class HostedUsageStatsService : UnsupportedUsageStatsManager() {
+class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), android.app.usage.IUsageStatsManager by unsupported<android.app.usage.IUsageStatsManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     @Volatile var packageService: HostedPackageManagerService? = null
 
     private class Event(val packageName: String, val type: Int, val timeStamp: Long)

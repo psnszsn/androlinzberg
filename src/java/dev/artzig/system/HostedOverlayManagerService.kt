@@ -15,7 +15,9 @@ import android.content.om.OverlayInfo
  * overlay, as `OverlayManagerServiceImpl` does. Fabricated (self-targeting)
  * overlay transactions need idmap2, which is not hosted, so `commit` stays unserved.
  */
-class HostedOverlayManagerService(private val permissions: HostedPermissions) : UnsupportedOverlayManager() {
+class HostedOverlayManagerService(private val permissions: HostedPermissions) : android.content.om.IOverlayManager.Stub(), android.content.om.IOverlayManager by unsupported<android.content.om.IOverlayManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private fun enforceChange(what: String) = permissions.enforce(Manifest.permission.CHANGE_OVERLAY_PACKAGES, what)
 
     override fun getAllOverlays(userId: Int): MutableMap<String?, MutableList<OverlayInfo?>?>? = HashMap()

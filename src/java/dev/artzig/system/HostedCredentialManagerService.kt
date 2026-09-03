@@ -32,7 +32,9 @@ import android.os.RemoteException
  * itself is enabled (the DeviceConfig default). Each call hands back a
  * cancellation transport as AOSP does.
  */
-class HostedCredentialManagerService(private val permissions: HostedPermissions) : UnsupportedCredentialManager() {
+class HostedCredentialManagerService(private val permissions: HostedPermissions) : android.credentials.ICredentialManager.Stub(), android.credentials.ICredentialManager by unsupported<android.credentials.ICredentialManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private fun transport(): ICancellationSignal = CancellationSignal.createTransport()
 
     override fun executeGetCredential(request: GetCredentialRequest?, callback: IGetCredentialCallback?, callingPackage: String?): ICancellationSignal? {

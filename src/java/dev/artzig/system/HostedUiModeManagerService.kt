@@ -28,7 +28,9 @@ class HostedUiModeManagerService(
     private val context: Context,
     private val activityManager: HostedActivityManagerService,
     private val permissions: HostedPermissions,
-) : UnsupportedUiModeManager() {
+) : android.app.IUiModeManager.Stub(), android.app.IUiModeManager by unsupported<android.app.IUiModeManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     /** Per-uid night modes (a package's processes share its uid; AOSP keys the override by package). */
     private val packageNightModes = HashMap<Int, Int>()

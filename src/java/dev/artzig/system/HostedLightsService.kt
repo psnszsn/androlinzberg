@@ -16,7 +16,9 @@ import android.os.Process
  * `setLightStates` keep their AOSP argument checks, and the
  * CONTROL_DEVICE_LIGHTS permission enforced on every call.
  */
-class HostedLightsService : UnsupportedLightsManager() {
+class HostedLightsService : android.hardware.lights.ILightsManager.Stub(), android.hardware.lights.ILightsManager by unsupported<android.hardware.lights.ILightsManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val sessions = LinkedHashMap<IBinder, Int>()
 

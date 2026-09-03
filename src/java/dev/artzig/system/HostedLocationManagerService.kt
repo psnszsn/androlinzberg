@@ -29,7 +29,9 @@ import android.util.Log
  * listener and PendingIntent registrations are kept (and never delivered),
  * GNSS capabilities are empty and mock providers keep the MOCK_LOCATION gate.
  */
-class HostedLocationManagerService : UnsupportedLocationManager() {
+class HostedLocationManagerService : android.location.ILocationManager.Stub(), android.location.ILocationManager by unsupported<android.location.ILocationManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     @Volatile var packageService: HostedPackageManagerService? = null
 
     private val lock = Any()

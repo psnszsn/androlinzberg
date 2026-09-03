@@ -4,6 +4,7 @@ package dev.artzig.system
 
 import android.view.inputmethod.InputMethodInfo
 import android.view.inputmethod.InputMethodSubtype
+import com.android.internal.inputmethod.IImeTracker
 import com.android.internal.inputmethod.InputMethodInfoSafeList
 import com.android.internal.view.IInputMethodManager
 
@@ -17,8 +18,26 @@ import com.android.internal.view.IInputMethodManager
  */
 internal class HostedInputMethodManagerService :
     IInputMethodManager.Stub(),
-    IInputMethodManager by IInputMethodManager.Default() {
+    IInputMethodManager by unsupported<IInputMethodManager>() {
     override fun asBinder(): android.os.IBinder = this
+
+    /**
+     * `InputMethodManager.createRealInstance` registers every client before it
+     * performs any query. AOSP IMMS retains this tuple in ClientController;
+     * with no IME sessions to bind, validating the required endpoints is the
+     * only observable work the hosted service needs.
+     */
+    override fun addClient(
+        client: com.android.internal.inputmethod.IInputMethodClient?,
+        inputmethod: com.android.internal.inputmethod.IRemoteInputConnection?,
+        untrustedDisplayId: Int,
+    ) {
+        requireNotNull(client) { "client must not be null" }
+        requireNotNull(inputmethod) { "fallbackInputConnection must not be null" }
+    }
+
+    /** No IME process exists to receive or report visibility transitions. */
+    override fun getImeTrackerService(): IImeTracker? = null
 
     override fun getInputMethodList(userId: Int, directBootAwareness: Int): InputMethodInfoSafeList =
         InputMethodInfoSafeList.empty()

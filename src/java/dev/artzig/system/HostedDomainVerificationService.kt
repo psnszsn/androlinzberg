@@ -25,7 +25,9 @@ import android.os.UserHandle
 class HostedDomainVerificationService(
     private val packages: HostedPackageManagerService,
     private val permissions: HostedPermissions,
-) : UnsupportedDomainVerificationManager() {
+) : android.content.pm.verify.domain.IDomainVerificationManager.Stub(), android.content.pm.verify.domain.IDomainVerificationManager by unsupported<android.content.pm.verify.domain.IDomainVerificationManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val linkHandlingAllowed = HashMap<String, Boolean>()
     private val filterGroups = HashMap<String, Bundle>()

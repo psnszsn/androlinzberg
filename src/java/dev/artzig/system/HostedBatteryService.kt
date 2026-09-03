@@ -49,7 +49,11 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
     private var sequence = 0
     private val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "BatteryService").apply { isDaemon = true } }
 
-    val registrar: android.os.IBatteryPropertiesRegistrar.Stub = object : UnsupportedBatteryPropertiesRegistrar() {
+    val registrar: android.os.IBatteryPropertiesRegistrar.Stub = object :
+        android.os.IBatteryPropertiesRegistrar.Stub(),
+        android.os.IBatteryPropertiesRegistrar by unsupported<android.os.IBatteryPropertiesRegistrar>() {
+        override fun asBinder(): android.os.IBinder = this
+
         /** BatteryPropertiesRegistrar.getProperty: 0 on success, -1 for a property the supply has not got. */
         override fun getProperty(id: Int, prop: BatteryProperty?): Int {
             prop ?: return -1

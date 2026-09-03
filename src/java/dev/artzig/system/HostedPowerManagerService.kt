@@ -27,7 +27,9 @@ import java.io.PrintWriter
  * low-power standby, no ambient display. Sleep, wake, reboot and shutdown stay system-only
  * (DEVICE_POWER / REBOOT) and are no-ops for the system.
  */
-class HostedPowerManagerService : UnsupportedPowerManager() {
+class HostedPowerManagerService : android.os.IPowerManager.Stub(), android.os.IPowerManager by unsupported<android.os.IPowerManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     /** PowerManagerService.WakeLock. */
     private inner class WakeLock(
         val lock: IBinder,
@@ -256,7 +258,9 @@ class HostedPowerManagerService : UnsupportedPowerManager() {
  * for a device whose thermal HAL reports nothing: no temperatures, no cooling devices,
  * status NONE, unknown headroom, listeners accepted and never called.
  */
-class HostedThermalService : UnsupportedThermalService() {
+class HostedThermalService : android.os.IThermalService.Stub(), android.os.IThermalService by unsupported<android.os.IThermalService>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val eventListeners = ArrayList<android.os.IThermalEventListener>()
     private val statusListeners = ArrayList<android.os.IThermalStatusListener>()

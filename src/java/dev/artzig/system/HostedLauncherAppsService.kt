@@ -47,7 +47,9 @@ class HostedLauncherAppsService(
     private val context: Context,
     private val packages: HostedPackageManagerService,
     private val permissions: HostedPermissions,
-) : UnsupportedLauncherApps() {
+) : android.content.pm.ILauncherApps.Stub(), android.content.pm.ILauncherApps by unsupported<android.content.pm.ILauncherApps>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     private val listeners = LinkedHashMap<IBinder, IOnAppsChangedListener>()
 

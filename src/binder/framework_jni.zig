@@ -784,6 +784,96 @@ fn registerClassLoaderFactory(env: JNIEnvPtr) !void {
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }
 
+// ---------------------------------------------------------- android.util.Log
+// Host sink for the verbatim AOSP Log class. Android normally writes through
+// logd; the island's AOSP liblog writes the same record to stderr, while the
+// diagnostic callback preserves the structured issue journal until that test
+// seam moves out of android.*.
+const LogIsLoggableFn = *const fn (priority: c_int, tag: [*c]const u8, default_priority: c_int) callconv(.c) c_int;
+const LogBufWriteFn = *const fn (buffer_id: c_int, priority: c_int, tag: [*c]const u8, message: [*c]const u8) callconv(.c) c_int;
+
+const android_log_info: c_int = 4;
+const log_id_max: jni.jint = 8;
+const logger_entry_max_payload: jni.jint = 4068;
+
+var g_log_diagnostics: jni.jclass = null;
+var g_record_log: jni.jmethodID = null;
+var g_platform_library: std.DynLib = undefined;
+var g_log_is_loggable: LogIsLoggableFn = undefined;
+var g_log_buf_write: LogBufWriteFn = undefined;
+
+fn logIsLoggable(env: JNIEnvPtr, _: jni.jclass, tag_object: jni.jstring, level: jni.jint) callconv(.c) jni.jboolean {
+    if (tag_object == null) return jni.JNI_FALSE;
+    const tag = env.*.*.GetStringUTFChars.?(env, tag_object, null) orelse return jni.JNI_FALSE;
+    defer env.*.*.ReleaseStringUTFChars.?(env, tag_object, tag);
+    return if (g_log_is_loggable(level, tag, android_log_info) != 0) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+
+fn logPrintln(
+    env: JNIEnvPtr,
+    _: jni.jclass,
+    buffer_id: jni.jint,
+    priority: jni.jint,
+    tag_object: jni.jstring,
+    message_object: jni.jstring,
+) callconv(.c) jni.jint {
+    if (message_object == null) {
+        throwNamed(env, "java/lang/NullPointerException", "println needs a message");
+        return -1;
+    }
+    if (buffer_id < 0 or buffer_id >= log_id_max) {
+        throwNamed(env, "java/lang/NullPointerException", "bad bufID");
+        return -1;
+    }
+
+    const tag = if (tag_object == null)
+        null
+    else
+        env.*.*.GetStringUTFChars.?(env, tag_object, null) orelse return -1;
+    defer if (tag != null) env.*.*.ReleaseStringUTFChars.?(env, tag_object, tag);
+
+    const message = env.*.*.GetStringUTFChars.?(env, message_object, null) orelse return -1;
+    defer env.*.*.ReleaseStringUTFChars.?(env, message_object, message);
+
+    env.*.*.CallStaticVoidMethod.?(env, g_log_diagnostics, g_record_log, priority, tag_object, message_object);
+    if (env.*.*.ExceptionCheck.?(env) == jni.JNI_TRUE) env.*.*.ExceptionClear.?(env);
+    return g_log_buf_write(buffer_id, priority, tag, message);
+}
+
+fn logLoggerEntryMaxPayload(_: JNIEnvPtr, _: jni.jclass) callconv(.c) jni.jint {
+    return logger_entry_max_payload;
+}
+
+fn registerLog(env: JNIEnvPtr) !void {
+    // libbinder_ndk is also used by standalone native clients. Resolve liblog
+    // only when an ART process registers framework natives; the launcher has
+    // already loaded the platform island by this point.
+    g_platform_library = try std.DynLib.open("libandroid_platform.so");
+    g_log_is_loggable = g_platform_library.lookup(LogIsLoggableFn, "__android_log_is_loggable") orelse
+        return error.NoMethod;
+    g_log_buf_write = g_platform_library.lookup(LogBufWriteFn, "__android_log_buf_write") orelse
+        return error.NoMethod;
+
+    const diagnostics = env.*.*.FindClass.?(env, "android/util/ArtzigTestDiagnostics") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, diagnostics);
+    g_log_diagnostics = @ptrCast(env.*.*.NewGlobalRef.?(env, diagnostics) orelse return error.NoClass);
+    g_record_log = env.*.*.GetStaticMethodID.?(
+        env,
+        g_log_diagnostics,
+        "recordLog",
+        "(ILjava/lang/String;Ljava/lang/String;)V",
+    ) orelse return error.NoMethod;
+
+    const cls = env.*.*.FindClass.?(env, "android/util/Log") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method("isLoggable", "(Ljava/lang/String;I)Z", &logIsLoggable),
+        method("println_native", "(IILjava/lang/String;Ljava/lang/String;)I", &logPrintln),
+        method("logger_entry_max_payload_native", "()I", &logLoggerEntryMaxPayload),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
+
 // ------------------------------------------------------------- registration
 
 fn method(name: [*:0]const u8, signature: [*:0]const u8, ptr: anytype) jni.JNINativeMethod {
@@ -823,6 +913,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerTrace(env) catch return -1;
     registerSystemClock(env) catch return -1;
     registerClassLoaderFactory(env) catch return -1;
+    registerLog(env) catch return -1;
     // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
     // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;

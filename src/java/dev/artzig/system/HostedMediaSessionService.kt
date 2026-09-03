@@ -41,7 +41,9 @@ import android.view.KeyEvent
  * as in AOSP: the system, or a package holding MEDIA_CONTENT_CONTROL / an enabled
  * notification listener, neither of which exists for a hosted app.
  */
-class HostedMediaSessionService : UnsupportedSessionManager() {
+class HostedMediaSessionService : android.media.session.ISessionManager.Stub(), android.media.session.ISessionManager by unsupported<android.media.session.ISessionManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     @Volatile var packageService: HostedPackageManagerService? = null
 
     private val lock = Any()

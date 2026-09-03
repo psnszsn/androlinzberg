@@ -28,7 +28,9 @@ import android.util.Log
  * "nothing configured" values. Anything else stays unsupported at the
  * service boundary.
  */
-class HostedNotificationManagerService : UnsupportedNotificationManager() {
+class HostedNotificationManagerService : android.app.INotificationManager.Stub(), android.app.INotificationManager by unsupported<android.app.INotificationManager>() {
+    override fun asBinder(): android.os.IBinder = this
+
     /** The package manager resolves uids to packages (NMS.checkCallerIsSameApp). */
     @Volatile var packageService: HostedPackageManagerService? = null
 

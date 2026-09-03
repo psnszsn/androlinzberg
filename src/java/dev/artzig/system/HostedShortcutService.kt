@@ -25,7 +25,9 @@ import android.util.Log
  * pin-request surface answering "unsupported" because no default launcher exists.
  * Shortcuts live for the session; the on-disk shortcut XML is not written.
  */
-class HostedShortcutService(private val context: Context, private val permissions: HostedPermissions) : UnsupportedShortcutService() {
+class HostedShortcutService(private val context: Context, private val permissions: HostedPermissions) : android.content.pm.IShortcutService.Stub(), android.content.pm.IShortcutService by unsupported<android.content.pm.IShortcutService>() {
+    override fun asBinder(): android.os.IBinder = this
+
     private val lock = Any()
     /** package -> id -> shortcut, in insertion order. */
     private val packages = HashMap<String, LinkedHashMap<String, ShortcutInfo>>()
