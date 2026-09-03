@@ -32,7 +32,6 @@ framework_patches = tuple(
         (12, "-AssetManager-env-overridable-framework-res.apk-path-.patch"),
         (13, "-host-hwui-view-uncommitted-working-tree-changes-pres.patch"),
         (14, "-fixup-drop-duplicated-Bitmap-compress-declaration-fr.patch"),
-        (15, "-ServiceManager-process-local-service-overlay-for-the.patch"),
         (16, "-MessageQueue-host-pump-slice-for-the-Wayland-owner-l.patch"),
         (17, "-Process-broker-assigned-uid-no-zygote-on-the-host-ar.patch"),
         (19, "-Environment-session-data-root-from-ARTZIG_DATA_DIR-o.patch"),

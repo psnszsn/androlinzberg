@@ -362,14 +362,6 @@ internal object FrameworkModuleSmoke {
     private fun testHostedSystemServices() {
         run {
             val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
-            android.os.ServiceManager.addProcessLocalService(
-                Context.DISPLAY_SERVICE,
-                dev.artzig.system.HostedDisplayManagerService(),
-            )
-            android.os.ServiceManager.addProcessLocalService(
-                Context.INPUT_SERVICE,
-                dev.artzig.system.HostedInputManagerService(),
-            )
             val dm = checkNotNull(context.getSystemService(android.hardware.display.DisplayManager::class.java))
             check(dm === context.getSystemService(Context.DISPLAY_SERVICE)) { "display manager not cached" }
             check(dm.displays.size == 1) { "expected one display" }

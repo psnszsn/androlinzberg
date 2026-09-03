@@ -22,7 +22,7 @@ import android.view.ArtzigDisplay
  * display service the unchanged AOSP DisplayManagerGlobal client talks to.
  */
 object HostContexts {
-    private var displayServiceInstalled = false
+    private var processServiceCacheInitialized = false
 
     /** The process's system context over the given window geometry (theme applied when not 0). */
     @JvmStatic
@@ -41,12 +41,16 @@ object HostContexts {
         // ZygoteInit preloads the system font map before any process draws text.
         android.graphics.Typeface.loadPreinstalledSystemFontMap()
         synchronized(this) {
-            if (!displayServiceInstalled) {
-                android.os.ServiceManager.addProcessLocalService(
-                    Context.DISPLAY_SERVICE,
-                    dev.artzig.system.HostedDisplayManagerService(),
+            if (!processServiceCacheInitialized) {
+                // AOSP ActivityThread.ApplicationThread.bindApplication seeds
+                // process-specific Binder references through this stock API.
+                android.os.ServiceManager.initServiceCache(
+                    hashMapOf<String, android.os.IBinder>(
+                        Context.DISPLAY_SERVICE to dev.artzig.system.HostedDisplayManagerService(),
+                        Context.INPUT_SERVICE to dev.artzig.system.HostedInputManagerService(),
+                    ),
                 )
-                displayServiceInstalled = true
+                processServiceCacheInitialized = true
             }
         }
         val thread = ActivityThread.systemMain()

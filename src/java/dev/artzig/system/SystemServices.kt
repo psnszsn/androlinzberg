@@ -67,10 +67,6 @@ internal object SystemServices {
                 }
             },
         )
-        // The system process has its own (headless) logical display and no input
-        // devices beyond the virtual keyboard; both names are per-process.
-        android.os.ServiceManager.addProcessLocalService(Context.DISPLAY_SERVICE, HostedDisplayManagerService())
-        android.os.ServiceManager.addProcessLocalService(Context.INPUT_SERVICE, HostedInputManagerService())
         android.os.ServiceManager.addService(Context.INPUT_METHOD_SERVICE, HostedInputMethodManagerService())
         val manager = SystemServiceManager(context)
         LocalServices.addService(SystemServiceManager::class.java, manager)

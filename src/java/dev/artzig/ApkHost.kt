@@ -370,17 +370,6 @@ public final class ApkHost {
             // call sites. sClassLoader holds the APK loader for that routing.
             Log.i(TAG, "APK dexopt status: " + apkDexoptStatus())
 
-            // Per-process display and input services: real Binder objects the
-            // unchanged AOSP DisplayManagerGlobal / InputManagerGlobal clients
-            // resolve through ServiceManager.
-            android.os.ServiceManager.addProcessLocalService(
-                android.content.Context.INPUT_SERVICE,
-                dev.artzig.system.HostedInputManagerService(),
-            )
-            android.os.ServiceManager.addProcessLocalService(
-                android.content.Context.DISPLAY_SERVICE,
-                dev.artzig.system.HostedDisplayManagerService(),
-            )
             // A resizable Activity starts with the current window bounds; a fixed
             // manifest orientation constrains those bounds before onCreate.
             val initialOrientation: Int =
@@ -523,17 +512,6 @@ public final class ApkHost {
             // The real AOSP Parcel has no default-classloader hook; Parcelables
             // are read with an explicit loader (Bundle.setClassLoader) at the
             // call sites. sClassLoader holds the APK loader for that routing.
-            // Same per-process display/input Binder services as init(): the
-            // AOSP manager clients resolve them through ServiceManager even in
-            // a headless service host.
-            android.os.ServiceManager.addProcessLocalService(
-                android.content.Context.INPUT_SERVICE,
-                dev.artzig.system.HostedInputManagerService(),
-            )
-            android.os.ServiceManager.addProcessLocalService(
-                android.content.Context.DISPLAY_SERVICE,
-                dev.artzig.system.HostedDisplayManagerService(),
-            )
             HostContexts.bootstrap(frameworkRes)
             applyWindowConfiguration(640, 480, 120)
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
