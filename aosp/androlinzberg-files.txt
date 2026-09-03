@@ -1666,6 +1666,7 @@ F aosp frameworks/base/services/core/java/com/android/server/contentcapture/Cont
 F aosp frameworks/base/core/java/com/android/internal/inputmethod/ImeTracingServerImpl.java
 F aosp frameworks/base/core/java/com/android/internal/util/TraceBuffer.java
 F aosp frameworks/base/core/java/android/provider/Downloads.java
+F aosp frameworks/base/core/java/android/net/http/X509TrustManagerExtensions.java
 F aosp frameworks/base/core/java/android/security/net/config/ApplicationConfig.java
 F aosp frameworks/base/core/java/android/security/net/config/CertificateSource.java
 F aosp frameworks/base/core/java/android/security/net/config/CertificatesEntryRef.java

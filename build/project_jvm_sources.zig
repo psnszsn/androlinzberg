@@ -112,7 +112,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/net/QosSessionAttributes.java",
     "src/framework-stubs/android/net/TetheringManager.java",
     "src/framework-stubs/android/net/TrafficStats.java",
-    "src/framework-stubs/android/net/http/X509TrustManagerExtensions.java",
     "src/framework-stubs/android/net/ipsec/ike/SaProposal.java",
     "src/framework-stubs/android/net/wifi/SoftApConfiguration.java",
     "src/framework-stubs/android/net/wifi/WifiManager.java",

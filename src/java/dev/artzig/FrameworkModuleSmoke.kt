@@ -52,6 +52,7 @@ import android.service.contentcapture.ContentCaptureService
 import android.service.textclassifier.TextClassifierService
 import android.service.voice.VisualQueryDetectedResult
 import android.net.Uri
+import android.net.http.X509TrustManagerExtensions
 import android.net.nsd.HostedNsdBackends
 import android.net.nsd.InMemoryHostedNsdBackend
 import android.net.nsd.NsdManager
@@ -97,6 +98,7 @@ import java.lang.reflect.Proxy
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.atomic.AtomicInteger
+import javax.net.ssl.X509TrustManager
 
 /** Behavioral smoke tests whose surface is the hosted framework modules. */
 internal object FrameworkModuleSmoke {
@@ -322,6 +324,21 @@ internal object FrameworkModuleSmoke {
         check(service.className ==
             "android.security.net.config.RootTrustManagerFactorySpi")
         provider.javaClass.classLoader.loadClass(service.className)
+
+        val plainTrustManager = object : X509TrustManager {
+            override fun getAcceptedIssuers() = emptyArray<java.security.cert.X509Certificate>()
+            override fun checkClientTrusted(
+                chain: Array<java.security.cert.X509Certificate>,
+                authType: String,
+            ) = Unit
+            override fun checkServerTrusted(
+                chain: Array<java.security.cert.X509Certificate>,
+                authType: String,
+            ) = Unit
+        }
+        check(runCatching {
+            X509TrustManagerExtensions(plainTrustManager)
+        }.exceptionOrNull() is IllegalArgumentException)
     }
 
     private fun testHostedPermissionGrants() {

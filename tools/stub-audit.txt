@@ -12,7 +12,7 @@
 # fails when more than `pending-budget` entries are not survivors; lower the budget as
 # stubs are replaced, never raise it.
 
-# pending-budget: 107
+# pending-budget: 106
 
 src/framework-stubs/android/app/ActionBar.java|replaceable|ui|frameworks/base/core/java/android/app/ActionBar.java (1 to add), not vendored
 src/framework-stubs/android/app/ActivityManager.java|blocked|activity|frameworks/base/core/java/android/app/ActivityManager.java (65 to add), not vendored; android.app.backup.BackupDataInput: JNI natives (via BackupDataInput < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.app.backup.BackupDataOutput: JNI natives (via BackupDataOutput < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.app.backup.FullBackup: JNI natives (via FullBackup < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.service.procstats.PackageAssociationProcessStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageAssociationProcessStatsProto < AssociationState < ProcessStats < ActivityManager); android.service.procstats.PackageAssociationSourceProcessStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageAssociationSourceProcessStatsProto < AssociationState < ProcessStats < ActivityManager); android.service.procstats.PackageServiceOperationStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceOperationStatsProto < ServiceState < ProcessStats < ActivityManager)
@@ -125,7 +125,6 @@ src/framework-stubs/android/net/ProxyInfo.java|no-aosp-source|survivor: Connecti
 src/framework-stubs/android/net/QosSessionAttributes.java|no-aosp-source|survivor: Connectivity module tree not vendored|no class with this name in the checkout
 src/framework-stubs/android/net/TetheringManager.java|no-aosp-source|survivor: Tethering module tree not vendored|no class with this name in the checkout
 src/framework-stubs/android/net/TrafficStats.java|no-aosp-source|survivor: Connectivity module tree not vendored|no class with this name in the checkout
-src/framework-stubs/android/net/http/X509TrustManagerExtensions.java|replaceable|connectivity|frameworks/base/core/java/android/net/http/X509TrustManagerExtensions.java (1 to add), not vendored
 src/framework-stubs/android/net/ipsec/ike/SaProposal.java|no-aosp-source|survivor: IPsec module tree (packages/modules/IPsec) not vendored|no class with this name in the checkout
 src/framework-stubs/android/net/wifi/SoftApConfiguration.java|no-aosp-source|survivor: Wifi module tree not vendored|no class with this name in the checkout
 src/framework-stubs/android/net/wifi/WifiManager.java|no-aosp-source|survivor: Wifi module tree not vendored|no class with this name in the checkout

@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 107 (budget 107). Survivors: 120. Total: 227.
+Pending: 106 (budget 106). Survivors: 120. Total: 226.
 
 ## Survivors
 
@@ -211,7 +211,6 @@ Pending: 107 (budget 107). Survivors: 120. Total: 227.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/net/NetworkScoreManager.java` | blocked | frameworks/base/core/java/android/net/NetworkScoreManager.java (11 to add), not vendored; android.net.wifi.ScanResult: no source in the checkout (via ScanResult < NetworkKey < NetworkScoreManager); android.net.wifi.WifiInfo: no source in the checkout (via WifiInfo < NetworkKey < NetworkScoreManager) |
-| `android/net/http/X509TrustManagerExtensions.java` | replaceable | frameworks/base/core/java/android/net/http/X509TrustManagerExtensions.java (1 to add), not vendored |
 
 ### devicepolicy
 
