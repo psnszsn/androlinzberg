@@ -1663,6 +1663,8 @@ F aosp frameworks/base/core/java/android/view/contentcapture/ContentCaptureCondi
 F aosp frameworks/base/core/java/android/view/contentprotection/ContentProtectionEventProcessor.java
 F aosp frameworks/base/core/java/android/view/contentprotection/ContentProtectionUtils.java
 F aosp frameworks/base/services/core/java/com/android/server/contentcapture/ContentCaptureManagerInternal.java
+F aosp frameworks/base/core/java/com/android/internal/inputmethod/ImeTracingServerImpl.java
+F aosp frameworks/base/core/java/com/android/internal/util/TraceBuffer.java
 F aosp frameworks/base/core/java/android/provider/DocumentsContract.java
 F aosp frameworks/base/core/java/android/provider/DocumentsProvider.java
 F aosp frameworks/base/media/java/android/media/ExifInterface.java

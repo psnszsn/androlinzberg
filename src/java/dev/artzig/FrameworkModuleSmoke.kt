@@ -54,6 +54,7 @@ import android.net.nsd.NsdServiceInfo
 import android.opengl.GLSurfaceView
 import android.util.Rational
 import android.util.SparseArray
+import android.util.proto.ProtoOutputStream
 import android.view.Choreographer
 import android.view.ArtzigVideoLayer
 import android.view.contentcapture.ContentCaptureEvent
@@ -82,6 +83,7 @@ import android.widget.FrameLayout
 import android.widget.EditText
 import android.widget.SeekBar
 import com.android.internal.util.RingBuffer
+import com.android.internal.util.TraceBuffer
 import java.io.ByteArrayInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -106,6 +108,7 @@ internal object FrameworkModuleSmoke {
         testAccessibilityHtmlFiltering()
         testFrameworkServiceValueContracts()
         testContentCaptureContracts()
+        testTraceBufferContracts()
         testIntentTypedExtras()
         testRemoteActionContract()
         testPictureInPictureContracts()
@@ -258,6 +261,24 @@ internal object FrameworkModuleSmoke {
         check(flushedEvents?.all {
             it.viewNode?.textIdEntry == "dev.artzig.capture"
         } == true)
+    }
+
+    private fun testTraceBufferContracts() {
+        val first = ProtoOutputStream().apply { write(0x10500000001L, 7) }
+        val second = ProtoOutputStream().apply { write(0x10500000001L, 11) }
+        val firstBytes = first.bytes
+        val secondBytes = second.bytes
+        val trace = TraceBuffer<ProtoOutputStream, ProtoOutputStream, ProtoOutputStream>(
+            firstBytes.size + 1,
+        )
+        trace.add(first)
+        check(trace.contains(firstBytes))
+        trace.add(second)
+        check(trace.size() == 1)
+        check(!trace.contains(firstBytes))
+        check(trace.contains(secondBytes))
+        trace.resetBuffer()
+        check(trace.size() == 0)
     }
 
     private fun testHostedPermissionGrants() {

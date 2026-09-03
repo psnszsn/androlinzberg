@@ -190,7 +190,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/com/android/internal/app/IBatteryStats.java",
     "src/framework-stubs/com/android/internal/content/NativeLibraryHelper.java",
     "src/framework-stubs/com/android/internal/inputmethod/ImeTracingPerfettoImpl.java",
-    "src/framework-stubs/com/android/internal/inputmethod/ImeTracingServerImpl.java",
     "src/framework-stubs/com/android/internal/jank/InteractionJankMonitor.java",
     "src/framework-stubs/com/android/internal/os/ApplicationSharedMemory.java",
     "src/framework-stubs/com/android/internal/os/BinderCallsStats.java",

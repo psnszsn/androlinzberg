@@ -143,7 +143,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/com/android/internal/policy", .{ .max_depth = 1, .not_names = &.{ "TransitionAnimation.java", "PhoneFallbackEventHandler.java", "FoldLockSettingsObserver.java", "ForceShowNavBarSettingsObserver.java", "GestureNavigationSettingsObserver.java", "AttributeCache.java" } });
     try c.add("$FB/core/java/com/android/internal/view", .{ .max_depth = 1 });
     try c.add("$FB/core/java/com/android/internal/view/menu", .{});
-    try c.add("$FB/core/java/com/android/internal/inputmethod", .{ .max_depth = 1, .not_names = &.{ "ImeTracingPerfettoImpl.java", "ImeTracingServerImpl.java" } });
+    try c.add("$FB/core/java/com/android/internal/inputmethod", .{ .max_depth = 1, .not_names = &.{"ImeTracingPerfettoImpl.java"} });
     try c.add("$FB/core/java/com/android/internal/protolog/common", .{});
     try c.file("$FB/core/java/com/android/internal/protolog/ProtoLogGroup.java");
     try c.add("$FB/core/java/com/android/internal/infra", .{ .max_depth = 1, .not_names = &.{ "AbstractRemoteService.java", "ServiceConnector.java", "AbstractMultiplePendingRequestsRemoteService.java", "AbstractSinglePendingRequestRemoteService.java" } });
@@ -297,6 +297,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/view/contentprotection/ContentProtectionEventProcessor.java");
     try c.file("$CJ/android/view/contentprotection/ContentProtectionUtils.java");
     try c.file("$FB/services/core/java/com/android/server/contentcapture/ContentCaptureManagerInternal.java");
+    try c.file("$CJ/com/android/internal/util/TraceBuffer.java");
     try c.file("$CJ/android/text/method/OffsetMapping.java");
     try c.file("$CJ/android/util/TimeFormatException.java");
     try c.file("$CJ/android/util/MergedConfiguration.java");
