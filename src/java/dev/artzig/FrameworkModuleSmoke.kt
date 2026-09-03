@@ -381,6 +381,12 @@ internal object FrameworkModuleSmoke {
             )
             check(inputMethods.inputMethodList.isEmpty()) { "host must expose no software IMEs" }
             check(inputMethods.enabledInputMethodList.isEmpty()) { "host must enable no software IMEs" }
+            val permissionEnforcer = checkNotNull(
+                context.getSystemService(android.os.PermissionEnforcer::class.java),
+            )
+            check(permissionEnforcer === context.getSystemService(Context.PERMISSION_ENFORCER_SERVICE)) {
+                "permission enforcer not cached"
+            }
             check(context.getSystemService("no.such.service") == null) { "unknown service must be null" }
         }
         val context = HostContexts.systemContext(

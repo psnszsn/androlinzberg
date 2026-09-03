@@ -268,6 +268,13 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/webkit/WebResourceError.java");
     try c.file("$CJ/android/webkit/WebResourceRequest.java");
     try c.file("$CJ/android/webkit/WebResourceResponse.java");
+    // Stock process-runtime utilities; these depend only on already hosted core APIs.
+    try c.file("$CJ/android/os/CancellationSignalBeamer.java");
+    try c.file("$CJ/android/os/PermissionEnforcer.java");
+    try c.file("$CJ/android/os/SynchronousResultReceiver.java");
+    try c.file("$CJ/com/android/internal/display/BrightnessSynchronizer.java");
+    try c.file("$CJ/com/android/internal/display/BrightnessUtils.java");
+    try c.file("$FB/tools/processors/immutability/src/android/processor/immutability/Immutable.java");
     try c.file("$CJ/android/text/method/OffsetMapping.java");
     try c.file("$CJ/android/util/TimeFormatException.java");
     try c.file("$CJ/android/util/MergedConfiguration.java");

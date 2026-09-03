@@ -353,6 +353,12 @@ public final class SystemServiceRegistry {
             @Override public android.permission.PermissionCheckerManager createService(ContextImpl ctx) throws ServiceNotFoundException {
                 return new android.permission.PermissionCheckerManager(ctx.getOuterContext());
             }});
+        registerService(Context.PERMISSION_ENFORCER_SERVICE, android.os.PermissionEnforcer.class,
+                new CachedServiceFetcher<android.os.PermissionEnforcer>() {
+            @Override public android.os.PermissionEnforcer createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                return new android.os.PermissionEnforcer(ctx.getOuterContext());
+            }});
         registerService(Context.PERMISSION_SERVICE, android.permission.PermissionManager.class, new NewServiceFetcher<android.permission.PermissionManager>() {
             @Override public android.permission.PermissionManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.permission.PermissionManager(); }});
         registerService(Context.PERMISSION_CONTROLLER_SERVICE, android.permission.PermissionControllerManager.class,

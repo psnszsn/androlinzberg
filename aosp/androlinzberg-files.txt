@@ -1620,6 +1620,12 @@ F aosp frameworks/base/core/java/android/webkit/ValueCallback.java
 F aosp frameworks/base/core/java/android/webkit/WebResourceError.java
 F aosp frameworks/base/core/java/android/webkit/WebResourceRequest.java
 F aosp frameworks/base/core/java/android/webkit/WebResourceResponse.java
+F aosp frameworks/base/core/java/android/os/CancellationSignalBeamer.java
+F aosp frameworks/base/core/java/android/os/PermissionEnforcer.java
+F aosp frameworks/base/core/java/android/os/SynchronousResultReceiver.java
+F aosp frameworks/base/core/java/com/android/internal/display/BrightnessSynchronizer.java
+F aosp frameworks/base/core/java/com/android/internal/display/BrightnessUtils.java
+F aosp frameworks/base/tools/processors/immutability/src/android/processor/immutability/Immutable.java
 F aosp frameworks/base/core/java/android/provider/DocumentsContract.java
 F aosp frameworks/base/core/java/android/provider/DocumentsProvider.java
 F aosp frameworks/base/media/java/android/media/ExifInterface.java

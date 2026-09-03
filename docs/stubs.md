@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 130 (budget 130). Survivors: 119. Total: 249.
+Pending: 125 (budget 125). Survivors: 119. Total: 244.
 
 ## Survivors
 
@@ -290,16 +290,16 @@ Pending: 130 (budget 130). Survivors: 119. Total: 249.
 | `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (4 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no s |
 | `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (3 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig) |
 | `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2938 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2937 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
 | `com/android/server/pm/InstallSource.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/InstallSource.java (2 to add), not vendored |
 | `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2936 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2935 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
 | `com/android/server/pm/PackageKeySetData.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/PackageKeySetData.java (1 to add), not vendored |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3041 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3040 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
 | `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (9 to add), not vendored; android.service.pm.PackageProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageProto < PackageSetting) |
 | `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (25 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.c |
 | `com/android/server/pm/UserManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java (4 to add), not vendored |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2953 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2952 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
 | `com/android/server/pm/permission/LegacyPermissionState.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/permission/LegacyPermissionState.java (5 to add), not vendored |
 
 ### permission
@@ -326,12 +326,7 @@ Pending: 130 (budget 130). Survivors: 119. Total: 249.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/CancellationSignalBeamer.java` | replaceable | frameworks/base/core/java/android/os/CancellationSignalBeamer.java (1 to add), not vendored |
 | `android/os/INetworkManagementService.java` | blocked | frameworks/base/core/java/android/os/INetworkManagementService.aidl (4 to add, AIDL interface), not vendored; android.net.RouteInfo: no source in the checkout (via RouteInfo < INetworkManagementService) |
-| `android/os/PermissionEnforcer.java` | replaceable | frameworks/base/core/java/android/os/PermissionEnforcer.java (1 to add), not vendored |
-| `android/os/SynchronousResultReceiver.java` | replaceable | frameworks/base/core/java/android/os/SynchronousResultReceiver.java (1 to add), not vendored |
-| `android/processor/immutability/Immutable.java` | replaceable | frameworks/base/tools/processors/immutability/src/android/processor/immutability/Immutable.java (1 to add), not vendored |
-| `com/android/internal/display/BrightnessSynchronizer.java` | replaceable | frameworks/base/core/java/com/android/internal/display/BrightnessSynchronizer.java (2 to add), not vendored |
 | `com/android/internal/os/BinderCallsStats.java` | blocked | frameworks/base/core/java/com/android/internal/os/BinderCallsStats.java (7 to add), not vendored; com.android.internal.os.BinderLatencyProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via BinderLatencyProto < BinderCallsStats) |
 | `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (208 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPromp |
 | `com/android/modules/utils/build/UnboundedSdkLevel.java` | replaceable | frameworks/libs/modules-utils/java/com/android/modules/utils/build/UnboundedSdkLevel.java (2 to add) |
@@ -361,12 +356,12 @@ Pending: 130 (budget 130). Survivors: 119. Total: 249.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2936 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2935 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
 | `com/android/server/UiThread.java` | replaceable | frameworks/base/services/core/java/com/android/server/UiThread.java (2 to add), not vendored |
 | `com/android/server/clipboard/ArcClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/ArcClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "ArcClipboardMonitor.java" |
 | `com/android/server/clipboard/EmulatorClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/EmulatorClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "EmulatorClipboardMonitor.java" |
 | `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server. |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2936 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2935 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
 
 ### textclassifier
 
