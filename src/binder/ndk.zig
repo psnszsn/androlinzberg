@@ -2577,14 +2577,10 @@ export fn JNI_OnLoad(vm: ?*anyopaque, reserved: ?*anyopaque) callconv(.c) i32 {
 
 const JNIEnvPtr = [*c]jni.JNIEnv;
 
-/// A JNIEnv for the calling thread, attaching it to the VM if necessary (e.g. a
-/// broker reader/dispatch thread that never entered the JVM on its own).
 /// A JNIEnv for the calling thread ([*c], null on failure), attaching it to the
 /// VM if necessary (e.g. a broker reader/dispatch thread that never entered the
-/// JVM on its own). v1 limitation: an attached library thread is not detached
-/// (no DetachCurrentThread) — harmless for the tested path, where the bridge
-/// runs on already-attached JVM threads; the remote-forward path (a library
-/// worker forwarding to Java) would want a pthread-key detach on thread exit.
+/// JVM on its own). Callers that own a native thread must call
+/// detachCurrentThread before that thread exits.
 /// Capture the JavaVM from a live env when the library was dlopen'd without
 /// System.load (no JNI_OnLoad) — the framework-JNI registration entry calls
 /// this first so later attached threads can reach the VM.
@@ -2607,7 +2603,7 @@ pub fn jniEnv() JNIEnvPtr {
 /// library thread that may have run Java (oneway serial workers, the reader
 /// thread, one-shot dispatchers) calls this before exiting: ART aborts a
 /// process whose attached native thread exits without detaching.
-fn detachCurrentThread() void {
+pub fn detachCurrentThread() void {
     const vm: [*c]jni.JavaVM = @ptrCast(@alignCast(g_jvm orelse return));
     var env: ?*anyopaque = null;
     if (vm.*.*.GetEnv.?(vm, &env, jni.JNI_VERSION_1_6) != jni.JNI_OK) return; // not attached

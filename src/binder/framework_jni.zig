@@ -187,6 +187,7 @@ fn callChangeCallbacks(env: JNIEnvPtr) void {
 fn changeCallbackThread() void {
     const env = ndk.jniEnv();
     if (env == null) return;
+    defer ndk.detachCurrentThread();
     callChangeCallbacks(env);
 }
 

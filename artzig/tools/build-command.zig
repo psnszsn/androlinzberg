@@ -149,6 +149,18 @@ fn exitCode(term: std.process.Child.Term) u8 {
     };
 }
 
+fn reportAbnormalTermination(io: Io, term: std.process.Child.Term, command: []const u8) !void {
+    var buffer: [256]u8 = undefined;
+    var writer = Io.Writer.fixed(&buffer);
+    switch (term) {
+        .exited => {},
+        .signal => |signal| try writer.print("build-command: {s} terminated by signal {t}\n", .{ command, signal }),
+        .stopped => |signal| try writer.print("build-command: {s} stopped by signal {t}\n", .{ command, signal }),
+        .unknown => |status| try writer.print("build-command: {s} terminated with status {d}\n", .{ command, status }),
+    }
+    if (writer.end != 0) try Io.File.stderr().writeStreamingAll(io, buffer[0..writer.end]);
+}
+
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const parsed = parse(init.arena.allocator(), args) catch |err| {
@@ -185,6 +197,7 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(result.stderr);
     try Io.File.stdout().writeStreamingAll(init.io, result.stdout);
     try writeFiltered(init.io, Io.File.stderr(), result.stderr, parsed.filters);
+    try reportAbnormalTermination(init.io, result.term, parsed.argv[0]);
     std.process.exit(exitCode(result.term));
 }
 
