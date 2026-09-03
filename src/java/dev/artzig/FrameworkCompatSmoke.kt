@@ -284,6 +284,7 @@ public final class FrameworkCompatSmoke {
             testOsTail()
             testSharedMemory()
             testLocalContentProvider()
+            testStockStrictModeRegistration()
             testAospPackageParser(args.firstOrNull())
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
             testStockEpicenterReveal()
@@ -823,6 +824,23 @@ public final class FrameworkCompatSmoke {
             }
             require(rejectedWireType, "stock proto input rejects a mismatched wire type")
             android.util.Log.i("FrameworkCompatSmoke", "stock proto streams ok")
+        }
+
+        /** Stock StrictMode registers its unsafe-intent callback through the hosted AMS. */
+        @JvmStatic
+        private fun testStockStrictModeRegistration() {
+            require(android.app.ActivityManager.getService() != null, "hosted activity manager is registered")
+            val previous = android.os.StrictMode.getVmPolicy()
+            try {
+                val policy = android.os.StrictMode.VmPolicy.Builder(previous)
+                    .detectUnsafeIntentLaunch()
+                    .build()
+                android.os.StrictMode.setVmPolicy(policy)
+                require(android.os.StrictMode.vmUnsafeIntentLaunchEnabled(), "unsafe-intent detection enabled")
+            } finally {
+                android.os.StrictMode.setVmPolicy(previous)
+            }
+            android.util.Log.i("FrameworkCompatSmoke", "stock StrictMode callback registration ok")
         }
 
         /** Stock validation and code-generation metadata used by AOSP generated value types. */

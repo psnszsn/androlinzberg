@@ -36,7 +36,6 @@ framework_patches = tuple(
         (15, "-ServiceManager-process-local-service-overlay-for-the.patch"),
         (16, "-MessageQueue-host-pump-slice-for-the-Wayland-owner-l.patch"),
         (17, "-Process-broker-assigned-uid-no-zygote-on-the-host-ar.patch"),
-        (18, "-StrictMode-tolerate-a-missing-activity-manager-on-th.patch"),
         (19, "-Environment-session-data-root-from-ARTZIG_DATA_DIR-o.patch"),
         (20, "-ClassLoaderFactory-the-hosted-APK-class-loader-on-th.patch"),
         (21, "-ApplicationLoaders-the-system-class-loader-is-the-ba.patch"),
