@@ -129,8 +129,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/android/accessibilityservice", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/textclassifier", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/textservice", .{ .max_depth = 1 });
-    try c.add("$FB/core/java/android/hardware/input", .{ .max_depth = 1, .not_names = &.{ "Virtual*.java", "InputDeviceSensorManager.java", "InputDeviceLights.java", "InputDeviceLightsManager.java", "InputDeviceVibrator.java", "InputDeviceVibratorManager.java", "InputDeviceBatteryState.java" } });
-    try c.add("$FB/core/java/android/hardware/display", .{ .max_depth = 1, .not_names = &.{"ColorDisplayManager.java"} });
+    try c.add("$FB/core/java/android/hardware/input", .{ .max_depth = 1, .not_names = &.{ "Virtual*.java", "InputDeviceLights.java", "InputDeviceBatteryState.java" } });
+    try c.add("$FB/core/java/android/hardware/display", .{ .max_depth = 1 });
     // Reused javanano runtime for the nano message classes (pure Java, vendored).
     try c.add("$NRT", .{});
     // Reused StatsD-module source: the real StatsEvent encoder (android.util.StatsLog
@@ -857,4 +857,67 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/metrics/PlaybackSession.java");
     try c.file("$FB/media/java/android/media/metrics/RecordingSession.java");
     try c.file("$FB/media/java/android/media/metrics/TranscodingSession.java");
+    // Managers over hosted services, phase 4: the real LocationManager and GNSS value types
+    // over the hosted ILocationManager, the real abstract SensorManager and sensor value
+    // types under the hosted SystemSensorManager seam (src/framework), the real LightsManager
+    // (SystemLightsManager) and ColorDisplayManager over hosted services, and the input-device
+    // lights/sensor/vibrator managers over the hosted input service.
+    try c.file("$CJ/android/location/Geofence.java");
+    try c.file("$CJ/android/location/Location.java");
+    try c.file("$CJ/com/android/internal/listeners/ListenerExecutor.java");
+    try c.file("$CJ/com/android/internal/listeners/ListenerTransport.java");
+    try c.file("$CJ/com/android/internal/listeners/ListenerTransportManager.java");
+    try c.file("$CJ/com/android/internal/util/ConcurrentUtils.java");
+    try c.file("$FB/location/java/android/location/Address.java");
+    try c.file("$FB/location/java/android/location/BatchedLocationCallback.java");
+    try c.file("$FB/location/java/android/location/CorrelationVector.java");
+    try c.file("$FB/location/java/android/location/Criteria.java");
+    try c.file("$FB/location/java/android/location/GnssAntennaInfo.java");
+    try c.file("$FB/location/java/android/location/GnssAutomaticGainControl.java");
+    try c.file("$FB/location/java/android/location/GnssCapabilities.java");
+    try c.file("$FB/location/java/android/location/GnssClock.java");
+    try c.file("$FB/location/java/android/location/GnssExcessPathInfo.java");
+    try c.file("$FB/location/java/android/location/GnssMeasurement.java");
+    try c.file("$FB/location/java/android/location/GnssMeasurementCorrections.java");
+    try c.file("$FB/location/java/android/location/GnssMeasurementRequest.java");
+    try c.file("$FB/location/java/android/location/GnssMeasurementsEvent.java");
+    try c.file("$FB/location/java/android/location/GnssNavigationMessage.java");
+    try c.file("$FB/location/java/android/location/GnssReflectingPlane.java");
+    try c.file("$FB/location/java/android/location/GnssRequest.java");
+    try c.file("$FB/location/java/android/location/GnssSignalType.java");
+    try c.file("$FB/location/java/android/location/GnssSingleSatCorrection.java");
+    try c.file("$FB/location/java/android/location/GnssStatus.java");
+    try c.file("$FB/location/java/android/location/GpsClock.java");
+    try c.file("$FB/location/java/android/location/GpsMeasurement.java");
+    try c.file("$FB/location/java/android/location/GpsMeasurementsEvent.java");
+    try c.file("$FB/location/java/android/location/GpsNavigationMessage.java");
+    try c.file("$FB/location/java/android/location/GpsNavigationMessageEvent.java");
+    try c.file("$FB/location/java/android/location/GpsSatellite.java");
+    try c.file("$FB/location/java/android/location/GpsStatus.java");
+    try c.file("$FB/location/java/android/location/LastLocationRequest.java");
+    try c.file("$FB/location/java/android/location/LocationListener.java");
+    try c.file("$FB/location/java/android/location/LocationManager.java");
+    try c.file("$FB/location/java/android/location/LocationProvider.java");
+    try c.file("$FB/location/java/android/location/LocationRequest.java");
+    try c.file("$FB/location/java/android/location/OnNmeaMessageListener.java");
+    try c.file("$FB/location/java/android/location/SatellitePvt.java");
+    try c.file("$FB/location/java/android/location/provider/ForwardGeocodeRequest.java");
+    try c.file("$FB/location/java/android/location/provider/ProviderProperties.java");
+    try c.file("$FB/location/java/android/location/provider/ProviderRequest.java");
+    try c.file("$FB/location/java/android/location/provider/ReverseGeocodeRequest.java");
+    try c.file("$CJ/android/hardware/LegacySensorManager.java");
+    try c.file("$CJ/android/hardware/Sensor.java");
+    try c.file("$CJ/android/hardware/SensorAdditionalInfo.java");
+    try c.file("$CJ/android/hardware/SensorDirectChannel.java");
+    try c.file("$CJ/android/hardware/SensorEvent.java");
+    try c.file("$CJ/android/hardware/SensorEventListener.java");
+    try c.file("$CJ/android/hardware/SensorListener.java");
+    try c.file("$CJ/android/hardware/TriggerEvent.java");
+    try c.file("$CJ/android/hardware/TriggerEventListener.java");
+    try c.file("$CJ/android/hardware/lights/Light.java");
+    try c.file("$CJ/android/hardware/lights/LightState.java");
+    try c.file("$CJ/android/hardware/lights/LightsManager.java");
+    try c.file("$CJ/android/hardware/lights/LightsRequest.java");
+    try c.file("$CJ/android/hardware/lights/SystemLightsManager.java");
+    try c.file("$CJ/android/hardware/SensorManager.java");
 }

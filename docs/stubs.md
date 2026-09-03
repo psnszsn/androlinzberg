@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 202 (budget 202). Survivors: 88. Total: 290.
+Pending: 183 (budget 183). Survivors: 90. Total: 273.
 
 ## Survivors
 
@@ -27,6 +27,8 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 | `android/hardware/OverlayProperties.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/hardware/SyncFence.java` | window seam (JNI natives) | blocked |
 | `android/hardware/display/IDeviceProductInfoConstants.java` | host-only (no AOSP class) | blocked |
+| `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | hardware/interfaces GNSS HAL constants not vendored | no-aosp-source |
+| `android/hardware/gnss/measurement_corrections/SingleSatCorrection.java` | hardware/interfaces GNSS HAL constants not vendored | no-aosp-source |
 | `android/hardware/graphics/common/DisplayDecorationSupport.java` | hardware/interfaces graphics HAL not vendored (aidl-compat declaration only) | no-aosp-source |
 | `android/hardware/health/V1_0/Constants.java` | hardware/interfaces health HAL constants not vendored | no-aosp-source |
 | `android/hardware/thermal/CoolingType.java` | hardware/interfaces thermal HAL enums not vendored | no-aosp-source |
@@ -111,7 +113,7 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/accessibilityservice/util/AccessibilityUtils.java` | replaceable | frameworks/base/core/java/android/accessibilityservice/util/AccessibilityUtils.java (1 to add), not vendored |
-| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (380 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < MediaPlayer < Ringtone < AccessibilityShortcutController); android |
+| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (379 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < MediaPlayer < Ringtone < AccessibilityShortcutController); android |
 
 ### activity
 
@@ -131,25 +133,25 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (543 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < PermissionUsageHelper < AppOpsManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the che |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (542 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < PermissionUsageHelper < AppOpsManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the che |
 
 ### audio
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (329 to add), not vendored; android.audio.policy.configuration.V7_0: no source in the checkout (via V7_0 < AudioAttributes); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < Audio |
+| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (328 to add), not vendored; android.audio.policy.configuration.V7_0: no source in the checkout (via V7_0 < AudioAttributes); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < Audio |
 | `android/media/AudioDeviceCallback.java` | replaceable | frameworks/base/media/java/android/media/AudioDeviceCallback.java (1 to add), not vendored |
-| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (331 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceInfo); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (via Blueto |
+| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (330 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceInfo); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (via Blueto |
 | `android/media/AudioFocusRequest.java` | replaceable | frameworks/base/media/java/android/media/AudioFocusRequest.java (1 to add), not vendored |
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (506 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (via BluetoothLeAudioCodecConfi |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (504 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (via BluetoothLeAudioCodecConfi |
 | `android/media/AudioRouting.kt` | replaceable | frameworks/base/media/java/android/media/AudioRouting.java (1 to add), not vendored |
-| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (333 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceAttributes < IAudioService < LoudnessCodecController); android.bluetooth.BluetoothL |
+| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (332 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceAttributes < IAudioService < LoudnessCodecController); android.bluetooth.BluetoothL |
 | `android/media/MediaRoute2Info.java` | replaceable | frameworks/base/media/java/android/media/MediaRoute2Info.java (2 to add), not vendored |
-| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (344 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioRecord < MediaRoute2ProviderService < MediaRouter2); android.bluetooth.BluetoothLeAudioCodecConfig:  |
-| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (328 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioPlaybackConfiguration < PlayerBase); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the c |
-| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (363 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < Utils < RingtoneManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (vi |
+| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (343 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioRecord < MediaRoute2ProviderService < MediaRouter2); android.bluetooth.BluetoothLeAudioCodecConfig:  |
+| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (327 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioPlaybackConfiguration < PlayerBase); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the c |
+| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (362 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < Utils < RingtoneManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (vi |
 | `android/media/RouteDiscoveryPreference.java` | replaceable | frameworks/base/media/java/android/media/RouteDiscoveryPreference.java (1 to add), not vendored |
-| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (331 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceAttributes < Spatializer); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the chec |
+| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (330 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceAttributes < Spatializer); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the chec |
 
 ### autofill
 
@@ -169,19 +171,13 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/BatteryStats.java` | blocked | frameworks/base/core/java/android/os/BatteryStats.java (773 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraCharacteristic |
+| `android/os/BatteryStats.java` | blocked | frameworks/base/core/java/android/os/BatteryStats.java (771 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraCharacteristic |
 
 ### biometrics
 
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/hardware/fingerprint/FingerprintManager.java` | blocked | frameworks/base/core/java/android/hardware/fingerprint/FingerprintManager.java (167 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: no source in the checkout (via AuthenticateReason < FingerprintAuthenticateOptions < FingerprintManager); android.hardware.biometrics.comm |
-
-### colordisplay
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/hardware/display/ColorDisplayManager.java` | replaceable | frameworks/base/core/java/android/hardware/display/ColorDisplayManager.java (2 to add), not vendored, excluded by c.add("$CJ/android/hardware/display") .not_names "ColorDisplayManager.java" |
 
 ### companion
 
@@ -222,9 +218,9 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (180 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection |
-| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (1062 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < DevicePolicyManager); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffec |
+| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (1060 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < DevicePolicyManager); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffec |
 | `android/app/admin/DevicePolicyResources.java` | replaceable | frameworks/base/core/java/android/app/admin/DevicePolicyResources.java (1 to add), not vendored |
-| `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (809 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < IDevicePolicyManager < DevicePolicyResourcesManager); android.bluetooth.BluetoothCodecConfig: no source in |
+| `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (807 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < IDevicePolicyManager < DevicePolicyResourcesManager); android.bluetooth.BluetoothCodecConfig: no source in |
 
 ### domainverification
 
@@ -244,14 +240,6 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 |---|---|---|
 | `android/os/IncidentManager.java` | blocked | frameworks/base/core/java/android/os/IncidentManager.java (7 to add), not vendored; android.os.IIncidentAuthListener: AIDL outside the configured include roots (via IIncidentAuthListener < IncidentManager); android.os.IIncidentCompanion: AIDL outside the configured include roots (via IIncidentCompan |
 
-### input
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/hardware/input/InputDeviceLightsManager.java` | replaceable | frameworks/base/core/java/android/hardware/input/InputDeviceLightsManager.java (1 to add), not vendored, excluded by c.add("$CJ/android/hardware/input") .not_names "InputDeviceLightsManager.java" |
-| `android/hardware/input/InputDeviceVibrator.java` | replaceable | frameworks/base/core/java/android/hardware/input/InputDeviceVibrator.java (1 to add), not vendored, excluded by c.add("$CJ/android/hardware/input") .not_names "InputDeviceVibrator.java" |
-| `android/hardware/input/InputDeviceVibratorManager.java` | replaceable | frameworks/base/core/java/android/hardware/input/InputDeviceVibratorManager.java (1 to add), not vendored, excluded by c.add("$CJ/android/hardware/input") .not_names "InputDeviceVibratorManager.java" |
-
 ### inputmethod
 
 | Stub | Audit | Closure |
@@ -266,22 +254,6 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/app/KeyguardManager.java` | replaceable | frameworks/base/core/java/android/app/KeyguardManager.java (31 to add), not vendored |
-
-### lights
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/hardware/lights/Light.java` | replaceable | frameworks/base/core/java/android/hardware/lights/Light.java (1 to add), not vendored |
-| `android/hardware/lights/LightState.java` | replaceable | frameworks/base/core/java/android/hardware/lights/LightState.java (1 to add), not vendored |
-| `android/hardware/lights/LightsManager.java` | replaceable | frameworks/base/core/java/android/hardware/lights/LightsManager.java (1 to add), not vendored |
-| `android/hardware/lights/LightsRequest.java` | replaceable | frameworks/base/core/java/android/hardware/lights/LightsRequest.java (1 to add), not vendored |
-
-### location
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/location/ILocationManager.java` | blocked | frameworks/base/location/java/android/location/ILocationManager.aidl (39 to add, AIDL interface), not vendored; AIDL outside the configured include roots; android.hardware.gnss.V2_1: no source in the checkout (via V2_1 < GnssMeasurement < GnssMeasurementsEvent < IGnssMeasurementsListener < ILocation |
-| `android/location/LocationManager.java` | blocked | frameworks/base/location/java/android/location/LocationManager.java (51 to add), not vendored; android.hardware.gnss.V2_1: no source in the checkout (via V2_1 < GnssMeasurement < GnssMeasurementsEvent < LocationManager); android.hardware.gnss.measurement_corrections.SingleSatCorrection: no source in |
 
 ### logging
 
@@ -334,16 +306,16 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 | `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (4 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no s |
 | `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (6 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig) |
 | `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3501 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3493 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
 | `com/android/server/pm/InstallSource.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/InstallSource.java (2 to add), not vendored |
 | `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3499 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3491 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
 | `com/android/server/pm/PackageKeySetData.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/PackageKeySetData.java (1 to add), not vendored |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3612 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3604 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
 | `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (9 to add), not vendored; android.service.pm.PackageProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via PackageProto < PackageSetting) |
 | `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (36 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.config.Chang |
-| `com/android/server/pm/UserManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java (746 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombina |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3525 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
+| `com/android/server/pm/UserManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java (744 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombina |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3517 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
 | `com/android/server/pm/permission/LegacyPermissionState.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/permission/LegacyPermissionState.java (5 to add), not vendored |
 
 ### permission
@@ -388,20 +360,6 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 |---|---|---|
 | `android/app/SearchManager.java` | replaceable | frameworks/base/core/java/android/app/SearchManager.java (9 to add), not vendored |
 
-### sensor
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/hardware/Sensor.java` | replaceable | frameworks/base/core/java/android/hardware/Sensor.java (1 to add), not vendored |
-| `android/hardware/SensorAdditionalInfo.java` | replaceable | frameworks/base/core/java/android/hardware/SensorAdditionalInfo.java (1 to add), not vendored |
-| `android/hardware/SensorDirectChannel.java` | replaceable | frameworks/base/core/java/android/hardware/SensorDirectChannel.java (1 to add), not vendored |
-| `android/hardware/SensorEvent.java` | replaceable | frameworks/base/core/java/android/hardware/SensorEvent.java (1 to add), not vendored |
-| `android/hardware/SensorEventListener.java` | replaceable | frameworks/base/core/java/android/hardware/SensorEventListener.java (1 to add), not vendored |
-| `android/hardware/SensorListener.java` | replaceable | frameworks/base/core/java/android/hardware/SensorListener.java (1 to add), not vendored |
-| `android/hardware/SensorManager.java` | replaceable | frameworks/base/core/java/android/hardware/SensorManager.java (2 to add), not vendored |
-| `android/hardware/TriggerEventListener.java` | replaceable | frameworks/base/core/java/android/hardware/TriggerEventListener.java (2 to add), not vendored |
-| `android/hardware/input/InputDeviceSensorManager.java` | replaceable | frameworks/base/core/java/android/hardware/input/InputDeviceSensorManager.java (1 to add), not vendored, excluded by c.add("$CJ/android/hardware/input") .not_names "InputDeviceSensorManager.java" |
-
 ### shortcut
 
 | Stub | Audit | Closure |
@@ -429,43 +387,43 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3499 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3491 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
 | `com/android/server/UiThread.java` | replaceable | frameworks/base/services/core/java/com/android/server/UiThread.java (2 to add), not vendored |
 | `com/android/server/clipboard/ArcClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/ArcClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "ArcClipboardMonitor.java" |
 | `com/android/server/clipboard/EmulatorClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/EmulatorClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "EmulatorClipboardMonitor.java" |
 | `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server.am.NeededUr |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3499 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3491 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
 
 ### telecom
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/telecom/PhoneAccount.java` | blocked | frameworks/base/telecomm/java/android/telecom/PhoneAccount.java (742 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraChara |
+| `android/telecom/PhoneAccount.java` | blocked | frameworks/base/telecomm/java/android/telecom/PhoneAccount.java (740 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraChara |
 | `android/telecom/PhoneAccountHandle.java` | blocked | frameworks/base/telecomm/java/android/telecom/PhoneAccountHandle.java (8 to add), not vendored; android.telecom.Logging: no source in the checkout (via Logging < EventManager < Log < PhoneAccountHandle) |
-| `android/telecom/TelecomManager.java` | blocked | frameworks/base/telecomm/java/android/telecom/TelecomManager.java (761 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraCha |
+| `android/telecom/TelecomManager.java` | blocked | frameworks/base/telecomm/java/android/telecom/TelecomManager.java (759 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraCha |
 
 ### telephony
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/provider/Telephony.java` | blocked | frameworks/base/core/java/android/provider/Telephony.java (746 to add), not vendored; android.app.role.OnRoleHoldersChangedListener: no source in the checkout (via OnRoleHoldersChangedListener < SmsApplication < Telephony); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via Bluet |
-| `android/telephony/Annotation.java` | blocked | frameworks/base/telephony/java/android/telephony/Annotation.java (743 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraChar |
-| `android/telephony/PhoneNumberUtils.java` | blocked | frameworks/base/telephony/java/android/telephony/PhoneNumberUtils.java (746 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Came |
-| `android/telephony/TelephonyManager.java` | blocked | frameworks/base/telephony/java/android/telephony/TelephonyManager.java (754 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Came |
-| `android/telephony/TelephonyRegistryManager.java` | blocked | frameworks/base/core/java/android/telephony/TelephonyRegistryManager.java (749 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < C |
-| `android/telephony/UiccCardInfo.java` | blocked | frameworks/base/telephony/java/android/telephony/UiccCardInfo.java (742 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraCh |
-| `android/telephony/gba/GbaService.java` | blocked | frameworks/base/telephony/java/android/telephony/gba/GbaService.java (744 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Camera |
-| `android/telephony/ims/ImsService.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/ImsService.java (751 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Camera |
-| `android/telephony/ims/ProvisioningManager.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/ProvisioningManager.java (746 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination |
-| `android/telephony/ims/RcsUceAdapter.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/RcsUceAdapter.java (742 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Cam |
-| `android/telephony/ims/SipDelegateManager.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/SipDelegateManager.java (745 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination  |
+| `android/provider/Telephony.java` | blocked | frameworks/base/core/java/android/provider/Telephony.java (744 to add), not vendored; android.app.role.OnRoleHoldersChangedListener: no source in the checkout (via OnRoleHoldersChangedListener < SmsApplication < Telephony); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via Bluet |
+| `android/telephony/Annotation.java` | blocked | frameworks/base/telephony/java/android/telephony/Annotation.java (741 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraChar |
+| `android/telephony/PhoneNumberUtils.java` | blocked | frameworks/base/telephony/java/android/telephony/PhoneNumberUtils.java (744 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Came |
+| `android/telephony/TelephonyManager.java` | blocked | frameworks/base/telephony/java/android/telephony/TelephonyManager.java (752 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Came |
+| `android/telephony/TelephonyRegistryManager.java` | blocked | frameworks/base/core/java/android/telephony/TelephonyRegistryManager.java (746 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < C |
+| `android/telephony/UiccCardInfo.java` | blocked | frameworks/base/telephony/java/android/telephony/UiccCardInfo.java (740 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < CameraCh |
+| `android/telephony/gba/GbaService.java` | blocked | frameworks/base/telephony/java/android/telephony/gba/GbaService.java (742 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Camera |
+| `android/telephony/ims/ImsService.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/ImsService.java (749 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Camera |
+| `android/telephony/ims/ProvisioningManager.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/ProvisioningManager.java (744 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination |
+| `android/telephony/ims/RcsUceAdapter.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/RcsUceAdapter.java (740 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination < Cam |
+| `android/telephony/ims/SipDelegateManager.java` | blocked | frameworks/base/telephony/java/android/telephony/ims/SipDelegateManager.java (743 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombination  |
 
 ### textclassifier
 
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/service/textclassifier/TextClassifierService.java` | replaceable | frameworks/base/core/java/android/service/textclassifier/TextClassifierService.java (1 to add), not vendored |
-| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (385 to add); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AidlConversion < ConversionUtil < SoundTrigger < IVoiceInteractionManagerService < VoiceInteractionSessio |
+| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (384 to add); android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AidlConversion < ConversionUtil < SoundTrigger < IVoiceInteractionManagerService < VoiceInteractionSessio |
 | `android/service/voice/VisualQueryDetectedResult.java` | replaceable | frameworks/base/core/java/android/service/voice/VisualQueryDetectedResult.java (1 to add), not vendored |
 | `android/speech/tts/TextToSpeech.java` | replaceable | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (10 to add), not vendored |
 
@@ -500,8 +458,8 @@ Pending: 202 (budget 202). Survivors: 88. Total: 290.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (360 to add, AIDL interface), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioPlaybackConfiguration < IAudioConfigChangedCallback < IVirtualDevice);  |
-| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (384 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioPlaybackConfiguration < VirtualAudioDevice < VirtualDeviceManager); android.bluet |
+| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (359 to add, AIDL interface), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioPlaybackConfiguration < IAudioConfigChangedCallback < IVirtualDevice);  |
+| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (383 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioPlaybackConfiguration < VirtualAudioDevice < VirtualDeviceManager); android.bluet |
 | `android/companion/virtual/VirtualDeviceParams.java` | replaceable | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add), not vendored |
 | `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored |
 

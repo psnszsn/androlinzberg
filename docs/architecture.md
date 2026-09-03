@@ -179,7 +179,19 @@ log lines). `AudioManager`, the audio value types and `MediaRouter2` remain
 pending stubs: their closure runs through `AudioSystem`, `AudioRecord` and
 `AudioPortEventHandler` natives and the audio-policy AIDL of `frameworks/av`
 and `hardware/interfaces`, so they need an AudioSystem host seam and those AIDL
-roots first (docs/stubs.md records the chain). System properties
+roots first (docs/stubs.md records the chain). Location, sensors, lights and
+color display are real too: `LocationManager` and the GNSS value types over
+`HostedLocationManagerService` (`ILocationManager`: only the passive provider,
+location off, null locations, listeners kept and never delivered, the
+MOCK_LOCATION gate), the real abstract `SensorManager` under the hosted
+`SystemSensorManager` seam (`src/framework`, libsensor JNI replaced by a device
+with no sensors), `SystemLightsManager` over `HostedLightsService`
+(`ILightsManager`: no lights, CONTROL_DEVICE_LIGHTS enforced),
+`ColorDisplayManager` over `HostedColorDisplayService` (`IColorDisplayManager`:
+no transforms, night display off) and the input-device lights, sensor and
+vibrator managers over the hosted input service. `ConnectivityManager` and the
+Wi-Fi managers stay marked stubs: their module trees (`packages/modules/
+Connectivity`, `Wifi`) are not vendored. System properties
 are session-wide, following Android's model: the broker owns a shared property
 area file in the session directory (`src/binder/prop_area.zig`, the
 `__system_property_area__` analogue) that every process — the JVM

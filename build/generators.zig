@@ -82,6 +82,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/native/libs/binder/aidl/",
         "frameworks/native/libs/permission/aidl/",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core/",
+        "frameworks/base/location/java/",
     }) |prefix| {
         if (std.mem.startsWith(u8, input, prefix)) {
             return replaceExtension(b, input[prefix.len..], ".java");
@@ -126,6 +127,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/apex/jobscheduler/framework/java",
         "frameworks/base/native/android/aidl",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
+        "frameworks/base/location/java",
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
 }
 

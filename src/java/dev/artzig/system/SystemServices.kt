@@ -183,6 +183,14 @@ internal object SystemServices {
         mediaSessions.packageService = packageManager
         android.os.ServiceManager.addService(Context.MEDIA_SESSION_SERVICE, mediaSessions)
         android.os.ServiceManager.addService(Context.MEDIA_METRICS_SERVICE, HostedMediaMetricsService())
+        // Phase 4: location (no providers), lights (none), color display (no transforms);
+        // sensors are the in-process SystemSensorManager seam, input-device managers ride
+        // the hosted input service.
+        val location = HostedLocationManagerService()
+        location.packageService = packageManager
+        android.os.ServiceManager.addService(Context.LOCATION_SERVICE, location)
+        android.os.ServiceManager.addService(Context.LIGHTS_SERVICE, HostedLightsService())
+        android.os.ServiceManager.addService(Context.COLOR_DISPLAY_SERVICE, HostedColorDisplayService())
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name

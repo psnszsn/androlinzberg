@@ -27,4 +27,9 @@ public class TimeUtils {
     public static String formatTimeForLogging(long millis) { return String.valueOf(millis); }
     public static void dumpTime(PrintWriter pw, long time) { pw.print(time); }
     public static void dumpTimeWithDelta(PrintWriter pw, long time, long now) { pw.print(time); }
+
+    /** AOSP formatRealtime: an elapsed-realtime instant as a duration relative to now. */
+    public static String formatRealtime(long millis) {
+        return formatDuration(millis - android.os.SystemClock.elapsedRealtime());
+    }
 }

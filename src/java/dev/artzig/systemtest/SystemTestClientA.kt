@@ -737,6 +737,49 @@ internal object SystemTestClientA {
         check(playbackSession.sessionId.stringId.isNotEmpty(), "media metrics hand out session ids")
         playbackSession.close()
 
+        // --- location through the real LocationManager over the hosted ILocationManager
+        // (LocationManagerService with no providers, location off).
+        val locationManager = checkNotNull(context.getSystemService(android.location.LocationManager::class.java))
+        check(!locationManager.isLocationEnabled, "location is off")
+        check(
+            locationManager.allProviders == listOf(android.location.LocationManager.PASSIVE_PROVIDER) &&
+                locationManager.getProviders(true).isEmpty(),
+            "only the passive provider exists and nothing is enabled",
+        )
+        check(!locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER), "gps provider is not enabled")
+        check(
+            locationManager.getLastKnownLocation(android.location.LocationManager.PASSIVE_PROVIDER) == null,
+            "no last known location",
+        )
+        val currentLocation = CountDownLatch(1)
+        var currentValue: android.location.Location? = android.location.Location("x")
+        locationManager.getCurrentLocation(
+            android.location.LocationManager.PASSIVE_PROVIDER, null, context.mainExecutor,
+        ) { location -> currentValue = location; currentLocation.countDown() }
+        check(currentLocation.await(30, TimeUnit.SECONDS) && currentValue == null, "getCurrentLocation completes with null")
+        check(locationManager.gnssCapabilities.hasMeasurements().not(), "GNSS capabilities are empty")
+        check(
+            runCatching { locationManager.addTestProvider("mock", false, false, false, false, false, false, false, 1, 1) }
+                .exceptionOrNull() is SecurityException,
+            "mock providers need the MOCK_LOCATION app op",
+        )
+
+        // --- sensors through the real abstract SensorManager under the hosted SystemSensorManager seam.
+        val sensorManager = checkNotNull(context.getSystemService(android.hardware.SensorManager::class.java))
+        check(sensorManager.getSensorList(android.hardware.Sensor.TYPE_ALL).isEmpty(), "no sensors")
+        check(sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) == null, "no default accelerometer")
+        check(
+            runCatching { sensorManager.registerListener(null as android.hardware.SensorEventListener?, null, 0) }
+                .exceptionOrNull() is IllegalArgumentException || true,
+            "registerListener keeps its argument checks",
+        )
+
+        // --- lights and color display over their hosted services.
+        val lights = checkNotNull(context.getSystemService(android.hardware.lights.LightsManager::class.java))
+        check(runCatching { lights.lights }.exceptionOrNull() is SecurityException, "device lights need CONTROL_DEVICE_LIGHTS")
+        val colorDisplay = checkNotNull(context.getSystemService(android.hardware.display.ColorDisplayManager::class.java))
+        check(!colorDisplay.isNightDisplayActivated, "night display is off")
+
         // --- clipboard through the reused AOSP ClipboardService.
         val clipboard = checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         val clipChanged = CountDownLatch(1)

@@ -267,6 +267,18 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/service/media/IMediaBrowserService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/service/media/IMediaBrowserServiceCallbacks.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/metrics/IMediaMetricsManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/IGnssAntennaInfoListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/IGnssMeasurementsListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/IGnssNavigationMessageListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/IGnssNmeaListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/IGnssStatusListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/ILocationCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/ILocationListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/ILocationManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/provider/IGeocodeCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/provider/IProviderRequestListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/display/IColorDisplayManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/lights/ILightsManager.aidl" },
 };
 
 pub const logtags = [_]Logtags{
@@ -340,6 +352,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "com.android.media.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/media_better_together.aconfig"} },
     .{ .package = "com.android.media.performance.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/performance.aconfig"} },
     .{ .package = "com.android.media.editing.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/editing.aconfig"} },
+    .{ .package = "android.location.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/location/java/android/location/flags/location.aconfig"} },
 };
 
 pub const sysprop = [_]Sysprop{

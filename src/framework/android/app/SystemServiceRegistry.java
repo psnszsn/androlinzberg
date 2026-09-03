@@ -186,7 +186,22 @@ public final class SystemServiceRegistry {
         registerService(Context.DISPLAY_SERVICE, android.hardware.display.DisplayManager.class, new CachedServiceFetcher<android.hardware.display.DisplayManager>() {
             @Override public android.hardware.display.DisplayManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.hardware.display.DisplayManager(ctx); }});
         registerService(Context.SENSOR_SERVICE, android.hardware.SensorManager.class, new CachedServiceFetcher<android.hardware.SensorManager>() {
-            @Override public android.hardware.SensorManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.hardware.SensorManager(); }});
+            @Override public android.hardware.SensorManager createService(ContextImpl ctx) {
+                return new android.hardware.SystemSensorManager(ctx.getOuterContext(), ctx.mMainThread.getHandler().getLooper());
+            }});
+        registerService(Context.LIGHTS_SERVICE, android.hardware.lights.LightsManager.class, new CachedServiceFetcher<android.hardware.lights.LightsManager>() {
+            @Override public android.hardware.lights.LightsManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                return new android.hardware.lights.SystemLightsManager(ctx);
+            }});
+        registerService(Context.COLOR_DISPLAY_SERVICE, android.hardware.display.ColorDisplayManager.class, new CachedServiceFetcher<android.hardware.display.ColorDisplayManager>() {
+            @Override public android.hardware.display.ColorDisplayManager createService(ContextImpl ctx) {
+                return new android.hardware.display.ColorDisplayManager();
+            }});
+        registerService(Context.LOCATION_SERVICE, android.location.LocationManager.class, new CachedServiceFetcher<android.location.LocationManager>() {
+            @Override public android.location.LocationManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.LOCATION_SERVICE);
+                return new android.location.LocationManager(ctx, android.location.ILocationManager.Stub.asInterface(b));
+            }});
         registerService(Context.SHORTCUT_SERVICE, android.content.pm.ShortcutManager.class, new CachedServiceFetcher<android.content.pm.ShortcutManager>() {
             @Override public android.content.pm.ShortcutManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.content.pm.ShortcutManager(); }});
         // MediaFrameworkPlatformInitializer / MediaFrameworkInitializer: the real MediaSessionManager

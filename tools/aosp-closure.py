@@ -71,6 +71,7 @@ AIDL_ROOTS = (
     "frameworks/base/apex/jobscheduler/framework/java",
     "frameworks/base/native/android/aidl",
     "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
+    "frameworks/base/location/java",
 )
 
 ACONFIG_CLASSES = {"Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl"}
