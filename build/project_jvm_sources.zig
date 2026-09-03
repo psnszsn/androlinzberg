@@ -309,7 +309,6 @@ pub const framework = [_][]const u8{
     "src/framework/android/ravenwood/annotation/RavenwoodReplace.java",
     "src/framework/android/ravenwood/annotation/RavenwoodThrow.java",
     "src/framework/android/security/keystore/KeyGenParameterSpec.java",
-    "src/framework/android/text/Html.java",
     "src/framework/android/text/format/DateFormat.java",
     "src/framework/android/text/format/Time.java",
     "src/framework/android/util/ArtzigTestDiagnostics.java",

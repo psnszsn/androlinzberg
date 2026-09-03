@@ -21,6 +21,7 @@ D aosp external/junit/src/main/java
 D aosp external/kotlinc
 D aosp external/protobuf
 D aosp external/skia
+D aosp external/tagsoup/src/org/ccil/cowan/tagsoup
 D aosp frameworks/av/media/aconfig
 D aosp frameworks/av/media/audio/aconfig
 D aosp frameworks/base/android-sdk-flags

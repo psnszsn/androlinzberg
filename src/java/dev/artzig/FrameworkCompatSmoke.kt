@@ -275,9 +275,16 @@ public final class FrameworkCompatSmoke {
         @Throws(Exception::class)
         @JvmStatic
         public fun main(args: Array<String>) {
+            if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
+            // AOSP application processes always have their initial Application
+            // before client framework APIs such as Html consult configuration.
+            if (android.app.ActivityThread.currentApplication() == null) {
+                android.app.ActivityThread.currentActivityThread().`bindSystemApplication$artzig`()
+            }
             testStockInternalUtilMetadata()
             testStockFontRequest()
             testStockTextSpans()
+            testStockHtml()
             testStockProtoStreams()
             testParcelRoundTrips()
             testSystemProperties()
@@ -286,7 +293,6 @@ public final class FrameworkCompatSmoke {
             testLocalContentProvider()
             testStockStrictModeRegistration()
             testAospPackageParser(args.firstOrNull())
-            if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
             testStockEpicenterReveal()
             val filtered: Intent =
                 Intent(Intent.ACTION_VIEW)
@@ -995,6 +1001,25 @@ public final class FrameworkCompatSmoke {
             // Marker construction is itself the interface: there is intentionally no state.
             android.text.style.NoWritingToolsSpan()
             android.util.Log.i("FrameworkCompatSmoke", "stock text spans ok")
+        }
+
+        /** Stock Html delegates malformed-HTML recovery to the vendored TagSoup parser. */
+        @JvmStatic
+        private fun testStockHtml() {
+            val parsed = android.text.Html.fromHtml(
+                "<p>Hello <b>bold<i> italic</b> &amp; plain</p>",
+                android.text.Html.FROM_HTML_MODE_COMPACT,
+            )
+            require(parsed.toString().contains("Hello bold italic & plain"), "HTML entities and text parsed")
+            val boldStart = parsed.toString().indexOf("bold")
+            val styles = parsed.getSpans(
+                boldStart,
+                boldStart + "bold".length,
+                android.text.style.StyleSpan::class.java,
+            )
+            require(styles.any { it.style == android.graphics.Typeface.BOLD }, "bold HTML creates StyleSpan")
+            require(android.text.Html.escapeHtml("<&>") == "&lt;&amp;&gt;", "HTML escaping")
+            android.util.Log.i("FrameworkCompatSmoke", "stock Html ok")
         }
 
         @JvmStatic private fun drainMainLooper() {

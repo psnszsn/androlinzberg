@@ -88,6 +88,7 @@ platform/external/snakeyaml
 platform/external/sqlite
 platform/external/squashfs-tools
 platform/external/starlark-go
+platform/external/tagsoup
 platform/external/testng
 platform/external/tinyxml2
 platform/external/turbine

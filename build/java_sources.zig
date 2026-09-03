@@ -73,11 +73,13 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     var framework = StaticCollector.init(b);
     const fb = SourceFiles.Root.dependency(b, aosp, "frameworks/base");
     const modules_utils = SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils");
+    const tagsoup = SourceFiles.Root.dependency(b, aosp, "external/tagsoup");
     framework.addRoot("FB", fb);
     framework.addRoot("CJ", fb.child(b, "core/java"));
     framework.addRoot("MU", modules_utils);
     framework.addRoot("NRT", SourceFiles.Root.dependency(b, aosp, "external/protobuf/javanano/src/main/java"));
     framework.addRoot("SD", SourceFiles.Root.dependency(b, aosp, "packages/modules/StatsD"));
+    framework.addRoot("TS", tagsoup);
     collectStatic(&framework) catch |err| std.debug.panic("unable to collect framework JVM sources: {t}", .{err});
     const project_root = SourceFiles.Root.project(b, "");
     for (project_sources.framework) |path| framework.files.addFile(project_root, path);
@@ -113,7 +115,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/graphics/java/android/graphics", .{ .not_paths = &.{"*/pdf/*"}, .not_names = &.{ "GraphicsStatsService.java", "GraphicBuffer.java", "SurfaceTexture.java", "SurfaceControl*.java", "Renderer*.java" } });
     try c.add("$FB/libs/hwui/apex/java", .{});
     try c.add("$FB/core/java/android/content/res", .{ .not_names = &.{ "ObbInfo.java", "ObbScanner.java" } });
-    try c.add("$FB/core/java/android/text", .{ .not_paths = &.{ "*/method/*", "*/util/*", "*/format/*" }, .not_names = &.{ "Html.java", "TranslationTransformationMethod.java" } });
+    try c.add("$FB/core/java/android/text", .{ .not_paths = &.{ "*/method/*", "*/util/*", "*/format/*" }, .not_names = &.{"TranslationTransformationMethod.java"} });
+    try c.add("$TS/src/org/ccil/cowan/tagsoup", .{ .not_paths = &.{"*/jaxp/*"} });
     try c.add("$FB/core/java/android/text/format", .{ .not_names = &.{ "Formatter.java", "Time.java", "TimeFormatter.java", "DateFormat.java", "TimeMigrationUtils.java" } });
     try c.add("$FB/core/java/android/view", .{ .max_depth = 1, .not_names = &.{ "ViewRootImpl.java", "WindowManagerGlobal.java", "WindowManagerImpl.java", "Choreographer.java", "ThreadedRenderer.java", "SurfaceControl.java", "SurfaceControlRegistry.java", "SurfaceControlInputReceiver.java", "SurfaceControlViewHost.java", "SurfaceView.java", "SurfaceSession.java", "TextureView.java", "WindowlessWindowManager.java", "WindowlessWindowLayout.java", "AccessibilityInteractionController.java", "HandwritingInitiator.java" } });
     try c.add("$FB/core/java/android/view/accessibility", .{ .max_depth = 1 });
