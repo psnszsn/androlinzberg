@@ -33,8 +33,8 @@
     // internet connectivity.
     .dependencies = .{
         .aosp = .{
-            .url = "file:///mnt/code/proj/androlinzberg/aosp/artzig-aosp-android-16.0.0_r1.tar.gz",
-            .hash = "N-V-__8AAIJMbgm1_xk9cUbXm5SWYa6gmQX3CGRGDuJS4lQS",
+            .url = "file:../aosp/artzig-aosp-android-16.0.0_r1.tar.gz",
+            .hash = "N-V-__8AAINLbgmmExm2IfF5mzL5miX6bAsFTi7BG660YOYL",
         },
         // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
         //.example = .{
