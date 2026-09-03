@@ -7,6 +7,20 @@ public class AppOpsManager {
     public static final int MODE_IGNORED = 1;
     public static final int MODE_ERRORED = 2;
     public static final int MODE_DEFAULT = 3;
+    public static final int MODE_FOREGROUND = 4;
+    // AOSP op names the telephony permission helpers consult (no op table here: the
+    // string ops are always MODE_ALLOWED, as the int ops are without the service).
+    public static final String OPSTR_COARSE_LOCATION = "android:coarse_location";
+    public static final String OPSTR_FINE_LOCATION = "android:fine_location";
+    public static final String OPSTR_READ_CALL_LOG = "android:read_call_log";
+    public static final String OPSTR_READ_SMS = "android:read_sms";
+    public static final String OPSTR_RECEIVE_SMS = "android:receive_sms";
+    public static final String OPSTR_RECEIVE_WAP_PUSH = "android:receive_wap_push";
+    public static final String OPSTR_SEND_SMS = "android:send_sms";
+    public static final String OPSTR_WRITE_SMS = "android:write_sms";
+    public static final String OPSTR_READ_PHONE_STATE = "android:read_phone_state";
+    public static final String OPSTR_READ_CELL_BROADCASTS = "android:read_cell_broadcasts";
+    public static final String OPSTR_USE_ICC_AUTH_WITH_DEVICE_IDENTIFIER = "android:use_icc_auth_with_device_identifier";
     public static final int OP_NONE = -1;
     public static final int OP_GET_USAGE_STATS = 43;
     public static final int OP_LEGACY_STORAGE = 87;
@@ -53,6 +67,10 @@ public class AppOpsManager {
     }
     public int checkOp(int op, int uid, String packageName) { return checkWithService(op, uid, packageName); }
     public int unsafeCheckOpNoThrow(String op, int uid, String packageName) { return MODE_ALLOWED; }
+    public int unsafeCheckOp(String op, int uid, String packageName) { return MODE_ALLOWED; }
+    public int noteOpNoThrow(String op, int uid, String packageName, String attributionTag, String message) { return MODE_ALLOWED; }
+    /** AOSP: MANAGE_APP_OPS_MODES writes the uid's op mode; string ops have no mode table here. */
+    public void setUidMode(String appOp, int uid, int mode) {}
     /** The session's app-ops service, when published; MODE_ALLOWED before.
      * Cached once resolved: the registry lookup is a broker round trip. */
     private static volatile com.android.internal.app.IAppOpsService sService;

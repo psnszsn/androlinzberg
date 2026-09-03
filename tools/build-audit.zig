@@ -74,6 +74,8 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
     for (generator_sources.logtags) |entry| try putForbidden(&result, allocator, entry.output);
     for (generator_sources.proto_outputs) |output| try putForbidden(&result, allocator, output);
     try putForbidden(&result, allocator, "com/android/internal/util/FrameworkStatsLog.java");
+    try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyStatsLog.java");
+    try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyCommonStatsLog.java");
     try putForbidden(&result, allocator, "com/android/internal/logging/nano/MetricsProto.java");
     for (generator_sources.sysprop) |entry| {
         if (entry.input.source != .aosp) continue;

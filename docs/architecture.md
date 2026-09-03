@@ -191,7 +191,35 @@ with no sensors), `SystemLightsManager` over `HostedLightsService`
 no transforms, night display off) and the input-device lights, sensor and
 vibrator managers over the hosted input service. `ConnectivityManager` and the
 Wi-Fi managers stay marked stubs: their module trees (`packages/modules/
-Connectivity`, `Wifi`) are not vendored. System properties
+Connectivity`, `Wifi`) are not vendored. Telephony and telecom are real: the
+`frameworks/base/telephony/java`, `telephony/common`, `telecomm/java` and
+`mms/java` trees compile verbatim (only the MMS PDU persister, which needs the
+`android.drm` JNI client, and the satellite HAL service base, which needs the
+radio HAL AIDL, are left out), so `TelephonyManager`, `SubscriptionManager`,
+`CarrierConfigManager`, `TelephonyRegistryManager`/`TelephonyCallback`,
+`SmsManager`, `EuiccManager`, `ImsManager`, `MmsManager` and `TelecomManager`
+are the AOSP classes, registered through `TelephonyFrameworkInitializer` with a
+`TelephonyServiceManager` as `ActivityThread` does. They talk to six hosted
+services that answer as a device without a radio: `HostedTelephonyService`
+(`ITelephony`: SIM absent, phone type none, network type unknown, data
+disconnected, radio unavailable, no carrier privileges, no emergency numbers;
+device identifiers keep the privileged-caller gate), `HostedSubscriptionService`
+(`ISub`: no subscriptions, INVALID ids, the READ_PHONE_STATE checks),
+`HostedPhoneSubInfoService` (`IPhoneSubInfo`: null identities behind the AOSP
+permission gates), `HostedCarrierConfigLoader` (`ICarrierConfigLoader`:
+`CarrierConfigManager.getDefaultConfig()` for every subscription),
+`HostedTelephonyRegistry` (`ITelephonyRegistry`: TelephonyRegistry's per-phone
+state at its constructor values with the same initial `notifyNow` callbacks,
+listener permission checks per event, `notify*` gated by MODIFY_PHONE_STATE)
+and `HostedTelecomService` (`ITelecomService`: a real phone-account registry
+with `PhoneAccountRegistrar`'s validation, no dialer, no calls; placing a call
+keeps the CALL_PHONE gate and logs that no account can carry it). The phone
+count is `TelephonyManager.getActiveModemCount()`, as in AOSP. Surviving
+stubs around this family: the radio HAL enums (`android.hardware.radio.*`),
+libphonenumber (`external/libphonenumber` is not vendored, so parsing reports
+"not a number" and the formatting helpers pass input through), the telecom
+aconfig flags, `RoleManager`, and the Connectivity types telephony parcels
+(`LinkAddress`, `LinkProperties`, `NetworkCapabilities`, `NetworkStats`). System properties
 are session-wide, following Android's model: the broker owns a shared property
 area file in the session directory (`src/binder/prop_area.zig`, the
 `__system_property_area__` analogue) that every process — the JVM

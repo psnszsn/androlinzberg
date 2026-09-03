@@ -3,6 +3,7 @@ package android.provider;
 import java.util.concurrent.Executor;
 public final class DeviceConfig {
     public static final String NAMESPACE_AUTOFILL = "autofill";
+    public static final String NAMESPACE_TELEPHONY = "telephony";
     public static final String NAMESPACE_CONTENT_CAPTURE = "content_capture";
     public static final String NAMESPACE_INPUT_NATIVE_BOOT = "input_native_boot";
     public static final String NAMESPACE_WIDGET = "widget";

@@ -53,6 +53,9 @@ public class ActivityManager {
     public static boolean isHighEndGfx() { return true; }
     public static boolean isLowRamDeviceStatic() { return false; }
     public static int getCurrentUser() { return 0; }
+    /** Hosted processes run foreground; the single user is always the current one. */
+    public int getUidImportance(int uid) { return RunningAppProcessInfo.IMPORTANCE_FOREGROUND; }
+    public boolean isProfileForeground(android.os.UserHandle userHandle) { return userHandle != null && userHandle.getIdentifier() == getCurrentUser(); }
     /** AOSP: the activity manager binder ("activity"), cached once resolved. */
     private static volatile IActivityManager sService;
     public static IActivityManager getService() {

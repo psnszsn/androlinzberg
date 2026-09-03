@@ -140,8 +140,28 @@ public final class SystemServiceRegistry {
             }});
         registerService(Context.CONNECTIVITY_SERVICE, android.net.ConnectivityManager.class, new NewServiceFetcher<android.net.ConnectivityManager>() {
             @Override public android.net.ConnectivityManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.ConnectivityManager(); }});
-        registerService(Context.TELEPHONY_SERVICE, android.telephony.TelephonyManager.class, new NewServiceFetcher<android.telephony.TelephonyManager>() {
-            @Override public android.telephony.TelephonyManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.telephony.TelephonyManager(); }});
+        // Telephony and telecom (AOSP: ActivityThread installs the TelephonyServiceManager,
+        // SystemServiceRegistry's static block runs TelephonyFrameworkInitializer and registers
+        // the registry, telecom and MMS managers). The managers resolve "phone", "isub",
+        // "iphonesubinfo", "carrier_config", "telephony.registry", "telecom" and "imms" through
+        // ServiceManager; the hosted services answer as a device without a radio.
+        android.telephony.TelephonyFrameworkInitializer.setTelephonyServiceManager(new android.os.TelephonyServiceManager());
+        android.telephony.TelephonyFrameworkInitializer.registerServiceWrappers();
+        registerService(Context.TELEPHONY_REGISTRY_SERVICE, android.telephony.TelephonyRegistryManager.class,
+                new CachedServiceFetcher<android.telephony.TelephonyRegistryManager>() {
+            @Override public android.telephony.TelephonyRegistryManager createService(ContextImpl ctx) {
+                return new android.telephony.TelephonyRegistryManager(ctx);
+            }});
+        registerService(Context.TELECOM_SERVICE, android.telecom.TelecomManager.class,
+                new CachedServiceFetcher<android.telecom.TelecomManager>() {
+            @Override public android.telecom.TelecomManager createService(ContextImpl ctx) {
+                return new android.telecom.TelecomManager(ctx.getOuterContext());
+            }});
+        registerService(Context.MMS_SERVICE, android.telephony.MmsManager.class,
+                new CachedServiceFetcher<android.telephony.MmsManager>() {
+            @Override public android.telephony.MmsManager createService(ContextImpl ctx) {
+                return new android.telephony.MmsManager(ctx.getOuterContext());
+            }});
         registerService(Context.INPUT_METHOD_SERVICE, android.view.inputmethod.InputMethodManager.class,
                 new CachedServiceFetcher<android.view.inputmethod.InputMethodManager>() {
             @Override public android.view.inputmethod.InputMethodManager createService(ContextImpl ctx) throws ServiceNotFoundException {

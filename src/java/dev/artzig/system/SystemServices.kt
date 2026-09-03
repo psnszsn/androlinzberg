@@ -191,6 +191,17 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.LOCATION_SERVICE, location)
         android.os.ServiceManager.addService(Context.LIGHTS_SERVICE, HostedLightsService())
         android.os.ServiceManager.addService(Context.COLOR_DISPLAY_SERVICE, HostedColorDisplayService())
+        // Phase 5: telephony and telecom for a device without a radio (no SIM, no modem,
+        // no subscriptions, no dialer). The phone count is TelephonyManager's active modem
+        // count, exactly as TelephonyRegistry and SubscriptionManagerService compute it.
+        val telephonyPermissions = HostedTelephonyPermissions(packageManager)
+        val modemCount = android.telephony.TelephonyManager.from(context).activeModemCount
+        android.os.ServiceManager.addService(Context.TELEPHONY_SERVICE, HostedTelephonyService(telephonyPermissions))
+        android.os.ServiceManager.addService("isub", HostedSubscriptionService(telephonyPermissions, modemCount))
+        android.os.ServiceManager.addService("iphonesubinfo", HostedPhoneSubInfoService(telephonyPermissions))
+        android.os.ServiceManager.addService(Context.CARRIER_CONFIG_SERVICE, HostedCarrierConfigLoader(telephonyPermissions))
+        android.os.ServiceManager.addService("telephony.registry", HostedTelephonyRegistry(telephonyPermissions, modemCount))
+        android.os.ServiceManager.addService(Context.TELECOM_SERVICE, HostedTelecomService(context, telephonyPermissions, packageManager))
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name

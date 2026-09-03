@@ -83,6 +83,9 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/native/libs/permission/aidl/",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core/",
         "frameworks/base/location/java/",
+        "frameworks/base/telephony/java/",
+        "frameworks/base/telecomm/java/",
+        "frameworks/base/mms/java/",
     }) |prefix| {
         if (std.mem.startsWith(u8, input, prefix)) {
             return replaceExtension(b, input[prefix.len..], ".java");
@@ -128,6 +131,9 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/native/android/aidl",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
         "frameworks/base/location/java",
+        "frameworks/base/telephony/java",
+        "frameworks/base/telecomm/java",
+        "frameworks/base/mms/java",
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
 }
 
@@ -319,19 +325,29 @@ fn statsJava(
     _ = stage.addCopyDirectory(aosp.path("frameworks/proto_logging/stats/stats_log_api_gen/include_cc_hdrs"), base ++ "/cc_hdrs", .{});
     _ = stage.addCopyDirectory(aosp.path("frameworks/proto_logging/stats/stats_log_api_gen/include_cc_srcs"), base ++ "/cc_srcs", .{});
 
-    const run = b.addRunArtifact(stats_tool);
-    run.setCwd(stage.getDirectory());
-    run.addArg("--java");
-    const java = run.addOutputFileArg("FrameworkStatsLog.java");
-    run.addArgs(&.{
-        "--module",      "framework",
-        "--javaPackage", "com.android.internal.util",
-        "--javaClass",   "FrameworkStatsLog",
-    });
-    run.setName("generate FrameworkStatsLog.java");
-    const result = b.allocator.alloc(LazyPath, 1) catch @panic("OOM");
-    result[0] = java;
-    _ = exposePaths(b, "gen-stats", "Generate FrameworkStatsLog Java source", result);
+    // One run per stats-log module, as Soong's stats-log-api-gen genrules do:
+    // the framework's FrameworkStatsLog, telephony's TelephonyStatsLog (AnomalyReporter)
+    // and telephony-common's TelephonyCommonStatsLog (TelephonyPermissions).
+    const specs = .{
+        .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },
+        .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },
+        .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
+    };
+    const result = b.allocator.alloc(LazyPath, specs.len) catch @panic("OOM");
+    inline for (specs, 0..) |spec, index| {
+        const run = b.addRunArtifact(stats_tool);
+        run.setCwd(stage.getDirectory());
+        run.addArg("--java");
+        const java = run.addOutputFileArg(spec.class ++ ".java");
+        run.addArgs(&.{
+            "--module",      spec.module,
+            "--javaPackage", spec.package,
+            "--javaClass",   spec.class,
+        });
+        run.setName("generate " ++ spec.class ++ ".java");
+        result[index] = java;
+    }
+    _ = exposePaths(b, "gen-stats", "Generate stats-log Java sources", result);
     return result;
 }
 

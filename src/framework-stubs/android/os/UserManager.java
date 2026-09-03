@@ -45,6 +45,11 @@ public class UserManager {
                 USER_TYPE_FULL_SYSTEM));
         return users;
     }
+    public List<UserHandle> getUserHandles(boolean excludeDying) {
+        List<UserHandle> handles = new ArrayList<>();
+        for (UserInfo user : getUsers()) handles.add(UserHandle.of(user.id));
+        return handles;
+    }
     /** Nested type of the IUserManager surface. */
     public static class EnforcingUser implements Parcelable {
         @Override public int describeContents() { return 0; }

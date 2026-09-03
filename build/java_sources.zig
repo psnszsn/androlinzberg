@@ -905,6 +905,48 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/location/java/android/location/provider/ProviderProperties.java");
     try c.file("$FB/location/java/android/location/provider/ProviderRequest.java");
     try c.file("$FB/location/java/android/location/provider/ReverseGeocodeRequest.java");
+
+    // Managers over hosted services, phase 5: the real TelephonyManager, SubscriptionManager,
+    // CarrierConfigManager, TelephonyRegistryManager, SmsManager, EuiccManager, ImsManager,
+    // MmsManager and TelecomManager families (the telephony, telecom and MMS framework trees
+    // verbatim) over hosted services, plus their closure: ContactsContract/Contacts, the
+    // legacy permission and system-config clients, the country detector and ParcelUuid.
+    // Left out of the trees: the MMS PDU persister (android.drm JNI) and the satellite HAL
+    // service base (android.hardware.radio.network.IRadioNetwork is not vendored).
+    try c.add("$FB/telephony/java", .{ .not_names = &.{ "SatelliteImplBase.java", "SatelliteService.java" } });
+    try c.add("$FB/telephony/common", .{ .not_names = &.{ "PduPersister.java", "DownloadDrmHelper.java", "DrmConvertSession.java" } });
+    try c.add("$FB/telecomm/java", .{});
+    try c.file("$CJ/android/content/AsyncQueryHandler.java");
+    try c.file("$CJ/android/content/CursorEntityIterator.java");
+    try c.file("$CJ/android/content/Entity.java");
+    try c.file("$CJ/android/content/EntityIterator.java");
+    try c.file("$CJ/android/content/pm/SignedPackage.java");
+    try c.file("$CJ/android/content/pm/permission/SplitPermissionInfoParcelable.java");
+    try c.file("$CJ/android/os/CarrierAssociatedAppEntry.java");
+    try c.file("$CJ/android/os/ParcelUuid.java");
+    try c.file("$CJ/android/os/SystemConfigManager.java");
+    try c.file("$CJ/android/os/TelephonyServiceManager.java");
+    try c.file("$CJ/android/permission/LegacyPermissionManager.java");
+    try c.file("$CJ/android/provider/Contacts.java");
+    try c.file("$CJ/android/provider/ContactsContract.java");
+    try c.file("$CJ/android/provider/ContactsInternal.java");
+    try c.file("$CJ/android/provider/SyncStateContract.java");
+    try c.file("$CJ/android/provider/Telephony.java");
+    try c.file("$CJ/android/telephony/DataConnectionRealTimeInfo.java");
+    try c.file("$CJ/android/telephony/PhoneStateListener.java");
+    try c.file("$CJ/android/telephony/Rlog.java");
+    try c.file("$CJ/android/telephony/SubscriptionPlan.java");
+    try c.file("$CJ/android/telephony/TelephonyCallback.java");
+    try c.file("$CJ/android/util/BackupUtils.java");
+    try c.file("$CJ/android/util/RecurrenceRule.java");
+    try c.file("$CJ/com/android/internal/util/BitwiseInputStream.java");
+    try c.file("$CJ/com/android/internal/util/BitwiseOutputStream.java");
+    try c.file("$CJ/com/android/internal/util/Protocol.java");
+    try c.file("$FB/location/java/android/location/Country.java");
+    try c.file("$FB/location/java/android/location/CountryDetector.java");
+    try c.file("$FB/location/java/android/location/CountryListener.java");
+    try c.file("$FB/mms/java/android/telephony/MmsManager.java");
+    try c.file("$CJ/android/telephony/TelephonyRegistryManager.java");
     try c.file("$CJ/android/hardware/LegacySensorManager.java");
     try c.file("$CJ/android/hardware/Sensor.java");
     try c.file("$CJ/android/hardware/SensorAdditionalInfo.java");

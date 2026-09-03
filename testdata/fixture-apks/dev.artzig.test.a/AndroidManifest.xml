@@ -8,6 +8,10 @@
     android:versionName="1">
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Telephony/telecom checks: the privileged phone-state permission (signature,
+         granted for the same reason) and the normal self-managed-calls permission. -->
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <application android:hasCode="false" android:label="azk test a">
         <!-- Resolvable only while enabled; the client toggles it to check the
              explicit-lookup enabled-state gate (no code needed for a manifest
@@ -21,5 +25,10 @@
             android:exported="false" />
         <service android:name="dev.artzig.systemtest.ANoPermissionJobService"
             android:exported="false" />
+        <!-- A self-managed ConnectionService for the telecom phone-account checks:
+             registration requires the service to hold the telecom bind permission. -->
+        <service android:name="dev.artzig.systemtest.ATestConnectionService"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+            android:exported="true" />
     </application>
 </manifest>

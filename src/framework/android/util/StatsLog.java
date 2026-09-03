@@ -25,6 +25,11 @@ public final class StatsLog {
     public static final byte ANNOTATION_ID_FIELD_RESTRICTION_PERIPHERAL_DEVICE_INFO = 10;
     public static final byte ANNOTATION_ID_FIELD_RESTRICTION_APP_USAGE = 11;
     public static final byte ANNOTATION_ID_FIELD_RESTRICTION_APP_ACTIVITY = 12;
+    // atom_field_options.proto RestrictionCategory, as the stats-log generator cites them.
+    public static final int RESTRICTION_CATEGORY_DIAGNOSTIC = 1;
+    public static final int RESTRICTION_CATEGORY_SYSTEM_INTELLIGENCE = 2;
+    public static final int RESTRICTION_CATEGORY_AUTHENTICATION = 3;
+    public static final int RESTRICTION_CATEGORY_FRAUD_AND_ABUSE = 4;
     public static final byte ANNOTATION_ID_FIELD_RESTRICTION_HEALTH_CONNECT = 13;
     public static final byte ANNOTATION_ID_FIELD_RESTRICTION_ACCESSIBILITY = 14;
     public static final byte ANNOTATION_ID_FIELD_RESTRICTION_SYSTEM_SEARCH = 15;

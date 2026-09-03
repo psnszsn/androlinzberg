@@ -72,6 +72,9 @@ AIDL_ROOTS = (
     "frameworks/base/native/android/aidl",
     "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
     "frameworks/base/location/java",
+    "frameworks/base/telephony/java",
+    "frameworks/base/telecomm/java",
+    "frameworks/base/mms/java",
 )
 
 ACONFIG_CLASSES = {"Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl"}

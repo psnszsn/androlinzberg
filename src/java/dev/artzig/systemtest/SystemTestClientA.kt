@@ -780,6 +780,64 @@ internal object SystemTestClientA {
         val colorDisplay = checkNotNull(context.getSystemService(android.hardware.display.ColorDisplayManager::class.java))
         check(!colorDisplay.isNightDisplayActivated, "night display is off")
 
+        // --- telephony and telecom through the real TelephonyManager, SubscriptionManager,
+        // CarrierConfigManager and TelecomManager over the hosted ITelephony, ISub,
+        // IPhoneSubInfo, ICarrierConfigLoader, ITelephonyRegistry and ITelecomService
+        // (a device without a radio: no SIM, no modem, no subscriptions, no dialer).
+        val telephony = checkNotNull(context.getSystemService(android.telephony.TelephonyManager::class.java))
+        check(telephony.simState == android.telephony.TelephonyManager.SIM_STATE_ABSENT, "sim state absent")
+        check(telephony.phoneType == android.telephony.TelephonyManager.PHONE_TYPE_NONE, "phone type none")
+        check(telephony.networkType == android.telephony.TelephonyManager.NETWORK_TYPE_UNKNOWN, "network type unknown")
+        check(telephony.dataState == android.telephony.TelephonyManager.DATA_DISCONNECTED, "data disconnected")
+        check(telephony.callState == android.telephony.TelephonyManager.CALL_STATE_IDLE, "call state idle")
+        check(!telephony.hasCarrierPrivileges(), "no carrier privileges")
+        check(telephony.networkOperatorName == "", "no network operator")
+        val serviceStateSeen = CountDownLatch(1)
+        var initialServiceState = -1
+        val telephonyCallback = object : android.telephony.TelephonyCallback(), android.telephony.TelephonyCallback.ServiceStateListener {
+            override fun onServiceStateChanged(serviceState: android.telephony.ServiceState) {
+                initialServiceState = serviceState.state
+                serviceStateSeen.countDown()
+            }
+        }
+        telephony.registerTelephonyCallback(context.mainExecutor, telephonyCallback)
+        check(serviceStateSeen.await(30, TimeUnit.SECONDS), "telephony callback delivers the initial service state")
+        check(initialServiceState == android.telephony.ServiceState.STATE_OUT_OF_SERVICE, "initial service state is out of service")
+        telephony.unregisterTelephonyCallback(telephonyCallback)
+        val subscriptions = checkNotNull(context.getSystemService(android.telephony.SubscriptionManager::class.java))
+        check(subscriptions.activeSubscriptionInfoList.orEmpty().isEmpty(), "no active subscriptions")
+        check(subscriptions.activeSubscriptionInfoCount == 0, "active subscription count is zero")
+        check(
+            android.telephony.SubscriptionManager.getDefaultSubscriptionId() == android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+            "no default subscription",
+        )
+        // TelephonyFrameworkInitializer skips the FEATURE_TELEPHONY_SUBSCRIPTION check below
+        // vendor API 2024Q2, so the manager exists; the loader answers with the defaults.
+        val carrierConfigManager = checkNotNull(context.getSystemService(android.telephony.CarrierConfigManager::class.java))
+        val carrierConfig = carrierConfigManager.config
+        val carrierDefaults = android.telephony.CarrierConfigManager.getDefaultConfig()
+        check(
+            carrierConfig != null && carrierConfig.size() == carrierDefaults.size() &&
+                carrierConfig.getBoolean(android.telephony.CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL) ==
+                carrierDefaults.getBoolean(android.telephony.CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL),
+            "carrier config is the AOSP default set",
+        )
+        val telecom = checkNotNull(context.getSystemService(android.telecom.TelecomManager::class.java))
+        check(telecom.callCapablePhoneAccounts.isEmpty(), "no call-capable phone accounts")
+        check(!telecom.isInCall, "not in a call")
+        check(telecom.defaultDialerPackage == null, "no default dialer")
+        val voipHandle = android.telecom.PhoneAccountHandle(ComponentName(context, "dev.artzig.systemtest.ATestConnectionService"), "voip")
+        telecom.registerPhoneAccount(
+            android.telecom.PhoneAccount.builder(voipHandle, "Test VoIP")
+                .setCapabilities(android.telecom.PhoneAccount.CAPABILITY_SELF_MANAGED)
+                .build(),
+        )
+        check(telecom.ownSelfManagedPhoneAccounts == listOf(voipHandle), "self-managed phone account registered")
+        check(telecom.getPhoneAccount(voipHandle)?.isEnabled == true, "self-managed phone account starts enabled")
+        check(telecom.isOutgoingCallPermitted(voipHandle), "outgoing self-managed call permitted")
+        telecom.unregisterPhoneAccount(voipHandle)
+        check(telecom.ownSelfManagedPhoneAccounts.isEmpty(), "self-managed phone account unregistered")
+
         // --- clipboard through the reused AOSP ClipboardService.
         val clipboard = checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         val clipChanged = CountDownLatch(1)
