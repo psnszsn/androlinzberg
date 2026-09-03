@@ -58,10 +58,23 @@ internal object SystemTestHostB {
         }
         ServiceManager.addService("dev.artzig.test.b.messenger", android.os.Messenger(messengerHandler).binder)
         System.err.println("system-test-host-b: attached pid=" + Process.myPid() + " uid=" + Process.myUid())
+        // A job of this package: the hosted job scheduler binds BJobService into
+        // this process from the system process and drives it to jobFinished.
+        val scheduler = checkNotNull(context.getSystemService(android.app.job.JobScheduler::class.java))
+        val jobResult = scheduler.schedule(
+            android.app.job.JobInfo.Builder(
+                11, android.content.ComponentName("dev.artzig.test.b", BJobService::class.java.name),
+            ).build(),
+        )
+        check(jobResult == android.app.job.JobScheduler.RESULT_SUCCESS) { "schedule returned " + jobResult }
         Thread {
             val exited = EchoService.exitLatch.await(120, java.util.concurrent.TimeUnit.SECONDS)
-            System.err.println("system-test-host-b: exiting (requested=" + exited + ", unbound=" + EchoService.unbound.get() + ")")
-            Runtime.getRuntime().exit(if (exited && EchoService.unbound.get()) 0 else 3)
+            val jobRan = TestJobService.b.finished.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            val jobUnbound = jobRan && TestJobService.b.destroyed.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            val jobGone = scheduler.getPendingJob(11) == null
+            System.err.println("system-test-host-b: exiting (requested=" + exited + ", unbound=" + EchoService.unbound.get() +
+                ", job ran=" + jobRan + ", job service destroyed=" + jobUnbound + ", job removed=" + jobGone + ")")
+            Runtime.getRuntime().exit(if (exited && EchoService.unbound.get() && jobRan && jobUnbound && jobGone) 0 else 3)
         }.apply { isDaemon = true }.start()
         Looper.loop()
     }

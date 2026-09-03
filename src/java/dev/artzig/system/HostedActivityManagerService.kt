@@ -62,6 +62,9 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
         var created = false
         var startRequested = false
         var lastStartId = 0
+        /** ServiceRecord.foregroundId/isForeground: the posted foreground notification, 0 when none. */
+        var foregroundId = 0
+        var isForeground = false
         val bindings = LinkedHashMap<FilterComparison, IntentBindRecord>()
         val connections = LinkedHashMap<IBinder, ConnectionRecord>()
     }
@@ -105,6 +108,8 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
     /** getContentProvider calls blocked until the owning package publishes. */
     private val providerWaiters = LinkedHashMap<String, MutableList<ProviderWaiter>>()
     @Volatile var processLauncher: ProcessLauncher? = null
+    /** Foreground-service notifications are posted and cancelled through the hosted notification service. */
+    @Volatile var notificationService: HostedNotificationManagerService? = null
     /** The session's package manager; consulted for APK paths of packages with no running process. */
     @Volatile var packageService: HostedPackageManagerService? = null
 
@@ -157,6 +162,9 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
                 for (connection in service.connections.values) notify.add(connection to service)
                 servicesByComponent.remove(service.name)
                 servicesByToken.remove(service.token)
+                if (service.isForeground && service.foregroundId != 0) {
+                    notificationService?.cancelForegroundServiceNotification(service.name.packageName, service.foregroundId)
+                }
             }
             // Connections owned by the dead process are dropped.
             for (service in servicesByComponent.values) {
@@ -472,6 +480,11 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
         if (record.startRequested || record.connections.isNotEmpty()) return null
         servicesByComponent.remove(record.name)
         servicesByToken.remove(record.token)
+        // bringDownServiceLocked: a foreground service's notification goes with it.
+        if (record.isForeground && record.foregroundId != 0) {
+            notificationService?.cancelForegroundServiceNotification(record.name.packageName, record.foregroundId)
+            record.isForeground = false
+        }
         val app = record.app ?: return null
         return {
             try {
@@ -815,8 +828,34 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
     override fun handleApplicationStrictModeViolation(app: IBinder?, penaltyMask: Int, crashInfo: android.os.StrictMode.ViolationInfo?) {}
     override fun addPackageDependency(packageName: String?) {}
     override fun updateServiceGroup(connection: IServiceConnection?, group: Int, importance: Int) {}
-    /** Foreground state is a notification concern; the host has no notification shade. */
-    override fun setServiceForeground(className: ComponentName?, token: IBinder?, id: Int, notification: android.app.Notification?, flags: Int, foregroundServiceType: Int) {}
+    /**
+     * ActiveServices.setServiceForegroundInnerLocked: startForeground posts the
+     * notification with FLAG_FOREGROUND_SERVICE (ServiceRecord.postNotification);
+     * stopForeground removes it (STOP_FOREGROUND_REMOVE) or detaches it.
+     */
+    override fun setServiceForeground(className: ComponentName?, token: IBinder?, id: Int, notification: android.app.Notification?, flags: Int, foregroundServiceType: Int) {
+        val record = synchronized(lock) { servicesByToken[token ?: return] } ?: return
+        val pkg = record.name.packageName
+        val uid = record.app?.uid ?: Binder.getCallingUid()
+        if (id != 0) {
+            requireNotNull(notification) { "null notification" }
+            if (record.foregroundId != id && record.foregroundId != 0) {
+                notificationService?.cancelForegroundServiceNotification(pkg, record.foregroundId)
+            }
+            notification.flags = notification.flags or android.app.Notification.FLAG_FOREGROUND_SERVICE
+            record.foregroundId = id
+            record.isForeground = true
+            notificationService?.postForegroundServiceNotification(pkg, uid, Binder.getCallingPid(), id, notification)
+        } else if (record.isForeground) {
+            record.isForeground = false
+            if (flags and android.app.Service.STOP_FOREGROUND_REMOVE != 0) {
+                notificationService?.cancelForegroundServiceNotification(pkg, record.foregroundId)
+            } else if (flags and android.app.Service.STOP_FOREGROUND_DETACH != 0) {
+                notificationService?.detachForegroundServiceNotification(pkg, record.foregroundId)
+            }
+            record.foregroundId = 0
+        }
+    }
     override fun getForegroundServiceType(className: ComponentName?, token: IBinder?): Int = 0
     override fun refContentProvider(connection: IBinder?, stableDelta: Int, unstableDelta: Int): Boolean = true
     override fun removeContentProvider(connection: IBinder?, stable: Boolean) {}

@@ -61,6 +61,8 @@ public class AudioAttributes implements Parcelable {
     }
 
     @Override public int describeContents() { return 0; }
+    /** AOSP dumpDebug writes AudioAttributesProto fields; the hosted proto sink is inert. */
+    public void dumpDebug(android.util.proto.ProtoOutputStream proto, long fieldId) {}
     @Override public void writeToParcel(Parcel dest, int flags) {
         dest.writeInt(mUsage); dest.writeInt(mContentType); dest.writeInt(mFlags);
     }

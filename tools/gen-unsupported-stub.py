@@ -9,6 +9,8 @@ src, pkg, cls, out = sys.argv[1:5]
 oneway = len(sys.argv) > 5 and sys.argv[5] == "oneway"
 text = open(src).read()
 iface = re.search(r'public interface (\w+) extends android\.os\.IInterface', text).group(1)
+java_pkg = re.search(r'^package ([\w.]+);', text, re.M).group(1)
+iface_fqn = f'{java_pkg}.{iface}'
 # The Default class carries every method with a body; parse its signatures.
 default = text[text.index('public static class Default implements'):]
 default = default[:default.index('\n  }\n')]
@@ -80,7 +82,7 @@ lines = ['@file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")', '',
          f'/** Every {iface} method throws UnsupportedOperationException; the hosted',
          ' * service overrides what it serves (generated from the AIDL interface by',
          ' * tools/gen-unsupported-stub.py; regenerate when the interface changes). */',
-         f'abstract class {cls} : {iface}.Stub() {{']
+         f'abstract class {cls} : {iface_fqn}.Stub() {{']
 for ret, name, params in sigs:
     ps = split_params(params)
     kparams = ', '.join(f'{n}: {kt_type(t)}' for t, n in ps)

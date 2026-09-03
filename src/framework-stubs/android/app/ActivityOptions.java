@@ -14,6 +14,11 @@ public class ActivityOptions {
     /** AOSP: options ride a Bundle; nothing in it is interpreted on this host. */
     public ActivityOptions(android.os.Bundle opts) {}
     public static ActivityOptions makeBasic() { return new ActivityOptions(); }
+    /** No window animations on the host: the transition variants are plain options. */
+    public static ActivityOptions makeCustomAnimation(android.content.Context context, int enterResId, int exitResId) { return new ActivityOptions(); }
+    @SafeVarargs
+    public static ActivityOptions makeSceneTransitionAnimation(Activity activity, android.util.Pair<android.view.View, String>... sharedElements) { return new ActivityOptions(); }
+    public ActivityOptions setPendingIntentLaunchFlags(int flags) { return this; }
     public ActivityOptions setCallerDisplayId(int callerDisplayId) { return this; }
     /** AOSP: options ride a Bundle; this host keeps no launch display/task state in them. */
     public static ActivityOptions fromBundle(android.os.Bundle bOptions) { return bOptions != null ? new ActivityOptions() : null; }

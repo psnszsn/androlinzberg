@@ -1,0 +1,32 @@
+From ed22f2f43b9d4d6f3b83466eaab1b6b0dc233be3 Mon Sep 17 00:00:00 2001
+From: artzig <artzig@localhost>
+Date: Wed, 2 Sep 2026 23:40:00 +0200
+Subject: [PATCH] AlarmManager: time-zone validation without
+ ZoneInfoDb.hasTimeZone on the artzig host
+
+The host libcore's com.android.i18n.timezone.ZoneInfoDb predates hasTimeZone;
+setTimeZone checks the same ID table through getAvailableIDs.
+
+Change-Id: I7b8aec3de4785c80c3299e8bee899c3d162a40da
+---
+ .../jobscheduler/framework/java/android/app/AlarmManager.java | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/apex/jobscheduler/framework/java/android/app/AlarmManager.java b/apex/jobscheduler/framework/java/android/app/AlarmManager.java
+index ec6a8b8af..198cf0f3a 100644
+--- a/apex/jobscheduler/framework/java/android/app/AlarmManager.java
++++ b/apex/jobscheduler/framework/java/android/app/AlarmManager.java
+@@ -1454,7 +1454,9 @@ public class AlarmManager {
+ 
+         // Reject this timezone if it isn't an Olson zone we recognize.
+         if (mTargetSdkVersion >= Build.VERSION_CODES.M) {
+-            boolean hasTimeZone = ZoneInfoDb.getInstance().hasTimeZone(timeZone);
++            // artzig: the host libcore's ZoneInfoDb has no hasTimeZone; the ID table is the same check.
++            boolean hasTimeZone = java.util.Arrays.asList(
++                    ZoneInfoDb.getInstance().getAvailableIDs()).contains(timeZone);
+             if (!hasTimeZone) {
+                 throw new IllegalArgumentException("Timezone: " + timeZone + " is not an Olson ID");
+             }
+-- 
+2.55.0
+

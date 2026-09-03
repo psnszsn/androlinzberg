@@ -100,6 +100,17 @@ public class Activity extends ContextWrapper implements Window.Callback,
                 this, ActivityThread.currentActivityThread().getApplicationThread().asBinder(),
                 getActivityToken(), this, intent, requestCode, options);
     }
+    /** AOSP startIntentSenderForResult: the sender is sent as its creator (no activity result token yet). */
+    public void startIntentSenderForResult(android.content.IntentSender intent, int requestCode,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
+            throws android.content.IntentSender.SendIntentException {
+        startIntentSenderForResult(intent, requestCode, fillInIntent, flagsMask, flagsValues, extraFlags, null);
+    }
+    public void startIntentSenderForResult(android.content.IntentSender intent, int requestCode,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options)
+            throws android.content.IntentSender.SendIntentException {
+        intent.sendIntent(this, 0, fillInIntent, null, null);
+    }
     public void setResult(int resultCode) {}
     public void setResult(int resultCode, Intent data) {}
     public boolean isActivityTransitionRunning() { return false; }

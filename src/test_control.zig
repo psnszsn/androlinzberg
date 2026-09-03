@@ -18,6 +18,7 @@ pub const Android = struct {
     env: [*c]art.jni.JNIEnv,
     class: art.jni.jclass,
     snapshot_method: art.jni.jmethodID,
+    notifications_method: art.jni.jmethodID,
     diagnostics_method: art.jni.jmethodID,
     runtime_diagnostics_method: art.jni.jmethodID,
     log_sequence_method: art.jni.jmethodID,
@@ -32,6 +33,7 @@ pub const Android = struct {
             .env = env,
             .class = class,
             .snapshot_method = try e.getStaticMethodID(class, "accessibilitySnapshot", "()Ljava/lang/String;"),
+            .notifications_method = try e.getStaticMethodID(class, "notificationsSnapshot", "()Ljava/lang/String;"),
             .diagnostics_method = try e.getStaticMethodID(class, "accessibilityDiagnostics", "(J)Ljava/lang/String;"),
             .runtime_diagnostics_method = try e.getStaticMethodID(class, "testDiagnostics", "(JJ)Ljava/lang/String;"),
             .log_sequence_method = try e.getStaticMethodID(class, "diagnosticLogSequence", "()J"),
@@ -44,6 +46,11 @@ pub const Android = struct {
 
     pub fn snapshot(self: *const Android, allocator: std.mem.Allocator) ![]u8 {
         return self.callString0(allocator, self.snapshot_method);
+    }
+
+    /// The package's posted notifications as the hosted notification service holds them.
+    pub fn notifications(self: *const Android, allocator: std.mem.Allocator) ![]u8 {
+        return self.callString0(allocator, self.notifications_method);
     }
 
     pub fn diagnostics(self: *const Android, allocator: std.mem.Allocator, after_revision: u64) ![]u8 {
@@ -718,6 +725,10 @@ pub const Server = struct {
         defer self.gpa.free(snapshot_json);
         var snapshot = try std.json.parseFromSlice(std.json.Value, self.gpa, snapshot_json, .{});
         defer snapshot.deinit();
+        const notifications_json = try android.notifications(self.gpa);
+        defer self.gpa.free(notifications_json);
+        var notifications = try std.json.parseFromSlice(std.json.Value, self.gpa, notifications_json, .{});
+        defer notifications.deinit();
         const parameters = valueField(call, "parameters") orelse .null;
         const selector = valueField(parameters, "selector");
         const include_tree = boolField(parameters, "include_tree") orelse false;
@@ -754,6 +765,8 @@ pub const Server = struct {
         try json.beginArray();
         for (matches.items) |node| try json.write(node);
         try json.endArray();
+        try json.objectField("notifications");
+        try json.write(notifications.value);
         try json.objectField("tree");
         if (include_tree) try json.write(snapshot.value) else try json.write(null);
         try json.endObject();

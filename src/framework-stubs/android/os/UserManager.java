@@ -8,6 +8,8 @@ import java.util.List;
 public class UserManager {
     /** Single hosted user: no profile parent, default user properties. */
     public UserHandle getProfileParent(UserHandle user) { return null; }
+    /** AOSP returns the profile type's accessibility label; the single hosted user has none. */
+    public String getProfileAccessibilityString(int userId) { return null; }
     public android.content.pm.UserProperties getUserProperties(UserHandle user) {
         return new android.content.pm.UserProperties.Builder().build();
     }

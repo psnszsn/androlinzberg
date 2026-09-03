@@ -143,6 +143,25 @@ internal object SystemServices {
         // service that reads settings during startup.
         android.os.ServiceManager.addService("content", HostedContentService())
         android.os.ServiceManager.addService("uri_grants", HostedUriGrantsService())
+        // The system process is an attached process of its own activity manager
+        // (ActivityManagerService.setSystemProcess) so system services bind app
+        // services through the real Context, as JobServiceContext does.
+        activityManager.attachApplication(android.app.ActivityThread.currentActivityThread().applicationThread, 0)
+        // Managers over hosted services, phase 1: notification, alarm, job scheduler.
+        // Registered before any app can attach, and the notification service
+        // first: the activity manager posts foreground-service notifications and
+        // the job scheduler posts user-initiated job notifications through it.
+        val notifications = HostedNotificationManagerService()
+        notifications.packageService = packageManager
+        activityManager.notificationService = notifications
+        android.os.ServiceManager.addService(Context.NOTIFICATION_SERVICE, notifications)
+        val alarms = HostedAlarmManagerService(context)
+        alarms.packageService = packageManager
+        android.os.ServiceManager.addService(Context.ALARM_SERVICE, alarms)
+        val jobs = HostedJobSchedulerService(context)
+        jobs.packageService = packageManager
+        jobs.notificationService = notifications
+        android.os.ServiceManager.addService(Context.JOB_SCHEDULER_SERVICE, jobs)
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name

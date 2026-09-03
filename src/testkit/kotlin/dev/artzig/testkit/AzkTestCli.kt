@@ -63,6 +63,12 @@ object AzkTestCli {
                 includeTree = false,
                 stableFrames = args.stableFrames,
             ) to 0
+            "notifications" -> {
+                // The package's posted notifications (the host has no shade; this is
+                // the observable record of notify/cancel).
+                val observation = client.observe(null, WaitKind.NOW, includeTree = false, stableFrames = args.stableFrames)
+                JsonObject().apply { add("notifications", observation.getAsJsonObject("observation")?.get("notifications")) } to 0
+            }
             "mark" -> JsonObject().apply { add("mark", client.mark().toJson()) } to 0
             "diagnose" -> client.diagnose(args.since?.let { loadMark(client, it) }) to 0
             "step" -> {
@@ -313,7 +319,7 @@ object AzkTestCli {
     private class UsageException(message: String) : IllegalArgumentException(message)
 
     private val COMMANDS = setOf(
-        "observe", "wait", "click", "drag", "scroll-forward", "scroll-backward",
+        "observe", "wait", "notifications", "click", "drag", "scroll-forward", "scroll-backward",
         "type", "set-text", "key", "mark", "diagnose",
     )
 
@@ -323,6 +329,7 @@ Commands:
   observe [selector] [--tree] [--wait now|ready|idle|exists|absent]
   wait ready|idle|exists|absent [selector]
   click|drag|scroll-forward|scroll-backward|type|set-text|key [selector] [value] [settle options]
+  notifications
   mark
   diagnose [--since JSON|@PATH]
   step click|drag|scroll-forward|scroll-backward|type|set-text|key [selector] [value] [settle options]

@@ -70,6 +70,7 @@ AIDL_ROOTS = (
     "frameworks/native/libs/permission/aidl",
     "frameworks/base/apex/jobscheduler/framework/java",
     "frameworks/base/native/android/aidl",
+    "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
 )
 
 ACONFIG_CLASSES = {"Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl"}
@@ -235,6 +236,8 @@ class SourceRules:
                 roots[name] = dep.group(1)
             elif child and child.group(1) in variables:
                 roots[name] = variables[child.group(1)] + "/" + child.group(2)
+            elif expr.strip() in variables:
+                roots[name] = variables[expr.strip()]
         self.roots = roots
         self.files: set[str] = set()
         self.trees: list[tuple[str, int | None, list[str], list[str]]] = []
@@ -366,6 +369,8 @@ class Resolver:
         self.aosp, self.index, self.manifest, self.rules, self.classes, self.stubs = aosp, index, manifest, rules, classes, stubs
         self.parsed: dict[str, list[str]] = {}
         self.nodes: dict[str, Node] = {}
+        # Parcelable .aidl declarations of present stubs that new AIDL interfaces import.
+        self.extra_manifest: set[str] = set()
         self.root_packages = {k.split(".", 1)[0] for k in index.by_fqn} | {p.split(".", 1)[0] for p in BOOT_PREFIXES}
 
     # -- reference extraction -------------------------------------------------
@@ -413,7 +418,10 @@ class Resolver:
         return f"{m.group(1)}.{name}" if m else name
 
     def exists(self, fqn: str) -> bool:
-        return self.classes.has(fqn) or bool(self.index.lookup(fqn)) or fqn in self.stubs.by_fqn
+        if self.classes.has(fqn) or bool(self.index.lookup(fqn)) or fqn in self.stubs.by_fqn:
+            return True
+        pkg, _, name = fqn.rpartition(".")
+        return name in ACONFIG_CLASSES and pkg in self.index.aconfig
 
     def canonical(self, fqn: str) -> str:
         """Reduce nested references (a.b.C.D, a.b.C.CONST) to the top-level class."""
@@ -515,7 +523,13 @@ class Resolver:
             for ref in n.refs:
                 if ref in absent or not self.classes.has(ref):
                     if ref in self.stubs.by_fqn and ref not in absent:
-                        continue  # an existing stub counts as present
+                        # An existing stub counts as present, but an AIDL interface
+                        # importing it still needs the stub's parcelable declaration.
+                        if n.kind.startswith("aidl"):
+                            for a in self.index.lookup(ref).get("aidl", []):
+                                if not self.manifest.vendored(a):
+                                    self.extra_manifest.add(a)
+                        continue
                     self.node(ref).referrers.add(fqn)
                     self.parent.setdefault(ref, fqn)
                     queue.append(ref)
@@ -599,6 +613,8 @@ def render_closure(res: Resolver, seeds: list[str], nodes: dict[str, Node]) -> s
                     manifest_lines.add(f"F aosp {a}")
         elif n.kind in ("aidl-interface", "aidl-structured"):
             aidl_lines.add(f"aosp|{n.path}")
+    for a in res.extra_manifest:
+        manifest_lines.add(f"F aosp {a}")
     aconfig_lines: set[str] = set()
     for n in nodes.values():
         if n.kind == "aconfig" and not present(n):
@@ -667,6 +683,7 @@ def cmd_closure(args: argparse.Namespace, res: Resolver) -> int:
             seeds.append(res.fqn_of(s))
         else:
             seeds.append(s)
+    res.classes.names |= set(args.assume_present)
     nodes = res.closure(seeds, absent=set(seeds))
     print(render_closure(res, seeds, nodes))
     return 1 if any(blockers_of(n) for n in nodes.values()) else 0
@@ -822,6 +839,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-cache", action="store_true", help="rebuild the checkout index")
     sub = ap.add_subparsers(dest="command", required=True)
     c = sub.add_parser("closure", help="what has to be added so the seeds compile")
+    c.add_argument("--assume-present", action="append", default=[], metavar="FQN",
+                   help="treat this class as compiled (a planned host stub or cut); repeatable")
     c.add_argument("seeds", nargs="+")
     a = sub.add_parser("audit", help="classify every stub as replaceable/blocked/no-aosp-source")
     a.add_argument("--json", action="store_true")

@@ -81,6 +81,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/native/libs/input/",
         "frameworks/native/libs/binder/aidl/",
         "frameworks/native/libs/permission/aidl/",
+        "frameworks/base/cmds/idmap2/idmap2d/aidl/core/",
     }) |prefix| {
         if (std.mem.startsWith(u8, input, prefix)) {
             return replaceExtension(b, input[prefix.len..], ".java");
@@ -124,6 +125,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/native/libs/binder/aidl",
         "frameworks/base/apex/jobscheduler/framework/java",
         "frameworks/base/native/android/aidl",
+        "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
 }
 
@@ -361,6 +363,7 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
     compile.addArgs(&.{ "--feature-flags", resource_flags.csv, "-o" });
     const compiled = compile.addOutputFileArg("framework-res-compiled.zip");
     compile.setName("aapt2 compile framework resources");
+    const remote_colors = remoteColorResources(b, res);
 
     const link = command.create(b);
     link.addArgs(&.{ "aapt2", "link", "-o" });
@@ -377,6 +380,7 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
         "-x",
     });
     link.addFileArg(compiled);
+    link.addFileArg(remote_colors);
     inline for (.{
         "warn: removing resource android:string/user_switched without required default value.",
         "warn: duplicate definitions of 'SET_DEFAULT_ACCOUNT_FOR_CONTACTS', overriding previous.",
@@ -405,6 +409,43 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
     outputs.append(b.allocator, signed) catch @panic("OOM");
     _ = exposePaths(b, "gen-res", "Compile, link, and sign framework resources", outputs.items);
     return .{ .java_sources = result, .apk = signed };
+}
+
+/// The Soong genrules remote-color-resources-{compile-public,compile-colors,apk,arsc}
+/// of frameworks/base/core/res/Android.bp: the color resources RemoteViews may re-theme
+/// are linked into their own package and its resources.arsc ships as the raw framework
+/// resource R.raw.remote_views_color_resources. Returns the compiled overlay for link.
+fn remoteColorResources(b: *std.Build, res: LazyPath) LazyPath {
+    const compile = b.addSystemCommand(&.{ "aapt2", "compile", "-o" });
+    const flats = compile.addOutputDirectoryArg("remote-color-resources-flat");
+    compile.addFileArg(res.path(b, "remote_color_resources_res/values/public.xml"));
+    compile.addFileArg(res.path(b, "remote_color_resources_res/values/colors.xml"));
+    compile.setName("aapt2 compile remote color resources");
+
+    const link = b.addSystemCommand(&.{ "aapt2", "link", "-o" });
+    const apk = link.addOutputFileArg("remote-color-resources.apk");
+    link.addArg("--manifest");
+    link.addFileArg(res.path(b, "RemoteThemeColorsAndroidManifest.xml"));
+    link.addFileArg(flats.path(b, "values_public.arsc.flat"));
+    link.addFileArg(flats.path(b, "values_colors.arsc.flat"));
+    link.setName("aapt2 link remote color resources");
+
+    const extract = b.addSystemCommand(&.{ "bash", "-c", "unzip -p \"$1\" resources.arsc > \"$2\"", "remote-color-resources-arsc" });
+    extract.addFileArg(apk);
+    const arsc = extract.addOutputFileArg("remote_views_color_resources.arsc");
+    extract.setName("extract remote color resources.arsc");
+
+    // The raw resource is private: its R.raw symbol exists only through the
+    // <java-symbol> declaration the genrule zips next to it.
+    const overlay = b.addWriteFiles();
+    _ = overlay.addCopyFile(arsc, "res/raw/remote_views_color_resources.arsc");
+    _ = overlay.addCopyFile(res.path(b, "remote_color_resources_res/symbols.xml"), "res/values/remote_views_symbols.xml");
+    const compile_overlay = b.addSystemCommand(&.{ "aapt2", "compile", "--dir" });
+    compile_overlay.addDirectoryArg(overlay.getDirectory().path(b, "res"));
+    compile_overlay.addArg("-o");
+    const compiled = compile_overlay.addOutputFileArg("remote-color-resources-raw.zip");
+    compile_overlay.setName("aapt2 compile remote color raw resource");
+    return compiled;
 }
 
 fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPath) FixtureApks {

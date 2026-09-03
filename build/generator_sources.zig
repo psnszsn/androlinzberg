@@ -218,6 +218,21 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/vr/IPersistentVrStateCallbacks.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/vr/IVrManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/vr/IVrStateCallbacks.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/apex/jobscheduler/framework/java/android/app/job/IJobCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/apex/jobscheduler/framework/java/android/app/job/IJobService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/apex/jobscheduler/framework/java/android/app/job/IUserVisibleJobObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/core/android/os/FabricatedOverlayInternal.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/core/android/os/FabricatedOverlayInternalEntry.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/ICallNotificationEventCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/INotificationManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/notification/IConditionListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/notification/IConditionProvider.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/notification/INotificationListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/notification/IStatusBarNotificationHolder.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/apex/jobscheduler/framework/java/android/app/job/IJobScheduler.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/appwidget/IAppWidgetHost.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/appwidget/IAppWidgetService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/IPackageInstallerCallback.aidl" },
 };
 
 pub const logtags = [_]Logtags{
@@ -282,6 +297,9 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.app.supervision.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/supervision/flags.aconfig"} },
     .{ .package = "android.net.wifi.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/wifi/wifi.aconfig"} },
     .{ .package = "android.webkit", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/webkit/flags.aconfig"} },
+    .{ .package = "android.appwidget.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/appwidget/flags.aconfig"} },
+    .{ .package = "android.service.notification", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/notification/flags.aconfig"} },
+    .{ .package = "android.app.job", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/apex/jobscheduler/framework/aconfig/job.aconfig"} },
 };
 
 pub const sysprop = [_]Sysprop{
@@ -342,6 +360,14 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/appstartinfo.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/profilerinfo.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/pendingintent.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/widget/remoteviews.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/notification.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/notificationmanager.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/notification_channel_group.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/notification_channel.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/notification.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/alarmmanager.proto" },
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app/job/job_enums.proto" },
 };
 
 pub const proto_outputs = [_][]const u8{
@@ -397,6 +423,30 @@ pub const proto_outputs = [_][]const u8{
     "android/view/inputmethod/InputMethodManagerProto.java",
     "com/android/server/IntentResolverProto.java",
     "com/android/server/StatLoggerProto.java",
+    "android/widget/RemoteViewsProto.java",
+    "android/widget/SizeFProto.java",
+    "android/service/notification/NotificationServiceDumpProto.java",
+    "android/service/notification/NotificationRecordProto.java",
+    "android/service/notification/ListenersDisablingEffectsProto.java",
+    "android/service/notification/ManagedServiceInfoProto.java",
+    "android/service/notification/ManagedServicesProto.java",
+    "android/service/notification/RankingHelperProto.java",
+    "android/service/notification/ConditionProto.java",
+    "android/service/notification/ZenRuleProto.java",
+    "android/service/notification/ZenModeProto.java",
+    "android/service/notification/ZenPolicyProto.java",
+    "android/service/notification/PackageRemoteViewInfoProto.java",
+    "android/service/notification/NotificationRemoteViewsProto.java",
+    "android/service/notification/DNDModeProto.java",
+    "android/service/notification/DNDPolicyProto.java",
+    "android/service/notification/NotificationServiceProto.java",
+    "android/app/PolicyProto.java",
+    "android/app/NotificationChannelGroupProto.java",
+    "android/app/NotificationChannelProto.java",
+    "android/app/NotificationProto.java",
+    "android/app/AlarmManagerProto.java",
+    "android/app/AlarmClockInfoProto.java",
+    "android/app/job/JobProtoEnums.java",
 };
 
 pub const stats_protos = [_][]const u8{

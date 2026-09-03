@@ -137,7 +137,21 @@ retained, and delivery lands on the registering process's chosen `Handler`.
 The clipboard is the real AOSP `ClipboardService` running in the system
 process (with the unchanged `ClipboardManager` client). Its host monitor is
 deliberately inert, so clipboard state is shared within the Android session
-but is not read from or written to the Wayland clipboard. System properties
+but is not read from or written to the Wayland clipboard. The notification,
+alarm and job-scheduler managers are the unchanged AOSP clients over hosted
+services on the real AIDL surfaces: `HostedNotificationManagerService`
+(`INotificationManager`: per-package channel and group tables, the posted
+notification table, toasts, and the AOSP "nothing configured" answers for zen,
+listeners and bubbles; there is no shade — a posted notification is a log line
+and the testkit's `notifications` observation), `HostedAlarmManagerService`
+(`IAlarmManager`: RTC and elapsed alarms on one scheduled executor, delivery
+through the PendingIntent or the `IAlarmListener` protocol, alarm clocks, exact
+alarms always permitted) and `HostedJobSchedulerService` (`IJobScheduler`:
+per-uid job tables with the AOSP run-time window, work queues and backoff,
+constraints reduced to what the host knows, execution by binding the app's
+`JobService` from the system context and driving `IJobService`/`IJobCallback`
+exactly as `JobServiceContext` does). Foreground-service notifications flow
+from the activity manager into the same notification table. System properties
 are session-wide, following Android's model: the broker owns a shared property
 area file in the session directory (`src/binder/prop_area.zig`, the
 `__system_property_area__` analogue) that every process — the JVM

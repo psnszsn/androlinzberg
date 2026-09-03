@@ -155,6 +155,8 @@ public final class ViewHost {
 
         @JvmStatic public fun accessibilitySnapshot(): String = android.view.ArtzigAccessibilityBridge.snapshot()
 
+        @JvmStatic public fun notificationsSnapshot(): String = NotificationObservation.snapshot()
+
         @JvmStatic public fun accessibilityDiagnostics(afterRevision: Long): String =
             android.view.ArtzigAccessibilityBridge.diagnostics(
                 afterRevision,

@@ -18,6 +18,26 @@ public class SuggestionSpan extends CharacterStyle implements ParcelableSpan {
             int flags, Class<?> notificationTargetClass) {
         mSuggestions = suggestions; mFlags = flags;
     }
+    /** AOSP underline getters (RemoteViewsSerializers); the inert span draws nothing. */
+    public int getEasyCorrectUnderlineColor() { return 0; }
+    public float getEasyCorrectUnderlineThickness() { return 0f; }
+    public int getMisspelledUnderlineColor() { return 0; }
+    public float getMisspelledUnderlineThickness() { return 0f; }
+    public int getAutoCorrectionUnderlineColor() { return 0; }
+    public float getAutoCorrectionUnderlineThickness() { return 0f; }
+    public int getGrammarErrorUnderlineColor() { return 0; }
+    public float getGrammarErrorUnderlineThickness() { return 0f; }
+
+    /** AOSP @hide constructor used by RemoteViewsSerializers; the inert span keeps only suggestions and flags. */
+    public SuggestionSpan(String[] suggestions, int flags, String localeStringForCompatibility,
+            String languageTag, int hashCode, int easyCorrectUnderlineColor,
+            float easyCorrectUnderlineThickness, int misspelledUnderlineColor,
+            float misspelledUnderlineThickness, int autoCorrectionUnderlineColor,
+            float autoCorrectionUnderlineThickness, int grammarErrorUnderlineColor,
+            float grammarErrorUnderlineThickness) {
+        this((java.util.Locale) null, suggestions, flags);
+    }
+
     public SuggestionSpan(android.os.Parcel src) {
         mSuggestions = src.createStringArray();
         mFlags = src.readInt();

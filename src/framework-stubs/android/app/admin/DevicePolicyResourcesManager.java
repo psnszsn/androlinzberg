@@ -8,6 +8,10 @@ public class DevicePolicyResourcesManager {
             Supplier<Drawable> defaultDrawableLoader) {
         return defaultDrawableLoader.get();
     }
+    public Drawable getDrawable(String drawableId, String drawableStyle, String drawableSource,
+            Supplier<Drawable> defaultDrawableLoader) {
+        return getDrawable(drawableId, drawableStyle, defaultDrawableLoader);
+    }
     public Drawable getDrawableForDensity(String drawableId, String drawableStyle,
             int density, Supplier<Drawable> defaultDrawableLoader) {
         return defaultDrawableLoader.get();

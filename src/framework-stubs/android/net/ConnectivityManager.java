@@ -2,7 +2,7 @@
 package android.net;
 public class ConnectivityManager {
     public NetworkInfo getActiveNetworkInfo() { return new NetworkInfo(); }
-    public Network getActiveNetwork() { return new Network(); }
+    public Network getActiveNetwork() { return new Network(100); }
     public NetworkCapabilities getNetworkCapabilities(Network network) { return new NetworkCapabilities(); }
     public LinkProperties getLinkProperties(Network network) { return new LinkProperties(); }
     public void registerNetworkCallback(NetworkRequest request, NetworkCallback callback) {

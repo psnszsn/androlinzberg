@@ -353,6 +353,225 @@ internal object SystemTestClientA {
         )
         context.unregisterReceiver(pendingReceiver)
 
+        // --- notifications through the real NotificationManager over the hosted
+        // INotificationManager (NotificationManagerService/PreferencesHelper semantics).
+        val notifications = checkNotNull(context.getSystemService(android.app.NotificationManager::class.java))
+        check(notifications.areNotificationsEnabled(), "notifications enabled by default")
+        check(
+            notifications.importance == android.app.NotificationManager.IMPORTANCE_UNSPECIFIED,
+            "package importance unspecified by default",
+        )
+        notifications.createNotificationChannel(
+            android.app.NotificationChannel("test", "Test", android.app.NotificationManager.IMPORTANCE_HIGH),
+        )
+        check(
+            notifications.getNotificationChannel("test")?.importance == android.app.NotificationManager.IMPORTANCE_HIGH,
+            "channel round-trips with its importance",
+        )
+        // Re-creating a channel may only lower its importance (user has locked nothing).
+        notifications.createNotificationChannel(
+            android.app.NotificationChannel("test", "Test renamed", android.app.NotificationManager.IMPORTANCE_LOW),
+        )
+        check(
+            notifications.getNotificationChannel("test")?.let {
+                it.importance == android.app.NotificationManager.IMPORTANCE_LOW && it.name == "Test renamed"
+            } == true,
+            "re-created channel lowers importance and renames",
+        )
+        notifications.createNotificationChannel(
+            android.app.NotificationChannel("test", "Test", android.app.NotificationManager.IMPORTANCE_MAX),
+        )
+        check(
+            notifications.getNotificationChannel("test")?.importance == android.app.NotificationManager.IMPORTANCE_LOW,
+            "re-created channel cannot raise importance",
+        )
+        check(
+            runCatching {
+                notifications.createNotificationChannel(
+                    android.app.NotificationChannel("grouped", "Grouped", android.app.NotificationManager.IMPORTANCE_DEFAULT)
+                        .also { it.group = "missing-group" },
+                )
+            }.exceptionOrNull() is IllegalArgumentException,
+            "a channel in an unknown group is rejected",
+        )
+        notifications.createNotificationChannelGroup(android.app.NotificationChannelGroup("g1", "Group one"))
+        notifications.createNotificationChannel(
+            android.app.NotificationChannel("grouped", "Grouped", android.app.NotificationManager.IMPORTANCE_DEFAULT)
+                .also { it.group = "g1" },
+        )
+        check(
+            notifications.getNotificationChannelGroup("g1")?.channels?.map { it.id } == listOf("grouped"),
+            "channel group lists its channels",
+        )
+        fun note(title: String, text: String, channel: String = "test"): android.app.Notification =
+            android.app.Notification.Builder(context, channel)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(text)
+                .build()
+        notifications.notify(7, note("hello", "world"))
+        var active = notifications.activeNotifications
+        check(
+            active.size == 1 && active[0].id == 7 && active[0].tag == null &&
+                active[0].packageName == "dev.artzig.test.a" &&
+                active[0].notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE) == "hello",
+            "posted notification is active with its extras",
+        )
+        notifications.notify(7, note("hello", "again"))
+        active = notifications.activeNotifications
+        check(
+            active.size == 1 && active[0].notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT) == "again",
+            "re-posting the same id updates in place",
+        )
+        notifications.notify("t", 7, note("tagged", "x"))
+        check(notifications.activeNotifications.size == 2, "a tag makes a distinct notification")
+        notifications.notify(8, note("no channel", "dropped", channel = "nope"))
+        check(notifications.activeNotifications.size == 2, "a notification on an unknown channel is dropped")
+        notifications.cancel("t", 7)
+        check(notifications.activeNotifications.map { it.id to it.tag } == listOf(7 to null), "cancel(tag, id) removes only that one")
+        notifications.notify(9, note("grouped", "y", channel = "grouped"))
+        notifications.deleteNotificationChannel("grouped")
+        check(
+            notifications.getNotificationChannel("grouped") == null && notifications.activeNotifications.none { it.id == 9 },
+            "deleting a channel cancels its notifications",
+        )
+        notifications.cancelAll()
+        check(notifications.activeNotifications.isEmpty(), "cancelAll clears the package")
+        check(
+            runCatching { notifications.deleteNotificationChannel(android.app.NotificationChannel.DEFAULT_CHANNEL_ID) }
+                .exceptionOrNull() is IllegalArgumentException,
+            "the default channel cannot be deleted",
+        )
+        check(
+            notifications.notificationPolicy.priorityCallSenders == android.app.NotificationManager.Policy.PRIORITY_SENDERS_ANY &&
+                notifications.currentInterruptionFilter == android.app.NotificationManager.INTERRUPTION_FILTER_ALL,
+            "default zen policy: everything allowed, filter ALL",
+        )
+
+        // --- alarms through the real AlarmManager over the hosted IAlarmManager
+        // (AlarmManagerService delivery: PendingIntent broadcast, listener callback).
+        val alarms = checkNotNull(context.getSystemService(android.app.AlarmManager::class.java))
+        check(alarms.canScheduleExactAlarms(), "exact alarms are permitted")
+        val alarmLatch = CountDownLatch(1)
+        var alarmCount = -1
+        var alarmAt = 0L
+        val alarmReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, received: Intent?) {
+                alarmCount = received?.getIntExtra(Intent.EXTRA_ALARM_COUNT, -1) ?: -1
+                alarmAt = android.os.SystemClock.elapsedRealtime()
+                alarmLatch.countDown()
+            }
+        }
+        context.registerReceiver(alarmReceiver, android.content.IntentFilter("dev.artzig.test.ALARM"))
+        // Mutable: AlarmManagerService fills EXTRA_ALARM_COUNT into the sent intent,
+        // which PendingIntentRecord.sendInner only applies to mutable senders.
+        val alarmIntent = android.app.PendingIntent.getBroadcast(
+            context, 5, Intent("dev.artzig.test.ALARM"), android.app.PendingIntent.FLAG_MUTABLE,
+        )
+        val alarmSetAt = android.os.SystemClock.elapsedRealtime()
+        alarms.setExact(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, alarmSetAt + 300, alarmIntent)
+        check(alarmLatch.await(30, TimeUnit.SECONDS), "exact alarm delivers its PendingIntent broadcast")
+        check(alarmAt - alarmSetAt >= 300 && alarmAt - alarmSetAt < 5000, "exact alarm fires within tolerance of its trigger")
+        check(alarmCount == 1, "the alarm broadcast carries EXTRA_ALARM_COUNT")
+        context.unregisterReceiver(alarmReceiver)
+        val listenerLatch = CountDownLatch(1)
+        alarms.setExact(
+            android.app.AlarmManager.RTC, System.currentTimeMillis() + 200, "test-listener",
+            { listenerLatch.countDown() }, android.os.Handler(Looper.getMainLooper()),
+        )
+        check(listenerLatch.await(30, TimeUnit.SECONDS), "listener alarm runs on its handler")
+        val cancelledLatch = CountDownLatch(1)
+        val cancelledListener = android.app.AlarmManager.OnAlarmListener { cancelledLatch.countDown() }
+        alarms.setExact(
+            android.app.AlarmManager.ELAPSED_REALTIME, android.os.SystemClock.elapsedRealtime() + 300, "cancelled",
+            cancelledListener, android.os.Handler(Looper.getMainLooper()),
+        )
+        alarms.cancel(cancelledListener)
+        check(!cancelledLatch.await(1, TimeUnit.SECONDS), "a cancelled listener alarm does not fire")
+        check(alarms.nextAlarmClock == null, "no alarm clock scheduled")
+        val clockIntent = android.app.PendingIntent.getBroadcast(
+            context, 6, Intent("dev.artzig.test.CLOCK"), android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        alarms.setAlarmClock(android.app.AlarmManager.AlarmClockInfo(System.currentTimeMillis() + 3_600_000, clockIntent), clockIntent)
+        check(alarms.nextAlarmClock?.showIntent == clockIntent, "the next alarm clock is the one just set")
+        alarms.cancel(clockIntent)
+        check(alarms.nextAlarmClock == null, "cancelling the alarm clock clears it")
+        check(
+            runCatching {
+                alarms.setRepeating(android.app.AlarmManager.RTC, 0, 60_000, alarmIntent)
+                alarms.cancel(alarmIntent)
+            }.isSuccess,
+            "repeating alarms are accepted and cancelled",
+        )
+
+        // --- jobs through the real JobSchedulerImpl over the hosted IJobScheduler
+        // (JobSchedulerService validation, JobServiceContext execution in this process).
+        val scheduler = checkNotNull(context.getSystemService(android.app.job.JobScheduler::class.java))
+        val jobComponent = ComponentName("dev.artzig.test.a", AJobService::class.java.name)
+        check(
+            runCatching {
+                scheduler.schedule(
+                    android.app.job.JobInfo.Builder(1, ComponentName("dev.artzig.test.a", ANoPermissionJobService::class.java.name)).build(),
+                )
+            }.exceptionOrNull() is IllegalArgumentException,
+            "a job service without BIND_JOB_SERVICE is rejected",
+        )
+        check(
+            runCatching {
+                scheduler.schedule(
+                    android.app.job.JobInfo.Builder(1, ComponentName("dev.artzig.test.b", BJobService::class.java.name)).build(),
+                )
+            }.exceptionOrNull() is IllegalArgumentException,
+            "a job in another package is rejected",
+        )
+        check(
+            scheduler.schedule(android.app.job.JobInfo.Builder(1, jobComponent).setMinimumLatency(300).build()) ==
+                android.app.job.JobScheduler.RESULT_SUCCESS,
+            "schedule succeeds",
+        )
+        check(scheduler.getPendingJob(1)?.id == 1 && scheduler.allPendingJobs.size == 1, "scheduled job is pending")
+        check(
+            scheduler.getPendingJobReason(1) == android.app.job.JobScheduler.PENDING_JOB_REASON_CONSTRAINT_MINIMUM_LATENCY,
+            "pending reason is the minimum latency",
+        )
+        check(TestJobService.a.started.await(30, TimeUnit.SECONDS), "the job service starts in this process")
+        check(TestJobService.a.lastParams?.jobId == 1, "onStartJob carries the job id")
+        check(TestJobService.a.finished.await(30, TimeUnit.SECONDS), "jobFinished completes the job")
+        check(TestJobService.a.destroyed.await(30, TimeUnit.SECONDS), "the job service is unbound after completion")
+        var jobGone = false
+        val jobDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (!jobGone && System.nanoTime() < jobDeadline) {
+            jobGone = scheduler.getPendingJob(1) == null
+            if (!jobGone) Thread.sleep(50)
+        }
+        check(jobGone, "a finished one-off job is no longer pending")
+        // Work items: enqueue delivers them through dequeueWork/completeWork.
+        val workJob = android.app.job.JobInfo.Builder(2, jobComponent).build()
+        check(
+            scheduler.enqueue(workJob, android.app.job.JobWorkItem(Intent().putExtra("n", 5))) ==
+                android.app.job.JobScheduler.RESULT_SUCCESS &&
+                scheduler.enqueue(workJob, android.app.job.JobWorkItem(Intent().putExtra("n", 6))) ==
+                android.app.job.JobScheduler.RESULT_SUCCESS,
+            "enqueue accepts work",
+        )
+        val workDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (TestJobService.a.workExtras.size < 2 && System.nanoTime() < workDeadline) Thread.sleep(50)
+        check(TestJobService.a.workExtras.containsAll(listOf(5, 6)), "work items are delivered to the job service")
+        check(
+            scheduler.schedule(android.app.job.JobInfo.Builder(3, jobComponent).setMinimumLatency(60_000).build()) ==
+                android.app.job.JobScheduler.RESULT_SUCCESS,
+        "a delayed job is accepted",
+        )
+        scheduler.cancel(3)
+        check(scheduler.getPendingJob(3) == null, "cancel removes a pending job")
+        check(
+            scheduler.schedule(android.app.job.JobInfo.Builder(4, jobComponent).setPeriodic(15 * 60_000L).build()) ==
+                android.app.job.JobScheduler.RESULT_SUCCESS && scheduler.getPendingJob(4)?.isPeriodic == true,
+            "a periodic job is pending in its window",
+        )
+        scheduler.cancelAll()
+        check(scheduler.allPendingJobs.isEmpty(), "cancelAll clears the package's jobs")
+
         // --- clipboard through the reused AOSP ClipboardService.
         val clipboard = checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         val clipChanged = CountDownLatch(1)

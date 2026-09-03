@@ -115,10 +115,29 @@ public final class SystemServiceRegistry {
             @Override public DownloadManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new DownloadManager(ctx.getOuterContext()); }});
         registerService(Context.AUDIO_SERVICE, android.media.AudioManager.class, new NewServiceFetcher<android.media.AudioManager>() {
             @Override public android.media.AudioManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.media.AudioManager(); }});
-        registerService(Context.NOTIFICATION_SERVICE, NotificationManager.class, new NewServiceFetcher<NotificationManager>() {
-            @Override public NotificationManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new NotificationManager(); }});
-        registerService(Context.ALARM_SERVICE, AlarmManager.class, new NewServiceFetcher<AlarmManager>() {
-            @Override public AlarmManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new AlarmManager(); }});
+        // AOSP creation expressions: the real managers over the hosted
+        // INotificationManager / IAlarmManager services.
+        registerService(Context.NOTIFICATION_SERVICE, NotificationManager.class,
+                new CachedServiceFetcher<NotificationManager>() {
+            @Override public NotificationManager createService(ContextImpl ctx) {
+                final Context outerContext = ctx.getOuterContext();
+                return new NotificationManager(
+                    new android.view.ContextThemeWrapper(outerContext,
+                            android.content.res.Resources.selectSystemTheme(0,
+                                    outerContext.getApplicationInfo().targetSdkVersion,
+                                    com.android.internal.R.style.Theme_Dialog,
+                                    com.android.internal.R.style.Theme_Holo_Dialog,
+                                    com.android.internal.R.style.Theme_DeviceDefault_Dialog,
+                                    com.android.internal.R.style.Theme_DeviceDefault_Light_Dialog))
+                );
+            }});
+        registerService(Context.ALARM_SERVICE, AlarmManager.class,
+                new CachedServiceFetcher<AlarmManager>() {
+            @Override public AlarmManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.ALARM_SERVICE);
+                IAlarmManager service = IAlarmManager.Stub.asInterface(b);
+                return new AlarmManager(service, ctx);
+            }});
         registerService(Context.CONNECTIVITY_SERVICE, android.net.ConnectivityManager.class, new NewServiceFetcher<android.net.ConnectivityManager>() {
             @Override public android.net.ConnectivityManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.ConnectivityManager(); }});
         registerService(Context.TELEPHONY_SERVICE, android.telephony.TelephonyManager.class, new NewServiceFetcher<android.telephony.TelephonyManager>() {
@@ -156,8 +175,13 @@ public final class SystemServiceRegistry {
             @Override public android.app.usage.UsageStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.app.usage.UsageStatsManager(); }});
         registerService(Context.WIFI_SERVICE, android.net.wifi.WifiManager.class, new NewServiceFetcher<android.net.wifi.WifiManager>() {
             @Override public android.net.wifi.WifiManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.wifi.WifiManager(); }});
+        // JobSchedulerFrameworkInitializer.registerServiceWrappers: the real JobSchedulerImpl
+        // over the hosted IJobScheduler.
         registerService(Context.JOB_SCHEDULER_SERVICE, android.app.job.JobScheduler.class, new CachedServiceFetcher<android.app.job.JobScheduler>() {
-            @Override public android.app.job.JobScheduler createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.app.job.JobScheduler(); }});
+            @Override public android.app.job.JobScheduler createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.JOB_SCHEDULER_SERVICE);
+                return new JobSchedulerImpl(ctx.getOuterContext(), android.app.job.IJobScheduler.Stub.asInterface(b));
+            }});
         registerService(Context.VIBRATOR_SERVICE, android.os.Vibrator.class, new NewServiceFetcher<android.os.Vibrator>() {
             @Override public android.os.Vibrator createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.Vibrator(); }});
         registerService(Context.ACCESSIBILITY_SERVICE, android.view.accessibility.AccessibilityManager.class,

@@ -6,4 +6,10 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 @Retention(RetentionPolicy.CLASS)
 @Target({ElementType.METHOD, ElementType.PARAMETER, ElementType.FIELD, ElementType.LOCAL_VARIABLE, ElementType.TYPE, ElementType.CONSTRUCTOR, ElementType.ANNOTATION_TYPE, ElementType.PACKAGE, ElementType.TYPE_USE})
-public @interface VisibleForTesting { int otherwise() default 2; }
+public @interface VisibleForTesting {
+    int PRIVATE = 2;
+    int PACKAGE_PRIVATE = 3;
+    int PROTECTED = 4;
+    int NONE = 5;
+    int otherwise() default PRIVATE;
+}

@@ -113,7 +113,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/android/view/inputmethod", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/translation", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/inspector", .{ .max_depth = 1 });
-    try c.add("$FB/core/java/android/widget", .{ .max_depth = 1, .not_names = &.{ "RemoteViews.java", "VideoView.java", "RemoteViewsAdapter.java", "RemoteViewsService.java", "MediaController.java", "QuickContactBadge.java", "DayPicker*.java", "DatePicker*.java", "TimePicker*.java", "RadialTimePickerView.java", "SimpleMonthView.java", "CalendarView*.java", "YearPickerView.java", "TextViewWithCircularIndicator.java", "DateTimeView.java", "TextInputTimePickerView.java", "RemoteCollectionItemsAdapter.java", "RemoteViewsSerializers.java", "SearchView.java", "SuggestionsAdapter.java", "ActivityChooserModel.java", "ActivityChooserView.java", "ShareActionProvider.java" } });
+    try c.add("$FB/core/java/android/widget", .{ .max_depth = 1, .not_names = &.{ "VideoView.java", "RemoteViewsService.java", "MediaController.java", "QuickContactBadge.java", "DayPicker*.java", "DatePicker*.java", "TimePicker*.java", "RadialTimePickerView.java", "SimpleMonthView.java", "CalendarView*.java", "YearPickerView.java", "TextViewWithCircularIndicator.java", "DateTimeView.java", "TextInputTimePickerView.java", "SearchView.java", "SuggestionsAdapter.java", "ActivityChooserModel.java", "ActivityChooserView.java", "ShareActionProvider.java" } });
     try c.add("$FB/core/java/android/text/method", .{});
     try c.add("$FB/core/java/android/window", .{ .max_depth = 1, .not_names = &.{ "SurfaceSyncGroup.java", "TransitionInfo.java", "WindowContainerTransaction.java", "TaskFragment*.java", "RemoteTransition.java", "WindowContainerToken.java", "TransitionRequestInfo.java", "WindowOrganizer.java", "TaskOrganizer.java", "DisplayAreaOrganizer.java", "BackAnimation*.java", "WindowTokenClient.java", "TransitionFilter.java", "WindowAnimationState.java", "StartingWindowInfo.java", "TaskAppearedInfo.java", "WindowTokenClientController.java", "WindowContext.java", "WindowContextController.java", "RemoteTransitionStub.java", "DisplayAreaInfo.java", "SplashScreen.java", "DisplayAreaAppearedInfo.java", "TransitionMetrics.java", "TaskSnapshot.java", "PictureInPicture*.java", "SnapshotDrawerUtils.java", "SplashScreenView.java", "WindowProviderService.java" } });
     try c.add("$FB/core/java/android/database", .{});
@@ -157,7 +157,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/com/android/internal/dynamicanimation", .{});
     try c.add("$FB/core/java/com/google/android/collect", .{});
     try c.add("$FB/core/java/android/view/animation", .{});
-    try c.add("$FB/core/java/android/content/om", .{ .not_names = &.{ "FabricatedOverlay.java", "OverlayManager.java", "OverlayManagerTransaction.java" } });
+    try c.add("$FB/core/java/android/content/om", .{ .not_names = &.{"OverlayManager.java"} });
     try c.file("$FB/core/java/com/android/internal/graphics/ColorUtils.java");
     try c.add("$FB/core/java/com/android/internal/graphics/cam", .{});
     try c.add("$FB/core/java/android/animation", .{});
@@ -666,4 +666,76 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$MU/java/com/android/modules/utils/TypedXmlPullParser.java");
     try c.file("$MU/java/com/android/modules/utils/TypedXmlSerializer.java");
     try c.file("$MU/java/com/android/internal/util/FastXmlSerializer.java");
+    // Managers over hosted services, phase 1: the real NotificationManager (+ Notification,
+    // channels, Person, RemoteInput, RemoteViews with its RemoteCompose player, zen/condition
+    // value types, StatusBarNotification, NotificationListenerService), AlarmManager and the
+    // JobScheduler client family over INotificationManager/IAlarmManager/IJobScheduler served
+    // by HostedNotificationManagerService/HostedAlarmManagerService/HostedJobSchedulerService.
+    // NotificationChannel's vibration XML (de)serializers are cut with marked stubs
+    // (android.os.vibrator.persistence) until the vibrator family brings the real
+    // VibrationEffect (phase 2).
+    try c.file("$CJ/android/app/AutomaticZenRule.java");
+    try c.file("$CJ/android/app/Notification.java");
+    try c.file("$CJ/android/app/NotificationChannel.java");
+    try c.file("$CJ/android/app/NotificationChannelGroup.java");
+    try c.file("$CJ/android/app/NotificationHistory.java");
+    try c.file("$CJ/android/app/NotificationManager.java");
+    try c.file("$CJ/android/app/Person.java");
+    try c.file("$CJ/android/app/RemoteInput.java");
+    try c.file("$CJ/android/app/RemoteInputHistoryItem.java");
+    try c.file("$CJ/android/app/backup/BackupAnnotations.java");
+    try c.file("$CJ/android/app/backup/BackupRestoreEventLogger.java");
+    try c.file("$CJ/android/app/backup/NotificationLoggingConstants.java");
+    try c.file("$CJ/android/net/NetworkSpecifier.java");
+    try c.file("$CJ/android/service/notification/Adjustment.java");
+    try c.file("$CJ/android/service/notification/Condition.java");
+    try c.file("$CJ/android/service/notification/NotificationListenerFilter.java");
+    try c.file("$CJ/android/service/notification/NotificationListenerService.java");
+    try c.file("$CJ/android/service/notification/NotificationRankingUpdate.java");
+    try c.file("$CJ/android/service/notification/NotificationStats.java");
+    try c.file("$CJ/android/service/notification/RateEstimator.java");
+    try c.file("$CJ/android/service/notification/ScheduleCalendar.java");
+    try c.file("$CJ/android/service/notification/SnoozeCriterion.java");
+    try c.file("$CJ/android/service/notification/StatusBarNotification.java");
+    try c.file("$CJ/android/service/notification/SystemZenRules.java");
+    try c.file("$CJ/android/service/notification/ZenAdapters.java");
+    try c.file("$CJ/android/service/notification/ZenDeviceEffects.java");
+    try c.file("$CJ/android/service/notification/ZenModeConfig.java");
+    try c.file("$CJ/android/service/notification/ZenPolicy.java");
+    try c.file("$CJ/android/util/proto/ProtoStream.java");
+    try c.file("$CJ/com/android/internal/notification/NotificationChannelGroupsHelper.java");
+    try c.file("$CJ/com/android/internal/util/ContrastColorUtil.java");
+    try c.file("$CJ/com/android/internal/util/ImageUtils.java");
+    try c.file("$CJ/com/android/internal/util/NotificationBigTextNormalizer.java");
+    try c.file("$CJ/com/android/internal/widget/CachingIconView.java");
+    try c.file("$CJ/com/android/internal/widget/ColoredIconHelper.java");
+    try c.file("$CJ/com/android/internal/widget/ExploreByTouchHelper.java");
+    try c.file("$CJ/com/android/internal/widget/LocalImageResolver.java");
+    try c.file("$CJ/com/android/internal/widget/NotificationExpandButton.java");
+    try c.file("$CJ/com/android/internal/widget/NotificationProgressModel.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/AlarmManager.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/JobInfo.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/JobParameters.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/JobScheduler.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/JobService.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/JobServiceEngine.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/JobSnapshot.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/JobWorkItem.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/PendingJobReasonsInfo.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/job/UserVisibleJobSummary.java");
+    try c.file("$MU/java/com/android/internal/logging/InstanceId.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/app/JobSchedulerImpl.java");
+    try c.add("$FB/core/java/com/android/internal/widget/remotecompose", .{});
+    // The real AppWidgetHostView (RemoteViews' view host) with AppWidgetHost, AppWidgetManager,
+    // the provider info and the LauncherActivityInfo value type; LauncherApps is a marked stub
+    // and the appwidget service itself is phase 6.
+    try c.file("$CJ/android/appwidget/AppWidgetManager.java");
+    try c.file("$CJ/android/appwidget/AppWidgetProvider.java");
+    try c.file("$CJ/android/appwidget/AppWidgetHost.java");
+    try c.file("$CJ/android/appwidget/AppWidgetHostView.java");
+    try c.file("$CJ/android/appwidget/AppWidgetProviderInfo.java");
+    try c.file("$CJ/android/appwidget/PendingHostUpdate.java");
+    try c.file("$CJ/android/content/pm/IncrementalStatesInfo.java");
+    try c.file("$CJ/android/content/pm/LauncherActivityInfo.java");
+    try c.file("$CJ/android/content/pm/LauncherActivityInfoInternal.java");
 }

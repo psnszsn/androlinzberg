@@ -5,6 +5,7 @@ public final class ProtoOutputStream {
     public ProtoOutputStream() {}
     public ProtoOutputStream(int chunkSize) {}
     public ProtoOutputStream(java.io.FileDescriptor fd) {}
+    public ProtoOutputStream(java.io.OutputStream stream) {}
     public long start(long fieldId) { return 0; }
     public void end(long token) {}
     public void write(long fieldId, int val) {}
