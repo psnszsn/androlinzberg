@@ -300,6 +300,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/TraceBuffer.java");
     try c.file("$CJ/android/provider/Downloads.java");
     try c.file("$CJ/android/net/http/X509TrustManagerExtensions.java");
+    // Stock StatFs; patch 0019 redirects SQLiteGlobal's device /data probe to
+    // the hosted session data partition before it reaches this class.
+    try c.file("$CJ/android/os/StatFs.java");
     try c.add("$CJ/android/security/net/config", .{});
     try c.file("$CJ/android/text/method/OffsetMapping.java");
     try c.file("$CJ/android/util/TimeFormatException.java");

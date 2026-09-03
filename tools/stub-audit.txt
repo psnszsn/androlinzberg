@@ -12,7 +12,7 @@
 # fails when more than `pending-budget` entries are not survivors; lower the budget as
 # stubs are replaced, never raise it.
 
-# pending-budget: 106
+# pending-budget: 105
 
 src/framework-stubs/android/app/ActionBar.java|replaceable|ui|frameworks/base/core/java/android/app/ActionBar.java (1 to add), not vendored
 src/framework-stubs/android/app/ActivityManager.java|blocked|activity|frameworks/base/core/java/android/app/ActivityManager.java (65 to add), not vendored; android.app.backup.BackupDataInput: JNI natives (via BackupDataInput < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.app.backup.BackupDataOutput: JNI natives (via BackupDataOutput < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.app.backup.FullBackup: JNI natives (via FullBackup < BackupAgent < BackupManager < LocalePicker < ActivityManager); android.service.procstats.PackageAssociationProcessStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageAssociationProcessStatsProto < AssociationState < ProcessStats < ActivityManager); android.service.procstats.PackageAssociationSourceProcessStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageAssociationSourceProcessStatsProto < AssociationState < ProcessStats < ActivityManager); android.service.procstats.PackageServiceOperationStatsProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceOperationStatsProto < ServiceState < ProcessStats < ActivityManager)
@@ -146,7 +146,6 @@ src/framework-stubs/android/os/InputEventInjectionSync.java|replaceable|survivor
 src/framework-stubs/android/os/PerfettoTrace.java|blocked|survivor: JNI natives (perfetto is unavailable)|frameworks/base/core/java/android/os/PerfettoTrace.java (2 to add), not vendored; android.os.PerfettoTrackEventExtra: JNI natives (via PerfettoTrackEventExtra < PerfettoTrace); real class has JNI natives
 src/framework-stubs/android/os/PerformanceHintManager.java|blocked|survivor: JNI natives (libandroid_runtime PerformanceHintManager)|frameworks/base/core/java/android/os/PerformanceHintManager.java (2 to add), not vendored; real class has JNI natives
 src/framework-stubs/android/os/PointerIconType.java|replaceable|survivor: libinput AIDL enum generated for C++ only (gen-aidl-cpp)|frameworks/native/libs/input/android/os/PointerIconType.aidl (1 to add, AIDL interface)
-src/framework-stubs/android/os/StatFs.java|replaceable|storage|frameworks/base/core/java/android/os/StatFs.java (1 to add), not vendored
 src/framework-stubs/android/os/UserManager.java|replaceable|user|frameworks/base/core/java/android/os/UserManager.java (1 to add)
 src/framework-stubs/android/os/VintfObject.java|blocked|survivor: JNI natives (libvintf)|frameworks/base/core/java/android/os/VintfObject.java (1 to add), not vendored; real class has JNI natives
 src/framework-stubs/android/os/ext/SdkExtensions.java|no-aosp-source|survivor: SdkExtensions module tree not vendored|no class with this name in the checkout

@@ -6,10 +6,38 @@ Subject: [PATCH] Environment: session data root from ARTZIG_DATA_DIR on the
 
 ANDROID_DATA is ART's dalvik-cache root on this host (an XDG cache directory
 shared between sessions), so the launcher-exported ARTZIG_DATA_DIR takes
-precedence for the Android data directory.
+precedence for the Android data directory. SQLiteGlobal's stock page-size
+probe names the device's /data partition literally; point that probe at the
+same session data root because the host has no /data mount.
 ---
- core/java/android/os/Environment.java | 6 +++++-
- 1 file changed, 5 insertions(+), 1 deletion(-)
+ core/java/android/database/sqlite/SQLiteGlobal.java | 9 ++++++---
+ core/java/android/os/Environment.java               | 6 +++++-
+ 2 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/core/java/android/database/sqlite/SQLiteGlobal.java b/core/java/android/database/sqlite/SQLiteGlobal.java
+index 9aa9f1ac1..ab9ba5eed 100644
+--- a/core/java/android/database/sqlite/SQLiteGlobal.java
++++ b/core/java/android/database/sqlite/SQLiteGlobal.java
+@@ -20,3 +20,4 @@ import android.annotation.TestApi;
+ import android.content.res.Resources;
++import android.os.Environment;
+ import android.os.StatFs;
+ import android.os.SystemProperties;
+@@ -73,9 +74,11 @@ public final class SQLiteGlobal {
+     public static int getDefaultPageSize() {
+         synchronized (sLock) {
+             if (sDefaultPageSize == 0) {
+-                // If there is an issue accessing /data, something is so seriously
+-                // wrong that we just let the IllegalArgumentException propagate.
+-                sDefaultPageSize = new StatFs("/data").getBlockSize();
++                // Host adaptation (artzig): follows AOSP SQLiteGlobal.getDefaultPageSize,
++                // but the host has no literal /data mount. Environment owns the session
++                // data-root redirect, so query that Android data partition instead.
++                sDefaultPageSize = new StatFs(
++                        Environment.getDataDirectory().getPath()).getBlockSize();
+             }
+             return SystemProperties.getInt("debug.sqlite.pagesize", sDefaultPageSize);
+         }
 
 diff --git a/core/java/android/os/Environment.java b/core/java/android/os/Environment.java
 index 69540c42a..1ad2d0672 100644
@@ -30,4 +58,3 @@ index 69540c42a..1ad2d0672 100644
      private static final File DIR_ANDROID_STORAGE = getDirectory(ENV_ANDROID_STORAGE, "/storage");
 -- 
 2.55.0
-

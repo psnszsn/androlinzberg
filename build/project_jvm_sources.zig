@@ -133,7 +133,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/os/PerfettoTrace.java",
     "src/framework-stubs/android/os/PerformanceHintManager.java",
     "src/framework-stubs/android/os/PointerIconType.java",
-    "src/framework-stubs/android/os/StatFs.java",
     "src/framework-stubs/android/os/UserManager.java",
     "src/framework-stubs/android/os/VintfObject.java",
     "src/framework-stubs/android/os/ext/SdkExtensions.java",

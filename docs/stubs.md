@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 106 (budget 106). Survivors: 120. Total: 226.
+Pending: 105 (budget 105). Survivors: 120. Total: 225.
 
 ## Survivors
 
@@ -324,7 +324,6 @@ Pending: 106 (budget 106). Survivors: 120. Total: 226.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/StatFs.java` | replaceable | frameworks/base/core/java/android/os/StatFs.java (1 to add), not vendored |
 | `android/os/storage/IStorageManager.java` | blocked | frameworks/base/core/java/android/os/storage/IStorageManager.aidl (9 to add, AIDL interface), not vendored; android.os.IVoldTaskListener: no source in the checkout (via IVoldTaskListener < IStorageManager) |
 | `android/os/storage/StorageManager.java` | blocked | frameworks/base/core/java/android/os/storage/StorageManager.java (23 to add), not vendored; android.content.res.ObbScanner: JNI natives (via ObbScanner < StorageManager); android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < IInstalld < StorageManager); and |
 | `android/os/storage/VolumeInfo.java` | blocked | frameworks/base/core/java/android/os/storage/VolumeInfo.java (3 to add), not vendored; android.os.IVold: no source in the checkout (via IVold < VolumeInfo) |

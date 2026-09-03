@@ -43,6 +43,7 @@ import com.android.internal.pm.pkg.parsing.ParsingUtils
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.Parcelable
+import android.os.StatFs
 import android.provider.Downloads
 import android.security.net.config.NetworkSecurityConfig
 import android.security.net.config.NetworkSecurityConfigProvider
@@ -117,6 +118,7 @@ internal object FrameworkModuleSmoke {
         testContentCaptureContracts()
         testTraceBufferContracts()
         testProviderContracts()
+        testStatFsContracts()
         testIntentTypedExtras()
         testRemoteActionContract()
         testPictureInPictureContracts()
@@ -338,6 +340,20 @@ internal object FrameworkModuleSmoke {
         }
         check(runCatching {
             X509TrustManagerExtensions(plainTrustManager)
+        }.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    private fun testStatFsContracts() {
+        val stat = StatFs(".")
+        check(stat.blockSizeLong > 0)
+        check(stat.blockCountLong > 0)
+        check(stat.totalBytes == stat.blockCountLong * stat.blockSizeLong)
+        check(stat.availableBytes == stat.availableBlocksLong * stat.blockSizeLong)
+        check(stat.freeBytes >= stat.availableBytes)
+        stat.restat("/tmp")
+        check(stat.totalBytes > 0)
+        check(runCatching {
+            StatFs("/path-that-does-not-exist/artzig-statfs")
         }.exceptionOrNull() is IllegalArgumentException)
     }
 
