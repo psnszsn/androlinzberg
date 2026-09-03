@@ -168,7 +168,18 @@ APK and per-package data directory sizes on the host filesystem) and
 `DeviceIdleManager`/`PowerExemptionManager` over `HostedDeviceIdleController`
 (`IDeviceIdleController`: nobody is idle, allowlists empty). The HAL enum
 packages these clients re-export (`android.hardware.{health,vibrator,thermal}`)
-are marked stubs because `hardware/interfaces` is not vendored. System properties
+are marked stubs because `hardware/interfaces` is not vendored. Media sessions
+are real: `MediaSession`, `MediaController` and `MediaSessionManager` over
+`HostedMediaSessionService` (`ISessionManager`: session records with the AOSP
+`ISession`/`ISessionController` binders, controller callback fan-out, the
+media-button session stack and media-key dispatch, the MEDIA_CONTENT_CONTROL
+gate on reading other packages' sessions) and `MediaMetricsManager` over
+`HostedMediaMetricsService` (`IMediaMetricsManager`: session ids, metrics as
+log lines). `AudioManager`, the audio value types and `MediaRouter2` remain
+pending stubs: their closure runs through `AudioSystem`, `AudioRecord` and
+`AudioPortEventHandler` natives and the audio-policy AIDL of `frameworks/av`
+and `hardware/interfaces`, so they need an AudioSystem host seam and those AIDL
+roots first (docs/stubs.md records the chain). System properties
 are session-wide, following Android's model: the broker owns a shared property
 area file in the session directory (`src/binder/prop_area.zig`, the
 `__system_property_area__` analogue) that every process — the JVM

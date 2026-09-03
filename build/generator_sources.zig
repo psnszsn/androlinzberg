@@ -252,6 +252,21 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamOverlayClient.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamOverlayClientCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IRemoteSessionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/IActiveSessionsListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/IOnMediaKeyEventDispatchedListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/IOnMediaKeyEventSessionChangedListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/IOnMediaKeyListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/IOnVolumeKeyLongPressListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/ISession.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/ISession2TokensListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/ISessionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/ISessionController.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/ISessionControllerCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/session/ISessionManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/service/media/IMediaBrowserService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/service/media/IMediaBrowserServiceCallbacks.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/metrics/IMediaMetricsManager.aidl" },
 };
 
 pub const logtags = [_]Logtags{
@@ -322,6 +337,9 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.app.usage", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/usage/flags.aconfig"} },
     .{ .package = "android.service.controls.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/controls/flags/flags.aconfig"} },
     .{ .package = "android.service.dreams", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/dreams/flags.aconfig"} },
+    .{ .package = "com.android.media.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/media_better_together.aconfig"} },
+    .{ .package = "com.android.media.performance.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/performance.aconfig"} },
+    .{ .package = "com.android.media.editing.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/editing.aconfig"} },
 };
 
 pub const sysprop = [_]Sysprop{

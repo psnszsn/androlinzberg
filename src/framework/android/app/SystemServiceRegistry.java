@@ -189,8 +189,19 @@ public final class SystemServiceRegistry {
             @Override public android.hardware.SensorManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.hardware.SensorManager(); }});
         registerService(Context.SHORTCUT_SERVICE, android.content.pm.ShortcutManager.class, new CachedServiceFetcher<android.content.pm.ShortcutManager>() {
             @Override public android.content.pm.ShortcutManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.content.pm.ShortcutManager(); }});
-        registerService(Context.MEDIA_METRICS_SERVICE, android.media.metrics.MediaMetricsManager.class, new NewServiceFetcher<android.media.metrics.MediaMetricsManager>() {
-            @Override public android.media.metrics.MediaMetricsManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.media.metrics.MediaMetricsManager(); }});
+        // MediaFrameworkPlatformInitializer / MediaFrameworkInitializer: the real MediaSessionManager
+        // over the hosted ISessionManager, MediaMetricsManager over the hosted IMediaMetricsManager.
+        // AOSP: the media framework initializer registers MediaSessionManager and owns the
+        // MediaServiceManager the manager resolves its binder through.
+        android.media.MediaFrameworkPlatformInitializer.setMediaServiceManager(new android.media.MediaServiceManager());
+        android.media.MediaFrameworkPlatformInitializer.registerServiceWrappers();
+        registerService(Context.MEDIA_METRICS_SERVICE, android.media.metrics.MediaMetricsManager.class,
+                new CachedServiceFetcher<android.media.metrics.MediaMetricsManager>() {
+            @Override public android.media.metrics.MediaMetricsManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder iBinder = android.os.ServiceManager.getServiceOrThrow(Context.MEDIA_METRICS_SERVICE);
+                android.media.metrics.IMediaMetricsManager service = android.media.metrics.IMediaMetricsManager.Stub.asInterface(iBinder);
+                return new android.media.metrics.MediaMetricsManager(service, ctx.getUserId());
+            }});
         registerService(Context.USAGE_STATS_SERVICE, android.app.usage.UsageStatsManager.class,
                 new CachedServiceFetcher<android.app.usage.UsageStatsManager>() {
             @Override public android.app.usage.UsageStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException {
@@ -248,6 +259,34 @@ public final class SystemServiceRegistry {
             }});
         registerService(Context.DEVICE_POLICY_SERVICE, android.app.admin.DevicePolicyManager.class, new NewServiceFetcher<android.app.admin.DevicePolicyManager>() {
             @Override public android.app.admin.DevicePolicyManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.app.admin.DevicePolicyManager(); }});
+    }
+
+    /** AOSP ContextAwareServiceProducerWithBinder / WithoutBinder (the framework initializers' API). */
+    public interface ContextAwareServiceProducerWithBinder<TServiceClass> {
+        TServiceClass createService(Context ctx, android.os.IBinder service);
+    }
+
+    public interface ContextAwareServiceProducerWithoutBinder<TServiceClass> {
+        TServiceClass createService(Context ctx);
+    }
+
+    public static <TServiceClass> void registerContextAwareService(String serviceName,
+            Class<TServiceClass> serviceWrapperClass,
+            ContextAwareServiceProducerWithBinder<TServiceClass> serviceProducer) {
+        registerService(serviceName, serviceWrapperClass, new CachedServiceFetcher<TServiceClass>() {
+            @Override public TServiceClass createService(ContextImpl ctx) throws ServiceNotFoundException {
+                return serviceProducer.createService(ctx.getOuterContext(),
+                        android.os.ServiceManager.getServiceOrThrow(serviceName));
+            }});
+    }
+
+    public static <TServiceClass> void registerContextAwareService(String serviceName,
+            Class<TServiceClass> serviceWrapperClass,
+            ContextAwareServiceProducerWithoutBinder<TServiceClass> serviceProducer) {
+        registerService(serviceName, serviceWrapperClass, new CachedServiceFetcher<TServiceClass>() {
+            @Override public TServiceClass createService(ContextImpl ctx) {
+                return serviceProducer.createService(ctx.getOuterContext());
+            }});
     }
 
     /** AOSP createServiceCache: the per-ContextImpl slot array for CachedServiceFetchers. */

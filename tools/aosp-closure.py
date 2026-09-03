@@ -521,14 +521,15 @@ class Resolver:
             n = self.node(fqn)
             result[fqn] = n
             for ref in n.refs:
+                # An AIDL interface importing a class that is already compiled (a
+                # stub or a real class) still needs that class's parcelable
+                # declaration in the package for the aidl compiler.
+                if n.kind.startswith("aidl") and ref not in absent and self.classes.has(ref):
+                    for a in self.index.lookup(ref).get("aidl", []):
+                        if not self.manifest.vendored(a):
+                            self.extra_manifest.add(a)
                 if ref in absent or not self.classes.has(ref):
                     if ref in self.stubs.by_fqn and ref not in absent:
-                        # An existing stub counts as present, but an AIDL interface
-                        # importing it still needs the stub's parcelable declaration.
-                        if n.kind.startswith("aidl"):
-                            for a in self.index.lookup(ref).get("aidl", []):
-                                if not self.manifest.vendored(a):
-                                    self.extra_manifest.add(a)
                         continue
                     self.node(ref).referrers.add(fqn)
                     self.parent.setdefault(ref, fqn)

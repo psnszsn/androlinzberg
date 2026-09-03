@@ -57,6 +57,40 @@ internal object SystemTestHostB {
             true
         }
         ServiceManager.addService("dev.artzig.test.b.messenger", android.os.Messenger(messengerHandler).binder)
+        // A real MediaSession over the hosted ISessionManager: client A controls it through
+        // a MediaController built from the token this process publishes, and through the
+        // media-key dispatch of the session manager.
+        val mediaSession = android.media.session.MediaSession(context, "azk-test-b")
+        mediaSession.setCallback(object : android.media.session.MediaSession.Callback() {
+            // MediaSession.Callback.onMediaButtonEvent only routes a media key to
+            // onPlay/onPause when the current state advertises the matching action.
+            private val actions = android.media.session.PlaybackState.ACTION_PLAY or android.media.session.PlaybackState.ACTION_PAUSE
+            override fun onPlay() {
+                mediaSession.setPlaybackState(
+                    android.media.session.PlaybackState.Builder().setActions(actions)
+                        .setState(android.media.session.PlaybackState.STATE_PLAYING, 0, 1f).build(),
+                )
+                TestMediaSessionState.played.countDown()
+            }
+            override fun onPause() {
+                mediaSession.setPlaybackState(
+                    android.media.session.PlaybackState.Builder().setActions(actions)
+                        .setState(android.media.session.PlaybackState.STATE_PAUSED, 0, 0f).build(),
+                )
+                TestMediaSessionState.paused.countDown()
+            }
+        })
+        mediaSession.setMetadata(
+            android.media.MediaMetadata.Builder()
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, "azk track").build(),
+        )
+        mediaSession.setPlaybackState(
+            android.media.session.PlaybackState.Builder()
+                .setActions(android.media.session.PlaybackState.ACTION_PLAY or android.media.session.PlaybackState.ACTION_PAUSE)
+                .setState(android.media.session.PlaybackState.STATE_STOPPED, 0, 0f).build(),
+        )
+        mediaSession.isActive = true
+        ServiceManager.addService("dev.artzig.test.b.mediasession", mediaSession.sessionToken.binder.asBinder())
         System.err.println("system-test-host-b: attached pid=" + Process.myPid() + " uid=" + Process.myUid())
         // A job of this package: the hosted job scheduler binds BJobService into
         // this process from the system process and drives it to jobFinished.
@@ -72,11 +106,21 @@ internal object SystemTestHostB {
             val jobRan = TestJobService.b.finished.await(30, java.util.concurrent.TimeUnit.SECONDS)
             val jobUnbound = jobRan && TestJobService.b.destroyed.await(30, java.util.concurrent.TimeUnit.SECONDS)
             val jobGone = scheduler.getPendingJob(11) == null
+            val sessionPlayed = TestMediaSessionState.played.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            val sessionPaused = sessionPlayed && TestMediaSessionState.paused.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            mediaSession.release()
             System.err.println("system-test-host-b: exiting (requested=" + exited + ", unbound=" + EchoService.unbound.get() +
-                ", job ran=" + jobRan + ", job service destroyed=" + jobUnbound + ", job removed=" + jobGone + ")")
-            Runtime.getRuntime().exit(if (exited && EchoService.unbound.get() && jobRan && jobUnbound && jobGone) 0 else 3)
+                ", job ran=" + jobRan + ", job service destroyed=" + jobUnbound + ", job removed=" + jobGone +
+                ", session played=" + sessionPlayed + ", session paused=" + sessionPaused + ")")
+            Runtime.getRuntime().exit(if (exited && EchoService.unbound.get() && jobRan && jobUnbound && jobGone && sessionPlayed && sessionPaused) 0 else 3)
         }.apply { isDaemon = true }.start()
         Looper.loop()
+    }
+
+    /** What the media session in this process observed (client A drives it). */
+    internal object TestMediaSessionState {
+        @JvmField val played = java.util.concurrent.CountDownLatch(1)
+        @JvmField val paused = java.util.concurrent.CountDownLatch(1)
     }
 
     /** Serves `dev.artzig.test.b.INdkProbe`: add(a,b) and echo(String). */

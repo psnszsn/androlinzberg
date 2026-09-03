@@ -2626,7 +2626,14 @@ fn javaForwardTransact(binder: *AIBinder, code: u32, in: *const AParcel, out: *A
     args[2].j = @intCast(@intFromPtr(out));
     args[3].i = 0; // flags (the on_transact seam does not carry them; oneway is handled by the caller)
     const handled = env.*.*.CallBooleanMethodA.?(env, local, fw.binder_exec_transact, &args);
-    if (clearException(env)) return STATUS_FAILED_TRANSACTION;
+    if (env.*.*.ExceptionCheck.?(env) == jni.JNI_TRUE) {
+        // Binder.execTransact rethrows what Parcel.writeException cannot encode; the
+        // caller only sees FAILED_TRANSACTION, so describe it here (AOSP logs the same
+        // "Caught a RuntimeException from the binder stub implementation").
+        env.*.*.ExceptionDescribe.?(env);
+        env.*.*.ExceptionClear.?(env);
+        return STATUS_FAILED_TRANSACTION;
+    }
     return if (handled == jni.JNI_TRUE) STATUS_OK else STATUS_UNKNOWN_TRANSACTION;
 }
 

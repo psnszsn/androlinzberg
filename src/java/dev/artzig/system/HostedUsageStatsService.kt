@@ -131,7 +131,8 @@ class HostedUsageStatsService : UnsupportedUsageStatsManager() {
                 pool.add(event.packageName)
             }
         }
-        return UsageEvents(list, pool.toTypedArray(), false)
+        // UsageEvents resolves pool indices with a binary search: the pool must be sorted.
+        return UsageEvents(list, pool.sorted().toTypedArray(), false)
     }
 
     override fun queryEvents(beginTime: Long, endTime: Long, callingPackage: String?): UsageEvents? {

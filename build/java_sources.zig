@@ -819,4 +819,42 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/vibrator/persistence/XmlSerializerException.java");
     try c.file("$CJ/com/android/internal/vibrator/persistence/XmlValidator.java");
     try c.file("$FB/apex/jobscheduler/framework/java/android/os/PowerWhitelistManager.java");
+    // Managers over hosted services, phase 3: the real media session family (MediaSession,
+    // MediaController, MediaSessionManager, PlaybackState, MediaMetadata, MediaDescription,
+    // Rating, MediaBrowser/MediaBrowserService) over the hosted ISessionManager, and the real
+    // MediaMetricsManager over the hosted IMediaMetricsManager. AudioManager and the audio value
+    // types stay pending: their closure needs an AudioSystem host seam and the frameworks/av +
+    // hardware/interfaces audio AIDL roots (see docs/stubs.md).
+    try c.file("$FB/media/java/android/media/MediaDescription.java");
+    try c.file("$FB/media/java/android/media/MediaFrameworkPlatformInitializer.java");
+    try c.file("$FB/media/java/android/media/MediaMetadata.java");
+    try c.file("$FB/media/java/android/media/MediaMetadataEditor.java");
+    try c.file("$FB/media/java/android/media/MediaServiceManager.java");
+    try c.file("$FB/media/java/android/media/Rating.java");
+    try c.file("$FB/media/java/android/media/RemoteControlClient.java");
+    try c.file("$FB/media/java/android/media/VolumeProvider.java");
+    try c.file("$FB/media/java/android/media/browse/MediaBrowser.java");
+    try c.file("$FB/media/java/android/media/browse/MediaBrowserUtils.java");
+    try c.file("$FB/media/java/android/media/session/MediaController.java");
+    try c.file("$FB/media/java/android/media/session/MediaSession.java");
+    try c.file("$FB/media/java/android/media/session/MediaSessionLegacyHelper.java");
+    try c.file("$FB/media/java/android/media/session/MediaSessionManager.java");
+    try c.file("$FB/media/java/android/media/session/ParcelableListBinder.java");
+    try c.file("$FB/media/java/android/media/session/PlaybackState.java");
+    try c.file("$FB/media/java/android/service/media/MediaBrowserService.java");
+    try c.file("$FB/media/java/android/media/metrics/BundleSession.java");
+    try c.file("$FB/media/java/android/media/metrics/EditingEndedEvent.java");
+    try c.file("$FB/media/java/android/media/metrics/Event.java");
+    try c.file("$FB/media/java/android/media/metrics/NetworkEvent.java");
+    try c.file("$FB/media/java/android/media/metrics/PlaybackErrorEvent.java");
+    try c.file("$FB/media/java/android/media/metrics/PlaybackMetrics.java");
+    try c.file("$FB/media/java/android/media/metrics/PlaybackStateEvent.java");
+    try c.file("$FB/media/java/android/media/metrics/TrackChangeEvent.java");
+    try c.file("$FB/media/java/android/media/metrics/EditingSession.java");
+    try c.file("$FB/media/java/android/media/metrics/LogSessionId.java");
+    try c.file("$FB/media/java/android/media/metrics/MediaItemInfo.java");
+    try c.file("$FB/media/java/android/media/metrics/MediaMetricsManager.java");
+    try c.file("$FB/media/java/android/media/metrics/PlaybackSession.java");
+    try c.file("$FB/media/java/android/media/metrics/RecordingSession.java");
+    try c.file("$FB/media/java/android/media/metrics/TranscodingSession.java");
 }

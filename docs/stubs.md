@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 215 (budget 215). Survivors: 86. Total: 301.
+Pending: 202 (budget 202). Survivors: 88. Total: 290.
 
 ## Survivors
 
@@ -39,9 +39,11 @@ Pending: 215 (budget 215). Survivors: 86. Total: 301.
 | `android/hardware/vibrator/IVibratorManager.java` | hardware/interfaces vibrator HAL enums not vendored | no-aosp-source |
 | `android/hardware/vibrator/V1_0/EffectStrength.java` | hardware/interfaces vibrator HAL constants not vendored | no-aosp-source |
 | `android/hardware/vibrator/V1_3/Effect.java` | hardware/interfaces vibrator HAL constants not vendored | no-aosp-source |
+| `android/media/MediaCommunicationManager.java` | Media module tree (packages/modules/Media) not vendored | no-aosp-source |
 | `android/media/MediaCrypto.java` | JNI natives (libmedia_jni; DRM is not supported) | blocked |
 | `android/media/MediaMetadataRetriever.java` | JNI natives (libmedia_jni) | blocked |
-| `android/media/metrics/MetricsEvents.kt` | host-only (no AOSP class) | no-aosp-source |
+| `android/media/MediaSession2.java` | Media module tree (packages/modules/Media) not vendored | no-aosp-source |
+| `android/media/Session2Token.java` | Media module tree (packages/modules/Media) not vendored | no-aosp-source |
 | `android/net/ConnectivityManager.java` | Connectivity module tree not vendored (phase 4 decides whether to vendor framework/src) | no-aosp-source |
 | `android/net/LinkProperties.java` | Connectivity module tree not vendored | no-aosp-source |
 | `android/net/Network.java` | Connectivity module tree not vendored | no-aosp-source |
@@ -129,7 +131,7 @@ Pending: 215 (budget 215). Survivors: 86. Total: 301.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (544 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < PermissionUsageHelper < AppOpsManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the che |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (543 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < PermissionUsageHelper < AppOpsManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the che |
 
 ### audio
 
@@ -139,11 +141,11 @@ Pending: 215 (budget 215). Survivors: 86. Total: 301.
 | `android/media/AudioDeviceCallback.java` | replaceable | frameworks/base/media/java/android/media/AudioDeviceCallback.java (1 to add), not vendored |
 | `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (331 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceInfo); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (via Blueto |
 | `android/media/AudioFocusRequest.java` | replaceable | frameworks/base/media/java/android/media/AudioFocusRequest.java (1 to add), not vendored |
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (510 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (via BluetoothLeAudioCodecConfi |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (506 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (via BluetoothLeAudioCodecConfi |
 | `android/media/AudioRouting.kt` | replaceable | frameworks/base/media/java/android/media/AudioRouting.java (1 to add), not vendored |
 | `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (333 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioDeviceAttributes < IAudioService < LoudnessCodecController); android.bluetooth.BluetoothL |
 | `android/media/MediaRoute2Info.java` | replaceable | frameworks/base/media/java/android/media/MediaRoute2Info.java (2 to add), not vendored |
-| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (350 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioRecord < MediaRoute2ProviderService < MediaRouter2); android.bluetooth.BluetoothLeAudioCodecConfig:  |
+| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (344 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioRecord < MediaRoute2ProviderService < MediaRouter2); android.bluetooth.BluetoothLeAudioCodecConfig:  |
 | `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (328 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioPlaybackConfiguration < PlayerBase); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the c |
 | `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (363 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < Utils < RingtoneManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the checkout (vi |
 | `android/media/RouteDiscoveryPreference.java` | replaceable | frameworks/base/media/java/android/media/RouteDiscoveryPreference.java (1 to add), not vendored |
@@ -303,29 +305,6 @@ Pending: 215 (budget 215). Survivors: 86. Total: 301.
 | `android/media/projection/MediaProjection.java` | replaceable | frameworks/base/media/java/android/media/projection/MediaProjection.java (2 to add), not vendored |
 | `android/media/quality/PictureProfileHandle.java` | replaceable | frameworks/base/media/java/android/media/quality/PictureProfileHandle.java (1 to add), not vendored |
 
-### mediametrics
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/media/metrics/LogSessionId.java` | replaceable | frameworks/base/media/java/android/media/metrics/LogSessionId.java (1 to add), not vendored |
-| `android/media/metrics/MediaMetricsManager.java` | replaceable | frameworks/base/media/java/android/media/metrics/MediaMetricsManager.java (8 to add), not vendored |
-| `android/media/metrics/PlaybackSession.java` | replaceable | frameworks/base/media/java/android/media/metrics/PlaybackSession.java (1 to add), not vendored |
-| `android/media/metrics/RecordingSession.java` | replaceable | frameworks/base/media/java/android/media/metrics/RecordingSession.java (1 to add), not vendored |
-
-### mediasession
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/media/MediaDescription.java` | replaceable | frameworks/base/media/java/android/media/MediaDescription.java (2 to add), not vendored |
-| `android/media/MediaMetadata.java` | blocked | frameworks/base/media/java/android/media/MediaMetadata.java (5 to add), not vendored; android.media.MediaCommunicationManager: no source in the checkout (via MediaCommunicationManager < MediaSessionLegacyHelper < RemoteControlClient < MediaMetadataEditor < MediaMetadata) |
-| `android/media/Rating.java` | replaceable | frameworks/base/media/java/android/media/Rating.java (1 to add), not vendored |
-| `android/media/browse/MediaBrowser.java` | replaceable | frameworks/base/media/java/android/media/browse/MediaBrowser.java (4 to add), not vendored |
-| `android/media/session/MediaController.java` | replaceable | frameworks/base/media/java/android/media/session/MediaController.java (4 to add), not vendored |
-| `android/media/session/MediaSession.java` | replaceable | frameworks/base/media/java/android/media/session/MediaSession.java (7 to add), not vendored |
-| `android/media/session/MediaSessionManager.java` | blocked | frameworks/base/media/java/android/media/session/MediaSessionManager.java (19 to add), not vendored; android.media.MediaCommunicationManager: no source in the checkout (via MediaCommunicationManager < MediaSessionManager); android.media.MediaSession2: no source in the checkout (via MediaSession2 < M |
-| `android/media/session/PlaybackState.java` | replaceable | frameworks/base/media/java/android/media/session/PlaybackState.java (1 to add), not vendored |
-| `android/service/media/MediaBrowserService.java` | replaceable | frameworks/base/media/java/android/service/media/MediaBrowserService.java (5 to add), not vendored |
-
 ### opengl
 
 | Stub | Audit | Closure |
@@ -355,16 +334,16 @@ Pending: 215 (budget 215). Survivors: 86. Total: 301.
 | `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (4 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no s |
 | `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (6 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig) |
 | `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3506 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3501 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
 | `com/android/server/pm/InstallSource.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/InstallSource.java (2 to add), not vendored |
 | `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3504 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3499 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
 | `com/android/server/pm/PackageKeySetData.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/PackageKeySetData.java (1 to add), not vendored |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3617 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3612 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
 | `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (9 to add), not vendored; android.service.pm.PackageProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via PackageProto < PackageSetting) |
 | `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (36 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.config.Chang |
 | `com/android/server/pm/UserManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java (746 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < AudioEffect < AudioRecordingConfiguration < MediaRecorder < MandatoryStreamCombina |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3530 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3525 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
 | `com/android/server/pm/permission/LegacyPermissionState.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/permission/LegacyPermissionState.java (5 to add), not vendored |
 
 ### permission
@@ -450,12 +429,12 @@ Pending: 215 (budget 215). Survivors: 86. Total: 301.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3504 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3499 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
 | `com/android/server/UiThread.java` | replaceable | frameworks/base/services/core/java/com/android/server/UiThread.java (2 to add), not vendored |
 | `com/android/server/clipboard/ArcClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/ArcClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "ArcClipboardMonitor.java" |
 | `com/android/server/clipboard/EmulatorClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/EmulatorClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "EmulatorClipboardMonitor.java" |
 | `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server.am.NeededUr |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3504 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3499 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
 
 ### telecom
 

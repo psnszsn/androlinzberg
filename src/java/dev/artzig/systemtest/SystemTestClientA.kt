@@ -683,6 +683,60 @@ internal object SystemTestClientA {
             "allowlist changes need DEVICE_POWER",
         )
 
+        // --- media sessions: the real MediaController over host B's real MediaSession, both
+        // through the hosted ISessionManager (MediaSessionService/MediaSessionRecord semantics).
+        val sessionManager = checkNotNull(context.getSystemService(android.media.session.MediaSessionManager::class.java))
+        check(
+            runCatching { sessionManager.getActiveSessions(null) }.exceptionOrNull() is SecurityException,
+            "active sessions need MEDIA_CONTENT_CONTROL or a notification listener",
+        )
+        var sessionBinder: IBinder? = null
+        val sessionDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+        while (sessionBinder == null && System.nanoTime() < sessionDeadline) {
+            sessionBinder = ServiceManager.getService("dev.artzig.test.b.mediasession")
+            if (sessionBinder == null) Thread.sleep(100)
+        }
+        check(sessionBinder != null, "host B published its media session token")
+        val token = android.media.session.MediaSession.Token(
+            0, android.media.session.ISessionController.Stub.asInterface(sessionBinder),
+        )
+        val controller = android.media.session.MediaController(context, token)
+        check(controller.packageName == "dev.artzig.test.b", "controller reports the session's package")
+        check(
+            controller.metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) == "azk track",
+            "controller reads the session's metadata",
+        )
+        check(
+            controller.playbackState?.state == android.media.session.PlaybackState.STATE_STOPPED,
+            "controller reads the initial playback state",
+        )
+        val playing = CountDownLatch(1)
+        val pausedState = CountDownLatch(1)
+        controller.registerCallback(object : android.media.session.MediaController.Callback() {
+            override fun onPlaybackStateChanged(state: android.media.session.PlaybackState?) {
+                when (state?.state) {
+                    android.media.session.PlaybackState.STATE_PLAYING -> playing.countDown()
+                    android.media.session.PlaybackState.STATE_PAUSED -> pausedState.countDown()
+                }
+            }
+        }, android.os.Handler(Looper.getMainLooper()))
+        controller.transportControls.play()
+        check(playing.await(30, TimeUnit.SECONDS), "play reaches the session and its state change reaches the controller")
+        sessionManager.dispatchMediaKeyEvent(
+            android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE), false,
+        )
+        sessionManager.dispatchMediaKeyEvent(
+            android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE), false,
+        )
+        check(pausedState.await(30, TimeUnit.SECONDS), "a dispatched media key reaches the playing session")
+        controller.unregisterCallback(object : android.media.session.MediaController.Callback() {})
+
+        // --- media metrics over the hosted IMediaMetricsManager.
+        val metrics = checkNotNull(context.getSystemService(android.media.metrics.MediaMetricsManager::class.java))
+        val playbackSession = metrics.createPlaybackSession()
+        check(playbackSession.sessionId.stringId.isNotEmpty(), "media metrics hand out session ids")
+        playbackSession.close()
+
         // --- clipboard through the reused AOSP ClipboardService.
         val clipboard = checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         val clipChanged = CountDownLatch(1)
