@@ -12,8 +12,9 @@ fn setApplicationEnvironment(command: @import("build/command.zig").Command, tree
     command.setPathEnvironment("ARTZIG_ROOT", tree.path(command.b, "bin/art"));
     // glibc reads LD_LIBRARY_PATH at process startup. ART later dlopens its
     // built-in JNI libraries by soname, so direct cache-tree executions must
-    // expose the emitted runtime's lib64 directory to the child process.
-    command.setPathEnvironment("LD_LIBRARY_PATH", tree.path(command.b, "bin/art/lib64"));
+    // expose the emitted runtime's lib64 directory to the child process, ahead
+    // of whatever the caller's environment already lists (Mesa for Cage).
+    command.prependPathEnvironment("LD_LIBRARY_PATH", tree.path(command.b, "bin/art/lib64"));
 }
 
 pub fn build(b: *std.Build) void {

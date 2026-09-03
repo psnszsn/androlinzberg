@@ -102,7 +102,15 @@ pub const Command = struct {
     }
 
     pub fn setPathEnvironment(command: Command, name: []const u8, value: LazyPath) void {
-        command.run.addArgs(&.{ "--env", name });
+        command.run.addArgs(&.{ "--env-path", name });
+        command.run.addDirectoryArg(value);
+    }
+
+    /// Prepends a path to the inherited value of a list variable such as
+    /// LD_LIBRARY_PATH, so a host-provided search path (Mesa for the Wayland
+    /// test harness) stays visible behind the emitted runtime's directory.
+    pub fn prependPathEnvironment(command: Command, name: []const u8, value: LazyPath) void {
+        command.run.addArgs(&.{ "--env-path-prepend", name });
         command.run.addDirectoryArg(value);
     }
 
@@ -112,7 +120,7 @@ pub const Command = struct {
     }
 
     pub fn setFileEnvironment(command: Command, name: []const u8, value: LazyPath) void {
-        command.run.addArgs(&.{ "--env", name });
+        command.run.addArgs(&.{ "--env-path", name });
         command.run.addFileArg(value);
     }
 

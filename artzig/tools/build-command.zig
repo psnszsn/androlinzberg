@@ -13,6 +13,13 @@ const Parsed = struct {
 const Environment = struct {
     name: []const u8,
     value: []const u8,
+    /// The value is a path: a relative value is resolved against the working
+    /// directory before the child runs, so consumers that persist locations
+    /// (ART class-loader contexts, the install tree) see one absolute spelling.
+    path: bool = false,
+    /// Prepend the (resolved) value to the variable's inherited value with a
+    /// ':' separator instead of replacing it, as for LD_LIBRARY_PATH.
+    prepend: bool = false,
 };
 
 fn parse(allocator: std.mem.Allocator, args: []const []const u8) !Parsed {
@@ -84,11 +91,20 @@ fn parse(allocator: std.mem.Allocator, args: []const []const u8) !Parsed {
             if (index + 2 > args.len) return error.MissingArgument;
             try environment.append(allocator, .{ .name = args[index], .value = args[index + 1] });
             index += 2;
+        } else if (std.mem.eql(u8, directive, "--env-path")) {
+            if (index + 2 > args.len) return error.MissingArgument;
+            try environment.append(allocator, .{ .name = args[index], .value = args[index + 1], .path = true });
+            index += 2;
+        } else if (std.mem.eql(u8, directive, "--env-path-prepend")) {
+            if (index + 2 > args.len) return error.MissingArgument;
+            try environment.append(allocator, .{ .name = args[index], .value = args[index + 1], .path = true, .prepend = true });
+            index += 2;
         } else if (std.mem.eql(u8, directive, "--env-child")) {
             if (index + 3 > args.len) return error.MissingArgument;
             try environment.append(allocator, .{
                 .name = args[index],
                 .value = try std.fs.path.join(allocator, &.{ args[index + 2], args[index + 1] }),
+                .path = true,
             });
             index += 3;
         } else if (std.mem.eql(u8, directive, "--stderr-filter")) {
@@ -138,14 +154,27 @@ pub fn main(init: std.process.Init) !void {
     const parsed = parse(init.arena.allocator(), args) catch |err| {
         try Io.File.stderr().writeStreamingAll(
             init.io,
-            "usage: build-command (--arg VALUE | --join SEP COUNT VALUES... | --prefix PREFIX VALUE | --child NAME DIRECTORY | --child-path CHILD DIRECTORY | --prefix-child-path PREFIX CHILD DIRECTORY | --join-child-paths PREFIX SEP COUNT CHILDREN... DIRECTORY | --env NAME VALUE | --env-child NAME CHILD DIRECTORY | --stderr-filter TEXT | --passthru ...)...\n",
+            "usage: build-command (--arg VALUE | --join SEP COUNT VALUES... | --prefix PREFIX VALUE | --child NAME DIRECTORY | --child-path CHILD DIRECTORY | --prefix-child-path PREFIX CHILD DIRECTORY | --join-child-paths PREFIX SEP COUNT CHILDREN... DIRECTORY | --env NAME VALUE | --env-path NAME PATH | --env-path-prepend NAME PATH | --env-child NAME CHILD DIRECTORY | --stderr-filter TEXT | --passthru ...)...\n",
         );
         return err;
     };
 
     var environment = try init.minimal.environ.createMap(init.gpa);
     defer environment.deinit();
-    for (parsed.environment) |entry| try environment.put(entry.name, entry.value);
+    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = cwd_buffer[0..try Io.Dir.cwd().realPathFile(init.io, ".", &cwd_buffer)];
+    for (parsed.environment) |entry| {
+        const resolved = if (entry.path and !std.fs.path.isAbsolute(entry.value))
+            try std.fs.path.resolve(init.arena.allocator(), &.{ cwd, entry.value })
+        else
+            entry.value;
+        const inherited = if (entry.prepend) environment.get(entry.name) else null;
+        const value = if (inherited != null and inherited.?.len != 0)
+            try std.mem.concat(init.arena.allocator(), u8, &.{ resolved, ":", inherited.? })
+        else
+            resolved;
+        try environment.put(entry.name, value);
+    }
     for (parsed.clean_paths) |path| try Io.Dir.cwd().deleteTree(init.io, path);
 
     const result = try std.process.run(init.gpa, init.io, .{
@@ -186,6 +215,32 @@ test "parses environment and stderr filters" {
     try std.testing.expectEqualStrings("known note", parsed.filters[0]);
 }
 
+test "marks path environment values for resolution against the working directory" {
+    const parsed = try parse(std.testing.allocator, &.{
+        "build-command", "--env-path", "ARTZIG_INSTALL_ROOT", "./.zig-cache/o/tree", "--env", "JAVA_OPTS", "-Xmx1g", "--arg", "true",
+    });
+    defer std.testing.allocator.free(parsed.argv);
+    defer std.testing.allocator.free(parsed.environment);
+    defer std.testing.allocator.free(parsed.filters);
+    defer std.testing.allocator.free(parsed.clean_paths);
+    try std.testing.expectEqualStrings("./.zig-cache/o/tree", parsed.environment[0].value);
+    try std.testing.expect(parsed.environment[0].path);
+    try std.testing.expect(!parsed.environment[1].path);
+}
+
+test "marks prepended path environment values" {
+    const parsed = try parse(std.testing.allocator, &.{
+        "build-command", "--env-path-prepend", "LD_LIBRARY_PATH", "./lib64", "--arg", "true",
+    });
+    defer std.testing.allocator.free(parsed.argv);
+    defer std.testing.allocator.free(parsed.environment);
+    defer std.testing.allocator.free(parsed.filters);
+    defer std.testing.allocator.free(parsed.clean_paths);
+    try std.testing.expectEqualStrings("./lib64", parsed.environment[0].value);
+    try std.testing.expect(parsed.environment[0].path);
+    try std.testing.expect(parsed.environment[0].prepend);
+}
+
 test "derives an environment path below a declared directory" {
     const parsed = try parse(std.testing.allocator, &.{
         "build-command", "--env-child", "LD_LIBRARY_PATH", "lib64", "/cache/runtime", "--arg", "true",
@@ -198,6 +253,7 @@ test "derives an environment path below a declared directory" {
     defer std.testing.allocator.free(parsed.clean_paths);
     try std.testing.expectEqualStrings("LD_LIBRARY_PATH", parsed.environment[0].name);
     try std.testing.expectEqualStrings("/cache/runtime/lib64", value);
+    try std.testing.expect(parsed.environment[0].path);
 }
 
 test "derives and joins child arguments from one declared directory" {

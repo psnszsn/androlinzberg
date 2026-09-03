@@ -59,7 +59,7 @@ pub const Command = struct {
     }
 
     pub fn setPathEnvironment(command: Command, name: []const u8, value: LazyPath) void {
-        command.run.addArgs(&.{ "--env", name });
+        command.run.addArgs(&.{ "--env-path", name });
         command.run.addDirectoryArg(value);
     }
 

@@ -61,7 +61,7 @@ framework contract explains the behavior.
 Before replacing a stub with the real AOSP class, run
 `tools/aosp-closure.py closure --classes <framework-classes.jar> <fqn>` against
 a live build: it prints the manifest, `build/java_sources.zig` and
-`tools/aidl-list.txt` lines the real class needs and names any blocker (JNI
+`build/generator_sources.zig` entries the real class needs and names any blocker (JNI
 natives, an unvendored module tree, an AIDL file outside the include roots, an
 unwired generator). Every stub is listed in `tools/stub-audit.txt` with the
 family it is pending replacement in or a `survivor:` reason; regenerate it with
@@ -73,9 +73,9 @@ rejects an unlisted stub and a pending count above the budget.
 Do not hand-write a class that Soong generates. aconfig `Flags`/`FeatureFlags`,
 logtags `EventLogTags`, `*Proto` message classes, sysprop accessors, and
 `FrameworkStatsLog` come from the Run steps wired through `build/generators.zig`
-and `build/java.zig`, driven by the declaration files and explicit input lists
-under `tools/`. Add the package to the generator's input list rather than
-writing a placeholder;
+and `build/java.zig`, driven by the declarations in `build/generator_sources.zig`.
+Add the package to the generator's input list there rather than writing a
+placeholder;
 The `jvm-source` mode of `tools/build-audit.zig`, fed by the exact Zig
 `SourceSet`, rejects a repo-owned class whose package matches a generated
 artifact (`.java` and `.kt`). A package whose declaration is not yet in a
