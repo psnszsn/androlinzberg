@@ -9,5 +9,10 @@ public class RuntimeInit {
     private static volatile IBinder mApplicationObject;
     public static void setApplicationObject(IBinder app) { mApplicationObject = app; }
     public static IBinder getApplicationObject() { return mApplicationObject; }
+    /**
+     * Follows AOSP RuntimeInit.wtf$ravenwood: Log already emitted the failure,
+     * and the host has no ActivityManager/DropBox crash-reporting pipeline.
+     */
+    public static void wtf(String tag, Throwable failure, boolean system) {}
     private RuntimeInit() {}
 }

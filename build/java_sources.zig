@@ -155,9 +155,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/android/hardware/display", .{ .max_depth = 1 });
     // Reused javanano runtime for the nano message classes (pure Java, vendored).
     try c.add("$NRT", .{});
-    // Reused StatsD-module source: the real StatsEvent encoder (android.util.StatsLog
-    // is the host-seam sink in src/framework).
+    // Stock StatsD-module client over the host's no-statsd JNI sink.
     try c.file("$SD/framework/java/android/util/StatsEvent.java");
+    try c.file("$SD/framework/java/android/util/StatsLog.java");
     // AOSP system-server skeleton reused by the hosted system process (src/java/dev/artzig/system).
     try c.file("$FB/services/core/java/com/android/server/SystemService.java");
     try c.file("$FB/services/core/java/com/android/server/SystemServiceManager.java");
@@ -216,6 +216,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/util/Printer.java");
     try c.file("$CJ/android/util/EmptyArray.java");
     try c.file("$CJ/android/util/UtilConfig.java");
+    try c.file("$CJ/android/util/Log.java");
     try c.file("$CJ/android/util/Slog.java");
     try c.file("$CJ/android/util/Dumpable.java");
     try c.file("$CJ/android/os/Parcelable.java");
@@ -261,6 +262,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/XmlUtils.java");
     try c.file("$CJ/com/android/internal/util/HexDump.java");
     try c.file("$CJ/com/android/internal/util/FastPrintWriter.java");
+    try c.file("$CJ/com/android/internal/util/LineBreakBufferedWriter.java");
     try c.file("$CJ/com/android/internal/util/AnnotationValidations.java");
     try c.file("$CJ/com/android/internal/util/BitUtils.java");
     try c.file("$CJ/com/android/internal/util/DataClass.java");

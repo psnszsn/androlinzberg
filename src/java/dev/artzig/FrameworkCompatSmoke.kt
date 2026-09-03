@@ -285,6 +285,7 @@ public final class FrameworkCompatSmoke {
             testStockCompatChanges()
             testGeneratedAppProtoEnums()
             testPinnedAnnotationPrebuilts()
+            testStockLoggingClients()
             testStockFontRequest()
             testStockTextSpans()
             testStockHtml()
@@ -954,6 +955,46 @@ public final class FrameworkCompatSmoke {
                 "Error Prone annotation prebuilt",
             )
             android.util.Log.i("FrameworkCompatSmoke", "pinned annotation prebuilts ok")
+        }
+
+        /** Verbatim AOSP logging clients over the two host-native sinks. */
+        @JvmStatic
+        private fun testStockLoggingClients() {
+            val unknownHost = java.io.IOException(java.net.UnknownHostException("offline"))
+            require(android.util.Log.getStackTraceString(unknownHost).isEmpty(), "UnknownHost filtering")
+
+            var terribleFailureHandled = false
+            val previousHandler = android.util.Log.setWtfHandler { tag, failure, system ->
+                require(tag == "FrameworkCompatSmoke", "wtf tag")
+                require(failure.message == "expected test failure", "wtf message")
+                require(!system, "wtf system flag")
+                terribleFailureHandled = true
+            }
+            try {
+                android.util.Log.wtf("FrameworkCompatSmoke", "expected test failure")
+            } finally {
+                android.util.Log.setWtfHandler(previousHandler)
+            }
+            require(terribleFailureHandled, "stock wtf handler")
+            require(android.util.Log.isLoggable("FrameworkCompatSmoke", android.util.Log.INFO), "liblog filtering")
+
+            require(android.util.StatsLog.logStart(17), "stats start breadcrumb")
+            require(android.util.StatsLog.logStop(17), "stats stop breadcrumb")
+            require(android.util.StatsLog.logEvent(17), "stats event breadcrumb")
+            require(
+                Class.forName("com.android.internal.statsd.StatsdStatsLog").name ==
+                    "com.android.internal.statsd.StatsdStatsLog",
+                "generated StatsD stats log",
+            )
+
+            val logCursor = android.util.ArtzigTestDiagnostics.logSequence()
+            val issueCursor = android.util.ArtzigTestDiagnostics.issueSequence()
+            android.util.Log.i("FrameworkCompatSmoke", "stock logging clients ok")
+            require(
+                android.util.ArtzigTestDiagnostics.snapshot(logCursor, issueCursor)
+                    .contains("stock logging clients ok"),
+                "native log diagnostics sink",
+            )
         }
 
         /** Stock AOSP FontRequest: validation, identity key and certificate rendering. */

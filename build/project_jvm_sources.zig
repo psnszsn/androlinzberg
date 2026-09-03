@@ -309,8 +309,6 @@ pub const framework = [_][]const u8{
     "src/framework/android/text/format/DateFormat.java",
     "src/framework/android/text/format/Time.java",
     "src/framework/android/util/ArtzigTestDiagnostics.java",
-    "src/framework/android/util/Log.java",
-    "src/framework/android/util/StatsLog.java",
     "src/framework/android/util/TimeUtils.java",
     "src/framework/android/util/Xml.java",
     "src/framework/android/util/proto/ProtoUtils.java",

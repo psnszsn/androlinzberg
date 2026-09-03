@@ -254,6 +254,21 @@ pub fn build(b: *std.Build) void {
     b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
         .dependOn(&binder_ndk.step);
 
+    // Stock StatsLog loads libstats_jni itself. The host has no statsd daemon,
+    // so this tiny JNI library supplies AOSP's Ravenwood-equivalent no-op sink.
+    const stats_jni = b.addLibrary(.{
+        .name = "stats_jni",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/platform/stats_log.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "art", .module = art_mod }},
+        }),
+    });
+    b.step("stats-jni", "Build the hosted StatsLog JNI sink")
+        .dependOn(&stats_jni.step);
+
     // --- native island: hwui + JNI + our shims, linked against static Skia
     const island = @import("build/island.zig").build(b, .{
         .target = target,
@@ -515,6 +530,7 @@ pub fn build(b: *std.Build) void {
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
         .island = island.file,
+        .stats_jni = stats_jni.getEmittedBin(),
         .binder_ndk = binder_ndk.getEmittedBin(),
         .art_runtime = artzig_dep.namedLazyPath("art-runtime"),
         .libart = libart_overlay,

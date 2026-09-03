@@ -5,6 +5,7 @@
 #include <Bitmap.h>
 #include <jni/Bitmap.h>
 #include <input/KeyCharacterMap.h>
+#include <log/log.h>
 #include <SkGraphics.h>
 #include <jni.h>
 #include <Properties.h>
@@ -147,6 +148,84 @@ static int azk_register_android_view_HostedInputDispatcher(JNIEnv* env) {
     return env->RegisterNatives(dispatcher_class, methods, 1);
 }
 
+// Host sink for the verbatim AOSP android.util.Log. Android normally writes
+// through logd; host liblog writes the same record to stderr, while the test
+// diagnostics call preserves the structured issue journal until phase 6 moves
+// that observer out of android.*.
+static jclass g_azk_test_diagnostics = nullptr;
+static jmethodID g_azk_record_log = nullptr;
+
+static jboolean azk_Log_isLoggable(JNIEnv* env, jclass, jstring tag_object, jint level) {
+    if (tag_object == nullptr) return JNI_FALSE;
+    const char* tag = env->GetStringUTFChars(tag_object, nullptr);
+    if (tag == nullptr) return JNI_FALSE;
+    const jboolean result = __android_log_is_loggable(level, tag, ANDROID_LOG_INFO);
+    env->ReleaseStringUTFChars(tag_object, tag);
+    return result;
+}
+
+static jint azk_Log_printlnNative(
+        JNIEnv* env, jclass, jint buffer_id, jint priority, jstring tag_object,
+        jstring message_object) {
+    if (message_object == nullptr) {
+        jclass exception_class = env->FindClass("java/lang/NullPointerException");
+        if (exception_class != nullptr) env->ThrowNew(exception_class, "println needs a message");
+        return -1;
+    }
+    if (buffer_id < 0 || buffer_id >= LOG_ID_MAX) {
+        jclass exception_class = env->FindClass("java/lang/NullPointerException");
+        if (exception_class != nullptr) env->ThrowNew(exception_class, "bad bufID");
+        return -1;
+    }
+
+    const char* tag = nullptr;
+    if (tag_object != nullptr) {
+        tag = env->GetStringUTFChars(tag_object, nullptr);
+        if (tag == nullptr) return -1;
+    }
+    const char* message = env->GetStringUTFChars(message_object, nullptr);
+    if (message == nullptr) {
+        if (tag != nullptr) env->ReleaseStringUTFChars(tag_object, tag);
+        return -1;
+    }
+
+    env->CallStaticVoidMethod(
+            g_azk_test_diagnostics, g_azk_record_log, priority, tag_object, message_object);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    const jint result = __android_log_buf_write(buffer_id, priority, tag, message);
+
+    if (tag != nullptr) env->ReleaseStringUTFChars(tag_object, tag);
+    env->ReleaseStringUTFChars(message_object, message);
+    return result;
+}
+
+static jint azk_Log_loggerEntryMaxPayload(JNIEnv*, jclass) {
+    return LOGGER_ENTRY_MAX_PAYLOAD;
+}
+
+static int azk_register_android_util_Log(JNIEnv* env) {
+    jclass diagnostics = env->FindClass("android/util/ArtzigTestDiagnostics");
+    if (diagnostics == nullptr) return -1;
+    g_azk_test_diagnostics = reinterpret_cast<jclass>(env->NewGlobalRef(diagnostics));
+    env->DeleteLocalRef(diagnostics);
+    if (g_azk_test_diagnostics == nullptr) return -1;
+    g_azk_record_log = env->GetStaticMethodID(
+            g_azk_test_diagnostics, "recordLog", "(ILjava/lang/String;Ljava/lang/String;)V");
+    if (g_azk_record_log == nullptr) return -1;
+
+    jclass log_class = env->FindClass("android/util/Log");
+    if (log_class == nullptr) return -1;
+    const JNINativeMethod methods[] = {
+            {"isLoggable", "(Ljava/lang/String;I)Z",
+             reinterpret_cast<void*>(azk_Log_isLoggable)},
+            {"println_native", "(IILjava/lang/String;Ljava/lang/String;)I",
+             reinterpret_cast<void*>(azk_Log_printlnNative)},
+            {"logger_entry_max_payload_native", "()I",
+             reinterpret_cast<void*>(azk_Log_loggerEntryMaxPayload)},
+    };
+    return env->RegisterNatives(log_class, methods, sizeof(methods) / sizeof(methods[0]));
+}
+
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
 // ApkAssets callbacks). The VM is stored at registration time.
 #include <android_runtime/AndroidRuntime.h>
@@ -223,6 +302,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_graphics_MeshSpecification),
             E(android::register_android_graphics_Mesh),
             E(android::register_android_util_PathParser),
+            E(azk_register_android_util_Log),
             E(android::register_android_content_AssetManager),
             E(android::register_android_content_res_ApkAssets),
             E(android::register_android_content_StringBlock),

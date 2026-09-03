@@ -81,6 +81,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/native/libs/input/",
         "frameworks/native/libs/binder/aidl/",
         "frameworks/native/libs/permission/aidl/",
+        "packages/modules/StatsD/aidl/",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core/",
         "frameworks/base/location/java/",
         "frameworks/base/telephony/java/",
@@ -127,6 +128,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/media/java",
         "frameworks/native/libs/input",
         "frameworks/native/libs/binder/aidl",
+        "packages/modules/StatsD/aidl",
         "frameworks/base/apex/jobscheduler/framework/java",
         "frameworks/base/native/android/aidl",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
@@ -326,10 +328,12 @@ fn statsJava(
     _ = stage.addCopyDirectory(aosp.path("frameworks/proto_logging/stats/stats_log_api_gen/include_cc_srcs"), base ++ "/cc_srcs", .{});
 
     // One run per stats-log module, as Soong's stats-log-api-gen genrules do:
-    // the framework's FrameworkStatsLog, telephony's TelephonyStatsLog (AnomalyReporter)
-    // and telephony-common's TelephonyCommonStatsLog (TelephonyPermissions).
+    // the framework's FrameworkStatsLog, StatsD's StatsdStatsLog, telephony's
+    // TelephonyStatsLog (AnomalyReporter), and telephony-common's
+    // TelephonyCommonStatsLog (TelephonyPermissions).
     const specs = .{
         .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },
+        .{ .module = "statsd", .package = "com.android.internal.statsd", .class = "StatsdStatsLog" },
         .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },
         .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
     };

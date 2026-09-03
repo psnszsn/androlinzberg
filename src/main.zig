@@ -338,6 +338,7 @@ fn configureFonts(init: std.process.Init) void {
 fn bootHeadless(init: std.process.Init) !Headless {
     const arena = init.arena.allocator();
     const tree = try installTree(init);
+    const runtime_overlay_dir = try std.fs.path.join(arena, &.{ tree, "lib", "art" });
     const island_path = try std.fs.path.join(arena, &.{ tree, "lib", "libandroid_platform.so" });
     var lib = try std.DynLib.open(island_path);
     try bindPlatformIo(&lib, init.io);
@@ -354,6 +355,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     // without the bionic loader there is no <root>/lib64 fallback.
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .library_path = &.{runtime_overlay_dir},
         .use_bionic_loader = false,
         .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
     });
