@@ -31,7 +31,7 @@ fn linkByPath(b: *std.Build, m: *std.Build.Module, pc: []const u8, sonames: []co
     const dir = while (it.next()) |t| {
         if (std.mem.startsWith(u8, t, "-L")) break t[2..];
     } else std.debug.panic("pkg-config {s}: no -L", .{pc});
-    for (sonames) |so| m.addObjectFile(.{ .cwd_relative = b.fmt("{s}/{s}", .{ dir, so }) });
+    for (sonames) |so| m.addObjectFile(b.graph.cwdRelativePath(b.fmt("{s}/{s}", .{ dir, so })));
 }
 
 fn lib(b: *std.Build, o: Options, name: []const u8) *std.Build.Step.Compile {
@@ -99,9 +99,9 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     linkByPath(b, c_bio.root_module, "libmd", &.{"libmd.so.0"});
     c_bio.root_module.addSystemIncludePath(blk: {
         var code: u8 = 0;
-        const out = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "libbsd" }, &code, .ignore) catch break :blk .{ .cwd_relative = "/usr/include" };
+        const out = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "libbsd" }, &code, .ignore) catch break :blk b.graph.cwdRelativePath("/usr/include");
         const t = std.mem.trim(u8, out, " \n");
-        break :blk .{ .cwd_relative = if (std.mem.startsWith(u8, t, "-I")) b.dupe(t[2..]) else "/usr/include" };
+        break :blk b.graph.cwdRelativePath(if (std.mem.startsWith(u8, t, "-I")) t[2..] else "/usr/include");
     });
     c_bio.root_module.linkLibrary(pthread_bio);
     // bionic defines FE_DFL_ENV as &__fe_dfl_env; glibc/musl use -1

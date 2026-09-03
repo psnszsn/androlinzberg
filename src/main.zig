@@ -54,6 +54,10 @@ const usage =
 /// The install tree the executable lives in (zig-out): <tree>/bin/androlinzberg.
 fn installTree(init: std.process.Init) ![]const u8 {
     const a = init.arena.allocator();
+    if (init.minimal.environ.getPosix("ARTZIG_INSTALL_ROOT")) |configured| {
+        if (!std.fs.path.isAbsolute(configured)) return error.NoInstallTree;
+        return configured;
+    }
     const exe = try std.process.executablePathAlloc(init.io, a);
     const bin = std.fs.path.dirname(exe) orelse return error.NoInstallTree;
     const discovered_tree = std.fs.path.dirname(bin) orelse return error.NoInstallTree;
@@ -296,7 +300,6 @@ const Headless = struct {
     rt: art.Runtime,
     tree: []const u8,
 };
-
 
 /// Register the framework natives served by libbinder_ndk.so (SystemProperties
 /// for now; the android.os migration grows this). The library also backs the

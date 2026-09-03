@@ -61,6 +61,7 @@
 //   soong/.intermediates/art/runtime/libart_mterp.x86_64ng/gen/mterp_x86_64ng.S
 //   soong/.intermediates/art/tools/cpp-define-generator/cpp-define-generator-asm-support/linux_glibc_x86_64/gen/
 const std = @import("std");
+const host_toolchain = @import("../host_toolchain.zig");
 
 const target_cflags = [_][]const u8{
     // instruction_set.h defines reserve sizes for every InstructionSet enum,
@@ -105,26 +106,52 @@ pub const Options = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     vendor: std.Build.LazyPath,
-    out: std.Build.LazyPath,
-    /// absolute paths of the same two roots (include paths are passed per compile unit as -I)
-    vendor_dir: []const u8,
-    out_dir: []const u8,
-    /// absolute path of the artzig package root (for build/gen/prelude)
-    root_dir: []const u8,
-    /// extra flags applied to every compile unit (e.g. -isystem for headers Soong's sysroot had: libcap)
-    extra_cflags: []const []const u8 = &.{},
-    /// generated-source roots (see build/genrules.zig); keys are out/-relative Soong gen dirs.
-    /// Anything not provided falls back to reading Soong's out/ tree.
-    gen_dirs: []const GenDir = &.{},
+    project: std.Build.LazyPath,
+    host: host_toolchain.Result,
+    /// All required generated sources and headers. There is deliberately no
+    /// fallback to a Soong out/ directory.
+    generated: GeneratedArtifacts = undefined,
 };
-pub const GenDir = struct { key: []const u8, dir: std.Build.LazyPath };
-fn genDir(b: *std.Build, o: Options, key: []const u8) std.Build.LazyPath {
-    for (o.gen_dirs) |g| if (std.mem.eql(u8, g.key, key)) return g.dir;
-    return o.out.path(b, key);
-}
+pub const GeneratedArtifacts = struct {
+    aconfig: SourceArtifacts,
+    compiler_operators: SourceArtifacts,
+    compiler_optimization: std.Build.LazyPath,
+    dex2oat_operators: SourceArtifacts,
+    libartbase_operators: SourceArtifacts,
+    dexfile_operators: SourceArtifacts,
+    runtime_operators: SourceArtifacts,
+    mterp: std.Build.LazyPath,
+    asm_defines: SourceArtifacts,
+};
 
-const Root = enum { vendor, out, project };
-const Inc = struct { root: Root, rel: []const u8, kind: []const u8 = "-I" };
+pub const SourceArtifacts = struct {
+    sources: []const std.Build.LazyPath,
+    include_roots: []const std.Build.LazyPath = &.{},
+};
+const Root = enum { vendor, project };
+const HostRoot = enum { libcap };
+const GeneratedRoot = enum {
+    aconfig,
+    compiler_operators,
+    dex2oat_operators,
+    libartbase_operators,
+    dexfile_operators,
+    runtime_operators,
+    asm_defines,
+};
+const Inc = struct {
+    root: Root = .vendor,
+    rel: []const u8,
+    kind: []const u8 = "-I",
+    generated: ?GeneratedRoot = null,
+    host: ?HostRoot = null,
+};
+
+fn generatedArtifacts(o: Options, root: GeneratedRoot) SourceArtifacts {
+    return switch (root) {
+        inline else => |tag| @field(o.generated, @tagName(tag)),
+    };
+}
 
 /// Flags every compile unit in this target set shares (intersection over all units).
 pub const base_cflags = [_][]const u8{
@@ -135,36 +162,204 @@ pub const base_cflags = [_][]const u8{
     "-fno-exceptions",           "-fno-strict-aliasing",               "-fmessage-length=0",           "-ftrivial-auto-var-init=zero",             "-g",
 };
 
-fn rootDir(o: Options, r: Root) []const u8 {
+fn rootPath(o: Options, r: Root) std.Build.LazyPath {
     return switch (r) {
-        .vendor => o.vendor_dir,
-        .out => o.out_dir,
-        .project => o.root_dir,
+        .vendor => o.vendor,
+        .project => o.project,
     };
 }
-fn incSet(b: *std.Build, o: Options, list: []const Inc) []const []const u8 {
+const IncludeSet = struct {
+    args: []const []const u8,
+    declarations: []const Inc,
+};
+
+const GroupFlags = struct {
+    args: []const []const u8,
+    includes: []const Inc,
+};
+
+fn incSet(b: *std.Build, o: Options, list: []const Inc) IncludeSet {
+    _ = o;
     var out: std.ArrayList([]const u8) = .empty;
     for (list) |i| {
-        if (std.mem.startsWith(u8, i.kind, "gen:")) continue; // generated dirs: added per module, see addGenIncludes
-        if (i.kind.len == 2) { // -I<path>
-            out.append(b.allocator, b.fmt("{s}{s}/{s}", .{ i.kind, rootDir(o, i.root), i.rel })) catch @panic("OOM");
-        } else { // -isystem / -include <path>
-            out.append(b.allocator, i.kind) catch @panic("OOM");
-            out.append(b.allocator, if (i.rel.len > 0 and i.rel[0] == '/') i.rel else b.fmt("{s}/{s}", .{ rootDir(o, i.root), i.rel })) catch @panic("OOM");
+        // Include directories are graph paths added by addIncludes. The sole
+        // forced include is found through its declared include directory, so
+        // only the header basename remains a compiler flag string.
+        if (!std.mem.eql(u8, i.kind, "-include")) continue;
+        out.append(b.allocator, "-include") catch @panic("OOM");
+        out.append(b.allocator, std.fs.path.basename(i.rel)) catch @panic("OOM");
+    }
+    return .{ .args = out.items, .declarations = list };
+}
+fn sameInclude(a: Inc, b: Inc) bool {
+    return a.root == b.root and
+        a.generated == b.generated and
+        a.host == b.host and
+        std.mem.eql(u8, a.rel, b.rel) and
+        std.mem.eql(u8, a.kind, b.kind);
+}
+
+fn addIncludes(b: *std.Build, o: Options, m: *std.Build.Module, list: []const Inc) void {
+    for (list, 0..) |i, index| {
+        for (list[0..index]) |previous| {
+            if (sameInclude(previous, i)) break;
+        } else {
+            addInclude(b, o, m, i);
         }
     }
-    return out.items;
 }
-/// Generated include dirs cannot be absolute strings at configure time; add them as module include paths.
-/// They only contain uniquely named generated headers, so module-level ordering is harmless.
-fn addGenIncludes(b: *std.Build, o: Options, m: *std.Build.Module, list: []const Inc) void {
-    for (list) |i| if (std.mem.startsWith(u8, i.kind, "gen:")) {
-        const d = genDir(b, o, i.kind[4..]);
-        m.addIncludePath(if (i.rel.len == 0) d else d.path(b, i.rel));
+
+fn addInclude(b: *std.Build, o: Options, m: *std.Build.Module, i: Inc) void {
+    if (i.host) |host| {
+        const roots = switch (host) {
+            .libcap => o.host.libcap_include_roots,
+        };
+        for (roots) |base| m.addSystemIncludePath(if (i.rel.len == 0) base else base.path(b, i.rel));
+        return;
+    }
+    if (i.generated) |generated| {
+        for (generatedArtifacts(o, generated).include_roots) |base| {
+            const path = if (i.rel.len == 0) base else base.path(b, i.rel);
+            m.addIncludePath(path);
+        }
+        return;
+    }
+    const base = rootPath(o, i.root);
+    if (std.mem.eql(u8, i.kind, "-include")) {
+        m.addIncludePath(base.path(b, std.fs.path.dirname(i.rel) orelse ""));
+    } else if (std.mem.eql(u8, i.kind, "-isystem")) {
+        m.addSystemIncludePath(base.path(b, i.rel));
+    } else {
+        m.addIncludePath(base.path(b, i.rel));
+    }
+}
+
+const SourceGroups = struct {
+    b: *std.Build,
+    options: Options,
+    owner: *std.Build.Step.Compile,
+    owner_name: []const u8,
+    next_index: usize = 0,
+
+    const AddCSourceFilesOptions = struct {
+        root: ?std.Build.LazyPath = null,
+        files: []const []const u8,
+        flags: GroupFlags,
+        language: ?std.Build.Module.CSourceLanguage = null,
+    };
+
+    const CSourceFile = struct {
+        file: std.Build.LazyPath,
+        flags: GroupFlags,
+        language: ?std.Build.Module.CSourceLanguage = null,
+    };
+
+    const GroupModule = struct {
+        name: []const u8,
+        module: *std.Build.Module,
+    };
+
+    fn newModule(self: *SourceGroups, group_flags: GroupFlags) GroupModule {
+        const name = self.b.fmt("{s}-sources-{d}", .{ self.owner_name, self.next_index });
+        const module = self.b.createModule(.{
+            .target = self.options.target,
+            .optimize = self.options.optimize,
+            .link_libc = true,
+            .link_libcpp = true,
+            .sanitize_c = .off,
+        });
+        self.next_index += 1;
+        addIncludes(self.b, self.options, module, group_flags.includes);
+        return .{ .name = name, .module = module };
+    }
+
+    fn attachObject(self: *SourceGroups, group: GroupModule) void {
+        self.owner.root_module.addObject(self.b.addObject(.{
+            .name = group.name,
+            .root_module = group.module,
+        }));
+    }
+
+    fn addCSourceFiles(self: *SourceGroups, source: AddCSourceFilesOptions) void {
+        if (self.owner.kind == .lib and self.owner.linkage != .dynamic) {
+            // Preserve the native archive contract: every selected source is
+            // its own member, so the final linker extracts only the object
+            // that satisfies an unresolved symbol. Grouping several sources
+            // into one relocatable object changes ART's overlapping static
+            // library semantics.
+            const root = source.root orelse @panic("static source group requires a root");
+            for (source.files) |file| {
+                const group = self.newModule(source.flags);
+                group.module.addCSourceFile(.{
+                    .file = root.path(self.b, file),
+                    .flags = source.flags.args,
+                    .language = source.language,
+                });
+                self.attachObject(group);
+            }
+        } else {
+            // Shared libraries and executables keep the group as one object;
+            // this preserves their source-before-library link ordering.
+            const group = self.newModule(source.flags);
+            group.module.addCSourceFiles(.{
+                .root = source.root,
+                .files = source.files,
+                .flags = source.flags.args,
+                .language = source.language,
+            });
+            self.attachObject(group);
+        }
+    }
+
+    fn addCSourceFile(self: *SourceGroups, source: CSourceFile) void {
+        const group = self.newModule(source.flags);
+        group.module.addCSourceFile(.{
+            .file = source.file,
+            .flags = source.flags.args,
+            .language = source.language,
+        });
+        self.attachObject(group);
+    }
+};
+
+fn applySourceGroups(
+    b: *std.Build,
+    o: Options,
+    I: Incs,
+    owner: *std.Build.Step.Compile,
+    comptime add: fn (*std.Build, Options, Incs, *SourceGroups) void,
+) void {
+    var groups: SourceGroups = .{
+        .b = b,
+        .options = o,
+        .owner = owner,
+        // Static and shared variants often have the same logical name, while
+        // their output names are distinct (libfoo.a versus libfoo.so).
+        .owner_name = owner.out_filename,
+        // Several source declarations may contribute to one owner. Continue
+        // after its existing link objects rather than reusing `sources-0`.
+        .next_index = owner.root_module.link_objects.items.len,
+    };
+    add(b, o, I, &groups);
+}
+
+fn addGeneratedSources(m: *SourceGroups, artifacts: SourceArtifacts, source_flags: GroupFlags) void {
+    for (artifacts.sources) |source| m.addCSourceFile(.{ .file = source, .flags = source_flags });
+}
+fn flags(b: *std.Build, _: Options, delta: []const []const u8, incs: IncludeSet) GroupFlags {
+    return .{
+        .args = std.mem.concat(b.allocator, []const u8, &.{ &base_cflags, &target_cflags, delta, incs.args }) catch @panic("OOM"),
+        .includes = incs.declarations,
     };
 }
-fn flags(b: *std.Build, o: Options, delta: []const []const u8, incs: []const []const u8) []const []const u8 {
-    return std.mem.concat(b.allocator, []const u8, &.{ &base_cflags, &target_cflags, delta, incs, o.extra_cflags }) catch @panic("OOM");
+
+fn compilerOptimizationFlags(b: *std.Build, o: Options, I: Incs) GroupFlags {
+    var result = flags(b, o, &cf_0, I.inc_18);
+    result.includes = std.mem.concat(b.allocator, Inc, &.{
+        result.includes,
+        &.{.{ .root = .vendor, .rel = "art/compiler/optimizing" }},
+    }) catch @panic("OOM");
+    return result;
 }
 // Same relocatable rpath set Soong gives host binaries (bin/ next to lib64/).
 fn setRPaths(c: *std.Build.Step.Compile) void {
@@ -173,7 +368,14 @@ fn setRPaths(c: *std.Build.Step.Compile) void {
 // sanitize_c off: zig's ubsan runtime adds a 256K static-TLS block per .so, which then cannot be dlopen()ed
 fn newLib(b: *std.Build, o: Options, name: []const u8, linkage: std.builtin.LinkMode) *std.Build.Step.Compile {
     const c = b.addLibrary(.{ .name = name, .linkage = linkage, .root_module = b.createModule(.{ .target = o.target, .optimize = o.optimize, .link_libc = true, .link_libcpp = true, .sanitize_c = .off }) });
-    if (linkage == .dynamic) setRPaths(c);
+    if (linkage == .dynamic) {
+        setRPaths(c);
+    } else {
+        // Group-local source objects are archived into this target. Zig still
+        // requires the aggregate archive itself to own one direct source.
+        const empty = b.addWriteFiles().add(b.fmt("{s}-aggregate.c", .{name}), "");
+        c.root_module.addCSourceFile(.{ .file = empty });
+    }
     return c;
 }
 fn newExe(b: *std.Build, o: Options, name: []const u8) *std.Build.Step.Compile {
@@ -495,17 +697,17 @@ const cf_26 = [_][]const u8{
     "-Wno-error=deprecated-builtins", "-Wno-error=deprecated",                     "-Wno-error=invalid-offsetof",            "-Wno-vla-cxx-extension",
 };
 const cf_27 = [_][]const u8{
-    "-Wno-enum-compare",                    "-Wno-enum-compare-switch",                  "-Wno-null-pointer-arithmetic",         "-Wno-null-dereference",          "-Wno-pointer-compare",
-    "-Wno-final-dtor-non-final-class",      "-Wno-psabi",                                "-Wno-null-pointer-subtraction",        "-Wno-string-concatenation",      "-Wno-deprecated-non-prototype",
-    "-Wno-deprecated",                      "-Wno-error=format",                         "-Wmissing-prototypes",                 "-Wstrict-prototypes",            "-DHAVE_EXPAT_CONFIG_H",
-    "-UWIN32_LEAN_AND_MEAN",                "-std=gnu23",                                "-Wimplicit-int-float-conversion",      "-Wno-void-pointer-to-enum-cast", "-Wno-void-pointer-to-int-cast",
-    "-Wno-pointer-to-int-cast",             "-Wno-unused-variable",                      "-Wno-missing-field-initializers",      "-Wno-packed-non-pod",            "-Wno-tautological-constant-compare",
-    "-Wno-tautological-type-limit-compare", "-Wno-implicit-int-float-conversion",        "-Wno-tautological-overlap-compare",    "-Wno-deprecated-copy",           "-Wno-range-loop-construct",
-    "-Wno-zero-as-null-pointer-constant",   "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-deprecated-enum-enum-conversion", "-Wno-error=pessimizing-move",    "-Wno-non-c-typedef-for-linkage",
-    "-Wno-align-mismatch",                  "-Wno-error=unused-but-set-variable",        "-Wno-error=unused-but-set-parameter",  "-Wno-error=deprecated-builtins", "-Wno-error=deprecated",
-    "-Wno-error=invalid-offsetof",          "-Wno-vla-cxx-extension",                    "-fcommon",                             "-Wno-format-insufficient-args",  "-Wno-misleading-indentation",
-    "-Wno-bitwise-instead-of-logical",      "-Wno-unused-parameter",                     "-Wno-unused-but-set-parameter",        "-Wno-unqualified-std-cast-call", "-Wno-array-parameter",
-    "-Wno-gnu-offsetof-extensions",         "-Wno-pessimizing-move",
+    "-Wno-enum-compare",                  "-Wno-enum-compare-switch",             "-Wno-null-pointer-arithmetic",              "-Wno-null-dereference",                "-Wno-pointer-compare",
+    "-Wno-final-dtor-non-final-class",    "-Wno-psabi",                           "-Wno-null-pointer-subtraction",             "-Wno-string-concatenation",            "-Wno-deprecated-non-prototype",
+    "-Wno-deprecated",                    "-Wno-error=format",                    "-Wmissing-prototypes",                      "-Wstrict-prototypes",                  "-DHAVE_EXPAT_CONFIG_H",
+    "-DXML_DEV_URANDOM=1",                "-UWIN32_LEAN_AND_MEAN",                "-std=gnu23",                                "-Wimplicit-int-float-conversion",      "-Wno-void-pointer-to-enum-cast",
+    "-Wno-void-pointer-to-int-cast",      "-Wno-pointer-to-int-cast",             "-Wno-unused-variable",                      "-Wno-missing-field-initializers",      "-Wno-packed-non-pod",
+    "-Wno-tautological-constant-compare", "-Wno-tautological-type-limit-compare", "-Wno-implicit-int-float-conversion",        "-Wno-tautological-overlap-compare",    "-Wno-deprecated-copy",
+    "-Wno-range-loop-construct",          "-Wno-zero-as-null-pointer-constant",   "-Wno-deprecated-anon-enum-enum-conversion", "-Wno-deprecated-enum-enum-conversion", "-Wno-error=pessimizing-move",
+    "-Wno-non-c-typedef-for-linkage",     "-Wno-align-mismatch",                  "-Wno-error=unused-but-set-variable",        "-Wno-error=unused-but-set-parameter",  "-Wno-error=deprecated-builtins",
+    "-Wno-error=deprecated",              "-Wno-error=invalid-offsetof",          "-Wno-vla-cxx-extension",                    "-fcommon",                             "-Wno-format-insufficient-args",
+    "-Wno-misleading-indentation",        "-Wno-bitwise-instead-of-logical",      "-Wno-unused-parameter",                     "-Wno-unused-but-set-parameter",        "-Wno-unqualified-std-cast-call",
+    "-Wno-array-parameter",               "-Wno-gnu-offsetof-extensions",         "-Wno-pessimizing-move",
 };
 const cf_28 = [_][]const u8{
     "-DANDROID_STRICT",                     "-Wimplicit-fallthrough",                    "-D_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS", "-Wno-gnu-include-next",          "-std=gnu++20",
@@ -679,7 +881,7 @@ const inc_13 = [_]Inc{
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "art/libdexfile" },
     .{ .root = .vendor, .rel = "art/libdexfile/external/include" },
     .{ .root = .vendor, .rel = "system/core/include" },
@@ -708,7 +910,7 @@ const inc_16 = [_]Inc{
     .{ .root = .vendor, .rel = "external/fmtlib/include" },
     .{ .root = .vendor, .rel = "external/dlmalloc" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -721,7 +923,7 @@ const inc_17 = [_]Inc{
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -734,7 +936,7 @@ const inc_18 = [_]Inc{
     .{ .root = .vendor, .rel = "system/libbase/include" },
     .{ .root = .vendor, .rel = "external/fmtlib/include" },
     .{ .root = .vendor, .rel = "external/dlmalloc" },
-    .{ .root = .out, .rel = "", .kind = "gen:" ++ "soong/.intermediates/art/tools/cpp-define-generator/cpp-define-generator-asm-support/linux_glibc_x86_64/gen" },
+    .{ .rel = "", .generated = .asm_defines },
     .{ .root = .vendor, .rel = "art/cmdline" },
     .{ .root = .vendor, .rel = "art/disassembler" },
     .{ .root = .vendor, .rel = "libnativehelper/header_only_include" },
@@ -743,11 +945,11 @@ const inc_18 = [_]Inc{
     .{ .root = .vendor, .rel = "external/lzma/C" },
     .{ .root = .vendor, .rel = "art/libartpalette/include" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "art/libprofile" },
     .{ .root = .vendor, .rel = "art/libdexfile" },
     .{ .root = .vendor, .rel = "art/libdexfile/external/include" },
-    .{ .root = .out, .rel = "gensrcs", .kind = "gen:" ++ "soong/.intermediates/art/compiler/art_compiler_operator_srcs/gen" },
+    .{ .rel = "gensrcs", .generated = .compiler_operators },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -777,7 +979,7 @@ const inc_21 = [_]Inc{
     .{ .root = .vendor, .rel = "external/fmtlib/include" },
     .{ .root = .vendor, .rel = "external/dlmalloc" },
     .{ .root = .vendor, .rel = "libnativehelper/header_only_include" },
-    .{ .root = .out, .rel = "", .kind = "gen:" ++ "soong/.intermediates/art/tools/cpp-define-generator/cpp-define-generator-asm-support/linux_glibc_x86_64/gen" },
+    .{ .rel = "", .generated = .asm_defines },
     .{ .root = .vendor, .rel = "art/compiler/export" },
     .{ .root = .vendor, .rel = "external/cpu_features/include" },
     .{ .root = .vendor, .rel = "art/odrefresh/include" },
@@ -793,12 +995,12 @@ const inc_21 = [_]Inc{
     .{ .root = .vendor, .rel = "external/rust/android-crates-io/crates/rustc-demangle-capi/include" },
     .{ .root = .vendor, .rel = "external/zstd/lib" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "art/libdexfile" },
     .{ .root = .vendor, .rel = "art/libdexfile/external/include" },
     .{ .root = .vendor, .rel = "art/libprofile" },
     .{ .root = .vendor, .rel = "external/zlib" },
-    .{ .root = .out, .rel = "gensrcs", .kind = "gen:" ++ "soong/.intermediates/art/runtime/art_operator_srcs/gen" },
+    .{ .rel = "gensrcs", .generated = .runtime_operators },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -823,8 +1025,8 @@ const inc_23 = [_]Inc{
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
-    .{ .root = .out, .rel = "gensrcs", .kind = "gen:" ++ "soong/.intermediates/art/libdexfile/dexfile_operator_srcs/gen" },
+    .{ .rel = "include", .generated = .aconfig },
+    .{ .rel = "gensrcs", .generated = .dexfile_operators },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -833,7 +1035,7 @@ const inc_24 = [_]Inc{
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "system/libziparchive/include" },
     .{ .root = .vendor, .rel = "external/googletest/googletest/include" },
     .{ .root = .vendor, .rel = "system/libbase/include" },
@@ -842,7 +1044,7 @@ const inc_24 = [_]Inc{
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
     .{ .root = .vendor, .rel = "art/libartpalette/include" },
     .{ .root = .vendor, .rel = "libnativehelper/include_jni" },
-    .{ .root = .out, .rel = "gensrcs", .kind = "gen:" ++ "soong/.intermediates/art/libartbase/art_libartbase_operator_srcs/gen" },
+    .{ .rel = "gensrcs", .generated = .libartbase_operators },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -876,17 +1078,17 @@ const inc_27 = [_]Inc{
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
     .{ .root = .vendor, .rel = "external/dlmalloc" },
-    .{ .root = .out, .rel = "", .kind = "gen:" ++ "soong/.intermediates/art/tools/cpp-define-generator/cpp-define-generator-asm-support/linux_glibc_x86_64/gen" },
+    .{ .rel = "", .generated = .asm_defines },
     .{ .root = .vendor, .rel = "art/compiler" },
     .{ .root = .vendor, .rel = "external/cpu_features/include" },
     .{ .root = .vendor, .rel = "art/libdexfile" },
     .{ .root = .vendor, .rel = "libnativehelper/include_jni" },
     .{ .root = .vendor, .rel = "art/libdexfile/external/include" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "art/libartpalette/include" },
     .{ .root = .vendor, .rel = "art/libprofile" },
-    .{ .root = .out, .rel = "gensrcs", .kind = "gen:" ++ "soong/.intermediates/art/dex2oat/art_dex2oat_operator_srcs/gen" },
+    .{ .rel = "gensrcs", .generated = .dex2oat_operators },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -927,7 +1129,7 @@ const inc_32 = [_]Inc{
     .{ .root = .vendor, .rel = "system/libbase/include" },
     .{ .root = .vendor, .rel = "external/fmtlib/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -989,7 +1191,7 @@ const inc_37 = [_]Inc{
     .{ .root = .vendor, .rel = "libnativehelper/include_jni" },
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "system/libziparchive/include" },
     .{ .root = .vendor, .rel = "external/googletest/googletest/include" },
     .{ .root = .vendor, .rel = "system/unwinding/libunwindstack/include" },
@@ -1002,7 +1204,7 @@ const inc_37 = [_]Inc{
     .{ .root = .vendor, .rel = "art/odrefresh/include" },
     .{ .root = .vendor, .rel = "art/runtime" },
     .{ .root = .vendor, .rel = "external/dlmalloc" },
-    .{ .root = .out, .rel = "", .kind = "gen:" ++ "soong/.intermediates/art/tools/cpp-define-generator/cpp-define-generator-asm-support/linux_glibc_x86_64/gen" },
+    .{ .rel = "", .generated = .asm_defines },
     .{ .root = .vendor, .rel = "external/cpu_features/include" },
     .{ .root = .vendor, .rel = "art/libelffile" },
     .{ .root = .vendor, .rel = "art/sigchainlib" },
@@ -1018,7 +1220,6 @@ const inc_38 = [_]Inc{
     .{ .root = .vendor, .rel = "external/expat/lib" },
     .{ .root = .vendor, .rel = "external/expat/lib" },
     .{ .root = .vendor, .rel = "external/expat" },
-    .{ .root = .project, .rel = "build/gen/prelude/include_stdio.h", .kind = "-include" },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -1036,6 +1237,7 @@ const inc_39 = [_]Inc{
     .{ .root = .vendor, .rel = "libnativehelper/include_platform" },
     .{ .root = .vendor, .rel = "libnativehelper/include_platform_header_only" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/i18n/sdk/common_os/include/external/icu/libicu/ndk_headers" },
+    .{ .rel = "", .host = .libcap },
     .{ .root = .vendor, .rel = "external/expat/lib" },
     .{ .root = .vendor, .rel = "external/zlib" },
     .{ .root = .vendor, .rel = "system/core/include" },
@@ -1084,13 +1286,13 @@ const inc_43 = [_]Inc{
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
     .{ .root = .vendor, .rel = "external/dlmalloc" },
-    .{ .root = .out, .rel = "", .kind = "gen:" ++ "soong/.intermediates/art/tools/cpp-define-generator/cpp-define-generator-asm-support/linux_glibc_x86_64/gen" },
+    .{ .rel = "", .generated = .asm_defines },
     .{ .root = .vendor, .rel = "art/compiler" },
     .{ .root = .vendor, .rel = "external/cpu_features/include" },
     .{ .root = .vendor, .rel = "art/libdexfile" },
     .{ .root = .vendor, .rel = "art/libdexfile/external/include" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
 };
@@ -1120,7 +1322,7 @@ const inc_46 = [_]Inc{
     .{ .root = .vendor, .rel = "art/libartbase" },
     .{ .root = .vendor, .rel = "external/tinyxml2" },
     .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/platform/sdk/common_os/include/external/libcap/libcap/include" },
-    .{ .root = .out, .rel = "include", .kind = "gen:" ++ "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen" },
+    .{ .rel = "include", .generated = .aconfig },
     .{ .root = .vendor, .rel = "system/libbase/include" },
     .{ .root = .vendor, .rel = "external/fmtlib/include" },
     .{ .root = .vendor, .rel = "system/libziparchive/include" },
@@ -1146,56 +1348,56 @@ const inc_47 = [_]Inc{
 
 /// Resolved include sets, filled in by build().
 const Incs = struct {
-    inc_0: []const []const u8,
-    inc_1: []const []const u8,
-    inc_2: []const []const u8,
-    inc_3: []const []const u8,
-    inc_4: []const []const u8,
-    inc_5: []const []const u8,
-    inc_6: []const []const u8,
-    inc_7: []const []const u8,
-    inc_8: []const []const u8,
-    inc_9: []const []const u8,
-    inc_10: []const []const u8,
-    inc_11: []const []const u8,
-    inc_12: []const []const u8,
-    inc_13: []const []const u8,
-    inc_14: []const []const u8,
-    inc_16: []const []const u8,
-    inc_17: []const []const u8,
-    inc_18: []const []const u8,
-    inc_19: []const []const u8,
-    inc_20: []const []const u8,
-    inc_21: []const []const u8,
-    inc_22: []const []const u8,
-    inc_23: []const []const u8,
-    inc_24: []const []const u8,
-    inc_25: []const []const u8,
-    inc_26: []const []const u8,
-    inc_27: []const []const u8,
-    inc_28: []const []const u8,
-    inc_29: []const []const u8,
-    inc_30: []const []const u8,
-    inc_31: []const []const u8,
-    inc_32: []const []const u8,
-    inc_33: []const []const u8,
-    inc_34: []const []const u8,
-    inc_35: []const []const u8,
-    inc_36: []const []const u8,
-    inc_37: []const []const u8,
-    inc_38: []const []const u8,
-    inc_39: []const []const u8,
-    inc_40: []const []const u8,
-    inc_41: []const []const u8,
-    inc_42: []const []const u8,
-    inc_43: []const []const u8,
-    inc_44: []const []const u8,
-    inc_45: []const []const u8,
-    inc_46: []const []const u8,
-    inc_47: []const []const u8,
+    inc_0: IncludeSet,
+    inc_1: IncludeSet,
+    inc_2: IncludeSet,
+    inc_3: IncludeSet,
+    inc_4: IncludeSet,
+    inc_5: IncludeSet,
+    inc_6: IncludeSet,
+    inc_7: IncludeSet,
+    inc_8: IncludeSet,
+    inc_9: IncludeSet,
+    inc_10: IncludeSet,
+    inc_11: IncludeSet,
+    inc_12: IncludeSet,
+    inc_13: IncludeSet,
+    inc_14: IncludeSet,
+    inc_16: IncludeSet,
+    inc_17: IncludeSet,
+    inc_18: IncludeSet,
+    inc_19: IncludeSet,
+    inc_20: IncludeSet,
+    inc_21: IncludeSet,
+    inc_22: IncludeSet,
+    inc_23: IncludeSet,
+    inc_24: IncludeSet,
+    inc_25: IncludeSet,
+    inc_26: IncludeSet,
+    inc_27: IncludeSet,
+    inc_28: IncludeSet,
+    inc_29: IncludeSet,
+    inc_30: IncludeSet,
+    inc_31: IncludeSet,
+    inc_32: IncludeSet,
+    inc_33: IncludeSet,
+    inc_34: IncludeSet,
+    inc_35: IncludeSet,
+    inc_36: IncludeSet,
+    inc_37: IncludeSet,
+    inc_38: IncludeSet,
+    inc_39: IncludeSet,
+    inc_40: IncludeSet,
+    inc_41: IncludeSet,
+    inc_42: IncludeSet,
+    inc_43: IncludeSet,
+    inc_44: IncludeSet,
+    inc_45: IncludeSet,
+    inc_46: IncludeSet,
+    inc_47: IncludeSet,
 };
 
-fn srcs_libsigchain_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libsigchain_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1203,9 +1405,8 @@ fn srcs_libsigchain_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Mod
         },
         .flags = flags(b, o, &cf_0, I.inc_0),
     });
-    addGenIncludes(b, o, m, &inc_0);
 }
-fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1364,35 +1565,33 @@ fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Bui
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
-            "art/compiler/debug/elf_debug_writer.cc",                     "art/compiler/dex/inline_method_analyser.cc",            "art/compiler/driver/compiler_options.cc",                             "art/compiler/driver/dex_compilation_unit.cc",
-            "art/compiler/jit/jit_compiler.cc",                           "art/compiler/jit/jit_logger.cc",                        "art/compiler/jni/quick/calling_convention.cc",                        "art/compiler/jni/quick/jni_compiler.cc",
-            "art/compiler/optimizing/block_builder.cc",                   "art/compiler/optimizing/block_namer.cc",                "art/compiler/optimizing/bounds_check_elimination.cc",                 "art/compiler/optimizing/builder.cc",
-            "art/compiler/optimizing/cha_guard_optimization.cc",          "art/compiler/optimizing/code_generation_data.cc",       "art/compiler/optimizing/code_generator.cc",                           "art/compiler/optimizing/code_generator_utils.cc",
-            "art/compiler/optimizing/code_sinking.cc",                    "art/compiler/optimizing/constant_folding.cc",           "art/compiler/optimizing/constructor_fence_redundancy_elimination.cc", "art/compiler/optimizing/control_flow_simplifier.cc",
-            "art/compiler/optimizing/data_type.cc",                       "art/compiler/optimizing/dead_code_elimination.cc",      "art/compiler/optimizing/escape.cc",                                   "art/compiler/optimizing/graph_checker.cc",
-            "art/compiler/optimizing/graph_visualizer.cc",                "art/compiler/optimizing/gvn.cc",                        "art/compiler/optimizing/handle_cache.cc",                             "art/compiler/optimizing/induction_var_analysis.cc",
-            "art/compiler/optimizing/induction_var_range.cc",             "art/compiler/optimizing/inliner.cc",                    "art/compiler/optimizing/instruction_builder.cc",                      "art/compiler/optimizing/instruction_simplifier.cc",
-            "art/compiler/optimizing/intrinsic_objects.cc",               "art/compiler/optimizing/intrinsics.cc",                 "art/compiler/optimizing/licm.cc",                                     "art/compiler/optimizing/linear_order.cc",
-            "art/compiler/optimizing/load_store_analysis.cc",             "art/compiler/optimizing/load_store_elimination.cc",     "art/compiler/optimizing/locations.cc",                                "art/compiler/optimizing/loop_analysis.cc",
-            "art/compiler/optimizing/loop_optimization.cc",               "art/compiler/optimizing/nodes.cc",                      "art/compiler/optimizing/nodes_vector.cc",                             "art/compiler/optimizing/optimization.cc",
-            "art/compiler/optimizing/optimizing_compiler.cc",             "art/compiler/optimizing/parallel_move_resolver.cc",     "art/compiler/optimizing/prepare_for_register_allocation.cc",          "art/compiler/optimizing/profiling_info_builder.cc",
-            "art/compiler/optimizing/reference_type_info.cc",             "art/compiler/optimizing/reference_type_propagation.cc", "art/compiler/optimizing/register_allocation_resolver.cc",             "art/compiler/optimizing/register_allocator.cc",
-            "art/compiler/optimizing/register_allocator_linear_scan.cc",  "art/compiler/optimizing/scheduler.cc",                  "art/compiler/optimizing/sharpening.cc",                               "art/compiler/optimizing/side_effects_analysis.cc",
-            "art/compiler/optimizing/ssa_builder.cc",                     "art/compiler/optimizing/ssa_liveness_analysis.cc",      "art/compiler/optimizing/ssa_phi_elimination.cc",                      "art/compiler/optimizing/stack_map_stream.cc",
-            "art/compiler/optimizing/superblock_cloner.cc",               "art/compiler/optimizing/write_barrier_elimination.cc",  "art/compiler/trampolines/trampoline_compiler.cc",                     "art/compiler/utils/assembler.cc",
-            "art/compiler/utils/jni_macro_assembler.cc",                  "art/compiler/compiler.cc",                              "art/compiler/optimizing/instruction_simplifier_x86_shared.cc",        "art/compiler/optimizing/x86_memory_gen.cc",
-            "art/compiler/jni/quick/x86_64/calling_convention_x86_64.cc", "art/compiler/optimizing/intrinsics_x86_64.cc",          "art/compiler/optimizing/instruction_simplifier_x86_64.cc",            "art/compiler/optimizing/code_generator_x86_64.cc",
-            "art/compiler/optimizing/code_generator_vector_x86_64.cc",    "art/compiler/utils/x86_64/assembler_x86_64.cc",         "art/compiler/utils/x86_64/jni_macro_assembler_x86_64.cc",             "art/compiler/utils/x86_64/managed_register_x86_64.cc",
+            "art/compiler/debug/elf_debug_writer.cc",                "art/compiler/dex/inline_method_analyser.cc",                   "art/compiler/driver/compiler_options.cc",                             "art/compiler/driver/dex_compilation_unit.cc",
+            "art/compiler/jit/jit_compiler.cc",                      "art/compiler/jit/jit_logger.cc",                               "art/compiler/jni/quick/calling_convention.cc",                        "art/compiler/jni/quick/jni_compiler.cc",
+            "art/compiler/optimizing/block_builder.cc",              "art/compiler/optimizing/block_namer.cc",                       "art/compiler/optimizing/bounds_check_elimination.cc",                 "art/compiler/optimizing/builder.cc",
+            "art/compiler/optimizing/cha_guard_optimization.cc",     "art/compiler/optimizing/code_generation_data.cc",              "art/compiler/optimizing/code_generator.cc",                           "art/compiler/optimizing/code_generator_utils.cc",
+            "art/compiler/optimizing/code_sinking.cc",               "art/compiler/optimizing/constant_folding.cc",                  "art/compiler/optimizing/constructor_fence_redundancy_elimination.cc", "art/compiler/optimizing/control_flow_simplifier.cc",
+            "art/compiler/optimizing/data_type.cc",                  "art/compiler/optimizing/dead_code_elimination.cc",             "art/compiler/optimizing/escape.cc",                                   "art/compiler/optimizing/graph_checker.cc",
+            "art/compiler/optimizing/graph_visualizer.cc",           "art/compiler/optimizing/gvn.cc",                               "art/compiler/optimizing/handle_cache.cc",                             "art/compiler/optimizing/induction_var_analysis.cc",
+            "art/compiler/optimizing/induction_var_range.cc",        "art/compiler/optimizing/inliner.cc",                           "art/compiler/optimizing/instruction_builder.cc",                      "art/compiler/optimizing/instruction_simplifier.cc",
+            "art/compiler/optimizing/intrinsic_objects.cc",          "art/compiler/optimizing/intrinsics.cc",                        "art/compiler/optimizing/licm.cc",                                     "art/compiler/optimizing/linear_order.cc",
+            "art/compiler/optimizing/load_store_analysis.cc",        "art/compiler/optimizing/load_store_elimination.cc",            "art/compiler/optimizing/locations.cc",                                "art/compiler/optimizing/loop_analysis.cc",
+            "art/compiler/optimizing/loop_optimization.cc",          "art/compiler/optimizing/nodes.cc",                             "art/compiler/optimizing/nodes_vector.cc",                             "art/compiler/optimizing/optimizing_compiler.cc",
+            "art/compiler/optimizing/parallel_move_resolver.cc",     "art/compiler/optimizing/prepare_for_register_allocation.cc",   "art/compiler/optimizing/profiling_info_builder.cc",                   "art/compiler/optimizing/reference_type_info.cc",
+            "art/compiler/optimizing/reference_type_propagation.cc", "art/compiler/optimizing/register_allocation_resolver.cc",      "art/compiler/optimizing/register_allocator.cc",                       "art/compiler/optimizing/register_allocator_linear_scan.cc",
+            "art/compiler/optimizing/scheduler.cc",                  "art/compiler/optimizing/sharpening.cc",                        "art/compiler/optimizing/side_effects_analysis.cc",                    "art/compiler/optimizing/ssa_builder.cc",
+            "art/compiler/optimizing/ssa_liveness_analysis.cc",      "art/compiler/optimizing/ssa_phi_elimination.cc",               "art/compiler/optimizing/stack_map_stream.cc",                         "art/compiler/optimizing/superblock_cloner.cc",
+            "art/compiler/optimizing/write_barrier_elimination.cc",  "art/compiler/trampolines/trampoline_compiler.cc",              "art/compiler/utils/assembler.cc",                                     "art/compiler/utils/jni_macro_assembler.cc",
+            "art/compiler/compiler.cc",                              "art/compiler/optimizing/instruction_simplifier_x86_shared.cc", "art/compiler/optimizing/x86_memory_gen.cc",                           "art/compiler/jni/quick/x86_64/calling_convention_x86_64.cc",
+            "art/compiler/optimizing/intrinsics_x86_64.cc",          "art/compiler/optimizing/instruction_simplifier_x86_64.cc",     "art/compiler/optimizing/code_generator_x86_64.cc",                    "art/compiler/optimizing/code_generator_vector_x86_64.cc",
+            "art/compiler/utils/x86_64/assembler_x86_64.cc",         "art/compiler/utils/x86_64/jni_macro_assembler_x86_64.cc",      "art/compiler/utils/x86_64/managed_register_x86_64.cc",
         },
         .flags = flags(b, o, &cf_0, I.inc_18),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/compiler/art_compiler_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/compiler/linker/linker_patch.operator_out.cc", "gensrcs/art/compiler/optimizing/locations.operator_out.cc", "gensrcs/art/compiler/optimizing/nodes.operator_out.cc", "gensrcs/art/compiler/optimizing/optimizing_compiler_stats.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_0, I.inc_18),
-    });
+    // AOSP exposes X86MemoryOperandGeneration to both x86 backends but guards
+    // its constructor with x86 only. The declared patch keeps this build
+    // x86_64-only while following the shared pass contract.
+    m.addCSourceFile(.{ .file = o.generated.compiler_optimization, .flags = compilerOptimizationFlags(b, o, I) });
+    addGeneratedSources(m, o.generated.compiler_operators, flags(b, o, &cf_0, I.inc_18));
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1472,27 +1671,8 @@ fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Bui
         },
         .flags = flags(b, o, &cf_16, I.inc_21),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/runtime/art_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/runtime/base/callee_save_type.operator_out.cc", "gensrcs/art/runtime/base/locks.operator_out.cc",               "gensrcs/art/runtime/class_status.operator_out.cc",            "gensrcs/art/runtime/compilation_kind.operator_out.cc",
-            "gensrcs/art/runtime/gc/allocator/rosalloc.operator_out.cc", "gensrcs/art/runtime/gc/allocator_type.operator_out.cc",        "gensrcs/art/runtime/gc/collector/gc_type.operator_out.cc",    "gensrcs/art/runtime/gc/collector/mark_compact.operator_out.cc",
-            "gensrcs/art/runtime/gc/collector_type.operator_out.cc",     "gensrcs/art/runtime/gc/space/region_space.operator_out.cc",    "gensrcs/art/runtime/gc/space/space.operator_out.cc",          "gensrcs/art/runtime/gc/weak_root_state.operator_out.cc",
-            "gensrcs/art/runtime/gc_root.operator_out.cc",               "gensrcs/art/runtime/indirect_reference_table.operator_out.cc", "gensrcs/art/runtime/instrumentation.operator_out.cc",         "gensrcs/art/runtime/jdwp_provider.operator_out.cc",
-            "gensrcs/art/runtime/jni_id_type.operator_out.cc",           "gensrcs/art/runtime/linear_alloc.operator_out.cc",             "gensrcs/art/runtime/lock_word.operator_out.cc",               "gensrcs/art/runtime/oat/image.operator_out.cc",
-            "gensrcs/art/runtime/oat/oat.operator_out.cc",               "gensrcs/art/runtime/oat/oat_file.operator_out.cc",             "gensrcs/art/runtime/process_state.operator_out.cc",           "gensrcs/art/runtime/reflective_value_visitor.operator_out.cc",
-            "gensrcs/art/runtime/stack.operator_out.cc",                 "gensrcs/art/runtime/suspend_reason.operator_out.cc",           "gensrcs/art/runtime/thread.operator_out.cc",                  "gensrcs/art/runtime/thread_state.operator_out.cc",
-            "gensrcs/art/runtime/trace.operator_out.cc",                 "gensrcs/art/runtime/trace_profile.operator_out.cc",            "gensrcs/art/runtime/verifier/verifier_enums.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_16, I.inc_21),
-    });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/runtime/libart_mterp.x86_64ng/gen"),
-        .files = &.{
-            "mterp_x86_64ng.S",
-        },
-        .flags = flags(b, o, &cf_17, I.inc_21),
-    });
+    addGeneratedSources(m, o.generated.runtime_operators, flags(b, o, &cf_16, I.inc_21));
+    m.addCSourceFile(.{ .file = o.generated.mterp, .flags = flags(b, o, &cf_17, I.inc_21) });
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1518,14 +1698,7 @@ fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Bui
         },
         .flags = flags(b, o, &cf_19, I.inc_23),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/libdexfile/dexfile_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/libdexfile/dex/dex_file.operator_out.cc",    "gensrcs/art/libdexfile/dex/dex_file_layout.operator_out.cc", "gensrcs/art/libdexfile/dex/dex_instruction.operator_out.cc", "gensrcs/art/libdexfile/dex/dex_instruction_utils.operator_out.cc",
-            "gensrcs/art/libdexfile/dex/invoke_type.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_19, I.inc_23),
-    });
+    addGeneratedSources(m, o.generated.dexfile_operators, flags(b, o, &cf_19, I.inc_23));
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1540,13 +1713,7 @@ fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Bui
         },
         .flags = flags(b, o, &cf_20, I.inc_24),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/libartbase/art_libartbase_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/libartbase/arch/instruction_set.operator_out.cc", "gensrcs/art/libartbase/base/allocator.operator_out.cc", "gensrcs/art/libartbase/base/unix_file/fd_file.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_20, I.inc_24),
-    });
+    addGeneratedSources(m, o.generated.libartbase_operators, flags(b, o, &cf_20, I.inc_24));
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1643,42 +1810,9 @@ fn srcs_libdex2oat_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Bui
         },
         .flags = flags(b, o, &cf_0, I.inc_27),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/dex2oat/art_dex2oat_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/dex2oat/linker/image_writer.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_0, I.inc_27),
-    });
-    addGenIncludes(b, o, m, &inc_0);
-    addGenIncludes(b, o, m, &inc_1);
-    addGenIncludes(b, o, m, &inc_10);
-    addGenIncludes(b, o, m, &inc_11);
-    addGenIncludes(b, o, m, &inc_12);
-    addGenIncludes(b, o, m, &inc_13);
-    addGenIncludes(b, o, m, &inc_14);
-    addGenIncludes(b, o, m, &inc_16);
-    addGenIncludes(b, o, m, &inc_17);
-    addGenIncludes(b, o, m, &inc_18);
-    addGenIncludes(b, o, m, &inc_19);
-    addGenIncludes(b, o, m, &inc_2);
-    addGenIncludes(b, o, m, &inc_20);
-    addGenIncludes(b, o, m, &inc_21);
-    addGenIncludes(b, o, m, &inc_22);
-    addGenIncludes(b, o, m, &inc_23);
-    addGenIncludes(b, o, m, &inc_24);
-    addGenIncludes(b, o, m, &inc_25);
-    addGenIncludes(b, o, m, &inc_26);
-    addGenIncludes(b, o, m, &inc_27);
-    addGenIncludes(b, o, m, &inc_3);
-    addGenIncludes(b, o, m, &inc_4);
-    addGenIncludes(b, o, m, &inc_5);
-    addGenIncludes(b, o, m, &inc_6);
-    addGenIncludes(b, o, m, &inc_7);
-    addGenIncludes(b, o, m, &inc_8);
-    addGenIncludes(b, o, m, &inc_9);
+    addGeneratedSources(m, o.generated.dex2oat_operators, flags(b, o, &cf_0, I.inc_27));
 }
-fn srcs_libnativehelper_compat_libc___static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libnativehelper_compat_libc___static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1686,9 +1820,8 @@ fn srcs_libnativehelper_compat_libc___static(b: *std.Build, o: Options, I: Incs,
         },
         .flags = flags(b, o, &cf_23, I.inc_28),
     });
-    addGenIncludes(b, o, m, &inc_28);
 }
-fn srcs_libcrypto_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libcrypto_static_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1760,9 +1893,8 @@ fn srcs_libcrypto_static_static(b: *std.Build, o: Options, I: Incs, m: *std.Buil
         .files = &linux_x86_64_crypto_asm,
         .flags = flags(b, o, &cf_22, I.inc_26),
     });
-    addGenIncludes(b, o, m, &inc_26);
 }
-fn srcs_libfdlibm_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libfdlibm_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1789,44 +1921,37 @@ fn srcs_libfdlibm_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Modul
         },
         .flags = flags(b, o, &cf_24, I.inc_29),
     });
-    addGenIncludes(b, o, m, &inc_29);
 }
-fn srcs_libart_compiler_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libart_compiler_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
-            "art/compiler/debug/elf_debug_writer.cc",                     "art/compiler/dex/inline_method_analyser.cc",            "art/compiler/driver/compiler_options.cc",                             "art/compiler/driver/dex_compilation_unit.cc",
-            "art/compiler/jit/jit_compiler.cc",                           "art/compiler/jit/jit_logger.cc",                        "art/compiler/jni/quick/calling_convention.cc",                        "art/compiler/jni/quick/jni_compiler.cc",
-            "art/compiler/optimizing/block_builder.cc",                   "art/compiler/optimizing/block_namer.cc",                "art/compiler/optimizing/bounds_check_elimination.cc",                 "art/compiler/optimizing/builder.cc",
-            "art/compiler/optimizing/cha_guard_optimization.cc",          "art/compiler/optimizing/code_generation_data.cc",       "art/compiler/optimizing/code_generator.cc",                           "art/compiler/optimizing/code_generator_utils.cc",
-            "art/compiler/optimizing/code_sinking.cc",                    "art/compiler/optimizing/constant_folding.cc",           "art/compiler/optimizing/constructor_fence_redundancy_elimination.cc", "art/compiler/optimizing/control_flow_simplifier.cc",
-            "art/compiler/optimizing/data_type.cc",                       "art/compiler/optimizing/dead_code_elimination.cc",      "art/compiler/optimizing/escape.cc",                                   "art/compiler/optimizing/graph_checker.cc",
-            "art/compiler/optimizing/graph_visualizer.cc",                "art/compiler/optimizing/gvn.cc",                        "art/compiler/optimizing/handle_cache.cc",                             "art/compiler/optimizing/induction_var_analysis.cc",
-            "art/compiler/optimizing/induction_var_range.cc",             "art/compiler/optimizing/inliner.cc",                    "art/compiler/optimizing/instruction_builder.cc",                      "art/compiler/optimizing/instruction_simplifier.cc",
-            "art/compiler/optimizing/intrinsic_objects.cc",               "art/compiler/optimizing/intrinsics.cc",                 "art/compiler/optimizing/licm.cc",                                     "art/compiler/optimizing/linear_order.cc",
-            "art/compiler/optimizing/load_store_analysis.cc",             "art/compiler/optimizing/load_store_elimination.cc",     "art/compiler/optimizing/locations.cc",                                "art/compiler/optimizing/loop_analysis.cc",
-            "art/compiler/optimizing/loop_optimization.cc",               "art/compiler/optimizing/nodes.cc",                      "art/compiler/optimizing/nodes_vector.cc",                             "art/compiler/optimizing/optimization.cc",
-            "art/compiler/optimizing/optimizing_compiler.cc",             "art/compiler/optimizing/parallel_move_resolver.cc",     "art/compiler/optimizing/prepare_for_register_allocation.cc",          "art/compiler/optimizing/profiling_info_builder.cc",
-            "art/compiler/optimizing/reference_type_info.cc",             "art/compiler/optimizing/reference_type_propagation.cc", "art/compiler/optimizing/register_allocation_resolver.cc",             "art/compiler/optimizing/register_allocator.cc",
-            "art/compiler/optimizing/register_allocator_linear_scan.cc",  "art/compiler/optimizing/scheduler.cc",                  "art/compiler/optimizing/sharpening.cc",                               "art/compiler/optimizing/side_effects_analysis.cc",
-            "art/compiler/optimizing/ssa_builder.cc",                     "art/compiler/optimizing/ssa_liveness_analysis.cc",      "art/compiler/optimizing/ssa_phi_elimination.cc",                      "art/compiler/optimizing/stack_map_stream.cc",
-            "art/compiler/optimizing/superblock_cloner.cc",               "art/compiler/optimizing/write_barrier_elimination.cc",  "art/compiler/trampolines/trampoline_compiler.cc",                     "art/compiler/utils/assembler.cc",
-            "art/compiler/utils/jni_macro_assembler.cc",                  "art/compiler/compiler.cc",                              "art/compiler/optimizing/instruction_simplifier_x86_shared.cc",        "art/compiler/optimizing/x86_memory_gen.cc",
-            "art/compiler/jni/quick/x86_64/calling_convention_x86_64.cc", "art/compiler/optimizing/intrinsics_x86_64.cc",          "art/compiler/optimizing/instruction_simplifier_x86_64.cc",            "art/compiler/optimizing/code_generator_x86_64.cc",
-            "art/compiler/optimizing/code_generator_vector_x86_64.cc",    "art/compiler/utils/x86_64/assembler_x86_64.cc",         "art/compiler/utils/x86_64/jni_macro_assembler_x86_64.cc",             "art/compiler/utils/x86_64/managed_register_x86_64.cc",
+            "art/compiler/debug/elf_debug_writer.cc",                "art/compiler/dex/inline_method_analyser.cc",                   "art/compiler/driver/compiler_options.cc",                             "art/compiler/driver/dex_compilation_unit.cc",
+            "art/compiler/jit/jit_compiler.cc",                      "art/compiler/jit/jit_logger.cc",                               "art/compiler/jni/quick/calling_convention.cc",                        "art/compiler/jni/quick/jni_compiler.cc",
+            "art/compiler/optimizing/block_builder.cc",              "art/compiler/optimizing/block_namer.cc",                       "art/compiler/optimizing/bounds_check_elimination.cc",                 "art/compiler/optimizing/builder.cc",
+            "art/compiler/optimizing/cha_guard_optimization.cc",     "art/compiler/optimizing/code_generation_data.cc",              "art/compiler/optimizing/code_generator.cc",                           "art/compiler/optimizing/code_generator_utils.cc",
+            "art/compiler/optimizing/code_sinking.cc",               "art/compiler/optimizing/constant_folding.cc",                  "art/compiler/optimizing/constructor_fence_redundancy_elimination.cc", "art/compiler/optimizing/control_flow_simplifier.cc",
+            "art/compiler/optimizing/data_type.cc",                  "art/compiler/optimizing/dead_code_elimination.cc",             "art/compiler/optimizing/escape.cc",                                   "art/compiler/optimizing/graph_checker.cc",
+            "art/compiler/optimizing/graph_visualizer.cc",           "art/compiler/optimizing/gvn.cc",                               "art/compiler/optimizing/handle_cache.cc",                             "art/compiler/optimizing/induction_var_analysis.cc",
+            "art/compiler/optimizing/induction_var_range.cc",        "art/compiler/optimizing/inliner.cc",                           "art/compiler/optimizing/instruction_builder.cc",                      "art/compiler/optimizing/instruction_simplifier.cc",
+            "art/compiler/optimizing/intrinsic_objects.cc",          "art/compiler/optimizing/intrinsics.cc",                        "art/compiler/optimizing/licm.cc",                                     "art/compiler/optimizing/linear_order.cc",
+            "art/compiler/optimizing/load_store_analysis.cc",        "art/compiler/optimizing/load_store_elimination.cc",            "art/compiler/optimizing/locations.cc",                                "art/compiler/optimizing/loop_analysis.cc",
+            "art/compiler/optimizing/loop_optimization.cc",          "art/compiler/optimizing/nodes.cc",                             "art/compiler/optimizing/nodes_vector.cc",                             "art/compiler/optimizing/optimizing_compiler.cc",
+            "art/compiler/optimizing/parallel_move_resolver.cc",     "art/compiler/optimizing/prepare_for_register_allocation.cc",   "art/compiler/optimizing/profiling_info_builder.cc",                   "art/compiler/optimizing/reference_type_info.cc",
+            "art/compiler/optimizing/reference_type_propagation.cc", "art/compiler/optimizing/register_allocation_resolver.cc",      "art/compiler/optimizing/register_allocator.cc",                       "art/compiler/optimizing/register_allocator_linear_scan.cc",
+            "art/compiler/optimizing/scheduler.cc",                  "art/compiler/optimizing/sharpening.cc",                        "art/compiler/optimizing/side_effects_analysis.cc",                    "art/compiler/optimizing/ssa_builder.cc",
+            "art/compiler/optimizing/ssa_liveness_analysis.cc",      "art/compiler/optimizing/ssa_phi_elimination.cc",               "art/compiler/optimizing/stack_map_stream.cc",                         "art/compiler/optimizing/superblock_cloner.cc",
+            "art/compiler/optimizing/write_barrier_elimination.cc",  "art/compiler/trampolines/trampoline_compiler.cc",              "art/compiler/utils/assembler.cc",                                     "art/compiler/utils/jni_macro_assembler.cc",
+            "art/compiler/compiler.cc",                              "art/compiler/optimizing/instruction_simplifier_x86_shared.cc", "art/compiler/optimizing/x86_memory_gen.cc",                           "art/compiler/jni/quick/x86_64/calling_convention_x86_64.cc",
+            "art/compiler/optimizing/intrinsics_x86_64.cc",          "art/compiler/optimizing/instruction_simplifier_x86_64.cc",     "art/compiler/optimizing/code_generator_x86_64.cc",                    "art/compiler/optimizing/code_generator_vector_x86_64.cc",
+            "art/compiler/utils/x86_64/assembler_x86_64.cc",         "art/compiler/utils/x86_64/jni_macro_assembler_x86_64.cc",      "art/compiler/utils/x86_64/managed_register_x86_64.cc",
         },
         .flags = flags(b, o, &cf_0, I.inc_18),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/compiler/art_compiler_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/compiler/linker/linker_patch.operator_out.cc", "gensrcs/art/compiler/optimizing/locations.operator_out.cc", "gensrcs/art/compiler/optimizing/nodes.operator_out.cc", "gensrcs/art/compiler/optimizing/optimizing_compiler_stats.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_0, I.inc_18),
-    });
-    addGenIncludes(b, o, m, &inc_18);
+    m.addCSourceFile(.{ .file = o.generated.compiler_optimization, .flags = compilerOptimizationFlags(b, o, I) });
+    addGeneratedSources(m, o.generated.compiler_operators, flags(b, o, &cf_0, I.inc_18));
 }
-fn srcs_libart_runtime_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libart_runtime_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1906,27 +2031,8 @@ fn srcs_libart_runtime_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.
         },
         .flags = flags(b, o, &cf_16, I.inc_21),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/runtime/art_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/runtime/base/callee_save_type.operator_out.cc", "gensrcs/art/runtime/base/locks.operator_out.cc",               "gensrcs/art/runtime/class_status.operator_out.cc",            "gensrcs/art/runtime/compilation_kind.operator_out.cc",
-            "gensrcs/art/runtime/gc/allocator/rosalloc.operator_out.cc", "gensrcs/art/runtime/gc/allocator_type.operator_out.cc",        "gensrcs/art/runtime/gc/collector/gc_type.operator_out.cc",    "gensrcs/art/runtime/gc/collector/mark_compact.operator_out.cc",
-            "gensrcs/art/runtime/gc/collector_type.operator_out.cc",     "gensrcs/art/runtime/gc/space/region_space.operator_out.cc",    "gensrcs/art/runtime/gc/space/space.operator_out.cc",          "gensrcs/art/runtime/gc/weak_root_state.operator_out.cc",
-            "gensrcs/art/runtime/gc_root.operator_out.cc",               "gensrcs/art/runtime/indirect_reference_table.operator_out.cc", "gensrcs/art/runtime/instrumentation.operator_out.cc",         "gensrcs/art/runtime/jdwp_provider.operator_out.cc",
-            "gensrcs/art/runtime/jni_id_type.operator_out.cc",           "gensrcs/art/runtime/linear_alloc.operator_out.cc",             "gensrcs/art/runtime/lock_word.operator_out.cc",               "gensrcs/art/runtime/oat/image.operator_out.cc",
-            "gensrcs/art/runtime/oat/oat.operator_out.cc",               "gensrcs/art/runtime/oat/oat_file.operator_out.cc",             "gensrcs/art/runtime/process_state.operator_out.cc",           "gensrcs/art/runtime/reflective_value_visitor.operator_out.cc",
-            "gensrcs/art/runtime/stack.operator_out.cc",                 "gensrcs/art/runtime/suspend_reason.operator_out.cc",           "gensrcs/art/runtime/thread.operator_out.cc",                  "gensrcs/art/runtime/thread_state.operator_out.cc",
-            "gensrcs/art/runtime/trace.operator_out.cc",                 "gensrcs/art/runtime/trace_profile.operator_out.cc",            "gensrcs/art/runtime/verifier/verifier_enums.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_16, I.inc_21),
-    });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/runtime/libart_mterp.x86_64ng/gen"),
-        .files = &.{
-            "mterp_x86_64ng.S",
-        },
-        .flags = flags(b, o, &cf_17, I.inc_21),
-    });
+    addGeneratedSources(m, o.generated.runtime_operators, flags(b, o, &cf_16, I.inc_21));
+    m.addCSourceFile(.{ .file = o.generated.mterp, .flags = flags(b, o, &cf_17, I.inc_21) });
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1934,11 +2040,8 @@ fn srcs_libart_runtime_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.
         },
         .flags = flags(b, o, &cf_17, I.inc_21),
     });
-    addGenIncludes(b, o, m, &inc_19);
-    addGenIncludes(b, o, m, &inc_20);
-    addGenIncludes(b, o, m, &inc_21);
 }
-fn srcs_libodrstatslog_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libodrstatslog_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1946,9 +2049,8 @@ fn srcs_libodrstatslog_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.
         },
         .flags = flags(b, o, &cf_0, I.inc_16),
     });
-    addGenIncludes(b, o, m, &inc_16);
 }
-fn srcs_libelffile_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libelffile_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1957,9 +2059,8 @@ fn srcs_libelffile_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Modu
         },
         .flags = flags(b, o, &cf_0, I.inc_17),
     });
-    addGenIncludes(b, o, m, &inc_17);
 }
-fn srcs_libzstd_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libzstd_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1976,9 +2077,8 @@ fn srcs_libzstd_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module)
         },
         .flags = flags(b, o, &cf_9, I.inc_10),
     });
-    addGenIncludes(b, o, m, &inc_10);
 }
-fn srcs_libprocinfo_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libprocinfo_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1986,9 +2086,8 @@ fn srcs_libprocinfo_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Mod
         },
         .flags = flags(b, o, &cf_25, I.inc_30),
     });
-    addGenIncludes(b, o, m, &inc_30);
 }
-fn srcs_libdexfile_support_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libdexfile_support_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -1996,9 +2095,8 @@ fn srcs_libdexfile_support_static(b: *std.Build, o: Options, I: Incs, m: *std.Bu
         },
         .flags = flags(b, o, &cf_0, I.inc_31),
     });
-    addGenIncludes(b, o, m, &inc_31);
 }
-fn srcs_libtinyxml2_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libtinyxml2_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2006,19 +2104,11 @@ fn srcs_libtinyxml2_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Mod
         },
         .flags = flags(b, o, &cf_11, I.inc_12),
     });
-    addGenIncludes(b, o, m, &inc_12);
 }
-fn srcs_art_aconfig_flags_lib_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen"),
-        .files = &.{
-            "com_android_art_flags.cc",
-        },
-        .flags = flags(b, o, &cf_25, I.inc_32),
-    });
-    addGenIncludes(b, o, m, &inc_32);
+fn srcs_art_aconfig_flags_lib_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
+    addGeneratedSources(m, o.generated.aconfig, flags(b, o, &cf_25, I.inc_32));
 }
-fn srcs_fmtlib_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_fmtlib_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2026,9 +2116,8 @@ fn srcs_fmtlib_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) 
         },
         .flags = flags(b, o, &cf_3, I.inc_3),
     });
-    addGenIncludes(b, o, m, &inc_3);
 }
-fn srcs_libssl_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libssl_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2045,9 +2134,8 @@ fn srcs_libssl_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) 
         },
         .flags = flags(b, o, &cf_21, I.inc_33),
     });
-    addGenIncludes(b, o, m, &inc_33);
 }
-fn srcs_libcrypto_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libcrypto_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2119,9 +2207,8 @@ fn srcs_libcrypto_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Modul
         .files = &linux_x86_64_crypto_asm,
         .flags = flags(b, o, &cf_22, I.inc_26),
     });
-    addGenIncludes(b, o, m, &inc_26);
 }
-fn srcs_libnativehelper_any_vm_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libnativehelper_any_vm_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2129,9 +2216,8 @@ fn srcs_libnativehelper_any_vm_static(b: *std.Build, o: Options, I: Incs, m: *st
         },
         .flags = flags(b, o, &cf_23, I.inc_34),
     });
-    addGenIncludes(b, o, m, &inc_34);
 }
-fn srcs_libartbase_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libartbase_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2153,17 +2239,9 @@ fn srcs_libartbase_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Modu
         },
         .flags = flags(b, o, &cf_20, I.inc_24),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/libartbase/art_libartbase_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/libartbase/arch/instruction_set.operator_out.cc", "gensrcs/art/libartbase/base/allocator.operator_out.cc", "gensrcs/art/libartbase/base/unix_file/fd_file.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_20, I.inc_24),
-    });
-    addGenIncludes(b, o, m, &inc_12);
-    addGenIncludes(b, o, m, &inc_24);
+    addGeneratedSources(m, o.generated.libartbase_operators, flags(b, o, &cf_20, I.inc_24));
 }
-fn srcs_libartbase_testing_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libartbase_testing_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2171,9 +2249,8 @@ fn srcs_libartbase_testing_static(b: *std.Build, o: Options, I: Incs, m: *std.Bu
         },
         .flags = flags(b, o, &cf_0, I.inc_35),
     });
-    addGenIncludes(b, o, m, &inc_35);
 }
-fn srcs_libziparchive_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libziparchive_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2182,9 +2259,8 @@ fn srcs_libziparchive_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.M
         },
         .flags = flags(b, o, &cf_10, I.inc_11),
     });
-    addGenIncludes(b, o, m, &inc_11);
 }
-fn srcs_libbase_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libbase_static(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2203,10 +2279,8 @@ fn srcs_libbase_static(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module)
         },
         .flags = flags(b, o, &cf_3, I.inc_3),
     });
-    addGenIncludes(b, o, m, &inc_1);
-    addGenIncludes(b, o, m, &inc_3);
 }
-fn srcs_dalvikvm(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_dalvikvm(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2214,9 +2288,8 @@ fn srcs_dalvikvm(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void 
         },
         .flags = flags(b, o, &cf_26, I.inc_36),
     });
-    addGenIncludes(b, o, m, &inc_36);
 }
-fn srcs_dex2oat(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_dex2oat(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2224,19 +2297,17 @@ fn srcs_dex2oat(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
         },
         .flags = flags(b, o, &cf_26, I.inc_37),
     });
-    addGenIncludes(b, o, m, &inc_37);
 }
-fn srcs_libexpat(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
-    m.addCSourceFiles(.{
-        .root = o.vendor,
-        .files = &.{
-            "external/expat/expat/lib/xmlparse.c", "external/expat/expat/lib/xmlrole.c", "external/expat/expat/lib/xmltok.c",
-        },
-        .flags = flags(b, o, &cf_27, I.inc_38),
-    });
-    addGenIncludes(b, o, m, &inc_38);
+fn srcs_libexpat(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
+    const source_flags = flags(b, o, &cf_27, I.inc_38);
+    for ([_][]const u8{ "xmlparse.c", "xmlrole.c", "xmltok.c" }) |name| {
+        m.addCSourceFile(.{
+            .file = o.vendor.path(b, b.fmt("external/expat/expat/lib/{s}", .{name})),
+            .flags = source_flags,
+        });
+    }
 }
-fn srcs_libjavacore(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libjavacore(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2249,9 +2320,8 @@ fn srcs_libjavacore(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) vo
         },
         .flags = flags(b, o, &cf_28, I.inc_39),
     });
-    addGenIncludes(b, o, m, &inc_39);
 }
-fn srcs_libopenjdk(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libopenjdk(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2280,9 +2350,8 @@ fn srcs_libopenjdk(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) voi
         },
         .flags = flags(b, o, &cf_30, I.inc_40),
     });
-    addGenIncludes(b, o, m, &inc_40);
 }
-fn srcs_libandroidio(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libandroidio(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2290,9 +2359,8 @@ fn srcs_libandroidio(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) v
         },
         .flags = flags(b, o, &cf_28, I.inc_41),
     });
-    addGenIncludes(b, o, m, &inc_41);
 }
-fn srcs_liblz4(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_liblz4(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2300,9 +2368,8 @@ fn srcs_liblz4(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
         },
         .flags = flags(b, o, &cf_4, I.inc_4),
     });
-    addGenIncludes(b, o, m, &inc_4);
 }
-fn srcs_libnativebridge(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libnativebridge(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2310,9 +2377,8 @@ fn srcs_libnativebridge(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module
         },
         .flags = flags(b, o, &cf_0, I.inc_6),
     });
-    addGenIncludes(b, o, m, &inc_6);
 }
-fn srcs_libnativeloader(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libnativeloader(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2320,9 +2386,8 @@ fn srcs_libnativeloader(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module
         },
         .flags = flags(b, o, &cf_0, I.inc_7),
     });
-    addGenIncludes(b, o, m, &inc_7);
 }
-fn srcs_liblzma(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_liblzma(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2339,9 +2404,8 @@ fn srcs_liblzma(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
         },
         .flags = flags(b, o, &cf_5, I.inc_5),
     });
-    addGenIncludes(b, o, m, &inc_5);
 }
-fn srcs_libunwindstack(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libunwindstack(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2363,9 +2427,8 @@ fn srcs_libunwindstack(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module)
         },
         .flags = flags(b, o, &cf_7, I.inc_8),
     });
-    addGenIncludes(b, o, m, &inc_8);
 }
-fn srcs_libdexfile(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libdexfile(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2377,17 +2440,9 @@ fn srcs_libdexfile(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) voi
         },
         .flags = flags(b, o, &cf_12, I.inc_23),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/libdexfile/dexfile_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/libdexfile/dex/dex_file.operator_out.cc",    "gensrcs/art/libdexfile/dex/dex_file_layout.operator_out.cc", "gensrcs/art/libdexfile/dex/dex_instruction.operator_out.cc", "gensrcs/art/libdexfile/dex/dex_instruction_utils.operator_out.cc",
-            "gensrcs/art/libdexfile/dex/invoke_type.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_12, I.inc_23),
-    });
-    addGenIncludes(b, o, m, &inc_23);
+    addGeneratedSources(m, o.generated.dexfile_operators, flags(b, o, &cf_12, I.inc_23));
 }
-fn srcs_libprofile(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libprofile(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2395,9 +2450,8 @@ fn srcs_libprofile(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) voi
         },
         .flags = flags(b, o, &cf_12, I.inc_13),
     });
-    addGenIncludes(b, o, m, &inc_13);
 }
-fn srcs_libart_disassembler(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libart_disassembler(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2405,12 +2459,11 @@ fn srcs_libart_disassembler(b: *std.Build, o: Options, I: Incs, m: *std.Build.Mo
         },
         .flags = flags(b, o, &cf_0, I.inc_14),
     });
-    addGenIncludes(b, o, m, &inc_14);
 }
-fn srcs_libart(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libart(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     _ = .{ b, o, I, m };
 }
-fn srcs_libziparchive(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libziparchive(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2419,9 +2472,8 @@ fn srcs_libziparchive(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) 
         },
         .flags = flags(b, o, &cf_10, I.inc_11),
     });
-    addGenIncludes(b, o, m, &inc_11);
 }
-fn srcs_libartpalette(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libartpalette(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2429,9 +2481,8 @@ fn srcs_libartpalette(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) 
         },
         .flags = flags(b, o, &cf_0, I.inc_42),
     });
-    addGenIncludes(b, o, m, &inc_42);
 }
-fn srcs_libbase(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libbase(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2443,9 +2494,8 @@ fn srcs_libbase(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
         },
         .flags = flags(b, o, &cf_1, I.inc_1),
     });
-    addGenIncludes(b, o, m, &inc_1);
 }
-fn srcs_libartbase(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libartbase(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2460,16 +2510,9 @@ fn srcs_libartbase(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) voi
         },
         .flags = flags(b, o, &cf_12, I.inc_24),
     });
-    m.addCSourceFiles(.{
-        .root = genDir(b, o, "soong/.intermediates/art/libartbase/art_libartbase_operator_srcs/gen"),
-        .files = &.{
-            "gensrcs/art/libartbase/arch/instruction_set.operator_out.cc", "gensrcs/art/libartbase/base/allocator.operator_out.cc", "gensrcs/art/libartbase/base/unix_file/fd_file.operator_out.cc",
-        },
-        .flags = flags(b, o, &cf_12, I.inc_24),
-    });
-    addGenIncludes(b, o, m, &inc_24);
+    addGeneratedSources(m, o.generated.libartbase_operators, flags(b, o, &cf_12, I.inc_24));
 }
-fn srcs_libopenjdkjvm(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libopenjdkjvm(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2477,9 +2520,8 @@ fn srcs_libopenjdkjvm(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) 
         },
         .flags = flags(b, o, &cf_0, I.inc_43),
     });
-    addGenIncludes(b, o, m, &inc_43);
 }
-fn srcs_libjavacrypto(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libjavacrypto(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2488,9 +2530,8 @@ fn srcs_libjavacrypto(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) 
         },
         .flags = flags(b, o, &cf_31, I.inc_44),
     });
-    addGenIncludes(b, o, m, &inc_44);
 }
-fn srcs_libnativehelper(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libnativehelper(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2498,9 +2539,8 @@ fn srcs_libnativehelper(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module
         },
         .flags = flags(b, o, &cf_23, I.inc_45),
     });
-    addGenIncludes(b, o, m, &inc_45);
 }
-fn srcs_libsigchain(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libsigchain(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2508,9 +2548,8 @@ fn srcs_libsigchain(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) vo
         },
         .flags = flags(b, o, &cf_0, I.inc_0),
     });
-    addGenIncludes(b, o, m, &inc_0);
 }
-fn srcs_liblog(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_liblog(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2519,9 +2558,8 @@ fn srcs_liblog(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
         },
         .flags = flags(b, o, &cf_2, I.inc_2),
     });
-    addGenIncludes(b, o, m, &inc_2);
 }
-fn srcs_libz(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_libz(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2533,9 +2571,8 @@ fn srcs_libz(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
         },
         .flags = flags(b, o, &cf_8, I.inc_9),
     });
-    addGenIncludes(b, o, m, &inc_9);
 }
-fn srcs_generate_boot_image(b: *std.Build, o: Options, I: Incs, m: *std.Build.Module) void {
+fn srcs_generate_boot_image(b: *std.Build, o: Options, I: Incs, m: *SourceGroups) void {
     m.addCSourceFiles(.{
         .root = o.vendor,
         .files = &.{
@@ -2543,13 +2580,19 @@ fn srcs_generate_boot_image(b: *std.Build, o: Options, I: Incs, m: *std.Build.Mo
         },
         .flags = flags(b, o, &cf_26, I.inc_46),
     });
-    addGenIncludes(b, o, m, &inc_46);
 }
 
-pub const OperatorOut = struct { key: []const u8, local: []const u8, headers: []const []const u8 };
+pub const OperatorGroup = enum {
+    compiler_operators,
+    runtime_operators,
+    dexfile_operators,
+    libartbase_operators,
+    dex2oat_operators,
+};
+pub const OperatorOut = struct { group: OperatorGroup, local: []const u8, headers: []const []const u8 };
 /// generate_operator_out.py invocations Soong performs for this target set
 pub const operator_out = [_]OperatorOut{
-    .{ .key = "soong/.intermediates/art/compiler/art_compiler_operator_srcs/gen", .local = "art/compiler", .headers = &.{
+    .{ .group = .compiler_operators, .local = "art/compiler", .headers = &.{
         "art/compiler/linker/linker_patch.h",
         "art/compiler/optimizing/locations.h",
         "art/compiler/optimizing/nodes.h",
@@ -2559,7 +2602,7 @@ pub const operator_out = [_]OperatorOut{
         "art/compiler/optimizing/nodes.h",
         "art/compiler/optimizing/optimizing_compiler_stats.h",
     } },
-    .{ .key = "soong/.intermediates/art/runtime/art_operator_srcs/gen", .local = "art/runtime", .headers = &.{
+    .{ .group = .runtime_operators, .local = "art/runtime", .headers = &.{
         "art/runtime/base/callee_save_type.h",
         "art/runtime/base/locks.h",
         "art/runtime/class_status.h",
@@ -2623,7 +2666,7 @@ pub const operator_out = [_]OperatorOut{
         "art/runtime/trace_profile.h",
         "art/runtime/verifier/verifier_enums.h",
     } },
-    .{ .key = "soong/.intermediates/art/libdexfile/dexfile_operator_srcs/gen", .local = "art/libdexfile", .headers = &.{
+    .{ .group = .dexfile_operators, .local = "art/libdexfile", .headers = &.{
         "art/libdexfile/dex/dex_file.h",
         "art/libdexfile/dex/dex_file_layout.h",
         "art/libdexfile/dex/dex_instruction.h",
@@ -2635,7 +2678,7 @@ pub const operator_out = [_]OperatorOut{
         "art/libdexfile/dex/dex_instruction_utils.h",
         "art/libdexfile/dex/invoke_type.h",
     } },
-    .{ .key = "soong/.intermediates/art/libartbase/art_libartbase_operator_srcs/gen", .local = "art/libartbase", .headers = &.{
+    .{ .group = .libartbase_operators, .local = "art/libartbase", .headers = &.{
         "art/libartbase/arch/instruction_set.h",
         "art/libartbase/base/allocator.h",
         "art/libartbase/base/unix_file/fd_file.h",
@@ -2646,13 +2689,24 @@ pub const operator_out = [_]OperatorOut{
         "art/libartbase/base/allocator.h",
         "art/libartbase/base/unix_file/fd_file.h",
     } },
-    .{ .key = "soong/.intermediates/art/dex2oat/art_dex2oat_operator_srcs/gen", .local = "art/dex2oat", .headers = &.{
+    .{ .group = .dex2oat_operators, .local = "art/dex2oat", .headers = &.{
         "art/dex2oat/linker/image_writer.h",
     } },
 };
 /// flags Soong compiles art/tools/cpp-define-generator/asm_defines.cc with (for build/genrules.zig)
 pub fn asmDefinesFlags(b: *std.Build, o: Options) []const []const u8 {
-    return flags(b, o, &cf_0, incSet(b, o, &inc_47));
+    return flags(b, o, &cf_0, incSet(b, o, &inc_47)).args;
+}
+
+pub fn addAsmDefinesInputs(b: *std.Build, o: Options, run: *std.Build.Step.Run) void {
+    for (inc_47) |include| {
+        std.debug.assert(include.generated == null);
+        const path = rootPath(o, include.root).path(b, include.rel);
+        if (std.mem.eql(u8, include.kind, "-isystem"))
+            run.addPrefixedDirectoryArg("-isystem", path)
+        else
+            run.addPrefixedDirectoryArg("-I", path);
+    }
 }
 
 pub const Artifacts = struct {
@@ -2760,108 +2814,108 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
         .inc_47 = incSet(b, o, &inc_47),
     };
     const libsigchain_static = newLib(b, o, "sigchain", .static);
-    srcs_libsigchain_static(b, o, I, libsigchain_static.root_module);
+    applySourceGroups(b, o, I, libsigchain_static, srcs_libsigchain_static);
     const libdex2oat_static_static = newLib(b, o, "dex2oat_static", .static);
-    srcs_libdex2oat_static_static(b, o, I, libdex2oat_static_static.root_module);
+    applySourceGroups(b, o, I, libdex2oat_static_static, srcs_libdex2oat_static_static);
     const libnativehelper_compat_libc___static = newLib(b, o, "nativehelper_compat_libc++", .static);
-    srcs_libnativehelper_compat_libc___static(b, o, I, libnativehelper_compat_libc___static.root_module);
+    applySourceGroups(b, o, I, libnativehelper_compat_libc___static, srcs_libnativehelper_compat_libc___static);
     const libcrypto_static_static = newLib(b, o, "crypto_static", .static);
-    srcs_libcrypto_static_static(b, o, I, libcrypto_static_static.root_module);
+    applySourceGroups(b, o, I, libcrypto_static_static, srcs_libcrypto_static_static);
     const libfdlibm_static = newLib(b, o, "fdlibm", .static);
-    srcs_libfdlibm_static(b, o, I, libfdlibm_static.root_module);
+    applySourceGroups(b, o, I, libfdlibm_static, srcs_libfdlibm_static);
     const libart_compiler_static = newLib(b, o, "art-compiler", .static);
-    srcs_libart_compiler_static(b, o, I, libart_compiler_static.root_module);
+    applySourceGroups(b, o, I, libart_compiler_static, srcs_libart_compiler_static);
     const libart_runtime_static = newLib(b, o, "art-runtime", .static);
-    srcs_libart_runtime_static(b, o, I, libart_runtime_static.root_module);
+    applySourceGroups(b, o, I, libart_runtime_static, srcs_libart_runtime_static);
     const libodrstatslog_static = newLib(b, o, "odrstatslog", .static);
-    srcs_libodrstatslog_static(b, o, I, libodrstatslog_static.root_module);
+    applySourceGroups(b, o, I, libodrstatslog_static, srcs_libodrstatslog_static);
     const libelffile_static = newLib(b, o, "elffile", .static);
-    srcs_libelffile_static(b, o, I, libelffile_static.root_module);
+    applySourceGroups(b, o, I, libelffile_static, srcs_libelffile_static);
     const libzstd_static = newLib(b, o, "zstd", .static);
-    srcs_libzstd_static(b, o, I, libzstd_static.root_module);
+    applySourceGroups(b, o, I, libzstd_static, srcs_libzstd_static);
     const libprocinfo_static = newLib(b, o, "procinfo", .static);
-    srcs_libprocinfo_static(b, o, I, libprocinfo_static.root_module);
+    applySourceGroups(b, o, I, libprocinfo_static, srcs_libprocinfo_static);
     const libdexfile_support_static = newLib(b, o, "dexfile_support", .static);
-    srcs_libdexfile_support_static(b, o, I, libdexfile_support_static.root_module);
+    applySourceGroups(b, o, I, libdexfile_support_static, srcs_libdexfile_support_static);
     const libtinyxml2_static = newLib(b, o, "tinyxml2", .static);
-    srcs_libtinyxml2_static(b, o, I, libtinyxml2_static.root_module);
+    applySourceGroups(b, o, I, libtinyxml2_static, srcs_libtinyxml2_static);
     const art_aconfig_flags_lib_static = newLib(b, o, "art-aconfig-flags-lib", .static);
-    srcs_art_aconfig_flags_lib_static(b, o, I, art_aconfig_flags_lib_static.root_module);
+    applySourceGroups(b, o, I, art_aconfig_flags_lib_static, srcs_art_aconfig_flags_lib_static);
     const fmtlib_static = newLib(b, o, "fmtlib", .static);
-    srcs_fmtlib_static(b, o, I, fmtlib_static.root_module);
+    applySourceGroups(b, o, I, fmtlib_static, srcs_fmtlib_static);
     const libssl_static = newLib(b, o, "ssl", .static);
-    srcs_libssl_static(b, o, I, libssl_static.root_module);
+    applySourceGroups(b, o, I, libssl_static, srcs_libssl_static);
     const libcrypto_static = newLib(b, o, "crypto", .static);
-    srcs_libcrypto_static(b, o, I, libcrypto_static.root_module);
+    applySourceGroups(b, o, I, libcrypto_static, srcs_libcrypto_static);
     const libnativehelper_any_vm_static = newLib(b, o, "nativehelper_any_vm", .static);
-    srcs_libnativehelper_any_vm_static(b, o, I, libnativehelper_any_vm_static.root_module);
+    applySourceGroups(b, o, I, libnativehelper_any_vm_static, srcs_libnativehelper_any_vm_static);
     const libartbase_static = newLib(b, o, "artbase", .static);
-    srcs_libartbase_static(b, o, I, libartbase_static.root_module);
+    applySourceGroups(b, o, I, libartbase_static, srcs_libartbase_static);
     const libartbase_testing_static = newLib(b, o, "artbase-testing", .static);
-    srcs_libartbase_testing_static(b, o, I, libartbase_testing_static.root_module);
+    applySourceGroups(b, o, I, libartbase_testing_static, srcs_libartbase_testing_static);
     const libziparchive_static = newLib(b, o, "ziparchive", .static);
-    srcs_libziparchive_static(b, o, I, libziparchive_static.root_module);
+    applySourceGroups(b, o, I, libziparchive_static, srcs_libziparchive_static);
     const libbase_static = newLib(b, o, "base", .static);
-    srcs_libbase_static(b, o, I, libbase_static.root_module);
+    applySourceGroups(b, o, I, libbase_static, srcs_libbase_static);
     const dalvikvm = newExe(b, o, "dalvikvm64");
-    srcs_dalvikvm(b, o, I, dalvikvm.root_module);
+    applySourceGroups(b, o, I, dalvikvm, srcs_dalvikvm);
     const dex2oat = newExe(b, o, "dex2oat64");
-    srcs_dex2oat(b, o, I, dex2oat.root_module);
+    applySourceGroups(b, o, I, dex2oat, srcs_dex2oat);
     const libexpat = newLib(b, o, "expat-host", .dynamic);
-    srcs_libexpat(b, o, I, libexpat.root_module);
+    applySourceGroups(b, o, I, libexpat, srcs_libexpat);
     const libjavacore = newLib(b, o, "javacore", .dynamic);
-    srcs_libjavacore(b, o, I, libjavacore.root_module);
+    applySourceGroups(b, o, I, libjavacore, srcs_libjavacore);
     const libopenjdk = newLib(b, o, "openjdk", .dynamic);
-    srcs_libopenjdk(b, o, I, libopenjdk.root_module);
+    applySourceGroups(b, o, I, libopenjdk, srcs_libopenjdk);
     const libandroidio = newLib(b, o, "androidio", .dynamic);
-    srcs_libandroidio(b, o, I, libandroidio.root_module);
+    applySourceGroups(b, o, I, libandroidio, srcs_libandroidio);
     const liblz4 = newLib(b, o, "lz4", .dynamic);
-    srcs_liblz4(b, o, I, liblz4.root_module);
+    applySourceGroups(b, o, I, liblz4, srcs_liblz4);
     const libnativebridge = newLib(b, o, "nativebridge", .dynamic);
-    srcs_libnativebridge(b, o, I, libnativebridge.root_module);
+    applySourceGroups(b, o, I, libnativebridge, srcs_libnativebridge);
     const libnativeloader = newLib(b, o, "nativeloader", .dynamic);
-    srcs_libnativeloader(b, o, I, libnativeloader.root_module);
+    applySourceGroups(b, o, I, libnativeloader, srcs_libnativeloader);
     const liblzma = newLib(b, o, "lzma", .dynamic);
-    srcs_liblzma(b, o, I, liblzma.root_module);
+    applySourceGroups(b, o, I, liblzma, srcs_liblzma);
     const libunwindstack = newLib(b, o, "unwindstack", .dynamic);
-    srcs_libunwindstack(b, o, I, libunwindstack.root_module);
+    applySourceGroups(b, o, I, libunwindstack, srcs_libunwindstack);
     const libdexfile = newLib(b, o, "dexfile", .dynamic);
-    srcs_libdexfile(b, o, I, libdexfile.root_module);
+    applySourceGroups(b, o, I, libdexfile, srcs_libdexfile);
     const libprofile = newLib(b, o, "profile", .dynamic);
-    srcs_libprofile(b, o, I, libprofile.root_module);
+    applySourceGroups(b, o, I, libprofile, srcs_libprofile);
     const libart_disassembler = newLib(b, o, "art-disassembler", .dynamic);
-    srcs_libart_disassembler(b, o, I, libart_disassembler.root_module);
+    applySourceGroups(b, o, I, libart_disassembler, srcs_libart_disassembler);
     const libart = newLib(b, o, "art", .dynamic);
-    srcs_libart(b, o, I, libart.root_module);
+    applySourceGroups(b, o, I, libart, srcs_libart);
     const libziparchive = newLib(b, o, "ziparchive", .dynamic);
-    srcs_libziparchive(b, o, I, libziparchive.root_module);
+    applySourceGroups(b, o, I, libziparchive, srcs_libziparchive);
     const libartpalette = newLib(b, o, "artpalette", .dynamic);
-    srcs_libartpalette(b, o, I, libartpalette.root_module);
+    applySourceGroups(b, o, I, libartpalette, srcs_libartpalette);
     const libbase = newLib(b, o, "base", .dynamic);
-    srcs_libbase(b, o, I, libbase.root_module);
+    applySourceGroups(b, o, I, libbase, srcs_libbase);
     const libartbase = newLib(b, o, "artbase", .dynamic);
-    srcs_libartbase(b, o, I, libartbase.root_module);
+    applySourceGroups(b, o, I, libartbase, srcs_libartbase);
     const libopenjdkjvm = newLib(b, o, "openjdkjvm", .dynamic);
-    srcs_libopenjdkjvm(b, o, I, libopenjdkjvm.root_module);
+    applySourceGroups(b, o, I, libopenjdkjvm, srcs_libopenjdkjvm);
     const libjavacrypto = newLib(b, o, "javacrypto", .dynamic);
-    srcs_libjavacrypto(b, o, I, libjavacrypto.root_module);
+    applySourceGroups(b, o, I, libjavacrypto, srcs_libjavacrypto);
     const libnativehelper = newLib(b, o, "nativehelper", .dynamic);
-    srcs_libnativehelper(b, o, I, libnativehelper.root_module);
+    applySourceGroups(b, o, I, libnativehelper, srcs_libnativehelper);
     const libsigchain = newLib(b, o, "sigchain", .dynamic);
-    srcs_libsigchain(b, o, I, libsigchain.root_module);
+    applySourceGroups(b, o, I, libsigchain, srcs_libsigchain);
     const liblog = newLib(b, o, "log", .dynamic);
-    srcs_liblog(b, o, I, liblog.root_module);
+    applySourceGroups(b, o, I, liblog, srcs_liblog);
     const libz = newLib(b, o, "z-host", .dynamic);
-    srcs_libz(b, o, I, libz.root_module);
+    applySourceGroups(b, o, I, libz, srcs_libz);
     const generate_boot_image = newExe(b, o, "generate-boot-image64");
-    srcs_generate_boot_image(b, o, I, generate_boot_image.root_module);
-    srcs_libsigchain_static(b, o, I, dalvikvm.root_module); // --whole-archive
+    applySourceGroups(b, o, I, generate_boot_image, srcs_generate_boot_image);
+    applySourceGroups(b, o, I, dalvikvm, srcs_libsigchain_static); // --whole-archive
     dalvikvm.root_module.linkLibrary(liblog);
     dalvikvm.root_module.linkLibrary(libnativehelper);
     // ldflag: -pie
     // ldflag: -Wl,--export-dynamic
     dex2oat.root_module.linkLibrary(libdex2oat_static_static);
-    dex2oat.root_module.addCSourceFiles(.{ .root = .{ .cwd_relative = o.root_dir }, .files = &.{"src/gen/rustlibs_stub.c"}, .flags = &.{"-fPIC"} });
+    dex2oat.root_module.addCSourceFiles(.{ .root = o.project, .files = &.{"src/gen/rustlibs_stub.c"}, .flags = &.{"-fPIC"} });
     // ldflag: -pie
     libjavacore.root_module.linkLibrary(libnativehelper_compat_libc___static);
     libjavacore.root_module.linkLibrary(libcrypto_static_static);
@@ -2889,8 +2943,8 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     libnativeloader.root_module.linkLibrary(libnativebridge);
     libnativeloader.root_module.linkLibrary(libbase);
     libnativeloader.root_module.linkLibrary(liblog);
-    srcs_libzstd_static(b, o, I, libunwindstack.root_module); // --whole-archive
-    libunwindstack.root_module.addCSourceFiles(.{ .root = .{ .cwd_relative = o.root_dir }, .files = &.{"src/gen/rustlibs_stub.c"}, .flags = &.{"-fPIC"} });
+    applySourceGroups(b, o, I, libunwindstack, srcs_libzstd_static); // --whole-archive
+    libunwindstack.root_module.addCSourceFiles(.{ .root = o.project, .files = &.{"src/gen/rustlibs_stub.c"}, .flags = &.{"-fPIC"} });
     libunwindstack.root_module.linkLibrary(libprocinfo_static);
     libunwindstack.root_module.linkLibrary(libdexfile_support_static);
     libunwindstack.root_module.linkLibrary(libbase);
@@ -2911,8 +2965,8 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     libprofile.root_module.linkLibrary(libartbase);
     libprofile.root_module.linkLibrary(libdexfile);
     libart_disassembler.root_module.linkLibrary(libbase);
-    srcs_libart_compiler_static(b, o, I, libart.root_module); // --whole-archive
-    srcs_libart_runtime_static(b, o, I, libart.root_module); // --whole-archive
+    applySourceGroups(b, o, I, libart, srcs_libart_compiler_static); // --whole-archive
+    applySourceGroups(b, o, I, libart, srcs_libart_runtime_static); // --whole-archive
     libart.root_module.linkLibrary(libodrstatslog_static);
     libart.root_module.linkLibrary(libelffile_static);
     libart.root_module.linkLibrary(libartpalette);
@@ -2936,9 +2990,9 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     libartpalette.root_module.linkLibrary(libbase);
     libartpalette.root_module.linkLibrary(liblog);
     libartpalette.setVersionScript(o.vendor.path(b, "art/libartpalette/libartpalette.map"));
-    srcs_fmtlib_static(b, o, I, libbase.root_module); // --whole-archive
+    applySourceGroups(b, o, I, libbase, srcs_fmtlib_static); // --whole-archive
     libbase.root_module.linkLibrary(liblog);
-    srcs_libtinyxml2_static(b, o, I, libartbase.root_module); // --whole-archive
+    applySourceGroups(b, o, I, libartbase, srcs_libtinyxml2_static); // --whole-archive
     libartbase.root_module.linkSystemLibrary("cap", .{}); // prebuilt libcap.a -> system
     libartbase.root_module.linkLibrary(art_aconfig_flags_lib_static);
     libartbase.root_module.linkLibrary(libziparchive);
@@ -2952,7 +3006,7 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     libjavacrypto.root_module.linkLibrary(libssl_static);
     libjavacrypto.root_module.linkLibrary(libcrypto_static);
     libjavacrypto.root_module.linkLibrary(liblog);
-    srcs_libnativehelper_any_vm_static(b, o, I, libnativehelper.root_module); // --whole-archive
+    applySourceGroups(b, o, I, libnativehelper, srcs_libnativehelper_any_vm_static); // --whole-archive
     libnativehelper.root_module.linkLibrary(liblog);
     // ldflag: -Wl,-z,global
     generate_boot_image.root_module.linkLibrary(libartbase_static);

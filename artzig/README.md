@@ -13,7 +13,10 @@ The build consumes its pinned AOSP subset through the `.aosp` dependency in
 [`aosp/README.md`](../aosp/README.md) to initialize the selective Repo checkout
 and regenerate `aosp/artzig-aosp-android-16.0.0_r1.tar.gz`.
 
-The committed files in `build/gen/` record the native and Java build graphs.
+The committed files in `build/gen/` record the native graph. JVM inputs are
+typed declarations in `build/java_sources.zig`; generated ART outputs are
+passed as exact files or include roots rather than a synthetic Soong `out/`
+tree.
 
 ## Development shell
 

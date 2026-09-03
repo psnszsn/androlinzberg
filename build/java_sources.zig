@@ -4,7 +4,7 @@
 //! so each one is an explicit compiler input. Generated sources are exposed as
 //! exact LazyPaths by build/generators.zig.
 const std = @import("std");
-const SourceFiles = @import("artzig").SourceFiles;
+const SourceFiles = @import("artzig").SourceSet;
 const project_sources = @import("project_jvm_sources.zig");
 
 const AddOptions = SourceFiles.AddOptions;

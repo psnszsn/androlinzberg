@@ -1,20 +1,39 @@
 //! Host-JDK Kotlin test-control client, CLI, and JUnit integration tests.
 const std = @import("std");
-const SourceFiles = @import("artzig").SourceFiles;
+const SourceFiles = @import("artzig").SourceSet;
 const project_sources = @import("project_jvm_sources.zig");
+const command = @import("command.zig");
 
 pub const Result = struct {
-    install_step: *std.Build.Step,
+    jars: Jars,
 };
 
-fn javac(b: *std.Build) *std.Build.Step.Run {
-    return b.addSystemCommand(&.{
-        "bash",
-        "-c",
-        \\exec javac "$@" 2> >(grep -F -v -e 'Note: Some input files use or override a deprecated API.' -e 'Note: Recompile with -Xlint:deprecation for details.' -e 'Note: Some input files use unchecked or unsafe operations.' -e 'Note: Recompile with -Xlint:unchecked for details.' >&2)
-        ,
-        "bash",
-    });
+pub const Jars = struct {
+    testkit: std.Build.LazyPath,
+    tests: std.Build.LazyPath,
+    junit_hamcrest: std.Build.LazyPath,
+    gson: std.Build.LazyPath,
+    kotlin_stdlib: std.Build.LazyPath,
+    kotlin_stdlib_jdk7: std.Build.LazyPath,
+    kotlin_stdlib_jdk8: std.Build.LazyPath,
+    kotlin_test: std.Build.LazyPath,
+    kotlin_test_junit: std.Build.LazyPath,
+
+    pub fn all(jars: Jars) [9]std.Build.LazyPath {
+        return .{ jars.testkit, jars.tests, jars.junit_hamcrest, jars.gson, jars.kotlin_stdlib, jars.kotlin_stdlib_jdk7, jars.kotlin_stdlib_jdk8, jars.kotlin_test, jars.kotlin_test_junit };
+    }
+};
+
+fn javac(b: *std.Build) command.Command {
+    const result = command.create(b);
+    result.addArg("javac");
+    inline for (.{
+        "Note: Some input files use or override a deprecated API.",
+        "Note: Recompile with -Xlint:deprecation for details.",
+        "Note: Some input files use unchecked or unsafe operations.",
+        "Note: Recompile with -Xlint:unchecked for details.",
+    }) |pattern| result.filterStderr(pattern);
+    return result;
 }
 
 fn jarClasses(
@@ -59,8 +78,8 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency) Result {
     hamcrest_javac.addArgs(&.{ "--release", "11", "-nowarn", "-Xlint:none", "-encoding", "UTF-8", "-d" });
     const hamcrest_classes = hamcrest_javac.addOutputDirectoryArg("hamcrest-classes");
     hamcrest_javac.addPrefixedFileArg("@", hamcrest_sources.responseFile(b, "hamcrest-sources.rsp"));
-    hamcrest_sources.addInputs(hamcrest_javac);
-    hamcrest_javac.setName("compile testkit Hamcrest dependency");
+    hamcrest_sources.addInputs(hamcrest_javac.run);
+    hamcrest_javac.run.setName("compile testkit Hamcrest dependency");
 
     const junit_javac = javac(b);
     junit_javac.addArgs(&.{ "--release", "11", "-nowarn", "-Xlint:none", "-encoding", "UTF-8", "-classpath" });
@@ -68,8 +87,8 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency) Result {
     junit_javac.addArg("-d");
     const junit_classes = junit_javac.addOutputDirectoryArg("junit-classes");
     junit_javac.addPrefixedFileArg("@", junit_sources.responseFile(b, "junit-sources.rsp"));
-    junit_sources.addInputs(junit_javac);
-    junit_javac.setName("compile testkit JUnit dependency");
+    junit_sources.addInputs(junit_javac.run);
+    junit_javac.run.setName("compile testkit JUnit dependency");
 
     const junit_hamcrest_jar = jarClasses(
         b,
@@ -91,57 +110,45 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency) Result {
     compiler_collector.addFile(kotlin_root, "build.txt");
     const compiler_inputs = compiler_collector.select(null);
 
-    const compile_testkit = b.addSystemCommand(&.{
-        "sh",
-        "-c",
-        \\exec "$1" -no-stdlib -no-reflect -language-version 2.0 -api-version 2.0 -jvm-target 21 -java-parameters -classpath "$2:$3:$4:$5:$6:$7:$8" -d "$9" "@${10}"
-        ,
-        "sh",
-    });
+    const compile_testkit = command.create(b);
     compile_testkit.addFileArg(kotlin_root.path.path(b, "bin/kotlinc"));
-    inline for (.{ kotlin_stdlib, kotlin_stdlib_jdk7, kotlin_stdlib_jdk8, gson, junit_hamcrest_jar, kotlin_test, kotlin_test_junit }) |dependency| {
-        compile_testkit.addFileArg(dependency);
-    }
+    compile_testkit.addArgs(&.{ "-no-stdlib", "-no-reflect", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters", "-classpath" });
+    compile_testkit.addJoinedPaths(":", &.{ kotlin_stdlib, kotlin_stdlib_jdk7, kotlin_stdlib_jdk8, gson, junit_hamcrest_jar, kotlin_test, kotlin_test_junit });
+    compile_testkit.addArg("-d");
     const testkit_classes = compile_testkit.addOutputDirectoryArg("testkit-classes");
-    compile_testkit.addFileArg(testkit_sources.responseFile(b, "testkit-sources.rsp"));
-    testkit_sources.addInputs(compile_testkit);
-    compiler_inputs.addInputs(compile_testkit);
-    compile_testkit.setEnvironmentVariable("JAVA_OPTS", "-Xmx1024M -Xms128M");
-    compile_testkit.setName("compile Kotlin testkit");
+    compile_testkit.addPrefixedFileArg("@", testkit_sources.responseFile(b, "testkit-sources.rsp"));
+    testkit_sources.addInputs(compile_testkit.run);
+    compiler_inputs.addInputs(compile_testkit.run);
+    compile_testkit.run.setEnvironmentVariable("JAVA_OPTS", "-Xmx1024M -Xms128M");
+    compile_testkit.run.setName("compile Kotlin testkit");
     const testkit_jar = jarClasses(b, "testkit.jar", &.{testkit_classes});
 
-    const compile_tests = b.addSystemCommand(&.{
-        "sh",
-        "-c",
-        \\exec "$1" -no-stdlib -no-reflect -language-version 2.0 -api-version 2.0 -jvm-target 21 -java-parameters -Xfriend-paths="$9" -classpath "$2:$3:$4:$5:$6:$7:$8:$9" -d "${10}" "@${11}"
-        ,
-        "sh",
-    });
+    const compile_tests = command.create(b);
     compile_tests.addFileArg(kotlin_root.path.path(b, "bin/kotlinc"));
-    inline for (.{ kotlin_stdlib, kotlin_stdlib_jdk7, kotlin_stdlib_jdk8, gson, junit_hamcrest_jar, kotlin_test, kotlin_test_junit }) |dependency| {
-        compile_tests.addFileArg(dependency);
-    }
-    compile_tests.addFileArg(testkit_jar);
+    compile_tests.addArgs(&.{ "-no-stdlib", "-no-reflect", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters" });
+    compile_tests.addPrefixedFileArg("-Xfriend-paths=", testkit_jar);
+    compile_tests.addArg("-classpath");
+    compile_tests.addJoinedPaths(":", &.{ kotlin_stdlib, kotlin_stdlib_jdk7, kotlin_stdlib_jdk8, gson, junit_hamcrest_jar, kotlin_test, kotlin_test_junit, testkit_jar });
+    compile_tests.addArg("-d");
     const test_classes = compile_tests.addOutputDirectoryArg("test-classes");
-    compile_tests.addFileArg(test_sources.responseFile(b, "test-sources.rsp"));
-    test_sources.addInputs(compile_tests);
-    compiler_inputs.addInputs(compile_tests);
-    compile_tests.setEnvironmentVariable("JAVA_OPTS", "-Xmx1024M -Xms128M");
-    compile_tests.setName("compile Kotlin testkit tests");
+    compile_tests.addPrefixedFileArg("@", test_sources.responseFile(b, "test-sources.rsp"));
+    test_sources.addInputs(compile_tests.run);
+    compiler_inputs.addInputs(compile_tests.run);
+    compile_tests.run.setEnvironmentVariable("JAVA_OPTS", "-Xmx1024M -Xms128M");
+    compile_tests.run.setName("compile Kotlin testkit tests");
     const tests_jar = jarClasses(b, "tests.jar", &.{test_classes});
 
-    const install_testkit = b.addInstallFileWithDir(testkit_jar, .lib, "azk-test/testkit.jar");
-    inline for (.{
-        .{ tests_jar, "azk-test/tests.jar" },
-        .{ junit_hamcrest_jar, "azk-test/junit-hamcrest.jar" },
-        .{ gson, "azk-test/gson.jar" },
-        .{ kotlin_stdlib, "azk-test/kotlin-stdlib.jar" },
-        .{ kotlin_stdlib_jdk7, "azk-test/kotlin-stdlib-jdk7.jar" },
-        .{ kotlin_stdlib_jdk8, "azk-test/kotlin-stdlib-jdk8.jar" },
-        .{ kotlin_test, "azk-test/kotlin-test.jar" },
-        .{ kotlin_test_junit, "azk-test/kotlin-test-junit.jar" },
-    }) |entry| {
-        install_testkit.step.dependOn(&b.addInstallFileWithDir(entry[0], .lib, entry[1]).step);
-    }
-    return .{ .install_step = &install_testkit.step };
+    return .{
+        .jars = .{
+            .testkit = testkit_jar,
+            .tests = tests_jar,
+            .junit_hamcrest = junit_hamcrest_jar,
+            .gson = gson,
+            .kotlin_stdlib = kotlin_stdlib,
+            .kotlin_stdlib_jdk7 = kotlin_stdlib_jdk7,
+            .kotlin_stdlib_jdk8 = kotlin_stdlib_jdk8,
+            .kotlin_test = kotlin_test,
+            .kotlin_test_junit = kotlin_test_junit,
+        },
+    };
 }

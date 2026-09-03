@@ -1,6 +1,9 @@
 const std = @import("std");
 
-pub const SourceFiles = @import("build/source_files.zig");
+pub const SourceSet = @import("build/source_files.zig");
+/// Compatibility alias for downstream packages; new build interfaces use SourceSet.
+pub const SourceFiles = SourceSet;
+pub const systemModules = @import("build/system_modules.zig").build;
 
 // artzig build:
 //   zig build dist      — assemble the relocatable runtime tree into zig-out/dist/art
@@ -12,13 +15,15 @@ pub const SourceFiles = @import("build/source_files.zig");
 //   const dep = b.dependency("artzig", .{ .target = t, .optimize = o });
 //   exe.root_module.addImport("art", dep.module("art"));
 //   artzig.installRuntime(b, dep, exe);                        // builds + installs ART next to the exe
-//   const dex = artzig.d8(b, dep, jar_or_classes, "classes.dex");
+//   const classes = artzig.javac(b, &.{b.path("Hello.java")});
+//   const dex = artzig.d8(b, dep, &.{classes.jar}, .{}).path(b, "classes.dex");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const aosp_dep = b.dependency("aosp", .{});
     const aosp = aosp_dep.path("");
     const bionic_translation = b.dependency("bionic_translation", .{}).path("");
+    b.addNamedLazyPath("r8-jar", aosp.path(b, "prebuilts/r8/r8.jar"));
 
     // --- the `art` module: translated jni.h + src/art.zig
     const jni_tc = b.addTranslateC(.{
@@ -35,31 +40,16 @@ pub fn build(b: *std.Build) void {
     });
     art_mod.addImport("jni_c", jni_mod);
 
-    const vendor_dir = aosp_dep.builder.root.toString(b.allocator) catch @panic("OOM");
-    const out_dir = (b.root.join(b.allocator, "out") catch @panic("OOM")).toString(b.allocator) catch @panic("OOM");
-    const root_dir = b.root.toString(b.allocator) catch @panic("OOM");
-    // headers Soong's host sysroot provides that a plain glibc doesn't (libcap); from pkg-config
-    const extra_cflags: []const []const u8 = blk: {
-        var code: u8 = 0;
-        const stdout = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "libcap" }, &code, .ignore) catch break :blk &.{};
-        var list: std.ArrayList([]const u8) = .empty;
-        var it = std.mem.tokenizeAny(u8, stdout, " \n");
-        while (it.next()) |t| if (std.mem.startsWith(u8, t, "-I")) list.append(b.allocator, b.fmt("-isystem{s}", .{t[2..]})) catch @panic("OOM");
-        break :blk list.items;
-    };
     const art_step = b.step("gen-art", "Build the whole ART host runtime from build/gen/art.zig with Zig");
     var art_opts: @import("build/gen/art.zig").Options = .{
         .target = target,
         .optimize = optimize,
         .vendor = aosp,
-        .out = b.path("out"),
-        .vendor_dir = vendor_dir,
-        .out_dir = out_dir,
-        .root_dir = root_dir,
-        .extra_cflags = extra_cflags,
+        .project = b.path(""),
+        .host = @import("build/host_toolchain.zig").discover(b),
     };
     // genrules ported to Zig (operator_out, mterp, asm_defines, vendored aconfig): no Soong out/ needed
-    art_opts.gen_dirs = @import("build/genrules.zig").build(b, .{ .vendor = aosp, .art_opts = art_opts });
+    art_opts.generated = @import("build/genrules.zig").build(b, .{ .vendor = aosp, .art_opts = art_opts });
     const art_gen = @import("build/gen/art.zig").build(b, art_opts);
     const gen_step = b.step("gen-libartbase", "Build libartbase.so + deps with Zig");
     gen_step.dependOn(&b.addInstallArtifact(art_gen.libartbase, .{ .dest_dir = .{ .override = .{ .custom = "gen" } } }).step);
@@ -91,13 +81,13 @@ pub fn build(b: *std.Build) void {
 
     // --- boot classpath jars built with the system JDK (no Soong)
     const javalib = @import("build/javalib.zig").build(b, .{
-        .vendor = aosp,
-        .vendor_dir = SourceFiles.Root.dependency(b, aosp_dep, "").absolute,
+        .vendor = SourceSet.Root.dependency(b, aosp_dep, ""),
         .target = target,
         .optimize = optimize,
     });
     // consumers (app/) compile framework Java against the boot classpath
     b.addNamedLazyPath("core-all-jar", javalib.class_jars.get("core-all").?);
+    b.addNamedLazyPath("core-all-classes", javalib.core_all_classes);
     const java_step = b.step("java", "Build the boot classpath jars (core-oj, ... ) with the system JDK");
     {
         var it = javalib.jars.iterator();
@@ -167,15 +157,16 @@ pub fn build(b: *std.Build) void {
 
     // javac + d8 the example's Java
     const classes = javac(b, &.{b.path("examples/hello/Hello.java")});
-    const dex = d8With(b, b.path("tools/d8.sh"), b.path("dist/art"), classes).path(b, "classes.dex");
+    const dex = d8WithR8(b, aosp.path(b, "prebuilts/r8/r8.jar"), &.{classes.jar}, .{}).path(b, "classes.dex");
     const dex_install = b.addInstallFileWithDir(dex, .bin, "hello-classes.dex");
     example_step.dependOn(&dex_install.step);
 
-    const run = b.addRunArtifact(exe);
+    const run = @import("build/command.zig").create(b);
+    run.setPathEnvironment("ARTZIG_ROOT", runtime);
+    run.addFileArg(exe.getEmittedBin());
     run.addFileArg(dex);
     run.addArg("Hello");
-    run.step.dependOn(example_step);
-    b.step("run", "Run examples/hello").dependOn(&run.step);
+    b.step("run", "Run examples/hello").dependOn(&run.run.step);
 }
 
 // ---------------------------------------------------------------------------
@@ -198,24 +189,55 @@ pub fn installRuntimeFromPath(b: *std.Build, tree: std.Build.LazyPath, step: *st
 
 /// Compile Java sources with the system `javac` into a directory of .class files.
 /// Targets Java 17 class files (d8 handles anything ART's libcore can't run natively).
-pub fn javac(b: *std.Build, sources: []const std.Build.LazyPath) std.Build.LazyPath {
+pub const JavaClasses = struct {
+    directory: std.Build.LazyPath,
+    jar: std.Build.LazyPath,
+};
+
+pub fn javac(b: *std.Build, sources: []const std.Build.LazyPath) JavaClasses {
     const cmd = b.addSystemCommand(&.{ "javac", "-source", "17", "-target", "17", "-Xlint:-options", "-d" });
-    const out = cmd.addOutputDirectoryArg("classes");
+    const directory = cmd.addOutputDirectoryArg("classes");
     for (sources) |s| cmd.addFileArg(s);
-    return out;
+    const jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
+    const output = jar.addOutputFileArg("classes.jar");
+    jar.addArg("-C");
+    jar.addDirectoryArg(directory);
+    jar.addArg(".");
+    return .{ .directory = directory, .jar = output };
 }
 
-/// Run d8 (from the runtime tree, via the system `java`) on a jar or a directory of .class
-/// files; returns the output directory containing classes.dex.
-pub fn d8(b: *std.Build, dep: *std.Build.Dependency, input: std.Build.LazyPath) std.Build.LazyPath {
-    return d8With(b, dep.path("tools/d8.sh"), dep.path("dist/art"), input);
+pub const D8Options = struct {
+    min_api: u16 = 26,
+    libraries: []const std.Build.LazyPath = &.{},
+};
+
+/// Run the pinned D8 on explicit jar or class-file inputs. Directory inputs are
+/// deliberately not accepted: package compiler output into a jar first so the
+/// build graph knows the complete input artifact.
+pub fn d8(
+    b: *std.Build,
+    dep: *std.Build.Dependency,
+    inputs: []const std.Build.LazyPath,
+    options: D8Options,
+) std.Build.LazyPath {
+    return d8WithR8(b, dep.namedLazyPath("r8-jar"), inputs, options);
 }
 
-pub fn d8With(b: *std.Build, script: std.Build.LazyPath, tree: std.Build.LazyPath, input: std.Build.LazyPath) std.Build.LazyPath {
-    const cmd = std.Build.Step.Run.create(b, "d8");
-    cmd.addFileArg(script);
-    cmd.addFileArg(tree.path(b, "framework/d8.jar"));
+fn d8WithR8(
+    b: *std.Build,
+    r8_jar: std.Build.LazyPath,
+    inputs: []const std.Build.LazyPath,
+    options: D8Options,
+) std.Build.LazyPath {
+    const cmd = b.addSystemCommand(&.{ "java", "-cp" });
+    cmd.addFileArg(r8_jar);
+    cmd.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", b.fmt("{d}", .{options.min_api}) });
+    for (options.libraries) |library| {
+        cmd.addArg("--lib");
+        cmd.addFileArg(library);
+    }
+    cmd.addArg("--output");
     const out_dir = cmd.addOutputDirectoryArg("dex");
-    cmd.addDirectoryArg(input);
+    for (inputs) |input| cmd.addFileArg(input);
     return out_dir;
 }

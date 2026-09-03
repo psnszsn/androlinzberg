@@ -1,5 +1,0 @@
-# source|canonical input|generated output; parsed by build/generators.zig
-aosp|frameworks/base/core/java/android/view/EventLogTags.logtags|android/view/EventLogTags.java
-aosp|frameworks/base/services/core/java/com/android/server/am/EventLogTags.logtags|com/android/server/am/EventLogTags.java
-aosp|frameworks/base/core/java/android/os/EventLogTags.logtags|android/os/EventLogTags.java
-aosp|frameworks/base/core/java/android/content/EventLogTags.logtags|android/content/EventLogTags.java

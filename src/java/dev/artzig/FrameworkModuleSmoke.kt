@@ -88,12 +88,12 @@ internal object FrameworkModuleSmoke {
     private val events = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
 
-    private var fixtureApkDir: String? = null
+    private var permissionsFixtureApk: String? = null
 
     @JvmStatic
     fun main(args: Array<String>) {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
-        fixtureApkDir = args.firstOrNull()
+        permissionsFixtureApk = args.firstOrNull()
         testPackageNames()
         testIntentTypedExtras()
         testRemoteActionContract()
@@ -142,9 +142,9 @@ internal object FrameworkModuleSmoke {
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk"
         // Server-side install of the fixture APK: WAKE_LOCK (normal) is
         // granted at install, CAMERA (dangerous) is not.
-        val fixtures = checkNotNull(fixtureApkDir) { "fixture APK directory argument missing" }
+        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(installer.installPackage("$fixtures/org.example.permissions.apk", null) == "org.example.permissions")
+        check(installer.installPackage(fixture, null) == "org.example.permissions")
 
         val wakeLock = "android.permission.WAKE_LOCK"
         val camera = "android.permission.CAMERA"
@@ -436,9 +436,9 @@ internal object FrameworkModuleSmoke {
         // AOSP: the download table lives in the application's data directory; a
         // system context has none, so the block runs against a package context
         // of the installed fixture (this process is bound to that package).
-        val fixtures = checkNotNull(fixtureApkDir) { "fixture APK directory argument missing" }
+        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
         val fixtureInstaller = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(fixtureInstaller.installPackage("$fixtures/org.example.permissions.apk", null) == "org.example.permissions")
+        check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
         ActivityThread.attachApplicationHosted("org.example.permissions")
         val appContext = context.createPackageContext("org.example.permissions", 0)
         // The hosted provider table is deliberately kept under filesDir, where the APK can alter

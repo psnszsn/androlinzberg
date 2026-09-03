@@ -11,19 +11,10 @@ pub const Options = struct {
     /// external/skia in the root AOSP dependency.
     root: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
+    host_include_roots: []const std.Build.LazyPath,
     /// extra include dirs (framework mode needs cutils/trace.h + log/log.h)
     include_dirs: []const std.Build.LazyPath = &.{},
 };
-
-/// zig pins the target CPU features explicitly, so a per-file `-march=` is
-/// ignored: SIMD groups become their own objects with a matching cpu_model.
-fn cpuForFlags(flags: []const []const u8) ?*const std.Target.Cpu.Model {
-    for (flags) |f| {
-        if (std.mem.eql(u8, f, "-march=haswell") or std.mem.eql(u8, f, "-mavx2")) return &std.Target.x86.cpu.haswell;
-        if (std.mem.eql(u8, f, "-march=skylake-avx512") or std.mem.eql(u8, f, "-mavx512f")) return &std.Target.x86.cpu.skylake_avx512;
-    }
-    return null;
-}
 
 /// pkg-config names for the system libs skia's GN "libs" refer to.
 fn pkgConfigName(lib: []const u8) ?[]const u8 {
@@ -46,7 +37,8 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         // never build skia unoptimized: -O0 rasterization is unusable
         .optimize = .ReleaseFast,
         .link_libc = true,
-        .link_libcpp = true,
+        // Skia is linked into libandroid_platform.so.
+        .pic = true,
     });
     const lib = b.addLibrary(.{ .name = "skia", .linkage = .static, .root_module = mod });
     mod.addIncludePath(o.root);
@@ -59,65 +51,52 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
 
     var base_flags = std.ArrayList([]const u8).empty;
     base_flags.appendSlice(b.allocator, &.{
-        "-std=c++20",          "-fno-exceptions",             "-fno-rtti",
-        "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fstrict-aliasing",
-        "-ffunction-sections", "-fdata-sections",             "-Wno-attributes",
-        "-w",
+        "-std=c++20",          "-fPIC",                       "-fno-exceptions",   "-fno-rtti",
+        "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fstrict-aliasing", "-ffunction-sections",
+        "-fdata-sections",     "-Wno-attributes",             "-Wno-psabi",        "-w",
     }) catch @panic("oom");
     for (gen.defines) |d| base_flags.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
 
+    var object_index: usize = 0;
     for (gen.groups) |g| {
         var flags = std.ArrayList([]const u8).empty;
         flags.appendSlice(b.allocator, base_flags.items) catch @panic("oom");
-        flags.appendSlice(b.allocator, g.flags) catch @panic("oom");
+        for (g.flags) |flag| {
+            flags.append(b.allocator, if (std.mem.eql(u8, flag, "-march=skylake-avx512"))
+                "-march=skylake_avx512"
+            else
+                flag) catch @panic("oom");
+        }
         // Zig's bundled Clang does not expose __builtin_ia32_vcvtph2ps256;
         // retain skcms' own baseline-forwarding implementation for this TU.
         if (std.mem.eql(u8, g.name, "//modules/skcms:skcms_TransformHsw"))
             flags.append(b.allocator, "-DSKCMS_DISABLE_HSW") catch @panic("oom");
-        if (cpuForFlags(g.flags)) |cpu| {
-            var q = o.target.query;
-            q.cpu_model = .{ .explicit = cpu };
-            const simd_mod = b.createModule(.{
-                .target = b.resolveTargetQuery(q),
-                .optimize = .ReleaseFast,
-                .link_libc = true,
-                .link_libcpp = true,
+        var cflags: std.ArrayList([]const u8) = .empty;
+        for (flags.items) |flag| if (!std.mem.startsWith(u8, flag, "-std=") and
+            !std.mem.eql(u8, flag, "-fno-rtti") and
+            !std.mem.eql(u8, flag, "-fvisibility-inlines-hidden"))
+        {
+            cflags.append(b.allocator, flag) catch @panic("oom");
+        };
+        for (g.files) |file| {
+            const is_c = std.mem.endsWith(u8, file, ".c");
+            const compile = b.addSystemCommand(&.{
+                b.graph.zig_exe,                                           if (is_c) "cc" else "c++", "-c", "-target",
+                o.target.query.zigTriple(b.allocator) catch @panic("oom"), "-O3",
             });
-            simd_mod.addIncludePath(o.root);
-            simd_mod.addIncludePath(o.root.path(b, "linux"));
-            simd_mod.addIncludePath(o.root.path(b, "linux/include/config"));
-            simd_mod.addIncludePath(o.root.path(b, "include/config"));
-            for (o.include_dirs) |d| simd_mod.addIncludePath(d);
-            // object name: "//modules/skcms:skcms_TransformHsw" -> "skia_skcms_TransformHsw"
-            const short = g.name[(std.mem.lastIndexOfScalar(u8, g.name, ':') orelse 0) + 1 ..];
-            const obj = b.addObject(.{ .name = b.fmt("skia_{s}", .{short}), .root_module = simd_mod });
-            var cflags: std.ArrayList([]const u8) = .empty;
-            for (flags.items) |fl| if (!std.mem.startsWith(u8, fl, "-std=") and !std.mem.eql(u8, fl, "-fno-rtti") and !std.mem.eql(u8, fl, "-fvisibility-inlines-hidden")) cflags.append(b.allocator, fl) catch @panic("oom");
-            var cpp_files: std.ArrayList([]const u8) = .empty;
-            var c_files: std.ArrayList([]const u8) = .empty;
-            for (g.files) |f| {
-                if (std.mem.endsWith(u8, f, ".c")) c_files.append(b.allocator, f) catch @panic("oom") else cpp_files.append(b.allocator, f) catch @panic("oom");
-            }
-            if (cpp_files.items.len > 0) simd_mod.addCSourceFiles(.{ .root = o.root, .files = cpp_files.items, .flags = flags.items });
-            if (c_files.items.len > 0) simd_mod.addCSourceFiles(.{ .root = o.root, .files = c_files.items, .flags = cflags.items });
-            mod.addObject(obj);
-            continue;
-        }
-        // skcms is C++ but lives outside src/; C sources need C flags
-        var cpp: std.ArrayList([]const u8) = .empty;
-        var c: std.ArrayList([]const u8) = .empty;
-        for (g.files) |f| {
-            if (std.mem.endsWith(u8, f, ".c")) c.append(b.allocator, f) catch @panic("oom") else cpp.append(b.allocator, f) catch @panic("oom");
-        }
-        if (cpp.items.len > 0) mod.addCSourceFiles(.{
-            .root = o.root,
-            .files = cpp.items,
-            .flags = flags.items,
-        });
-        if (c.items.len > 0) {
-            var cflags = std.ArrayList([]const u8).empty;
-            for (flags.items) |fl| if (!std.mem.startsWith(u8, fl, "-std=") and !std.mem.eql(u8, fl, "-fno-rtti") and !std.mem.eql(u8, fl, "-fvisibility-inlines-hidden")) cflags.append(b.allocator, fl) catch @panic("oom");
-            mod.addCSourceFiles(.{ .root = o.root, .files = c.items, .flags = cflags.items });
+            compile.step.name = b.fmt("compile Skia {s}", .{file});
+            compile.addArgs(if (is_c) cflags.items else flags.items);
+            compile.addPrefixedDirectoryArg("-I", o.root);
+            compile.addPrefixedDirectoryArg("-I", o.root.path(b, "linux"));
+            compile.addPrefixedDirectoryArg("-I", o.root.path(b, "linux/include/config"));
+            compile.addPrefixedDirectoryArg("-I", o.root.path(b, "include/config"));
+            for (o.include_dirs) |include| compile.addPrefixedDirectoryArg("-I", include);
+            for (o.host_include_roots) |include| compile.addPrefixedDirectoryArg("-isystem", include);
+            compile.addFileArg(o.root.path(b, file));
+            compile.addArg("-o");
+            const object = compile.addOutputFileArg(b.fmt("skia-tu-{d}.o", .{object_index}));
+            object_index += 1;
+            mod.addObjectFile(object);
         }
     }
     for (gen.system_libs) |l| {

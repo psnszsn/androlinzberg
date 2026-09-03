@@ -10,36 +10,17 @@ const LazyPath = Build.LazyPath;
 
 pub const Root = struct {
     path: LazyPath,
-    absolute: []const u8,
 
     pub fn project(b: *Build, sub_path: []const u8) Root {
-        const project_root = b.root.toString(b.allocator) catch @panic("OOM");
-        return .{
-            .path = b.path(sub_path),
-            .absolute = absolutePath(b, project_root, sub_path),
-        };
+        return .{ .path = b.path(sub_path) };
     }
 
-    pub fn dependency(b: *Build, dep: *Build.Dependency, sub_path: []const u8) Root {
-        const dependency_root = dep.builder.root.toString(b.allocator) catch @panic("OOM");
-        return .{
-            .path = dep.path(sub_path),
-            .absolute = absolutePath(b, dependency_root, sub_path),
-        };
+    pub fn dependency(_: *Build, dep: *Build.Dependency, sub_path: []const u8) Root {
+        return .{ .path = dep.path(sub_path) };
     }
 
     pub fn child(root: Root, b: *Build, sub_path: []const u8) Root {
-        return .{
-            .path = root.path.path(b, sub_path),
-            .absolute = b.pathJoin(&.{ root.absolute, sub_path }),
-        };
-    }
-
-    fn absolutePath(b: *Build, root: []const u8, sub_path: []const u8) []const u8 {
-        const relative = if (sub_path.len == 0) root else b.pathJoin(&.{ root, sub_path });
-        return Io.Dir.cwd().realPathFileAlloc(b.graph.io, relative, b.allocator) catch |err| {
-            std.debug.panic("unable to resolve source root {s}: {t}", .{ relative, err });
-        };
+        return .{ .path = root.path.path(b, sub_path) };
     }
 };
 
@@ -52,7 +33,6 @@ pub const AddOptions = struct {
 
 pub const File = struct {
     path: LazyPath,
-    absolute: []const u8,
 };
 
 pub const Files = struct {
@@ -63,68 +43,52 @@ pub const Files = struct {
     }
 
     pub fn responseFile(files: Files, b: *Build, name: []const u8) LazyPath {
-        var size: usize = 0;
-        for (files.items) |file| size += file.absolute.len + 1;
-        const contents = b.allocator.alloc(u8, size) catch @panic("OOM");
-        var offset: usize = 0;
-        for (files.items) |file| {
-            @memcpy(contents[offset..][0..file.absolute.len], file.absolute);
-            offset += file.absolute.len;
-            contents[offset] = '\n';
-            offset += 1;
-        }
+        const absolute = b.allocator.alloc([]const u8, files.items.len) catch @panic("OOM");
+        for (files.items, absolute) |file, *resolved| resolved.* = configurePath(b, file.path);
+        const contents = responseContents(b.allocator, absolute) catch @panic("OOM");
         const write = b.addWriteFiles();
         return write.add(name, contents);
     }
 };
 
+fn responseContents(allocator: std.mem.Allocator, files: []const []const u8) ![]u8 {
+    var size: usize = 0;
+    for (files) |file| size += file.len + 1;
+    const contents = try allocator.alloc(u8, size);
+    var offset: usize = 0;
+    for (files) |file| {
+        @memcpy(contents[offset..][0..file.len], file);
+        offset += file.len;
+        contents[offset] = '\n';
+        offset += 1;
+    }
+    return contents;
+}
+
 pub const Collector = struct {
     b: *Build,
-    files: std.StringHashMapUnmanaged(File) = .empty,
+    files: std.StringHashMapUnmanaged(Entry) = .empty,
 
     pub fn init(b: *Build) Collector {
         return .{ .b = b };
     }
 
     pub fn addFile(c: *Collector, root: Root, relative_path: []const u8) void {
-        const absolute = c.b.pathJoin(&.{ root.absolute, relative_path });
-        const result = c.files.getOrPut(c.b.allocator, absolute) catch @panic("OOM");
-        if (result.found_existing) return;
-        result.key_ptr.* = absolute;
-        result.value_ptr.* = .{
-            .path = root.path.path(c.b, relative_path),
-            .absolute = absolute,
-        };
-    }
-
-    pub fn addResponseFile(c: *Collector, source_root: Root, response_file: Root) void {
-        c.b.dependOnFileContents(response_file.path);
-        const contents = Io.Dir.cwd().readFileAlloc(
-            c.b.graph.io,
-            response_file.absolute,
-            c.b.allocator,
-            .limited(std.math.maxInt(u32)),
-        ) catch |err| {
-            std.debug.panic("unable to read source response file {s}: {t}", .{ response_file.absolute, err });
-        };
-        var lines = std.mem.tokenizeScalar(u8, contents, '\n');
-        while (lines.next()) |raw_line| {
-            const line = std.mem.trim(u8, raw_line, " \t\r");
-            if (line.len == 0 or line[0] == '#') continue;
-            c.addFile(source_root, line);
-        }
+        const absolute = c.b.pathJoin(&.{ configurePath(c.b, root.path), relative_path });
+        _ = remember(&c.files, c.b.allocator, absolute, root.path.path(c.b, relative_path));
     }
 
     pub fn addTree(c: *Collector, root: Root, options: AddOptions) void {
-        var dir = Io.Dir.cwd().openDir(c.b.graph.io, root.absolute, .{ .iterate = true }) catch |err| {
-            std.debug.panic("unable to open source directory {s}: {t}", .{ root.absolute, err });
+        const root_absolute = configurePath(c.b, root.path);
+        var dir = Io.Dir.cwd().openDir(c.b.graph.io, root_absolute, .{ .iterate = true }) catch |err| {
+            std.debug.panic("unable to open source directory {s}: {t}", .{ root_absolute, err });
         };
         defer dir.close(c.b.graph.io);
         var walker = dir.walk(c.b.allocator) catch @panic("OOM");
         defer walker.deinit();
 
         while (walker.next(c.b.graph.io) catch |err| {
-            std.debug.panic("unable to walk source directory {s}: {t}", .{ root.absolute, err });
+            std.debug.panic("unable to walk source directory {s}: {t}", .{ root_absolute, err });
         }) |entry| {
             if (entry.kind == .directory) {
                 if (options.max_depth) |max_depth| {
@@ -142,36 +106,81 @@ pub const Collector = struct {
             if (!matchesAnySuffix(options.extensions, entry.basename)) continue;
             if (matchesAny(options.not_names, entry.basename)) continue;
 
-            const absolute = c.b.pathJoin(&.{ root.absolute, entry.path });
+            const absolute = c.b.pathJoin(&.{ root_absolute, entry.path });
             if (matchesAny(options.not_paths, absolute)) continue;
-            const result = c.files.getOrPut(c.b.allocator, absolute) catch @panic("OOM");
-            if (result.found_existing) continue;
-            result.key_ptr.* = absolute;
-            result.value_ptr.* = .{
-                .path = root.path.path(c.b, entry.path),
-                .absolute = absolute,
-            };
+            _ = remember(&c.files, c.b.allocator, absolute, root.path.path(c.b, entry.path));
         }
     }
 
     pub fn select(c: *const Collector, extension: ?[]const u8) Files {
-        const selected = c.b.allocator.alloc(File, c.files.count()) catch @panic("OOM");
-        var count: usize = 0;
-        var values = c.files.valueIterator();
-        while (values.next()) |file| {
-            if (extension) |ext| {
-                if (!std.mem.endsWith(u8, file.absolute, ext)) continue;
-            }
-            selected[count] = file.*;
-            count += 1;
+        const result = selectEntries(c.b.allocator, &c.files, extension);
+        const paths = c.b.allocator.alloc(File, result.len) catch @panic("OOM");
+        for (result, paths) |entry, *path| {
+            path.* = .{ .path = entry.path };
         }
-        const result = selected[0..count];
-        std.mem.sortUnstable(File, result, {}, lessThan);
-        return .{ .items = result };
+        return .{ .items = paths };
     }
 };
 
-fn lessThan(_: void, lhs: File, rhs: File) bool {
+const Entry = struct { path: LazyPath, absolute: []const u8 };
+
+fn remember(
+    files: *std.StringHashMapUnmanaged(Entry),
+    allocator: std.mem.Allocator,
+    absolute: []const u8,
+    path: LazyPath,
+) bool {
+    const result = files.getOrPut(allocator, absolute) catch @panic("OOM");
+    if (result.found_existing) return false;
+    result.key_ptr.* = absolute;
+    result.value_ptr.* = .{ .path = path, .absolute = absolute };
+    return true;
+}
+
+fn selectEntries(
+    allocator: std.mem.Allocator,
+    files: *const std.StringHashMapUnmanaged(Entry),
+    extension: ?[]const u8,
+) []Entry {
+    var count: usize = 0;
+    var count_values = files.valueIterator();
+    while (count_values.next()) |file| {
+        if (extension == null or std.mem.endsWith(u8, file.absolute, extension.?)) count += 1;
+    }
+    const selected = allocator.alloc(Entry, count) catch @panic("OOM");
+    var index: usize = 0;
+    var values = files.valueIterator();
+    while (values.next()) |file| {
+        if (extension) |ext| {
+            if (!std.mem.endsWith(u8, file.absolute, ext)) continue;
+        }
+        selected[index] = file.*;
+        index += 1;
+    }
+    std.mem.sortUnstable(Entry, selected, {}, lessThan);
+    return selected;
+}
+
+/// Resolve source-tree locations only while walking or transporting an exact
+/// response-file input set. The absolute string never escapes SourceSet.
+fn configurePath(b: *Build, lazy_path: LazyPath) []const u8 {
+    const unresolved = switch (lazy_path) {
+        .src_path => |source| b.pathJoin(&.{
+            source.owner.root.toString(b.allocator) catch @panic("OOM"),
+            source.sub_path,
+        }),
+        .dependency => |dependency| b.pathJoin(&.{
+            dependency.dependency.builder.root.toString(b.allocator) catch @panic("OOM"),
+            dependency.sub_path,
+        }),
+        else => std.debug.panic("only project and dependency paths can be source-set roots", .{}),
+    };
+    return Io.Dir.cwd().realPathFileAlloc(b.graph.io, unresolved, b.allocator) catch |err| {
+        std.debug.panic("unable to resolve source path {s}: {t}", .{ unresolved, err });
+    };
+}
+
+fn lessThan(_: void, lhs: Entry, rhs: Entry) bool {
     return std.mem.order(u8, lhs.absolute, rhs.absolute) == .lt;
 }
 
@@ -221,4 +230,26 @@ test "glob matching" {
     try std.testing.expect(globMatch("SurfaceControl*.java", "SurfaceControlViewHost.java"));
     try std.testing.expect(globMatch("*/pdf/*", "/tmp/android/graphics/pdf/PdfRenderer.java"));
     try std.testing.expect(!globMatch("DayPicker*.java", "DatePicker.java"));
+}
+
+test "response files preserve exact selected order" {
+    const files = [_][]const u8{ "/root/A.java", "/root/B.java" };
+    const contents = try responseContents(std.testing.allocator, &files);
+    defer std.testing.allocator.free(contents);
+    try std.testing.expectEqualStrings("/root/A.java\n/root/B.java\n", contents);
+}
+
+test "source selection deduplicates, filters, and sorts exact files" {
+    var files: std.StringHashMapUnmanaged(Entry) = .empty;
+    defer files.deinit(std.testing.allocator);
+    try std.testing.expect(remember(&files, std.testing.allocator, "/root/B.java", undefined));
+    try std.testing.expect(remember(&files, std.testing.allocator, "/root/ignored.kt", undefined));
+    try std.testing.expect(remember(&files, std.testing.allocator, "/root/A.java", undefined));
+    try std.testing.expect(!remember(&files, std.testing.allocator, "/root/B.java", undefined));
+
+    const selected = selectEntries(std.testing.allocator, &files, ".java");
+    defer std.testing.allocator.free(selected);
+    try std.testing.expectEqual(@as(usize, 2), selected.len);
+    try std.testing.expectEqualStrings("/root/A.java", selected[0].absolute);
+    try std.testing.expectEqualStrings("/root/B.java", selected[1].absolute);
 }

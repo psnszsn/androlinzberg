@@ -6,7 +6,13 @@ Run the native tests and the source-boundary check:
 
 ```sh
 zig build -j10 native-test cpp-audit
+zig build -j10 graph-audit
 ```
+
+`graph-audit` rejects deleted build-script references, install-prefix inputs,
+duplicate absolute-root build options, and project/generated `.cwd_relative`
+paths. The JVM provenance and native boundary checks receive the same exact
+source and artifact sets as their build consumers.
 
 Run the framework and class-loading tests:
 

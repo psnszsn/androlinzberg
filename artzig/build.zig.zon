@@ -82,9 +82,9 @@
         "build.zig",
         "build.zig.zon",
         "src",
-        "tools/d8.sh",
         "build",
         "tools",
+        // Includes tools/build-command.zig, shared by root and dependency graphs.
         "patches",
         "flake.nix",
         "flake.lock",

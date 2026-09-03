@@ -1,8 +1,8 @@
 //! Hand-ported Soong genrules for the ART host build. Produces the generated
-//! source/header directories that build/gen/art.zig consumes through
-//! `Options.gen_dirs`, so no Soong build output is needed.
+//! source/header artifacts that build/gen/art.zig consumes through its typed
+//! `GeneratedArtifacts`, so no Soong build output is needed.
 //!
-//!  - operator_out : art/tools/generate_operator_out.py per header (one dir per module)
+//!  - operator_out : art/tools/generate_operator_out.py per unique header (exact files)
 //!  - mterp        : art/runtime/interpreter/mterp/gen_mterp.py → mterp_x86_64ng.S
 //!  - asm_defines  : compile asm_defines.cc to assembly with the module's own flags,
 //!                   then art/tools/cpp-define-generator/make_header.py → asm_defines.h
@@ -12,18 +12,25 @@ const art = @import("gen/art.zig");
 
 pub const Options = struct {
     vendor: std.Build.LazyPath,
-    /// the art.zig Options (for asmDefinesFlags); gen_dirs in it are ignored here
+    /// the art.zig Options used by asmDefinesFlags
     art_opts: art.Options,
     python: []const u8 = "python3",
 };
 
-pub fn build(b: *std.Build, o: Options) []const art.GenDir {
-    var dirs: std.ArrayList(art.GenDir) = .empty;
+pub fn build(b: *std.Build, o: Options) art.GeneratedArtifacts {
+    var compiler_operators: []const std.Build.LazyPath = undefined;
+    var dex2oat_operators: []const std.Build.LazyPath = undefined;
+    var libartbase_operators: []const std.Build.LazyPath = undefined;
+    var dexfile_operators: []const std.Build.LazyPath = undefined;
+    var runtime_operators: []const std.Build.LazyPath = undefined;
 
     // --- operator_out: <key>/gensrcs/<header dir>/<name>.operator_out.cc
     for (art.operator_out) |op| {
-        const wf = b.addWriteFiles();
+        var outputs: std.ArrayList(std.Build.LazyPath) = .empty;
+        var seen: std.StringHashMapUnmanaged(void) = .empty;
         for (op.headers) |hdr| {
+            const entry = seen.getOrPut(b.allocator, hdr) catch @panic("OOM");
+            if (entry.found_existing) continue;
             const run = b.addSystemCommand(&.{ o.python, "art/tools/generate_operator_out.py", op.local, hdr });
             run.setCwd(o.vendor);
             run.addFileInput(o.vendor.path(b, hdr));
@@ -31,15 +38,22 @@ pub fn build(b: *std.Build, o: Options) []const art.GenDir {
             // Python 3.14 warns about the pinned AOSP script's codecs.open().
             // Keep other warning classes and all stderr visible.
             run.setEnvironmentVariable("PYTHONWARNINGS", "ignore::DeprecationWarning");
-            const out = run.captureStdOut(.{});
-            const name = b.fmt("gensrcs/{s}.operator_out.cc", .{hdr[0 .. hdr.len - 2]});
-            _ = wf.addCopyFile(out, name);
+            const stem = std.fs.path.stem(hdr);
+            const out = run.captureStdOut(.{ .basename = b.fmt("{s}.operator_out.cc", .{stem}) });
+            outputs.append(b.allocator, out) catch @panic("OOM");
         }
-        dirs.append(b.allocator, .{ .key = op.key, .dir = wf.getDirectory() }) catch @panic("OOM");
+        const sources = outputs.toOwnedSlice(b.allocator) catch @panic("OOM");
+        switch (op.group) {
+            .compiler_operators => compiler_operators = sources,
+            .dex2oat_operators => dex2oat_operators = sources,
+            .libartbase_operators => libartbase_operators = sources,
+            .dexfile_operators => dexfile_operators = sources,
+            .runtime_operators => runtime_operators = sources,
+        }
     }
 
     // --- mterp (x86_64ng): gen_mterp.py <out.S> <fragments...>
-    {
+    const mterp = blk: {
         const frags = [_][]const u8{
             "arithmetic.S", "array.S", "control_flow.S", "floating_point.S",
             "invoke.S",     "main.S",  "object.S",       "other.S",
@@ -53,37 +67,50 @@ pub fn build(b: *std.Build, o: Options) []const art.GenDir {
             run.addArg(rel);
             run.addFileInput(o.vendor.path(b, rel));
         }
-        const wf = b.addWriteFiles();
-        _ = wf.addCopyFile(out_s, "mterp_x86_64ng.S");
-        dirs.append(b.allocator, .{ .key = "soong/.intermediates/art/runtime/libart_mterp.x86_64ng/gen", .dir = wf.getDirectory() }) catch @panic("OOM");
-    }
+        break :blk out_s;
+    };
 
     // --- asm_defines.h
-    {
+    const asm_defines = blk: {
         const cc = b.addSystemCommand(&.{ b.graph.zig_exe, "c++", "-S", "-o" });
         const asm_out = cc.addOutputFileArg("asm_defines.s");
         cc.addFileArg(o.vendor.path(b, "art/tools/cpp-define-generator/asm_defines.cc"));
         cc.addArgs(art.asmDefinesFlags(b, o.art_opts));
+        art.addAsmDefinesInputs(b, o.art_opts, cc);
         cc.addArg("-Wno-everything");
         cc.addFileInput(o.vendor.path(b, "art/tools/cpp-define-generator/asm_defines.def"));
 
         const mk = b.addSystemCommand(&.{ o.python, "art/tools/cpp-define-generator/make_header.py" });
         mk.setCwd(o.vendor);
         mk.addFileArg(asm_out);
-        const hdr = mk.captureStdOut(.{});
-        const wf = b.addWriteFiles();
-        _ = wf.addCopyFile(hdr, "asm_defines.h");
-        dirs.append(b.allocator, .{
-            .key = "soong/.intermediates/art/tools/cpp-define-generator/cpp-define-generator-asm-support/linux_glibc_x86_64/gen",
-            .dir = wf.getDirectory(),
-        }) catch @panic("OOM");
-    }
+        break :blk mk.captureStdOut(.{ .basename = "asm_defines.h" });
+    };
+
+    // Pinned AOSP's x86 memory optimization is shared by the x86 and x86_64
+    // backends, but its construction switch is guarded only by the former.
+    // Apply the minimal source patch as a cacheable graph node rather than
+    // enabling and compiling the unused 32-bit backend.
+    const compiler_optimization = blk: {
+        const run = b.addSystemCommand(&.{ "patch", "--batch", "--forward", "--quiet", "--output" });
+        const output = run.addOutputFileArg("optimization.cc");
+        run.addFileArg(o.vendor.path(b, "art/compiler/optimizing/optimization.cc"));
+        run.addFileArg(b.path("build/patches/art-x86_64-memory-optimization.patch"));
+        break :blk output;
+    };
 
     // --- aconfig flag library: vendored
-    dirs.append(b.allocator, .{
-        .key = "soong/.intermediates/art/build/flags/art-aconfig-flags-lib/linux_glibc_x86_64_static/gen",
-        .dir = b.path("src/gen/aconfig"),
-    }) catch @panic("OOM");
-
-    return dirs.items;
+    return .{
+        .aconfig = .{
+            .sources = &.{b.path("src/gen/aconfig/com_android_art_flags.cc")},
+            .include_roots = &.{b.path("src/gen/aconfig")},
+        },
+        .compiler_operators = .{ .sources = compiler_operators },
+        .compiler_optimization = compiler_optimization,
+        .dex2oat_operators = .{ .sources = dex2oat_operators },
+        .libartbase_operators = .{ .sources = libartbase_operators },
+        .dexfile_operators = .{ .sources = dexfile_operators },
+        .runtime_operators = .{ .sources = runtime_operators },
+        .mterp = mterp,
+        .asm_defines = .{ .sources = &.{}, .include_roots = &.{asm_defines.dirname()} },
+    };
 }

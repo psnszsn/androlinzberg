@@ -297,9 +297,9 @@ public final class FrameworkCompatSmoke {
             // Server-side install: the org.example fixture APK's manifest
             // declares the launcher activity and the PLAYBACK service the
             // assertions below resolve through real IntentFilters.
-            val fixtureDir: String = requireNotNull(args.getOrNull(1)) { "fixture APK directory argument missing" }
+            val fixtureApk: String = requireNotNull(args.getOrNull(1)) { "fixture APK argument missing" }
             val installer = requireNotNull(android.app.HostedServiceClient.installerOrNull())
-            require(installer.installPackage("$fixtureDir/org.example.apk", null) == "org.example", "fixture install")
+            require(installer.installPackage(fixtureApk, null) == "org.example", "fixture install")
             testLoadedApk()
 
             val packageManager: PackageManager = HostContexts.systemContext(

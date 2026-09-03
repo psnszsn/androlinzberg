@@ -28,7 +28,8 @@ scripting, or compiler plug-ins.
 - Do not copy an AOSP class only to change its language.
 - Make focused changes to existing compatibility Java.
 
-`tools/check-jvm-source-policy.sh` checks these rules.
+The `jvm-source` mode of `tools/build-audit.zig` checks these rules from the
+same explicit `SourceSet` inputs used by the Zig build graph.
 
 ## Java compatibility
 

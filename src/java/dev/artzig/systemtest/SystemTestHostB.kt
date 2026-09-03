@@ -27,9 +27,9 @@ internal object SystemTestHostB {
         dev.artzig.HostContexts.systemContext(frameworkRes, 640, 480, 120, 0)
         // Install this package's fixture APK: the session's package manager
         // parses the real manifest (client A asserts the parsed values).
-        val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
+        val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_B")) { "AZK_FIXTURE_APK_B is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(installer.installPackage("$fixtures/dev.artzig.test.b.apk", null) == "dev.artzig.test.b")
+        check(installer.installPackage(fixture, null) == "dev.artzig.test.b")
         ActivityThread.attachApplicationHosted("dev.artzig.test.b")
         // AOSP handleBindApplication: the test providers are installed from their
         // parsed ProviderInfos and published before Application.onCreate (client

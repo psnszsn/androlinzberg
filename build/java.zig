@@ -3,31 +3,34 @@
 //! tools/build-java.sh; the curated source list lives in build/java_sources.zig.
 const std = @import("std");
 const LazyPath = std.Build.LazyPath;
-const SourceFiles = @import("artzig").SourceFiles;
+const SourceFiles = @import("artzig").SourceSet;
 const java_sources = @import("java_sources.zig");
+const command = @import("command.zig");
 
 pub const Options = struct {
     artzig: *std.Build.Dependency,
     aosp: *std.Build.Dependency,
     generated: @import("generators.zig").Result,
+    source_audit: *std.Build.Step,
 };
 
 pub const Result = struct {
     /// Classpath jar containing classes.dex and any secondary dex files.
     classpath_jar: LazyPath,
+    app_context_jar: LazyPath,
+    framework_odex: LazyPath,
+    framework_vdex: LazyPath,
     /// Test dex whose kotlin.KotlinVersion must shadow the host copy.
     kotlin_shadow_fixture: LazyPath,
-    res_apk: LazyPath,
-    /// Directory of signed resources-only fixture APKs (testdata/fixture-apks).
-    fixture_apks_dir: LazyPath,
+    resources: @import("generators.zig").FrameworkResources,
+    fixtures: @import("generators.zig").FixtureApks,
     java_step: *std.Build.Step,
 };
 
 pub fn build(b: *std.Build, o: Options) Result {
     const dep = o.artzig;
     const aosp = o.aosp;
-    const fb = aosp.path("frameworks/base");
-    const core_all = dep.namedLazyPath("core-all-jar");
+    const core_all_classes = dep.namedLazyPath("core-all-classes");
     const sources = java_sources.configure(b, aosp);
     var kotlinc_input_collector = SourceFiles.Collector.init(b);
     const kotlinc_root = SourceFiles.Root.dependency(b, aosp, "external/kotlinc");
@@ -36,56 +39,17 @@ pub fn build(b: *std.Build, o: Options) Result {
     kotlinc_input_collector.addFile(kotlinc_root, "build.txt");
     const kotlinc_inputs = kotlinc_input_collector.select(null);
 
-    const source_policy = b.addSystemCommand(&.{"bash"});
-    source_policy.addFileArg(b.path("tools/check-jvm-source-policy.sh"));
-    source_policy.addDirectoryArg(aosp.path(""));
-
-    // 1. core-all + annotation classes -> compile-time "JDK" (system modules)
-    const plus = b.addSystemCommand(&.{ "bash", "tools/make-core-plus.sh" });
-    plus.addFileArg(core_all);
-    plus.addDirectoryArg(fb);
-    const core_plus = plus.addOutputFileArg("core-all-plus.jar");
-
-    const sysmod = b.addSystemCommand(&.{"bash"});
-    sysmod.addFileArg(dep.path("tools/make-system-modules.sh"));
-    sysmod.addFileArg(core_plus);
-    const sysmod_dir = sysmod.addOutputDirectoryArg("sysmodules");
-    sysmod.addDirectoryArg(aosp.path(""));
-
-    // 2. Generated Java, framework resources, and fixture APKs are cacheable
-    // Run/WriteFiles nodes owned by build/generators.zig.
-    const res_apk = o.generated.res_apk;
-    const fixture_apks_dir = o.generated.fixture_apks_dir;
-
-    // 3. Kotlin first, then Java, matching AOSP Soong's mixed-source ordering.
-    // Each compiler owns its output directory; the only shell logic joins
-    // LazyPaths into classpath arguments and shifts the fixed arguments before
-    // forwarding every generated Java file directly.
-    const kotlin_stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
-    const kotlinc = b.addSystemCommand(&.{
-        "sh",
-        "-c",
-        \\compiler="$1"; classpath="$2:$3"; output="$4"; java_sources="$5"; kotlin_sources="$6"; shift 6
-        \\exec "$compiler" -no-jdk -no-stdlib -no-reflect -language-version 2.0 -api-version 2.0 -jvm-target 21 -java-parameters -Xsam-conversions=class -Xstring-concat=inline -classpath "$classpath" -d "$output" "@$java_sources" "@$kotlin_sources" "$@"
-        ,
-        "sh",
+    // 1. core-all + the two annotations missing from libcore -> compile-time
+    // "JDK" (system modules). The broader host annotation set is compiled
+    // separately below and belongs only in framework.jar.
+    const boot_annotation_javac = b.addSystemCommand(&.{
+        "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-d",
     });
-    kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
-    kotlinc.addFileArg(core_plus);
-    kotlinc.addFileArg(kotlin_stdlib);
-    const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
-    kotlinc.addFileArg(sources.java_rsp);
-    kotlinc.addFileArg(sources.kotlin_rsp);
-    for (o.generated.java_files) |file| kotlinc.addFileArg(file);
-    sources.addKotlincInputs(kotlinc);
-    kotlinc_inputs.addInputs(kotlinc);
-    kotlinc.step.dependOn(&source_policy.step);
-    // C1-only code fills the code cache faster; size it for the whole tree.
-    kotlinc.setEnvironmentVariable("JAVA_OPTS", "-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=512m");
-    kotlinc.setName("compile framework Kotlin");
+    const boot_annotation_classes = boot_annotation_javac.addOutputDirectoryArg("boot-annotation-classes");
+    boot_annotation_javac.addFileArg(aosp.path("frameworks/base/core/java/android/annotation/SuppressLint.java"));
+    boot_annotation_javac.addFileArg(aosp.path("frameworks/base/core/java/android/annotation/TargetApi.java"));
+    boot_annotation_javac.setName("compile boot annotations");
 
-    // android.annotation belongs to the system-module image, so runtime copies
-    // of annotation classes need a separate module-free javac pass.
     const annotation_javac = b.addSystemCommand(&.{
         "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-d",
     });
@@ -94,24 +58,73 @@ pub fn build(b: *std.Build, o: Options) Result {
     sources.addAnnotationInputs(annotation_javac);
     annotation_javac.setName("compile runtime annotations");
 
-    const javac = b.addSystemCommand(&.{
-        "bash",
-        "-c",
-        \\system="$1"; classpath="$2:$3:$4"; output="$5"; sources="$6"; shift 6
-        \\exec javac --system="$system" -source 21 -target 21 -encoding UTF-8 -g -parameters -XDstringConcat=inline -Xmaxerrs 2000 -nowarn -Xlint:none -classpath "$classpath" -d "$output" "@$sources" "$@" 2> >(grep -F -v -e 'Note: Some input files use or override a deprecated API.' -e 'Note: Recompile with -Xlint:deprecation for details.' -e 'Note: Some input files use unchecked or unsafe operations.' -e 'Note: Recompile with -Xlint:unchecked for details.' >&2)
-        ,
-        "bash",
-    });
+    const plus = b.addSystemCommand(&.{ "jar", "--create", "--file" });
+    const core_plus = plus.addOutputFileArg("core-all-plus.jar");
+    plus.addArg("-C");
+    plus.addDirectoryArg(core_all_classes);
+    plus.addArg(".");
+    plus.addArg("-C");
+    plus.addDirectoryArg(boot_annotation_classes);
+    plus.addArg("android/annotation/SuppressLint.class");
+    plus.addArg("-C");
+    plus.addDirectoryArg(boot_annotation_classes);
+    plus.addArg("android/annotation/TargetApi.class");
+
+    const sysmod_dir = @import("artzig").systemModules(
+        b,
+        aosp.path(""),
+        core_plus,
+        &.{ core_all_classes, boot_annotation_classes },
+        b.path("artzig/tools/build-command.zig"),
+    );
+
+    // 2. Generated Java, framework resources, and fixture APKs are cacheable
+    // Run/WriteFiles nodes owned by build/generators.zig.
+    const res_apk = o.generated.resources.apk;
+
+    // 3. Kotlin first, then Java, matching AOSP Soong's mixed-source ordering.
+    // The host command adapter joins the exact classpath LazyPaths without
+    // hiding either source or compiler dependencies in shell syntax.
+    const kotlin_stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
+    const kotlinc = command.create(b);
+    kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
+    inline for (.{ "-no-jdk", "-no-stdlib", "-no-reflect", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters", "-Xsam-conversions=class", "-Xstring-concat=inline", "-classpath" }) |arg| kotlinc.addArg(arg);
+    kotlinc.addJoinedPaths(":", &.{ core_plus, kotlin_stdlib });
+    kotlinc.addArg("-d");
+    const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
+    kotlinc.addPrefixedFileArg("@", sources.java_rsp);
+    kotlinc.addPrefixedFileArg("@", sources.kotlin_rsp);
+    for (o.generated.jvm.sources) |file| kotlinc.addFileArg(file);
+    sources.addKotlincInputs(kotlinc.run);
+    kotlinc_inputs.addInputs(kotlinc.run);
+    kotlinc.run.step.dependOn(o.source_audit);
+    // C1-only code fills the code cache faster; size it for the whole tree.
+    kotlinc.run.setEnvironmentVariable("JAVA_OPTS", "-Xmx2048M -Xms256M -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=512m");
+    kotlinc.run.setName("compile framework Kotlin");
+
+    const javac = command.create(b);
+    javac.addArg("javac");
+    javac.addArg("--system");
     javac.addDirectoryArg(sysmod_dir);
-    javac.addDirectoryArg(kotlin_classes);
-    javac.addDirectoryArg(annotation_classes);
-    javac.addFileArg(kotlin_stdlib);
+    inline for (.{ "-source", "21", "-target", "21", "-encoding", "UTF-8", "-g", "-parameters", "-XDstringConcat=inline", "-Xmaxerrs", "2000", "-nowarn", "-Xlint:none", "-classpath" }) |arg| javac.addArg(arg);
+    javac.addJoinedPathInputs(":", &.{
+        .{ .directory = kotlin_classes },
+        .{ .directory = annotation_classes },
+        .{ .file = kotlin_stdlib },
+    });
+    javac.addArg("-d");
     const java_classes = javac.addOutputDirectoryArg("java-classes");
-    javac.addFileArg(sources.java_rsp);
-    for (o.generated.java_files) |file| javac.addFileArg(file);
-    sources.addJavacInputs(javac);
-    javac.step.dependOn(&source_policy.step);
-    javac.setName("compile framework Java");
+    javac.addPrefixedFileArg("@", sources.java_rsp);
+    for (o.generated.jvm.sources) |file| javac.addFileArg(file);
+    inline for (.{
+        "Note: Some input files use or override a deprecated API.",
+        "Note: Recompile with -Xlint:deprecation for details.",
+        "Note: Some input files use unchecked or unsafe operations.",
+        "Note: Recompile with -Xlint:unchecked for details.",
+    }) |pattern| javac.filterStderr(pattern);
+    sources.addJavacInputs(javac.run);
+    javac.run.step.dependOn(o.source_audit);
+    javac.run.setName("compile framework Java");
 
     // 5. Package each compiler's directory directly, with no intermediate
     // class-tree copies. The r8 CLI takes jars rather than directories.
@@ -151,13 +164,41 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     // Android's framework jars are dexpreopted into the system image. Build an adjacent hosted
     // odex/vdex pair against the exact ART boot image and final framework.jar location.
-    const dexopt = b.addSystemCommand(&.{"bash"});
-    dexopt.addFileArg(b.path("tools/dexopt-framework.sh"));
-    dexopt.addDirectoryArg(dep.namedLazyPath("art-runtime"));
-    dexopt.addFileArg(classpath_jar);
-    dexopt.addFileArg(b.graph.path(.install_prefix, "framework/framework.jar"));
-    const framework_oat = dexopt.addOutputDirectoryArg("framework-oat");
-    dexopt.setName("dex2oat framework.jar (speed)");
+    const art_runtime = dep.namedLazyPath("art-runtime");
+    const dexopt = command.create(b);
+    dexopt.setPathEnvironment("ANDROID_ROOT", art_runtime);
+    dexopt.setChildPathEnvironment("ANDROID_ART_ROOT", "apex/com.android.art", art_runtime);
+    dexopt.setChildPathEnvironment("ANDROID_I18N_ROOT", "com.android.i18n", art_runtime);
+    dexopt.setChildPathEnvironment("ANDROID_TZDATA_ROOT", "com.android.tzdata", art_runtime);
+    _ = dexopt.setOutputDirectoryEnvironment("ANDROID_DATA", "framework-oat-data");
+    dexopt.run.setEnvironmentVariable("ANDROID_LOG_TAGS", "*:w");
+    dexopt.addChildPathArg("bin/dex2oat64", art_runtime);
+    dexopt.addPrefixedFileArg("--dex-file=", classpath_jar);
+    dexopt.addPrefixedFileArg("--dex-location=", classpath_jar);
+    const framework_odex = dexopt.addPrefixedOutputFileArg("--oat-file=", "framework.odex");
+    const framework_vdex = dexopt.addPrefixedOutputFileArg("--output-vdex=", "framework.vdex");
+    dexopt.addArgs(&.{
+        "--instruction-set=x86_64",
+        "--instruction-set-features=runtime",
+        "--compiler-filter=speed",
+        "--class-loader-context=PCL[]",
+    });
+    dexopt.addPrefixedChildPathArg("--boot-image=", "apex/com.android.art/javalib/boot.art", art_runtime);
+    dexopt.addArg("--runtime-arg");
+    dexopt.addPrefixedJoinedChildPaths("-Xbootclasspath:", ":", &.{
+        "apex/com.android.art/javalib/core-oj.jar",
+        "apex/com.android.art/javalib/core-libart.jar",
+        "apex/com.android.art/javalib/okhttp.jar",
+        "apex/com.android.art/javalib/bouncycastle.jar",
+        "apex/com.android.art/javalib/apache-xml.jar",
+        "apex/com.android.i18n/javalib/core-icu4j.jar",
+        "apex/com.android.conscrypt/javalib/conscrypt.jar",
+    }, art_runtime);
+    dexopt.addArg("--runtime-arg");
+    dexopt.addArg("-Xbootclasspath-locations:/apex/com.android.art/javalib/core-oj.jar:/apex/com.android.art/javalib/core-libart.jar:/apex/com.android.art/javalib/okhttp.jar:/apex/com.android.art/javalib/bouncycastle.jar:/apex/com.android.art/javalib/apache-xml.jar:/apex/com.android.i18n/javalib/core-icu4j.jar:/apex/com.android.conscrypt/javalib/conscrypt.jar");
+    dexopt.addArgs(&.{ "--no-generate-mini-debug-info", "-j4" });
+    dexopt.filterStderr(" Compilation of ");
+    dexopt.run.setName("dex2oat framework.jar (speed)");
     d8.addFileArg(aosp.path("external/kotlinc/lib/kotlin-stdlib.jar"));
 
     // A tiny app dex used to verify that APK-bundled kotlin.* classes win over
@@ -184,28 +225,17 @@ pub fn build(b: *std.Build, o: Options) Result {
     fixture_d8.addFileArg(fixture_classes_jar);
 
     const java_step = b.step("java", "Build the framework jar (kotlinc + javac + d8), framework-res.apk and generated Java");
-    java_step.dependOn(&b.addInstallFileWithDir(classpath_jar, .{ .custom = "framework" }, "framework.jar").step);
-    java_step.dependOn(&b.addInstallFileWithDir(
-        app_context_jar,
-        .{ .custom = "framework" },
-        "framework-app-context.jar",
-    ).step);
-    java_step.dependOn(&b.addInstallFileWithDir(
-        framework_oat.path(b, "framework.odex"),
-        .{ .custom = "framework/oat/x86_64" },
-        "framework.odex",
-    ).step);
-    java_step.dependOn(&b.addInstallFileWithDir(
-        framework_oat.path(b, "framework.vdex"),
-        .{ .custom = "framework/oat/x86_64" },
-        "framework.vdex",
-    ).step);
-    java_step.dependOn(&b.addInstallFileWithDir(res_apk, .{ .custom = "res" }, "framework-res.apk").step);
+    inline for (.{ classpath_jar, app_context_jar, framework_odex, framework_vdex, res_apk }) |path| {
+        path.addStepDependencies(java_step);
+    }
     return .{
         .classpath_jar = classpath_jar,
+        .app_context_jar = app_context_jar,
+        .framework_odex = framework_odex,
+        .framework_vdex = framework_vdex,
         .kotlin_shadow_fixture = kotlin_shadow_fixture,
-        .res_apk = res_apk,
-        .fixture_apks_dir = fixture_apks_dir,
+        .resources = o.generated.resources,
+        .fixtures = o.generated.fixtures,
         .java_step = java_step,
     };
 }

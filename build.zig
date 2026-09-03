@@ -7,16 +7,57 @@
 const std = @import("std");
 const Scanner = @import("wayland").Scanner;
 
+fn setApplicationEnvironment(command: @import("build/command.zig").Command, tree: std.Build.LazyPath) void {
+    command.setPathEnvironment("ARTZIG_INSTALL_ROOT", tree);
+    command.setPathEnvironment("ARTZIG_ROOT", tree.path(command.b, "bin/art"));
+    // glibc reads LD_LIBRARY_PATH at process startup. ART later dlopens its
+    // built-in JNI libraries by soname, so direct cache-tree executions must
+    // expose the emitted runtime's lib64 directory to the child process.
+    command.setPathEnvironment("LD_LIBRARY_PATH", tree.path(command.b, "bin/art/lib64"));
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{ .default_target = .{ .cpu_model = .baseline } });
     const optimize = b.standardOptimizeOption(.{});
+    const host_toolchain = @import("build/host_toolchain.zig").discover(b);
 
-    const cpp_audit = b.addSystemCommand(&.{ "bash", "tools/check-native-boundary.sh" });
-    cpp_audit.addFileInput(b.path("tools/check-native-boundary.sh"));
-    cpp_audit.setName("audit application C++ boundary");
-    const cpp_audit_step = b.step("cpp-audit", "Verify that C++ is limited to HWUI/Skia/AOSP ABI bridges");
-    cpp_audit_step.dependOn(&cpp_audit.step);
-    b.getInstallStep().dependOn(&cpp_audit.step);
+    const build_tools_test = b.step("build-tools-test", "Run build graph support unit tests");
+    @import("build/command.zig").addTests(b, build_tools_test);
+    const audit_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/build-audit.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    audit_tests.root_module.addImport("generator_sources", b.createModule(.{
+        .root_source_file = b.path("build/generator_sources.zig"),
+    }));
+    build_tools_test.dependOn(&b.addRunArtifact(audit_tests).step);
+    const source_set_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("artzig/build/source_files.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    build_tools_test.dependOn(&b.addRunArtifact(source_set_tests).step);
+    const jar_entry_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("artzig/build/jar_entries.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    build_tools_test.dependOn(&b.addRunArtifact(jar_entry_tests).step);
+    const generator_declaration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("build/generator_sources.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    build_tools_test.dependOn(&b.addRunArtifact(generator_declaration_tests).step);
 
     // --- zig-wayland: generate protocol bindings
     const scanner = Scanner.create(b, .{});
@@ -52,7 +93,58 @@ pub fn build(b: *std.Build) void {
     const aosp = aosp_dep.path("");
     const artzig_dep = b.dependency("artzig", .{ .target = target, .optimize = optimize });
     const art_mod = artzig_dep.module("art");
-    @import("artzig").installRuntime(b, artzig_dep, b.getInstallStep());
+    const build_audit = b.addExecutable(.{
+        .name = "build-audit",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/build-audit.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    build_audit.root_module.addImport("generator_sources", b.createModule(.{
+        .root_source_file = b.path("build/generator_sources.zig"),
+    }));
+    const SourceSet = @import("artzig").SourceSet;
+    var project_jvm = SourceSet.Collector.init(b);
+    inline for (.{ "artzig/src", "artzig/examples", "src", "tests", "testdata", "tools" }) |root| {
+        project_jvm.addTree(SourceSet.Root.project(b, root), .{ .extensions = &.{ ".java", ".kt" } });
+    }
+    const project_jvm_files = project_jvm.select(null);
+    const jvm_source_audit = b.addRunArtifact(build_audit);
+    jvm_source_audit.addArg("jvm-source");
+    jvm_source_audit.addDirectoryArg(b.path(""));
+    jvm_source_audit.addDirectoryArg(aosp);
+    for (project_jvm_files.items) |file| jvm_source_audit.addFileArg(file.path);
+    project_jvm_files.addInputs(jvm_source_audit);
+    jvm_source_audit.setName("audit JVM source provenance");
+
+    var project_cpp = SourceSet.Collector.init(b);
+    project_cpp.addTree(SourceSet.Root.project(b, "src"), .{ .extensions = &.{ ".cpp", ".cc", ".cxx" } });
+    const project_cpp_files = project_cpp.select(null);
+    const cpp_audit = b.addRunArtifact(build_audit);
+    cpp_audit.addArg("cpp-boundary");
+    for (project_cpp_files.items) |file| cpp_audit.addFileArg(file.path);
+    project_cpp_files.addInputs(cpp_audit);
+    cpp_audit.setName("audit application C++ boundary");
+    const cpp_audit_step = b.step("cpp-audit", "Verify that C++ is limited to HWUI/Skia/AOSP ABI bridges");
+    cpp_audit_step.dependOn(&cpp_audit.step);
+    b.getInstallStep().dependOn(&cpp_audit.step);
+
+    var graph_sources = SourceSet.Collector.init(b);
+    graph_sources.addFile(SourceSet.Root.project(b, ""), "build.zig");
+    graph_sources.addFile(SourceSet.Root.project(b, "artzig"), "build.zig");
+    graph_sources.addTree(SourceSet.Root.project(b, "build"), .{ .extensions = &.{".zig"} });
+    graph_sources.addTree(SourceSet.Root.project(b, "artzig/build"), .{ .extensions = &.{".zig"} });
+    const graph_files = graph_sources.select(".zig");
+    const graph_audit = b.addRunArtifact(build_audit);
+    graph_audit.addArg("graph");
+    for (graph_files.items) |file| graph_audit.addFileArg(file.path);
+    graph_files.addInputs(graph_audit);
+    graph_audit.setName("audit LazyPath build graph invariants");
+    const graph_audit_step = b.step("graph-audit", "Reject script, install-prefix, and path-identity regressions");
+    graph_audit_step.dependOn(&graph_audit.step);
+    build_tools_test.dependOn(&graph_audit.step);
+    b.getInstallStep().dependOn(&graph_audit.step);
     const libart_overlay = artzig_dep.namedLazyPath("libart-so");
     const libjavacrypto_overlay = artzig_dep.namedLazyPath("libjavacrypto-so");
     const bionic_overlays = .{
@@ -61,11 +153,20 @@ pub fn build(b: *std.Build) void {
         .{ artzig_dep.namedLazyPath("libc-bio-so"), "libc_bio.so" },
         .{ artzig_dep.namedLazyPath("libstdcpp-bio-so"), "libstdc++_bio.so" },
     };
+    const binder_broker = b.addExecutable(.{
+        .name = "azk-binder-broker",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/binder/broker_main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
 
     // --- Skia: static, built with zig c++ from the pinned AOSP tree.
     const skia_lib = @import("build/skia.zig").build(b, .{
         .root = aosp.path(b, "external/skia"),
         .target = target,
+        .host_include_roots = host_toolchain.skia.roots,
         .include_dirs = &.{
             aosp.path(b, "system/core/libcutils/include"),
             aosp.path(b, "system/logging/liblog/include"),
@@ -148,13 +249,8 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "art", .module = art_mod }},
         }),
     });
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        binder_ndk.getEmittedBin(),
-        .{ .custom = "lib/art" },
-        "libbinder_ndk.so",
-    ).step);
     b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
-        .dependOn(&b.addInstallFileWithDir(binder_ndk.getEmittedBin(), .{ .custom = "lib/art" }, "libbinder_ndk.so").step);
+        .dependOn(&binder_ndk.step);
 
     // --- native island: hwui + JNI + our shims, linked against static Skia
     const island = @import("build/island.zig").build(b, .{
@@ -163,56 +259,43 @@ pub fn build(b: *std.Build) void {
         .skia = skia_lib,
         .binder_ndk = binder_ndk,
         .art = art_mod,
-        .aidl_cpp = generated.aidl_cpp,
-        .aosp_dir = aosp_dep.builder.root.toString(b.allocator) catch @panic("OOM"),
+        .aidl_header_roots = generated.native.aidl_header_roots,
+        .host_include_roots = host_toolchain.island.include_roots,
+        .host_library_roots = host_toolchain.island.library_roots,
+        .host_libraries = host_toolchain.island.libraries,
+        .host_link_flags = host_toolchain.island.link_flags,
+        .aosp = aosp,
     });
-    b.installArtifact(island);
-    b.step("island", "Build libandroid_platform.so").dependOn(&b.addInstallArtifact(island, .{}).step);
+    b.step("island", "Build libandroid_platform.so").dependOn(island.step);
 
     // --- framework JVM jar (Java + Kotlin), framework-res.apk, generated Java
     const java = @import("build/java.zig").build(b, .{
         .artzig = artzig_dep,
         .aosp = aosp_dep,
         .generated = generated,
+        .source_audit = &jvm_source_audit.step,
     });
-    b.getInstallStep().dependOn(java.java_step);
     const testkit = @import("build/testkit.zig").build(b, aosp_dep);
-    b.getInstallStep().dependOn(testkit.install_step);
+    const testkit_jars = testkit.jars.all();
+    inline for (.{
+        .{ testkit.jars.testkit, "azk-test/testkit.jar" },
+        .{ testkit.jars.tests, "azk-test/tests.jar" },
+        .{ testkit.jars.junit_hamcrest, "azk-test/junit-hamcrest.jar" },
+        .{ testkit.jars.gson, "azk-test/gson.jar" },
+        .{ testkit.jars.kotlin_stdlib, "azk-test/kotlin-stdlib.jar" },
+        .{ testkit.jars.kotlin_stdlib_jdk7, "azk-test/kotlin-stdlib-jdk7.jar" },
+        .{ testkit.jars.kotlin_stdlib_jdk8, "azk-test/kotlin-stdlib-jdk8.jar" },
+        .{ testkit.jars.kotlin_test, "azk-test/kotlin-test.jar" },
+        .{ testkit.jars.kotlin_test_junit, "azk-test/kotlin-test-junit.jar" },
+    }) |entry| b.getInstallStep().dependOn(&b.addInstallFileWithDir(entry[0], .lib, entry[1]).step);
     b.installBinFile("tools/azk-test", "azk-test");
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        b.path("tools/dexopt-apk.sh"),
-        .{ .custom = "share/androlinzberg" },
-        "dexopt-apk.sh",
-    ).step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        libart_overlay,
-        .{ .custom = "lib/art" },
-        "libart.so",
-    ).step);
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        libjavacrypto_overlay,
-        .{ .custom = "lib/art" },
-        "libjavacrypto.so",
-    ).step);
-    inline for (bionic_overlays) |overlay| {
-        b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-            overlay[0],
-            .{ .custom = "lib/art" },
-            overlay[1],
-        ).step);
-    }
-    b.getInstallStep().dependOn(&b.addInstallFileWithDir(
-        b.path("src/bionic_translation.cfg"),
-        .{ .custom = "share/bionic_translation/cfg.d" },
-        "bionic_translation.cfg",
-    ).step);
 
-    // ABI-conformance check: the installed .so must export every A* symbol the
+    // ABI-conformance check: the emitted .so must export every A* symbol the
     // prebuilt libbinder_ndk.so does, so unmodified NDK/AIDL clients resolve.
-    const ndk_abi_check = b.addSystemCommand(&.{ "bash", "tools/check-ndk-abi.sh" });
-    ndk_abi_check.addFileArg(b.graph.path(.install_prefix, "lib/art/libbinder_ndk.so"));
+    const ndk_abi_check = b.addRunArtifact(build_audit);
+    ndk_abi_check.addArg("ndk-abi");
+    ndk_abi_check.addFileArg(binder_ndk.getEmittedBin());
     ndk_abi_check.addFileArg(aosp.path(b, "prebuilts/runtime/mainline/platform/sdk/x86_64/lib/libbinder_ndk.so"));
-    ndk_abi_check.step.dependOn(b.getInstallStep());
     b.step("ndk-abi", "Check libbinder_ndk exports the full prebuilt ABI").dependOn(&ndk_abi_check.step);
 
     // Native binder self-test: links the ABI and drives it against a broker.
@@ -227,8 +310,7 @@ pub fn build(b: *std.Build) void {
     });
     ndk_test.root_module.linkLibrary(binder_ndk);
     const ndk_test_run = b.addRunArtifact(ndk_test);
-    ndk_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
-    ndk_test_run.step.dependOn(b.getInstallStep());
+    ndk_test_run.addFileArg(binder_broker.getEmittedBin());
     b.step("ndk-test", "Run the native binder ABI self-test").dependOn(&ndk_test_run.step);
 
     // Cross-language system-test client: links the ABI and, connecting to the
@@ -265,8 +347,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkSystemLibrary("wayland-client", .{ .needed = true });
     exe.root_module.linkSystemLibrary("xkbcommon", .{ .needed = true });
     exe.root_module.linkSystemLibrary("fontconfig", .{ .needed = true }); // platform/fonts.zig
-    exe.step.dependOn(&b.addInstallArtifact(island, .{}).step);
-    b.installArtifact(exe);
 
     // --- azk_codec: MediaCodec backend over system FFmpeg. The system build
     // includes VA-API and DRM hwcontexts, which the minimal vendored build does
@@ -277,14 +357,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    inline for (.{ "libavcodec", "libavutil", "libva", "libdrm" }) |pc| {
-        var code: u8 = 0;
-        const out = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", pc }, &code, .ignore) catch @panic("pkg-config " ++ pc);
-        var it = std.mem.tokenizeAny(u8, out, " \n");
-        while (it.next()) |flag| if (std.mem.startsWith(u8, flag, "-I")) {
-            av_tc.addIncludePath(.{ .cwd_relative = b.dupe(flag[2..]) });
-        };
-    }
+    for (host_toolchain.codec.roots) |root| av_tc.addSystemIncludePath(root);
     av_tc.addIncludePath(b.path("src/codec"));
     const codec_mod = b.createModule(.{
         .root_source_file = b.path("src/codec/azk_codec.zig"),
@@ -333,12 +406,7 @@ pub fn build(b: *std.Build) void {
         .file = b.path("src/platform/azk_pipewire.c"),
         .flags = &.{ "-std=c11", "-D_GNU_SOURCE" },
     });
-    var pipewire_code: u8 = 0;
-    const pipewire_cflags = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "libpipewire-0.3" }, &pipewire_code, .ignore) catch @panic("pkg-config libpipewire-0.3");
-    var pipewire_flags = std.mem.tokenizeAny(u8, pipewire_cflags, " \n");
-    while (pipewire_flags.next()) |flag| if (std.mem.startsWith(u8, flag, "-I")) {
-        audio_mod.addIncludePath(.{ .cwd_relative = b.dupe(flag[2..]) });
-    };
+    for (host_toolchain.pipewire.roots) |root| audio_mod.addSystemIncludePath(root);
     audio_mod.linkSystemLibrary("pipewire-0.3", .{ .needed = true, .use_pkg_config = .no });
     const event_fd_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/event_fd.zig"),
@@ -433,15 +501,6 @@ pub fn build(b: *std.Build) void {
     const platform_abi_check = b.addObject(.{ .name = "platform-abi-check", .root_module = platform_abi_test_mod });
     const launcher_check = b.addObject(.{ .name = "launcher-check", .root_module = exe.root_module });
     // --- hosted Binder broker + protocol tests
-    const binder_broker = b.addExecutable(.{
-        .name = "azk-binder-broker",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/binder/broker_main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    b.installArtifact(binder_broker);
     const binder_broker_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/binder/broker_test.zig"),
@@ -450,6 +509,32 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_binder_broker_tests = b.addRunArtifact(binder_broker_tests);
+    const application_tree = @import("build/application.zig").build(b, .{
+        .launcher = exe.getEmittedBin(),
+        .broker = binder_broker.getEmittedBin(),
+        .island = island.file,
+        .binder_ndk = binder_ndk.getEmittedBin(),
+        .art_runtime = artzig_dep.namedLazyPath("art-runtime"),
+        .libart = libart_overlay,
+        .libjavacrypto = libjavacrypto_overlay,
+        .bionic = .{
+            .{ .file = bionic_overlays[0][0], .name = bionic_overlays[0][1] },
+            .{ .file = bionic_overlays[1][0], .name = bionic_overlays[1][1] },
+            .{ .file = bionic_overlays[2][0], .name = bionic_overlays[2][1] },
+            .{ .file = bionic_overlays[3][0], .name = bionic_overlays[3][1] },
+        },
+        .framework_jar = java.classpath_jar,
+        .framework_app_context = java.app_context_jar,
+        .framework_odex = java.framework_odex,
+        .framework_vdex = java.framework_vdex,
+        .framework_resources = java.resources.apk,
+    });
+    b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+        .source_dir = application_tree,
+        .install_dir = .prefix,
+        .install_subdir = "",
+    }).step);
+
     const binder_test_driver = b.addExecutable(.{
         .name = "azk-binder-test",
         .root_module = b.createModule(.{
@@ -458,11 +543,13 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    const binder_test_run = b.addRunArtifact(binder_test_driver);
-    binder_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
-    binder_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
-    binder_test_run.step.dependOn(b.getInstallStep());
-    b.step("binder-test", "Run multi-process hosted Binder tests through the broker").dependOn(&binder_test_run.step);
+    const binder_test_run = @import("build/command.zig").create(b);
+    setApplicationEnvironment(binder_test_run, application_tree);
+    binder_test_run.addFileArg(binder_test_driver.getEmittedBin());
+    binder_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    binder_test_run.addFileArg(application_tree.path(b, "bin/azk-binder-broker"));
+    binder_test_run.run.setName("run hosted Binder tests");
+    b.step("binder-test", "Run multi-process hosted Binder tests through the broker").dependOn(&binder_test_run.run.step);
 
     const system_test_driver = b.addExecutable(.{
         .name = "azk-system-test",
@@ -472,13 +559,16 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    const system_test_run = b.addRunArtifact(system_test_driver);
-    system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
-    system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-binder-broker"));
-    system_test_run.addDirectoryArg(java.fixture_apks_dir);
-    system_test_run.addFileArg(b.graph.path(.install_prefix, "bin/azk-ndk-system-client"));
-    system_test_run.step.dependOn(b.getInstallStep());
-    b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.step);
+    const system_test_run = @import("build/command.zig").create(b);
+    setApplicationEnvironment(system_test_run, application_tree);
+    system_test_run.addFileArg(system_test_driver.getEmittedBin());
+    system_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    system_test_run.addFileArg(application_tree.path(b, "bin/azk-binder-broker"));
+    system_test_run.addFileArg(java.fixtures.test_a);
+    system_test_run.addFileArg(java.fixtures.test_b);
+    system_test_run.addFileArg(ndk_system_client.getEmittedBin());
+    system_test_run.run.setName("run hosted system-service tests");
+    b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.run.step);
 
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
     native_test_step.dependOn(&run_audio_tests.step);
@@ -495,115 +585,121 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&launcher_check.step);
     native_test_step.dependOn(&cpp_audit.step);
 
-    const jvm_test_run = std.Build.Step.Run.create(b, "run JVM integration tests");
-    jvm_test_run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    const jvm_test_run = @import("build/command.zig").create(b);
+    setApplicationEnvironment(jvm_test_run, application_tree);
+    jvm_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     jvm_test_run.addArg("--javatest");
     jvm_test_run.addFileArg(java.kotlin_shadow_fixture);
-    jvm_test_run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.KotlinClassLoaderSmoke");
+    jvm_test_run.run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.KotlinClassLoaderSmoke");
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    jvm_test_run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
-    jvm_test_run.step.dependOn(b.getInstallStep());
+    jvm_test_run.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    jvm_test_run.run.setName("run JVM integration tests");
     const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
-    jvm_test_step.dependOn(&jvm_test_run.step);
-    const framework_module_smoke = std.Build.Step.Run.create(b, "run hosted framework module tests");
-    framework_module_smoke.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    jvm_test_step.dependOn(&jvm_test_run.run.step);
+    const framework_module_smoke = @import("build/command.zig").create(b);
+    setApplicationEnvironment(framework_module_smoke, application_tree);
+    framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     framework_module_smoke.addArg("--javatest");
-    framework_module_smoke.setEnvironmentVariable(
+    framework_module_smoke.run.setEnvironmentVariable(
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkModuleSmoke",
     );
     // Fixture APKs (installed server-side by the permission-grant test).
-    framework_module_smoke.addDirectoryArg(java.fixture_apks_dir);
+    framework_module_smoke.addFileArg(java.fixtures.permissions);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    framework_module_smoke.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
-    framework_module_smoke.step.dependOn(b.getInstallStep());
-    jvm_test_step.dependOn(&framework_module_smoke.step);
-    const framework_compat_smoke = std.Build.Step.Run.create(b, "run framework compatibility smoke");
-    framework_compat_smoke.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    framework_module_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    framework_module_smoke.run.setName("run hosted framework module tests");
+    jvm_test_step.dependOn(&framework_module_smoke.run.step);
+    const framework_compat_smoke = @import("build/command.zig").create(b);
+    setApplicationEnvironment(framework_compat_smoke, application_tree);
+    framework_compat_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     framework_compat_smoke.addArg("--javatest");
-    framework_compat_smoke.setEnvironmentVariable(
+    framework_compat_smoke.run.setEnvironmentVariable(
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkCompatSmoke",
     );
     // Absolute fixture paths on argv (the smoke must not depend on the CWD):
-    // the androidfw parser fixture, then the fixture-APK directory.
+    // the androidfw parser fixture, then the generated package fixture.
     framework_compat_smoke.addFileArg(
         aosp.path(b, "frameworks/base/libs/androidfw/tests/data/app/app.apk"),
     );
-    framework_compat_smoke.addDirectoryArg(java.fixture_apks_dir);
+    framework_compat_smoke.addFileArg(java.fixtures.example);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    framework_compat_smoke.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
-    framework_compat_smoke.step.dependOn(b.getInstallStep());
-    jvm_test_step.dependOn(&framework_compat_smoke.step);
+    framework_compat_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    framework_compat_smoke.run.setName("run framework compatibility smoke");
+    jvm_test_step.dependOn(&framework_compat_smoke.run.step);
     // JNI true-sharing bridge: loads libbinder_ndk into the ART process and
     // round-trips a binder across the language boundary in both directions.
-    const ndk_bridge_test = std.Build.Step.Run.create(b, "run libbinder_ndk JNI bridge test");
-    ndk_bridge_test.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    const ndk_bridge_test = @import("build/command.zig").create(b);
+    setApplicationEnvironment(ndk_bridge_test, application_tree);
+    ndk_bridge_test.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     ndk_bridge_test.addArg("--javatest");
-    // The absolute path of the installed library, loaded via System.load.
-    ndk_bridge_test.addFileArg(b.graph.path(.install_prefix, "lib/art/libbinder_ndk.so"));
-    ndk_bridge_test.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.NdkBridgeTest");
-    ndk_bridge_test.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
-    ndk_bridge_test.step.dependOn(b.getInstallStep());
-    jvm_test_step.dependOn(&ndk_bridge_test.step);
-    const jvm_exit_smoke = std.Build.Step.Run.create(b, "run hosted JVM exit smoke");
-    jvm_exit_smoke.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
+    ndk_bridge_test.addFileArg(application_tree.path(b, "lib/art/libbinder_ndk.so"));
+    ndk_bridge_test.run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.NdkBridgeTest");
+    ndk_bridge_test.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    ndk_bridge_test.run.setName("run libbinder_ndk JNI bridge test");
+    jvm_test_step.dependOn(&ndk_bridge_test.run.step);
+    const jvm_exit_smoke = @import("build/command.zig").create(b);
+    setApplicationEnvironment(jvm_exit_smoke, application_tree);
+    jvm_exit_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     jvm_exit_smoke.addArg("--javatest");
-    jvm_exit_smoke.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.JvmExitSmoke");
-    jvm_exit_smoke.expectExitCode(23);
+    jvm_exit_smoke.run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.JvmExitSmoke");
+    jvm_exit_smoke.run.expectExitCode(23);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    jvm_exit_smoke.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
-    jvm_exit_smoke.step.dependOn(b.getInstallStep());
-    jvm_test_step.dependOn(&jvm_exit_smoke.step);
+    jvm_exit_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    jvm_exit_smoke.run.setName("run hosted JVM exit smoke");
+    jvm_test_step.dependOn(&jvm_exit_smoke.run.step);
 
-    const testkit_step = b.step("testkit", "Build and install the host Kotlin testkit");
-    testkit_step.dependOn(testkit.install_step);
+    const testkit_step = b.step("testkit", "Build the host Kotlin testkit jars");
+    for (testkit_jars) |path| path.addStepDependencies(testkit_step);
 
-    const azk_test_run = std.Build.Step.Run.create(b, "run Kotlin azk-test client");
-    azk_test_run.addFileArg(b.path("tools/azk-test"));
+    const azk_test_run = @import("build/command.zig").create(b);
+    azk_test_run.addArgs(&.{ "java", "-cp" });
+    azk_test_run.addJoinedPaths(":", &testkit_jars);
+    azk_test_run.addArg("dev.artzig.testkit.AzkTestCli");
     azk_test_run.addPassthruArgs();
-    azk_test_run.step.dependOn(testkit.install_step);
-    b.step("azk-test", "Run the Kotlin test-control CLI").dependOn(&azk_test_run.step);
+    azk_test_run.run.setName("run Kotlin azk-test client");
+    b.step("azk-test", "Run the Kotlin test-control CLI").dependOn(&azk_test_run.run.step);
 
-    const testkit_unit_run = std.Build.Step.Run.create(b, "run Kotlin testkit unit tests");
-    testkit_unit_run.addFileArg(b.path("tools/azk-test"));
-    testkit_unit_run.addArg("--unit");
-    testkit_unit_run.step.dependOn(testkit.install_step);
+    const testkit_unit_run = @import("build/command.zig").create(b);
+    testkit_unit_run.addArgs(&.{ "java", "-cp" });
+    testkit_unit_run.addJoinedPaths(":", &testkit_jars);
+    testkit_unit_run.addArg("dev.artzig.testkit.TestkitUnitTestMain");
+    testkit_unit_run.run.setName("run Kotlin testkit unit tests");
     const testkit_test_step = b.step("testkit-test", "Run host Kotlin testkit unit tests");
-    testkit_test_step.dependOn(&testkit_unit_run.step);
+    testkit_test_step.dependOn(&testkit_unit_run.run.step);
 
-    const integration_run = b.addSystemCommand(&.{
-        "env",
-        "WLR_RENDERER=gles2",
-        "AZK_LAUNCHER=zig-out/bin/androlinzberg",
-        "AZK_APK_REGISTRY=tests/apks.json",
-        "AZK_ARTIFACT_ROOT=zig-out/test-results/integration",
-        "AZK_SHARED_CACHE=zig-out/test-cache/integration",
-        "bash",
-    });
+    const integration_run = @import("build/command.zig").create(b);
+    integration_run.setFileEnvironment("AZK_LAUNCHER", application_tree.path(b, "bin/androlinzberg"));
+    setApplicationEnvironment(integration_run, application_tree);
+    integration_run.run.setEnvironmentVariable("WLR_RENDERER", "gles2");
+    integration_run.run.setEnvironmentVariable("AZK_APK_REGISTRY", "tests/apks.json");
+    integration_run.run.setEnvironmentVariable("AZK_ARTIFACT_ROOT", "zig-out/test-results/integration");
+    integration_run.run.setEnvironmentVariable("AZK_SHARED_CACHE", "zig-out/test-cache/integration");
+    integration_run.addArg("bash");
     integration_run.addFileArg(b.path("tools/shot.sh"));
-    integration_run.addArg("zig-out/test-results/integration/suite.png");
-    integration_run.addArgs(&.{ "--runner", "--" });
-    integration_run.addFileArg(b.path("tools/azk-test"));
-    integration_run.addArg("--junit");
+    integration_run.addArgs(&.{ "zig-out/test-results/integration/suite.png", "--runner", "--" });
+    integration_run.addFileArg(@import("build/command.zig").executable(b).getEmittedBin());
+    integration_run.addArgs(&.{ "--arg", "java", "--arg", "-cp", "--join", ":", b.fmt("{d}", .{testkit_jars.len}) });
+    for (testkit_jars) |jar| integration_run.addFileArg(jar);
+    integration_run.addArgs(&.{ "--arg", "dev.artzig.testkit.IntegrationTestMain", "--passthru" });
     integration_run.addPassthruArgs();
-    integration_run.step.dependOn(b.getInstallStep());
-    integration_run.step.dependOn(&testkit_unit_run.step);
-    b.step("integration-test", "Run Kotlin APK integration tests under Cage").dependOn(&integration_run.step);
+    integration_run.run.step.dependOn(&testkit_unit_run.run.step);
+    integration_run.run.setName("run APK integration tests under Cage");
+    b.step("integration-test", "Run Kotlin APK integration tests under Cage").dependOn(&integration_run.run.step);
 
-    // run the *installed* launcher: it resolves the island/dex/res relative to
-    // its own install tree (zig-out/), which the cache-dir copy does not have.
-    const run = std.Build.Step.Run.create(b, "run androlinzberg");
-    run.addFileArg(b.graph.path(.install_prefix, "bin/androlinzberg"));
-    run.step.dependOn(b.getInstallStep());
+    const run = @import("build/command.zig").create(b);
+    setApplicationEnvironment(run, application_tree);
+    run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     run.addPassthruArgs();
-    b.step("run", "Run the launcher: zig build run -- <app.apk>").dependOn(&run.step);
+    run.run.setName("run androlinzberg");
+    b.step("run", "Run the launcher: zig build run -- <app.apk>").dependOn(&run.run.step);
 }

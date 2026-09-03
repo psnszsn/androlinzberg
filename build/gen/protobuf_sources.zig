@@ -173,4 +173,3 @@ pub const libprotoc = [_][]const u8{
     "google/protobuf/compiler/subprocess.cc",
     "google/protobuf/compiler/zip_writer.cc",
 };
-

@@ -6,6 +6,7 @@
 const std = @import("std");
 const art = @import("gen/art.zig");
 const javalib = @import("javalib.zig");
+const command = @import("command.zig");
 
 pub const Options = struct {
     vendor: std.Build.LazyPath,
@@ -17,6 +18,14 @@ pub const Options = struct {
 };
 
 const boot_jars_art = [_][]const u8{ "core-oj", "core-libart", "okhttp", "bouncycastle", "apache-xml" };
+const runtime_rpath = "$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64";
+
+fn patchElf(b: *std.Build, input: std.Build.LazyPath, name: []const u8) std.Build.LazyPath {
+    const patch = b.addSystemCommand(&.{ "patchelf", "--set-rpath", runtime_rpath, "--output" });
+    const output = patch.addOutputFileArg(name);
+    patch.addFileArg(input);
+    return output;
+}
 
 /// Build the complete runtime as a cacheable directory and install it for the
 /// explicit `zig build dist` target. Consumers use the returned LazyPath, so
@@ -57,7 +66,8 @@ pub fn build(b: *std.Build, step: *std.Build.Step, o: Options) std.Build.LazyPat
         // the ICU prebuilts link a shared libc++ (zig-built libs carry their own statically)
         "prebuilts/clang/host/linux-x86/clang-r547379/lib/x86_64-unknown-linux-gnu/libc++.so",
     }) |lib| {
-        _ = stage.addCopyFile(o.vendor.path(b, lib), b.pathJoin(&.{ "lib64", std.fs.path.basename(lib) }));
+        const name = std.fs.path.basename(lib);
+        _ = stage.addCopyFile(patchElf(b, o.vendor.path(b, lib), name), b.pathJoin(&.{ "lib64", name }));
     }
 
     // --- ICU / tz data from the vendored APEXes
@@ -65,37 +75,54 @@ pub fn build(b: *std.Build, step: *std.Build.Step, o: Options) std.Build.LazyPat
         .{ "prebuilts/runtime/mainline/i18n/apex/com.android.i18n-x86_64.apex", "com.android.i18n" },
         .{ "prebuilts/runtime/mainline/tzdata/apex/com.android.tzdata-x86_64.apex", "com.android.tzdata" },
     }) |e| {
-        const ex = b.addSystemCommand(&.{b.pathJoin(&.{ b.root.toString(b.allocator) catch @panic("OOM"), "tools/extract-apex-etc.sh" })});
-        ex.addFileArg(o.vendor.path(b, e[0]));
+        const unzip = b.addSystemCommand(&.{ "unzip", "-p" });
+        unzip.addFileArg(o.vendor.path(b, e[0]));
+        unzip.addArg("apex_payload.img");
+        const payload = unzip.captureStdOut(.{ .basename = "apex_payload.img" });
+
+        const runner = b.addExecutable(.{
+            .name = "build-command",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("tools/build-command.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseSafe,
+            }),
+        });
+        const ex = b.addRunArtifact(runner);
+        ex.addArgs(&.{ "--arg", "debugfs", "--arg", "-R", "--prefix", "rdump /etc " });
         const etc = ex.addOutputDirectoryArg("etc-root");
+        ex.addArg("--arg");
+        ex.addFileArg(payload);
+        ex.addArgs(&.{
+            "--stderr-filter", "Operation not permitted while changing ownership",
+            "--stderr-filter", "debugfs 1.47.4",
+        });
+        ex.setName(b.fmt("extract {s} data", .{e[1]}));
         _ = stage.addCopyDirectory(etc, e[1], .{});
     }
 
     // --- launcher contract
     _ = stage.add("runtime.env", runtime_env);
-    _ = stage.add("bin/art", art_sh);
+    _ = stage.addCopyFile(b.path("tools/art"), "bin/art");
 
-    // --- boot image: copy the immutable staged inputs into a declared output
-    // directory, then generate the image there. The Run step hashes the staged
-    // directory and caches the complete result.
-    const gbi = b.addSystemCommand(&.{"sh"});
-    gbi.addArgs(&.{
-        "-eu", "-c",
-        \\S="$1"; R="$2"; cp -a "$S/." "$R/"; chmod +x "$R/bin/art"; \
-        \\for f in "$R"/bin/*64 "$R"/lib64/*.so; do \
-        \\  [ -f "$f" ] || continue; \
-        \\  patchelf --set-rpath '$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64' "$f"; \
-        \\done; \
-        \\exec "$R/bin/generate-boot-image64" \
-        \\  --output-dir="$R/apex/com.android.art/javalib" --compiler-filter=speed \
-        \\  --use-profile=false --dex2oat-bin="$R/bin/dex2oat64" --android-root="$R" \
-        \\  --instruction-set=x86_64 2>&1
-        ,
-        "sh",
-    });
-    gbi.addDirectoryArg(stage.getDirectory());
-    const runtime = gbi.addOutputDirectoryArg("art-runtime");
-    gbi.setName("generate cacheable ART runtime");
+    // --- boot image: a separate declared tree, generated against the exact
+    // immutable runtime inputs. The final assembly below is the only merge.
+    const gbi = command.create(b);
+    gbi.addFileArg(o.arts.generate_boot_image.getEmittedBin());
+    const boot_image = gbi.addPrefixedOutputDirectoryArg("--output-dir=", "boot-image");
+    gbi.addArgs(&.{ "--compiler-filter=speed", "--use-profile=false" });
+    gbi.addPrefixedFileArg("--dex2oat-bin=", o.arts.dex2oat.getEmittedBin());
+    gbi.addPrefixedDirectoryArg("--android-root=", stage.getDirectory());
+    gbi.setChildPathEnvironment("LD_LIBRARY_PATH", "lib64", stage.getDirectory());
+    gbi.addArg("--instruction-set=x86_64");
+    gbi.filterStderr(" I dex2oat64:");
+    gbi.filterStderr(" W dex2oat64: elf_debug_loc_writer.h:");
+    gbi.run.setName("generate cacheable ART runtime");
+
+    const final = b.addWriteFiles();
+    _ = final.addCopyDirectory(stage.getDirectory(), "", .{});
+    _ = final.addCopyDirectory(boot_image, "apex/com.android.art/javalib", .{});
+    const runtime = final.getDirectory();
 
     const install = b.addInstallDirectory(.{
         .source_dir = runtime,
@@ -117,16 +144,5 @@ const runtime_env =
     \\ART_BOOTCLASSPATH="$A/com.android.art/javalib/core-oj.jar:$A/com.android.art/javalib/core-libart.jar:$A/com.android.art/javalib/okhttp.jar:$A/com.android.art/javalib/bouncycastle.jar:$A/com.android.art/javalib/apache-xml.jar:$A/com.android.i18n/javalib/core-icu4j.jar:$A/com.android.conscrypt/javalib/conscrypt.jar"
     \\ART_BOOTCLASSPATH_LOCATIONS="/apex/com.android.art/javalib/core-oj.jar:/apex/com.android.art/javalib/core-libart.jar:/apex/com.android.art/javalib/okhttp.jar:/apex/com.android.art/javalib/bouncycastle.jar:/apex/com.android.art/javalib/apache-xml.jar:/apex/com.android.i18n/javalib/core-icu4j.jar:/apex/com.android.conscrypt/javalib/conscrypt.jar"
     \\ART_VM_OPTS="-Xnorelocate -Ximage:$ART_ROOT/apex/com.android.art/javalib/boot.art -Xbootclasspath:$ART_BOOTCLASSPATH -Xbootclasspath-locations:$ART_BOOTCLASSPATH_LOCATIONS"
-    \\
-;
-
-const art_sh =
-    \\#!/usr/bin/env bash
-    \\# Convenience launcher: art [-Xopts] -cp foo.dex Main
-    \\ART_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-    \\export ART_ROOT
-    \\. "$ART_ROOT/runtime.env"
-    \\mkdir -p "$ANDROID_DATA/dalvik-cache/x86_64"
-    \\exec "$ART_ROOT/bin/dalvikvm64" $ART_VM_OPTS "$@"
     \\
 ;

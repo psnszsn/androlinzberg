@@ -47,6 +47,29 @@ zig build -j10 --help
 - `zig-out/lib/libandroid_platform.so` contains the native Android platform
   interface.
 
+`zig-out` is only the publication layout. Build, run, and test steps consume
+the cache artifacts that produced it; they do not read the install prefix or
+depend on the global install step.
+
+## Build graph conventions
+
+The Zig declarations are the source of truth for build inputs and outputs:
+
+- `build/generator_sources.zig` declares generator inputs and expected Java
+  outputs.
+- `build/java_sources.zig` and `artzig/build/java_sources.zig` declare the
+  curated JVM source sets.
+- `artzig/build/gen/art.zig` declares the native ART source graph and typed
+  generated-artifact groups.
+- `build/application.zig` owns the cacheable application layout; installation
+  publishes that layout without becoming an input to another step.
+
+Cross-module paths are `std.Build.LazyPath` values. Known generated files stay
+individual files; directory outputs are reserved for artifacts that are
+actually trees, such as class directories, include roots, system modules, and
+runtime layouts. Response files are generated from the same exact `SourceSet`
+inputs and are only command-line transport.
+
 ## Source changes
 
 Use the pinned AOSP tree as the reference for Android behavior. Check the AOSP
@@ -73,6 +96,7 @@ zig build -j10 binder-test
 zig build -j10 system-test
 zig build -j10 testkit-test
 zig build -j10 cpp-audit
+zig build -j10 graph-audit
 ```
 
 Run the APK integration suite after a change to APK startup, Android lifecycle,

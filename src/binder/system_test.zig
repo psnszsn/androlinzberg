@@ -1,6 +1,6 @@
 //! Multi-process hosted system-service test driver.
 //!
-//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <fixture-apk-dir>
+//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-client>
 //!
 //! Starts one broker and one system process, then two ART app peers: package
 //! `dev.artzig.test.b` hosting a real `android.app.Service` through the
@@ -18,14 +18,15 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 5) {
-        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <fixture-apk-dir> <ndk-system-client>\n", .{});
+    if (args.len < 6) {
+        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client>\n", .{});
         return error.InvalidArguments;
     }
     const launcher = args[1];
     const broker_exe = args[2];
-    const fixture_apks = args[3];
-    const ndk_client = args[4];
+    const fixture_a = args[3];
+    const fixture_b = args[4];
+    const ndk_client = args[5];
 
     var random: [8]u8 = undefined;
     io.random(&random);
@@ -42,7 +43,8 @@ pub fn main(init: std.process.Init) !void {
     try env.put("AZK_BINDER_SYSTEM_COOKIE", "system-test-system");
     try env.put("AZK_PROP_AREA", prop_area_path);
     // The peers install their packages from build-time fixture APKs.
-    try env.put("AZK_FIXTURE_APKS", fixture_apks);
+    try env.put("AZK_FIXTURE_APK_A", fixture_a);
+    try env.put("AZK_FIXTURE_APK_B", fixture_b);
     // Hermetic: a nonexistent display keeps the hosted clipboard monitor off
     // the developer's real Wayland clipboard (an empty value would fall back
     // to wayland-0; parallel test sessions would cross-talk through it).

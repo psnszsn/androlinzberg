@@ -8,35 +8,16 @@ pub const Options = struct {
     protoc: *std.Build.Step.Compile,
 };
 
-const proto_list = @embedFile("../tools/stats-proto-list.txt");
-
-fn protoPaths(b: *std.Build) []const []const u8 {
-    var paths = std.ArrayList([]const u8).empty;
-    var lines = std.mem.tokenizeScalar(u8, proto_list, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (line.len == 0 or line[0] == '#') continue;
-        const prefix = "aosp|";
-        if (!std.mem.startsWith(u8, line, prefix)) @panic("stats proto input must be sourced from aosp");
-        paths.append(b.allocator, line[prefix.len..]) catch @panic("OOM");
-    }
-    return paths.items;
-}
-
 pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
-    const protos = protoPaths(b);
-    const generate = b.addSystemCommand(&.{
-        "bash",         "-c",
-        \\exec "$@" 2> >(grep -F -v 'frameworks/proto_logging/stats/atoms/display/display_atoms.proto:22:1: warning: Import frameworks/proto_logging/stats/enums/display/display_enums.proto is unused.' >&2)
-        ,
-        "stats-protoc",
-    });
-    generate.addArtifactArg(o.protoc);
+    const protos = @import("generator_sources.zig").stats_protos;
+    const generate = @import("command.zig").create(b);
+    generate.addFileArg(o.protoc.getEmittedBin());
     generate.addPrefixedDirectoryArg("-I", o.aosp);
     generate.addPrefixedDirectoryArg("-I", o.aosp.path(b, "external/protobuf/src"));
     const generated = generate.addPrefixedOutputDirectoryArg("--cpp_out=", "stats-proto-cpp");
     for (protos) |path| generate.addFileArg(o.aosp.path(b, path));
-    generate.setName("generate stats atoms protobuf C++ closure");
+    generate.filterStderr("frameworks/proto_logging/stats/atoms/display/display_atoms.proto:22:1: warning: Import frameworks/proto_logging/stats/enums/display/display_enums.proto is unused.");
+    generate.run.setName("generate stats atoms protobuf C++ closure");
 
     const mod = b.createModule(.{
         .target = o.target,

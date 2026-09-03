@@ -13,32 +13,41 @@ pub const Options = struct {
     /// libbinder_ndk.so — the hwui parcel JNI (android 16) calls its AParcel ABI.
     binder_ndk: *std.Build.Step.Compile,
     art: *std.Build.Module,
-    /// Output directory of the native AIDL Run step; contains gen/.
-    aidl_cpp: std.Build.LazyPath,
-    /// Extracted root of the root package's AOSP dependency.
-    aosp_dir: []const u8,
+    aidl_header_roots: []const std.Build.LazyPath,
+    host_include_roots: []const std.Build.LazyPath,
+    host_library_roots: []const std.Build.LazyPath,
+    host_libraries: []const []const u8,
+    host_link_flags: []const []const u8,
+    aosp: std.Build.LazyPath,
+};
+
+pub const Result = struct {
+    file: std.Build.LazyPath,
+    step: *std.Build.Step,
 };
 
 const Roots = struct {
-    app: []const u8,
-    az: []const u8,
-    fb: []const u8,
-    hw: []const u8,
-    v: []const u8,
-    minikin: []const u8,
-    sks: []const u8,
+    app: std.Build.LazyPath,
+    aosp: std.Build.LazyPath,
 
-    fn subst(self: Roots, b: *std.Build, s: []const u8) []const u8 {
-        var out = s;
-        const pairs = .{
-            .{ "$MINIKIN", self.minikin }, .{ "$APP", self.app }, .{ "$AZ", self.az },
-            .{ "$FB", self.fb },           .{ "$HW", self.hw },   .{ "$V", self.v },
-            .{ "$SKS", self.sks },
+    fn resolve(self: Roots, b: *std.Build, value: []const u8) std.Build.LazyPath {
+        const mappings = .{
+            .{ "$MINIKIN", self.aosp.path(b, "frameworks/minikin") },
+            .{ "$APP", self.app },
+            .{ "$AZ", self.aosp },
+            .{ "$FB", self.aosp.path(b, "frameworks/base") },
+            .{ "$HW", self.aosp.path(b, "frameworks/base/libs/hwui") },
+            .{ "$V", self.aosp },
+            .{ "$SKS", self.aosp.path(b, "external/skia") },
         };
-        inline for (pairs) |p| {
-            out = std.mem.replaceOwned(u8, b.allocator, out, p[0], p[1]) catch @panic("oom");
+        inline for (mappings) |mapping| {
+            if (std.mem.startsWith(u8, value, mapping[0])) {
+                var relative = value[mapping[0].len..];
+                while (std.mem.startsWith(u8, relative, "/")) relative = relative[1..];
+                return if (relative.len == 0) mapping[1] else mapping[1].path(b, relative);
+            }
         }
-        return out;
+        std.debug.panic("unknown island path root: {s}", .{value});
     }
 };
 
@@ -65,32 +74,20 @@ const our_srcs = [_][]const u8{
     "src/native/AospParcelAbi.cpp",
 };
 
-pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
-    const app = "."; // paths are build-root relative (zig runs compiles from the build root)
-    const r = Roots{
-        .app = app,
-        .az = o.aosp_dir,
-        .fb = b.pathJoin(&.{ o.aosp_dir, "frameworks", "base" }),
-        .hw = b.pathJoin(&.{ o.aosp_dir, "frameworks", "base", "libs", "hwui" }),
-        .v = o.aosp_dir,
-        .minikin = b.pathJoin(&.{ o.aosp_dir, "frameworks", "minikin" }),
-        .sks = b.pathJoin(&.{ o.aosp_dir, "external", "skia" }),
-    };
+pub fn build(b: *std.Build, o: Options) Result {
+    const r = Roots{ .app = b.path(""), .aosp = o.aosp };
 
-    const mod = b.createModule(.{
-        .root_source_file = b.path("src/native/platform_abi.zig"),
-        .target = o.target,
-        .optimize = o.optimize,
-        .link_libc = true,
-        .link_libcpp = true,
-        .imports = &.{.{ .name = "art", .module = o.art }},
+    const abi_object = b.addObject(.{
+        .name = "android-platform-abi",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/native/platform_abi.zig"),
+            .target = o.target,
+            .optimize = o.optimize,
+            .link_libc = true,
+            .pic = true,
+            .imports = &.{.{ .name = "art", .module = o.art }},
+        }),
     });
-    const lib = b.addLibrary(.{ .name = "android_platform", .linkage = .dynamic, .root_module = mod });
-    // Fail while linking instead of deferring missing static-library symbols
-    // until libandroid_platform.so is loaded by the JVM.
-    lib.link_z_defs = true;
-
-    for (gen.include_dirs) |d| mod.addIncludePath(.{ .cwd_relative = r.subst(b, d) });
 
     // common flags
     var cxx = std.ArrayList([]const u8).empty;
@@ -98,9 +95,11 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         "-std=gnu++23",            "-fno-exceptions",             "-fno-rtti", "-w",                                          "-D_GNU_SOURCE", "-DNDEBUG",
         // zig enables UBSan for C/C++ in Debug; AOSP code trips it (null memcpy of 0 bytes)
         "-fno-sanitize=undefined",
-        // math/half.h specializes std::is_floating_point; libc++ marks that an error
+        // AOSP's half type intentionally specializes this standard trait.
         "-Wno-invalid-specialization",
-        // zig hashes `-include` files into the C cache, so it must be a real path
+        // Keep the LazyPath include root below as the dependency identity. Zig's
+        // C cache currently requires the force-included header itself to be an
+        // absolute compiler argument when many source roots share one module.
         "-include",  b.pathResolve(&.{"src/native/azk_prelude.h"}),
     }) catch @panic("oom");
     var cc = std.ArrayList([]const u8).empty;
@@ -110,12 +109,75 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         cc.append(b.allocator, b.fmt("-D{s}", .{d})) catch @panic("oom");
     }
 
+    const binder_inc = o.aosp.path(b, "frameworks/native/libs/binder/include");
+    const binder_ndk_includes = [_]std.Build.LazyPath{
+        o.aosp.path(b, "frameworks/native/libs/binder/ndk/include_ndk"),
+        o.aosp.path(b, "frameworks/native/libs/binder/ndk/include_platform"),
+        o.aosp.path(b, "frameworks/native/libs/binder/ndk/include_cpp"),
+        binder_inc,
+    };
+    var common_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    for (gen.include_dirs) |d| common_includes.append(b.allocator, r.resolve(b, d)) catch @panic("oom");
+    common_includes.appendSlice(b.allocator, &binder_ndk_includes) catch @panic("oom");
+    common_includes.append(b.allocator, b.path("src/native")) catch @panic("oom");
+    common_includes.append(b.allocator, b.path("src/native/input-compat")) catch @panic("oom");
+    common_includes.appendSlice(b.allocator, o.aidl_header_roots) catch @panic("oom");
+
+    var objects: std.ArrayList(std.Build.LazyPath) = .empty;
+
     const G = struct {
         b: *std.Build,
-        mod: *std.Build.Module,
+        objects: *std.ArrayList(std.Build.LazyPath),
+        target: std.Build.ResolvedTarget,
+        optimize: std.builtin.OptimizeMode,
+        common_includes: []const std.Build.LazyPath,
+        host_includes: []const std.Build.LazyPath,
         cxx: []const []const u8,
         cc: []const []const u8,
-        fn add(self: @This(), root: []const u8, files: []const []const u8, extra: []const []const u8) void {
+        next_index: usize = 0,
+
+        fn addObject(
+            self: *@This(),
+            root: std.Build.LazyPath,
+            files: []const []const u8,
+            includes: []const std.Build.LazyPath,
+            flags: []const []const u8,
+            language: std.Build.Module.CSourceLanguage,
+        ) void {
+            for (files) |file| {
+                const name = self.b.fmt("android-platform-tu-{d}", .{self.next_index});
+                self.next_index += 1;
+                const compiler = if (language == .cpp) "c++" else "cc";
+                const compile = self.b.addSystemCommand(&.{ self.b.graph.zig_exe, compiler, "-c", "-fPIC" });
+                compile.step.name = self.b.fmt("compile {s}", .{file});
+                compile.addArgs(&.{
+                    "-target",
+                    self.target.query.zigTriple(self.b.allocator) catch @panic("oom"),
+                    switch (self.optimize) {
+                        .Debug => "-O0",
+                        .ReleaseSafe => "-O2",
+                        .ReleaseFast => "-O3",
+                        .ReleaseSmall => "-Os",
+                    },
+                });
+                compile.addArgs(flags);
+                for (self.common_includes) |include| compile.addPrefixedDirectoryArg("-I", include);
+                for (self.host_includes) |include| compile.addPrefixedDirectoryArg("-isystem", include);
+                for (includes) |include| compile.addPrefixedDirectoryArg("-I", include);
+                compile.addFileArg(root.path(self.b, file));
+                compile.addArg("-o");
+                const object = compile.addOutputFileArg(self.b.fmt("{s}.o", .{name}));
+                self.objects.append(self.b.allocator, object) catch @panic("oom");
+            }
+        }
+
+        fn add(
+            self: *@This(),
+            root: std.Build.LazyPath,
+            files: []const []const u8,
+            includes: []const std.Build.LazyPath,
+            extra: []const []const u8,
+        ) void {
             var cpp: std.ArrayList([]const u8) = .empty;
             var c: std.ArrayList([]const u8) = .empty;
             for (files) |f| {
@@ -125,68 +187,82 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
                 var flags = std.ArrayList([]const u8).empty;
                 flags.appendSlice(self.b.allocator, self.cxx) catch @panic("oom");
                 flags.appendSlice(self.b.allocator, extra) catch @panic("oom");
-                self.mod.addCSourceFiles(.{ .root = .{ .cwd_relative = root }, .files = cpp.items, .flags = flags.items });
+                self.addObject(root, cpp.items, includes, flags.items, .cpp);
             }
             if (c.items.len > 0) {
                 var flags = std.ArrayList([]const u8).empty;
                 flags.appendSlice(self.b.allocator, self.cc) catch @panic("oom");
                 flags.appendSlice(self.b.allocator, extra) catch @panic("oom");
-                self.mod.addCSourceFiles(.{ .root = .{ .cwd_relative = root }, .files = c.items, .flags = flags.items });
+                self.addObject(root, c.items, includes, flags.items, .c);
             }
         }
     };
-    const g = G{ .b = b, .mod = mod, .cxx = cxx.items, .cc = cc.items };
-    const I = struct {
-        fn i(bb: *std.Build, p: []const u8) []const u8 {
-            return bb.fmt("-I{s}", .{p});
-        }
-    }.i;
-    const binder_inc = I(b, b.pathJoin(&.{ r.az, "frameworks/native/libs/binder/include" }));
+    var g = G{
+        .b = b,
+        .objects = &objects,
+        .target = o.target,
+        .optimize = o.optimize,
+        .common_includes = common_includes.items,
+        .host_includes = o.host_include_roots,
+        .cxx = cxx.items,
+        .cc = cc.items,
+    };
     // NDK binder C headers (AParcel): the ABI itself is our zig libbinder_ndk,
     // linked below; installed at lib/art, reached from bin via the rpath.
-    mod.linkLibrary(o.binder_ndk);
-    mod.addRPathSpecial("$ORIGIN/../lib/art");
-    mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ r.az, "frameworks/native/libs/binder/ndk/include_ndk" }) });
-    mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ r.az, "frameworks/native/libs/binder/ndk/include_platform" }) });
-    mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ r.az, "frameworks/native/libs/binder/ndk/include_cpp" }) });
-    mod.addIncludePath(b.path("src/native/input-compat"));
-    const zip_inc = I(b, b.pathJoin(&.{ r.v, "system/libziparchive/include" }));
-    const zip_incfs_inc = I(b, b.pathJoin(&.{ r.v, "system/libziparchive/incfs_support/include" }));
-    // generated AIDL C++ headers come from a build step (LazyPath), so they go
-    // on the module include path rather than a per-group -I string
-    mod.addIncludePath(o.aidl_cpp.path(b, "gen"));
+    const zip_inc = o.aosp.path(b, "system/libziparchive/include");
+    const zip_incfs_inc = o.aosp.path(b, "system/libziparchive/incfs_support/include");
+    // Generated AIDL C++ headers are exact LazyPath roots shared by each group.
     const aidl_inc = "-DARTZIG_AIDL_CPP_INCLUDED";
-    const input_compat_inc = I(b, b.pathJoin(&.{ r.app, "src/native/input-compat" }));
-    const apex_inc = I(b, b.pathJoin(&.{ r.hw, "apex/include" }));
-    const hw_jni_inc = I(b, b.pathJoin(&.{ r.hw, "jni" }));
-    const fn_inc = I(b, b.pathJoin(&.{ r.az, "frameworks/native/include" }));
+    const input_compat_inc = b.path("src/native/input-compat");
+    const apex_inc = o.aosp.path(b, "frameworks/base/libs/hwui/apex/include");
+    const hw_jni_inc = o.aosp.path(b, "frameworks/base/libs/hwui/jni");
+    const fn_inc = o.aosp.path(b, "frameworks/native/include");
 
-    g.add(b.pathJoin(&.{ r.v, "system/libbase" }), &gen.libbase_srcs, &.{I(b, b.pathJoin(&.{ r.v, "system/libbase" }))});
-    g.add(b.pathJoin(&.{ r.v, "system/logging/liblog" }), &gen.liblog_srcs, &.{ I(b, b.pathJoin(&.{ r.v, "system/logging/liblog" })), "-DLIBLOG_LOG_TAG=1006", "-DANDROID_DEBUGGABLE=0" });
-    g.add(b.pathJoin(&.{ r.v, "system/core/libcutils" }), &gen.libcutils_srcs, &.{I(b, b.pathJoin(&.{ r.v, "system/core/libcutils" }))});
-    g.add(b.pathJoin(&.{ r.v, "system/core/libutils" }), &gen.libutils_srcs, &.{ I(b, b.pathJoin(&.{ r.v, "system/core/libutils" })), "-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION" });
-    g.add(b.pathJoin(&.{ r.v, "external/fmtlib" }), &gen.fmtlib_srcs, &.{});
-    g.add(r.minikin, &minikin_srcs, &.{ I(b, b.pathJoin(&.{ r.minikin, "libs" })), I(b, b.pathJoin(&.{ r.minikin, "libs/minikin" })) });
-    g.add(r.sks, &skia_extra_srcs, &.{});
-    g.add(b.pathJoin(&.{ r.fb, "libs/hostgraphics" }), &gen.hostgraphics_srcs, &.{});
-    g.add(b.pathJoin(&.{ r.az, "frameworks/native/libs/ui" }), &gen.fn_ui_srcs, &.{I(b, b.pathJoin(&.{ r.az, "frameworks/native/libs/ui/include_private" }))});
-    g.add(b.pathJoin(&.{ r.fb, "libs/androidfw" }), &gen.androidfw_srcs, &.{ I(b, b.pathJoin(&.{ r.fb, "libs/androidfw/include_pathutils" })), zip_inc, zip_incfs_inc, binder_inc });
-    g.add(b.pathJoin(&.{ r.v, "system/libziparchive" }), &gen.ziparchive_srcs, &.{ zip_inc, zip_incfs_inc, I(b, b.pathJoin(&.{ r.v, "system/libziparchive" })), "-DINCFS_SUPPORT_DISABLED=1", "-DZIPARCHIVE_DISABLE_CALLBACK_API=1", "-DZLIB_CONST", "-D_FILE_OFFSET_BITS=64" });
-    g.add(b.pathJoin(&.{ r.az, "system/incremental_delivery/incfs/util" }), &.{"map_ptr.cpp"}, &.{});
-    g.add(b.pathJoin(&.{ r.az, "frameworks/native/libs/input" }), &gen.input_srcs, &.{ fn_inc, I(b, b.pathJoin(&.{ r.az, "frameworks/native/libs/input" })), input_compat_inc, aidl_inc, binder_inc });
-    g.add(b.pathJoin(&.{ r.az, "frameworks/native/libs/attestation" }), &gen.attestation_srcs, &.{fn_inc});
-    g.add(b.pathJoin(&.{ r.fb, "core/jni" }), &gen.core_jni_srcs, &.{ I(b, b.pathJoin(&.{ r.app, "src/native/sqlite-compat" })), I(b, b.pathJoin(&.{ r.fb, "core/jni" })), I(b, b.pathJoin(&.{ r.fb, "core/jni/include" })), zip_inc, aidl_inc, apex_inc, input_compat_inc, binder_inc });
-    g.add(r.hw, &gen.hwui_srcs, &.{ apex_inc, I(b, b.pathJoin(&.{ r.app, "src/native" })) });
-    g.add(r.hw, &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc });
-    g.add(r.hw, &gen.jni_srcs, &.{hw_jni_inc});
-    g.add(b.pathJoin(&.{ r.v, "libnativehelper" }), &gen.nativehelper_srcs, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
-    g.add(r.app, &our_srcs, &.{ hw_jni_inc, I(b, b.pathJoin(&.{ r.fb, "core/jni/include" })), binder_inc, I(b, b.pathJoin(&.{ r.app, "src/platform" })) });
+    g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
+    g.add(o.aosp.path(b, "system/logging/liblog"), &gen.liblog_srcs, &.{o.aosp.path(b, "system/logging/liblog")}, &.{ "-DLIBLOG_LOG_TAG=1006", "-DANDROID_DEBUGGABLE=0" });
+    g.add(o.aosp.path(b, "system/core/libcutils"), &gen.libcutils_srcs, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
+    g.add(o.aosp.path(b, "system/core/libutils"), &gen.libutils_srcs, &.{o.aosp.path(b, "system/core/libutils")}, &.{"-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION"});
+    g.add(o.aosp.path(b, "external/fmtlib"), &gen.fmtlib_srcs, &.{}, &.{});
+    g.add(o.aosp.path(b, "frameworks/minikin"), &minikin_srcs, &.{ o.aosp.path(b, "frameworks/minikin/libs"), o.aosp.path(b, "frameworks/minikin/libs/minikin") }, &.{});
+    g.add(o.aosp.path(b, "external/skia"), &skia_extra_srcs, &.{}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hostgraphics"), &gen.hostgraphics_srcs, &.{}, &.{});
+    g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &gen.fn_ui_srcs, &.{o.aosp.path(b, "frameworks/native/libs/ui/include_private")}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/androidfw"), &gen.androidfw_srcs, &.{ o.aosp.path(b, "frameworks/base/libs/androidfw/include_pathutils"), zip_inc, zip_incfs_inc, binder_inc }, &.{});
+    g.add(o.aosp.path(b, "system/libziparchive"), &gen.ziparchive_srcs, &.{ zip_inc, zip_incfs_inc, o.aosp.path(b, "system/libziparchive") }, &.{ "-DINCFS_SUPPORT_DISABLED=1", "-DZIPARCHIVE_DISABLE_CALLBACK_API=1", "-DZLIB_CONST", "-D_FILE_OFFSET_BITS=64" });
+    g.add(o.aosp.path(b, "system/incremental_delivery/incfs/util"), &.{"map_ptr.cpp"}, &.{}, &.{});
+    g.add(o.aosp.path(b, "frameworks/native/libs/input"), &gen.input_srcs, &.{ fn_inc, o.aosp.path(b, "frameworks/native/libs/input"), input_compat_inc, binder_inc }, &.{aidl_inc});
+    g.add(o.aosp.path(b, "frameworks/native/libs/attestation"), &gen.attestation_srcs, &.{fn_inc}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.core_jni_srcs, &.{ b.path("src/native/sqlite-compat"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), zip_inc, apex_inc, input_compat_inc, binder_inc }, &.{aidl_inc});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
+    g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
+    g.add(b.path(""), &our_srcs, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform") }, &.{});
 
-    mod.linkLibrary(o.skia);
-    for ([_][]const u8{
-        "harfbuzz",    "harfbuzz-icu", "freetype2", "fontconfig", "icu-uc", "icu-i18n",
-        "libpng",      "zlib",         "openssl",   "sqlite3",    "egl",    "gl",
-        "wayland-egl", "gbm",          "libdrm",
-    }) |pc| mod.linkSystemLibrary(pc, .{ .needed = true });
-    return lib;
+    // Zig's bundled LLD rejects valid weak-hidden libc++ COMDAT relocations in
+    // Skia before resolving them locally. Keep Zig's compiler and libc++, but
+    // delegate this one final ELF link to GNU bfd.
+    const link = b.addSystemCommand(&.{
+        b.graph.zig_exe,                      "c++",                           "-fuse-ld=bfd", "-shared", "-Wl,-z,defs",
+        "-Wl,-soname,libandroid_platform.so", "-Wl,-rpath,$ORIGIN/../lib/art",
+    });
+    link.step.name = "link libandroid_platform.so";
+    link.step.max_rss = 16 * 1024 * 1024 * 1024;
+    // The Nix development shell injects every build input, plus outputs/out,
+    // through NIX_LDFLAGS. Link only the typed pkg-config roots above so this
+    // product cannot acquire an undeclared build-tree RUNPATH.
+    link.removeEnvironmentVariable("NIX_LDFLAGS");
+    link.addArtifactArg(abi_object);
+    for (objects.items) |object| link.addFileArg(object);
+    link.addFileArg(o.skia.getEmittedBin());
+    link.addFileArg(o.binder_ndk.getEmittedBin());
+    for (o.host_library_roots) |root| {
+        link.addPrefixedDirectoryArg("-L", root);
+        link.addPrefixedDirectoryArg("-Wl,-rpath,", root);
+    }
+    for (o.host_libraries) |library| link.addArg(b.fmt("-l{s}", .{library}));
+    link.addArgs(o.host_link_flags);
+    link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-o" });
+    const output = link.addOutputFileArg("libandroid_platform.so");
+    return .{ .file = output, .step = &link.step };
 }

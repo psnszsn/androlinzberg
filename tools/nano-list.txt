@@ -1,2 +1,0 @@
-# .proto files generated with protoc-gen-javanano (build/javanano.zig).
-aosp|frameworks/base/proto/src/metrics_constants/metrics_constants.proto

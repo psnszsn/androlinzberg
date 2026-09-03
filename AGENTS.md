@@ -64,11 +64,13 @@ logtags `EventLogTags`, `*Proto` message classes, sysprop accessors, and
 and `build/java.zig`, driven by the declaration files and explicit input lists
 under `tools/`. Add the package to the generator's input list rather than
 writing a placeholder;
-`tools/check-jvm-source-policy.sh` rejects a repo-owned class whose package
-matches a generated artifact (`.java` and `.kt`). A package whose declaration is
-not yet in a vendored tree may stay hand-stubbed until its module tree is
-imported. The `.aosp` dependency hash in `build.zig.zon` pins the extracted AOSP
-package contents.
+The `jvm-source` mode of `tools/build-audit.zig`, fed by the exact Zig
+`SourceSet`, rejects a repo-owned class whose package matches a generated
+artifact (`.java` and `.kt`). A package whose declaration is not yet in a
+vendored tree may stay hand-stubbed until its module tree is imported. The
+`.aosp` dependency hash in `build.zig.zon` pins the extracted AOSP package
+contents. Generator declarations and expected outputs live in
+`build/generator_sources.zig`; do not add build-consumed text manifests.
 
 Prefer deep modules at the AOSP/host seam: callers should provide an Android
 operation such as “apply this configuration” or “launch this activity,” while

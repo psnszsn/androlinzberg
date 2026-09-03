@@ -23,6 +23,7 @@ pub const include_dirs = [_][]const u8{
     "$SKS/include/docs",
     "$SKS/include/gpu",
     "$SKS/include/private",
+    "$SKS/include/third_party/vulkan",
     "$SKS/src/core",
     "$SKS/src/image",
     "$SKS/src/utils",

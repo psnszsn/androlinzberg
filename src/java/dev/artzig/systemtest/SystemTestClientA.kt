@@ -47,9 +47,9 @@ internal object SystemTestClientA {
         // package's Application). The fixture requests WRITE_SECURE_SETTINGS;
         // the signature match with framework-res.apk (both signed by the
         // azk-platform test key) grants it at install.
-        val fixtures = checkNotNull(System.getenv("AZK_FIXTURE_APKS")) { "AZK_FIXTURE_APKS is not set" }
+        val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_A")) { "AZK_FIXTURE_APK_A is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(installer.installPackage("$fixtures/dev.artzig.test.a.apk", null) == "dev.artzig.test.a")
+        check(installer.installPackage(fixture, null) == "dev.artzig.test.a")
         ActivityThread.attachApplicationHosted("dev.artzig.test.a")
         val appInfo = checkNotNull(ActivityThread.getPackageManager().getApplicationInfo("dev.artzig.test.a", 0L, 0))
         val context: android.content.Context =
