@@ -275,7 +275,8 @@ public final class FrameworkCompatSmoke {
         @Throws(Exception::class)
         @JvmStatic
         public fun main(args: Array<String>) {
-        testParcelRoundTrips()
+            testStockTextSpans()
+            testParcelRoundTrips()
             testSystemProperties()
             testOsTail()
             testSharedMemory()
@@ -720,6 +721,78 @@ public final class FrameworkCompatSmoke {
             android.os.CancellationSignal.fromTransport(transport).setOnCancelListener { cancelled = true }
             signal.cancel()
             require(cancelled && signal.isCanceled, "CancellationSignal propagates through its transport")
+        }
+
+        /** Stock AOSP text spans: identity lookup, failure modes, mutation and parcel state. */
+        @JvmStatic
+        private fun testStockTextSpans() {
+            val original = object : android.text.style.ClickableSpan() {
+                override fun onClick(widget: android.view.View) {}
+            }
+            val text = android.text.SpannableString("link")
+            text.setSpan(original, 0, text.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val accessible = android.text.style.AccessibilityClickableSpan(original.id)
+            require(accessible.findClickableSpan(text) === original, "accessible span finds original id")
+            require(accessible.findClickableSpan("link") == null, "accessible span rejects unspanned text")
+            val clickFailure = runCatching {
+                android.text.style.AccessibilityClickableSpan::class.java
+                    .getMethod("onClick", android.view.View::class.java)
+                    .invoke(accessible, null)
+            }.exceptionOrNull()
+            require(
+                (clickFailure as? java.lang.reflect.InvocationTargetException)?.cause is RuntimeException,
+                "uninitialized accessible span click fails",
+            )
+
+            val replacement = android.text.style.AccessibilityReplacementSpan("image description")
+            val replacementParcel = android.os.Parcel.obtain()
+            replacement.writeToParcel(replacementParcel, 0)
+            replacementParcel.setDataPosition(0)
+            val restoredReplacement = android.text.style.AccessibilityReplacementSpan.CREATOR
+                .createFromParcel(replacementParcel)
+            require(
+                restoredReplacement.contentDescription == "image description",
+                "replacement span content description parcels",
+            )
+            replacementParcel.recycle()
+
+            val edit = android.text.style.EasyEditSpan()
+            require(edit.isDeleteEnabled, "easy-edit deletion starts enabled")
+            edit.setDeleteEnabled(false)
+            val editParcel = android.os.Parcel.obtain()
+            edit.writeToParcel(editParcel, 0)
+            editParcel.setDataPosition(0)
+            val restoredEdit = android.text.style.EasyEditSpan(editParcel)
+            require(!restoredEdit.isDeleteEnabled, "easy-edit deletion state parcels")
+            require(restoredEdit.pendingIntent == null, "easy-edit empty pending intent parcels")
+            editParcel.recycle()
+
+            val suggestions = android.text.style.SuggestionSpan(
+                java.util.Locale.US,
+                arrayOf("one", "two", "three", "four", "five", "six"),
+                android.text.style.SuggestionSpan.FLAG_EASY_CORRECT,
+            )
+            require(
+                suggestions.suggestions.contentEquals(arrayOf("one", "two", "three", "four", "five")),
+                "suggestion span caps suggestions",
+            )
+            require(suggestions.localeObject == java.util.Locale.US, "suggestion span keeps locale")
+            suggestions.flags = android.text.style.SuggestionSpan.FLAG_MISSPELLED
+            val suggestionParcel = android.os.Parcel.obtain()
+            suggestions.writeToParcel(suggestionParcel, 0)
+            suggestionParcel.setDataPosition(0)
+            val restoredSuggestions = android.text.style.SuggestionSpan.CREATOR
+                .createFromParcel(suggestionParcel)
+            require(
+                restoredSuggestions.flags == android.text.style.SuggestionSpan.FLAG_MISSPELLED,
+                "suggestion flags parcel",
+            )
+            require(restoredSuggestions.localeObject == java.util.Locale.US, "suggestion locale parcels")
+            suggestionParcel.recycle()
+
+            // Marker construction is itself the interface: there is intentionally no state.
+            android.text.style.NoWritingToolsSpan()
+            android.util.Log.i("FrameworkCompatSmoke", "stock text spans ok")
         }
 
         @JvmStatic private fun drainMainLooper() {

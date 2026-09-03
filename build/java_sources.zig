@@ -104,7 +104,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/graphics/java/android/graphics", .{ .not_paths = &.{"*/pdf/*"}, .not_names = &.{ "GraphicsStatsService.java", "GraphicBuffer.java", "SurfaceTexture.java", "SurfaceControl*.java", "Renderer*.java" } });
     try c.add("$FB/libs/hwui/apex/java", .{});
     try c.add("$FB/core/java/android/content/res", .{ .not_names = &.{ "ObbInfo.java", "ObbScanner.java" } });
-    try c.add("$FB/core/java/android/text", .{ .not_paths = &.{ "*/method/*", "*/util/*", "*/format/*" }, .not_names = &.{ "Html.java", "NoWritingToolsSpan.java", "SuggestionSpan.java", "AccessibilityClickableSpan.java", "AccessibilityReplacementSpan.java", "AccessibilityURLSpan.java", "EasyEditSpan.java", "TranslationTransformationMethod.java" } });
+    try c.add("$FB/core/java/android/text", .{ .not_paths = &.{ "*/method/*", "*/util/*", "*/format/*" }, .not_names = &.{ "Html.java", "TranslationTransformationMethod.java" } });
     try c.add("$FB/core/java/android/text/format", .{ .not_names = &.{ "Formatter.java", "Time.java", "TimeFormatter.java", "DateFormat.java", "TimeMigrationUtils.java" } });
     try c.add("$FB/core/java/android/view", .{ .max_depth = 1, .not_names = &.{ "ViewRootImpl.java", "WindowManagerGlobal.java", "WindowManagerImpl.java", "Choreographer.java", "ThreadedRenderer.java", "SurfaceControl.java", "SurfaceControlRegistry.java", "SurfaceControlInputReceiver.java", "SurfaceControlViewHost.java", "SurfaceView.java", "SurfaceSession.java", "TextureView.java", "WindowlessWindowManager.java", "WindowlessWindowLayout.java", "AccessibilityInteractionController.java", "HandwritingInitiator.java" } });
     try c.add("$FB/core/java/android/view/accessibility", .{ .max_depth = 1 });
