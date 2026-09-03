@@ -275,6 +275,14 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/display/BrightnessSynchronizer.java");
     try c.file("$CJ/com/android/internal/display/BrightnessUtils.java");
     try c.file("$FB/tools/processors/immutability/src/android/processor/immutability/Immutable.java");
+    // Stock app-jank value types and framework logging clients.
+    try c.file("$CJ/android/app/jank/AppJankStats.java");
+    try c.file("$CJ/android/app/jank/RelativeFrameTimeHistogram.java");
+    try c.file("$CJ/com/android/internal/jank/Cuj.java");
+    try c.file("$CJ/com/android/internal/logging/MetricsLogger.java");
+    try c.file("$CJ/com/android/internal/protolog/ProtoLogConfigurationService.java");
+    try c.file("$CJ/com/android/internal/util/LatencyTracker.java");
+    try c.file("$CJ/com/android/internal/util/PerfettoTrigger.java");
     try c.file("$CJ/android/text/method/OffsetMapping.java");
     try c.file("$CJ/android/util/TimeFormatException.java");
     try c.file("$CJ/android/util/MergedConfiguration.java");

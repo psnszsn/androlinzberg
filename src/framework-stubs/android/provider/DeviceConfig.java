@@ -14,6 +14,8 @@ public final class DeviceConfig {
     public static final String NAMESPACE_WINDOW_MANAGER = "window_manager";
     public static final String NAMESPACE_CLIPBOARD = "clipboard";
     public static final String NAMESPACE_PRIVACY = "privacy";
+    // AOSP DeviceConfig namespace used by LatencyTracker; this host keeps values default-backed.
+    public static final String NAMESPACE_LATENCY_TRACKER = "latency_tracker";
     private DeviceConfig() {}
     public static String getString(String namespace, String name, String defaultValue) { return defaultValue; }
     public static boolean getBoolean(String namespace, String name, boolean defaultValue) { return defaultValue; }

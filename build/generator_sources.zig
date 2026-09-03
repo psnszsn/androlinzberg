@@ -117,6 +117,8 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/IWindowContainerTransactionCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/WindowAnimationState.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/infra/IAndroidFuture.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/protolog/IProtoLogClient.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/protolog/IProtoLogConfigurationService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/inputmethod/IAccessibilityInputMethodSession.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/inputmethod/IAccessibilityInputMethodSessionCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/inputmethod/IBooleanListener.aidl" },
@@ -519,6 +521,7 @@ pub const logtags = [_]Logtags{
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/services/core/java/com/android/server/am/EventLogTags.logtags" }, .output = "com/android/server/am/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/EventLogTags.logtags" }, .output = "android/os/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/EventLogTags.logtags" }, .output = "android/content/EventLogTags.java" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/logging/EventLogTags.logtags" }, .output = "com/android/internal/logging/EventLogTags.java" },
 };
 
 pub const aconfig = [_]Aconfig{
