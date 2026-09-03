@@ -282,6 +282,7 @@ public final class FrameworkCompatSmoke {
                 android.app.ActivityThread.currentActivityThread().`bindSystemApplication$artzig`()
             }
             testStockInternalUtilMetadata()
+            testStockCompatChanges()
             testStockFontRequest()
             testStockTextSpans()
             testStockHtml()
@@ -897,6 +898,33 @@ public final class FrameworkCompatSmoke {
                 "DataClass generated metadata requires a timestamp",
             )
             android.util.Log.i("FrameworkCompatSmoke", "stock internal util metadata ok")
+        }
+
+        /** Stock CompatChanges queries the session's hosted IPlatformCompat service. */
+        @JvmStatic
+        private fun testStockCompatChanges() {
+            require(android.app.compat.CompatChanges.isChangeEnabled(0x41L), "current-process change enabled")
+            require(
+                android.app.compat.CompatChanges.isChangeEnabled(
+                    0x42L,
+                    "org.example",
+                    android.os.UserHandle.SYSTEM,
+                ),
+                "package change enabled through platform compat Binder",
+            )
+            require(
+                android.app.compat.CompatChanges.isChangeEnabled(0x43L, android.os.Process.SYSTEM_UID),
+                "uid change enabled through platform compat Binder",
+            )
+
+            val range = android.app.compat.PackageOverride.Builder()
+                .setMinVersionCode(2L)
+                .setMaxVersionCode(4L)
+                .setEnabled(false)
+                .build()
+            require(range.evaluate(1L) == android.app.compat.PackageOverride.VALUE_UNDEFINED, "override lower bound")
+            require(range.evaluate(3L) == android.app.compat.PackageOverride.VALUE_DISABLED, "override range value")
+            android.util.Log.i("FrameworkCompatSmoke", "stock compat changes ok")
         }
 
         /** Stock AOSP FontRequest: validation, identity key and certificate rendering. */

@@ -111,6 +111,14 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 fn collectStatic(c: *StaticCollector) !void {
     try c.file("$MU/java/com/android/internal/util/Preconditions.java");
     try c.add("$MU/java/com/android/internal/annotations", .{});
+    try c.add("$FB/core/java/android/app/compat", .{});
+    try c.file("$FB/core/java/com/android/internal/compat/CompatibilityChangeConfig.java");
+    try c.file("$FB/core/java/com/android/internal/compat/CompatibilityChangeInfo.java");
+    try c.file("$FB/core/java/com/android/internal/compat/CompatibilityOverrideConfig.java");
+    try c.file("$FB/core/java/com/android/internal/compat/CompatibilityOverridesByPackageConfig.java");
+    try c.file("$FB/core/java/com/android/internal/compat/CompatibilityOverridesToRemoveByPackageConfig.java");
+    try c.file("$FB/core/java/com/android/internal/compat/CompatibilityOverridesToRemoveConfig.java");
+    try c.file("$FB/core/java/com/android/internal/compat/OverrideAllowedState.java");
     try c.add("$FB/core/java/com/android/internal/util/function", .{});
     try c.add("$FB/graphics/java/android/graphics", .{ .not_paths = &.{"*/pdf/*"}, .not_names = &.{ "GraphicsStatsService.java", "GraphicBuffer.java", "SurfaceTexture.java", "SurfaceControl*.java", "Renderer*.java" } });
     try c.add("$FB/libs/hwui/apex/java", .{});

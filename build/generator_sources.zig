@@ -148,6 +148,8 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/app/IAppOpsNotedCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/app/IAppOpsService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/app/IAppOpsStartedCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/compat/IOverrideValidator.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/compat/IPlatformCompat.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/widget/IRemoteViewsFactory.aidl" },
     .{ .source = .repo, .path = "aidl-compat/dev/artzig/binder/IBinderTestCallback.aidl" },
     .{ .source = .repo, .path = "aidl-compat/dev/artzig/binder/IBinderTestService.aidl" },

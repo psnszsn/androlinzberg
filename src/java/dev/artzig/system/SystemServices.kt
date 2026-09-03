@@ -114,6 +114,10 @@ internal object SystemServices {
                 }
             },
         )
+        android.os.ServiceManager.addService(
+            Context.PLATFORM_COMPAT_SERVICE,
+            HostedPlatformCompatService(),
+        )
         val activityManager = HostedActivityManagerService()
         activityManager.processLauncher = sessionProcessLauncher()
         activityManager.packageService = packageManager
