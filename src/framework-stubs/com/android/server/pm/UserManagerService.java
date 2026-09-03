@@ -8,8 +8,11 @@ import android.content.pm.UserInfo;
 
 public final class UserManagerService {
     private static final UserManagerService INSTANCE = new UserManagerService();
-    private static final UserInfo USER_SYSTEM =
-            new UserInfo(0, "hosted", UserInfo.FLAG_SYSTEM | UserInfo.FLAG_FULL | UserInfo.FLAG_PRIMARY);
+    // The real UserInfo derives a user type from the flags and refuses to guess for the
+    // system user, so the type is spelled out as UserManagerService.createUserInternal does.
+    private static final UserInfo USER_SYSTEM = new UserInfo(0, "hosted", null,
+            UserInfo.FLAG_SYSTEM | UserInfo.FLAG_FULL | UserInfo.FLAG_PRIMARY | UserInfo.FLAG_ADMIN | UserInfo.FLAG_MAIN,
+            android.os.UserManager.USER_TYPE_FULL_SYSTEM);
 
     private UserManagerService() {}
 

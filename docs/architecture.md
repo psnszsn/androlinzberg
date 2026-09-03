@@ -219,7 +219,40 @@ stubs around this family: the radio HAL enums (`android.hardware.radio.*`),
 libphonenumber (`external/libphonenumber` is not vendored, so parsing reports
 "not a number" and the formatting helpers pass input through), the telecom
 aconfig flags, `RoleManager`, and the Connectivity types telephony parcels
-(`LinkAddress`, `LinkProperties`, `NetworkCapabilities`, `NetworkStats`). System properties
+(`LinkAddress`, `LinkProperties`, `NetworkCapabilities`, `NetworkStats`). The policy
+long tail is real where its closure allowed: `KeyguardManager` over
+`HostedTrustManagerService` (`ITrustManager`: never locked or secure, listeners told
+so on registration) and `HostedLockSettingsService` (`ILockSettings`: credential
+type none, a per-user key/value store behind the AOSP write gate, empty credential
+verifies), `SearchManager` and `SearchView` over `HostedSearchManagerService`
+(`ISearchManager`: searchable metadata from an activity's meta-data, no global
+search), `ShortcutManager` over `HostedShortcutService` (`IShortcutService`:
+ShortcutService's per-package table with the dynamic/pinned/disabled transitions,
+limits and incoming checks, no launcher to pin), `LauncherApps` over
+`HostedLauncherAppsService` (`ILauncherApps`: launcher activities from the hosted
+package manager's MAIN/LAUNCHER query, launches through the system context, the
+shortcut surface behind `ensureShortcutPermission`), `DropBoxManager` over
+`HostedDropBoxManagerService` (`IDropBoxManagerService`: timestamped entries,
+READ_LOGS on reads), `OverlayManager` over `HostedOverlayManagerService`
+(`IOverlayManager`: no overlays; fabricated overlays fail without idmap2),
+`DomainVerificationManager` over `HostedDomainVerificationService`
+(`IDomainVerificationManager`: no verified domains, name-not-found for unknown
+packages), `WallpaperManager` over `HostedWallpaperManagerService`
+(`IWallpaperManager`: wallpaper unsupported, the framework default drawable),
+`CredentialManager` over `HostedCredentialManagerService` (`ICredentialManager`:
+no providers, so requests end with the AOSP no-credential errors), the autofill
+service classes, `UiModeManager` over `HostedUiModeManagerService`
+(`IUiModeManager`: type NORMAL, night mode in `Settings.Secure` with the
+`config_defaultNightMode` default, per-package night modes; changes reach app
+processes as configuration deltas through the hosted activity manager's
+`ConfigurationChangeItem` transactions, which the hosted `ActivityThread` now
+applies), and `AppWidgetManager`/`AppWidgetHost` over `HostedAppWidgetService`
+(`IAppWidgetService`: host ids and options, no providers, no pinning).
+`UserManager` stays a stub: its `UserManagerCache` is emitted by the
+CachedProperty annotation processor, which needs guava (not vendored).
+`DevicePolicyManager`, `StatusBarManager`, `StorageManager`, `IncidentManager` and
+`VirtualDeviceManager` stay stubs behind the biometrics/keymint HAL, vold/installd
+AIDL and camera/audio chains docs/stubs.md records. System properties
 are session-wide, following Android's model: the broker owns a shared property
 area file in the session directory (`src/binder/prop_area.zig`, the
 `__system_property_area__` analogue) that every process — the JVM

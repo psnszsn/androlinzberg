@@ -53,6 +53,10 @@ public class ActivityManager {
     public static boolean isHighEndGfx() { return true; }
     public static boolean isLowRamDeviceStatic() { return false; }
     public static int getCurrentUser() { return 0; }
+    public static final int ASSIST_CONTEXT_BASIC = 0;
+    public static final int ASSIST_CONTEXT_FULL = 1;
+    public static final int ASSIST_CONTEXT_CONTENT = 2;
+    public static final int ASSIST_CONTEXT_AUTOFILL = 3;
     /** Hosted processes run foreground; the single user is always the current one. */
     public int getUidImportance(int uid) { return RunningAppProcessInfo.IMPORTANCE_FOREGROUND; }
     public boolean isProfileForeground(android.os.UserHandle userHandle) { return userHandle != null && userHandle.getIdentifier() == getCurrentUser(); }

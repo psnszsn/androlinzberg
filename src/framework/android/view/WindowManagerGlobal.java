@@ -14,7 +14,10 @@ public final class WindowManagerGlobal {
     }
     private static final IWindowManager sWindowManager = new IWindowManager() {};
     public static IWindowManager getWindowManagerService() { return sWindowManager; }
-    public static Object getWindowSession() { return null; }
+    /** The hosted window path never opens a WindowManagerService session: the AIDL Default
+     * (every call a no-op) stands in for wallpaper offsets, drags and the other session calls. */
+    private static final IWindowSession sWindowSession = new IWindowSession.Default();
+    public static IWindowSession getWindowSession() { return sWindowSession; }
     public void addRoot(ViewRootImpl root) { mRoots.add(root); }
     public ArrayList<ViewRootImpl> getRootViews() { return mRoots; }
     public ArrayList<ViewRootImpl> getRootViews(android.os.IBinder token) { return mRoots; }

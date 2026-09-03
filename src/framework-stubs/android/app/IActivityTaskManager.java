@@ -19,4 +19,6 @@ public interface IActivityTaskManager extends android.os.IInterface {
             android.os.Bundle options) throws android.os.RemoteException {
         throw new UnsupportedOperationException("IActivityTaskManager.startActivityIntentSender is not hosted");
     }
+    /** SearchManager.launchAssist: no assistant to hand context to. */
+    default android.os.Bundle getAssistContextExtras(int requestType) throws android.os.RemoteException { return null; }
 }

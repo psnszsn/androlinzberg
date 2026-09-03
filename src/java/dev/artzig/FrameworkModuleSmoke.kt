@@ -11,7 +11,6 @@ import android.app.Person
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
-import android.app.HostedUiModeController
 import android.app.UiModeManager
 import android.content.ComponentName
 import android.content.Context
@@ -404,23 +403,6 @@ internal object FrameworkModuleSmoke {
         check(clipboardManager.text == "hosted-clip")
         checkNotNull(clipboardManager.primaryClipDescription)
 
-        val uiModeManager = checkNotNull(context.getSystemService(UiModeManager::class.java))
-        check(uiModeManager === context.getSystemService(Context.UI_MODE_SERVICE))
-        val previousApplicationNightMode =
-            HostedUiModeController.getApplicationNightMode(context)
-        try {
-            uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_NO)
-            check(context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-                Configuration.UI_MODE_NIGHT_NO)
-            uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_YES)
-            check(context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-                Configuration.UI_MODE_NIGHT_YES)
-            check(runCatching {
-                uiModeManager.setApplicationNightMode(Int.MIN_VALUE)
-            }.exceptionOrNull() is IllegalArgumentException)
-        } finally {
-            uiModeManager.setApplicationNightMode(previousApplicationNightMode)
-        }
 
         val notificationBuilder = Notification.Builder(context, "smoke")
         check(notificationBuilder.addPerson("name:framework-smoke") === notificationBuilder)
@@ -441,6 +423,35 @@ internal object FrameworkModuleSmoke {
         check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
         ActivityThread.attachApplicationHosted("org.example.permissions")
         val appContext = context.createPackageContext("org.example.permissions", 0)
+        // Night mode is delivered to this process only once it is attached to the activity
+        // manager (above), as AOSP delivers package configuration to attached processes.
+        val uiModeManager = checkNotNull(context.getSystemService(UiModeManager::class.java))
+        check(uiModeManager === context.getSystemService(Context.UI_MODE_SERVICE))
+        // The hosted IUiModeManager delivers the package's night mode as a configuration
+        // transaction on the main looper (AOSP: ActivityTaskManager's package configuration
+        // update), so the queue is drained before the configuration is inspected.
+        // The transaction arrives on a binder thread (IApplicationThread is oneway) and is
+        // posted to the main looper, so drain the queue until the configuration reflects it.
+        fun nightBitsBecome(expected: Int): Boolean {
+            repeat(250) {
+                drainMainQueue()
+                if (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == expected) return true
+                Thread.sleep(20)
+            }
+            return false
+        }
+        try {
+            uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_NO)
+            check(nightBitsBecome(Configuration.UI_MODE_NIGHT_NO))
+            uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_YES)
+            check(nightBitsBecome(Configuration.UI_MODE_NIGHT_YES))
+            check(runCatching {
+                uiModeManager.setApplicationNightMode(Int.MIN_VALUE)
+            }.exceptionOrNull() is IllegalArgumentException)
+        } finally {
+            uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_AUTO)
+            drainMainQueue()
+        }
         // The hosted provider table is deliberately kept under filesDir, where the APK can alter
         // it. Verify that restoring a forged successful record cannot turn provider APIs into a
         // read/delete primitive for paths outside application-owned storage.

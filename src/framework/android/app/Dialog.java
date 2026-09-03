@@ -23,10 +23,10 @@ import com.android.internal.policy.PhoneWindow;
 public class Dialog implements DialogInterface, Window.Callback,
         KeyEvent.Callback, View.OnCreateContextMenuListener {
     private static final String TAG = "Dialog";
-    private final Context mContext;
+    final Context mContext;
     private final Window mWindow;
     private final WindowManager mWindowManager;
-    private View mDecor;
+    View mDecor;
     private Activity mOwnerActivity;
     private boolean mCreated;
     private boolean mShowing;

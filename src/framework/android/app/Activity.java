@@ -94,6 +94,14 @@ public class Activity extends ContextWrapper implements Window.Callback,
     @Override public void startActivity(Intent intent, Bundle options) { startActivityForResult(intent, -1, options); }
     @Override public void startActivities(Intent[] intents) { for (Intent i : intents) startActivity(i); }
     @Override public void startActivities(Intent[] intents, Bundle options) { startActivities(intents); }
+    /** AOSP Activity.mHandler: the main-thread handler package-private helpers post to (KeyguardManager). */
+    final android.os.Handler mHandler = new android.os.Handler();
+    /** AOSP Activity.getLaunchedFromPackage: the activity task manager knows the launcher; this host has no record. */
+    public String getLaunchedFromPackage() { return null; }
+    /** AOSP Activity.requestWindowFeature: a feature request on the activity window. */
+    public final boolean requestWindowFeature(int featureId) { return getWindow().requestFeature(featureId); }
+    /** AOSP Activity.onActivityResult: results reach the activity through dispatchActivityResult. */
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {}
     public void startActivityForResult(Intent intent, int requestCode) { startActivityForResult(intent, requestCode, null); }
     public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
         ActivityThread.currentActivityThread().getInstrumentation().execStartActivity(

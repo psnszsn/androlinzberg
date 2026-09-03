@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.verify.domain.DomainVerificationManager
 import android.os.IBinder
 import android.os.Looper
 import android.os.Process
@@ -837,6 +838,101 @@ internal object SystemTestClientA {
         check(telecom.isOutgoingCallPermitted(voipHandle), "outgoing self-managed call permitted")
         telecom.unregisterPhoneAccount(voipHandle)
         check(telecom.ownSelfManagedPhoneAccounts.isEmpty(), "self-managed phone account unregistered")
+
+        // --- the policy long tail through the real managers over hosted services (phase 6):
+        // user, keyguard, search, shortcuts/launcher apps, dropbox, overlays, domain
+        // verification, wallpaper, credentials, UI mode and app widgets.
+        val hostedUsers = checkNotNull(context.getSystemService(android.os.UserManager::class.java))
+        check(hostedUsers.getUserHandles(true) == listOf(android.os.UserHandle.SYSTEM), "the single hosted user")
+        val keyguard = checkNotNull(context.getSystemService(android.app.KeyguardManager::class.java))
+        check(!keyguard.isKeyguardLocked && !keyguard.isKeyguardSecure && !keyguard.isDeviceLocked && !keyguard.isDeviceSecure, "no keyguard, no lock")
+        val searchManager = checkNotNull(context.getSystemService(android.app.SearchManager::class.java))
+        check(searchManager.getSearchableInfo(ComponentName(context, "dev.artzig.systemtest.AToggleActivity")) == null, "no searchable metadata")
+        check(searchManager.globalSearchActivity == null, "no global search activity")
+        val shortcuts = checkNotNull(context.getSystemService(android.content.pm.ShortcutManager::class.java))
+        val viewIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://example.test/"))
+        check(
+            shortcuts.setDynamicShortcuts(
+                listOf(
+                    android.content.pm.ShortcutInfo.Builder(context, "one").setShortLabel("One").setIntent(viewIntent).setRank(0).build(),
+                    android.content.pm.ShortcutInfo.Builder(context, "two").setShortLabel("Two").setIntent(viewIntent).setRank(1).build(),
+                ),
+            ),
+            "dynamic shortcuts set",
+        )
+        check(shortcuts.dynamicShortcuts.map { it.id }.sorted() == listOf("one", "two"), "dynamic shortcuts listed")
+        check(shortcuts.dynamicShortcuts.all { it.isDynamic && !it.isPinned && it.isEnabled }, "dynamic shortcut flags")
+        check(shortcuts.maxShortcutCountPerActivity == 15, "AOSP shortcut limit")
+        check(!shortcuts.isRequestPinShortcutSupported, "no launcher to pin shortcuts")
+        check(
+            runCatching {
+                shortcuts.addDynamicShortcuts(listOf(android.content.pm.ShortcutInfo.Builder(context, "no-intent").setShortLabel("x").build()))
+            }.exceptionOrNull() is IllegalArgumentException,
+            "a dynamic shortcut needs an intent",
+        )
+        shortcuts.removeDynamicShortcuts(listOf("one"))
+        check(shortcuts.dynamicShortcuts.map { it.id } == listOf("two"), "dynamic shortcut removed")
+        shortcuts.disableShortcuts(listOf("two"))
+        check(shortcuts.dynamicShortcuts.isEmpty() && shortcuts.pinnedShortcuts.isEmpty(), "disabling an unpinned shortcut drops it")
+        val launcherApps = checkNotNull(context.getSystemService(android.content.pm.LauncherApps::class.java))
+        check(launcherApps.isPackageEnabled(context.packageName, android.os.Process.myUserHandle()), "launcher apps sees this package")
+        check(launcherApps.getApplicationInfo(context.packageName, 0, android.os.Process.myUserHandle()).packageName == context.packageName, "launcher apps application info")
+        check(!launcherApps.hasShortcutHostPermission(), "not the default launcher")
+        check(launcherApps.profiles == listOf(android.os.UserHandle.SYSTEM), "launcher profiles")
+        val dropBox = checkNotNull(context.getSystemService(android.os.DropBoxManager::class.java))
+        check(dropBox.isTagEnabled("azk-test"), "dropbox tag enabled")
+        val dropBoxSince = System.currentTimeMillis() - 1
+        dropBox.addText("azk-test", "hello dropbox")
+        val dropped = dropBox.getNextEntry("azk-test", dropBoxSince)
+        check(dropped != null && dropped.tag == "azk-test" && dropped.getText(64) == "hello dropbox", "dropbox entry round trip")
+        dropped?.close()
+        val domainVerification = checkNotNull(context.getSystemService(DomainVerificationManager::class.java))
+        check(domainVerification.getDomainVerificationUserState(context.packageName) == null, "no verified domains")
+        check(
+            runCatching { domainVerification.getDomainVerificationUserState("dev.artzig.no.such.package") }.exceptionOrNull() is android.content.pm.PackageManager.NameNotFoundException,
+            "domain verification of an unknown package",
+        )
+        val wallpaper = checkNotNull(context.getSystemService(android.app.WallpaperManager::class.java))
+        check(!wallpaper.isWallpaperSupported && wallpaper.wallpaperInfo == null, "no wallpaper service")
+        val credentials = checkNotNull(context.getSystemService(android.credentials.CredentialManager::class.java))
+        val credentialDone = CountDownLatch(1)
+        var credentialError: android.credentials.GetCredentialException? = null
+        credentials.getCredential(
+            context,
+            android.credentials.GetCredentialRequest.Builder(android.os.Bundle())
+                .addCredentialOption(android.credentials.CredentialOption.Builder("azk.test.credential", android.os.Bundle(), android.os.Bundle()).build())
+                .build(),
+            null,
+            context.mainExecutor,
+            object : android.os.OutcomeReceiver<android.credentials.GetCredentialResponse, android.credentials.GetCredentialException> {
+                override fun onResult(result: android.credentials.GetCredentialResponse) { credentialDone.countDown() }
+                override fun onError(error: android.credentials.GetCredentialException) {
+                    credentialError = error
+                    credentialDone.countDown()
+                }
+            },
+        )
+        check(credentialDone.await(30, TimeUnit.SECONDS), "credential request completes")
+        check(credentialError?.type == android.credentials.GetCredentialException.TYPE_NO_CREDENTIAL, "no credential provider")
+        val uiMode = checkNotNull(context.getSystemService(android.app.UiModeManager::class.java))
+        check(uiMode.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_NORMAL, "ui mode type normal")
+        check(uiMode.nightMode == android.app.UiModeManager.MODE_NIGHT_NO, "night mode follows config_defaultNightMode")
+        uiMode.setApplicationNightMode(android.app.UiModeManager.MODE_NIGHT_YES)
+        var nightApplied = false
+        for (i in 0 until 50) {
+            if (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES) { nightApplied = true; break }
+            Thread.sleep(100)
+        }
+        check(nightApplied, "application night mode reaches this process's configuration")
+        uiMode.setApplicationNightMode(android.app.UiModeManager.MODE_NIGHT_NO)
+        check(runCatching { uiMode.setApplicationNightMode(Int.MIN_VALUE) }.exceptionOrNull() is IllegalArgumentException, "invalid night mode rejected")
+        val appWidgets = checkNotNull(android.appwidget.AppWidgetManager.getInstance(context))
+        check(appWidgets.installedProviders.isEmpty(), "no app widget providers")
+        val widgetHost = android.appwidget.AppWidgetHost(context, 7)
+        val widgetId = widgetHost.allocateAppWidgetId()
+        check(widgetId > 0 && appWidgets.getAppWidgetInfo(widgetId) == null, "app widget id allocated, unbound")
+        widgetHost.deleteAppWidgetId(widgetId)
+        check(widgetHost.appWidgetIds.isEmpty(), "app widget id released")
 
         // --- clipboard through the reused AOSP ClipboardService.
         val clipboard = checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))

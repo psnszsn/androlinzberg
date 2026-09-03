@@ -202,6 +202,22 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.CARRIER_CONFIG_SERVICE, HostedCarrierConfigLoader(telephonyPermissions))
         android.os.ServiceManager.addService("telephony.registry", HostedTelephonyRegistry(telephonyPermissions, modemCount))
         android.os.ServiceManager.addService(Context.TELECOM_SERVICE, HostedTelecomService(context, telephonyPermissions, packageManager))
+        // Phase 6: the policy long tail (UI mode, keyguard's trust and lock-settings services,
+        // search, dropbox, overlays, domain verification, wallpaper, credentials, shortcuts,
+        // launcher apps, app widgets) for a device with no launcher, lock screen or providers.
+        val hostedPermissions = HostedPermissions(packageManager)
+        android.os.ServiceManager.addService(Context.UI_MODE_SERVICE, HostedUiModeManagerService(context, activityManager, hostedPermissions))
+        android.os.ServiceManager.addService(Context.TRUST_SERVICE, HostedTrustManagerService(hostedPermissions))
+        android.os.ServiceManager.addService("lock_settings", HostedLockSettingsService(hostedPermissions))
+        android.os.ServiceManager.addService(Context.SEARCH_SERVICE, HostedSearchManagerService(context, packageManager))
+        android.os.ServiceManager.addService(Context.DROPBOX_SERVICE, HostedDropBoxManagerService(context, hostedPermissions))
+        android.os.ServiceManager.addService(Context.OVERLAY_SERVICE, HostedOverlayManagerService(hostedPermissions))
+        android.os.ServiceManager.addService(Context.DOMAIN_VERIFICATION_SERVICE, HostedDomainVerificationService(packageManager, hostedPermissions))
+        android.os.ServiceManager.addService(Context.WALLPAPER_SERVICE, HostedWallpaperManagerService(hostedPermissions))
+        android.os.ServiceManager.addService(Context.CREDENTIAL_SERVICE, HostedCredentialManagerService(hostedPermissions))
+        android.os.ServiceManager.addService(Context.SHORTCUT_SERVICE, HostedShortcutService(context, hostedPermissions))
+        android.os.ServiceManager.addService(Context.LAUNCHER_APPS_SERVICE, HostedLauncherAppsService(context, packageManager, hostedPermissions))
+        android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name

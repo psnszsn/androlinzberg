@@ -899,9 +899,10 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     override fun isProtectedBroadcast(actionName: String?): Boolean = false
     override fun isInstantApp(packageName: String?, userId: Int): Boolean = false
     override fun getInstallerPackageName(packageName: String?): String? = null
-    override fun hasSystemFeature(name: String?, version: Int): Boolean = false
+    /** The system features this host declares: app-widget hosting (the hosted IAppWidgetService). */
+    override fun hasSystemFeature(name: String?, version: Int): Boolean = name in HOST_FEATURES && version <= 0
     override fun getSystemAvailableFeatures(): ParceledListSlice<*> =
-        ParceledListSlice(emptyList<android.content.pm.FeatureInfo>())
+        ParceledListSlice(HOST_FEATURES.map { android.content.pm.FeatureInfo().apply { this.name = it } })
     override fun getSystemSharedLibraryNames(): Array<String>? = null
     override fun isSafeMode(): Boolean = false
     override fun isFirstBoot(): Boolean = false
@@ -927,6 +928,8 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     override fun getHarmfulAppWarning(packageName: String?, userId: Int): CharSequence? = null
 
     private companion object {
+        val HOST_FEATURES: Set<String> = setOf(PackageManager.FEATURE_APP_WIDGETS)
+
         const val TAG = "HostedPackageManager"
     }
 }

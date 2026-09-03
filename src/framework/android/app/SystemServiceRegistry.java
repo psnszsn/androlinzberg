@@ -102,8 +102,8 @@ public final class SystemServiceRegistry {
             }});
         registerService(Context.APP_OPS_SERVICE, AppOpsManager.class, new NewServiceFetcher<AppOpsManager>() {
             @Override public AppOpsManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new AppOpsManager(); }});
-        registerService(Context.KEYGUARD_SERVICE, KeyguardManager.class, new NewServiceFetcher<KeyguardManager>() {
-            @Override public KeyguardManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new KeyguardManager(); }});
+        registerService(Context.KEYGUARD_SERVICE, KeyguardManager.class, new CachedServiceFetcher<KeyguardManager>() {
+            @Override public KeyguardManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new KeyguardManager(ctx); }});
         registerService(Context.TEXT_CLASSIFICATION_SERVICE, android.view.textclassifier.TextClassificationManager.class,
                 new CachedServiceFetcher<android.view.textclassifier.TextClassificationManager>() {
             @Override public android.view.textclassifier.TextClassificationManager createService(ContextImpl ctx) throws ServiceNotFoundException {
@@ -189,7 +189,7 @@ public final class SystemServiceRegistry {
                 return new android.app.usage.StorageStatsManager(ctx, service);
             }});
         registerService(Context.UI_MODE_SERVICE, UiModeManager.class, new CachedServiceFetcher<UiModeManager>() {
-            @Override public UiModeManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new UiModeManager(ctx); }});
+            @Override public UiModeManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new UiModeManager(ctx.getOuterContext()); }});
         registerService(Context.NSD_SERVICE, android.net.nsd.NsdManager.class, new CachedServiceFetcher<android.net.nsd.NsdManager>() {
             @Override public android.net.nsd.NsdManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.nsd.NsdManager(ctx); }});
         registerService(Context.BATTERY_SERVICE, android.os.BatteryManager.class,
@@ -223,7 +223,66 @@ public final class SystemServiceRegistry {
                 return new android.location.LocationManager(ctx, android.location.ILocationManager.Stub.asInterface(b));
             }});
         registerService(Context.SHORTCUT_SERVICE, android.content.pm.ShortcutManager.class, new CachedServiceFetcher<android.content.pm.ShortcutManager>() {
-            @Override public android.content.pm.ShortcutManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.content.pm.ShortcutManager(); }});
+            @Override public android.content.pm.ShortcutManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.SHORTCUT_SERVICE);
+                return new android.content.pm.ShortcutManager(ctx, android.content.pm.IShortcutService.Stub.asInterface(b));
+            }});
+        registerService(Context.LAUNCHER_APPS_SERVICE, android.content.pm.LauncherApps.class, new CachedServiceFetcher<android.content.pm.LauncherApps>() {
+            @Override public android.content.pm.LauncherApps createService(ContextImpl ctx) { return new android.content.pm.LauncherApps(ctx); }});
+        registerService(Context.SEARCH_SERVICE, android.app.SearchManager.class, new CachedServiceFetcher<android.app.SearchManager>() {
+            @Override public android.app.SearchManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                return new android.app.SearchManager(ctx.getOuterContext(), ctx.mMainThread.getHandler());
+            }});
+        registerService(Context.DROPBOX_SERVICE, android.os.DropBoxManager.class, new CachedServiceFetcher<android.os.DropBoxManager>() {
+            @Override public android.os.DropBoxManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.DROPBOX_SERVICE);
+                return new android.os.DropBoxManager(ctx, com.android.internal.os.IDropBoxManagerService.Stub.asInterface(b));
+            }});
+        registerService(Context.OVERLAY_SERVICE, android.content.om.OverlayManager.class, new CachedServiceFetcher<android.content.om.OverlayManager>() {
+            @Override public android.content.om.OverlayManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                final android.os.IBinder b = (android.compat.Compatibility.isChangeEnabled(android.content.om.OverlayManager.SELF_TARGETING_OVERLAY))
+                        ? android.os.ServiceManager.getService(Context.OVERLAY_SERVICE)
+                        : android.os.ServiceManager.getServiceOrThrow(Context.OVERLAY_SERVICE);
+                return new android.content.om.OverlayManager(ctx, android.content.om.IOverlayManager.Stub.asInterface(b));
+            }});
+        registerService(Context.DOMAIN_VERIFICATION_SERVICE, android.content.pm.verify.domain.DomainVerificationManager.class,
+                new CachedServiceFetcher<android.content.pm.verify.domain.DomainVerificationManager>() {
+            @Override public android.content.pm.verify.domain.DomainVerificationManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.DOMAIN_VERIFICATION_SERVICE);
+                return new android.content.pm.verify.domain.DomainVerificationManager(ctx,
+                        android.content.pm.verify.domain.IDomainVerificationManager.Stub.asInterface(b));
+            }});
+        registerService(Context.WALLPAPER_SERVICE, android.app.WallpaperManager.class, new CachedServiceFetcher<android.app.WallpaperManager>() {
+            @Override public android.app.WallpaperManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                final android.os.IBinder b = android.os.ServiceManager.getService(Context.WALLPAPER_SERVICE);
+                if (b == null) {
+                    android.content.pm.ApplicationInfo appInfo = ctx.getApplicationInfo();
+                    if (appInfo.targetSdkVersion >= android.os.Build.VERSION_CODES.P
+                            && appInfo.isInstantApp()) {
+                        throw new ServiceNotFoundException(Context.WALLPAPER_SERVICE);
+                    }
+                    final boolean enabled = ctx.getResources().getBoolean(com.android.internal.R.bool.config_enableWallpaperService);
+                    if (!enabled) {
+                        throw new ServiceNotFoundException(Context.WALLPAPER_SERVICE);
+                    }
+                }
+                android.app.IWallpaperManager service = android.app.IWallpaperManager.Stub.asInterface(b);
+                return new android.app.WallpaperManager(service, ctx.getOuterContext(), ctx.mMainThread.getHandler());
+            }});
+        registerService(Context.CREDENTIAL_SERVICE, android.credentials.CredentialManager.class, new CachedServiceFetcher<android.credentials.CredentialManager>() {
+            @Override public android.credentials.CredentialManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getService(Context.CREDENTIAL_SERVICE);
+                android.credentials.ICredentialManager service = android.credentials.ICredentialManager.Stub.asInterface(b);
+                if (service != null) {
+                    return new android.credentials.CredentialManager(ctx.getOuterContext(), service);
+                }
+                return null;
+            }});
+        registerService(Context.APPWIDGET_SERVICE, android.appwidget.AppWidgetManager.class, new CachedServiceFetcher<android.appwidget.AppWidgetManager>() {
+            @Override public android.appwidget.AppWidgetManager createService(ContextImpl ctx) {
+                android.os.IBinder b = android.os.ServiceManager.getService(Context.APPWIDGET_SERVICE);
+                return b == null ? null : new android.appwidget.AppWidgetManager(ctx, com.android.internal.appwidget.IAppWidgetService.Stub.asInterface(b));
+            }});
         // MediaFrameworkPlatformInitializer / MediaFrameworkInitializer: the real MediaSessionManager
         // over the hosted ISessionManager, MediaMetricsManager over the hosted IMediaMetricsManager.
         // AOSP: the media framework initializer registers MediaSessionManager and owns the

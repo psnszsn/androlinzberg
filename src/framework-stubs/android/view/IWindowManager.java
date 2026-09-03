@@ -10,6 +10,19 @@ public interface IWindowManager {
     default boolean isKeyguardLocked() throws android.os.RemoteException { return false; }
     default void showStrictModeViolation(boolean on) throws android.os.RemoteException {}
     default boolean isKeyguardSecure(int userId) throws android.os.RemoteException { return false; }
+    // Keyguard control (KeyguardManager): there is no keyguard to disable, exit or observe.
+    default void disableKeyguard(android.os.IBinder token, String tag, int userId) throws android.os.RemoteException {}
+    default void reenableKeyguard(android.os.IBinder token, int userId) throws android.os.RemoteException {}
+    default void exitKeyguardSecurely(android.view.IOnKeyguardExitResult callback) throws android.os.RemoteException {
+        if (callback != null) callback.onKeyguardExitResult(true);
+    }
+    default void dismissKeyguard(com.android.internal.policy.IKeyguardDismissCallback callback, CharSequence message) throws android.os.RemoteException {
+        if (callback != null) callback.onDismissSucceeded();
+    }
+    default void addKeyguardLockedStateListener(com.android.internal.policy.IKeyguardLockedStateListener listener) throws android.os.RemoteException {
+        if (listener != null) listener.onKeyguardLockedStateChanged(false);
+    }
+    default void removeKeyguardLockedStateListener(com.android.internal.policy.IKeyguardLockedStateListener listener) throws android.os.RemoteException {}
     default int getInitialDisplayDensity(int displayId) throws android.os.RemoteException { return 160; }
     default int getBaseDisplayDensity(int displayId) throws android.os.RemoteException { return 160; }
     default boolean hasNavigationBar(int displayId) throws android.os.RemoteException { return false; }

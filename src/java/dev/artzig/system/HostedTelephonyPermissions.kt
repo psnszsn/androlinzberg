@@ -1,9 +1,7 @@
 package dev.artzig.system
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Binder
-import android.os.Process
 
 /**
  * The permission checks the hosted telephony and telecom services share.
@@ -16,14 +14,7 @@ import android.os.Process
  * permission: a SecurityException where AOSP enforces, a false where AOSP asks
  * the no-throw variant.
  */
-class HostedTelephonyPermissions(private val packages: HostedPackageManagerService) {
-    fun has(permission: String, uid: Int = Binder.getCallingUid()): Boolean =
-        uid == Process.SYSTEM_UID || uid == Process.ROOT_UID ||
-            packages.checkUidPermission(permission, uid) == PackageManager.PERMISSION_GRANTED
-
-    fun isCallerPackage(packageName: String?, uid: Int = Binder.getCallingUid()): Boolean =
-        packageName != null && (uid == Process.SYSTEM_UID || packages.getPackagesForUid(uid)?.contains(packageName) == true)
-
+class HostedTelephonyPermissions(packages: HostedPackageManagerService) : HostedPermissions(packages) {
     /** TelephonyPermissions.checkCallingOrSelfReadPhoneStateNoThrow. */
     fun canReadPhoneState(): Boolean = has(Manifest.permission.READ_PRIVILEGED_PHONE_STATE) || has(Manifest.permission.READ_PHONE_STATE)
 
@@ -49,8 +40,4 @@ class HostedTelephonyPermissions(private val packages: HostedPackageManagerServi
 
     fun enforcePrivilegedPhoneState(message: String) = enforce(Manifest.permission.READ_PRIVILEGED_PHONE_STATE, message)
     fun enforceModifyPhoneState(message: String) = enforce(Manifest.permission.MODIFY_PHONE_STATE, message)
-
-    fun enforce(permission: String, message: String) {
-        if (!has(permission)) throw SecurityException("$message requires $permission")
-    }
 }

@@ -1,6 +1,9 @@
 /* artzig stub: android.text.Html — escape only (fromHtml needs tagsoup; provide plain-text fallback). */
 package android.text;
 public class Html {
+    public static final int TO_HTML_PARAGRAPH_LINES_CONSECUTIVE = 0x00000000;
+    public static final int TO_HTML_PARAGRAPH_LINES_INDIVIDUAL = 0x00000001;
+
     public static final int FROM_HTML_MODE_LEGACY = 0, FROM_HTML_MODE_COMPACT = 63;
     private Html() {}
     public static Spanned fromHtml(String source) { return fromHtml(source, FROM_HTML_MODE_LEGACY); }
@@ -19,4 +22,5 @@ public class Html {
         return out.toString();
     }
     public static String toHtml(Spanned text) { return escapeHtml(text.toString()); }
+    public static String toHtml(Spanned text, int option) { return toHtml(text); }
 }

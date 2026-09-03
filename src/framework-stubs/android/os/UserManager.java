@@ -25,6 +25,35 @@ public class UserManager {
     public CharSequence getBadgedLabelForUser(CharSequence label, UserHandle user) { return label; }
     public static final String USER_TYPE_FULL_SYSTEM = "android.os.usertype.full.SYSTEM";
     public static final String USER_TYPE_PROFILE_MANAGED = "android.os.usertype.profile.MANAGED";
+    public static final String USER_TYPE_FULL_SECONDARY = "android.os.usertype.full.SECONDARY";
+    public static final String USER_TYPE_FULL_GUEST = "android.os.usertype.full.GUEST";
+    public static final String USER_TYPE_FULL_DEMO = "android.os.usertype.full.DEMO";
+    public static final String USER_TYPE_FULL_RESTRICTED = "android.os.usertype.full.RESTRICTED";
+    public static final String USER_TYPE_SYSTEM_HEADLESS = "android.os.usertype.system.HEADLESS";
+    public static final String USER_TYPE_PROFILE_CLONE = "android.os.usertype.profile.CLONE";
+    public static final String USER_TYPE_PROFILE_PRIVATE = "android.os.usertype.profile.PRIVATE";
+    public static final String USER_TYPE_PROFILE_COMMUNAL = "android.os.usertype.profile.COMMUNAL";
+    public static final String USER_TYPE_PROFILE_SUPERVISING = "android.os.usertype.profile.SUPERVISING";
+    public static final String DISALLOW_MODIFY_ACCOUNTS = "no_modify_accounts";
+    public static final int USER_OPERATION_SUCCESS = 1;
+    public static final int USER_OPERATION_ERROR_UNKNOWN = 2;
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface UserOperationResult {}
+    public static boolean isUserTypeDemo(String userType) { return USER_TYPE_FULL_DEMO.equals(userType); }
+    public static boolean isUserTypeRestricted(String userType) { return USER_TYPE_FULL_RESTRICTED.equals(userType); }
+    public static boolean isUserTypeCloneProfile(String userType) { return USER_TYPE_PROFILE_CLONE.equals(userType); }
+    public static boolean isUserTypePrivateProfile(String userType) { return USER_TYPE_PROFILE_PRIVATE.equals(userType); }
+    public static boolean isUserTypeCommunalProfile(String userType) { return USER_TYPE_PROFILE_COMMUNAL.equals(userType); }
+    public static boolean isUserTypeSupervisingProfile(String userType) { return USER_TYPE_PROFILE_SUPERVISING.equals(userType); }
+    public boolean isPrivateProfile() { return false; }
+    public static boolean isDeviceInDemoMode(android.content.Context context) { return false; }
+    public Bundle getUserRestrictions(UserHandle userHandle) { return new Bundle(); }
+    public List<UserHandle> getUserProfiles() { return getUserHandles(true); }
+    /** The one hosted user's record, null for any other id. */
+    public UserInfo getUserInfo(int userId) {
+        for (UserInfo user : getUsers()) if (user.id == userId) return user;
+        return null;
+    }
     public static final String DISALLOW_CROSS_PROFILE_COPY_PASTE = "no_cross_profile_copy_paste";
     public static final String DISALLOW_SHARE_INTO_MANAGED_PROFILE = "no_sharing_into_profile";
     private static final UserManager sInstance = new UserManager();

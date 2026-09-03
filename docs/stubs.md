@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 168 (budget 168). Survivors: 118. Total: 286.
+Pending: 142 (budget 142). Survivors: 119. Total: 261.
 
 ## Survivors
 
@@ -93,6 +93,7 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `android/os/ext/SdkExtensions.java` | SdkExtensions module tree not vendored | no-aosp-source |
 | `android/os/incremental/IncrementalManager.java` | JNI natives (incfs) | blocked |
 | `android/provider/DeviceConfig.java` | ConfigInfrastructure module tree not vendored | no-aosp-source |
+| `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | replaceable |
 | `android/util/EventLog.java` | JNI natives (liblog event tags) | blocked |
 | `android/util/MemoryIntArray.java` | JNI natives (ashmem) | blocked |
 | `android/util/jar/StrictJarFile.java` | JNI natives (libandroid_runtime StrictJarFile) | blocked |
@@ -161,7 +162,7 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (486 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < PermissionUsageHelper < AppOpsManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the che |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (484 to add), not vendored; android.bluetooth.BluetoothCodecConfig: no source in the checkout (via BluetoothCodecConfig < AudioSystem < PermissionUsageHelper < AppOpsManager); android.bluetooth.BluetoothLeAudioCodecConfig: no source in the che |
 
 ### audio
 
@@ -185,15 +186,7 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/content/AutofillOptions.java` | replaceable | frameworks/base/core/java/android/content/AutofillOptions.java (1 to add), not vendored |
-| `android/service/autofill/AutofillService.java` | replaceable | frameworks/base/core/java/android/service/autofill/AutofillService.java (37 to add), not vendored |
-| `android/service/autofill/FillEventHistory.java` | replaceable | frameworks/base/core/java/android/service/autofill/FillEventHistory.java (2 to add), not vendored |
-| `android/service/autofill/FillRequest.java` | replaceable | frameworks/base/core/java/android/service/autofill/FillRequest.java (2 to add), not vendored |
-| `android/service/autofill/UserData.java` | replaceable | frameworks/base/core/java/android/service/autofill/UserData.java (3 to add), not vendored |
-| `android/widget/inline/InlineContentView.java` | replaceable | frameworks/base/core/java/android/widget/inline/InlineContentView.java (1 to add), not vendored |
-| `android/widget/inline/InlinePresentationSpec.java` | replaceable | frameworks/base/core/java/android/widget/inline/InlinePresentationSpec.java (1 to add), not vendored |
-| `com/android/internal/view/inline/InlineTooltipUi.java` | replaceable | frameworks/base/core/java/com/android/internal/view/inline/InlineTooltipUi.java (1 to add) |
-| `com/android/internal/widget/InlinePresentationStyleUtils.java` | replaceable | frameworks/base/core/java/com/android/internal/widget/InlinePresentationStyleUtils.java (1 to add), not vendored |
+| `android/widget/inline/InlineContentView.java` | replaceable | frameworks/base/core/java/android/widget/inline/InlineContentView.java (1 to add) |
 
 ### battery
 
@@ -205,7 +198,7 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/hardware/fingerprint/FingerprintManager.java` | blocked | frameworks/base/core/java/android/hardware/fingerprint/FingerprintManager.java (167 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: no source in the checkout (via AuthenticateReason < FingerprintAuthenticateOptions < FingerprintManager); android.hardware.biometrics.comm |
+| `android/hardware/fingerprint/FingerprintManager.java` | blocked | frameworks/base/core/java/android/hardware/fingerprint/FingerprintManager.java (165 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: no source in the checkout (via AuthenticateReason < FingerprintAuthenticateOptions < FingerprintManager); android.hardware.biometrics.comm |
 
 ### companion
 
@@ -229,38 +222,13 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `android/view/contentprotection/ContentProtectionEventProcessor.java` | replaceable | frameworks/base/core/java/android/view/contentprotection/ContentProtectionEventProcessor.java (2 to add), not vendored |
 | `com/android/server/contentcapture/ContentCaptureManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/contentcapture/ContentCaptureManagerInternal.java (2 to add), not vendored |
 
-### credentials
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/credentials/Constants.java` | replaceable | frameworks/base/core/java/android/credentials/Constants.java (1 to add), not vendored |
-| `android/credentials/CredentialManager.java` | replaceable | frameworks/base/core/java/android/credentials/CredentialManager.java (33 to add), not vendored |
-| `android/credentials/CredentialOption.java` | replaceable | frameworks/base/core/java/android/credentials/CredentialOption.java (1 to add), not vendored |
-| `android/credentials/GetCredentialException.java` | replaceable | frameworks/base/core/java/android/credentials/GetCredentialException.java (1 to add), not vendored |
-| `android/credentials/GetCredentialRequest.java` | replaceable | frameworks/base/core/java/android/credentials/GetCredentialRequest.java (1 to add), not vendored |
-| `android/credentials/GetCredentialResponse.java` | replaceable | frameworks/base/core/java/android/credentials/GetCredentialResponse.java (2 to add), not vendored |
-| `android/service/credentials/CredentialProviderService.java` | replaceable | frameworks/base/core/java/android/service/credentials/CredentialProviderService.java (21 to add), not vendored |
-
 ### devicepolicy
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (180 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection |
-| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (317 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < DevicePolicyManager); android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < Fac |
-| `android/app/admin/DevicePolicyResources.java` | replaceable | frameworks/base/core/java/android/app/admin/DevicePolicyResources.java (1 to add), not vendored |
-| `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (68 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < IDevicePolicyManager < DevicePolicyResourcesManager); android.net.wifi.WifiSsid: no source in the checkout  |
-
-### domainverification
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/content/pm/verify/domain/DomainVerificationManager.java` | replaceable | frameworks/base/core/java/android/content/pm/verify/domain/DomainVerificationManager.java (8 to add), not vendored |
-
-### dropbox
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/os/DropBoxManager.java` | replaceable | frameworks/base/core/java/android/os/DropBoxManager.java (2 to add), not vendored |
+| `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (169 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection |
+| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (290 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < DevicePolicyManager); android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < Fac |
+| `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (41 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < IDevicePolicyManager < DevicePolicyResourcesManager); android.net.wifi.WifiSsid: no source in the checkout  |
 
 ### incident
 
@@ -276,12 +244,6 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `android/inputmethodservice/InputMethodService.java` | blocked | frameworks/base/core/java/android/inputmethodservice/InputMethodService.java (23 to add), not vendored; android.inputmethodservice.InputMethodServiceProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via InputMethodServiceProto < InputMethodService); android.inputmethodservice.SoftI |
 | `com/android/internal/inputmethod/ImeTracingPerfettoImpl.java` | blocked | frameworks/base/core/java/com/android/internal/inputmethod/ImeTracingPerfettoImpl.java (17 to add), not vendored, excluded by c.add("$CJ/com/android/internal/inputmethod") .not_names "ImeTracingPerfettoImpl.java"; android.internal.perfetto.protos.Inputmethodeditor: no source in the checkout (via Inp |
 | `com/android/internal/inputmethod/ImeTracingServerImpl.java` | replaceable | frameworks/base/core/java/com/android/internal/inputmethod/ImeTracingServerImpl.java (2 to add), not vendored, excluded by c.add("$CJ/com/android/internal/inputmethod") .not_names "ImeTracingServerImpl.java" |
-
-### keyguard
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/app/KeyguardManager.java` | replaceable | frameworks/base/core/java/android/app/KeyguardManager.java (31 to add), not vendored |
 
 ### logging
 
@@ -318,32 +280,26 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `javax/microedition/khronos/opengles/GL.kt` | replaceable | frameworks/base/opengl/java/javax/microedition/khronos/opengles/GL.java (1 to add), not vendored |
 | `javax/microedition/khronos/opengles/GL10.kt` | replaceable | frameworks/base/opengl/java/javax/microedition/khronos/opengles/GL10.java (1 to add), not vendored |
 
-### overlay
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/content/om/OverlayManager.java` | replaceable | frameworks/base/core/java/android/content/om/OverlayManager.java (2 to add), not vendored, excluded by c.add("$CJ/android/content/om") .not_names "OverlayManager.java" |
-
 ### packagemanager
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/content/pm/IPackageInstaller.java` | replaceable | frameworks/base/core/java/android/content/pm/IPackageInstaller.aidl (6 to add, AIDL interface) |
-| `android/content/pm/PackageInstaller.java` | replaceable | frameworks/base/core/java/android/content/pm/PackageInstaller.java (10 to add), not vendored |
+| `android/content/pm/IPackageInstaller.java` | replaceable | frameworks/base/core/java/android/content/pm/IPackageInstaller.aidl (4 to add, AIDL interface) |
+| `android/content/pm/PackageInstaller.java` | replaceable | frameworks/base/core/java/android/content/pm/PackageInstaller.java (8 to add), not vendored |
 | `android/content/pm/PackageManagerInternal.java` | blocked | frameworks/base/services/core/java/android/content/pm/PackageManagerInternal.java (19 to add), not vendored; com.android.internal.logging.EventLogTags: generated: proto/logtags/stats generator (tools/*-list.txt) (via EventLogTags < SystemConfigFileCommitEventLogger < AtomicFile < PackageDynamicCodeL |
 | `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (4 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no s |
 | `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (3 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig) |
 | `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3030 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2955 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
 | `com/android/server/pm/InstallSource.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/InstallSource.java (2 to add), not vendored |
 | `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3028 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2953 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
 | `com/android/server/pm/PackageKeySetData.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/PackageKeySetData.java (1 to add), not vendored |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3135 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3058 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
 | `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (9 to add), not vendored; android.service.pm.PackageProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via PackageProto < PackageSetting) |
 | `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (36 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.config.Chang |
-| `com/android/server/pm/UserManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java (5 to add), not vendored |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3054 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
+| `com/android/server/pm/UserManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java (4 to add), not vendored |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2970 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
 | `com/android/server/pm/permission/LegacyPermissionState.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/permission/LegacyPermissionState.java (5 to add), not vendored |
 
 ### permission
@@ -378,28 +334,20 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `com/android/internal/compat/IPlatformCompat.java` | replaceable | frameworks/base/core/java/com/android/internal/compat/IPlatformCompat.aidl (1 to add, AIDL interface), not vendored |
 | `com/android/internal/display/BrightnessSynchronizer.java` | replaceable | frameworks/base/core/java/com/android/internal/display/BrightnessSynchronizer.java (2 to add), not vendored |
 | `com/android/internal/os/BinderCallsStats.java` | blocked | frameworks/base/core/java/com/android/internal/os/BinderCallsStats.java (7 to add), not vendored; com.android.internal.os.BinderLatencyProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via BinderLatencyProto < BinderCallsStats) |
-| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (210 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPromp |
+| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (208 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPromp |
 | `com/android/modules/utils/build/UnboundedSdkLevel.java` | blocked | frameworks/libs/modules-utils/java/com/android/modules/utils/build/UnboundedSdkLevel.java (3 to add); androidx.annotation.ChecksSdkIntAtLeast: no source in the checkout (via ChecksSdkIntAtLeast < SdkLevel < UnboundedSdkLevel) |
-
-### search
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/app/SearchManager.java` | replaceable | frameworks/base/core/java/android/app/SearchManager.java (9 to add), not vendored |
 
 ### shortcut
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/content/pm/LauncherApps.java` | replaceable | frameworks/base/core/java/android/content/pm/LauncherApps.java (8 to add), not vendored |
 | `android/content/pm/ShortcutInfo.java` | blocked | frameworks/base/core/java/android/content/pm/ShortcutInfo.java (8 to add), not vendored; android.app.appsearch.AppSearchSchema: no source in the checkout (via AppSearchSchema < AppSearchShortcutInfo < ShortcutInfo); android.app.appsearch.GenericDocument: no source in the checkout (via GenericDocumen |
-| `android/content/pm/ShortcutManager.java` | replaceable | frameworks/base/core/java/android/content/pm/ShortcutManager.java (2 to add), not vendored |
 
 ### statusbar
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/StatusBarManager.java` | blocked | frameworks/base/core/java/android/app/StatusBarManager.java (165 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < PromptContentViewWithM |
+| `android/app/StatusBarManager.java` | blocked | frameworks/base/core/java/android/app/StatusBarManager.java (163 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < PromptContentViewWithM |
 
 ### storage
 
@@ -414,12 +362,12 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3028 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2953 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
 | `com/android/server/UiThread.java` | replaceable | frameworks/base/services/core/java/com/android/server/UiThread.java (2 to add), not vendored |
 | `com/android/server/clipboard/ArcClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/ArcClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "ArcClipboardMonitor.java" |
 | `com/android/server/clipboard/EmulatorClipboardMonitor.java` | replaceable | frameworks/base/services/core/java/com/android/server/clipboard/EmulatorClipboardMonitor.java (1 to add), not vendored, excluded by c.add("$FB/services/core/java/com/android/server/clipboard") .not_names "EmulatorClipboardMonitor.java" |
 | `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (tools/*-list.txt) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server.am.NeededUr |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3028 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2953 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
 
 ### textclassifier
 
@@ -444,18 +392,11 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `android/widget/TimePicker.java` | replaceable | frameworks/base/core/java/android/widget/TimePicker.java (6 to add), not vendored, excluded by c.add("$CJ/android/widget") .not_names "TimePicker*.java" |
 | `com/android/internal/widget/floatingtoolbar/FloatingToolbar.java` | replaceable | frameworks/base/core/java/com/android/internal/widget/floatingtoolbar/FloatingToolbar.java (3 to add), not vendored |
 
-### uimode
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/app/UiModeManager.kt` | replaceable | frameworks/base/core/java/android/app/UiModeManager.java (4 to add), not vendored |
-
 ### user
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/content/pm/UserInfo.java` | replaceable | frameworks/base/core/java/android/content/pm/UserInfo.java (1 to add), not vendored |
-| `android/os/UserManager.java` | replaceable | frameworks/base/core/java/android/os/UserManager.java (12 to add), not vendored |
+| `android/os/UserManager.java` | replaceable | frameworks/base/core/java/android/os/UserManager.java (1 to add) |
 
 ### virtualdevice
 
@@ -466,19 +407,13 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `android/companion/virtual/VirtualDeviceParams.java` | replaceable | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add), not vendored |
 | `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored |
 
-### wallpaper
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/app/WallpaperManager.java` | replaceable | frameworks/base/core/java/android/app/WallpaperManager.java (28 to add), not vendored |
-
 ### webkit
 
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/webkit/ClientCertRequest.kt` | replaceable | frameworks/base/core/java/android/webkit/ClientCertRequest.java (1 to add), not vendored |
 | `android/webkit/ConsoleMessage.kt` | replaceable | frameworks/base/core/java/android/webkit/ConsoleMessage.java (1 to add), not vendored |
-| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (211 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < Androi |
+| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (209 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < Androi |
 | `android/webkit/HttpAuthHandler.kt` | replaceable | frameworks/base/core/java/android/webkit/HttpAuthHandler.java (1 to add), not vendored |
 | `android/webkit/JavascriptInterface.kt` | replaceable | frameworks/base/core/java/android/webkit/JavascriptInterface.java (1 to add), not vendored |
 | `android/webkit/JsResult.kt` | replaceable | frameworks/base/core/java/android/webkit/JsResult.java (1 to add), not vendored |
@@ -486,11 +421,11 @@ Pending: 168 (budget 168). Survivors: 118. Total: 286.
 | `android/webkit/SafeBrowsingResponse.kt` | replaceable | frameworks/base/core/java/android/webkit/SafeBrowsingResponse.java (1 to add), not vendored |
 | `android/webkit/SslErrorHandler.kt` | replaceable | frameworks/base/core/java/android/webkit/SslErrorHandler.java (1 to add), not vendored |
 | `android/webkit/ValueCallback.kt` | replaceable | frameworks/base/core/java/android/webkit/ValueCallback.java (1 to add), not vendored |
-| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (212 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < Andr |
+| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (210 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < Andr |
 | `android/webkit/WebResourceError.kt` | replaceable | frameworks/base/core/java/android/webkit/WebResourceError.java (1 to add), not vendored |
 | `android/webkit/WebResourceRequest.kt` | replaceable | frameworks/base/core/java/android/webkit/WebResourceRequest.java (1 to add), not vendored |
 | `android/webkit/WebResourceResponse.kt` | replaceable | frameworks/base/core/java/android/webkit/WebResourceResponse.java (1 to add), not vendored |
-| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (210 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < AndroidK |
+| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (208 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < AndroidK |
 | `android/webkit/WebViewClient.kt` | replaceable | frameworks/base/core/java/android/webkit/WebViewClient.java (1 to add), not vendored |
 
 ### window

@@ -610,7 +610,20 @@ public final class ActivityThread extends ClientTransactionHandler {
     @Override public void handleAttachSplashScreenView(ActivityClientRecord r, android.window.SplashScreenView.SplashScreenViewParcelable parcelable, android.view.SurfaceControl startingWindowLeash) { throw notHosted("handleAttachSplashScreenView"); }
     @Override public Activity handleLaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, int deviceId, Intent customIntent) { throw notHosted("handleLaunchActivity"); }
     @Override public void handleStartActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, ActivityOptions.SceneTransitionInfo sceneTransitionInfo) { throw notHosted("handleStartActivity"); }
-    @Override public void handleConfigurationChanged(Configuration config, int deviceId) { throw notHosted("handleConfigurationChanged"); }
+    /** A system-sent configuration (a ConfigurationChangeItem): the hosted system sends deltas in
+     * Configuration.updateFrom form (only the changed fields defined), so merge into the process
+     * configuration and apply it as a launcher-driven change (AOSP: ResourcesManager first, then
+     * the activities and components). */
+    @Override public void handleConfigurationChanged(Configuration config, int deviceId) {
+        if (config == null) return;
+        Configuration current = ResourcesManager.getInstance().getConfiguration();
+        Configuration next = new Configuration(current);
+        int changes = next.updateFrom(config);
+        if (changes == 0) return;
+        android.util.DisplayMetrics metrics = android.content.res.Resources.getSystem().getDisplayMetrics();
+        ResourcesManager.getInstance().applyConfigurationToResources(next, null);
+        applyConfigurationInProcess(next, changes, metrics.widthPixels, metrics.heightPixels);
+    }
     @Override public ActivityClientRecord prepareRelaunchActivity(IBinder token, List<ResultInfo> pendingResults, List<com.android.internal.content.ReferrerIntent> pendingNewIntents, int configChanges, android.util.MergedConfiguration config, boolean preserveWindow, android.window.ActivityWindowInfo activityWindowInfo) { throw notHosted("prepareRelaunchActivity"); }
     @Override public void handleRelaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions) { throw notHosted("handleRelaunchActivity"); }
     @Override public void reportRelaunch(ActivityClientRecord r) { throw notHosted("reportRelaunch"); }

@@ -98,6 +98,32 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
 
     private val lock = Any()
     private val processes = LinkedHashMap<IBinder, ProcessRecord>()
+
+    /**
+     * Sends a configuration delta (Configuration.updateFrom form) to every attached process of
+     * [packageName], or to every process when it is null, as a ConfigurationChangeItem
+     * transaction (AOSP ActivityTaskManagerService.updateGlobalConfiguration /
+     * updatePackageConfiguration deliver configuration changes the same way).
+     */
+    fun scheduleConfigurationDelta(delta: android.content.res.Configuration, packageName: String?) =
+        scheduleConfigurationDelta(delta) { packageName == null || it.packageName == packageName }
+
+    /** The same delta to every process of [uid] (a package's processes share its uid). */
+    fun scheduleConfigurationDeltaForUid(delta: android.content.res.Configuration, uid: Int) =
+        scheduleConfigurationDelta(delta) { it.uid == uid }
+
+    private fun scheduleConfigurationDelta(delta: android.content.res.Configuration, select: (ProcessRecord) -> Boolean) {
+        val targets = synchronized(lock) { processes.values.filter(select) }
+        for (record in targets) {
+            try {
+                val transaction = android.app.servertransaction.ClientTransaction(record.thread)
+                transaction.addTransactionItem(android.app.servertransaction.ConfigurationChangeItem(delta, android.content.Context.DEVICE_ID_DEFAULT))
+                record.thread.scheduleTransaction(transaction)
+            } catch (e: android.os.RemoteException) {
+                Log.w(TAG, "configuration delta not delivered to ${record.processName}", e)
+            }
+        }
+    }
     private val servicesByComponent = LinkedHashMap<ComponentName, ServiceRecord>()
     private val servicesByToken = LinkedHashMap<IBinder, ServiceRecord>()
     /** Bind/start operations waiting for a package's process to attach. */

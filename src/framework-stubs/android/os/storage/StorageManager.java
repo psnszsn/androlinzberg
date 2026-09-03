@@ -4,6 +4,10 @@ import java.io.File;
 import java.io.IOException;
 import java.util.UUID;
 public class StorageManager {
+    /** No credential-encrypted storage on this host. */
+    public static boolean isEncrypted() { return false; }
+    public static boolean isFileEncrypted() { return false; }
+
     public static final UUID UUID_DEFAULT = new UUID(0L, 0L);
     public static final int FLAG_FOR_WRITE = 1 << 8;
     public static final int FLAG_REAL_STATE = 1 << 9;

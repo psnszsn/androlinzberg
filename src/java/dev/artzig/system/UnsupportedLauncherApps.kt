@@ -1,0 +1,49 @@
+@file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+
+package dev.artzig.system
+
+/** Every ILauncherApps method throws UnsupportedOperationException; the hosted
+ * service overrides what it serves (generated from the AIDL interface by
+ * tools/gen-unsupported-stub.py; regenerate when the interface changes). */
+abstract class UnsupportedLauncherApps : android.content.pm.ILauncherApps.Stub() {
+    override fun addOnAppsChangedListener(callingPackage: String?, listener: android.content.pm.IOnAppsChangedListener?) { throw UnsupportedOperationException("ILauncherApps.addOnAppsChangedListener is not hosted") }
+    override fun removeOnAppsChangedListener(listener: android.content.pm.IOnAppsChangedListener?) { throw UnsupportedOperationException("ILauncherApps.removeOnAppsChangedListener is not hosted") }
+    override fun getLauncherActivities(callingPackage: String?, packageName: String?, user: android.os.UserHandle?): android.content.pm.ParceledListSlice<*>? = throw UnsupportedOperationException("ILauncherApps.getLauncherActivities is not hosted")
+    override fun resolveLauncherActivityInternal(callingPackage: String?, component: android.content.ComponentName?, user: android.os.UserHandle?): android.content.pm.LauncherActivityInfoInternal? = throw UnsupportedOperationException("ILauncherApps.resolveLauncherActivityInternal is not hosted")
+    override fun startSessionDetailsActivityAsUser(caller: android.app.IApplicationThread?, callingPackage: String?, callingFeatureId: String?, sessionInfo: android.content.pm.PackageInstaller.SessionInfo?, sourceBounds: android.graphics.Rect?, opts: android.os.Bundle?, user: android.os.UserHandle?) { throw UnsupportedOperationException("ILauncherApps.startSessionDetailsActivityAsUser is not hosted") }
+    override fun startActivityAsUser(caller: android.app.IApplicationThread?, callingPackage: String?, callingFeatureId: String?, component: android.content.ComponentName?, sourceBounds: android.graphics.Rect?, opts: android.os.Bundle?, user: android.os.UserHandle?) { throw UnsupportedOperationException("ILauncherApps.startActivityAsUser is not hosted") }
+    override fun getActivityLaunchIntent(callingPackage: String?, component: android.content.ComponentName?, user: android.os.UserHandle?): android.app.PendingIntent? = throw UnsupportedOperationException("ILauncherApps.getActivityLaunchIntent is not hosted")
+    override fun getLauncherUserInfo(user: android.os.UserHandle?): android.content.pm.LauncherUserInfo? = throw UnsupportedOperationException("ILauncherApps.getLauncherUserInfo is not hosted")
+    override fun getPreInstalledSystemPackages(user: android.os.UserHandle?): MutableList<String?>? = throw UnsupportedOperationException("ILauncherApps.getPreInstalledSystemPackages is not hosted")
+    override fun getAppMarketActivityIntent(callingPackage: String?, packageName: String?, user: android.os.UserHandle?): android.content.IntentSender? = throw UnsupportedOperationException("ILauncherApps.getAppMarketActivityIntent is not hosted")
+    override fun getPrivateSpaceSettingsIntent(): android.content.IntentSender? = throw UnsupportedOperationException("ILauncherApps.getPrivateSpaceSettingsIntent is not hosted")
+    override fun showAppDetailsAsUser(caller: android.app.IApplicationThread?, callingPackage: String?, callingFeatureId: String?, component: android.content.ComponentName?, sourceBounds: android.graphics.Rect?, opts: android.os.Bundle?, user: android.os.UserHandle?) { throw UnsupportedOperationException("ILauncherApps.showAppDetailsAsUser is not hosted") }
+    override fun isPackageEnabled(callingPackage: String?, packageName: String?, user: android.os.UserHandle?): Boolean = throw UnsupportedOperationException("ILauncherApps.isPackageEnabled is not hosted")
+    override fun getSuspendedPackageLauncherExtras(packageName: String?, user: android.os.UserHandle?): android.os.Bundle? = throw UnsupportedOperationException("ILauncherApps.getSuspendedPackageLauncherExtras is not hosted")
+    override fun isActivityEnabled(callingPackage: String?, component: android.content.ComponentName?, user: android.os.UserHandle?): Boolean = throw UnsupportedOperationException("ILauncherApps.isActivityEnabled is not hosted")
+    override fun getApplicationInfo(callingPackage: String?, packageName: String?, flags: Int, user: android.os.UserHandle?): android.content.pm.ApplicationInfo? = throw UnsupportedOperationException("ILauncherApps.getApplicationInfo is not hosted")
+    override fun getAppUsageLimit(callingPackage: String?, packageName: String?, user: android.os.UserHandle?): android.content.pm.LauncherApps.AppUsageLimit? = throw UnsupportedOperationException("ILauncherApps.getAppUsageLimit is not hosted")
+    override fun getShortcuts(callingPackage: String?, query: android.content.pm.ShortcutQueryWrapper?, user: android.os.UserHandle?): android.content.pm.ParceledListSlice<*>? = throw UnsupportedOperationException("ILauncherApps.getShortcuts is not hosted")
+    override fun pinShortcuts(callingPackage: String?, packageName: String?, shortcutIds: MutableList<String?>?, user: android.os.UserHandle?) { throw UnsupportedOperationException("ILauncherApps.pinShortcuts is not hosted") }
+    override fun startShortcut(callingPackage: String?, packageName: String?, featureId: String?, id: String?, sourceBounds: android.graphics.Rect?, startActivityOptions: android.os.Bundle?, userId: Int): Boolean = throw UnsupportedOperationException("ILauncherApps.startShortcut is not hosted")
+    override fun getShortcutIconResId(callingPackage: String?, packageName: String?, id: String?, userId: Int): Int = throw UnsupportedOperationException("ILauncherApps.getShortcutIconResId is not hosted")
+    override fun getShortcutIconFd(callingPackage: String?, packageName: String?, id: String?, userId: Int): android.os.ParcelFileDescriptor? = throw UnsupportedOperationException("ILauncherApps.getShortcutIconFd is not hosted")
+    override fun hasShortcutHostPermission(callingPackage: String?): Boolean = throw UnsupportedOperationException("ILauncherApps.hasShortcutHostPermission is not hosted")
+    override fun shouldHideFromSuggestions(packageName: String?, user: android.os.UserHandle?): Boolean = throw UnsupportedOperationException("ILauncherApps.shouldHideFromSuggestions is not hosted")
+    override fun getShortcutConfigActivities(callingPackage: String?, packageName: String?, user: android.os.UserHandle?): android.content.pm.ParceledListSlice<*>? = throw UnsupportedOperationException("ILauncherApps.getShortcutConfigActivities is not hosted")
+    override fun getShortcutConfigActivityIntent(callingPackage: String?, component: android.content.ComponentName?, user: android.os.UserHandle?): android.content.IntentSender? = throw UnsupportedOperationException("ILauncherApps.getShortcutConfigActivityIntent is not hosted")
+    override fun getShortcutIntent(callingPackage: String?, packageName: String?, shortcutId: String?, opts: android.os.Bundle?, user: android.os.UserHandle?): android.app.PendingIntent? = throw UnsupportedOperationException("ILauncherApps.getShortcutIntent is not hosted")
+    override fun registerPackageInstallerCallback(callingPackage: String?, callback: android.content.pm.IPackageInstallerCallback?) { throw UnsupportedOperationException("ILauncherApps.registerPackageInstallerCallback is not hosted") }
+    override fun getAllSessions(callingPackage: String?): android.content.pm.ParceledListSlice<*>? = throw UnsupportedOperationException("ILauncherApps.getAllSessions is not hosted")
+    override fun registerShortcutChangeCallback(callingPackage: String?, query: android.content.pm.ShortcutQueryWrapper?, callback: android.content.pm.IShortcutChangeCallback?) { throw UnsupportedOperationException("ILauncherApps.registerShortcutChangeCallback is not hosted") }
+    override fun unregisterShortcutChangeCallback(callingPackage: String?, callback: android.content.pm.IShortcutChangeCallback?) { throw UnsupportedOperationException("ILauncherApps.unregisterShortcutChangeCallback is not hosted") }
+    override fun cacheShortcuts(callingPackage: String?, packageName: String?, shortcutIds: MutableList<String?>?, user: android.os.UserHandle?, cacheFlags: Int) { throw UnsupportedOperationException("ILauncherApps.cacheShortcuts is not hosted") }
+    override fun uncacheShortcuts(callingPackage: String?, packageName: String?, shortcutIds: MutableList<String?>?, user: android.os.UserHandle?, cacheFlags: Int) { throw UnsupportedOperationException("ILauncherApps.uncacheShortcuts is not hosted") }
+    override fun getShortcutIconUri(callingPackage: String?, packageName: String?, shortcutId: String?, userId: Int): String? = throw UnsupportedOperationException("ILauncherApps.getShortcutIconUri is not hosted")
+    override fun getActivityOverrides(callingPackage: String?, userId: Int): MutableMap<String?, android.content.pm.LauncherActivityInfoInternal?>? = throw UnsupportedOperationException("ILauncherApps.getActivityOverrides is not hosted")
+    override fun registerDumpCallback(cb: android.window.IDumpCallback?) { throw UnsupportedOperationException("ILauncherApps.registerDumpCallback is not hosted") }
+    override fun unRegisterDumpCallback(cb: android.window.IDumpCallback?) { throw UnsupportedOperationException("ILauncherApps.unRegisterDumpCallback is not hosted") }
+    override fun setArchiveCompatibilityOptions(enableIconOverlay: Boolean, enableUnarchivalConfirmation: Boolean) { throw UnsupportedOperationException("ILauncherApps.setArchiveCompatibilityOptions is not hosted") }
+    override fun getUserProfiles(): MutableList<android.os.UserHandle?>? = throw UnsupportedOperationException("ILauncherApps.getUserProfiles is not hosted")
+    override fun saveViewCaptureData() { throw UnsupportedOperationException("ILauncherApps.saveViewCaptureData is not hosted") }
+}
