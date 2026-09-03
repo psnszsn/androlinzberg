@@ -43,6 +43,7 @@ import com.android.internal.pm.pkg.parsing.ParsingUtils
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.Parcelable
+import android.service.contentcapture.ContentCaptureService
 import android.service.textclassifier.TextClassifierService
 import android.service.voice.VisualQueryDetectedResult
 import android.net.Uri
@@ -55,6 +56,9 @@ import android.util.Rational
 import android.util.SparseArray
 import android.view.Choreographer
 import android.view.ArtzigVideoLayer
+import android.view.contentcapture.ContentCaptureEvent
+import android.view.contentcapture.IContentCaptureManager
+import android.view.contentprotection.ContentProtectionEventProcessor
 import android.view.HostedSystemUiController
 import android.view.HostedInputDispatcher
 import android.view.HostedWindowPresentation
@@ -77,10 +81,12 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.EditText
 import android.widget.SeekBar
+import com.android.internal.util.RingBuffer
 import java.io.ByteArrayInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.lang.reflect.Proxy
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.atomic.AtomicInteger
@@ -99,6 +105,7 @@ internal object FrameworkModuleSmoke {
         testPackageNames()
         testAccessibilityHtmlFiltering()
         testFrameworkServiceValueContracts()
+        testContentCaptureContracts()
         testIntentTypedExtras()
         testRemoteActionContract()
         testPictureInPictureContracts()
@@ -204,6 +211,53 @@ internal object FrameworkModuleSmoke {
         check(restoredOptions.contentProtectionOptions.requiredGroups ==
             listOf(listOf("required")))
         check(restoredOptions.whitelistedComponents == captureOptions.whitelistedComponents)
+    }
+
+    private fun testContentCaptureContracts() {
+        val service = object : ContentCaptureService() {}
+        service.onCreate()
+        check(service.onBind(Intent(ContentCaptureService.SERVICE_INTERFACE)) != null)
+        check(service.onBind(Intent(ContentCaptureService.PROTECTION_SERVICE_INTERFACE)) != null)
+        check(service.onBind(Intent("dev.artzig.WRONG_CONTENT_CAPTURE_ACTION")) == null)
+
+        var flushedEvents: List<ContentCaptureEvent>? = null
+        val manager = Proxy.newProxyInstance(
+            IContentCaptureManager::class.java.classLoader,
+            arrayOf(IContentCaptureManager::class.java),
+        ) { _, method, arguments ->
+            if (method.name == "onLoginDetected") {
+                val events = arguments?.get(0) as android.content.pm.ParceledListSlice<*>
+                flushedEvents = events.list.filterIsInstance<ContentCaptureEvent>()
+            }
+            null
+        } as IContentCaptureManager
+        val options = android.content.ContentCaptureOptions.ContentProtectionOptions(
+            true,
+            16,
+            listOf(listOf("username"), listOf("password")),
+            listOf(listOf("sign in")),
+            1,
+        )
+        val processor = ContentProtectionEventProcessor(
+            RingBuffer(ContentCaptureEvent::class.java, 16),
+            Handler(Looper.getMainLooper()),
+            manager,
+            "dev.artzig.capture",
+            options,
+        )
+        fun appeared(text: String) =
+            ContentCaptureEvent(123, ContentCaptureEvent.TYPE_VIEW_APPEARED).setText(text)
+
+        processor.processEvent(appeared("USERNAME"))
+        processor.processEvent(appeared("PASSWORD"))
+        drainMainQueue()
+        check(flushedEvents == null)
+        processor.processEvent(appeared("Tap to SIGN IN"))
+        drainMainQueue()
+        check(flushedEvents?.size == 3)
+        check(flushedEvents?.all {
+            it.viewNode?.textIdEntry == "dev.artzig.capture"
+        } == true)
     }
 
     private fun testHostedPermissionGrants() {

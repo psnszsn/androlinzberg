@@ -286,8 +286,17 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/PerfettoTrigger.java");
     try c.file("$CJ/android/accessibilityservice/util/AccessibilityUtils.java");
     try c.file("$CJ/android/content/ContentCaptureOptions.java");
+    try c.file("$CJ/android/service/contentcapture/ActivityEvent.java");
+    try c.file("$CJ/android/service/contentcapture/ContentCaptureService.java");
+    try c.file("$CJ/android/service/contentcapture/DataShareCallback.java");
+    try c.file("$CJ/android/service/contentcapture/DataShareReadAdapter.java");
+    try c.file("$CJ/android/service/contentcapture/FlushMetrics.java");
+    try c.file("$CJ/android/service/contentcapture/SnapshotData.java");
     try c.file("$CJ/android/service/textclassifier/TextClassifierService.java");
     try c.file("$CJ/android/service/voice/VisualQueryDetectedResult.java");
+    try c.file("$CJ/android/view/contentprotection/ContentProtectionEventProcessor.java");
+    try c.file("$CJ/android/view/contentprotection/ContentProtectionUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/contentcapture/ContentCaptureManagerInternal.java");
     try c.file("$CJ/android/text/method/OffsetMapping.java");
     try c.file("$CJ/android/util/TimeFormatException.java");
     try c.file("$CJ/android/util/MergedConfiguration.java");
