@@ -190,6 +190,15 @@ public final class SystemServiceRegistry {
             }});
         registerService(Context.UI_MODE_SERVICE, UiModeManager.class, new CachedServiceFetcher<UiModeManager>() {
             @Override public UiModeManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new UiModeManager(ctx.getOuterContext()); }});
+        registerService(Context.GRAMMATICAL_INFLECTION_SERVICE, GrammaticalInflectionManager.class,
+                new CachedServiceFetcher<GrammaticalInflectionManager>() {
+            @Override public GrammaticalInflectionManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                return new GrammaticalInflectionManager(ctx,
+                        IGrammaticalInflectionManager.Stub.asInterface(
+                                android.os.ServiceManager.getServiceOrThrow(
+                                        Context.GRAMMATICAL_INFLECTION_SERVICE)));
+            }});
         registerService(Context.NSD_SERVICE, android.net.nsd.NsdManager.class, new CachedServiceFetcher<android.net.nsd.NsdManager>() {
             @Override public android.net.nsd.NsdManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.nsd.NsdManager(ctx); }});
         registerService(Context.BATTERY_SERVICE, android.os.BatteryManager.class,

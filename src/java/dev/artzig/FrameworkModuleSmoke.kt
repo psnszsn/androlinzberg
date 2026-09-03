@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.app.ActivityThread
 import android.app.DownloadManager
+import android.app.GrammaticalInflectionManager
 import android.app.Notification
 import android.app.Person
 import android.app.PendingIntent
@@ -451,6 +452,54 @@ internal object FrameworkModuleSmoke {
         } finally {
             uiModeManager.setApplicationNightMode(UiModeManager.MODE_NIGHT_AUTO)
             drainMainQueue()
+        }
+        val registeredGrammaticalInflectionManager =
+            checkNotNull(appContext.getSystemService(GrammaticalInflectionManager::class.java))
+        check(registeredGrammaticalInflectionManager ===
+            appContext.getSystemService(Context.GRAMMATICAL_INFLECTION_SERVICE))
+        // A package context in this headless JVM smoke has no Application object (APK launch
+        // tests do). Give the stock client's application-context read a normal self-returning
+        // wrapper while retaining the package, resources, user and attribution identity.
+        val managerContext = object : ContextWrapper(appContext) {
+            override fun getApplicationContext(): Context = this
+        }
+        val grammaticalInflectionManager = GrammaticalInflectionManager(
+            managerContext,
+            android.app.IGrammaticalInflectionManager.Stub.asInterface(
+                android.os.ServiceManager.getServiceOrThrow(Context.GRAMMATICAL_INFLECTION_SERVICE),
+            ),
+        )
+        fun grammaticalGenderBecomes(expected: Int): Boolean {
+            repeat(250) {
+                drainMainQueue()
+                if (grammaticalInflectionManager.applicationGrammaticalGender == expected) return true
+                Thread.sleep(20)
+            }
+            return false
+        }
+        try {
+            grammaticalInflectionManager.setRequestedApplicationGrammaticalGender(
+                Configuration.GRAMMATICAL_GENDER_FEMININE,
+            )
+            check(grammaticalGenderBecomes(Configuration.GRAMMATICAL_GENDER_FEMININE))
+            check(runCatching {
+                grammaticalInflectionManager.setRequestedApplicationGrammaticalGender(Int.MIN_VALUE)
+            }.exceptionOrNull() is IllegalArgumentException)
+            check(runCatching {
+                grammaticalInflectionManager.systemGrammaticalGender
+            }.exceptionOrNull() is SecurityException)
+            check(grammaticalInflectionManager.peekSystemGrammaticalGenderByUserId(0) ==
+                Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
+            check(runCatching {
+                grammaticalInflectionManager.setSystemWideGrammaticalGender(
+                    Configuration.GRAMMATICAL_GENDER_FEMININE,
+                )
+            }.exceptionOrNull() is SecurityException)
+        } finally {
+            grammaticalInflectionManager.setRequestedApplicationGrammaticalGender(
+                Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED,
+            )
+            check(grammaticalGenderBecomes(Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED))
         }
         // The hosted provider table is deliberately kept under filesDir, where the APK can alter
         // it. Verify that restoring a forged successful record cannot turn provider APIs into a

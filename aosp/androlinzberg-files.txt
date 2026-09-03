@@ -319,6 +319,8 @@ F aosp frameworks/base/core/java/android/app/AppDetailsActivity.java
 F aosp frameworks/base/core/java/android/app/ApplicationPackageManager.java
 F aosp frameworks/base/core/java/android/app/ApplicationThreadConstants.java
 F aosp frameworks/base/core/java/android/app/AsyncNotedAppOp.java
+F aosp frameworks/base/core/java/android/app/GrammaticalInflectionManager.java
+F aosp frameworks/base/core/java/android/app/IGrammaticalInflectionManager.aidl
 F aosp frameworks/base/core/java/android/app/IServiceConnection.aidl
 F aosp frameworks/base/core/java/android/app/ITransientNotification.aidl
 F aosp frameworks/base/core/java/android/app/ITransientNotificationCallback.aidl

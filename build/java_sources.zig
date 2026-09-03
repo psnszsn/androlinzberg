@@ -239,6 +239,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/app/WindowConfiguration.java");
     try c.file("$CJ/android/app/RemoteAction.java");
     try c.file("$CJ/android/app/PictureInPictureParams.java");
+    try c.file("$CJ/android/app/GrammaticalInflectionManager.java");
     try c.file("$CJ/android/view/Gravity.java");
     try c.file("$CJ/android/view/InflateException.java");
     try c.file("$CJ/android/view/DisplayAdjustments.java");

@@ -207,6 +207,10 @@ internal object SystemServices {
         // launcher apps, app widgets) for a device with no launcher, lock screen or providers.
         val hostedPermissions = HostedPermissions(packageManager)
         android.os.ServiceManager.addService(Context.UI_MODE_SERVICE, HostedUiModeManagerService(context, activityManager, hostedPermissions))
+        android.os.ServiceManager.addService(
+            Context.GRAMMATICAL_INFLECTION_SERVICE,
+            HostedGrammaticalInflectionService(activityManager, hostedPermissions),
+        )
         android.os.ServiceManager.addService(Context.TRUST_SERVICE, HostedTrustManagerService(hostedPermissions))
         android.os.ServiceManager.addService("lock_settings", HostedLockSettingsService(hostedPermissions))
         android.os.ServiceManager.addService(Context.SEARCH_SERVICE, HostedSearchManagerService(context, packageManager))

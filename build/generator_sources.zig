@@ -13,6 +13,7 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/accessibilityservice/IAccessibilityServiceConnection.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/accessibilityservice/IBrailleDisplayConnection.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/accessibilityservice/IBrailleDisplayController.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/IGrammaticalInflectionManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/IServiceConnection.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/ITransientNotification.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/ITransientNotificationCallback.aidl" },

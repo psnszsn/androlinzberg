@@ -5,9 +5,11 @@ import android.app.IApplicationThread
 import android.app.IServiceConnection
 import android.content.ComponentName
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Binder
 import android.os.IBinder
 import android.os.RemoteException
+import android.os.UserHandle
 import android.util.Log
 
 /**
@@ -98,6 +100,15 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
 
     private val lock = Any()
     private val processes = LinkedHashMap<IBinder, ProcessRecord>()
+    private data class PackageConfigurationKey(val packageName: String, val userId: Int)
+    /**
+     * AOSP ActivityTaskManager's global configuration and PackageConfigPersister keep these
+     * values and merge them when a process attaches. The hosted session has one user and only
+     * exposes grammatical-gender overrides today, but keeps the ownership here so services do
+     * not have to know about process records or client transactions.
+     */
+    private var globalGrammaticalGender = Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED
+    private val packageGrammaticalGenders = HashMap<PackageConfigurationKey, Int>()
 
     /**
      * Sends a configuration delta (Configuration.updateFrom form) to every attached process of
@@ -114,14 +125,74 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
 
     private fun scheduleConfigurationDelta(delta: android.content.res.Configuration, select: (ProcessRecord) -> Boolean) {
         val targets = synchronized(lock) { processes.values.filter(select) }
-        for (record in targets) {
-            try {
-                val transaction = android.app.servertransaction.ClientTransaction(record.thread)
-                transaction.addTransactionItem(android.app.servertransaction.ConfigurationChangeItem(delta, android.content.Context.DEVICE_ID_DEFAULT))
-                record.thread.scheduleTransaction(transaction)
-            } catch (e: android.os.RemoteException) {
-                Log.w(TAG, "configuration delta not delivered to ${record.processName}", e)
+        for (record in targets) sendConfigurationDelta(record, delta)
+    }
+
+    private fun sendConfigurationDelta(record: ProcessRecord, delta: Configuration) {
+        try {
+            val transaction = android.app.servertransaction.ClientTransaction(record.thread)
+            transaction.addTransactionItem(android.app.servertransaction.ConfigurationChangeItem(delta, android.content.Context.DEVICE_ID_DEFAULT))
+            record.thread.scheduleTransaction(transaction)
+        } catch (e: android.os.RemoteException) {
+            Log.w(TAG, "configuration delta not delivered to ${record.processName}", e)
+        }
+    }
+
+    private fun grammaticalGenderDelta(gender: Int) = Configuration().apply {
+        setGrammaticalGender(gender)
+    }
+
+    /**
+     * Applies and remembers the app-specific override represented by
+     * ActivityTaskManagerInternal.PackageConfigurationUpdater.setGrammaticalGender().
+     * NOT_SPECIFIED clears the persisted package override after delivering that delta to a
+     * currently running process, just as PackageConfigPersister does.
+     */
+    fun setPackageGrammaticalGender(packageName: String, userId: Int, gender: Int): Boolean {
+        if (userId != UserHandle.USER_SYSTEM || (packageService?.getPackageUidInternal(packageName) ?: -1) < 0) {
+            return false
+        }
+        synchronized(lock) {
+            val key = PackageConfigurationKey(packageName, userId)
+            if (gender == Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED) {
+                packageGrammaticalGenders.remove(key)
+            } else {
+                packageGrammaticalGenders[key] = gender
             }
+        }
+        scheduleConfigurationDelta(grammaticalGenderDelta(gender)) { it.packageName == packageName }
+        return true
+    }
+
+    /** Applies a global grammatical-gender delta, then restores every package override. */
+    fun setGlobalGrammaticalGender(userId: Int, gender: Int) {
+        if (userId != UserHandle.USER_SYSTEM) return
+        val targets = synchronized(lock) {
+            globalGrammaticalGender = gender
+            processes.values.map { record ->
+                record to packageGrammaticalGenders[PackageConfigurationKey(record.packageName, userId)]
+            }
+        }
+        val global = grammaticalGenderDelta(gender)
+        for ((record, packageGender) in targets) {
+            sendConfigurationDelta(record, global)
+            if (packageGender != null) {
+                sendConfigurationDelta(record, grammaticalGenderDelta(packageGender))
+            }
+        }
+    }
+
+    /** Replays the global value and then the package override for a newly attached process. */
+    private fun replayConfigurationOverrides(record: ProcessRecord) {
+        val (global, packageGender) = synchronized(lock) {
+            globalGrammaticalGender to
+                packageGrammaticalGenders[PackageConfigurationKey(record.packageName, UserHandle.USER_SYSTEM)]
+        }
+        if (global != Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED) {
+            sendConfigurationDelta(record, grammaticalGenderDelta(global))
+        }
+        if (packageGender != null) {
+            sendConfigurationDelta(record, grammaticalGenderDelta(packageGender))
         }
     }
     private val servicesByComponent = LinkedHashMap<ComponentName, ServiceRecord>()
@@ -175,6 +246,7 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
             return
         }
         Log.i(TAG, "attached " + packageName + " pid=" + record.pid + " uid=" + record.uid)
+        replayConfigurationOverrides(record)
         if (callingUid != android.os.Process.SYSTEM_UID) processObserver?.invoke(packageName, callingUid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
