@@ -252,7 +252,11 @@ applies), and `AppWidgetManager`/`AppWidgetHost` over `HostedAppWidgetService`
 CachedProperty annotation processor, which needs guava (not vendored).
 `DevicePolicyManager`, `StatusBarManager`, `StorageManager`, `IncidentManager` and
 `VirtualDeviceManager` stay stubs behind the biometrics/keymint HAL, vold/installd
-AIDL and camera/audio chains docs/stubs.md records. System properties
+AIDL and camera/audio chains docs/stubs.md records. `docs/service-registry.md`
+(from `tools/registry-compare.py`) lists every service name in either registry
+with what the hosted registry provides for it; `docs/stubs.md` (from
+`tools/aosp-closure.py audit`) lists every remaining stub with its family or
+survivor reason, and `tools/stub-audit.txt` ratchets the pending count. System properties
 are session-wide, following Android's model: the broker owns a shared property
 area file in the session directory (`src/binder/prop_area.zig`, the
 `__system_property_area__` analogue) that every process — the JVM
