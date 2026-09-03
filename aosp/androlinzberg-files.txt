@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=82 F=1307 total=1389
+# Rules: D=90 F=2281 total=2371
 D aosp external/fmtlib
 D aosp external/hamcrest/hamcrest-core/src/main/java
 D aosp external/junit/src/main/java
@@ -100,6 +100,7 @@ D aosp system/libziparchive
 D aosp system/logging/liblog
 D aosp system/tools/sysprop
 F aosp build/soong/scripts/jars-to-module-info-java.sh
+F aosp external/error_prone/error_prone/error_prone_annotations-2.36.0.jar
 F aosp frameworks/base/core/java/android/annotation/SuppressLint.java
 F aosp frameworks/base/core/java/android/annotation/TargetApi.java
 F aosp frameworks/base/core/java/android/app/QueuedWork.java
@@ -1423,6 +1424,7 @@ F aosp frameworks/native/services/surfaceflinger/surfaceflinger_flags_new.aconfi
 F aosp prebuilts/build-tools/linux-x86/bin/aconfig
 F aosp prebuilts/r8/r8.jar
 F aosp prebuilts/runtime/mainline/platform/sdk/x86_64/lib/libbinder_ndk.so
+F aosp prebuilts/sdk/current/androidx/m2repository/androidx/annotation/annotation-jvm/1.9.0-rc01/annotation-jvm-1.9.0-rc01.jar
 F aosp prebuilts/sdk/tools/linux/bin/aidl
 F aosp prebuilts/sdk/tools/linux/lib/apksigner.jar
 F aosp prebuilts/tools/common/m2/repository/com/google/code/gson/gson/2.9.1/gson-2.9.1.jar

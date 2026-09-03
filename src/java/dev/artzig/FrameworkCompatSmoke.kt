@@ -284,6 +284,7 @@ public final class FrameworkCompatSmoke {
             testStockInternalUtilMetadata()
             testStockCompatChanges()
             testGeneratedAppProtoEnums()
+            testPinnedAnnotationPrebuilts()
             testStockFontRequest()
             testStockTextSpans()
             testStockHtml()
@@ -937,6 +938,22 @@ public final class FrameworkCompatSmoke {
                 "generated resource API",
             )
             android.util.Log.i("FrameworkCompatSmoke", "generated app proto enums ok")
+        }
+
+        /** AndroidX and Error Prone annotations come from AOSP's pinned java_import artifacts. */
+        @JvmStatic
+        private fun testPinnedAnnotationPrebuilts() {
+            val retention = androidx.annotation.NonNull::class.java.getAnnotation(java.lang.annotation.Retention::class.java)
+            require(retention.value == java.lang.annotation.RetentionPolicy.CLASS, "AndroidX retention")
+            require(
+                Class.forName("androidx.annotation.ChecksSdkIntAtLeast").isAnnotation,
+                "complete AndroidX annotation prebuilt",
+            )
+            require(
+                com.google.errorprone.annotations.CompileTimeConstant::class.java.isAnnotation,
+                "Error Prone annotation prebuilt",
+            )
+            android.util.Log.i("FrameworkCompatSmoke", "pinned annotation prebuilts ok")
         }
 
         /** Stock AOSP FontRequest: validation, identity key and certificate rendering. */

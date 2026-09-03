@@ -27,6 +27,21 @@ pub const Result = struct {
     java_step: *std.Build.Step,
 };
 
+fn extractJarPackage(
+    b: *std.Build,
+    archive: LazyPath,
+    package_pattern: []const u8,
+    output_name: []const u8,
+) LazyPath {
+    const extract = b.addSystemCommand(&.{ "unzip", "-q" });
+    extract.addFileArg(archive);
+    extract.addArg(package_pattern);
+    extract.addArg("-d");
+    const output = extract.addOutputDirectoryArg(output_name);
+    extract.setName(b.fmt("extract {s}", .{output_name}));
+    return output;
+}
+
 pub fn build(b: *std.Build, o: Options) Result {
     const dep = o.artzig;
     const aosp = o.aosp;
@@ -86,10 +101,30 @@ pub fn build(b: *std.Build, o: Options) Result {
     // The host command adapter joins the exact classpath LazyPaths without
     // hiding either source or compiler dependencies in shell syntax.
     const kotlin_stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
+    // Match the pinned AOSP java_import modules instead of maintaining local copies of their
+    // annotations. Extract only class packages so they can be compiled against and folded into
+    // the single hosted framework jar without carrying unrelated JAR metadata.
+    const androidx_annotation_classes = extractJarPackage(
+        b,
+        aosp.path("prebuilts/sdk/current/androidx/m2repository/androidx/annotation/annotation-jvm/1.9.0-rc01/annotation-jvm-1.9.0-rc01.jar"),
+        "androidx/annotation/*",
+        "androidx-annotation-classes",
+    );
+    const error_prone_annotation_classes = extractJarPackage(
+        b,
+        aosp.path("external/error_prone/error_prone/error_prone_annotations-2.36.0.jar"),
+        "com/google/errorprone/annotations/*",
+        "error-prone-annotation-classes",
+    );
     const kotlinc = command.create(b);
     kotlinc.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
     inline for (.{ "-no-jdk", "-no-stdlib", "-no-reflect", "-language-version", "2.0", "-api-version", "2.0", "-jvm-target", "21", "-java-parameters", "-Xsam-conversions=class", "-Xstring-concat=inline", "-classpath" }) |arg| kotlinc.addArg(arg);
-    kotlinc.addJoinedPaths(":", &.{ core_plus, kotlin_stdlib });
+    kotlinc.addJoinedPathInputs(":", &.{
+        .{ .file = core_plus },
+        .{ .file = kotlin_stdlib },
+        .{ .directory = androidx_annotation_classes },
+        .{ .directory = error_prone_annotation_classes },
+    });
     kotlinc.addArg("-d");
     const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
     kotlinc.addPrefixedFileArg("@", sources.java_rsp);
@@ -110,6 +145,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     javac.addJoinedPathInputs(":", &.{
         .{ .directory = kotlin_classes },
         .{ .directory = annotation_classes },
+        .{ .directory = androidx_annotation_classes },
+        .{ .directory = error_prone_annotation_classes },
         .{ .file = kotlin_stdlib },
     });
     javac.addArg("-d");
@@ -138,6 +175,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(java_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(androidx_annotation_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(error_prone_annotation_classes);
     jar.addArg(".");
 
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
