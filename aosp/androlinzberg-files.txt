@@ -1734,7 +1734,12 @@ F aosp frameworks/base/core/java/android/service/notification/ZenModeConfig.java
 F aosp frameworks/base/core/java/android/service/notification/ZenPolicy.aidl
 F aosp frameworks/base/core/java/android/service/notification/ZenPolicy.java
 F aosp frameworks/base/core/java/android/service/notification/flags.aconfig
+F aosp frameworks/base/core/java/android/util/proto/EncodedBuffer.java
+F aosp frameworks/base/core/java/android/util/proto/ProtoInputStream.java
+F aosp frameworks/base/core/java/android/util/proto/ProtoOutputStream.java
+F aosp frameworks/base/core/java/android/util/proto/ProtoParseException.java
 F aosp frameworks/base/core/java/android/util/proto/ProtoStream.java
+F aosp frameworks/base/core/java/android/util/proto/WireTypeMismatchException.java
 F aosp frameworks/base/core/java/android/widget/RemoteCollectionItemsAdapter.java
 F aosp frameworks/base/core/java/android/widget/RemoteViews.java
 F aosp frameworks/base/core/java/android/widget/RemoteViewsAdapter.java

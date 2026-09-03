@@ -713,7 +713,12 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/service/notification/ZenDeviceEffects.java");
     try c.file("$CJ/android/service/notification/ZenModeConfig.java");
     try c.file("$CJ/android/service/notification/ZenPolicy.java");
+    try c.file("$CJ/android/util/proto/EncodedBuffer.java");
+    try c.file("$CJ/android/util/proto/ProtoInputStream.java");
+    try c.file("$CJ/android/util/proto/ProtoOutputStream.java");
+    try c.file("$CJ/android/util/proto/ProtoParseException.java");
     try c.file("$CJ/android/util/proto/ProtoStream.java");
+    try c.file("$CJ/android/util/proto/WireTypeMismatchException.java");
     try c.file("$CJ/com/android/internal/notification/NotificationChannelGroupsHelper.java");
     try c.file("$CJ/com/android/internal/util/ContrastColorUtil.java");
     try c.file("$CJ/com/android/internal/util/ImageUtils.java");

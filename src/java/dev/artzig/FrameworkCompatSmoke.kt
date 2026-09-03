@@ -278,6 +278,7 @@ public final class FrameworkCompatSmoke {
             testStockInternalUtilMetadata()
             testStockFontRequest()
             testStockTextSpans()
+            testStockProtoStreams()
             testParcelRoundTrips()
             testSystemProperties()
             testOsTail()
@@ -766,6 +767,62 @@ public final class FrameworkCompatSmoke {
             require(view.clipBounds == android.graphics.Rect(40, 20, 40, 20), "reveal starts at center")
             require(view.translationZ == -5f, "reveal starts below captured z")
             android.util.Log.i("FrameworkCompatSmoke", "stock epicenter reveal ok")
+        }
+
+        /** Stock proto streams: binary encoding, nested traversal and wire-type validation. */
+        @JvmStatic
+        private fun testStockProtoStreams() {
+            val single = android.util.proto.ProtoStream.FIELD_COUNT_SINGLE
+            val intField = android.util.proto.ProtoStream.makeFieldId(
+                1,
+                single or android.util.proto.ProtoStream.FIELD_TYPE_INT32,
+            )
+            val stringField = android.util.proto.ProtoStream.makeFieldId(
+                2,
+                single or android.util.proto.ProtoStream.FIELD_TYPE_STRING,
+            )
+            val messageField = android.util.proto.ProtoStream.makeFieldId(
+                3,
+                single or android.util.proto.ProtoStream.FIELD_TYPE_MESSAGE,
+            )
+            val boolField = android.util.proto.ProtoStream.makeFieldId(
+                1,
+                single or android.util.proto.ProtoStream.FIELD_TYPE_BOOL,
+            )
+
+            val output = android.util.proto.ProtoOutputStream()
+            output.write(intField, 150)
+            output.write(stringField, "stock")
+            val token = output.start(messageField)
+            output.write(boolField, true)
+            output.end(token)
+            val encoded = output.bytes
+            require(encoded.isNotEmpty(), "stock proto output emits bytes")
+
+            val input = android.util.proto.ProtoInputStream(encoded)
+            require(input.nextField() == 1 && input.readInt(intField) == 150, "stock proto int round trip")
+            require(input.nextField() == 2 && input.readString(stringField) == "stock", "stock proto string round trip")
+            require(input.nextField() == 3, "stock proto nested field")
+            val readToken = input.start(messageField)
+            require(input.nextField() == 1 && input.readBoolean(boolField), "stock proto nested value")
+            require(input.nextField() == android.util.proto.ProtoInputStream.NO_MORE_FIELDS, "nested message ends")
+            input.end(readToken)
+            require(input.nextField() == android.util.proto.ProtoInputStream.NO_MORE_FIELDS, "top-level message ends")
+
+            val mismatchInput = android.util.proto.ProtoInputStream(encoded)
+            require(mismatchInput.nextField() == 1, "wire mismatch test field")
+            val stringAtFieldOne = android.util.proto.ProtoStream.makeFieldId(
+                1,
+                single or android.util.proto.ProtoStream.FIELD_TYPE_STRING,
+            )
+            val rejectedWireType = try {
+                mismatchInput.readString(stringAtFieldOne)
+                false
+            } catch (expected: android.util.proto.WireTypeMismatchException) {
+                true
+            }
+            require(rejectedWireType, "stock proto input rejects a mismatched wire type")
+            android.util.Log.i("FrameworkCompatSmoke", "stock proto streams ok")
         }
 
         /** Stock validation and code-generation metadata used by AOSP generated value types. */
