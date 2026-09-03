@@ -255,6 +255,19 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/view/Gravity.java");
     try c.file("$CJ/android/view/InflateException.java");
     try c.file("$CJ/android/view/DisplayAdjustments.java");
+    // Stock WebView-neutral client callbacks and value types. The Chromium-backed
+    // provider classes remain behind the hosted WebView seam.
+    try c.file("$CJ/android/webkit/ClientCertRequest.java");
+    try c.file("$CJ/android/webkit/ConsoleMessage.java");
+    try c.file("$CJ/android/webkit/HttpAuthHandler.java");
+    try c.file("$CJ/android/webkit/JavascriptInterface.java");
+    try c.file("$CJ/android/webkit/JsResult.java");
+    try c.file("$CJ/android/webkit/SafeBrowsingResponse.java");
+    try c.file("$CJ/android/webkit/SslErrorHandler.java");
+    try c.file("$CJ/android/webkit/ValueCallback.java");
+    try c.file("$CJ/android/webkit/WebResourceError.java");
+    try c.file("$CJ/android/webkit/WebResourceRequest.java");
+    try c.file("$CJ/android/webkit/WebResourceResponse.java");
     try c.file("$CJ/android/text/method/OffsetMapping.java");
     try c.file("$CJ/android/util/TimeFormatException.java");
     try c.file("$CJ/android/util/MergedConfiguration.java");

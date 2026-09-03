@@ -1609,6 +1609,17 @@ F aosp frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig
 F aosp frameworks/base/core/java/android/app/supervision/flags.aconfig
 F aosp frameworks/base/wifi/wifi.aconfig
 F aosp frameworks/base/core/java/android/webkit/flags.aconfig
+F aosp frameworks/base/core/java/android/webkit/ClientCertRequest.java
+F aosp frameworks/base/core/java/android/webkit/ConsoleMessage.java
+F aosp frameworks/base/core/java/android/webkit/HttpAuthHandler.java
+F aosp frameworks/base/core/java/android/webkit/JavascriptInterface.java
+F aosp frameworks/base/core/java/android/webkit/JsResult.java
+F aosp frameworks/base/core/java/android/webkit/SafeBrowsingResponse.java
+F aosp frameworks/base/core/java/android/webkit/SslErrorHandler.java
+F aosp frameworks/base/core/java/android/webkit/ValueCallback.java
+F aosp frameworks/base/core/java/android/webkit/WebResourceError.java
+F aosp frameworks/base/core/java/android/webkit/WebResourceRequest.java
+F aosp frameworks/base/core/java/android/webkit/WebResourceResponse.java
 F aosp frameworks/base/core/java/android/provider/DocumentsContract.java
 F aosp frameworks/base/core/java/android/provider/DocumentsProvider.java
 F aosp frameworks/base/media/java/android/media/ExifInterface.java

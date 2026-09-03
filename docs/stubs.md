@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 141 (budget 141). Survivors: 119. Total: 260.
+Pending: 130 (budget 130). Survivors: 119. Total: 249.
 
 ## Survivors
 
@@ -410,20 +410,9 @@ Pending: 141 (budget 141). Survivors: 119. Total: 260.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/webkit/ClientCertRequest.kt` | replaceable | frameworks/base/core/java/android/webkit/ClientCertRequest.java (1 to add), not vendored |
-| `android/webkit/ConsoleMessage.kt` | replaceable | frameworks/base/core/java/android/webkit/ConsoleMessage.java (1 to add), not vendored |
 | `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (209 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < Androi |
-| `android/webkit/HttpAuthHandler.kt` | replaceable | frameworks/base/core/java/android/webkit/HttpAuthHandler.java (1 to add), not vendored |
-| `android/webkit/JavascriptInterface.kt` | replaceable | frameworks/base/core/java/android/webkit/JavascriptInterface.java (1 to add), not vendored |
-| `android/webkit/JsResult.kt` | replaceable | frameworks/base/core/java/android/webkit/JsResult.java (1 to add), not vendored |
 | `android/webkit/RenderProcessGoneDetail.kt` | replaceable | frameworks/base/core/java/android/webkit/RenderProcessGoneDetail.java (1 to add), not vendored |
-| `android/webkit/SafeBrowsingResponse.kt` | replaceable | frameworks/base/core/java/android/webkit/SafeBrowsingResponse.java (1 to add), not vendored |
-| `android/webkit/SslErrorHandler.kt` | replaceable | frameworks/base/core/java/android/webkit/SslErrorHandler.java (1 to add), not vendored |
-| `android/webkit/ValueCallback.kt` | replaceable | frameworks/base/core/java/android/webkit/ValueCallback.java (1 to add), not vendored |
 | `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (210 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < Andr |
-| `android/webkit/WebResourceError.kt` | replaceable | frameworks/base/core/java/android/webkit/WebResourceError.java (1 to add), not vendored |
-| `android/webkit/WebResourceRequest.kt` | replaceable | frameworks/base/core/java/android/webkit/WebResourceRequest.java (1 to add), not vendored |
-| `android/webkit/WebResourceResponse.kt` | replaceable | frameworks/base/core/java/android/webkit/WebResourceResponse.java (1 to add), not vendored |
 | `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (208 to add), not vendored; android.hardware.biometrics.common.CommonProps: no source in the checkout (via CommonProps < HidlFaceSensorConfig < FaceSensorConfigurations < IFaceService < FaceManager < BiometricPrompt < KeyProtection < AndroidK |
 | `android/webkit/WebViewClient.kt` | replaceable | frameworks/base/core/java/android/webkit/WebViewClient.java (1 to add), not vendored |
 
