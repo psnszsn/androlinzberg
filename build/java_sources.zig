@@ -127,6 +127,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/android/window", .{ .max_depth = 1, .not_names = &.{ "SurfaceSyncGroup.java", "TransitionInfo.java", "WindowContainerTransaction.java", "TaskFragment*.java", "RemoteTransition.java", "WindowContainerToken.java", "TransitionRequestInfo.java", "WindowOrganizer.java", "TaskOrganizer.java", "DisplayAreaOrganizer.java", "BackAnimation*.java", "WindowTokenClient.java", "TransitionFilter.java", "WindowAnimationState.java", "StartingWindowInfo.java", "TaskAppearedInfo.java", "WindowTokenClientController.java", "WindowContext.java", "WindowContextController.java", "RemoteTransitionStub.java", "DisplayAreaInfo.java", "SplashScreen.java", "DisplayAreaAppearedInfo.java", "TransitionMetrics.java", "TaskSnapshot.java", "PictureInPicture*.java", "SnapshotDrawerUtils.java", "SplashScreenView.java", "WindowProviderService.java" } });
     try c.add("$FB/core/java/android/database", .{});
     try c.add("$FB/core/java/android/transition", .{});
+    try c.file("$CJ/com/android/internal/transition/EpicenterTranslateClipReveal.java");
+    try c.file("$CJ/com/android/internal/transition/TransitionConstants.java");
     try c.add("$FB/core/java/com/android/internal/policy", .{ .max_depth = 1, .not_names = &.{ "TransitionAnimation.java", "PhoneFallbackEventHandler.java", "FoldLockSettingsObserver.java", "ForceShowNavBarSettingsObserver.java", "GestureNavigationSettingsObserver.java", "AttributeCache.java" } });
     try c.add("$FB/core/java/com/android/internal/view", .{ .max_depth = 1 });
     try c.add("$FB/core/java/com/android/internal/view/menu", .{});

@@ -1330,6 +1330,8 @@ F aosp frameworks/base/core/java/com/android/internal/textservice/ISpellCheckerS
 F aosp frameworks/base/core/java/com/android/internal/textservice/ISpellCheckerSessionListener.aidl
 F aosp frameworks/base/core/java/com/android/internal/textservice/ITextServicesManager.aidl
 F aosp frameworks/base/core/java/com/android/internal/textservice/ITextServicesSessionListener.aidl
+F aosp frameworks/base/core/java/com/android/internal/transition/EpicenterTranslateClipReveal.java
+F aosp frameworks/base/core/java/com/android/internal/transition/TransitionConstants.java
 F aosp frameworks/base/core/java/com/android/internal/util/ArrayUtils.java
 F aosp frameworks/base/core/java/com/android/internal/util/AnnotationValidations.java
 F aosp frameworks/base/core/java/com/android/internal/util/BitUtils.java

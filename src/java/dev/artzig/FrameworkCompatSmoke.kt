@@ -285,6 +285,7 @@ public final class FrameworkCompatSmoke {
             testLocalContentProvider()
             testAospPackageParser(args.firstOrNull())
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
+            testStockEpicenterReveal()
             val filtered: Intent =
                 Intent(Intent.ACTION_VIEW)
                     .setPackage("org.example")
@@ -723,6 +724,48 @@ public final class FrameworkCompatSmoke {
             android.os.CancellationSignal.fromTransport(transport).setOnCancelListener { cancelled = true }
             signal.cancel()
             require(cancelled && signal.isCanceled, "CancellationSignal propagates through its transport")
+        }
+
+        /** Stock popup reveal transition: captures geometry and builds all three animations. */
+        @JvmStatic
+        private fun testStockEpicenterReveal() {
+            val context = HostContexts.systemContext(
+                requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
+                200,
+                200,
+                120,
+                0,
+            )
+            val sceneRoot = android.widget.FrameLayout(context)
+            val view = android.view.View(context)
+            view.layout(0, 0, 80, 40)
+            view.translationX = 7f
+            view.translationY = 9f
+            view.translationZ = 5f
+            view.clipBounds = android.graphics.Rect(10, 5, 70, 35)
+
+            val values = android.transition.TransitionValues(view)
+            val transition = com.android.internal.transition.EpicenterTranslateClipReveal()
+            transition.captureEndValues(values)
+            require(
+                values.values["android:epicenterReveal:bounds"] == android.graphics.Rect(0, 0, 80, 40),
+                "epicenter reveal captures bounds",
+            )
+            require(values.values["android:epicenterReveal:translateX"] == 7f, "captures translation X")
+            require(values.values["android:epicenterReveal:translateY"] == 9f, "captures translation Y")
+            require(values.values["android:epicenterReveal:translateZ"] == 5f, "captures translation Z")
+            require(
+                values.values["android:epicenterReveal:clip"] == android.graphics.Rect(10, 5, 70, 35),
+                "epicenter reveal captures clip",
+            )
+
+            val animator = transition.onAppear(sceneRoot, view, null, values)
+            require(animator is android.animation.AnimatorSet, "epicenter reveal creates an animator set")
+            val animatorSet = animator as android.animation.AnimatorSet
+            require(animatorSet.childAnimations.size == 3, "epicenter reveal animates x, y and z")
+            require(view.clipBounds == android.graphics.Rect(40, 20, 40, 20), "reveal starts at center")
+            require(view.translationZ == -5f, "reveal starts below captured z")
+            android.util.Log.i("FrameworkCompatSmoke", "stock epicenter reveal ok")
         }
 
         /** Stock validation and code-generation metadata used by AOSP generated value types. */

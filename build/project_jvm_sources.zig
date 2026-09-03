@@ -352,7 +352,6 @@ pub const framework = [_][]const u8{
     "src/framework/com/android/internal/content/om/OverlayConfig.java",
     "src/framework/com/android/internal/content/om/OverlayManagerImpl.java",
     "src/framework/com/android/internal/ravenwood/RavenwoodEnvironment.java",
-    "src/framework/com/android/internal/transition/EpicenterTranslateClipReveal.java",
     "src/framework/com/google/errorprone/annotations/CompileTimeConstant.java",
     "src/java/dev/artzig/ApkHost.kt",
     "src/java/dev/artzig/AppProcess.kt",
