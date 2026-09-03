@@ -72,9 +72,10 @@ pub const Set = struct {
 pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     var framework = StaticCollector.init(b);
     const fb = SourceFiles.Root.dependency(b, aosp, "frameworks/base");
+    const modules_utils = SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils");
     framework.addRoot("FB", fb);
     framework.addRoot("CJ", fb.child(b, "core/java"));
-    framework.addRoot("MU", SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils"));
+    framework.addRoot("MU", modules_utils);
     framework.addRoot("NRT", SourceFiles.Root.dependency(b, aosp, "external/protobuf/javanano/src/main/java"));
     framework.addRoot("SD", SourceFiles.Root.dependency(b, aosp, "packages/modules/StatsD"));
     collectStatic(&framework) catch |err| std.debug.panic("unable to collect framework JVM sources: {t}", .{err});
@@ -82,6 +83,14 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     for (project_sources.framework) |path| framework.files.addFile(project_root, path);
 
     var annotations = SourceFiles.Collector.init(b);
+    // AnnotationValidations holds class literals for these annotations, so they
+    // must be present in framework.jar instead of only in the compile-time SDK.
+    inline for (.{
+        "java/android/annotation/AppIdInt.java",
+        "java/android/annotation/ColorInt.java",
+        "java/android/annotation/Size.java",
+        "java/android/annotation/UserIdInt.java",
+    }) |path| annotations.addFile(modules_utils, path);
     for (project_sources.annotations) |path| annotations.addFile(project_root, path);
 
     const java = framework.files.select(".java");
@@ -238,7 +247,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/XmlUtils.java");
     try c.file("$CJ/com/android/internal/util/HexDump.java");
     try c.file("$CJ/com/android/internal/util/FastPrintWriter.java");
+    try c.file("$CJ/com/android/internal/util/AnnotationValidations.java");
     try c.file("$CJ/com/android/internal/util/BitUtils.java");
+    try c.file("$CJ/com/android/internal/util/DataClass.java");
     try c.file("$CJ/com/android/internal/util/IntPair.java");
     try c.file("$CJ/com/android/internal/util/RingBuffer.java");
     try c.file("$CJ/com/android/internal/util/IndentingPrintWriter.java");

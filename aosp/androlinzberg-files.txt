@@ -1331,8 +1331,10 @@ F aosp frameworks/base/core/java/com/android/internal/textservice/ISpellCheckerS
 F aosp frameworks/base/core/java/com/android/internal/textservice/ITextServicesManager.aidl
 F aosp frameworks/base/core/java/com/android/internal/textservice/ITextServicesSessionListener.aidl
 F aosp frameworks/base/core/java/com/android/internal/util/ArrayUtils.java
+F aosp frameworks/base/core/java/com/android/internal/util/AnnotationValidations.java
 F aosp frameworks/base/core/java/com/android/internal/util/BitUtils.java
 F aosp frameworks/base/core/java/com/android/internal/util/CollectionUtils.java
+F aosp frameworks/base/core/java/com/android/internal/util/DataClass.java
 F aosp frameworks/base/core/java/com/android/internal/util/FastMath.java
 F aosp frameworks/base/core/java/com/android/internal/util/FastPrintWriter.java
 F aosp frameworks/base/core/java/com/android/internal/util/FunctionalUtils.java

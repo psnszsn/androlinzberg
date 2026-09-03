@@ -275,6 +275,7 @@ public final class FrameworkCompatSmoke {
         @Throws(Exception::class)
         @JvmStatic
         public fun main(args: Array<String>) {
+            testStockInternalUtilMetadata()
             testStockFontRequest()
             testStockTextSpans()
             testParcelRoundTrips()
@@ -722,6 +723,56 @@ public final class FrameworkCompatSmoke {
             android.os.CancellationSignal.fromTransport(transport).setOnCancelListener { cancelled = true }
             signal.cancel()
             require(cancelled && signal.isCanceled, "CancellationSignal propagates through its transport")
+        }
+
+        /** Stock validation and code-generation metadata used by AOSP generated value types. */
+        @JvmStatic
+        private fun testStockInternalUtilMetadata() {
+            com.android.internal.util.AnnotationValidations.validate(
+                android.annotation.NonNull::class.java,
+                null,
+                "present",
+            )
+            require(
+                runCatching {
+                    com.android.internal.util.AnnotationValidations.validate(
+                        android.annotation.NonNull::class.java,
+                        null,
+                        null,
+                    )
+                }.exceptionOrNull() is NullPointerException,
+                "non-null annotation validation",
+            )
+            val rangeFailure = runCatching {
+                com.android.internal.util.AnnotationValidations.validate(
+                    android.annotation.IntRange::class.java,
+                    null,
+                    4,
+                    "from",
+                    5L,
+                )
+            }.exceptionOrNull()
+            require(
+                rangeFailure is IllegalStateException &&
+                    rangeFailure.message == "Invalid @IntRange(from = 5): 4",
+                "integer range annotation validation",
+            )
+
+            val dataClass = com.android.internal.util.DataClass::class.java
+            require(dataClass.getMethod("genGetters").defaultValue == true, "DataClass getter default")
+            require(dataClass.getMethod("genCopyConstructor").defaultValue == false, "DataClass copy default")
+            require(
+                com.android.internal.util.DataClass.ParcelWith::class.java
+                    .getMethod("value").genericReturnType.typeName
+                    .contains("com.android.internal.util.Parcelling"),
+                "DataClass ParcelWith type",
+            )
+            require(
+                com.android.internal.util.DataClass.Generated::class.java
+                    .getMethod("time").defaultValue == null,
+                "DataClass generated metadata requires a timestamp",
+            )
+            android.util.Log.i("FrameworkCompatSmoke", "stock internal util metadata ok")
         }
 
         /** Stock AOSP FontRequest: validation, identity key and certificate rendering. */
