@@ -233,6 +233,25 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/appwidget/IAppWidgetHost.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/appwidget/IAppWidgetService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/IPackageInstallerCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/usage/IStorageStatsManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/usage/IUsageStatsManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IBatteryPropertiesRegistrar.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IPowerManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IScreenTimeoutPolicyListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IThermalEventListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IThermalHeadroomListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IThermalService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IThermalStatusListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IVibratorManagerService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IWakeLockCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/vibrator/IVibrationSession.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/vibrator/IVibrationSessionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamOverlay.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamOverlayCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamOverlayClient.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamOverlayClientCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/dreams/IDreamService.aidl" },
 };
 
 pub const logtags = [_]Logtags{
@@ -300,6 +319,9 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.appwidget.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/appwidget/flags.aconfig"} },
     .{ .package = "android.service.notification", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/notification/flags.aconfig"} },
     .{ .package = "android.app.job", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/apex/jobscheduler/framework/aconfig/job.aconfig"} },
+    .{ .package = "android.app.usage", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/usage/flags.aconfig"} },
+    .{ .package = "android.service.controls.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/controls/flags/flags.aconfig"} },
+    .{ .package = "android.service.dreams", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/dreams/flags.aconfig"} },
 };
 
 pub const sysprop = [_]Sysprop{
@@ -368,6 +390,8 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/notification.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/alarmmanager.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app/job/job_enums.proto" },
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/os/enums.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/powermanager.proto" },
 };
 
 pub const proto_outputs = [_][]const u8{
@@ -447,6 +471,9 @@ pub const proto_outputs = [_][]const u8{
     "android/app/AlarmManagerProto.java",
     "android/app/AlarmClockInfoProto.java",
     "android/app/job/JobProtoEnums.java",
+    "android/os/PowerManagerInternalProto.java",
+    "android/os/PowerManagerProto.java",
+    "android/os/OsProtoEnums.java",
 };
 
 pub const stats_protos = [_][]const u8{

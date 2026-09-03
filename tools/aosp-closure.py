@@ -686,6 +686,14 @@ def cmd_closure(args: argparse.Namespace, res: Resolver) -> int:
     res.classes.names |= set(args.assume_present)
     nodes = res.closure(seeds, absent=set(seeds))
     print(render_closure(res, seeds, nodes))
+    for fqn in args.explain:
+        if fqn not in nodes:
+            print(f"== {fqn}: not in the closure")
+            continue
+        chain = [fqn]
+        while chain[-1] in res.parent and chain[-1] not in seeds and len(chain) < 40:
+            chain.append(res.parent[chain[-1]])
+        print(f"== {fqn}: " + " <- ".join(chain))
     return 1 if any(blockers_of(n) for n in nodes.values()) else 0
 
 
@@ -841,6 +849,8 @@ def main(argv: list[str]) -> int:
     c = sub.add_parser("closure", help="what has to be added so the seeds compile")
     c.add_argument("--assume-present", action="append", default=[], metavar="FQN",
                    help="treat this class as compiled (a planned host stub or cut); repeatable")
+    c.add_argument("--explain", action="append", default=[], metavar="FQN",
+                   help="print the reference chain from a seed to this class; repeatable")
     c.add_argument("seeds", nargs="+")
     a = sub.add_parser("audit", help="classify every stub as replaceable/blocked/no-aosp-source")
     a.add_argument("--json", action="store_true")

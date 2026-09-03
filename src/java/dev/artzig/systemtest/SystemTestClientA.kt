@@ -572,6 +572,117 @@ internal object SystemTestClientA {
         scheduler.cancelAll()
         check(scheduler.allPendingJobs.isEmpty(), "cancelAll clears the package's jobs")
 
+        // --- power through the real PowerManager over the hosted IPowerManager
+        // (PowerManagerService wake-lock accounting; dumpsys-style query through IBinder.dump).
+        val power = checkNotNull(context.getSystemService(android.os.PowerManager::class.java))
+        check(power.isInteractive && !power.isPowerSaveMode && !power.isDeviceIdleMode, "always-on power state")
+        check(
+            power.isWakeLockLevelSupported(android.os.PowerManager.PARTIAL_WAKE_LOCK) &&
+                !power.isWakeLockLevelSupported(android.os.PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK),
+            "wake lock levels: partial yes, proximity no",
+        )
+        check(power.currentThermalStatus == android.os.PowerManager.THERMAL_STATUS_NONE, "thermal status none")
+        fun powerDump(): String {
+            val pipe = android.os.ParcelFileDescriptor.createPipe()
+            val reader = Thread { }
+            val out = java.io.ByteArrayOutputStream()
+            val drain = thread(name = "dump-drain") {
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe[0]).use { it.copyTo(out) }
+            }
+            ServiceManager.getService(Context.POWER_SERVICE).dump(pipe[1].fileDescriptor, arrayOf())
+            pipe[1].close()
+            drain.join(10_000)
+            return out.toString()
+        }
+        val wakeLock = power.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "azk:test")
+        wakeLock.acquire()
+        check(wakeLock.isHeld && powerDump().contains("'azk:test'"), "acquired wake lock is listed by the power service")
+        wakeLock.release()
+        check(!wakeLock.isHeld && !powerDump().contains("'azk:test'"), "released wake lock is gone from the power service")
+        check(
+            runCatching { power.goToSleep(android.os.SystemClock.uptimeMillis()) }.exceptionOrNull() is SecurityException,
+            "goToSleep needs DEVICE_POWER",
+        )
+
+        // --- battery: the sticky ACTION_BATTERY_CHANGED from the hosted BatteryService and
+        // the real BatteryManager over IBatteryPropertiesRegistrar/IBatteryStats.
+        val batterySticky = context.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        check(
+            batterySticky != null && batterySticky.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) == 100 &&
+                batterySticky.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) in 0..100 &&
+                batterySticky.hasExtra(android.os.BatteryManager.EXTRA_PLUGGED),
+            "sticky ACTION_BATTERY_CHANGED carries level, scale and plug state",
+        )
+        val battery = checkNotNull(context.getSystemService(android.os.BatteryManager::class.java))
+        check(
+            battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) ==
+                batterySticky!!.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1),
+            "BATTERY_PROPERTY_CAPACITY agrees with the sticky broadcast",
+        )
+        check(
+            battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_STATUS) ==
+                batterySticky.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1),
+            "BATTERY_PROPERTY_STATUS agrees with the sticky broadcast",
+        )
+        check(runCatching { battery.isCharging }.isSuccess, "isCharging reaches the hosted battery stats")
+
+        // --- vibrator: no vibrators on the host (VibratorManagerService with no HAL vibrators).
+        val vibratorManager = checkNotNull(context.getSystemService(android.os.VibratorManager::class.java))
+        check(vibratorManager.vibratorIds.isEmpty(), "no vibrator ids")
+        val vibrator = checkNotNull(context.getSystemService(android.os.Vibrator::class.java))
+        check(!vibrator.hasVibrator(), "hasVibrator is false")
+        check(
+            runCatching { vibrator.vibrate(android.os.VibrationEffect.createOneShot(20, android.os.VibrationEffect.DEFAULT_AMPLITUDE)) }.isSuccess,
+            "vibrate on a device without a vibrator is accepted",
+        )
+        check(
+            runCatching { vibrator.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(10, 20), intArrayOf(1, 300), -1)) }
+                .exceptionOrNull() is IllegalArgumentException,
+            "an invalid effect is rejected by validation",
+        )
+
+        // --- usage stats: the hosted UsageStatsService records this process's foreground span.
+        val usage = checkNotNull(context.getSystemService(android.app.usage.UsageStatsManager::class.java))
+        val now = System.currentTimeMillis()
+        val mine = usage.queryUsageStats(android.app.usage.UsageStatsManager.INTERVAL_DAILY, now - 3_600_000, now + 1)
+            .firstOrNull { it.packageName == "dev.artzig.test.a" }
+        check(mine != null && mine.totalTimeInForeground > 0 && mine.lastTimeUsed > 0, "usage stats report the attached test package")
+        check(
+            usage.queryEvents(now - 3_600_000, now + 1).let { events ->
+                var found = false
+                val event = android.app.usage.UsageEvents.Event()
+                while (events.hasNextEvent()) {
+                    events.getNextEvent(event)
+                    if (event.packageName == "dev.artzig.test.a" && event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) found = true
+                }
+                found
+            },
+            "usage events include this package's resume",
+        )
+        check(
+            usage.appStandbyBucket == android.app.usage.UsageStatsManager.STANDBY_BUCKET_ACTIVE && !usage.isAppInactive("dev.artzig.test.a"),
+            "app standby is inactive on the host",
+        )
+
+        // --- storage stats over the hosted IStorageStatsManager (host filesystem sizes).
+        val storage = checkNotNull(context.getSystemService(android.app.usage.StorageStatsManager::class.java))
+        val myStats = storage.queryStatsForPackage(android.os.storage.StorageManager.UUID_DEFAULT, "dev.artzig.test.a", Process.myUserHandle())
+        check(myStats.appBytes > 0, "package stats report the fixture APK size")
+        check(storage.getTotalBytes(android.os.storage.StorageManager.UUID_DEFAULT) > 0, "total bytes come from the data root")
+        check(
+            runCatching { storage.queryStatsForPackage(android.os.storage.StorageManager.UUID_DEFAULT, "dev.artzig.test.b", Process.myUserHandle()) }
+                .exceptionOrNull() is SecurityException,
+            "another package's stats need PACKAGE_USAGE_STATS",
+        )
+
+        // --- device idle over the hosted IDeviceIdleController: nobody is exempt, nothing is idle.
+        val exemptions = checkNotNull(context.getSystemService(android.os.PowerExemptionManager::class.java))
+        check(!power.isIgnoringBatteryOptimizations("dev.artzig.test.a"), "no package is exempt from battery optimizations")
+        check(
+            runCatching { exemptions.addToPermanentAllowList("dev.artzig.test.a") }.exceptionOrNull() is SecurityException,
+            "allowlist changes need DEVICE_POWER",
+        )
+
         // --- clipboard through the reused AOSP ClipboardService.
         val clipboard = checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         val clipChanged = CountDownLatch(1)

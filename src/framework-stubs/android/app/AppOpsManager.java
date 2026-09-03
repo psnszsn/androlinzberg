@@ -8,6 +8,7 @@ public class AppOpsManager {
     public static final int MODE_ERRORED = 2;
     public static final int MODE_DEFAULT = 3;
     public static final int OP_NONE = -1;
+    public static final int OP_GET_USAGE_STATS = 43;
     public static final int OP_LEGACY_STORAGE = 87;
     public static final int OP_MANAGE_EXTERNAL_STORAGE = 92;
     public static final int OP_NO_ISOLATED_STORAGE = 99;
@@ -71,6 +72,7 @@ public class AppOpsManager {
         catch (android.os.RemoteException e) { return MODE_ALLOWED; }
     }
     public int checkOpNoThrow(int op, int uid, String packageName) { return checkWithService(op, uid, packageName); }
+    public int noteOpNoThrow(int op, int uid, String packageName) { return noteOpNoThrow(op, uid, packageName, null, null); }
     public int noteOpNoThrow(int op, int uid, String packageName, String attributionTag, String message) {
         return checkWithService(op, uid, packageName);
     }

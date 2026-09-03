@@ -151,7 +151,24 @@ per-uid job tables with the AOSP run-time window, work queues and backoff,
 constraints reduced to what the host knows, execution by binding the app's
 `JobService` from the system context and driving `IJobService`/`IJobCallback`
 exactly as `JobServiceContext` does). Foreground-service notifications flow
-from the activity manager into the same notification table. System properties
+from the activity manager into the same notification table. The device-state
+managers are real as well: `PowerManager` over `HostedPowerManagerService`
+(`IPowerManager`: wake-lock accounting with death cleanup and a dumpsys-style
+dump, always interactive, no power save or idle mode) and `HostedThermalService`
+(`IThermalService`: status NONE, no temperatures), the `Vibrator` family over
+`HostedVibratorManagerService` (`IVibratorManagerService`: no vibrators, requests
+validated then dropped as AOSP does without hardware), `BatteryManager` over
+`HostedBatteryService` (`IBatteryPropertiesRegistrar` and `IBatteryStats` read
+from `/sys/class/power_supply`, the sticky `ACTION_BATTERY_CHANGED` broadcast on
+the real queue, "not present, 100%, AC" without a battery), `UsageStatsManager`
+over `HostedUsageStatsService` (`IUsageStatsManager`: foreground spans from the
+activity manager's process attach/death, app standby disabled),
+`StorageStatsManager` over `HostedStorageStatsService` (`IStorageStatsManager`:
+APK and per-package data directory sizes on the host filesystem) and
+`DeviceIdleManager`/`PowerExemptionManager` over `HostedDeviceIdleController`
+(`IDeviceIdleController`: nobody is idle, allowlists empty). The HAL enum
+packages these clients re-export (`android.hardware.{health,vibrator,thermal}`)
+are marked stubs because `hardware/interfaces` is not vendored. System properties
 are session-wide, following Android's model: the broker owns a shared property
 area file in the session directory (`src/binder/prop_area.zig`, the
 `__system_property_area__` analogue) that every process — the JVM

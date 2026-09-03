@@ -147,20 +147,40 @@ public final class SystemServiceRegistry {
             @Override public android.view.inputmethod.InputMethodManager createService(ContextImpl ctx) throws ServiceNotFoundException {
                 return android.view.inputmethod.InputMethodManager.createStubInstance(ctx.getDisplayId(), ctx.getMainLooper());
             }});
-        registerService(Context.POWER_SERVICE, android.os.PowerManager.class, new NewServiceFetcher<android.os.PowerManager>() {
-            @Override public android.os.PowerManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.PowerManager(); }});
+        registerService(Context.POWER_SERVICE, android.os.PowerManager.class,
+                new CachedServiceFetcher<android.os.PowerManager>() {
+            @Override public android.os.PowerManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder powerBinder = android.os.ServiceManager.getServiceOrThrow(Context.POWER_SERVICE);
+                android.os.IPowerManager powerService = android.os.IPowerManager.Stub.asInterface(powerBinder);
+                android.os.IBinder thermalBinder = android.os.ServiceManager.getServiceOrThrow(Context.THERMAL_SERVICE);
+                android.os.IThermalService thermalService = android.os.IThermalService.Stub.asInterface(thermalBinder);
+                return new android.os.PowerManager(ctx.getOuterContext(), powerService, thermalService,
+                        ctx.mMainThread.getHandler());
+            }});
         registerService(Context.USER_SERVICE, android.os.UserManager.class, new NewServiceFetcher<android.os.UserManager>() {
             @Override public android.os.UserManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.UserManager(); }});
         registerService(Context.STORAGE_SERVICE, android.os.storage.StorageManager.class, new NewServiceFetcher<android.os.storage.StorageManager>() {
             @Override public android.os.storage.StorageManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.storage.StorageManager(); }});
-        registerService(Context.STORAGE_STATS_SERVICE, android.app.usage.StorageStatsManager.class, new NewServiceFetcher<android.app.usage.StorageStatsManager>() {
-            @Override public android.app.usage.StorageStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.app.usage.StorageStatsManager(); }});
+        registerService(Context.STORAGE_STATS_SERVICE, android.app.usage.StorageStatsManager.class,
+                new CachedServiceFetcher<android.app.usage.StorageStatsManager>() {
+            @Override public android.app.usage.StorageStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.app.usage.IStorageStatsManager service = android.app.usage.IStorageStatsManager.Stub.asInterface(
+                        android.os.ServiceManager.getServiceOrThrow(Context.STORAGE_STATS_SERVICE));
+                return new android.app.usage.StorageStatsManager(ctx, service);
+            }});
         registerService(Context.UI_MODE_SERVICE, UiModeManager.class, new CachedServiceFetcher<UiModeManager>() {
             @Override public UiModeManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new UiModeManager(ctx); }});
         registerService(Context.NSD_SERVICE, android.net.nsd.NsdManager.class, new CachedServiceFetcher<android.net.nsd.NsdManager>() {
             @Override public android.net.nsd.NsdManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.nsd.NsdManager(ctx); }});
-        registerService(Context.BATTERY_SERVICE, android.os.BatteryManager.class, new NewServiceFetcher<android.os.BatteryManager>() {
-            @Override public android.os.BatteryManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.BatteryManager(); }});
+        registerService(Context.BATTERY_SERVICE, android.os.BatteryManager.class,
+                new CachedServiceFetcher<android.os.BatteryManager>() {
+            @Override public android.os.BatteryManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                com.android.internal.app.IBatteryStats stats = com.android.internal.app.IBatteryStats.Stub.asInterface(
+                        android.os.ServiceManager.getServiceOrThrow(android.os.BatteryStats.SERVICE_NAME));
+                android.os.IBatteryPropertiesRegistrar registrar = android.os.IBatteryPropertiesRegistrar.Stub
+                        .asInterface(android.os.ServiceManager.getServiceOrThrow("batteryproperties"));
+                return new android.os.BatteryManager(ctx, stats, registrar);
+            }});
         registerService(Context.INPUT_SERVICE, android.hardware.input.InputManager.class, new CachedServiceFetcher<android.hardware.input.InputManager>() {
             @Override public android.hardware.input.InputManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.hardware.input.InputManager(ctx); }});
         registerService(Context.DISPLAY_SERVICE, android.hardware.display.DisplayManager.class, new CachedServiceFetcher<android.hardware.display.DisplayManager>() {
@@ -171,8 +191,13 @@ public final class SystemServiceRegistry {
             @Override public android.content.pm.ShortcutManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.content.pm.ShortcutManager(); }});
         registerService(Context.MEDIA_METRICS_SERVICE, android.media.metrics.MediaMetricsManager.class, new NewServiceFetcher<android.media.metrics.MediaMetricsManager>() {
             @Override public android.media.metrics.MediaMetricsManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.media.metrics.MediaMetricsManager(); }});
-        registerService(Context.USAGE_STATS_SERVICE, android.app.usage.UsageStatsManager.class, new NewServiceFetcher<android.app.usage.UsageStatsManager>() {
-            @Override public android.app.usage.UsageStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.app.usage.UsageStatsManager(); }});
+        registerService(Context.USAGE_STATS_SERVICE, android.app.usage.UsageStatsManager.class,
+                new CachedServiceFetcher<android.app.usage.UsageStatsManager>() {
+            @Override public android.app.usage.UsageStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder iBinder = android.os.ServiceManager.getServiceOrThrow(Context.USAGE_STATS_SERVICE);
+                android.app.usage.IUsageStatsManager service = android.app.usage.IUsageStatsManager.Stub.asInterface(iBinder);
+                return new android.app.usage.UsageStatsManager(ctx.getOuterContext(), service);
+            }});
         registerService(Context.WIFI_SERVICE, android.net.wifi.WifiManager.class, new NewServiceFetcher<android.net.wifi.WifiManager>() {
             @Override public android.net.wifi.WifiManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.wifi.WifiManager(); }});
         // JobSchedulerFrameworkInitializer.registerServiceWrappers: the real JobSchedulerImpl
@@ -182,8 +207,22 @@ public final class SystemServiceRegistry {
                 android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.JOB_SCHEDULER_SERVICE);
                 return new JobSchedulerImpl(ctx.getOuterContext(), android.app.job.IJobScheduler.Stub.asInterface(b));
             }});
-        registerService(Context.VIBRATOR_SERVICE, android.os.Vibrator.class, new NewServiceFetcher<android.os.Vibrator>() {
-            @Override public android.os.Vibrator createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.Vibrator(); }});
+        registerService(Context.VIBRATOR_MANAGER_SERVICE, android.os.VibratorManager.class,
+                new CachedServiceFetcher<android.os.VibratorManager>() {
+            @Override public android.os.VibratorManager createService(ContextImpl ctx) { return new android.os.SystemVibratorManager(ctx); }});
+        registerService(Context.VIBRATOR_SERVICE, android.os.Vibrator.class,
+                new CachedServiceFetcher<android.os.Vibrator>() {
+            @Override public android.os.Vibrator createService(ContextImpl ctx) { return new android.os.SystemVibrator(ctx); }});
+        // DeviceIdleFrameworkInitializer.registerServiceWrappers.
+        registerService(Context.DEVICE_IDLE_CONTROLLER, android.os.DeviceIdleManager.class,
+                new CachedServiceFetcher<android.os.DeviceIdleManager>() {
+            @Override public android.os.DeviceIdleManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                return new android.os.DeviceIdleManager(ctx.getOuterContext(),
+                        android.os.IDeviceIdleController.Stub.asInterface(android.os.ServiceManager.getServiceOrThrow(Context.DEVICE_IDLE_CONTROLLER)));
+            }});
+        registerService(Context.POWER_EXEMPTION_SERVICE, android.os.PowerExemptionManager.class,
+                new CachedServiceFetcher<android.os.PowerExemptionManager>() {
+            @Override public android.os.PowerExemptionManager createService(ContextImpl ctx) { return new android.os.PowerExemptionManager(ctx.getOuterContext()); }});
         registerService(Context.ACCESSIBILITY_SERVICE, android.view.accessibility.AccessibilityManager.class,
                 new NewServiceFetcher<android.view.accessibility.AccessibilityManager>() {
             @Override public android.view.accessibility.AccessibilityManager createService(ContextImpl ctx) throws ServiceNotFoundException {

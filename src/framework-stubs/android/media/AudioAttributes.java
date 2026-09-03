@@ -22,6 +22,38 @@ public class AudioAttributes implements Parcelable {
     public static final int USAGE_ASSISTANCE_SONIFICATION = 13;
     public static final int USAGE_GAME = 14;
     public static final int USAGE_ASSISTANT = 16;
+    public static final int USAGE_VOICE_COMMUNICATION_SIGNALLING = 3;
+    public static final int USAGE_NOTIFICATION_COMMUNICATION_REQUEST = 7;
+    public static final int USAGE_NOTIFICATION_COMMUNICATION_INSTANT = 8;
+    public static final int USAGE_NOTIFICATION_COMMUNICATION_DELAYED = 9;
+    public static final int FLAG_BYPASS_INTERRUPTION_POLICY = 1 << 6;
+    public static final int FLAG_BYPASS_MUTE = 1 << 7;
+    /** AOSP AttributeUsage / AttributeContentType annotations (IntDef markers). */
+    public @interface AttributeUsage {}
+    public @interface AttributeContentType {}
+    /** AOSP getAllFlags: every flag, including the hidden ones. */
+    public int getAllFlags() { return mFlags; }
+    public static String usageToString(int usage) {
+        switch (usage) {
+            case USAGE_UNKNOWN: return "USAGE_UNKNOWN";
+            case USAGE_MEDIA: return "USAGE_MEDIA";
+            case USAGE_VOICE_COMMUNICATION: return "USAGE_VOICE_COMMUNICATION";
+            case USAGE_VOICE_COMMUNICATION_SIGNALLING: return "USAGE_VOICE_COMMUNICATION_SIGNALLING";
+            case USAGE_ALARM: return "USAGE_ALARM";
+            case USAGE_NOTIFICATION: return "USAGE_NOTIFICATION";
+            case USAGE_NOTIFICATION_RINGTONE: return "USAGE_NOTIFICATION_RINGTONE";
+            case USAGE_NOTIFICATION_COMMUNICATION_REQUEST: return "USAGE_NOTIFICATION_COMMUNICATION_REQUEST";
+            case USAGE_NOTIFICATION_COMMUNICATION_INSTANT: return "USAGE_NOTIFICATION_COMMUNICATION_INSTANT";
+            case USAGE_NOTIFICATION_COMMUNICATION_DELAYED: return "USAGE_NOTIFICATION_COMMUNICATION_DELAYED";
+            case USAGE_NOTIFICATION_EVENT: return "USAGE_NOTIFICATION_EVENT";
+            case USAGE_ASSISTANCE_ACCESSIBILITY: return "USAGE_ASSISTANCE_ACCESSIBILITY";
+            case USAGE_ASSISTANCE_NAVIGATION_GUIDANCE: return "USAGE_ASSISTANCE_NAVIGATION_GUIDANCE";
+            case USAGE_ASSISTANCE_SONIFICATION: return "USAGE_ASSISTANCE_SONIFICATION";
+            case USAGE_GAME: return "USAGE_GAME";
+            case USAGE_ASSISTANT: return "USAGE_ASSISTANT";
+            default: return "unknown usage " + usage;
+        }
+    }
     public static final int FLAG_AUDIBILITY_ENFORCED = 1 << 0;
     public static final int FLAG_HW_AV_SYNC = 1 << 4;
     public static final int FLAG_LOW_LATENCY = 1 << 8;

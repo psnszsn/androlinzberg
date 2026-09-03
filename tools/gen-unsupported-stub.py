@@ -74,8 +74,15 @@ def split_params(s):
     for p in out:
         p = p.strip()
         typ, name = p.rsplit(' ', 1)
+        if name in KOTLIN_KEYWORDS:
+            name = f'`{name}`'
         params.append((typ.strip(), name))
     return params
+
+# Java parameter names that are hard keywords in Kotlin must be escaped.
+KOTLIN_KEYWORDS = {'val', 'var', 'fun', 'object', 'in', 'is', 'when', 'typealias', 'interface',
+                   'package', 'as', 'typeof', 'class', 'do', 'else', 'false', 'for', 'if', 'null',
+                   'return', 'super', 'this', 'throw', 'true', 'try', 'while', 'break', 'continue'}
 
 lines = ['@file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")', '',
          f'package {pkg}', '',

@@ -110,6 +110,8 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
     @Volatile var processLauncher: ProcessLauncher? = null
     /** Foreground-service notifications are posted and cancelled through the hosted notification service. */
     @Volatile var notificationService: HostedNotificationManagerService? = null
+    /** Process attach (foreground = true) and death, for the usage stats service (UsageStatsService's activity events). */
+    @Volatile var processObserver: ((packageName: String, uid: Int, foreground: Boolean) -> Unit)? = null
     /** The session's package manager; consulted for APK paths of packages with no running process. */
     @Volatile var packageService: HostedPackageManagerService? = null
 
@@ -147,6 +149,7 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
             return
         }
         Log.i(TAG, "attached " + packageName + " pid=" + record.pid + " uid=" + record.uid)
+        if (callingUid != android.os.Process.SYSTEM_UID) processObserver?.invoke(packageName, callingUid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
         for (op in drained) op()
@@ -187,6 +190,7 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
             }
         }
         Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
+        processObserver?.invoke(record.packageName, record.uid, false)
     }
 
     // ---------------------------------------------------------- resolution
@@ -595,6 +599,11 @@ class HostedActivityManagerService : UnsupportedActivityManager() {
         finishedReceiver: android.content.IIntentReceiver?, code: Int,
     ) {
         broadcasts.broadcastIntent(intent, finishedReceiver, code, requiredPermission, finishedReceiver != null, false, packageName, uid)
+    }
+
+    /** A system service's sticky broadcast (BatteryService.sendBatteryChangedIntentLocked) on the real queue. */
+    internal fun broadcastStickyFromSystem(intent: Intent) {
+        broadcasts.broadcastIntent(intent, null, 0, null, false, true, "android", android.os.Process.SYSTEM_UID)
     }
 
     /** A service PendingIntent starts the service as its creator. */

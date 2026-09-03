@@ -118,7 +118,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/android/window", .{ .max_depth = 1, .not_names = &.{ "SurfaceSyncGroup.java", "TransitionInfo.java", "WindowContainerTransaction.java", "TaskFragment*.java", "RemoteTransition.java", "WindowContainerToken.java", "TransitionRequestInfo.java", "WindowOrganizer.java", "TaskOrganizer.java", "DisplayAreaOrganizer.java", "BackAnimation*.java", "WindowTokenClient.java", "TransitionFilter.java", "WindowAnimationState.java", "StartingWindowInfo.java", "TaskAppearedInfo.java", "WindowTokenClientController.java", "WindowContext.java", "WindowContextController.java", "RemoteTransitionStub.java", "DisplayAreaInfo.java", "SplashScreen.java", "DisplayAreaAppearedInfo.java", "TransitionMetrics.java", "TaskSnapshot.java", "PictureInPicture*.java", "SnapshotDrawerUtils.java", "SplashScreenView.java", "WindowProviderService.java" } });
     try c.add("$FB/core/java/android/database", .{});
     try c.add("$FB/core/java/android/transition", .{});
-    try c.add("$FB/core/java/com/android/internal/policy", .{ .max_depth = 1, .not_names = &.{ "TransitionAnimation.java", "PhoneFallbackEventHandler.java", "FoldLockSettingsObserver.java", "ForceShowNavBarSettingsObserver.java", "GestureNavigationSettingsObserver.java", "KeyguardDismissCallback.java", "AttributeCache.java" } });
+    try c.add("$FB/core/java/com/android/internal/policy", .{ .max_depth = 1, .not_names = &.{ "TransitionAnimation.java", "PhoneFallbackEventHandler.java", "FoldLockSettingsObserver.java", "ForceShowNavBarSettingsObserver.java", "GestureNavigationSettingsObserver.java", "AttributeCache.java" } });
     try c.add("$FB/core/java/com/android/internal/view", .{ .max_depth = 1 });
     try c.add("$FB/core/java/com/android/internal/view/menu", .{});
     try c.add("$FB/core/java/com/android/internal/inputmethod", .{ .max_depth = 1, .not_names = &.{ "ImeTracingPerfettoImpl.java", "ImeTracingServerImpl.java" } });
@@ -671,9 +671,6 @@ fn collectStatic(c: *StaticCollector) !void {
     // value types, StatusBarNotification, NotificationListenerService), AlarmManager and the
     // JobScheduler client family over INotificationManager/IAlarmManager/IJobScheduler served
     // by HostedNotificationManagerService/HostedAlarmManagerService/HostedJobSchedulerService.
-    // NotificationChannel's vibration XML (de)serializers are cut with marked stubs
-    // (android.os.vibrator.persistence) until the vibrator family brings the real
-    // VibrationEffect (phase 2).
     try c.file("$CJ/android/app/AutomaticZenRule.java");
     try c.file("$CJ/android/app/Notification.java");
     try c.file("$CJ/android/app/NotificationChannel.java");
@@ -738,4 +735,88 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/content/pm/IncrementalStatesInfo.java");
     try c.file("$CJ/android/content/pm/LauncherActivityInfo.java");
     try c.file("$CJ/android/content/pm/LauncherActivityInfoInternal.java");
+    // Managers over hosted services, phase 2: the real PowerManager (+ thermal and power-save
+    // value types, the dreams client types it references), the Vibrator family (VibrationEffect
+    // and its segments, the XML (de)serializers, SystemVibrator/SystemVibratorManager),
+    // BatteryManager/BatteryState, UsageStatsManager and StorageStatsManager over the hosted
+    // IPowerManager/IThermalService/IVibratorManagerService/IBatteryPropertiesRegistrar/
+    // IUsageStatsManager/IStorageStatsManager services.
+    try c.file("$CJ/android/app/usage/AppLaunchEstimateInfo.java");
+    try c.file("$CJ/android/app/usage/AppStandbyInfo.java");
+    try c.file("$CJ/android/app/usage/BroadcastResponseStats.java");
+    try c.file("$CJ/android/app/usage/BroadcastResponseStatsList.java");
+    try c.file("$CJ/android/app/usage/ConfigurationStats.java");
+    try c.file("$CJ/android/app/usage/EventStats.java");
+    try c.file("$CJ/android/app/usage/ExternalStorageStats.java");
+    try c.file("$CJ/android/app/usage/ParcelableUsageEventList.java");
+    try c.file("$CJ/android/app/usage/StorageStats.java");
+    try c.file("$CJ/android/app/usage/StorageStatsManager.java");
+    try c.file("$CJ/android/app/usage/UsageEvents.java");
+    try c.file("$CJ/android/app/usage/UsageEventsQuery.java");
+    try c.file("$CJ/android/app/usage/UsageStats.java");
+    try c.file("$CJ/android/app/usage/UsageStatsManager.java");
+    try c.file("$CJ/android/hardware/BatteryState.java");
+    try c.file("$CJ/android/os/BatteryManager.java");
+    try c.file("$CJ/android/os/BatteryProperty.java");
+    try c.file("$CJ/android/os/BatterySaverPolicyConfig.java");
+    try c.file("$CJ/android/os/CombinedVibration.java");
+    try c.file("$CJ/android/os/CoolingDevice.java");
+    try c.file("$CJ/android/os/NullVibrator.java");
+    try c.file("$CJ/android/os/ParcelDuration.java");
+    try c.file("$CJ/android/os/PowerManager.java");
+    try c.file("$CJ/android/os/PowerSaveState.java");
+    try c.file("$CJ/android/os/SystemVibrator.java");
+    try c.file("$CJ/android/os/SystemVibratorManager.java");
+    try c.file("$CJ/android/os/Temperature.java");
+    try c.file("$CJ/android/os/VibrationAttributes.java");
+    try c.file("$CJ/android/os/VibrationEffect.java");
+    try c.file("$CJ/android/os/Vibrator.java");
+    try c.file("$CJ/android/os/VibratorInfo.java");
+    try c.file("$CJ/android/os/VibratorManager.java");
+    try c.file("$CJ/android/os/storage/CrateInfo.java");
+    try c.file("$CJ/android/os/vibrator/BasicPwleSegment.java");
+    try c.file("$CJ/android/os/vibrator/MultiVibratorInfo.java");
+    try c.file("$CJ/android/os/vibrator/PrebakedSegment.java");
+    try c.file("$CJ/android/os/vibrator/PrimitiveSegment.java");
+    try c.file("$CJ/android/os/vibrator/PwleSegment.java");
+    try c.file("$CJ/android/os/vibrator/RampSegment.java");
+    try c.file("$CJ/android/os/vibrator/StepSegment.java");
+    try c.file("$CJ/android/os/vibrator/VendorVibrationSession.java");
+    try c.file("$CJ/android/os/vibrator/VibrationConfig.java");
+    try c.file("$CJ/android/os/vibrator/VibrationEffectSegment.java");
+    try c.file("$CJ/android/os/vibrator/VibratorEnvelopeEffectInfo.java");
+    try c.file("$CJ/android/os/vibrator/VibratorFrequencyProfile.java");
+    try c.file("$CJ/android/os/vibrator/VibratorFrequencyProfileLegacy.java");
+    try c.file("$CJ/android/os/vibrator/VibratorInfoFactory.java");
+    try c.file("$CJ/android/os/vibrator/persistence/ParsedVibration.java");
+    try c.file("$CJ/android/os/vibrator/persistence/VibrationXmlParser.java");
+    try c.file("$CJ/android/os/vibrator/persistence/VibrationXmlSerializer.java");
+    try c.file("$CJ/android/service/dreams/DreamActivity.java");
+    try c.file("$CJ/android/service/dreams/DreamOverlayConnectionHandler.java");
+    try c.file("$CJ/android/service/dreams/DreamService.java");
+    try c.file("$CJ/android/service/dreams/Sandman.java");
+    try c.file("$CJ/android/service/dreams/utils/DreamAccessibility.java");
+    try c.file("$CJ/com/android/internal/util/CallbackRegistry.java");
+    try c.file("$CJ/com/android/internal/util/DumpUtils.java");
+    try c.file("$CJ/com/android/internal/util/ObservableServiceConnection.java");
+    try c.file("$CJ/com/android/internal/util/ParseUtils.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/LegacyVibrationEffectXmlSerializer.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedAmplitudeStepWaveform.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedBasicEnvelopeEffect.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedComposedEffect.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedCompositionPrimitive.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedPredefinedEffect.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedRepeatingEffect.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedVendorEffect.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedWaveformEffectEntries.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/SerializedWaveformEnvelopeEffect.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/VibrationEffectSerializer.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/VibrationEffectXmlParser.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/XmlConstants.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/XmlParserException.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/XmlReader.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/XmlSerializedVibration.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/XmlSerializerException.java");
+    try c.file("$CJ/com/android/internal/vibrator/persistence/XmlValidator.java");
+    try c.file("$FB/apex/jobscheduler/framework/java/android/os/PowerWhitelistManager.java");
 }

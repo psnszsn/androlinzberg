@@ -111,7 +111,14 @@ public class Activity extends ContextWrapper implements Window.Callback,
             throws android.content.IntentSender.SendIntentException {
         intent.sendIntent(this, 0, fillInIntent, null, null);
     }
-    public void setResult(int resultCode) {}
+    /** AOSP convertToTranslucent: no translucent conversion without the activity task manager. */
+    public interface TranslucentConversionListener { void onTranslucentConversionComplete(boolean drawComplete); }
+    public boolean convertToTranslucent(TranslucentConversionListener callback, ActivityOptions options) {
+        if (callback != null) callback.onTranslucentConversionComplete(false);
+        return false;
+    }
+    public void convertFromTranslucent() {}
+        public void setResult(int resultCode) {}
     public void setResult(int resultCode, Intent data) {}
     public boolean isActivityTransitionRunning() { return false; }
     public void reportFullyDrawn() {}

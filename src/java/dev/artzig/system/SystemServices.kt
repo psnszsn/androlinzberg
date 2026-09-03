@@ -162,6 +162,22 @@ internal object SystemServices {
         jobs.packageService = packageManager
         jobs.notificationService = notifications
         android.os.ServiceManager.addService(Context.JOB_SCHEDULER_SERVICE, jobs)
+        // Managers over hosted services, phase 2: power (+ thermal), vibrator, battery
+        // (properties, sticky broadcast, battery stats), usage and storage stats, device idle.
+        android.os.ServiceManager.addService(Context.POWER_SERVICE, HostedPowerManagerService())
+        android.os.ServiceManager.addService(Context.THERMAL_SERVICE, HostedThermalService())
+        android.os.ServiceManager.addService(Context.VIBRATOR_MANAGER_SERVICE, HostedVibratorManagerService())
+        val battery = HostedBatteryService(activityManager)
+        android.os.ServiceManager.addService("batteryproperties", battery.registrar)
+        android.os.ServiceManager.addService(android.os.BatteryStats.SERVICE_NAME, battery.batteryStats)
+        val usageStats = HostedUsageStatsService()
+        usageStats.packageService = packageManager
+        activityManager.processObserver = { packageName, _, foreground -> usageStats.reportProcessState(packageName, foreground) }
+        android.os.ServiceManager.addService(Context.USAGE_STATS_SERVICE, usageStats)
+        val storageStats = HostedStorageStatsService()
+        storageStats.packageService = packageManager
+        android.os.ServiceManager.addService(Context.STORAGE_STATS_SERVICE, storageStats)
+        android.os.ServiceManager.addService(Context.DEVICE_IDLE_CONTROLLER, HostedDeviceIdleController())
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name
@@ -185,6 +201,8 @@ internal object SystemServices {
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
         manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
         manager.onUserStarting(trace, UserHandle.USER_SYSTEM)
+        // BatteryService publishes its sticky broadcast once the broadcast queue is up.
+        battery.start()
         // Session-wide marker: app processes (system-test) observe a property
         // set by the system process through the shared area.
         android.os.SystemProperties.set("sys.azk.boot_completed", "1")
