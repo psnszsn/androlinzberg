@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 109 (budget 109). Survivors: 120. Total: 229.
+Pending: 107 (budget 107). Survivors: 120. Total: 227.
 
 ## Survivors
 
@@ -211,7 +211,7 @@ Pending: 109 (budget 109). Survivors: 120. Total: 229.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/net/NetworkScoreManager.java` | blocked | frameworks/base/core/java/android/net/NetworkScoreManager.java (11 to add), not vendored; android.net.wifi.ScanResult: no source in the checkout (via ScanResult < NetworkKey < NetworkScoreManager); android.net.wifi.WifiInfo: no source in the checkout (via WifiInfo < NetworkKey < NetworkScoreManager) |
-| `android/net/http/X509TrustManagerExtensions.java` | replaceable | frameworks/base/core/java/android/net/http/X509TrustManagerExtensions.java (4 to add), not vendored |
+| `android/net/http/X509TrustManagerExtensions.java` | replaceable | frameworks/base/core/java/android/net/http/X509TrustManagerExtensions.java (1 to add), not vendored |
 
 ### devicepolicy
 
@@ -299,13 +299,6 @@ Pending: 109 (budget 109). Survivors: 120. Total: 229.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/preference/PreferenceManager.java` | replaceable | frameworks/base/core/java/android/preference/PreferenceManager.java (10 to add), not vendored |
-
-### provider
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/provider/Downloads.java` | replaceable | frameworks/base/core/java/android/provider/Downloads.java (1 to add), not vendored |
-| `android/security/net/config/NetworkSecurityConfigProvider.java` | replaceable | frameworks/base/core/java/android/security/net/config/NetworkSecurityConfigProvider.java (21 to add), not vendored |
 
 ### runtime
 

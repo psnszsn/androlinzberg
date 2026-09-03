@@ -145,8 +145,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/permission/PermissionControllerManager.java",
     "src/framework-stubs/android/preference/PreferenceManager.java",
     "src/framework-stubs/android/provider/DeviceConfig.java",
-    "src/framework-stubs/android/provider/Downloads.java",
-    "src/framework-stubs/android/security/net/config/NetworkSecurityConfigProvider.java",
     "src/framework-stubs/android/service/voice/VisibleActivityInfo.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",
     "src/framework-stubs/android/speech/tts/TextToSpeech.java",

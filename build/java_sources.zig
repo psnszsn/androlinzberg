@@ -298,6 +298,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/view/contentprotection/ContentProtectionUtils.java");
     try c.file("$FB/services/core/java/com/android/server/contentcapture/ContentCaptureManagerInternal.java");
     try c.file("$CJ/com/android/internal/util/TraceBuffer.java");
+    try c.file("$CJ/android/provider/Downloads.java");
+    try c.add("$CJ/android/security/net/config", .{});
     try c.file("$CJ/android/text/method/OffsetMapping.java");
     try c.file("$CJ/android/util/TimeFormatException.java");
     try c.file("$CJ/android/util/MergedConfiguration.java");

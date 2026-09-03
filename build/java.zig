@@ -42,10 +42,30 @@ fn extractJarPackage(
     return output;
 }
 
+fn extractConscryptCompileClasses(b: *std.Build, archive: LazyPath) LazyPath {
+    const extract = b.addSystemCommand(&.{ "unzip", "-q" });
+    extract.addFileArg(archive);
+    extract.addArg("com/android/org/conscrypt/*");
+    extract.addArg("-x");
+    extract.addArgs(&.{
+        "com/android/org/conscrypt/OpenSSLMessageDigestJDK*",
+        "com/android/org/conscrypt/OpenSSLProvider.class",
+        "com/android/org/conscrypt/OpenSSLRandom.class",
+    });
+    extract.addArg("-d");
+    const output = extract.addOutputDirectoryArg("conscrypt-compile-classes");
+    extract.setName("extract Conscrypt compile classes");
+    return output;
+}
+
 pub fn build(b: *std.Build, o: Options) Result {
     const dep = o.artzig;
     const aosp = o.aosp;
     const core_all_classes = dep.namedLazyPath("core-all-classes");
+    const conscrypt_compile_classes = extractConscryptCompileClasses(
+        b,
+        dep.namedLazyPath("conscrypt-classes"),
+    );
     const sources = java_sources.configure(b, aosp);
     var kotlinc_input_collector = SourceFiles.Collector.init(b);
     const kotlinc_root = SourceFiles.Root.dependency(b, aosp, "external/kotlinc");
@@ -84,12 +104,15 @@ pub fn build(b: *std.Build, o: Options) Result {
     plus.addArg("-C");
     plus.addDirectoryArg(boot_annotation_classes);
     plus.addArg("android/annotation/TargetApi.class");
+    plus.addArg("-C");
+    plus.addDirectoryArg(conscrypt_compile_classes);
+    plus.addArg(".");
 
     const sysmod_dir = @import("artzig").systemModules(
         b,
         aosp.path(""),
         core_plus,
-        &.{ core_all_classes, boot_annotation_classes },
+        &.{ core_all_classes, boot_annotation_classes, conscrypt_compile_classes },
         b.path("artzig/tools/build-command.zig"),
     );
 

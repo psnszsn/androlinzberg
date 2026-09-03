@@ -133,6 +133,7 @@ class DownloadManager(private val context: Context) {
 
     companion object {
         const val ACTION_DOWNLOAD_COMPLETE: String = "android.intent.action.DOWNLOAD_COMPLETE"
+        const val ACTION_DOWNLOAD_COMPLETED: String = "android.intent.action.DOWNLOAD_COMPLETED"
         const val ACTION_NOTIFICATION_CLICKED: String =
             "android.intent.action.DOWNLOAD_NOTIFICATION_CLICKED"
         const val ACTION_VIEW_DOWNLOADS: String = "android.intent.action.VIEW_DOWNLOADS"

@@ -88,6 +88,7 @@ pub fn build(b: *std.Build) void {
     // consumers (app/) compile framework Java against the boot classpath
     b.addNamedLazyPath("core-all-jar", javalib.class_jars.get("core-all").?);
     b.addNamedLazyPath("core-all-classes", javalib.core_all_classes);
+    b.addNamedLazyPath("conscrypt-classes", javalib.class_jars.get("conscrypt").?);
     const java_step = b.step("java", "Build the boot classpath jars (core-oj, ... ) with the system JDK");
     {
         var it = javalib.jars.iterator();

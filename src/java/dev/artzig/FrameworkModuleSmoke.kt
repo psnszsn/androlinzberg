@@ -43,6 +43,11 @@ import com.android.internal.pm.pkg.parsing.ParsingUtils
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.Parcelable
+import android.provider.Downloads
+import android.security.net.config.NetworkSecurityConfig
+import android.security.net.config.NetworkSecurityConfigProvider
+import android.security.net.config.Pin
+import android.security.net.config.PinSet
 import android.service.contentcapture.ContentCaptureService
 import android.service.textclassifier.TextClassifierService
 import android.service.voice.VisualQueryDetectedResult
@@ -109,6 +114,7 @@ internal object FrameworkModuleSmoke {
         testFrameworkServiceValueContracts()
         testContentCaptureContracts()
         testTraceBufferContracts()
+        testProviderContracts()
         testIntentTypedExtras()
         testRemoteActionContract()
         testPictureInPictureContracts()
@@ -279,6 +285,43 @@ internal object FrameworkModuleSmoke {
         check(trace.contains(secondBytes))
         trace.resetBuffer()
         check(trace.size() == 0)
+    }
+
+    private fun testProviderContracts() {
+        check(Downloads.Impl.CONTENT_URI.toString() == "content://downloads/my_downloads")
+        check(Downloads.Impl.isStatusInformational(Downloads.Impl.STATUS_RUNNING))
+        check(Downloads.Impl.isStatusSuccess(Downloads.Impl.STATUS_SUCCESS))
+        check(Downloads.Impl.isStatusError(Downloads.Impl.STATUS_BAD_REQUEST))
+        check(Downloads.Impl.statusToString(Downloads.Impl.STATUS_WAITING_FOR_NETWORK) ==
+            "WAITING_FOR_NETWORK")
+
+        val digest = ByteArray(Pin.getDigestLength("SHA-256")) { it.toByte() }
+        val pin = Pin("SHA-256", digest)
+        val pinSet = PinSet(setOf(pin), 1234L)
+        val parent = NetworkSecurityConfig.Builder()
+            .setCleartextTrafficPermitted(false)
+            .setHstsEnforced(true)
+        val config = NetworkSecurityConfig.Builder()
+            .setParent(parent)
+            .setPinSet(pinSet)
+            .build()
+        check(!config.isCleartextTrafficPermitted)
+        check(config.isHstsEnforced)
+        check(config.pins === pinSet)
+        check(config.pins.pins == setOf(pin))
+
+        val child = NetworkSecurityConfig.Builder().setParent(parent)
+        check(runCatching { parent.setParent(child) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { Pin.getDigestLength("MD5") }.exceptionOrNull() is
+            IllegalArgumentException)
+
+        val provider = NetworkSecurityConfigProvider()
+        check(provider.name == "AndroidNSSP")
+        check(provider["Alg.Alias.TrustManagerFactory.X509"] == "PKIX")
+        val service = checkNotNull(provider.getService("TrustManagerFactory", "PKIX"))
+        check(service.className ==
+            "android.security.net.config.RootTrustManagerFactorySpi")
+        provider.javaClass.classLoader.loadClass(service.className)
     }
 
     private fun testHostedPermissionGrants() {
