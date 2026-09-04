@@ -387,16 +387,28 @@ class Classes:
 
 
 class Stubs:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, framework_root: Path | None = None):
+        self.audit_by_fqn: dict[str, Path] = {}
         self.by_fqn: dict[str, Path] = {}
         self.marker: dict[str, str] = {}
+        if framework_root is None:
+            framework_root = REPO / "src/framework"
+        self.add_root(framework_root, audit=False)
+        self.add_root(root, audit=True)
+
+    def add_root(self, root: Path, audit: bool) -> None:
         for p in sorted(root.rglob("*")):
             if p.suffix not in (".java", ".kt") or not p.is_file():
                 continue
-            rel = p.relative_to(root)
-            fqn = ".".join(rel.with_suffix("").parts)
+            text = read(p)
+            package = PACKAGE_RE.search(text)
+            if package is None:
+                continue
+            fqn = f"{package.group(1)}.{p.stem}"
             self.by_fqn[fqn] = p
-            head = "\n".join(read(p).splitlines()[:20])
+            if audit:
+                self.audit_by_fqn[fqn] = p
+            head = "\n".join(text.splitlines()[:20])
             m = re.search(r"(artzig[^\n*]*|Hosted adaptation of AOSP[^\n*]*)", head)
             self.marker[fqn] = m.group(1).strip() if m else ""
 
@@ -426,7 +438,11 @@ class Resolver:
         self.aosp, self.index, self.manifest, self.rules, self.classes, self.stubs = aosp, index, manifest, rules, classes, stubs
         self.parsed: dict[str, list[str]] = {}
         self.parsed_abi_blockers: dict[str, list[str]] = {}
+        self.source_cache: dict[tuple[str, bool], str] = {}
+        self.method_return_cache: dict[tuple[str, str, bool], str | None] = {}
+        self.host_method_cache: dict[tuple[str, str], bool] = {}
         self.nodes: dict[str, Node] = {}
+        self.absent: set[str] = set()
         # Parcelable .aidl declarations of present stubs that new AIDL interfaces import.
         self.extra_manifest: set[str] = set()
         self.root_packages = {k.split(".", 1)[0] for k in index.by_fqn} | {p.split(".", 1)[0] for p in BOOT_PREFIXES}
@@ -455,6 +471,9 @@ class Resolver:
             else:
                 explicit[name.rsplit(".", 1)[-1]] = name
         body = IMPORT_RE.sub(" ", text)
+        abi_blockers.update(
+            self.method_abi_blockers(body, pkg, current_fqn, explicit, wildcards)
+        )
         found: set[str] = set()
         # Package-qualified references are handled below.  Also inspect
         # source-local Outer.Nested references: a compiled Outer stub is not
@@ -491,6 +510,230 @@ class Resolver:
     def stub_declares(self, fqn: str, member: str) -> bool:
         path = self.stubs.by_fqn.get(fqn)
         return bool(path and re.search(rf"\b{re.escape(member)}\b", strip_code(read(path))))
+
+    def host_declares_method(self, fqn: str, member: str) -> bool:
+        key = (fqn, member)
+        if key in self.host_method_cache:
+            return self.host_method_cache[key]
+        path = self.stubs.by_fqn.get(fqn)
+        if path is None:
+            return False
+        declared = self.source_declares_method(strip_code(read(path)), member)
+        self.host_method_cache[key] = declared
+        return declared
+
+    @staticmethod
+    def source_declares_method(text: str, member: str) -> bool:
+        java = re.search(
+            rf"\b(?:public|protected|private|static|final|abstract|synchronized|native|default)"
+            rf"\b[^;{{}}=]*\b{re.escape(member)}\s*\(",
+            text,
+        )
+        kotlin = re.search(rf"\bfun\s+(?:<[^>]+>\s*)?{re.escape(member)}\s*\(", text)
+        aidl = re.search(
+            rf"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:oneway\s+)?"
+            rf"[\w.$<>?\[\]]+\s+{re.escape(member)}\s*\([^;{{}}]*\)"
+            rf"(?:\s+throws\s+[\w., ]+)?\s*(?:=\s*\d+\s*)?;",
+            text,
+            re.M,
+        )
+        return bool(java or kotlin or aidl)
+
+    def resolve_source_type(
+        self,
+        name: str,
+        pkg: str,
+        explicit: dict[str, str],
+        wildcards: list[str],
+    ) -> str | None:
+        name = re.sub(r"<.*>", "", name).replace("[]", "").strip()
+        name = re.sub(r"^@[\w.]+(?:\([^)]*\))?\s*", "", name)
+        if name in {"boolean", "byte", "char", "double", "float", "int", "long", "short", "void"}:
+            return name
+        if "." in name:
+            return self.canonical(name)
+        if name in explicit:
+            return self.canonical(explicit[name])
+        for prefix in [pkg, *wildcards]:
+            candidate = f"{prefix}.{name}" if prefix else name
+            if self.exists(candidate):
+                return self.canonical(candidate)
+        return None
+
+    def source_for(self, fqn: str, host_first: bool = True) -> str:
+        key = (fqn, host_first)
+        if key in self.source_cache:
+            return self.source_cache[key]
+        host = self.stubs.by_fqn.get(fqn) if host_first else None
+        if host is not None:
+            source = read(host)
+        else:
+            sources = self.index.lookup(fqn)
+            paths = sources.get("java") or sources.get("kt") or sources.get("aidl") or []
+            source = read(self.aosp / self.pick(paths)) if paths else ""
+        self.source_cache[key] = source
+        return source
+
+    def method_return_type(
+        self,
+        fqn: str,
+        member: str,
+        host_first: bool = True,
+    ) -> str | None:
+        key = (fqn, member, host_first)
+        if key in self.method_return_cache:
+            return self.method_return_cache[key]
+        text = strip_code(self.source_for(fqn, host_first=host_first))
+        package = PACKAGE_RE.search(text)
+        pkg = package.group(1) if package else fqn.rpartition(".")[0]
+        explicit: dict[str, str] = {}
+        wildcards: list[str] = []
+        for imported in IMPORT_RE.finditer(text):
+            if imported.group(1):
+                continue
+            if imported.group(3):
+                wildcards.append(imported.group(2))
+            else:
+                name = imported.group(2)
+                explicit[name.rsplit(".", 1)[-1]] = name
+        # Framework Java methods in the closure are public/protected. Keeping
+        # this declaration-shaped avoids mistaking an invocation for a method.
+        java = re.search(
+            rf"\b(?:public|protected)\s+"
+            rf"(?:(?:static|final|synchronized|native|abstract|default)\s+)*"
+            rf"(?:@[\w.]+(?:\([^)]*\))?\s+)*"
+            rf"(?P<type>[\w.$<>?\[\]]+)\s+{re.escape(member)}\s*\(",
+            text,
+        )
+        if java:
+            result = self.resolve_source_type(java.group("type"), pkg, explicit, wildcards)
+            self.method_return_cache[key] = result
+            return result
+        aidl = re.search(
+            rf"^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:oneway\s+)?"
+            rf"(?P<type>[\w.$<>?\[\]]+)\s+{re.escape(member)}\s*\(",
+            text,
+            re.M,
+        )
+        if aidl:
+            result = self.resolve_source_type(aidl.group("type"), pkg, explicit, wildcards)
+            self.method_return_cache[key] = result
+            return result
+        kotlin = re.search(
+            rf"\bfun\s+(?:<[^>]+>\s*)?{re.escape(member)}\s*\([^)]*\)\s*:\s*"
+            rf"(?P<type>[\w.$<>?\[\]]+)",
+            text,
+        )
+        if kotlin:
+            result = self.resolve_source_type(kotlin.group("type"), pkg, explicit, wildcards)
+            self.method_return_cache[key] = result
+            return result
+        self.method_return_cache[key] = None
+        return None
+
+    def method_abi_blockers(
+        self,
+        text: str,
+        pkg: str,
+        current_fqn: str,
+        explicit: dict[str, str],
+        wildcards: list[str],
+    ) -> set[str]:
+        blockers: set[str] = set()
+
+        def check(owner: str | None, member: str) -> None:
+            if not owner or owner == current_fqn or owner not in self.stubs.by_fqn:
+                return
+            stock_source = strip_code(self.source_for(owner, host_first=False))
+            # A method absent from the stock owner's own source may be inherited
+            # (notably Object.getClass); the host inherits it too and is not an
+            # ABI blocker merely because its replacement file omits the token.
+            if not self.source_declares_method(stock_source, member):
+                return
+            if not self.host_declares_method(owner, member):
+                blockers.add(f"existing host class {owner} lacks method {member}")
+                return
+            host_return = self.method_return_type(owner, member)
+            stock_return = self.method_return_type(owner, member, host_first=False)
+            # Covariant reference returns are valid. Primitive and void returns
+            # are exact ABI, and a mismatch otherwise fails javac at the call.
+            primitives = {"boolean", "byte", "char", "double", "float", "int", "long", "short", "void"}
+            if (host_return is not None and stock_return is not None
+                    and (host_return in primitives or stock_return in primitives)
+                    and host_return != stock_return):
+                blockers.add(
+                    f"existing host class {owner} method {member} returns "
+                    f"{host_return or 'unknown'}, stock requires {stock_return or 'unknown'}"
+                )
+
+        variables: dict[str, str] = {}
+        for declared in re.finditer(
+            r"\b(?:final\s+)?(?P<type>[A-Z][\w.$]*(?:<[^;={}]+>)?(?:\[\])?)\s+"
+            r"(?P<name>[a-z_]\w*)\s*(?:=|;)",
+            text,
+        ):
+            resolved = self.resolve_source_type(
+                declared.group("type"), pkg, explicit, wildcards,
+            )
+            if resolved:
+                variables[declared.group("name")] = resolved
+
+        # Direct static calls, for example WindowManagerImpl.createFoo(...).
+        for call in re.finditer(r"\b(?P<owner>[A-Z]\w*)\s*\.\s*(?P<member>[a-zA-Z_]\w*)\s*\(", text):
+            owner = self.resolve_source_type(call.group("owner"), pkg, explicit, wildcards)
+            check(owner, call.group("member"))
+
+        # Calls through a typed local or field.
+        for call in re.finditer(r"\b(?P<owner>[a-z_]\w*)\s*\.\s*(?P<member>[a-zA-Z_]\w*)\s*\(", text):
+            check(variables.get(call.group("owner")), call.group("member"))
+
+        # One return-value hop catches the common framework service pattern:
+        # WindowManagerGlobal.getWindowManagerService().someBinderCall(...),
+        # and unqualified local helpers such as getController().attach(...).
+        chained = re.compile(
+            r"\b(?:(?P<owner>[A-Z]\w*)\s*\.\s*)?"
+            r"(?P<first>[a-zA-Z_]\w*)\s*\([^()]*\)\s*\.\s*"
+            r"(?P<second>[a-zA-Z_]\w*)\s*\("
+        )
+        for call in chained.finditer(text):
+            owner_name = call.group("owner")
+            owner = (
+                self.resolve_source_type(owner_name, pkg, explicit, wildcards)
+                if owner_name else current_fqn
+            )
+            returned = self.method_return_type(owner, call.group("first")) if owner else None
+            check(returned, call.group("second"))
+
+        # Replacing an abstract host superclass can also invalidate a concrete
+        # repo-owned subclass even when the new class's own body type-checks.
+        abstract_methods = set(re.findall(
+            r"\babstract\s+(?:@[\w.]+(?:\([^)]*\))?\s+)*"
+            r"[\w.$<>?\[\]]+\s+([a-zA-Z_]\w*)\s*\(",
+            text,
+        ))
+        if abstract_methods:
+            current_simple = current_fqn.rsplit(".", 1)[-1]
+            for subclass, path in self.stubs.by_fqn.items():
+                if subclass == current_fqn:
+                    continue
+                subclass_text = strip_code(read(path))
+                declaration = re.search(
+                    r"(?P<mods>(?:(?:public|protected|private|abstract|final)\s+)*)"
+                    r"class\s+\w+\s+extends\s+(?P<base>[\w.]+)",
+                    subclass_text,
+                )
+                if not declaration or "abstract" in declaration.group("mods").split():
+                    continue
+                base = declaration.group("base")
+                subclass_pkg = subclass.rpartition(".")[0]
+                if base not in (current_simple, current_fqn, f"{subclass_pkg}.{current_simple}"):
+                    continue
+                for member in abstract_methods:
+                    if not self.host_declares_method(subclass, member):
+                        blockers.add(
+                            f"existing host class {subclass} does not implement abstract method {member}"
+                        )
+        return blockers
 
     def fqn_of(self, rel_path: str) -> str:
         text = read(self.aosp / rel_path)
@@ -575,7 +818,10 @@ class Resolver:
             if n.kind in ("java", "kt"):
                 n.native = bool(NATIVE_RE.search(text))
                 n.refs = self.refs_of(path)
-                n.abi_blockers = self.parsed_abi_blockers.get(path, [])
+                n.abi_blockers = [
+                    blocker for blocker in self.parsed_abi_blockers.get(path, [])
+                    if self.abi_blocker_owner(blocker) not in self.absent
+                ]
             elif n.kind == "aidl-interface" or n.kind == "aidl-structured":
                 n.refs = self.aidl_refs(path, text)
             elif n.kind == "aidl-parcelable":
@@ -587,6 +833,11 @@ class Resolver:
     def pick(self, paths: list[str]) -> str:
         """Prefer a vendored path, then the shortest (frameworks/base first)."""
         return sorted(paths, key=lambda p: (not self.manifest.vendored(p), not p.startswith("frameworks/base/"), len(p)))[0]
+
+    @staticmethod
+    def abi_blocker_owner(blocker: str) -> str | None:
+        match = re.match(r"existing (?:stub|host class) ([\w.]+) ", blocker)
+        return match.group(1) if match else None
 
     def aidl_refs(self, rel_path: str, text: str) -> list[str]:
         pkg = PACKAGE_RE.search(text)
@@ -608,6 +859,7 @@ class Resolver:
     # -- closure --------------------------------------------------------------
     def closure(self, seeds: list[str], absent: set[str] = frozenset()) -> dict[str, Node]:
         """Nodes that must be added so every seed compiles; present classes stop the walk."""
+        self.absent = set(absent)
         result: dict[str, Node] = {}
         queue = list(seeds)
         seen: set[str] = set()
@@ -684,7 +936,7 @@ def render_closure(res: Resolver, seeds: list[str], nodes: dict[str, Node]) -> s
     out.append(f"== closure of {', '.join(seeds)}: {len(add_java)} source(s), {len(add_aidl)} AIDL, {len(blocked)} blocker(s)")
     stubs_seen = sorted(s for s in res.present_stubs(seeds))
     if stubs_seen:
-        out.append("existing stubs referenced (count as present): " + ", ".join(stubs_seen))
+        out.append("existing host replacements referenced (count as present): " + ", ".join(stubs_seen))
     for n in sorted(nodes.values(), key=lambda n: n.fqn):
         if present(n):
             continue
@@ -810,7 +1062,7 @@ AUDIT_HEADER = """# Stub audit: generated by `tools/aosp-closure.py audit --upda
 # across regeneration. Fields: stub path|audit status|family|detail.
 #   status  replaceable      the real class compiles once the listed sources are added
 #           blocked          the real closure reaches a JNI class, an unvendored module,
-#                            an AIDL/generator gap, or a member absent from a compiled stub
+#                            an AIDL/generator gap, or a member absent from a host replacement
 #           no-aosp-source   no class with this name in the checkout (host-only or module not synced)
 #           generated        the class is produced by a generator (aconfig/proto/...)
 #   family  a manager family this milestone replaces (notification, alarm, ...), another
@@ -875,7 +1127,7 @@ def write_markdown(path: Path, rows: list, hubs: list[tuple[str, int]], budget: 
            "closure tool sees today: `replaceable` means the real class compiles once the sources",
            "the tool lists are added; `blocked` names the first classes of the real closure that",
            "need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a",
-           "member absent from a compiled stub).", "",
+           "member absent from a host replacement).", "",
            f"Pending: {len(pending)} (budget {budget}). Survivors: {len(survivors)}. Total: {len(rows)}.", "",
            "## Survivors", "", "| Stub | Reason | Audit |", "|---|---|---|"]
     for p, fqn, status, family, detail in survivors:
@@ -905,7 +1157,7 @@ def cmd_audit(args: argparse.Namespace, res: Resolver) -> int:
     families, budget = read_audit(args.update) if args.update else ({}, None)
     rows = []
     blocked_closures: dict[str, dict[str, Node]] = {}
-    for fqn, path in sorted(res.stubs.by_fqn.items()):
+    for fqn, path in sorted(res.stubs.audit_by_fqn.items()):
         status, detail, nodes = classify_stub(res, fqn)
         rel = str(path.relative_to(REPO))
         family = families.get(rel, ("", ""))[0]

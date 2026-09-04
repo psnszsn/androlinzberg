@@ -24,6 +24,8 @@ pub fn build(b: *std.Build) void {
 
     const build_tools_test = b.step("build-tools-test", "Run build graph support unit tests");
     @import("build/command.zig").addTests(b, build_tools_test);
+    const aosp_closure_tests = b.addSystemCommand(&.{ "python3", "-B", "tools/test_aosp_closure.py" });
+    build_tools_test.dependOn(&aosp_closure_tests.step);
     const audit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/build-audit.zig"),
