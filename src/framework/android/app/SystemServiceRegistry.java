@@ -111,6 +111,11 @@ public final class SystemServiceRegistry {
             }});
         registerService(Context.ACTIVITY_SERVICE, ActivityManager.class, new NewServiceFetcher<ActivityManager>() {
             @Override public ActivityManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new ActivityManager(); }});
+        registerService(Context.ACTIVITY_TASK_SERVICE, ActivityTaskManager.class,
+                new CachedServiceFetcher<ActivityTaskManager>() {
+            @Override public ActivityTaskManager createService(ContextImpl ctx) {
+                return ActivityTaskManager.getInstance();
+            }});
         registerService(Context.DOWNLOAD_SERVICE, DownloadManager.class, new CachedServiceFetcher<DownloadManager>() {
             @Override public DownloadManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new DownloadManager(ctx.getOuterContext()); }});
         registerService(Context.AUDIO_SERVICE, android.media.AudioManager.class, new NewServiceFetcher<android.media.AudioManager>() {

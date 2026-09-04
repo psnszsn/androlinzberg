@@ -7,14 +7,14 @@ framework jar (over a hosted service or, where AOSP tolerates it, over no servic
 *stub* client is a `src/framework-stubs` replacement; *not registered* means
 `getSystemService` returns null on this host.
 
-AOSP registers 144 services; the hosted registry registers 61: 52 real clients, 9 stub clients. 98 AOSP services are not registered.
+AOSP registers 144 services; the hosted registry registers 66: 59 real clients, 7 stub clients. 93 AOSP services are not registered.
 
 | Context name | binder name | AOSP client | hosted client | in AOSP registry |
 |---|---|---|---|---|
 | ACCESSIBILITY_SERVICE | `accessibility` | `AccessibilityManager` | `AccessibilityManager` real | yes |
 | ACCOUNT_SERVICE | `account` | `AccountManager` | not registered | yes |
 | ACTIVITY_SERVICE | `activity` | `ActivityManager` | `ActivityManager` stub | yes |
-| ACTIVITY_TASK_SERVICE | `activity_task` | `ActivityTaskManager` | not registered | yes |
+| ACTIVITY_TASK_SERVICE | `activity_task` | `ActivityTaskManager` | `ActivityTaskManager` real | yes |
 | ADB_SERVICE | `adb` | `AdbManager` | not registered | yes |
 | ADVANCED_PROTECTION_SERVICE | `advanced_protection` | `AdvancedProtectionManager` | not registered | yes |
 | ALARM_SERVICE | `alarm` | `AlarmManager` | `AlarmManager` real | yes |
@@ -69,10 +69,10 @@ AOSP registers 144 services; the hosted registry registers 61: 52 real clients, 
 | FINGERPRINT_SERVICE | `fingerprint` | `FingerprintManager` | not registered | yes |
 | FONT_SERVICE | `font` | `FontManager` | not registered | yes |
 | GAME_SERVICE | `game` | `GameManager` | not registered | yes |
-| GRAMMATICAL_INFLECTION_SERVICE | `grammatical_inflection` | `GrammaticalInflectionManager` | not registered | yes |
+| GRAMMATICAL_INFLECTION_SERVICE | `grammatical_inflection` | `GrammaticalInflectionManager` | `GrammaticalInflectionManager` real | yes |
 | HARDWARE_PROPERTIES_SERVICE | `hardware_properties` | `HardwarePropertiesManager` | not registered | yes |
 | HDMI_CONTROL_SERVICE | `hdmi_control` | `HdmiControlManager` | not registered | yes |
-| INCIDENT_SERVICE | `incident` | `IncidentManager` | not registered | yes |
+| INCIDENT_SERVICE | `incident` | `IncidentManager` | `IncidentManager` real | yes |
 | INCREMENTAL_SERVICE | `incremental` | `IncrementalManager` | not registered | yes |
 | INPUT_METHOD_SERVICE | `input_method` | `InputMethodManager` | `InputMethodManager` real | yes |
 | INPUT_SERVICE | `input` | `InputManager` | `InputManager` real | yes |
@@ -107,8 +107,8 @@ AOSP registers 144 services; the hosted registry registers 61: 52 real clients, 
 | PEOPLE_SERVICE | `people` | `PeopleManager` | not registered | yes |
 | PERFORMANCE_HINT_SERVICE | `performance_hint` | `PerformanceHintManager` | not registered | yes |
 | PERMISSION_CHECKER_SERVICE | `permission_checker` | `PermissionCheckerManager` | `PermissionCheckerManager` real | yes |
-| PERMISSION_CONTROLLER_SERVICE | `permission_controller` | `PermissionControllerManager` | `PermissionControllerManager` stub | yes |
-| PERMISSION_ENFORCER_SERVICE | `permission_enforcer` | `PermissionEnforcer` | not registered | yes |
+| PERMISSION_CONTROLLER_SERVICE | `permission_controller` | `PermissionControllerManager` | `PermissionControllerManager` real | yes |
+| PERMISSION_ENFORCER_SERVICE | `permission_enforcer` | `PermissionEnforcer` | `PermissionEnforcer` real | yes |
 | PERMISSION_SERVICE | `permission` | `PermissionManager` | `PermissionManager` real | yes |
 | PERSISTENT_DATA_BLOCK_SERVICE | `persistent_data_block` | `PersistentDataBlockManager` | not registered | yes |
 | POWER_EXEMPTION_SERVICE | `power_exemption` | `-` | `PowerExemptionManager` real | host-only |
@@ -130,7 +130,7 @@ AOSP registers 144 services; the hosted registry registers 61: 52 real clients, 
 | SMARTSPACE_SERVICE | `smartspace` | `SmartspaceManager` | not registered | yes |
 | SMS_SERVICE | `sms` | `-` | `SmsManager` real (initializer) | host-only |
 | SOUND_TRIGGER_SERVICE | `soundtrigger` | `SoundTriggerManager` | not registered | yes |
-| STATUS_BAR_SERVICE | `statusbar` | `StatusBarManager` | not registered | yes |
+| STATUS_BAR_SERVICE | `statusbar` | `StatusBarManager` | `StatusBarManager` real | yes |
 | STORAGE_SERVICE | `storage` | `StorageManager` | `StorageManager` stub | yes |
 | STORAGE_STATS_SERVICE | `storagestats` | `StorageStatsManager` | `StorageStatsManager` real | yes |
 | SUPERVISION_SERVICE | `supervision` | `SupervisionManager` | not registered | yes |
@@ -159,7 +159,7 @@ AOSP registers 144 services; the hosted registry registers 61: 52 real clients, 
 | URI_GRANTS_SERVICE | `uri_grants` | `UriGrantsManager` | not registered | yes |
 | USAGE_STATS_SERVICE | `usagestats` | `UsageStatsManager` | `UsageStatsManager` real | yes |
 | USB_SERVICE | `usb` | `UsbManager` | not registered | yes |
-| USER_SERVICE | `user` | `UserManager` | `UserManager` stub | yes |
+| USER_SERVICE | `user` | `UserManager` | `UserManager` real | yes |
 | VIBRATOR_MANAGER_SERVICE | `vibrator_manager` | `VibratorManager` | `VibratorManager` real | yes |
 | VIBRATOR_SERVICE | `vibrator` | `Vibrator` | `Vibrator` real | yes |
 | VIRTUAL_DEVICE_SERVICE | `virtualdevice` | `VirtualDeviceManager` | not registered | yes |

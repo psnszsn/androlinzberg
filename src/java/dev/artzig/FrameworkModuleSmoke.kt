@@ -12,6 +12,7 @@ import android.app.ComponentCaller
 import android.app.DownloadManager
 import android.app.GrammaticalInflectionManager
 import android.app.IActivityClientController
+import android.app.IApplicationThread
 import android.app.Instrumentation
 import android.app.LocalActivityManager
 import android.app.Notification
@@ -23,13 +24,16 @@ import android.app.ResultInfo
 import android.app.TaskInfo
 import android.app.TaskStackListener
 import android.app.UiModeManager
+import android.app.UnsupportedApplicationThread
 import android.app.servertransaction.ActivityConfigurationChangeItem
+import android.app.servertransaction.ActivityResultItem
 import android.app.servertransaction.ActivityRelaunchItem
 import android.app.servertransaction.ClientTransaction
 import android.app.servertransaction.ClientTransactionListenerController
 import android.app.servertransaction.ConfigurationChangeItem
 import android.app.servertransaction.DestroyActivityItem
 import android.app.servertransaction.LaunchActivityItem
+import android.app.servertransaction.PauseActivityItem
 import android.app.servertransaction.PendingTransactionActions
 import android.app.servertransaction.ResumeActivityItem
 import android.app.servertransaction.StopActivityItem
@@ -73,6 +77,7 @@ import android.os.ParcelFileDescriptor
 import android.os.Parcelable
 import android.os.PersistableBundle
 import android.os.StatFs
+import android.os.UserHandle
 import android.provider.Downloads
 import android.util.SuperNotCalledException
 import android.security.net.config.NetworkSecurityConfig
@@ -119,6 +124,9 @@ import android.window.ActivityWindowInfo
 import android.window.IWindowContainerToken
 import android.window.TaskSnapshot
 import android.window.WindowContainerToken
+import dev.artzig.system.HostedActivityManagerService
+import dev.artzig.system.HostedActivityTaskManagerService
+import dev.artzig.system.HostedPackageManagerService
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebViewClient
@@ -155,6 +163,12 @@ internal object FrameworkModuleSmoke {
 
     private var permissionsFixtureApk: String? = null
 
+    private fun packageIdentityContext(base: Context, packageName: String): Context =
+        object : ContextWrapper(base.createPackageContext(packageName, 0)) {
+            override fun getPackageName(): String = packageName
+            override fun getOpPackageName(): String = packageName
+        }
+
     @JvmStatic
     fun main(args: Array<String>) {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
@@ -169,8 +183,6 @@ internal object FrameworkModuleSmoke {
         testProviderContracts()
         testStatFsContracts()
         testIntentTypedExtras()
-        testRemoteActionContract()
-        testPictureInPictureContracts()
         testConfigurationCalculation()
         testConfigurationContexts()
         testMessageQueueSyncBarrier()
@@ -179,6 +191,9 @@ internal object FrameworkModuleSmoke {
         testPostedCallbackRunsAfterPendingTraversal()
         testTraversalRescheduleAndSharedQueue()
         testHostedSystemServices()
+        testPictureInPictureContracts()
+        testRemoteActionContract()
+        testHostedActivityTaskServiceTransactions()
         testHostedAudioCapabilities()
         testAsyncMediaCodecFlushRestartsOnePump()
         testMediaMetricsContracts()
@@ -674,8 +689,10 @@ internal object FrameworkModuleSmoke {
         // AOSP checks the calling uid's grants: this process is bound to the
         // fixture package, so its package context answers for it.
         ActivityThread.attachApplicationHosted("org.example.permissions")
-        val base = HostContexts.systemContext(frameworkResources, 200, 200, 120, 0)
-            .createPackageContext("org.example.permissions", 0)
+        val base = packageIdentityContext(
+            HostContexts.systemContext(frameworkResources, 200, 200, 120, 0),
+            "org.example.permissions",
+        )
         val wrapped = ContextWrapper(base)
         check(base.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)
         check(wrapped.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)
@@ -746,7 +763,7 @@ internal object FrameworkModuleSmoke {
             200,
             120,
             0,
-        )
+        ).let { packageIdentityContext(it, "org.example.permissions") }
         val icon = Icon.createWithData(byteArrayOf(1, 2, 3), 0, 3)
         val intent = Intent("dev.artzig.REMOTE_ACTION")
         val pendingIntent = PendingIntent.getActivity(
@@ -789,7 +806,7 @@ internal object FrameworkModuleSmoke {
             200,
             120,
             0,
-        )
+        ).let { packageIdentityContext(it, "org.example.permissions") }
         val action = RemoteAction(
             Icon.createWithData(byteArrayOf(1), 0, 1),
             "Pause",
@@ -921,6 +938,33 @@ internal object FrameworkModuleSmoke {
         )
         val activityManager = context.getSystemService(ActivityManager::class.java)
         check(activityManager != null && !activityManager.isBackgroundRestricted)
+        val activityTaskManager = context.getSystemService(ActivityTaskManager::class.java)
+        check(activityTaskManager === ActivityTaskManager.getInstance())
+        val activityTaskService = ActivityTaskManager.getService()
+        check(activityTaskService != null)
+        check(activityTaskService.activityClientController != null)
+        check(activityTaskService.getTasks(4, false, true, Display.DEFAULT_DISPLAY).isEmpty())
+        check(activityTaskService.getRecentTasks(4, 0, UserHandle.USER_SYSTEM).list.isEmpty())
+        check(runCatching { activityTaskService.focusedRootTaskInfo }
+            .exceptionOrNull() is SecurityException)
+        check(runCatching { activityTaskService.getTaskBounds(Int.MAX_VALUE) }
+            .exceptionOrNull() is SecurityException)
+        check(activityTaskService.startActivity(
+            null,
+            null,
+            null,
+            Intent().setComponent(ComponentName("org.example.missing", "MissingActivity")),
+            null,
+            null,
+            null,
+            -1,
+            0,
+            null,
+            null,
+        ) == ActivityManager.START_CLASS_NOT_FOUND)
+        val taskListener = object : TaskStackListener() {}
+        check(runCatching { activityTaskService.registerTaskStackListener(taskListener) }
+            .exceptionOrNull() is SecurityException)
 
         val statusBarManager =
             checkNotNull(context.getSystemService(android.app.StatusBarManager::class.java))
@@ -972,9 +1016,19 @@ internal object FrameworkModuleSmoke {
         )
         check(incidentDenied.await(5, java.util.concurrent.TimeUnit.SECONDS))
 
-        val clipboardManager =
-            checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
-        check(clipboardManager === context.getSystemService(Context.CLIPBOARD_SERVICE))
+        // Bind this JVM to the installed fixture before exercising clients that authenticate the
+        // context package against the Binder caller UID (clipboard, PendingIntent, and peers).
+        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
+        val fixtureInstaller = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
+        ActivityThread.attachApplicationHosted("org.example.permissions")
+        val appContext = packageIdentityContext(context, "org.example.permissions")
+
+        checkNotNull(appContext.getSystemService(android.content.ClipboardManager::class.java))
+        val clipboardManager = android.content.ClipboardManager(
+            appContext,
+            Handler(appContext.mainLooper),
+        )
         clipboardManager.setPrimaryClip(android.content.ClipData.newPlainText("smoke", "hosted-clip"))
         check(clipboardManager.hasPrimaryClip())
         check(clipboardManager.text == "hosted-clip")
@@ -995,11 +1049,6 @@ internal object FrameworkModuleSmoke {
         // AOSP: the download table lives in the application's data directory; a
         // system context has none, so the block runs against a package context
         // of the installed fixture (this process is bound to that package).
-        val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
-        val fixtureInstaller = checkNotNull(android.app.HostedServiceClient.installerOrNull())
-        check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
-        ActivityThread.attachApplicationHosted("org.example.permissions")
-        val appContext = context.createPackageContext("org.example.permissions", 0)
         // Night mode is delivered to this process only once it is attached to the activity
         // manager (above), as AOSP delivers package configuration to attached processes.
         val uiModeManager = checkNotNull(context.getSystemService(UiModeManager::class.java))
@@ -1232,6 +1281,372 @@ internal object FrameworkModuleSmoke {
             destination.delete()
         }
         check(!destination.exists())
+    }
+
+    private fun testHostedActivityTaskServiceTransactions() {
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        android.app.PropertyInvalidatedCache.disableForTestMode()
+        val packages = HostedPackageManagerService().apply {
+            installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
+        }
+        val callerPackage = "org.example.permissions"
+        check(packages.installPackage(checkNotNull(permissionsFixtureApk)) == callerPackage)
+        val activityManager = HostedActivityManagerService().apply { packageService = packages }
+        val processOne = "android:hosted-task-one"
+        val processTwo = "android:hosted-task-two"
+        val resolver: (Intent, String?) -> ActivityInfo? = { intent, _ ->
+            intent.component?.let { component ->
+                val selectedProcess = if (component.className.contains("Two") ||
+                    component.className.contains("Unhandled")
+                ) {
+                    processTwo
+                } else if (component.className.contains("Missing")) {
+                    "android:hosted-task-missing"
+                } else {
+                    processOne
+                }
+                ActivityInfo().apply {
+                    packageName = component.packageName
+                    name = component.className
+                    processName = selectedProcess
+                    exported = true
+                    configChanges = if (component.className.contains("Handled")) {
+                        ActivityInfo.CONFIG_ORIENTATION
+                    } else {
+                        0
+                    }
+                    applicationInfo = ApplicationInfo().apply {
+                        packageName = component.packageName
+                        processName = selectedProcess
+                        uid = android.os.Process.SYSTEM_UID
+                        targetSdkVersion = android.os.Build.VERSION_CODES.CUR_DEVELOPMENT
+                    }
+                }
+            }
+        }
+        val service = HostedActivityTaskManagerService(
+            context,
+            activityManager,
+            packages,
+            resolver,
+        )
+        activityManager.activityTaskManager = service
+        val threadOne = CapturingApplicationThread()
+        val threadTwo = CapturingApplicationThread()
+        val callingUid = Binder.getCallingUid()
+        activityManager.noteProcessPackage(callingUid, callerPackage, processOne)
+        activityManager.attachApplication(threadOne, 0)
+        activityManager.noteProcessPackage(callingUid, callerPackage, processTwo)
+        activityManager.attachApplication(threadTwo, 0)
+        val controller = service.activityClientController
+
+        fun component(name: String) = ComponentName(callerPackage, "dev.artzig.$name")
+        fun launch(
+            name: String,
+            resultTo: android.os.IBinder? = null,
+            requestCode: Int = -1,
+        ): Int = service.startActivity(
+            null,
+            callerPackage,
+            null,
+            Intent().setComponent(component(name)),
+            null,
+            resultTo,
+            null,
+            requestCode,
+            0,
+            null,
+            null,
+        )
+        fun launchToken(transaction: ClientTransaction): android.os.IBinder =
+            (transaction.transactionItems.first { it is LaunchActivityItem } as LaunchActivityItem)
+                .activityToken
+        fun hasItems(transaction: ClientTransaction, vararg types: Class<*>): Boolean =
+            types.all { type -> transaction.transactionItems.any(type::isInstance) }
+
+        check(launch("HandledOne") == ActivityManager.START_SUCCESS)
+        val firstLaunch = threadOne.removeFirstTransaction()
+        check(hasItems(firstLaunch, LaunchActivityItem::class.java, ResumeActivityItem::class.java))
+        val firstToken = launchToken(firstLaunch)
+        controller.activityResumed(firstToken, false)
+
+        threadOne.transactions.clear()
+        threadTwo.transactions.clear()
+        check(launch("Two", firstToken, 42) == ActivityManager.START_SUCCESS)
+        check(threadOne.transactions.single().transactionItems.single() is PauseActivityItem)
+        check(threadTwo.transactions.isEmpty()) {
+            "cross-process launch escaped the source activityPaused gate"
+        }
+        controller.activityPaused(firstToken)
+        val secondLaunch = threadTwo.removeFirstTransaction()
+        check(hasItems(secondLaunch, LaunchActivityItem::class.java, ResumeActivityItem::class.java))
+        val secondToken = launchToken(secondLaunch)
+        controller.activityResumed(secondToken, false)
+        check(threadOne.transactions.last().transactionItems.single() is StopActivityItem)
+        controller.activityStopped(firstToken, null, null, null)
+
+        val task = service.getTasks(1, false, true, Display.DEFAULT_DISPLAY).single()
+        check(task.topActivity == component("Two"))
+        check(task.numActivities == 2 && task.baseActivity == component("HandledOne"))
+        check(service.getRecentTasks(1, 0, UserHandle.USER_SYSTEM).list.single().taskId == task.taskId)
+
+        threadOne.transactions.clear()
+        threadTwo.transactions.clear()
+        check(controller.finishActivity(
+            secondToken,
+            Activity.RESULT_OK,
+            Intent("dev.artzig.HOSTED_RESULT"),
+            0,
+        ))
+        check(threadTwo.transactions.single().transactionItems.single() is PauseActivityItem)
+        check(threadOne.transactions.isEmpty()) { "finish result escaped the source pause gate" }
+        controller.activityPaused(secondToken)
+        val reveal = threadOne.removeFirstTransaction()
+        check(reveal.transactionItems[0] is ActivityResultItem)
+        check(reveal.transactionItems.last() is ResumeActivityItem)
+        check(threadTwo.transactions.none { tx ->
+            tx.transactionItems.any { it is DestroyActivityItem }
+        }) { "source destroyed before result target resumed" }
+        controller.activityResumed(firstToken, false)
+        check(threadTwo.transactions.last().transactionItems.single() is DestroyActivityItem)
+        controller.activityDestroyed(secondToken)
+
+        // Pending activity results have no ComponentCaller attribution and wait while stopped.
+        controller.activityStopped(firstToken, null, null, null)
+        threadOne.transactions.clear()
+        val resultSender = checkNotNull(activityManager.getIntentSenderWithFeature(
+            ActivityManager.INTENT_SENDER_ACTIVITY_RESULT,
+            callerPackage,
+            null,
+            firstToken,
+            "hosted",
+            73,
+            arrayOf(Intent("dev.artzig.PENDING_RESULT")),
+            arrayOf(null),
+            PendingIntent.FLAG_IMMUTABLE,
+            null,
+            UserHandle.USER_SYSTEM,
+        ))
+        check(activityManager.sendIntentSender(
+            null, resultSender, null, Activity.RESULT_FIRST_USER, null, null, null, null, null,
+        ) == ActivityManager.START_SUCCESS)
+        check(threadOne.transactions.isEmpty())
+        controller.activityResumed(firstToken, false)
+        val pendingResultItem = threadOne.removeFirstTransaction().transactionItems.single()
+            as ActivityResultItem
+        val resultField = ActivityResultItem::class.java.getDeclaredField("mResultInfoList").apply {
+            isAccessible = true
+        }
+        @Suppress("UNCHECKED_CAST")
+        val pendingResults = resultField.get(pendingResultItem) as List<ResultInfo>
+        check(pendingResults.single().mCallerToken == null)
+
+        threadOne.transactions.clear()
+        val initialOrientation = context.resources.configuration.orientation
+        val firstOrientation = if (initialOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+            Configuration.ORIENTATION_PORTRAIT
+        } else {
+            Configuration.ORIENTATION_LANDSCAPE
+        }
+        check(service.updateConfigurationFromHost(
+            Configuration().apply { orientation = firstOrientation },
+        ))
+        check(threadOne.transactions.any { tx ->
+            tx.transactionItems.any { it is ActivityConfigurationChangeItem }
+        })
+
+        // An unhandled change preserves resumed state with Relaunch + Resume in one request.
+        threadOne.transactions.clear()
+        threadTwo.transactions.clear()
+        check(launch("UnhandledTwo") == ActivityManager.START_SUCCESS)
+        check(threadTwo.transactions.isEmpty())
+        controller.activityPaused(firstToken)
+        val thirdLaunch = threadTwo.removeFirstTransaction()
+        val thirdToken = launchToken(thirdLaunch)
+        controller.activityResumed(thirdToken, false)
+        check(threadOne.transactions.last().transactionItems.single() is StopActivityItem)
+        controller.activityStopped(firstToken, null, null, null)
+        threadOne.transactions.clear()
+        threadTwo.transactions.clear()
+        val secondOrientation = if (firstOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+            Configuration.ORIENTATION_PORTRAIT
+        } else {
+            Configuration.ORIENTATION_LANDSCAPE
+        }
+        check(service.updateConfigurationFromHost(
+            Configuration().apply { orientation = secondOrientation },
+        ))
+        val relaunch = threadTwo.transactions.first { tx ->
+            tx.transactionItems.any { it is ActivityRelaunchItem }
+        }
+        check(relaunch.transactionItems.any { it is ResumeActivityItem })
+        controller.activityRelaunched(thirdToken)
+        controller.activityResumed(thirdToken, false)
+
+        // Death of the focused process exposes and resumes the stopped task below it.
+        threadOne.transactions.clear()
+        service.onProcessDied(threadTwo.asBinder())
+        check(threadOne.transactions.single().transactionItems.last() is ResumeActivityItem)
+        controller.activityResumed(firstToken, false)
+
+        // Failed process bring-up removes its provisional activity/task record immediately.
+        val beforeFailedLaunch = service.getTasks(10, false, true, Display.DEFAULT_DISPLAY).size
+        var headlessLauncherCalls = 0
+        activityManager.processLauncher = HostedActivityManagerService.ProcessLauncher { _, _ ->
+            headlessLauncherCalls++
+            true
+        }
+        check(launch("MissingProcess") == ActivityManager.START_CANCELED)
+        check(headlessLauncherCalls == 0) {
+            "activity launch delegated an exact secondary-process target to the headless launcher"
+        }
+        activityManager.processLauncher = null
+        check(service.getTasks(10, false, true, Display.DEFAULT_DISPLAY).size == beforeFailedLaunch)
+
+        // One-shot getActivities launches the full creator stack and cancels before dispatch.
+        val stackSender = checkNotNull(activityManager.getIntentSenderWithFeature(
+            ActivityManager.INTENT_SENDER_ACTIVITY,
+            callerPackage,
+            null,
+            null,
+            null,
+            91,
+            arrayOf(
+                Intent().setComponent(component("StackOne")),
+                Intent().setComponent(component("StackTwo")),
+            ),
+            arrayOf(null, null),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT,
+            null,
+            UserHandle.USER_SYSTEM,
+        ))
+        check(activityManager.sendIntentSender(
+            null, stackSender, null, 0, null, null, null, null, null,
+        ) == ActivityManager.START_SUCCESS)
+        val stackTask = service.getTasks(1, false, true, Display.DEFAULT_DISPLAY).single()
+        check(stackTask.numActivities == 2 && stackTask.topActivity == component("StackTwo"))
+        check(activityManager.sendIntentSender(
+            null, stackSender, null, 0, null, null, null, null, null,
+        ) == ActivityManager.START_CANCELED)
+
+        // Key identity uses only the last intent/type. UPDATE_CURRENT replaces the stored stack
+        // while retaining and updating the existing final request intent.
+        val original = checkNotNull(activityManager.getIntentSenderWithFeature(
+            ActivityManager.INTENT_SENDER_ACTIVITY,
+            callerPackage,
+            null,
+            null,
+            null,
+            92,
+            arrayOf(
+                Intent("dev.artzig.OLD_PREFIX").setComponent(component("StackOne")),
+                Intent("dev.artzig.LAST").setComponent(component("StackTwo"))
+                    .putExtra("generation", 1),
+            ),
+            arrayOf(null, "type/last"),
+            PendingIntent.FLAG_IMMUTABLE,
+            null,
+            UserHandle.USER_SYSTEM,
+        ))
+        val updated = checkNotNull(activityManager.getIntentSenderWithFeature(
+            ActivityManager.INTENT_SENDER_ACTIVITY,
+            callerPackage,
+            null,
+            null,
+            null,
+            92,
+            arrayOf(
+                Intent("dev.artzig.NEW_PREFIX").setComponent(component("StackOne")),
+                Intent("dev.artzig.LAST").setComponent(component("StackTwo"))
+                    .putExtra("generation", 2),
+            ),
+            arrayOf(null, "type/last"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            null,
+            UserHandle.USER_SYSTEM,
+        ))
+        check(original === updated)
+        check(runCatching {
+            activityManager.getIntentForIntentSender(original)
+        }.exceptionOrNull() is SecurityException)
+        threadOne.transactions.clear()
+        threadTwo.transactions.clear()
+        check(activityManager.sendIntentSender(
+            null, original, null, 0, null, null, null, null, null,
+        ) == ActivityManager.START_SUCCESS)
+        controller.activityPaused(firstToken)
+        val updatedLaunchIntents = (threadOne.transactions + threadTwo.transactions)
+            .flatMap { transaction -> transaction.transactionItems }
+            .filterIsInstance<LaunchActivityItem>()
+            .map { item ->
+                LaunchActivityItem::class.java.getDeclaredField("mIntent").run {
+                    isAccessible = true
+                    get(item) as Intent
+                }
+            }
+        check(updatedLaunchIntents.any { it.action == "dev.artzig.NEW_PREFIX" })
+        check(updatedLaunchIntents.any { intent ->
+            intent.action == "dev.artzig.LAST" && intent.getIntExtra("generation", -1) == 2
+        })
+
+        // A newer cross-process start supersedes an undispatched launch that is waiting for the
+        // same resumed predecessor to acknowledge pause. Only the newest target may be enqueued.
+        val raceActivityManager = HostedActivityManagerService().apply { packageService = packages }
+        val raceService = HostedActivityTaskManagerService(
+            context,
+            raceActivityManager,
+            packages,
+            resolver,
+        )
+        raceActivityManager.activityTaskManager = raceService
+        val raceThreadOne = CapturingApplicationThread()
+        val raceThreadTwo = CapturingApplicationThread()
+        raceActivityManager.noteProcessPackage(callingUid, callerPackage, processOne)
+        raceActivityManager.attachApplication(raceThreadOne, 0)
+        raceActivityManager.noteProcessPackage(callingUid, callerPackage, processTwo)
+        raceActivityManager.attachApplication(raceThreadTwo, 0)
+        fun raceLaunch(name: String): Int = raceService.startActivity(
+            null,
+            callerPackage,
+            null,
+            Intent().setComponent(component(name)),
+            null,
+            null,
+            null,
+            -1,
+            0,
+            null,
+            null,
+        )
+        check(raceLaunch("RaceOne") == ActivityManager.START_SUCCESS)
+        val raceFirstToken = launchToken(raceThreadOne.removeFirstTransaction())
+        raceService.activityClientController.activityResumed(raceFirstToken, false)
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        check(raceLaunch("RaceBTwo") == ActivityManager.START_SUCCESS)
+        check(raceThreadTwo.transactions.isEmpty())
+        check(raceLaunch("RaceCTwo") == ActivityManager.START_SUCCESS)
+        check(raceThreadTwo.transactions.isEmpty())
+        raceService.activityClientController.activityPaused(raceFirstToken)
+        val survivingLaunches = raceThreadTwo.transactions.filter { transaction ->
+            transaction.transactionItems.any { it is LaunchActivityItem }
+        }
+        check(survivingLaunches.size == 1)
+        val survivingItem = survivingLaunches.single().transactionItems
+            .first { it is LaunchActivityItem } as LaunchActivityItem
+        val launchedIntent = LaunchActivityItem::class.java.getDeclaredField("mIntent").run {
+            isAccessible = true
+            get(survivingItem) as Intent
+        }
+        check(launchedIntent.component == component("RaceCTwo"))
+        check(raceService.getTasks(10, false, true, Display.DEFAULT_DISPLAY)
+            .none { it.topActivity == component("RaceBTwo") })
     }
 
     private fun testHostedAudioCapabilities() {
@@ -5525,6 +5940,16 @@ internal object FrameworkModuleSmoke {
     class ActivityGroupResultActivity : Activity()
 
     class LocalParentActivity : Activity()
+
+    private class CapturingApplicationThread : UnsupportedApplicationThread() {
+        val transactions = mutableListOf<ClientTransaction>()
+
+        override fun scheduleTransaction(transaction: ClientTransaction?) {
+            transactions += checkNotNull(transaction)
+        }
+
+        fun removeFirstTransaction(): ClientTransaction = transactions.removeAt(0)
+    }
 
     open class LocalRecordingActivity(private val activityLabel: String) : Activity() {
         val receivedNewIntents = mutableListOf<Intent>()

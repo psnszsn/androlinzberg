@@ -206,6 +206,13 @@ internal object SystemServices {
         activityManager.packageService = packageManager
         appOps.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
+        val activityTaskManager = HostedActivityTaskManagerService(
+            context,
+            activityManager,
+            packageManager,
+        )
+        activityManager.activityTaskManager = activityTaskManager
+        android.os.ServiceManager.addService(Context.ACTIVITY_TASK_SERVICE, activityTaskManager)
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
         // Reused services resolve users through ActivityManagerInternal.
         LocalServices.addService(

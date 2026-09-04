@@ -17,6 +17,7 @@ import android.content.pm.ServiceInfo
 import android.content.pm.SigningDetails
 import android.os.Binder
 import android.os.Process
+import android.os.UserHandle
 import android.util.Log
 import com.android.internal.pm.parsing.PackageParser2
 import com.android.internal.pm.parsing.pkg.AndroidPackageInternal
@@ -326,12 +327,8 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
 
     /** Hosted identity map used by PackageManagerInternal.isSameApp. */
     fun isSameAppInternal(packageName: String?, uid: Int): Boolean {
-        if (uid == Process.SYSTEM_UID) return true
-        // Test peers and a standalone system Context have no attach record.
-        // Preserve the hosted boundary: reject contradictory registered
-        // claims, while an as-yet-unregistered uid cannot be disproved.
-        val owned = getPackagesForUid(uid)
-        return owned.isNullOrEmpty() || owned.contains(packageName)
+        if (uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) return true
+        return getPackagesForUid(uid)?.contains(packageName) == true
     }
 
     /** First match for a service intent (activity manager's bind/start path). */
@@ -551,6 +548,12 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
                 ?: emptyList()
         }
     }
+
+    /** ActivityStarter's package-manager lookup, shared with the hosted task service. */
+    internal fun resolveActivityInfo(intent: Intent, resolvedType: String?): ActivityInfo? =
+        queryActivitiesInternal(intent, resolvedType, 0L, UserHandle.USER_SYSTEM)
+            .firstOrNull()
+            ?.activityInfo
 
     override fun queryIntentActivities(
         intent: Intent?,

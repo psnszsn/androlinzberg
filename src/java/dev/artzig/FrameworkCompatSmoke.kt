@@ -317,9 +317,10 @@ public final class FrameworkCompatSmoke {
             require(installer.installPackage(fixtureApk, null) == "org.example", "fixture install")
             testLoadedApk()
 
-            val packageManager: PackageManager = HostContexts.systemContext(
+            val hostedSystemContext = HostContexts.systemContext(
                 requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
-            ).packageManager
+            )
+            val packageManager: PackageManager = hostedSystemContext.packageManager
             val launch: Intent? = packageManager.getLaunchIntentForPackage("org.example")
             require(launch != null, "hosted launch intent")
             require(
@@ -405,7 +406,7 @@ public final class FrameworkCompatSmoke {
             verifyBoundedHostThrowableDiagnostic()
             require(
                 PendingIntent.getActivities(
-                    HostContexts.systemContext(requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0),
+                    hostedSystemContext.createPackageContext("org.example", 0),
                     7,
                     arrayOf<Intent>(Intent()),
                     PendingIntent.FLAG_IMMUTABLE,

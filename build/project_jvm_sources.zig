@@ -237,6 +237,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/binder/BinderTestServer.kt",
     "src/java/dev/artzig/system/BinderDelegates.kt",
     "src/java/dev/artzig/system/HostedActivityManagerService.kt",
+    "src/java/dev/artzig/system/HostedActivityTaskManagerService.kt",
     "src/java/dev/artzig/system/HostedAlarmManagerService.kt",
     "src/java/dev/artzig/system/HostedAppOpsService.kt",
     "src/java/dev/artzig/system/HostedAppWidgetService.kt",

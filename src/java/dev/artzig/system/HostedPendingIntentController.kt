@@ -19,38 +19,46 @@ import android.util.Log
  * FLAG_NO_CREATE / FLAG_CANCEL_CURRENT / FLAG_UPDATE_CURRENT / FLAG_ONE_SHOT
  * semantics, cancel listeners, and `send` dispatching by type. Broadcast and
  * service sends go through the activity manager as the creator; activity
- * sends need the activity task manager (the activity-core milestone) and
- * report START_CANCELED, which the sender sees as CanceledException.
+ * launches and pending activity results cross into the hosted activity task
+ * manager with the creator identity retained.
  */
 internal class HostedPendingIntentController(private val ams: HostedActivityManagerService) {
     class Key(
         val type: Int,
         val packageName: String?,
         val uid: Int,
+        val activityToken: IBinder?,
+        val resultWho: String?,
         val requestCode: Int,
-        val intents: Array<Intent?>?,
-        val resolvedTypes: Array<String?>?,
+        var intents: Array<Intent?>?,
+        var resolvedTypes: Array<String?>?,
         val flags: Int,
     ) {
         val requestIntent: Intent? get() = intents?.lastOrNull()
         override fun equals(other: Any?): Boolean {
             if (other !is Key) return false
-            if (type != other.type || uid != other.uid || requestCode != other.requestCode || flags != other.flags) return false
+            if (type != other.type || uid != other.uid || activityToken != other.activityToken ||
+                resultWho != other.resultWho || requestCode != other.requestCode || flags != other.flags
+            ) return false
             if (packageName != other.packageName) return false
-            val a = intents ?: emptyArray(); val b = other.intents ?: emptyArray()
-            if (a.size != b.size) return false
-            for (i in a.indices) {
-                val x = a[i]; val y = b[i]
-                if (x == null || y == null) { if (x !== y) return false } else if (!x.filterEquals(y)) return false
+            val request = requestIntent
+            val otherRequest = other.requestIntent
+            if (request == null || otherRequest == null) {
+                if (request !== otherRequest) return false
+            } else if (!request.filterEquals(otherRequest)) {
+                return false
             }
-            val ra = resolvedTypes ?: emptyArray(); val rb = other.resolvedTypes ?: emptyArray()
-            return ra.contentEquals(rb)
+            return resolvedTypes?.lastOrNull() == other.resolvedTypes?.lastOrNull()
         }
         override fun hashCode(): Int {
-            var h = type * 31 + uid; h = h * 31 + requestCode; h = h * 31 + flags
+            var h = type * 31 + uid
+            h = h * 31 + (activityToken?.hashCode() ?: 0)
+            h = h * 31 + (resultWho?.hashCode() ?: 0)
+            h = h * 31 + requestCode
+            h = h * 31 + flags
             h = h * 31 + (packageName?.hashCode() ?: 0)
-            intents?.forEach { h = h * 31 + (it?.filterHashCode() ?: 0) }
-            resolvedTypes?.forEach { h = h * 31 + (it?.hashCode() ?: 0) }
+            h = h * 31 + (requestIntent?.filterHashCode() ?: 0)
+            h = h * 31 + (resolvedTypes?.lastOrNull()?.hashCode() ?: 0)
             return h
         }
     }
@@ -72,14 +80,35 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
     private val records = HashMap<Key, Record>()
 
     fun getIntentSender(
-        type: Int, packageName: String?, uid: Int, requestCode: Int,
+        type: Int, packageName: String?, uid: Int, activityToken: IBinder?, resultWho: String?,
+        requestCode: Int,
         intents: Array<Intent?>?, resolvedTypes: Array<String?>?, flags: Int,
     ): IIntentSender? {
+        if (intents != null && intents.isEmpty()) {
+            throw IllegalArgumentException("Intents array length must be >= 1")
+        }
+        if (resolvedTypes != null && resolvedTypes.size != intents?.size) {
+            throw IllegalArgumentException("Intent array length does not match resolvedTypes length")
+        }
         val noCreate = (flags and PendingIntent.FLAG_NO_CREATE) != 0
         val cancelCurrent = (flags and PendingIntent.FLAG_CANCEL_CURRENT) != 0
         val updateCurrent = (flags and PendingIntent.FLAG_UPDATE_CURRENT) != 0
         val keyFlags = flags and (PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_UPDATE_CURRENT).inv()
-        val key = Key(type, packageName, uid, requestCode, intents, resolvedTypes, keyFlags)
+        val storedIntents = intents?.let { source ->
+            Array<Intent?>(source.size) { index -> source[index]?.let(::Intent) }
+        }
+        val storedResolvedTypes = resolvedTypes?.copyOf()
+        val key = Key(
+            type,
+            packageName,
+            uid,
+            activityToken,
+            resultWho,
+            requestCode,
+            storedIntents,
+            storedResolvedTypes,
+            keyFlags,
+        )
         synchronized(lock) {
             val existing = records[key]
             if (existing != null) {
@@ -88,6 +117,10 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
                         val request = existing.key.requestIntent
                         val fresh = key.requestIntent
                         if (request != null && fresh != null) request.replaceExtras(fresh)
+                        existing.key.intents = key.intents?.also {
+                            it[it.lastIndex] = request
+                        }
+                        existing.key.resolvedTypes = key.resolvedTypes
                     }
                     return existing
                 }
@@ -100,8 +133,15 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
         }
     }
 
-    fun cancel(sender: IIntentSender?) {
+    fun cancel(sender: IIntentSender?, callingUid: Int) {
         val record = sender as? Record ?: return
+        if (callingUid != record.key.uid && callingUid != android.os.Process.SYSTEM_UID &&
+            callingUid != android.os.Process.ROOT_UID
+        ) {
+            throw SecurityException(
+                "uid $callingUid may not cancel ${record.key.packageName}'s IntentSender",
+            )
+        }
         synchronized(lock) { cancelLocked(record) }
     }
 
@@ -137,10 +177,16 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
         record: Record, code: Int, fillIn: Intent?, resolvedType: String?,
         finishedReceiver: IIntentReceiver?, requiredPermission: String?, options: Bundle?,
     ): Int {
-        if (record.canceled) return ActivityManager.START_CANCELED
+        val prepared = synchronized(lock) {
+            if (record.canceled) return ActivityManager.START_CANCELED
+            prepareIntent(record, fillIn, resolvedType, 0, 0).also {
+                if ((record.key.flags and PendingIntent.FLAG_ONE_SHOT) != 0) {
+                    cancelLocked(record)
+                }
+            }
+        }
         val key = record.key
-        val finalIntent = key.requestIntent?.let { Intent(it) } ?: Intent()
-        if (!record.immutable && fillIn != null) finalIntent.fillIn(fillIn, key.flags)
+        val finalIntent = prepared.intent
         val result = when (key.type) {
             ActivityManager.INTENT_SENDER_BROADCAST -> {
                 ams.broadcastFromPendingIntent(key.packageName, key.uid, finalIntent, requiredPermission, finishedReceiver, code)
@@ -148,16 +194,145 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
             }
             ActivityManager.INTENT_SENDER_SERVICE, ActivityManager.INTENT_SENDER_FOREGROUND_SERVICE -> {
                 ams.startServiceFromPendingIntent(key.packageName, key.uid, finalIntent)
-                finishedReceiver?.let { deliverFinished(it, finalIntent, code) }
+                finishedReceiver?.let { deliverFinished(it, finalIntent, 0) }
                 ActivityManager.START_SUCCESS
             }
+            ActivityManager.INTENT_SENDER_ACTIVITY -> {
+                val started = startActivity(record, prepared, null, null, -1, options)
+                if (!ActivityManager.isStartResultFatalError(started)) {
+                    finishedReceiver?.let { deliverFinished(it, finalIntent, 0) }
+                }
+                started
+            }
+            ActivityManager.INTENT_SENDER_ACTIVITY_RESULT -> {
+                val delivered = ams.activityTaskManager?.deliverPendingActivityResult(
+                    key.activityToken,
+                    key.resultWho,
+                    key.requestCode,
+                    code,
+                    finalIntent,
+                    android.os.Process.INVALID_UID,
+                    null,
+                ) ?: false
+                if (delivered) finishedReceiver?.let { deliverFinished(it, finalIntent, 0) }
+                if (delivered) ActivityManager.START_SUCCESS else ActivityManager.START_CANCELED
+            }
             else -> {
-                Log.w(TAG, "activity PendingIntent send is not hosted (needs the activity task manager): " + finalIntent)
+                Log.w(TAG, "unsupported PendingIntent kind ${key.type}: $finalIntent")
                 ActivityManager.START_CANCELED
             }
         }
-        if ((key.flags and PendingIntent.FLAG_ONE_SHOT) != 0) synchronized(lock) { cancelLocked(record) }
         return result
+    }
+
+    /** ActivityTaskManagerService.startActivityIntentSender on a hosted PendingIntent record. */
+    fun sendActivity(
+        sender: IIntentSender?,
+        fillIn: Intent?,
+        resolvedType: String?,
+        resultTo: IBinder?,
+        resultWho: String?,
+        requestCode: Int,
+        flagsMask: Int,
+        flagsValues: Int,
+        options: Bundle?,
+    ): Int {
+        val record = sender as? Record ?: return ActivityManager.START_CANCELED
+        val prepared = synchronized(lock) {
+            if (record.canceled) return ActivityManager.START_CANCELED
+            if (record.key.type != ActivityManager.INTENT_SENDER_ACTIVITY) {
+                return ActivityManager.START_NOT_ACTIVITY
+            }
+            prepareIntent(record, fillIn, resolvedType, flagsMask, flagsValues).also {
+                if ((record.key.flags and PendingIntent.FLAG_ONE_SHOT) != 0) {
+                    cancelLocked(record)
+                }
+            }
+        }
+        val result = startActivity(record, prepared, resultTo, resultWho, requestCode, options)
+        return result
+    }
+
+    private data class PreparedIntent(
+        val intent: Intent,
+        val resolvedType: String?,
+        val allIntents: Array<Intent?>?,
+        val allResolvedTypes: Array<String?>?,
+    )
+
+    /**
+     * PendingIntentRecord.sendInner: immutable senders retain their creator's data/type/flags;
+     * mutable senders may fill data and may replace only flags outside Intent.IMMUTABLE_FLAGS.
+     */
+    private fun prepareIntent(
+        record: Record,
+        fillIn: Intent?,
+        suppliedResolvedType: String?,
+        suppliedFlagsMask: Int,
+        suppliedFlagsValues: Int,
+    ): PreparedIntent {
+        val key = record.key
+        val intent = key.requestIntent?.let(::Intent) ?: Intent()
+        var resolvedType = suppliedResolvedType
+        if (record.immutable) {
+            resolvedType = key.resolvedTypes?.lastOrNull()
+        } else {
+            if (fillIn == null) {
+                resolvedType = key.resolvedTypes?.lastOrNull()
+            } else {
+                val changes = intent.fillIn(fillIn, key.flags)
+                if (changes and Intent.FILL_IN_DATA == 0) {
+                    resolvedType = key.resolvedTypes?.lastOrNull()
+                }
+            }
+            val flagsMask = suppliedFlagsMask and Intent.IMMUTABLE_FLAGS.inv()
+            val flagsValues = suppliedFlagsValues and flagsMask
+            intent.flags = (intent.flags and flagsMask.inv()) or flagsValues
+        }
+        val allIntents = key.intents?.takeIf { it.size > 1 }?.let { source ->
+            Array<Intent?>(source.size) { index -> source[index]?.let(::Intent) }.also {
+                it[it.lastIndex] = intent
+            }
+        }
+        val allResolvedTypes = allIntents?.let { copied ->
+            Array<String?>(copied.size) { index -> key.resolvedTypes?.getOrNull(index) }.also {
+                it[it.lastIndex] = resolvedType
+            }
+        }
+        return PreparedIntent(intent, resolvedType, allIntents, allResolvedTypes)
+    }
+
+    /** PendingIntentRecord.sendInner preserves every creator-supplied intent in getActivities. */
+    private fun startActivity(
+        record: Record,
+        prepared: PreparedIntent,
+        resultTo: IBinder?,
+        resultWho: String?,
+        requestCode: Int,
+        options: Bundle?,
+    ): Int {
+        val key = record.key
+        val allIntents = prepared.allIntents
+        if (allIntents != null) {
+            return ams.activityTaskManager?.startActivitiesFromPendingIntent(
+                key.packageName,
+                key.uid,
+                allIntents,
+                prepared.allResolvedTypes,
+                resultTo,
+                options,
+            ) ?: ActivityManager.START_CANCELED
+        }
+        return ams.activityTaskManager?.startActivityFromPendingIntent(
+            key.packageName,
+            key.uid,
+            prepared.intent,
+            prepared.resolvedType,
+            resultTo,
+            resultWho,
+            requestCode,
+            options,
+        ) ?: ActivityManager.START_CANCELED
     }
 
     private fun deliverFinished(receiver: IIntentReceiver, intent: Intent, code: Int) {

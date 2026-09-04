@@ -201,6 +201,8 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
     private val servicesByToken = LinkedHashMap<IBinder, ServiceRecord>()
     /** Bind/start operations waiting for a package's process to attach. */
     private val pendingByPackage = LinkedHashMap<String, MutableList<() -> Unit>>()
+    /** Activity launches wait for the manifest-selected process, not merely the package. */
+    private val pendingByProcess = LinkedHashMap<Pair<String, String>, MutableList<() -> Unit>>()
     /** Published content providers, one record per declared authority
      * (source note: ActivityManagerService.mProviderMap). */
     private val providersByAuthority = LinkedHashMap<String, ContentProviderRecord>()
@@ -213,6 +215,8 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
     @Volatile var processObserver: ((packageName: String, uid: Int, foreground: Boolean) -> Unit)? = null
     /** The session's package manager; consulted for APK paths of packages with no running process. */
     @Volatile var packageService: HostedPackageManagerService? = null
+    /** Activity/task ownership is separate in AOSP; this is the host seam between AMS and ATMS. */
+    @Volatile internal var activityTaskManager: HostedActivityTaskManagerService? = null
 
     // ------------------------------------------------------------- attach
 
@@ -238,7 +242,10 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
         // handleProcessDied against a record that is actually registered.
         synchronized(lock) {
             processes[record.binder] = record
-            drained = pendingByPackage.remove(packageName) ?: emptyList()
+            drained = buildList {
+                addAll(pendingByPackage.remove(packageName) ?: emptyList())
+                addAll(pendingByProcess.remove(packageName to processName) ?: emptyList())
+            }
         }
         try {
             record.binder.linkToDeath(record, 0)
@@ -249,6 +256,13 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
         }
         Log.i(TAG, "attached " + packageName + " pid=" + record.pid + " uid=" + record.uid)
         replayConfigurationOverrides(record)
+        activityTaskManager?.onProcessAttached(
+            record.thread,
+            record.pid,
+            record.uid,
+            record.packageName,
+            record.processName,
+        )
         if (callingUid != android.os.Process.SYSTEM_UID) processObserver?.invoke(packageName, callingUid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
@@ -290,8 +304,112 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
             }
         }
         Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
+        activityTaskManager?.onProcessDied(record.binder)
         processObserver?.invoke(record.packageName, record.uid, false)
     }
+
+    internal data class AttachedProcess(
+        val thread: IApplicationThread,
+        val pid: Int,
+        val uid: Int,
+        val packageName: String,
+        val processName: String,
+    )
+
+    internal fun attachedProcess(thread: IApplicationThread?): AttachedProcess? = synchronized(lock) {
+        val record = thread?.asBinder()?.let(processes::get) ?: return@synchronized null
+        AttachedProcess(record.thread, record.pid, record.uid, record.packageName, record.processName)
+    }
+
+    internal fun attachedProcessForPackage(
+        packageName: String,
+        processName: String? = null,
+    ): AttachedProcess? = synchronized(lock) {
+        val record = processes.values.firstOrNull {
+            it.packageName == packageName && (processName == null || it.processName == processName)
+        }
+            ?: return@synchronized null
+        AttachedProcess(record.thread, record.pid, record.uid, record.packageName, record.processName)
+    }
+
+    /**
+     * ActivityTaskSupervisor.startSpecificActivity: run immediately in an attached process, or
+     * retain the launch while AMS starts the package process and replay it after attach.
+     */
+    internal fun withApplicationThread(
+        packageName: String,
+        processName: String? = null,
+        spawnIfMissing: Boolean = true,
+        action: (AttachedProcess) -> Unit,
+    ): Boolean {
+        var attached: AttachedProcess? = null
+        val accepted = synchronized(lock) {
+            val record = processes.values.firstOrNull {
+                it.packageName == packageName &&
+                    (processName == null || it.processName == processName)
+            }
+            if (record != null) {
+                attached = AttachedProcess(
+                    record.thread, record.pid, record.uid, record.packageName, record.processName,
+                )
+                true
+            } else if (!spawnIfMissing) {
+                // The production launcher starts service-only, windowless app processes. An
+                // activity start must not report success after routing its target to that host.
+                false
+            } else {
+                val replay = {
+                    attachedProcessForPackage(packageName, processName)?.let(action)
+                    Unit
+                }
+                val pending = if (processName == null) {
+                    pendingByPackage.getOrPut(packageName) { ArrayList() }
+                } else {
+                    pendingByProcess.getOrPut(packageName to processName) { ArrayList() }
+                }
+                pending.add(replay)
+                if (bringUpProcessLocked(packageName)) {
+                    true
+                } else {
+                    pending.remove(replay)
+                    if (processName == null && pending.isEmpty()) {
+                        pendingByPackage.remove(packageName)
+                    } else if (processName != null && pending.isEmpty()) {
+                        pendingByProcess.remove(packageName to processName)
+                    }
+                    false
+                }
+            }
+        }
+        if (accepted) attached?.let(action)
+        return accepted
+    }
+
+    internal fun updateGlobalConfiguration(values: Configuration) {
+        scheduleConfigurationDelta(values, null)
+    }
+
+    internal fun sendActivityIntentSender(
+        target: android.content.IIntentSender?,
+        fillIn: Intent?,
+        resolvedType: String?,
+        resultTo: IBinder?,
+        resultWho: String?,
+        requestCode: Int,
+        flagsMask: Int,
+        flagsValues: Int,
+        options: android.os.Bundle?,
+    ): Int = pendingIntents.sendActivity(
+        target,
+        fillIn,
+        resolvedType,
+        resultTo,
+        resultWho,
+        requestCode,
+        flagsMask,
+        flagsValues,
+        options,
+    )
 
     // ---------------------------------------------------------- resolution
 
@@ -646,8 +764,25 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
         type: Int, packageName: String?, featureId: String?, token: IBinder?, resultWho: String?,
         requestCode: Int, intents: Array<Intent?>?, resolvedTypes: Array<String?>?, flags: Int,
         options: android.os.Bundle?, userId: Int,
-    ): android.content.IIntentSender? =
-        pendingIntents.getIntentSender(type, packageName, Binder.getCallingUid(), requestCode, intents, resolvedTypes, flags)
+    ): android.content.IIntentSender? {
+        val callingUid = Binder.getCallingUid()
+        if (packageService?.isSameAppInternal(packageName, callingUid) != true) {
+            throw SecurityException(
+                "uid $callingUid is not allowed to create an IntentSender as $packageName",
+            )
+        }
+        return pendingIntents.getIntentSender(
+            type,
+            packageName,
+            callingUid,
+            token,
+            resultWho,
+            requestCode,
+            intents,
+            resolvedTypes,
+            flags,
+        )
+    }
 
     override fun getIntentSender(
         type: Int, packageName: String?, token: IBinder?, resultWho: String?, requestCode: Int,
@@ -664,15 +799,21 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
         return pendingIntents.sendInner(record, code, intent, resolvedType, finishedReceiver, requiredPermission, options)
     }
 
-    override fun cancelIntentSender(sender: android.content.IIntentSender?) = pendingIntents.cancel(sender)
+    override fun cancelIntentSender(sender: android.content.IIntentSender?) =
+        pendingIntents.cancel(sender, Binder.getCallingUid())
 
     override fun getInfoForIntentSender(sender: android.content.IIntentSender?): android.app.ActivityManager.PendingIntentInfo? {
         val record = pendingIntents.record(sender) ?: return null
         return android.app.ActivityManager.PendingIntentInfo(record.key.packageName, record.key.uid, record.immutable, record.key.type)
     }
 
-    override fun getIntentForIntentSender(sender: android.content.IIntentSender?): Intent? =
-        pendingIntents.record(sender)?.key?.requestIntent?.let { Intent(it) }
+    override fun getIntentForIntentSender(sender: android.content.IIntentSender?): Intent? {
+        enforceCallingPermission(
+            android.Manifest.permission.GET_INTENT_SENDER_INTENT,
+            "getIntentForIntentSender()",
+        )
+        return pendingIntents.record(sender)?.key?.requestIntent?.let { Intent(it) }
+    }
 
     override fun getTagForIntentSender(sender: android.content.IIntentSender?, prefix: String?): String? = null
 
@@ -690,8 +831,23 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
     override fun unregisterIntentSenderCancelListener(sender: android.content.IIntentSender?, receiver: com.android.internal.os.IResultReceiver?) =
         pendingIntents.unregisterCancelListener(sender, receiver)
 
-    override fun queryIntentComponentsForIntentSender(sender: android.content.IIntentSender?, matchFlags: Int): android.content.pm.ParceledListSlice<*>? =
-        android.content.pm.ParceledListSlice(ArrayList<android.content.pm.ResolveInfo>())
+    override fun queryIntentComponentsForIntentSender(
+        sender: android.content.IIntentSender?,
+        matchFlags: Int,
+    ): android.content.pm.ParceledListSlice<*>? {
+        enforceCallingPermission(
+            android.Manifest.permission.GET_INTENT_SENDER_INTENT,
+            "queryIntentComponentsForIntentSender()",
+        )
+        return android.content.pm.ParceledListSlice(ArrayList<android.content.pm.ResolveInfo>())
+    }
+
+    private fun enforceCallingPermission(permission: String, operation: String) {
+        val uid = Binder.getCallingUid()
+        if (checkUidPermission(permission, uid) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Permission Denial: $operation from uid=$uid requires $permission")
+        }
+    }
 
     /** A broadcast PendingIntent sends as its creator (PendingIntentRecord.sendInner, broadcast branch). */
     internal fun broadcastFromPendingIntent(
@@ -716,6 +872,17 @@ class HostedActivityManagerService : android.app.IActivityManager.Stub(), androi
     internal fun checkUidPermission(permission: String, uid: Int): Int =
         packageService?.checkUidPermission(permission, uid)
             ?: android.content.pm.PackageManager.PERMISSION_DENIED
+
+    override fun checkPermission(permission: String?, pid: Int, uid: Int): Int =
+        permission?.let { checkUidPermission(it, uid) }
+            ?: android.content.pm.PackageManager.PERMISSION_DENIED
+
+    override fun checkPermissionForDevice(
+        permission: String?,
+        pid: Int,
+        uid: Int,
+        deviceId: Int,
+    ): Int = checkPermission(permission, pid, uid)
 
     // ------------------------------------------------------------ providers
 
