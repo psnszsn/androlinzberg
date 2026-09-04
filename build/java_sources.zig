@@ -725,6 +725,13 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/android/app/StatusBarManager.java");
     try c.file("$CJ/android/os/IncidentManager.java");
     try c.file("$CJ/android/os/IncidentReportArgs.java");
+    try c.file("$CJ/android/app/AlertDialog.java");
+    try c.file("$CJ/com/android/internal/app/AlertController.java");
+    try c.file("$CJ/com/android/internal/app/MicroAlertController.java");
+    try c.file("$CJ/com/android/internal/widget/AlertDialogLayout.java");
+    try c.file("$CJ/com/android/internal/widget/ButtonBarLayout.java");
+    try c.file("$CJ/com/android/internal/widget/DialogTitle.java");
+    try c.file("$CJ/com/android/internal/widget/WatchListDecorLayout.java");
     try c.file("$CJ/android/media/NearbyMediaDevicesProvider.java");
     try c.file("$CJ/com/android/internal/statusbar/AppClipsServiceConnector.java");
     try c.file("$CJ/com/android/internal/statusbar/DisableStates.java");

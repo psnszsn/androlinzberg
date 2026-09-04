@@ -12,7 +12,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/app/ActivityManagerInternal.java",
     "src/framework-stubs/android/app/ActivityOptions.java",
     "src/framework-stubs/android/app/ActivityTaskManager.java",
-    "src/framework-stubs/android/app/AlertDialog.java",
     "src/framework-stubs/android/app/AppGlobals.java",
     "src/framework-stubs/android/app/AppOpsManager.java",
     "src/framework-stubs/android/app/Fragment.java",

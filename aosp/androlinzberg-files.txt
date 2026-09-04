@@ -3013,3 +3013,10 @@ F aosp frameworks/base/core/java/android/os/IncidentReportArgs.java
 F aosp frameworks/native/libs/incidentcompanion/binder/android/os/IIncidentAuthListener.aidl
 F aosp frameworks/native/libs/incidentcompanion/binder/android/os/IIncidentCompanion.aidl
 F aosp frameworks/native/libs/incidentcompanion/binder/android/os/IncidentManager.aidl
+F aosp frameworks/base/core/java/android/app/AlertDialog.java
+F aosp frameworks/base/core/java/com/android/internal/app/AlertController.java
+F aosp frameworks/base/core/java/com/android/internal/app/MicroAlertController.java
+F aosp frameworks/base/core/java/com/android/internal/widget/AlertDialogLayout.java
+F aosp frameworks/base/core/java/com/android/internal/widget/ButtonBarLayout.java
+F aosp frameworks/base/core/java/com/android/internal/widget/DialogTitle.java
+F aosp frameworks/base/core/java/com/android/internal/widget/WatchListDecorLayout.java

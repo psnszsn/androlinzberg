@@ -138,6 +138,7 @@ internal object FrameworkModuleSmoke {
         testAsyncMediaCodecFlushRestartsOnePump()
         testMediaMetricsContracts()
         testWebViewCallbackContracts()
+        testAlertDialogContracts()
         testSurfaceViewLifecycle()
         testNetworkServiceDiscovery()
         testHostedInputEvents()
@@ -1192,6 +1193,32 @@ internal object FrameworkModuleSmoke {
         } finally {
             android.webkit.HostedWebViewProviders.installForTests(null)
         }
+    }
+
+    private fun testAlertDialogContracts() {
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        var accepted = false
+        val dialog = android.app.AlertDialog.Builder(context)
+            .setTitle("Stock dialog")
+            .setMessage("AOSP AlertController content")
+            .setPositiveButton("Accept") { _, which ->
+                check(which == android.app.AlertDialog.BUTTON_POSITIVE)
+                accepted = true
+            }
+            .create()
+
+        dialog.create()
+        val button = checkNotNull(dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE))
+        check(button.text.toString() == "Accept")
+        button.performClick()
+        drainMainQueue()
+        check(accepted) { "stock AlertDialog did not dispatch its positive button callback" }
     }
 
     private fun testMediaMetricsContracts() {

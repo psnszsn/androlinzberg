@@ -24,7 +24,9 @@ public class Dialog implements DialogInterface, Window.Callback,
         KeyEvent.Callback, View.OnCreateContextMenuListener {
     private static final String TAG = "Dialog";
     final Context mContext;
-    private final Window mWindow;
+    // Matches AOSP Dialog.mWindow so AlertDialog can configure the shared
+    // PhoneWindow. Stock Dialog remains blocked on the legacy Fragment/action-bar closure.
+    final Window mWindow;
     private final WindowManager mWindowManager;
     View mDecor;
     private Activity mOwnerActivity;

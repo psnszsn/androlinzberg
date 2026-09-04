@@ -17,6 +17,7 @@ class NewPipeTest {
 
     @Test
     fun launchesHomeWithoutRuntimeIssues() = app.run {
+        dismissKeepAndroidOpenDialog()
         expectVisible(text = "Live")
         expectVisible(description = "Search")
         expectVisible(description = "Open Drawer")
@@ -25,6 +26,7 @@ class NewPipeTest {
 
     @Test
     fun hostF11EntersAndExitsFullscreen() = app.run {
+        dismissKeepAndroidOpenDialog()
         waitForFullscreen(false)
         key(value = "F11", description = "Search")
         waitForFullscreen(true)
@@ -34,6 +36,7 @@ class NewPipeTest {
 
     @Test
     fun opensAndEditsSearch() = app.run {
+        dismissKeepAndroidOpenDialog()
         click(description = "Search")
         waitFor(className = "android.widget.EditText")
         type(value = "kotlin integration", className = "android.widget.EditText")
@@ -45,6 +48,7 @@ class NewPipeTest {
 
     @Test
     fun hamburgerOpensNavigationDrawer() = app.run {
+        dismissKeepAndroidOpenDialog()
         expectVisible(description = "Open Drawer")
         val closed = screenshot("drawer-closed.png")
         assertScreenshotSize(closed, 412, 915)
@@ -58,6 +62,7 @@ class NewPipeTest {
 
     @Test
     fun revealingVideoControlsKeepsCompositorFullscreen() = app.run {
+        dismissKeepAndroidOpenDialog()
         waitFor(text = "LIVE")
         // The YouTube live feed is dynamic. Exercise the first live card
         // instead of pinning the test to a channel that may leave the feed.
@@ -83,6 +88,7 @@ class NewPipeTest {
 
     @Test
     fun fullscreenButtonExitsAndRestoresVideoDetails() = app.run {
+        dismissKeepAndroidOpenDialog()
         waitFor(text = "LIVE")
         click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
@@ -121,6 +127,7 @@ class NewPipeDesktopTest {
 
     @Test
     fun hamburgerOpensNavigationDrawer() = app.run {
+        dismissKeepAndroidOpenDialog()
         expectVisible(description = "Open Drawer")
         val closed = screenshot("drawer-closed.png")
         assertScreenshotSize(closed, 1600, 900)
@@ -134,6 +141,7 @@ class NewPipeDesktopTest {
 
     @Test
     fun videoButtonEntersCompositorFullscreen() = app.run {
+        dismissKeepAndroidOpenDialog()
         waitFor(text = "LIVE")
         click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
@@ -144,6 +152,14 @@ class NewPipeDesktopTest {
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
         waitForFullscreen(true)
     }
+}
+
+private fun AppSession.dismissKeepAndroidOpenDialog() {
+    expectVisible(text = "Keep Android Open")
+    expectVisible(text = "SOLUTION")
+    expectVisible(text = "DETAILS")
+    click(text = "OK")
+    waitFor(text = "Keep Android Open", absent = true)
 }
 
 private fun assertScreenshotSize(screenshot: Path, width: Int, height: Int) {
