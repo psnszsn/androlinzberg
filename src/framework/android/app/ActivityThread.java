@@ -797,7 +797,60 @@ public final class ActivityThread extends ClientTransactionHandler {
     @Override public void handleActivityConfigurationChanged(ActivityClientRecord r, Configuration overrideConfig, int displayId, android.window.ActivityWindowInfo activityWindowInfo) { throw notHosted("handleActivityConfigurationChanged"); }
     @Override public void handleWindowContextInfoChanged(IBinder clientToken, android.window.WindowContextInfo info) { throw notHosted("handleWindowContextInfoChanged"); }
     @Override public void handleWindowContextWindowRemoval(IBinder clientToken) { throw notHosted("handleWindowContextWindowRemoval"); }
-    @Override public void handleSendResult(ActivityClientRecord r, List<ResultInfo> results, String reason) { throw notHosted("handleSendResult"); }
+    /** Pinned AOSP ActivityThread.deliverResults, retaining process-entry preparation and the
+     * virtual Activity dispatch that ActivityGroup uses for embedded child ids. */
+    private void deliverResults(ActivityClientRecord r, List<ResultInfo> results, String reason) {
+        for (ResultInfo result : results) {
+            try {
+                if (result.mData != null) {
+                    result.mData.setExtrasClassLoader(r.activity.getClassLoader());
+                    result.mData.prepareToEnterProcess(isProtectedComponent(r.activityInfo),
+                            r.activity.getAttributionSource());
+                }
+                if (android.security.Flags.contentUriPermissionApis()) {
+                    ComponentCaller caller = new ComponentCaller(r.token, result.mCallerToken);
+                    r.activity.dispatchActivityResult(result.mResultWho, result.mRequestCode,
+                            result.mResultCode, result.mData, caller, reason);
+                } else {
+                    r.activity.dispatchActivityResult(result.mResultWho, result.mRequestCode,
+                            result.mResultCode, result.mData, reason);
+                }
+            } catch (Exception e) {
+                if (!mInstrumentation.onException(r.activity, e)) {
+                    throw new RuntimeException("Failure delivering result " + result
+                            + " to activity " + r.intent + ": " + e, e);
+                }
+            }
+        }
+    }
+
+    /** Pinned AOSP ActivityThread.handleSendResult. A resumed activity receives a temporary
+     * pause/result/resume callback sequence without changing its transaction lifecycle state. */
+    @Override public void handleSendResult(ActivityClientRecord r, List<ResultInfo> results,
+            String reason) {
+        final boolean resumed = r.getLifecycleState()
+                == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME;
+        if (resumed) {
+            try {
+                r.activity.mCalled = false;
+                mInstrumentation.callActivityOnPause(r.activity);
+                if (!r.activity.mCalled) {
+                    throw new android.util.SuperNotCalledException(
+                            "Activity " + r.intent.getComponent().toShortString()
+                            + " did not call through to super.onPause()");
+                }
+            } catch (android.util.SuperNotCalledException e) {
+                throw e;
+            } catch (Exception e) {
+                if (!mInstrumentation.onException(r.activity, e)) {
+                    throw new RuntimeException("Unable to pause activity "
+                            + r.intent.getComponent().toShortString() + ": " + e, e);
+                }
+            }
+        }
+        deliverResults(r, results, reason);
+        if (resumed) r.activity.performResume();
+    }
     /** AOSP ActivityThread.handleNewIntent/deliverNewIntents. The caller owns lifecycle moves. */
     @Override public void handleNewIntent(ActivityClientRecord r, List<com.android.internal.content.ReferrerIntent> intents) {
         if (r == null || r.activity == null || intents == null || intents.isEmpty()) return;

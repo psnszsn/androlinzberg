@@ -6,6 +6,7 @@ import android.app.Activity
 import android.app.ActivityGroup
 import android.app.ActivityManager
 import android.app.ActivityThread
+import android.app.ComponentCaller
 import android.app.DownloadManager
 import android.app.GrammaticalInflectionManager
 import android.app.LocalActivityManager
@@ -14,7 +15,9 @@ import android.app.Person
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
+import android.app.ResultInfo
 import android.app.UiModeManager
+import android.content.AttributionSource
 import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
@@ -42,6 +45,7 @@ import android.net.InetAddresses
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Bundle
+import android.os.Binder
 import android.os.Handler
 import android.os.Looper
 import com.android.internal.pm.pkg.parsing.ParsingUtils
@@ -50,6 +54,7 @@ import android.os.ParcelFileDescriptor
 import android.os.Parcelable
 import android.os.StatFs
 import android.provider.Downloads
+import android.util.SuperNotCalledException
 import android.security.net.config.NetworkSecurityConfig
 import android.security.net.config.NetworkSecurityConfigProvider
 import android.security.net.config.Pin
@@ -112,6 +117,7 @@ internal object FrameworkModuleSmoke {
     private val legacyFragmentEvents = mutableListOf<String>()
     private val localActivityEvents = mutableListOf<String>()
     private val activityGroupEvents = mutableListOf<String>()
+    private val activityResultEvents = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
     private var expectedLocalActivityParent: Activity? = null
 
@@ -159,6 +165,7 @@ internal object FrameworkModuleSmoke {
         testHostedInputWindowRouting()
         testWindowPresentation()
         testLocalActivityManagerLifecycleAndRecreation()
+        testActivityThreadResultDelivery()
         testActivityGroupLifecycleStateAndResults()
         testLegacyFragmentTransactionsAndRecreation()
         testLegacyFragmentHostedResultsAndRetention()
@@ -2900,6 +2907,202 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private fun testActivityThreadResultDelivery() {
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        val activityName = ResultDeliveryActivity::class.java.name
+        val info = activityInfo(activityName).apply {
+            exported = false
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
+        }
+        val activity = ResultDeliveryActivity()
+        activity.attach(context, info)
+        activity.performCreate(null)
+        activity.performStart()
+        activity.performPostCreate(null)
+        activity.performResume()
+
+        val record = ActivityThread.ActivityClientRecord().apply {
+            token = Binder()
+            intent = Intent().setComponent(ComponentName("org.example", activityName))
+            activityInfo = info
+            this.activity = activity
+            setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+        }
+        val first = RecordingProcessIntent("first").apply {
+            putExtra("result-payload", "one")
+        }
+        val second = RecordingProcessIntent("second").apply {
+            putExtra("result-payload", "two")
+        }
+
+        activityResultEvents.clear()
+        ActivityThread.currentActivityThread().handleSendResult(
+            record,
+            listOf(
+                ResultInfo(null, 11, Activity.RESULT_OK, first, Binder()),
+                ResultInfo(null, 12, Activity.RESULT_CANCELED, second),
+            ),
+            "FrameworkModuleSmoke-resumed",
+        )
+        check(activityResultEvents == listOf(
+            "pause",
+            "result:first:11:${Activity.RESULT_OK}:one",
+            "result:second:12:${Activity.RESULT_CANCELED}:two",
+            "resume",
+        )) { "resumed Activity result ordering: $activityResultEvents" }
+        check(record.lifecycleState == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+        check(first.preparedForProcess && first.fromProtectedComponent)
+        check(second.preparedForProcess && second.fromProtectedComponent)
+        check(first.extras?.classLoader === activity.classLoader)
+        check(second.extras?.classLoader === activity.classLoader)
+
+        activity.performPause()
+        record.setState(android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE)
+        val paused = RecordingProcessIntent("paused").apply {
+            putExtra("result-payload", "three")
+        }
+        activityResultEvents.clear()
+        ActivityThread.currentActivityThread().handleSendResult(
+            record,
+            listOf(ResultInfo(null, 13, Activity.RESULT_OK, paused)),
+            "FrameworkModuleSmoke-paused",
+        )
+        check(activityResultEvents == listOf(
+            "result:paused:13:${Activity.RESULT_OK}:three",
+        )) { "paused Activity result ordering: $activityResultEvents" }
+        check(record.lifecycleState == android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE)
+        check(paused.preparedForProcess && paused.fromProtectedComponent)
+        check(paused.extras?.classLoader === activity.classLoader)
+
+        activity.performStop()
+        activity.performDestroy()
+
+        val callerAware = CallerAwareResultActivity()
+        callerAware.attach(context, info)
+        callerAware.performCreate(null)
+        callerAware.performStart()
+        callerAware.performPostCreate(null)
+        callerAware.performResume()
+        callerAware.performPause()
+        val callerRecord = ActivityThread.ActivityClientRecord().apply {
+            token = Binder()
+            intent = Intent().setComponent(ComponentName("org.example", activityName))
+            activityInfo = info
+            this.activity = callerAware
+            setState(android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE)
+        }
+
+        withContentUriPermissionApis(false) {
+            ActivityThread.currentActivityThread().handleSendResult(
+                callerRecord,
+                listOf(ResultInfo(null, 21, Activity.RESULT_OK, Intent(), Binder())),
+                "FrameworkModuleSmoke-caller-flag-off",
+            )
+        }
+        check(callerAware.callbackKinds == listOf("legacy"))
+        check(runCatching { callerAware.currentCaller }.exceptionOrNull()
+            is IllegalStateException)
+
+        callerAware.callbackKinds.clear()
+        val callerToken = Binder()
+        withContentUriPermissionApis(true) {
+            ActivityThread.currentActivityThread().handleSendResult(
+                callerRecord,
+                listOf(ResultInfo(null, 22, Activity.RESULT_OK, Intent(), callerToken)),
+                "FrameworkModuleSmoke-caller-flag-on",
+            )
+        }
+        check(callerAware.callbackKinds == listOf("caller"))
+        check(callerAware.observedCaller == ComponentCaller(callerRecord.token, callerToken))
+        check(callerAware.currentCallerMatchedCallback)
+        check(runCatching { callerAware.currentCaller }.exceptionOrNull()
+            is IllegalStateException)
+        check(callerRecord.lifecycleState ==
+            android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE)
+
+        callerAware.callbackKinds.clear()
+        val hostedDispatch = Activity::class.java.getDeclaredMethod(
+            "dispatchActivityResult",
+            String::class.java,
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+            Intent::class.java,
+        ).apply { isAccessible = true }
+        withContentUriPermissionApis(true) {
+            hostedDispatch.invoke(
+                callerAware,
+                null,
+                24,
+                Activity.RESULT_OK,
+                Intent(),
+            )
+        }
+        check(callerAware.callbackKinds == listOf("caller"))
+        check(callerAware.observedCaller == ComponentCaller(callerAware.activityToken, null))
+        check(callerAware.currentCallerMatchedCallback)
+        check(runCatching { callerAware.currentCaller }.exceptionOrNull()
+            is IllegalStateException)
+        callerAware.performStop()
+        callerAware.performDestroy()
+
+        val missingSuper = MissingSuperPauseActivity()
+        missingSuper.attach(context, info)
+        missingSuper.performCreate(null)
+        missingSuper.performStart()
+        missingSuper.performPostCreate(null)
+        missingSuper.performResume()
+        val missingSuperRecord = ActivityThread.ActivityClientRecord().apply {
+            token = Binder()
+            intent = Intent().setComponent(ComponentName("org.example", activityName))
+            activityInfo = info
+            this.activity = missingSuper
+            setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+        }
+        val missingSuperFailure = runCatching {
+            ActivityThread.currentActivityThread().handleSendResult(
+                missingSuperRecord,
+                listOf(ResultInfo(null, 23, Activity.RESULT_OK, Intent())),
+                "FrameworkModuleSmoke-missing-super",
+            )
+        }.exceptionOrNull()
+        check(missingSuperFailure is SuperNotCalledException) {
+            "missing super.onPause should fail directly: $missingSuperFailure"
+        }
+        check(missingSuper.pauseCalls == 1)
+        check(missingSuperRecord.lifecycleState ==
+            android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+        missingSuper.performStop()
+        missingSuper.performDestroy()
+    }
+
+    private fun <T> withContentUriPermissionApis(enabled: Boolean, block: () -> T): T {
+        val flags = android.security.Flags::class.java.getDeclaredField("FEATURE_FLAGS")
+        flags.isAccessible = true
+        val original = flags.get(null)
+        val replacement = java.lang.reflect.Proxy.newProxyInstance(
+            flags.type.classLoader,
+            arrayOf(flags.type),
+        ) { _, method, args ->
+            if (method.name == "contentUriPermissionApis") {
+                enabled
+            } else {
+                method.invoke(original, *(args ?: emptyArray()))
+            }
+        }
+        flags.set(null, replacement)
+        return try {
+            block()
+        } finally {
+            flags.set(null, original)
+        }
+    }
+
     private fun testActivityGroupLifecycleStateAndResults() {
         val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
@@ -3023,6 +3226,39 @@ internal object FrameworkModuleSmoke {
                 "group-child:post-create:saved",
                 "group-child:resume",
             )) { "ActivityGroup child restore ordering: $localActivityEvents" }
+
+            localActivityEvents.clear()
+            activityGroupEvents.clear()
+            val groupResult = RecordingProcessIntent("group-handler").apply {
+                putExtra("group-result", "transaction-delivered")
+            }
+            val groupRecord = ActivityThread.ActivityClientRecord().apply {
+                token = Binder()
+                intent = Intent().setComponent(ComponentName("org.example", groupName))
+                activityInfo = groupInfo
+                activity = restoredGroup
+                setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+            }
+            withContentUriPermissionApis(true) {
+                ActivityThread.currentActivityThread().handleSendResult(
+                    groupRecord,
+                    listOf(ResultInfo("group-child", 74, Activity.RESULT_OK, groupResult)),
+                    "FrameworkModuleSmoke-ActivityGroup",
+                )
+            }
+            check(groupRecord.lifecycleState ==
+                android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+            check(restoredChild.resultRequestCode == 74)
+            check(restoredChild.resultCode == Activity.RESULT_OK)
+            check(restoredChild.resultMarker == "transaction-delivered")
+            check(activityGroupEvents == listOf("group:pause", "group:resume"))
+            check(localActivityEvents == listOf(
+                "group-child:pause",
+                "group-child:result",
+                "group-child:resume",
+            )) { "ActivityGroup transaction result ordering: $localActivityEvents" }
+            check(groupResult.preparedForProcess && groupResult.fromProtectedComponent)
+            check(groupResult.extras?.classLoader === restoredGroup.classLoader)
             check(adapter.presentedActivities.none { it is ActivityGroupChildActivity }) {
                 "ActivityGroup child escaped into the desktop presentation stack"
             }
@@ -3570,6 +3806,75 @@ internal object FrameworkModuleSmoke {
         override fun onSaveInstanceState(outState: Bundle) {
             super.onSaveInstanceState(outState)
             outState.putString("fragment-marker", "saved")
+        }
+    }
+
+    class RecordingProcessIntent(val resultLabel: String) : Intent() {
+        var preparedForProcess = false
+            private set
+        var fromProtectedComponent = false
+            private set
+
+        override fun prepareToEnterProcess(
+            fromProtectedComponent: Boolean,
+            source: AttributionSource?,
+        ) {
+            preparedForProcess = true
+            this.fromProtectedComponent = fromProtectedComponent
+            super.prepareToEnterProcess(fromProtectedComponent, source)
+        }
+    }
+
+    class ResultDeliveryActivity : Activity() {
+        override fun onPause() {
+            activityResultEvents += "pause"
+            super.onPause()
+        }
+
+        override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+            val result = data as RecordingProcessIntent
+            activityResultEvents +=
+                "result:${result.resultLabel}:$requestCode:$resultCode:" +
+                result.getStringExtra("result-payload")
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+
+        override fun onResume() {
+            activityResultEvents += "resume"
+            super.onResume()
+        }
+    }
+
+    class CallerAwareResultActivity : Activity() {
+        val callbackKinds = mutableListOf<String>()
+        var observedCaller: ComponentCaller? = null
+            private set
+        var currentCallerMatchedCallback = false
+            private set
+
+        override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+            callbackKinds += "legacy"
+            check(runCatching { currentCaller }.exceptionOrNull() is IllegalStateException)
+        }
+
+        override fun onActivityResult(
+            requestCode: Int,
+            resultCode: Int,
+            data: Intent?,
+            caller: ComponentCaller,
+        ) {
+            callbackKinds += "caller"
+            observedCaller = caller
+            currentCallerMatchedCallback = currentCaller === caller
+        }
+    }
+
+    class MissingSuperPauseActivity : Activity() {
+        var pauseCalls = 0
+            private set
+
+        override fun onPause() {
+            pauseCalls++
         }
     }
 

@@ -49,6 +49,9 @@ public class Instrumentation {
 
     public void callApplicationOnCreate(Application app) { app.onCreate(); }
 
+    /** AOSP Instrumentation.callActivityOnPause delegates through Activity.performPause. */
+    public void callActivityOnPause(Activity activity) { activity.performPause(); }
+
     /** AOSP Instrumentation.ActivityResult. */
     public static final class ActivityResult {
         private final int mResultCode;

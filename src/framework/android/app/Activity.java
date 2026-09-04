@@ -39,6 +39,10 @@ public class Activity extends ContextWrapper implements Window.Callback,
     private Intent mResultData;
     private String mResultWho;
     private int mResultRequestCode = -1;
+    /** AOSP Activity.mCalled: lifecycle dispatchers verify required super calls through this bit. */
+    boolean mCalled;
+    /** Caller identity is visible only while a caller-aware result/new-intent callback runs. */
+    private ComponentCaller mCurrentCaller;
     static final class NonConfigurationInstances {
         Object activity;
         java.util.HashMap<String, Object> children;
@@ -178,6 +182,19 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public final boolean requestWindowFeature(int featureId) { return getWindow().requestFeature(featureId); }
     /** AOSP Activity.onActivityResult: results reach the activity through dispatchActivityResult. */
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {}
+    /** Flagged AOSP callback; the default preserves legacy three-argument overrides. */
+    public void onActivityResult(int requestCode, int resultCode, Intent data,
+            ComponentCaller caller) {
+        onActivityResult(requestCode, resultCode, data);
+    }
+    /** AOSP caller scope: valid only from a caller-aware onActivityResult/onNewIntent callback. */
+    public ComponentCaller getCurrentCaller() {
+        if (mCurrentCaller == null) {
+            throw new IllegalStateException("The caller is null because #getCurrentCaller should be"
+                    + " called within #onNewIntent or #onActivityResult methods");
+        }
+        return mCurrentCaller;
+    }
     public void startActivityForResult(Intent intent, int requestCode) { startActivityForResult(intent, requestCode, null); }
     public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
         if (mParent != null) {
@@ -246,15 +263,38 @@ public class Activity extends ContextWrapper implements Window.Callback,
     int getResultCode$artzig() { return mResultCode; }
     Intent getResultData$artzig() { return mResultData; }
     void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data) {
-        dispatchActivityResult(who, requestCode, resultCode, data, null,
+        ComponentCaller caller = android.security.Flags.contentUriPermissionApis()
+                ? new ComponentCaller(getActivityToken(), null) : null;
+        dispatchActivityResult(who, requestCode, resultCode, data, caller,
                 "HostedActivityRuntime");
+    }
+    /** Pinned AOSP compatibility overload used when caller identity is unavailable. */
+    void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data,
+            String reason) {
+        if (android.security.Flags.contentUriPermissionApis()) {
+            internalDispatchActivityResult(who, requestCode, resultCode, data,
+                    new ComponentCaller(getActivityToken(), null), reason);
+        } else {
+            internalDispatchActivityResult(who, requestCode, resultCode, data, null, reason);
+        }
     }
     /** AOSP result dispatch shape overridden by ActivityGroup for embedded child ids. */
     void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data,
             ComponentCaller caller, String reason) {
+        internalDispatchActivityResult(who, requestCode, resultCode, data, caller, reason);
+    }
+    /** Pinned AOSP Activity.internalDispatchActivityResult, reduced to hosted fragments. */
+    private void internalDispatchActivityResult(String who, int requestCode, int resultCode,
+            Intent data, ComponentCaller caller, String reason) {
         mFragments.noteStateNotSaved();
         if (who == null) {
-            onActivityResult(requestCode, resultCode, data);
+            if (android.security.Flags.contentUriPermissionApis()) {
+                mCurrentCaller = caller;
+                onActivityResult(requestCode, resultCode, data, caller);
+                mCurrentCaller = null;
+            } else {
+                onActivityResult(requestCode, resultCode, data);
+            }
             return;
         }
         Fragment fragment = mFragments.findFragmentByWho(who);
@@ -469,7 +509,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     protected void onStart() { mFragments.doLoaderStart(); }
     protected void onResume() {}
     protected void onPostResume() {}
-    protected void onPause() {}
+    protected void onPause() { mCalled = true; }
     protected void onStop() {}
     protected void onDestroy() {}
     /** AOSP Activity.onNewIntent; used when LocalActivityManager reuses a child activity. */
@@ -532,7 +572,14 @@ public class Activity extends ContextWrapper implements Window.Callback,
         if (app != null) app.dispatchActivityPrePaused(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPrePaused(this);
         mFragments.dispatchPause();
+        mCalled = false;
         onPause();
+        if (!mCalled && getApplicationInfo().targetSdkVersion
+                >= android.os.Build.VERSION_CODES.GINGERBREAD) {
+            throw new android.util.SuperNotCalledException(
+                    "Activity " + getComponentName().toShortString()
+                    + " did not call through to super.onPause()");
+        }
         if (app != null) app.dispatchActivityPaused(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPaused(this);
         if (app != null) app.dispatchActivityPostPaused(this);
