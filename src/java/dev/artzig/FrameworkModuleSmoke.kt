@@ -17,6 +17,10 @@ import android.app.PictureInPictureParams
 import android.app.RemoteAction
 import android.app.ResultInfo
 import android.app.UiModeManager
+import android.app.servertransaction.ActivityConfigurationChangeItem
+import android.app.servertransaction.ClientTransaction
+import android.app.servertransaction.ClientTransactionListenerController
+import android.app.servertransaction.PendingTransactionActions
 import android.content.AttributionSource
 import android.content.ComponentName
 import android.content.Context
@@ -84,6 +88,7 @@ import android.view.InputDevice
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.Gravity
+import android.view.Display
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -93,6 +98,7 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.WindowManagerImpl
 import android.view.ViewRootImpl
+import android.window.ActivityWindowInfo
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebViewClient
@@ -118,6 +124,8 @@ internal object FrameworkModuleSmoke {
     private val localActivityEvents = mutableListOf<String>()
     private val activityGroupEvents = mutableListOf<String>()
     private val activityResultEvents = mutableListOf<String>()
+    private val activityConfigurationEvents = mutableListOf<String>()
+    private val changingConfigurationEvents = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
     private var expectedLocalActivityParent: Activity? = null
 
@@ -166,6 +174,7 @@ internal object FrameworkModuleSmoke {
         testWindowPresentation()
         testLocalActivityManagerLifecycleAndRecreation()
         testActivityThreadResultDelivery()
+        testActivityThreadConfigurationChange()
         testActivityGroupLifecycleStateAndResults()
         testLegacyFragmentTransactionsAndRecreation()
         testLegacyFragmentHostedResultsAndRetention()
@@ -3103,6 +3112,278 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private fun testActivityThreadConfigurationChange() {
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        val activityName = ConfigurationDispatchActivity::class.java.name
+        val missingSuperName = MissingSuperConfigurationActivity::class.java.name
+        val info = activityInfo(activityName).apply {
+            // ActivityConfigurationChangeItem means the server has already selected the handled
+            // callback path; ActivityThread must not second-guess it from this local mask.
+            configChanges = 0
+        }
+        val missingSuperInfo = activityInfo(missingSuperName)
+        ActivityThread.configureActivityHost(
+            LocalActivityHostAdapter(context),
+            mapOf(activityName to info, missingSuperName to missingSuperInfo),
+        )
+
+        val thread = ActivityThread.currentActivityThread()
+        val windowInfoEvents = mutableListOf<Pair<android.os.IBinder, ActivityWindowInfo>>()
+        val windowInfoListener = java.util.function.BiConsumer<android.os.IBinder, ActivityWindowInfo> {
+                token, windowInfo ->
+            windowInfoEvents += token to ActivityWindowInfo(windowInfo)
+        }
+        ClientTransactionListenerController.getInstance()
+            .registerActivityWindowInfoChangedListener(windowInfoListener)
+        var record: ActivityThread.ActivityClientRecord? = null
+        var missingSuperRecord: ActivityThread.ActivityClientRecord? = null
+        var configurationActivity: ConfigurationDispatchActivity? = null
+        val application = checkNotNull(ActivityThread.currentApplication())
+        val applicationCallback = configurationLifecycleCallback("application-callback")
+        val activityCallback = configurationLifecycleCallback("activity-callback")
+        application.registerActivityLifecycleCallbacks(applicationCallback)
+        try {
+            val token = Binder()
+            val activity = thread.startActivityNow(
+                null,
+                "configuration",
+                Intent().setComponent(ComponentName("org.example", activityName)),
+                info,
+                token,
+                null,
+                null,
+                Binder(),
+                null,
+            ) as ConfigurationDispatchActivity
+            configurationActivity = activity
+            activity.registerActivityLifecycleCallbacks(activityCallback)
+            record = checkNotNull(thread.getActivityClient(token))
+            thread.handleStartActivity(
+                record,
+                PendingTransactionActions().apply { setCallOnPostCreate(true) },
+                null,
+            )
+            check(thread.performResumeActivity(record, false, "configuration-smoke"))
+            val lifecycleState = record.lifecycleState
+            val initialOrientation = activity.resources.configuration.orientation
+            val targetOrientation = if (initialOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+                Configuration.ORIENTATION_PORTRAIT
+            } else {
+                Configuration.ORIENTATION_LANDSCAPE
+            }
+            val older = Configuration().apply {
+                orientation = targetOrientation
+                fontScale = 1.25f
+                seq = 100
+            }
+            val newer = Configuration(older).apply {
+                fontScale = 1.5f
+                seq = 101
+            }
+            val olderWindowInfo = ActivityWindowInfo().apply {
+                set(false, Rect(0, 0, 100, 100), Rect(0, 0, 100, 100))
+            }
+            val newerWindowInfo = ActivityWindowInfo().apply {
+                set(true, Rect(0, 0, 300, 200), Rect(20, 10, 280, 190))
+            }
+
+            activityConfigurationEvents.clear()
+            val transaction = ClientTransaction().apply {
+                addTransactionItem(
+                    ActivityConfigurationChangeItem(token, older, olderWindowInfo),
+                )
+                addTransactionItem(
+                    ActivityConfigurationChangeItem(token, newer, newerWindowInfo),
+                )
+            }
+            thread.executeTransaction(transaction)
+            check(activityConfigurationEvents == listOf(
+                "config",
+                "application-callback",
+                "activity-callback",
+            )) {
+                "configuration transaction did not coalesce to its newest item: " +
+                    activityConfigurationEvents
+            }
+            check(activity.callbackConfiguration?.orientation == targetOrientation)
+            check(activity.callbackConfiguration?.fontScale == 1.5f)
+            check(activity.resourcesMatchedDuringCallback) {
+                "Activity Resources were not updated before onConfigurationChanged"
+            }
+            check(record.lifecycleState == lifecycleState)
+            check(record.activityWindowInfo == newerWindowInfo)
+            check(record.activityWindowInfo != olderWindowInfo)
+            check(windowInfoEvents == listOf(token to newerWindowInfo))
+            newerWindowInfo.set(false, Rect(), Rect())
+            check(record.activityWindowInfo?.isEmbedded == true) {
+                "ActivityClientRecord retained the transaction's mutable window-info instance"
+            }
+            check(windowInfoEvents.single().second.isEmbedded) {
+                "window-info listener retained the transaction's mutable instance"
+            }
+
+            val sameWindowConfig = Configuration(newer).apply { seq = 102 }
+            val sameWindowInfo = ActivityWindowInfo(checkNotNull(record.activityWindowInfo))
+            thread.handleActivityConfigurationChanged(
+                record,
+                sameWindowConfig,
+                Display.INVALID_DISPLAY,
+                sameWindowInfo,
+            )
+            check(activityConfigurationEvents == listOf(
+                "config",
+                "application-callback",
+                "activity-callback",
+            )) {
+                "equivalent override spuriously dispatched a configuration callback"
+            }
+            check(windowInfoEvents.size == 1) {
+                "unchanged ActivityWindowInfo was dispatched again"
+            }
+            check(record.lifecycleState == lifecycleState)
+
+            val changedWindowConfig = Configuration(newer).apply { seq = 103 }
+            val changedWindowInfo = ActivityWindowInfo().apply {
+                set(false, Rect(0, 0, 640, 480), Rect(0, 0, 640, 480))
+            }
+            thread.handleActivityConfigurationChanged(
+                record,
+                changedWindowConfig,
+                Display.INVALID_DISPLAY,
+                changedWindowInfo,
+            )
+            check(activityConfigurationEvents == listOf(
+                "config",
+                "application-callback",
+                "activity-callback",
+            ))
+            check(record.lifecycleState == lifecycleState)
+            check(record.activityWindowInfo == changedWindowInfo)
+            check(windowInfoEvents == listOf(
+                token to sameWindowInfo,
+                token to changedWindowInfo,
+            ))
+
+            val unavailableDisplayFailure = runCatching {
+                thread.handleActivityConfigurationChanged(
+                    record,
+                    Configuration(newer).apply { seq = 104 },
+                    7,
+                    olderWindowInfo,
+                )
+            }.exceptionOrNull()
+            check(unavailableDisplayFailure is UnsupportedOperationException) {
+                "non-default display update should fail at the hosted display boundary: " +
+                    unavailableDisplayFailure
+            }
+            check(record.activityWindowInfo == changedWindowInfo)
+            check(record.lifecycleState == lifecycleState)
+
+            // Once seq=103 is installed, an older non-move update is dropped with all its state.
+            thread.handleActivityConfigurationChanged(
+                record,
+                older,
+                Display.INVALID_DISPLAY,
+                olderWindowInfo,
+            )
+            check(activityConfigurationEvents == listOf(
+                "config",
+                "application-callback",
+                "activity-callback",
+            ))
+            check(record.activityWindowInfo == changedWindowInfo)
+            check(windowInfoEvents.size == 2)
+
+            val missingToken = Binder()
+            val missingSuper = thread.startActivityNow(
+                null,
+                "configuration-missing-super",
+                Intent().setComponent(ComponentName("org.example", missingSuperName)),
+                missingSuperInfo,
+                missingToken,
+                null,
+                null,
+                Binder(),
+                null,
+            ) as MissingSuperConfigurationActivity
+            missingSuperRecord = checkNotNull(thread.getActivityClient(missingToken))
+            thread.handleStartActivity(
+                missingSuperRecord,
+                PendingTransactionActions().apply { setCallOnPostCreate(true) },
+                null,
+            )
+            check(thread.performResumeActivity(
+                missingSuperRecord,
+                false,
+                "configuration-missing-super",
+            ))
+            val missingLifecycleState = missingSuperRecord.lifecycleState
+            val missingTarget = if (
+                missingSuper.resources.configuration.orientation ==
+                    Configuration.ORIENTATION_LANDSCAPE
+            ) {
+                Configuration.ORIENTATION_PORTRAIT
+            } else {
+                Configuration.ORIENTATION_LANDSCAPE
+            }
+            val missingConfig = Configuration().apply {
+                orientation = missingTarget
+                seq = 200
+            }
+            val failure = runCatching {
+                ClientTransaction().apply {
+                    addTransactionItem(
+                        ActivityConfigurationChangeItem(
+                            missingToken,
+                            missingConfig,
+                            ActivityWindowInfo(),
+                        ),
+                    )
+                }.also(thread::executeTransaction)
+            }.exceptionOrNull()
+            check(failure is SuperNotCalledException) {
+                "missing super.onConfigurationChanged should fail directly: $failure"
+            }
+            check(missingSuper.resourcesOrientationDuringCallback == missingTarget) {
+                "Resources update did not precede the failing configuration callback"
+            }
+            check(missingSuperRecord.lifecycleState == missingLifecycleState)
+        } finally {
+            configurationActivity?.unregisterActivityLifecycleCallbacks(activityCallback)
+            application.unregisterActivityLifecycleCallbacks(applicationCallback)
+            ClientTransactionListenerController.getInstance()
+                .unregisterActivityWindowInfoChangedListener(windowInfoListener)
+            missingSuperRecord?.let {
+                thread.handleDestroyActivity(it, true, false, "configuration-smoke-cleanup")
+            }
+            record?.let {
+                thread.handleDestroyActivity(it, true, false, "configuration-smoke-cleanup")
+            }
+            ActivityThread.shutdownActivitiesInProcess()
+        }
+    }
+
+    private fun configurationLifecycleCallback(label: String) =
+        object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityResumed(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+
+            override fun onActivityConfigurationChanged(activity: Activity) {
+                activityConfigurationEvents += label
+            }
+        }
+
     private fun testActivityGroupLifecycleStateAndResults() {
         val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
@@ -3273,19 +3554,37 @@ internal object FrameworkModuleSmoke {
         createdThemeResIds.clear()
         val firstName = FirstActivity::class.java.name
         val secondName = SecondActivity::class.java.name
+        val missingConfigurationSuperName = HostedMissingSuperConfigurationActivity::class.java.name
         val firstInfo = activityInfo(firstName).apply {
-            configChanges = ActivityInfo.CONFIG_SCREEN_SIZE
+            configChanges = 0
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION_CODES.HONEYCOMB
             theme = 0x7f012345
         }
         val secondInfo = activityInfo(secondName).apply {
             applicationInfo.theme = 0x7f012346
         }
+        val missingConfigurationSuperInfo = activityInfo(missingConfigurationSuperName).apply {
+            configChanges = ActivityInfo.CONFIG_SCREEN_SIZE
+        }
         val adapter = RecordingHostAdapter()
 
         ActivityThread.configureActivityHost(
             adapter,
-            mapOf(firstName to firstInfo, secondName to secondInfo),
+            mapOf(
+                firstName to firstInfo,
+                secondName to secondInfo,
+                missingConfigurationSuperName to missingConfigurationSuperInfo,
+            ),
         )
+        val application = checkNotNull(ActivityThread.currentApplication())
+        val applicationConfigurationCallback = object : android.content.ComponentCallbacks {
+            override fun onConfigurationChanged(newConfig: Configuration) {
+                events += "application:config"
+            }
+
+            override fun onLowMemory() = Unit
+        }
+        application.registerComponentCallbacks(applicationConfigurationCallback)
         try {
             val first = ActivityThread.launchMainActivity(firstName)
             check(events == listOf("first:create", "first:start", "first:resume", "show:first")) {
@@ -3344,23 +3643,42 @@ internal object FrameworkModuleSmoke {
             adapter.implicitActivity = null
 
             val handledConfiguration = Configuration().apply { setToDefaults() }
+            check(firstInfo.configChanges and ActivityInfo.CONFIG_SCREEN_SIZE == 0)
+            check(firstInfo.getRealConfigChanged() and ActivityInfo.CONFIG_SCREEN_SIZE != 0) {
+                "pre-HONEYCOMB_MR2 ActivityInfo omitted the implicit screen-size change"
+            }
             ActivityThread.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_SCREEN_SIZE,
                 600,
                 900,
             )
-            check(events.takeLast(2) == listOf("resize:first:600x900", "first:config")) {
+            check(events.takeLast(3) == listOf(
+                "application:config",
+                "resize:first:600x900",
+                "first:config",
+            )) {
                 "handled configuration ordering: $events"
             }
+            check(first.changingConfigurations == 0)
 
             first.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            changingConfigurationEvents.clear()
+            val relaunchEventStart = events.size
             ActivityThread.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_ORIENTATION,
                 900,
                 600,
             )
+            val relaunchEvents = events.drop(relaunchEventStart)
+            check(relaunchEvents.firstOrNull() == "application:config") {
+                "Application configuration callback did not precede relaunch: $relaunchEvents"
+            }
+            check(relaunchEvents.indexOf("application:config") < relaunchEvents.indexOf("first:save")) {
+                "Application configuration callback did not precede Activity teardown: " +
+                    relaunchEvents
+            }
             check(ActivityThread.currentActivity() !== first)
             check(events.contains("first:save"))
             check(events.takeLast(5) == listOf(
@@ -3374,6 +3692,17 @@ internal object FrameworkModuleSmoke {
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
                 "configuration relaunch lost the activity's requested orientation"
             }
+            check(changingConfigurationEvents == listOf(
+                "first:stop:${ActivityInfo.CONFIG_ORIENTATION}",
+                "first:destroy:${ActivityInfo.CONFIG_ORIENTATION}",
+            )) { "configuration relaunch did not expose its change mask during teardown" }
+
+            changingConfigurationEvents.clear()
+            checkNotNull(ActivityThread.currentActivity()).recreate()
+            check(changingConfigurationEvents == listOf(
+                "first:stop:0",
+                "first:destroy:0",
+            )) { "explicit Activity.recreate inherited a configuration-change mask" }
 
             events.clear()
             checkNotNull(ActivityThread.currentActivity()).finish()
@@ -3384,8 +3713,34 @@ internal object FrameworkModuleSmoke {
                 "first:destroy",
                 "clear",
             )) { "last Activity finish ordering: $events" }
+
+            events.clear()
+            check(!ActivityThread.applyConfigurationInProcess(
+                handledConfiguration,
+                ActivityInfo.CONFIG_ORIENTATION,
+                640,
+                480,
+            ))
+            check(events == listOf("application:config")) {
+                "process configuration was not dispatched without a current Activity: $events"
+            }
+
+            ActivityThread.launchMainActivity(missingConfigurationSuperName)
+            val hostedMissingSuperFailure = runCatching {
+                ActivityThread.applyConfigurationInProcess(
+                    handledConfiguration,
+                    ActivityInfo.CONFIG_SCREEN_SIZE,
+                    600,
+                    900,
+                )
+            }.exceptionOrNull()
+            check(hostedMissingSuperFailure is SuperNotCalledException) {
+                "hosted handled configuration accepted a missing super call: " +
+                    hostedMissingSuperFailure
+            }
         } finally {
             ActivityThread.shutdownActivitiesInProcess()
+            application.unregisterComponentCallbacks(applicationConfigurationCallback)
         }
     }
 
@@ -3878,6 +4233,30 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    class ConfigurationDispatchActivity : Activity() {
+        var callbackConfiguration: Configuration? = null
+            private set
+        var resourcesMatchedDuringCallback = false
+            private set
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            activityConfigurationEvents += "config"
+            callbackConfiguration = Configuration(newConfig)
+            resourcesMatchedDuringCallback =
+                resources.configuration.orientation == newConfig.orientation &&
+                    resources.configuration.fontScale == newConfig.fontScale
+            super.onConfigurationChanged(newConfig)
+        }
+    }
+
+    class MissingSuperConfigurationActivity : Activity() {
+        var resourcesOrientationDuringCallback = Configuration.ORIENTATION_UNDEFINED
+            private set
+
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            resourcesOrientationDuringCallback = resources.configuration.orientation
+        }
+    }
+
     class RecordingActivityGroup : ActivityGroup() {
         override fun onCreate(savedInstanceState: Bundle?) {
             activityGroupEvents += if (savedInstanceState?.getString("group-state") == "saved") {
@@ -4071,11 +4450,13 @@ internal object FrameworkModuleSmoke {
 
         override fun onStop() {
             events += "$activityLabel:stop"
+            changingConfigurationEvents += "$activityLabel:stop:$changingConfigurations"
             super.onStop()
         }
 
         override fun onDestroy() {
             events += "$activityLabel:destroy"
+            changingConfigurationEvents += "$activityLabel:destroy:$changingConfigurations"
             super.onDestroy()
         }
 
@@ -4099,4 +4480,9 @@ internal object FrameworkModuleSmoke {
 
     class FirstActivity : RecordingActivity("first")
     class SecondActivity : RecordingActivity("second")
+    class HostedMissingSuperConfigurationActivity : RecordingActivity("missing-config") {
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            events += "missing-config:config"
+        }
+    }
 }

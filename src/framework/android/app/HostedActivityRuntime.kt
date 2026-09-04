@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
 import android.util.Log
+import android.util.SuperNotCalledException
 import java.util.ArrayDeque
 
 /**
@@ -162,18 +163,39 @@ object HostedActivityRuntime {
         width: Int,
         height: Int,
     ): Boolean {
+        // ActivityThread has already updated process Resources before entering this hosted seam.
+        // Pinned ActivityThread dispatches the process/Application callback even when there is no
+        // foreground Activity, and before deciding whether that Activity handles or relaunches.
+        if (changes != 0) {
+            ActivityThread.currentApplication()?.onConfigurationChanged(configuration)
+        }
         val activity = current ?: return false
-        val handled = activities[activity.javaClass.name]?.configChanges
-            ?: activity.activityInfo.configChanges
+        // ActivityInfo.getRealConfigChanged() includes the compatibility changes that the
+        // platform implicitly grants to old-target applications (notably screen-size changes
+        // before HONEYCOMB_MR2). Relaunch decisions must use that effective mask rather than the
+        // raw manifest field.
+        val handled = activities[activity.javaClass.name]?.getRealConfigChanged()
+            ?: activity.activityInfo.getRealConfigChanged()
         val unhandled = changes and handled.inv()
         if (unhandled != 0) {
+            // Pinned ActivityThread relaunch plumbing exposes the complete pending mask through
+            // Activity.getChangingConfigurations() during teardown of the old instance.
+            activity.mConfigChangeFlags = activity.mConfigChangeFlags or changes
             recreateActivity(activity)
             return true
         }
         requireHost().resizeActivityRoot(activity, width, height)
         if (changes != 0) {
-            ActivityThread.currentApplication()?.onConfigurationChanged(configuration)
+            activity.mConfigChangeFlags = 0
+            activity.mCalled = false
+            activity.mCurrentConfig = Configuration(configuration)
             activity.onConfigurationChanged(configuration)
+            if (!activity.mCalled) {
+                throw SuperNotCalledException(
+                    "Activity ${activity.localClassName} did not call through to " +
+                        "super.onConfigurationChanged()",
+                )
+            }
         }
         return false
     }

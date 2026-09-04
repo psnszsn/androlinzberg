@@ -43,6 +43,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
     boolean mCalled;
     /** Caller identity is visible only while a caller-aware result/new-intent callback runs. */
     private ComponentCaller mCurrentCaller;
+    /** AOSP configuration cached for deciding and reporting handled configuration changes. */
+    Configuration mCurrentConfig = new Configuration();
+    int mConfigChangeFlags;
     static final class NonConfigurationInstances {
         Object activity;
         java.util.HashMap<String, Object> children;
@@ -77,6 +80,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         if (base instanceof ContextImpl) ((ContextImpl) base).setOuterContext(this);
         mFragments.attachHost(null);
         mActivityInfo = activityInfo != null ? new ActivityInfo(activityInfo) : new ActivityInfo();
+        mCurrentConfig = new Configuration(base.getResources().getConfiguration());
         mRequestedOrientation = mActivityInfo.screenOrientation;
         mParent = parent;
         mEmbeddedID = id;
@@ -154,6 +158,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         mRequestedOrientation = requestedOrientation;
     }
     public int getRequestedOrientation() { return mRequestedOrientation; }
+    public int getChangingConfigurations() { return mConfigChangeFlags; }
     public void setVolumeControlStream(int streamType) {}
     public int getVolumeControlStream() { return 3; }
     public void invalidateOptionsMenu() {}
@@ -688,11 +693,25 @@ public class Activity extends ContextWrapper implements Window.Callback,
         finish();
     }
     public void onConfigurationChanged(Configuration newConfig) {
+        mCalled = true;
         mFragments.dispatchConfigurationChanged(newConfig);
         if (mWindow != null) {
             mWindow.onConfigurationChanged(newConfig);
         }
+        Application app = appOrNull();
+        if (app != null) app.dispatchActivityConfigurationChanged(this);
+        for (Application.ActivityLifecycleCallbacks callback : collectLifecycleCallbacks()) {
+            callback.onActivityConfigurationChanged(this);
+        }
+        // Stock Activity next dispatches its ComponentCallbacksController. Activity-level
+        // registerComponentCallbacks remains a separate hosted gap, so this seam stops here.
     }
+    /** AOSP Activity display-move dispatch; ContextWrapper updates the activity base context. */
+    final void dispatchMovedToDisplay(int displayId, Configuration config) {
+        updateDisplay(displayId);
+        onMovedToDisplay(displayId, config);
+    }
+    public void onMovedToDisplay(int displayId, Configuration config) {}
     public void onLowMemory() { mFragments.dispatchLowMemory(); }
     public void onTrimMemory(int level) { mFragments.dispatchTrimMemory(level); }
     public void onCreateContextMenu(android.view.ContextMenu menu, View view,

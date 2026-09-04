@@ -612,7 +612,8 @@ public final class ActivityThread extends ClientTransactionHandler {
             r.packageInfo = info.applicationInfo != null && info.applicationInfo.sourceDir != null
                     ? getPackageInfoNoCheck(info.applicationInfo, mCompatibilityInfo)
                     : getSystemContext().mPackageInfo;
-            final ContextImpl activityContext = createActivityContext(info, r.packageInfo, r.token);
+            final ContextImpl activityContext = createActivityContext(
+                    info, r.packageInfo, r.token, r.overrideConfig);
             final ClassLoader hostedClassLoader = HostedActivityRuntime.activityClassLoaderOrNull();
             final ClassLoader classLoader = hostedClassLoader != null
                     ? hostedClassLoader : activityContext.getClassLoader();
@@ -751,6 +752,8 @@ public final class ActivityThread extends ClientTransactionHandler {
     private final android.app.servertransaction.TransactionExecutor mTransactionExecutor =
             new android.app.servertransaction.TransactionExecutor(this);
     final ArrayMap<IBinder, ActivityClientRecord> mActivities = new ArrayMap<>();
+    /** Pinned AOSP ordering guard populated by configuration transaction preExecute. */
+    private final ArrayMap<IBinder, Configuration> mPendingOverrideConfigs = new ArrayMap<>();
     @Override android.app.servertransaction.TransactionExecutor getTransactionExecutor() { return mTransactionExecutor; }
     @Override void sendMessage(int what, Object obj) {
         if (what == H.EXECUTE_TRANSACTION) {
@@ -793,8 +796,91 @@ public final class ActivityThread extends ClientTransactionHandler {
         if (start) r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_START);
     }
     @Override public void reportRefresh(ActivityClientRecord r) { throw notHosted("reportRefresh"); }
-    @Override public void updatePendingActivityConfiguration(IBinder token, Configuration overrideConfig) { throw notHosted("updatePendingActivityConfiguration"); }
-    @Override public void handleActivityConfigurationChanged(ActivityClientRecord r, Configuration overrideConfig, int displayId, android.window.ActivityWindowInfo activityWindowInfo) { throw notHosted("handleActivityConfigurationChanged"); }
+    @Override public void updatePendingActivityConfiguration(IBinder token,
+            Configuration overrideConfig) {
+        synchronized (mPendingOverrideConfigs) {
+            final Configuration pendingOverrideConfig = mPendingOverrideConfigs.get(token);
+            if (pendingOverrideConfig != null
+                    && !pendingOverrideConfig.isOtherSeqNewer(overrideConfig)) {
+                return;
+            }
+            mPendingOverrideConfigs.put(token, overrideConfig);
+        }
+    }
+    /** Pinned AOSP ActivityThread.handleActivityConfigurationChanged, bounded at the hosted
+     * ResourcesManager/Activity boundary. The hosted ViewRootImpl deliberately has no per-root
+     * configuration callbacks; presentation resizing remains owned by HostAdapter. The server-side
+     * relaunch decision has already selected this path, so a public delta is always reported. */
+    @Override public void handleActivityConfigurationChanged(ActivityClientRecord r,
+            Configuration overrideConfig, int displayId,
+            android.window.ActivityWindowInfo activityWindowInfo) {
+        final android.app.servertransaction.ClientTransactionListenerController controller =
+                android.app.servertransaction.ClientTransactionListenerController.getInstance();
+        controller.onContextConfigurationPreChanged(r.activity);
+        try {
+            handleActivityConfigurationChangedInner(
+                    r, overrideConfig, displayId, activityWindowInfo);
+        } finally {
+            controller.onContextConfigurationPostChanged(r.activity);
+        }
+    }
+
+    private void handleActivityConfigurationChangedInner(ActivityClientRecord r,
+            Configuration overrideConfig, int displayId,
+            android.window.ActivityWindowInfo activityWindowInfo) {
+        synchronized (mPendingOverrideConfigs) {
+            final Configuration pendingOverrideConfig = mPendingOverrideConfigs.get(r.token);
+            if (overrideConfig.isOtherSeqNewer(pendingOverrideConfig)) {
+                return;
+            }
+            mPendingOverrideConfigs.remove(r.token);
+        }
+        if (displayId == android.view.Display.INVALID_DISPLAY) {
+            displayId = r.activity.getDisplayId();
+        }
+        if (displayId != android.view.Display.DEFAULT_DISPLAY) {
+            throw new UnsupportedOperationException(
+                    "Hosted activities cannot move to unavailable display " + displayId);
+        }
+        final boolean movedToDifferentDisplay = r.activity.getDisplayId() != displayId;
+        if (r.overrideConfig != null && !r.overrideConfig.isOtherSeqNewer(overrideConfig)
+                && !movedToDifferentDisplay) {
+            return;
+        }
+
+        r.overrideConfig = overrideConfig;
+        r.mActivityWindowInfo.set(activityWindowInfo);
+        r.activityWindowInfo = r.mActivityWindowInfo;
+
+        r.tmpConfig.setTo(ResourcesManager.getInstance().getConfiguration());
+        r.tmpConfig.updateFrom(overrideConfig);
+        final Configuration newConfig = new Configuration(r.tmpConfig);
+        final boolean shouldReportChange = r.activity.mCurrentConfig.diffPublicOnly(newConfig) != 0;
+
+        // AOSP requires token-scoped Resources to observe the new values before either callback.
+        ResourcesManager.getInstance().updateResourcesForActivity(
+                r.token, overrideConfig, displayId);
+
+        if (movedToDifferentDisplay) {
+            r.activity.dispatchMovedToDisplay(displayId, newConfig);
+        }
+        r.activity.mConfigChangeFlags = 0;
+        if (shouldReportChange) {
+            r.activity.mCalled = false;
+            r.activity.mCurrentConfig = new Configuration(newConfig);
+            r.activity.onConfigurationChanged(newConfig);
+            if (!r.activity.mCalled) {
+                throw new android.util.SuperNotCalledException("Activity "
+                        + r.activity.getLocalClassName()
+                        + " did not call through to super.onConfigurationChanged()");
+            }
+        }
+        if (!r.mActivityWindowInfo.equals(r.mLastReportedActivityWindowInfo)) {
+            r.mLastReportedActivityWindowInfo.set(r.mActivityWindowInfo);
+            android.app.servertransaction.ClientTransactionListenerController.getInstance()
+                    .onActivityWindowInfoChanged(r.token, r.mActivityWindowInfo);
+        }
+    }
     @Override public void handleWindowContextInfoChanged(IBinder clientToken, android.window.WindowContextInfo info) { throw notHosted("handleWindowContextInfoChanged"); }
     @Override public void handleWindowContextWindowRemoval(IBinder clientToken) { throw notHosted("handleWindowContextWindowRemoval"); }
     /** Pinned AOSP ActivityThread.deliverResults, retaining process-entry preparation and the
@@ -914,14 +1000,20 @@ public final class ActivityThread extends ClientTransactionHandler {
         public Activity.NonConfigurationInstances lastNonConfigurationInstances;
         public IBinder assistToken;
         public IBinder shareableActivityToken;
+        public Configuration overrideConfig;
+        final Configuration tmpConfig = new Configuration();
         private int mLifecycleState = android.app.servertransaction.ActivityLifecycleItem.PRE_ON_CREATE;
         public android.window.ActivityWindowInfo activityWindowInfo;
-        public android.window.ActivityWindowInfo mActivityWindowInfo = new android.window.ActivityWindowInfo();
+        public final android.window.ActivityWindowInfo mActivityWindowInfo =
+                new android.window.ActivityWindowInfo();
+        final android.window.ActivityWindowInfo mLastReportedActivityWindowInfo =
+                new android.window.ActivityWindowInfo();
         public ActivityClientRecord() {}
         public ActivityClientRecord(IBinder token, Intent intent, int ident, ActivityInfo info, Configuration overrideConfig, String referrer, com.android.internal.app.IVoiceInteractor voiceInteractor, Bundle state, android.os.PersistableBundle persistentState, List<ResultInfo> pendingResults, List<com.android.internal.content.ReferrerIntent> pendingNewIntents, ActivityOptions.SceneTransitionInfo sceneTransitionInfo, boolean isForward, ProfilerInfo profilerInfo, ClientTransactionHandler client, IBinder assistToken, IBinder shareableActivityToken, boolean launchedFromBubble, IBinder taskFragmentToken, IBinder initialCallerInfoAccessToken, android.window.ActivityWindowInfo activityWindowInfo) {
             this.token = token; this.intent = intent; this.activityInfo = info; this.state = state; this.isForward = isForward;
+            this.overrideConfig = overrideConfig;
             this.activityWindowInfo = activityWindowInfo;
-            if (activityWindowInfo != null) this.mActivityWindowInfo = activityWindowInfo;
+            if (activityWindowInfo != null) this.mActivityWindowInfo.set(activityWindowInfo);
         }
         public int getLifecycleState() { return mLifecycleState; }
         public void setState(int newLifecycleState) { mLifecycleState = newLifecycleState; }
@@ -949,12 +1041,12 @@ public final class ActivityThread extends ClientTransactionHandler {
         LoadedApk packageInfo = info.applicationInfo != null && info.applicationInfo.sourceDir != null
                 ? getPackageInfoNoCheck(info.applicationInfo, mCompatibilityInfo)
                 : getSystemContext().mPackageInfo;
-        return createActivityContext(info, packageInfo, new android.os.Binder());
+        return createActivityContext(info, packageInfo, new android.os.Binder(), null);
     }
     private ContextImpl createActivityContext(ActivityInfo info, LoadedApk packageInfo,
-            IBinder token) {
+            IBinder token, Configuration overrideConfig) {
         return ContextImpl.createActivityContext(this, packageInfo, info, token,
-                android.view.Display.DEFAULT_DISPLAY, null);
+                android.view.Display.DEFAULT_DISPLAY, overrideConfig);
     }
     public static Activity launchMainActivity(String activityClassName) { return HostedActivityRuntime.launchMain(activityClassName); }
     public static Activity currentActivity() { return HostedActivityRuntime.currentActivity(); }
