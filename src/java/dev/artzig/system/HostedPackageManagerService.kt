@@ -324,6 +324,16 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     fun getPackageUidInternal(packageName: String): Int =
         synchronized(lock) { packages[packageName]?.appId ?: -1 }
 
+    /** Hosted identity map used by PackageManagerInternal.isSameApp. */
+    fun isSameAppInternal(packageName: String?, uid: Int): Boolean {
+        if (uid == Process.SYSTEM_UID) return true
+        // Test peers and a standalone system Context have no attach record.
+        // Preserve the hosted boundary: reject contradictory registered
+        // claims, while an as-yet-unregistered uid cannot be disproved.
+        val owned = getPackagesForUid(uid)
+        return owned.isNullOrEmpty() || owned.contains(packageName)
+    }
+
     /** First match for a service intent (activity manager's bind/start path). */
     fun resolveServiceInfo(intent: Intent): ServiceInfo? =
         resolveService(intent, intent.type, 0L, 0)?.serviceInfo

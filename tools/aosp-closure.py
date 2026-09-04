@@ -52,6 +52,11 @@ BOOT_PREFIXES = (
     "android.annotation.",  # libcore core-all carries the framework annotations (tools/make-core-plus.sh)
 )
 
+# Most android.system classes come from libcore, but keystore2 is an AIDL
+# module generated from system/hardware/interfaces. Treating the whole
+# namespace as boot-provided hid that generated dependency from closures.
+BOOT_PREFIX_EXCEPTIONS = ("android.system.keystore2.",)
+
 # Checkout directories that never hold framework sources worth indexing.
 SKIP_DIRS = {
     ".git", ".repo", "out", "tests", "test", "androidTest", "benchmarks", "ravenwood",
@@ -77,6 +82,13 @@ AIDL_ROOTS = (
     "frameworks/base/telecomm/java",
     "frameworks/base/mms/java",
     "hardware/interfaces/gnss/aidl",
+    "hardware/interfaces/biometrics/common/aidl",
+    "hardware/interfaces/biometrics/face/aidl",
+    "hardware/interfaces/common/aidl",
+    "hardware/interfaces/keymaster/aidl",
+    "hardware/interfaces/security/keymint/aidl",
+    "system/hardware/interfaces/keystore2/aidl",
+    "system/core/gatekeeperd/binder",
     "hardware/interfaces/graphics/common/aidl",
     "hardware/interfaces/health/aidl",
     "hardware/interfaces/radio/aidl",
@@ -98,7 +110,15 @@ AIDL_ROOTS = (
 
 ACONFIG_CLASSES = {"Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl"}
 
-INDEX_VERSION = 6
+KNOWN_GENERATED = {
+    "android.os.UserManagerCache": "property_cache annotation processor (build/java.zig)",
+    "android.util.AggStats": "framework common.proto generator (build/generator_sources.zig)",
+    "android.util.Duration": "framework common.proto generator (build/generator_sources.zig)",
+    "com.android.modules.expresslog.MetricIds": "express catalog generator (build/generators.zig)",
+    "com.android.modules.expresslog.StatsExpressLog": "stats-log expresslog module (build/generators.zig)",
+}
+
+INDEX_VERSION = 8
 
 
 def strip_code(text: str) -> str:
@@ -285,17 +305,22 @@ class SourceRules:
         if not m or m.group(1) not in self.roots:
             return None
         base = self.roots[m.group(1)]
-        return base + ("/" + m.group(2) if m.group(2) else "")
+        relative = m.group(2)
+        if not relative:
+            return base
+        return f"{base}/{relative}" if base else relative
 
     def spec_for(self, path: str) -> str:
         """Prefer the most specific root variable for a checkout path."""
         best = None
         for name, base in self.roots.items():
-            if path.startswith(base + "/") and (best is None or len(base) > len(self.roots[best])):
+            if (not base or path.startswith(base + "/")) and (best is None or len(base) > len(self.roots[best])):
                 best = name
         if best is None:
             return path
-        return f"${best}/{path[len(self.roots[best]) + 1:]}"
+        base = self.roots[best]
+        relative = path[len(base) + 1:] if base else path
+        return f"${best}/{relative}"
 
     def selected(self, path: str) -> tuple[bool, str | None]:
         """(selected, reason-if-excluded-by-a-tree-rule)."""
@@ -350,7 +375,9 @@ class Classes:
         self.names.add(name.split("$", 1)[0])
 
     def has(self, fqn: str) -> bool:
-        return fqn in self.names or fqn.startswith(BOOT_PREFIXES)
+        if fqn in self.names:
+            return True
+        return fqn.startswith(BOOT_PREFIXES) and not fqn.startswith(BOOT_PREFIX_EXCEPTIONS)
 
 
 class Stubs:
@@ -441,7 +468,7 @@ class Resolver:
         return f"{m.group(1)}.{name}" if m else name
 
     def exists(self, fqn: str) -> bool:
-        if self.classes.has(fqn) or bool(self.index.lookup(fqn)) or fqn in self.stubs.by_fqn:
+        if self.classes.has(fqn) or bool(self.index.lookup(fqn)) or fqn in self.stubs.by_fqn or fqn in KNOWN_GENERATED:
             return True
         pkg, _, name = fqn.rpartition(".")
         return name in ACONFIG_CLASSES and pkg in self.index.aconfig
@@ -488,6 +515,8 @@ class Resolver:
             pkg, _, name = fqn.rpartition(".")
             if name in ACONFIG_CLASSES and pkg in self.index.aconfig:
                 n.kind, n.generated = "aconfig", pkg
+            elif fqn in KNOWN_GENERATED:
+                n.kind, n.generated = "generated", KNOWN_GENERATED[fqn]
             elif name.endswith("Proto") or name == "EventLogTags" or name == "FrameworkStatsLog":
                 n.kind, n.generated = "generated", "proto/logtags/stats generator (build/generator_sources.zig)"
             elif pkg == "android.sysprop":

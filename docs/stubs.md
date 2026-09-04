@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 105 (budget 105). Survivors: 78. Total: 183.
+Pending: 91 (budget 91). Survivors: 78. Total: 169.
 
 ## Survivors
 
@@ -100,7 +100,7 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (492 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetada |
+| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (526 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetada |
 
 ### activity
 
@@ -120,25 +120,25 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (680 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < OperationContext < ISession < IFace < FaceSensorConfigurations < IFaceService < FaceManager  |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (541 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < A |
 
 ### audio
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (442 to add), not vendored; android.audio.policy.configuration.V7_0: no source in the checkout (via V7_0 < AudioAttributes); android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo <  |
+| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (476 to add), not vendored; android.audio.policy.configuration.V7_0: no source in the checkout (via V7_0 < AudioAttributes); android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo <  |
 | `android/media/AudioDeviceCallback.java` | replaceable | frameworks/base/media/java/android/media/AudioDeviceCallback.java (1 to add), not vendored |
-| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (444 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorde |
+| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (478 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorde |
 | `android/media/AudioFocusRequest.java` | replaceable | frameworks/base/media/java/android/media/AudioFocusRequest.java (1 to add), not vendored |
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (624 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (657 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < |
 | `android/media/AudioRouting.kt` | replaceable | frameworks/base/media/java/android/media/AudioRouting.java (1 to add), not vendored |
-| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (445 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < Medi |
+| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (479 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < Medi |
 | `android/media/MediaRoute2Info.java` | replaceable | frameworks/base/media/java/android/media/MediaRoute2Info.java (2 to add), not vendored |
-| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (457 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < |
-| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (441 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < A |
-| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (475 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorde |
+| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (491 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < |
+| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (475 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < A |
+| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (509 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorde |
 | `android/media/RouteDiscoveryPreference.java` | replaceable | frameworks/base/media/java/android/media/RouteDiscoveryPreference.java (1 to add), not vendored |
-| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (444 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder <  |
+| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (478 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder <  |
 
 ### autofill
 
@@ -150,32 +150,32 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/BatteryStats.java` | blocked | frameworks/base/core/java/android/os/BatteryStats.java (32 to add), not vendored; android.server.ServerProtoEnums: no source in the checkout (via ServerProtoEnums < BatteryStats); android.server.location.ServerLocationProtoEnums: no source in the checkout (via ServerLocationProtoEnums < GnssSignalQu |
+| `android/os/BatteryStats.java` | blocked | frameworks/base/core/java/android/os/BatteryStats.java (29 to add), not vendored; android.server.ServerProtoEnums: no source in the checkout (via ServerProtoEnums < BatteryStats); android.server.location.ServerLocationProtoEnums: no source in the checkout (via ServerLocationProtoEnums < GnssSignalQu |
 
 ### biometrics
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/hardware/fingerprint/FingerprintManager.java` | blocked | frameworks/base/core/java/android/hardware/fingerprint/FingerprintManager.java (203 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < FingerprintAuthenticateOptions < FingerprintManager); android.hardware |
+| `android/hardware/fingerprint/FingerprintManager.java` | blocked | frameworks/base/core/java/android/hardware/fingerprint/FingerprintManager.java (31 to add), not vendored; android.hardware.biometrics.fingerprint.AcquiredInfo: AIDL outside the configured include roots (via AcquiredInfo < ISessionCallback < IFingerprint < FingerprintSensorConfigurations < IFingerpri |
 
 ### companion
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/CompanionDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/CompanionDeviceManager.java (238 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < BluetoothSocket < BluetoothAdapter < CompanionDeviceManager); android.net.NetworkUtils: JNI natives (via NetworkUtils < Ip |
+| `android/companion/CompanionDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/CompanionDeviceManager.java (237 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < BluetoothSocket < BluetoothAdapter < CompanionDeviceManager); android.net.NetworkUtils: JNI natives (via NetworkUtils < Ip |
 
 ### connectivity
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/net/NetworkScoreManager.java` | blocked | frameworks/base/core/java/android/net/NetworkScoreManager.java (54 to add), not vendored; android.net.NetworkUtils: JNI natives (via NetworkUtils < IpPrefix < StaticIpConfiguration < WifiConfiguration < WifiInfo < NetworkKey < NetworkScoreManager) |
+| `android/net/NetworkScoreManager.java` | blocked | frameworks/base/core/java/android/net/NetworkScoreManager.java (53 to add), not vendored; android.net.NetworkUtils: JNI natives (via NetworkUtils < IpPrefix < StaticIpConfiguration < WifiConfiguration < WifiInfo < NetworkKey < NetworkScoreManager) |
 
 ### devicepolicy
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (199 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < OperationContext < ISession < IFace < FaceSensorConfigurations < IFaceService <  |
-| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (321 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < DevicePolicyManager); android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReaso |
+| `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (20 to add), not vendored; android.security.IKeyChainAliasCallback: AIDL outside the configured include roots (via IKeyChainAliasCallback < KeyChain < DeviceAdminReceiver); android.security.IKeyChainService: AIDL outside the config |
+| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (140 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < DevicePolicyManager); android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalServerSocket < Zygote < DevicePolicyManager); andr |
 | `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (42 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < IDevicePolicyManager < DevicePolicyResourcesManager); android.stats.devicepolicy.DevicePolicyEnums: no sour |
 
 ### incident
@@ -199,7 +199,6 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 | `android/app/jank/JankTracker.java` | replaceable | frameworks/base/core/java/android/app/jank/JankTracker.java (3 to add), not vendored |
 | `com/android/internal/jank/InteractionJankMonitor.java` | replaceable | frameworks/base/core/java/com/android/internal/jank/InteractionJankMonitor.java (6 to add), not vendored |
 | `com/android/internal/protolog/ProtoLog.java` | blocked | frameworks/base/core/java/com/android/internal/protolog/ProtoLog.java (28 to add), not vendored; android.internal.perfetto.protos.DataSourceConfigOuterClass: no source in the checkout (via DataSourceConfigOuterClass < ProtoLogDataSource < ProtoLog); android.internal.perfetto.protos.InternedDataOuter |
-| `com/android/modules/expresslog/Counter.java` | replaceable | frameworks/libs/modules-utils/java/com/android/modules/expresslog/Counter.java (1 to add) |
 
 ### media
 
@@ -226,57 +225,36 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/content/pm/IPackageInstaller.java` | replaceable | frameworks/base/core/java/android/content/pm/IPackageInstaller.aidl (4 to add, AIDL interface) |
-| `android/content/pm/PackageInstaller.java` | replaceable | frameworks/base/core/java/android/content/pm/PackageInstaller.java (8 to add), not vendored |
-| `android/content/pm/PackageManagerInternal.java` | replaceable | frameworks/base/services/core/java/android/content/pm/PackageManagerInternal.java (17 to add), not vendored |
 | `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (15 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no  |
 | `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (3 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig) |
 | `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3211 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
-| `com/android/server/pm/InstallSource.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/InstallSource.java (2 to add), not vendored |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3042 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Settings < Cr |
 | `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3209 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
-| `com/android/server/pm/PackageKeySetData.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/PackageKeySetData.java (1 to add), not vendored |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3314 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
-| `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (9 to add), not vendored; android.service.pm.PackageProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageProto < PackageSetting) |
-| `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (25 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.c |
-| `com/android/server/pm/UserManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java (4 to add), not vendored |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3226 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
-| `com/android/server/pm/permission/LegacyPermissionState.java` | replaceable | frameworks/base/services/core/java/com/android/server/pm/permission/LegacyPermissionState.java (5 to add), not vendored |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3040 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Packag |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3143 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerService); android.apex.ApexInfo: AIDL  |
+| `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (4 to add), not vendored; android.service.pm.PackageProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageProto < PackageSetting) |
+| `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (21 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.c |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3054 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < PackageManagerServiceUtils < Use |
 
 ### permission
 
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/health/connect/HealthPermissions.java` | no-aosp-source | no class with this name in the checkout |
-| `android/permission/PermissionControllerManager.java` | replaceable | frameworks/base/core/java/android/permission/PermissionControllerManager.java (6 to add), not vendored |
-
-### preference
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/preference/PreferenceManager.java` | replaceable | frameworks/base/core/java/android/preference/PreferenceManager.java (10 to add), not vendored |
 
 ### runtime
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/INetworkManagementService.java` | blocked | frameworks/base/core/java/android/os/INetworkManagementService.aidl (17 to add, AIDL interface), not vendored; android.net.NetworkUtils: JNI natives (via NetworkUtils < IpPrefix < RouteInfo < INetworkManagementService) |
+| `android/os/INetworkManagementService.java` | blocked | frameworks/base/core/java/android/os/INetworkManagementService.aidl (16 to add, AIDL interface), not vendored; android.net.NetworkUtils: JNI natives (via NetworkUtils < IpPrefix < RouteInfo < INetworkManagementService) |
 | `com/android/internal/os/BinderCallsStats.java` | blocked | frameworks/base/core/java/com/android/internal/os/BinderCallsStats.java (7 to add), not vendored; com.android.internal.os.BinderLatencyProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via BinderLatencyProto < BinderCallsStats) |
-| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (238 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < OperationContext < ISession < IFace < FaceSensorConfigurations  |
-| `com/android/modules/utils/build/UnboundedSdkLevel.java` | replaceable | frameworks/libs/modules-utils/java/com/android/modules/utils/build/UnboundedSdkLevel.java (1 to add) |
-
-### shortcut
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/content/pm/ShortcutInfo.java` | replaceable | frameworks/base/core/java/android/content/pm/ShortcutInfo.java (6 to add), not vendored |
+| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (65 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < ZygoteInit < SystemServerClassLoaderFactory); android.net.http.Flags: no source in the checko |
 
 ### statusbar
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/StatusBarManager.java` | blocked | frameworks/base/core/java/android/app/StatusBarManager.java (193 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < OperationContext < ISession < IFace < FaceSensorConfigurations < IFaceService < FaceManag |
+| `android/app/StatusBarManager.java` | replaceable | frameworks/base/core/java/android/app/StatusBarManager.java (21 to add), not vendored |
 
 ### storage
 
@@ -290,15 +268,15 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3209 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3040 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < SystemServerInitThreadPool) |
 | `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server. |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3209 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3040 to add), not vendored; android.aconfigd.Aconfigd: no source in the checkout (via Aconfigd < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < InputManagerService < WindowM |
 
 ### textclassifier
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (498 to add); android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < |
+| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (534 to add); android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < CamcorderProfile < MediaRecorder < |
 | `android/speech/tts/TextToSpeech.java` | replaceable | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (10 to add), not vendored |
 
 ### ui
@@ -315,18 +293,12 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 | `android/widget/TimePicker.java` | replaceable | frameworks/base/core/java/android/widget/TimePicker.java (6 to add), not vendored, excluded by c.add("$CJ/android/widget") .not_names "TimePicker*.java" |
 | `com/android/internal/widget/floatingtoolbar/FloatingToolbar.java` | replaceable | frameworks/base/core/java/com/android/internal/widget/floatingtoolbar/FloatingToolbar.java (3 to add), not vendored |
 
-### user
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/os/UserManager.java` | replaceable | frameworks/base/core/java/android/os/UserManager.java (1 to add) |
-
 ### virtualdevice
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (473 to add, AIDL interface), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < Virtu |
-| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (539 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraDevice < VirtualCamera < V |
+| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (507 to add, AIDL interface), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraMetadata < Virtu |
+| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (572 to add), not vendored; android.hardware.camera2.CameraMetadataInfo: AIDL outside the configured include roots (via CameraMetadataInfo < PhysicalCaptureResultInfo < TotalCaptureResult < CameraDevice < VirtualCamera < V |
 | `android/companion/virtual/VirtualDeviceParams.java` | replaceable | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add), not vendored |
 | `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored |
 
@@ -334,10 +306,9 @@ Pending: 105 (budget 105). Survivors: 78. Total: 183.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (240 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < OperationContext < ISession < IFace < FaceSensorConfigurations < IFaceService < FaceManag |
-| `android/webkit/RenderProcessGoneDetail.kt` | replaceable | frameworks/base/core/java/android/webkit/RenderProcessGoneDetail.java (1 to add), not vendored |
-| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (240 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < OperationContext < ISession < IFace < FaceSensorConfigurations < IFaceService < FaceMan |
-| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (238 to add), not vendored; android.hardware.biometrics.common.AuthenticateReason: AIDL outside the configured include roots (via AuthenticateReason < OperationContext < ISession < IFace < FaceSensorConfigurations < IFaceService < FaceManager |
+| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (65 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < CookieManager); android.net.http.Flags: no source in the checkout (via Flags < ZygoteI |
+| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (67 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebChromeClient); android.net.http.Flags: no source in the checkout (via Flags < Zyg |
+| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (65 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebSettings); android.net.http.Flags: no source in the checkout (via Flags < ZygoteInit  |
 | `android/webkit/WebViewClient.kt` | replaceable | frameworks/base/core/java/android/webkit/WebViewClient.java (1 to add), not vendored |
 
 ### window
@@ -373,10 +344,20 @@ decides where to cut.
 | `android.media.INativeSpatializerCallback` | 25 | 2 |
 | `android.media.ISoundDose` | 25 | 2 |
 | `android.media.ISpatializer` | 25 | 2 |
+| `android.media.audio.common.AidlConversion` | 25 | 2 |
+| `android.media.audio.common.AudioConfig` | 25 | 2 |
 | `android.media.AudioHwModule` | 25 | 3 |
-| `android.media.AudioMixMatchCriterionValue` | 25 | 3 |
-| `android.media.SurroundSoundConfig` | 25 | 3 |
+| `android.media.audio.common.AudioAttributes` | 25 | 3 |
+| `android.media.audio.common.AudioHalEngineConfig` | 25 | 3 |
+| `android.media.audio.common.AudioOffloadInfo` | 25 | 3 |
+| `android.media.audio.common.AudioPortExt` | 25 | 3 |
 | `android.renderscript.Allocation` | 25 | 3 |
+| `android.media.audio.common.AudioHalCapCriterionV2` | 25 | 4 |
+| `android.media.audio.common.AudioHalCapDomain` | 25 | 4 |
+| `android.media.audio.common.AudioHalProductStrategy` | 25 | 4 |
+| `android.media.audio.common.AudioHalVolumeGroup` | 25 | 4 |
+| `android.media.audio.common.AudioPortMixExt` | 25 | 4 |
+| `android.media.audio.common.AudioHalCapConfiguration` | 25 | 5 |
 | `android.hardware.camera2.CaptureRequest` | 24 | 1 |
 | `android.media.ImageReader` | 24 | 2 |
 | `android.hardware.camera2.TotalCaptureResult` | 24 | 3 |
@@ -385,13 +366,3 @@ decides where to cut.
 | `android.hardware.camera2.CameraCharacteristics` | 22 | 1 |
 | `android.bluetooth.BluetoothSocket` | 21 | 1 |
 | `android.hardware.camera2.CameraMetadata` | 19 | 2 |
-| `android.net.IpPrefix` | 18 | 1 |
-| `android.media.IPlayer` | 18 | 2 |
-| `android.media.audiopolicy.AudioPolicy` | 18 | 2 |
-| `android.media.ImageUtils` | 18 | 5 |
-| `android.media.CamcorderProfile` | 17 | 2 |
-| `android.media.FadeManagerConfiguration` | 16 | 1 |
-| `com.android.internal.os.RoSystemProperties` | 16 | 1 |
-| `android.hardware.face.FaceManager` | 16 | 2 |
-| `android.media.audiopolicy.AudioPolicyConfig` | 16 | 2 |
-| `android.security.keymaster.KeymasterDefs` | 16 | 2 |

@@ -12,4 +12,13 @@ public interface Computer extends PackageDataSnapshot {
     PackageStateInternal getPackageStateInternal(String packageName);
     /** Updated-system-app shadowing does not exist here; always null. */
     default PackageStateInternal getDisabledSystemPackage(String packageName) { return null; }
+    default String[] filterOnlySystemPackages(String... packageNames) {
+        if (packageNames == null) return new String[0];
+        java.util.ArrayList<String> result = new java.util.ArrayList<>();
+        for (String packageName : packageNames) {
+            PackageStateInternal state = packageName == null ? null : getPackageStateInternal(packageName);
+            if (state != null && state.isSystem()) result.add(packageName);
+        }
+        return result.toArray(new String[0]);
+    }
 }

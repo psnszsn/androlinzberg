@@ -19,4 +19,8 @@ public class DevicePolicyResourcesManager {
     public String getString(String stringId, Supplier<String> defaultStringLoader) {
         return defaultStringLoader.get();
     }
+    public String getString(String stringId, Supplier<String> defaultStringLoader,
+            Object... formatArgs) {
+        return defaultStringLoader.get();
+    }
 }

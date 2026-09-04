@@ -7,6 +7,7 @@ package com.android.server.pm;
 import android.content.pm.UserInfo;
 
 public final class UserManagerService {
+    static final boolean DBG = false;
     private static final UserManagerService INSTANCE = new UserManagerService();
     // The real UserInfo derives a user type from the flags and refuses to guess for the
     // system user, so the type is spelled out as UserManagerService.createUserInternal does.

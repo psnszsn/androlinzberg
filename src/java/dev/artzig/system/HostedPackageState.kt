@@ -12,6 +12,7 @@ import com.android.internal.pm.parsing.pkg.AndroidPackageInternal
 import com.android.server.pm.InstallSource
 import com.android.server.pm.PackageKeySetData
 import com.android.server.pm.PackageSetting
+import com.android.server.pm.HostedPackageStateDefaults
 import com.android.server.pm.permission.LegacyPermissionState
 import com.android.server.pm.pkg.AndroidPackage
 import com.android.server.pm.pkg.PackageStateInternal
@@ -55,7 +56,7 @@ class HostedPackageState(
     private val transientState = PackageStateUnserialized(PackageSetting())
     private val domainSetId = UUID.randomUUID()
     private val legacyPermissionState = LegacyPermissionState()
-    private val keySetData = PackageKeySetData()
+    private val keySetData = HostedPackageStateDefaults.emptyKeySetData()
 
     override fun getPkg(): AndroidPackageInternal = pkg
     override fun getAndroidPackage(): AndroidPackage = pkg
@@ -64,7 +65,7 @@ class HostedPackageState(
     override fun getDomainSetId(): UUID = domainSetId
     override fun getSigningDetails(): SigningDetails = pkg.signingDetails
     override fun getSigningInfo(): SigningInfo = SigningInfo(pkg.signingDetails)
-    override fun getInstallSource(): InstallSource = InstallSource.EMPTY
+    override fun getInstallSource(): InstallSource = HostedPackageStateDefaults.emptyInstallSource()
     override fun getFlags(): Int = 0
     override fun getPrivateFlags(): Int = 0
     override fun getUserStates(): SparseArray<out PackageUserStateInternal> = userStates

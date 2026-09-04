@@ -18,10 +18,15 @@ public class DevicePolicyManager {
     public static final int PASSWORD_COMPLEXITY_MEDIUM = 0x30000;
     public static final int PASSWORD_COMPLEXITY_HIGH = 0x50000;
     public static final int MAX_PASSWORD_LENGTH = 16;
+    public static final int PERMISSION_GRANT_STATE_DEFAULT = 0;
+    public static final int PERMISSION_GRANT_STATE_GRANTED = 1;
+    public static final int PERMISSION_GRANT_STATE_DENIED = 2;
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface PasswordComplexity {}
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface PasswordQuality {}
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface PermissionGrantState {}
     /** No device or profile owner exists on this host. */
     public boolean isDeviceOwnerApp(String packageName) { return false; }
     public boolean isProfileOwnerApp(String packageName) { return false; }

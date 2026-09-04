@@ -27,6 +27,13 @@ public class Fragment implements android.content.ComponentCallbacks2 {
     public void startActivity(Intent intent) {}
     public void onCreate(Bundle savedInstanceState) {}
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) { return null; }
+    public void onViewCreated(View view, Bundle savedInstanceState) {}
+    public void onActivityCreated(Bundle savedInstanceState) {}
+    public void onStart() {}
+    public void onStop() {}
+    public void onDestroyView() {}
+    public void onSaveInstanceState(Bundle outState) {}
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {}
     public void onDestroy() {}
     public void onPause() {}
     public void onResume() {}

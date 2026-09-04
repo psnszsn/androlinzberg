@@ -785,6 +785,83 @@ fn registerClassLoaderFactory(env: JNIEnvPtr) !void {
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }
 
+// ----------------------------------------------------- binary XML utilities
+// AOSP CharsetUtils uses JNI's modified-UTF codec to read and write directly
+// at Runtime.addressOf() pointers. The caller owns and bounds the backing byte
+// array; the native preserves the Android contract that one trailing byte is
+// reserved for the temporary NUL terminator.
+
+fn charsetToModifiedUtf8(
+    env: JNIEnvPtr,
+    _: jni.jclass,
+    src: jni.jstring,
+    src_len: jni.jint,
+    dest: jni.jlong,
+    dest_off: jni.jint,
+    dest_len: jni.jint,
+) callconv(.c) jni.jint {
+    const encoded_len = env.*.*.GetStringUTFLength.?(env, src);
+    if (dest_off < 0 or dest_len < 0 or encoded_len < 0 or
+        @as(i64, dest_off) + @as(i64, encoded_len) >= @as(i64, dest_len))
+    {
+        return -encoded_len;
+    }
+    const address: usize = @intCast(@as(u64, @bitCast(dest)));
+    const bytes: [*]u8 = @ptrFromInt(address);
+    env.*.*.GetStringUTFRegion.?(env, src, 0, src_len, @ptrCast(bytes + @as(usize, @intCast(dest_off))));
+    return encoded_len;
+}
+
+fn charsetFromModifiedUtf8(
+    env: JNIEnvPtr,
+    _: jni.jclass,
+    src: jni.jlong,
+    src_off: jni.jint,
+    src_len: jni.jint,
+) callconv(.c) jni.jstring {
+    const address: usize = @intCast(@as(u64, @bitCast(src)));
+    const bytes: [*]u8 = @ptrFromInt(address);
+    const end: usize = @intCast(src_off + src_len);
+    const saved = bytes[end];
+    bytes[end] = 0;
+    defer bytes[end] = saved;
+    return env.*.*.NewStringUTF.?(env, @ptrCast(bytes + @as(usize, @intCast(src_off))));
+}
+
+fn registerCharsetUtils(env: JNIEnvPtr) !void {
+    const cls = env.*.*.FindClass.?(env, "android/util/CharsetUtils") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method("toModifiedUtf8Bytes", "(Ljava/lang/String;IJII)I", &charsetToModifiedUtf8),
+        method("fromModifiedUtf8Bytes", "(JII)Ljava/lang/String;", &charsetFromModifiedUtf8),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
+
+// The Android implementation shells out to /system/bin/idmap2. There is no
+// Android system partition or idmap daemon on the host, which is exactly its
+// documented failure branch: return null and let OverlayConfig skip immutable
+// framework overlay idmaps.
+fn overlayCreateIdmap(
+    _: JNIEnvPtr,
+    _: jni.jclass,
+    _: jni.jstring,
+    _: jni.jobjectArray,
+    _: jni.jobjectArray,
+    _: jni.jboolean,
+) callconv(.c) jni.jobjectArray {
+    return null;
+}
+
+fn registerOverlayConfig(env: JNIEnvPtr) !void {
+    const cls = env.*.*.FindClass.?(env, "com/android/internal/content/om/OverlayConfig") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method("createIdmap", "(Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;Z)[Ljava/lang/String;", &overlayCreateIdmap),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
+
 // ---------------------------------------------------------- android.util.Log
 // Host sink for the verbatim AOSP Log class. Android normally writes through
 // logd; the island's AOSP liblog writes the same record to stderr, while the
@@ -914,6 +991,8 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerTrace(env) catch return -1;
     registerSystemClock(env) catch return -1;
     registerClassLoaderFactory(env) catch return -1;
+    registerCharsetUtils(env) catch return -1;
+    registerOverlayConfig(env) catch return -1;
     registerLog(env) catch return -1;
     // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
     // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).

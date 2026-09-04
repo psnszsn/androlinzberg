@@ -6,6 +6,7 @@ public class VolumeInfo {
     public final String id;
     public final int type;
     public String fsUuid;
+    public String path = android.os.Environment.getDataDirectory().getPath();
     public VolumeInfo(String id, int type) { this.id = id; this.type = type; }
     public String getId() { return id; }
     public int getType() { return type; }

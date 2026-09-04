@@ -4,11 +4,19 @@
 package com.android.internal.content;
 
 import java.io.IOException;
+import java.io.FileDescriptor;
+import android.content.pm.parsing.PackageLite;
 
 public final class NativeLibraryHelper {
     private NativeLibraryHelper() {}
     public static final class Handle implements AutoCloseable {
         private Handle() {}
+        public static Handle create(PackageLite lite) throws IOException {
+            throw new IOException("native library extraction is not hosted");
+        }
+        public static Handle createFd(PackageLite lite, FileDescriptor fd) throws IOException {
+            throw new IOException("native library extraction is not hosted");
+        }
         public static Handle create(java.util.List<String> codePaths, boolean multiArch,
                 boolean extractNativeLibs, boolean debuggable) throws IOException {
             throw new IOException("native library extraction is not hosted");
@@ -20,5 +28,9 @@ public final class NativeLibraryHelper {
             throw new IOException("native library extraction is not hosted");
         }
         @Override public void close() {}
+    }
+    public static long sumNativeBinariesWithOverride(Handle handle, String abiOverride)
+            throws IOException {
+        return 0;
     }
 }

@@ -48,6 +48,67 @@ pub const NativeLoader = extern struct {
     dlerror: *const fn () callconv(.c) ?[*:0]const u8,
 };
 
+/// Host-only native loader used when an embedder does not need the Android
+/// compatibility linker. Conscrypt statically embeds BoringSSL, so its DSO
+/// must bind its own SSL symbols even when another host library has already
+/// loaded ABI-incompatible OpenSSL symbols into the global namespace.
+pub const HostLoader = struct {
+    var host_lib_dir: ?[:0]const u8 = null;
+    var host_lib_dir_buf: [4096]u8 = undefined;
+
+    pub const loader: NativeLoader = .{ .dlopen = dlopen, .dlsym = dlsym, .dlerror = dlerror };
+
+    pub fn init(root: []const u8) Error!*const NativeLoader {
+        const dir = std.fmt.bufPrint(host_lib_dir_buf[0 .. host_lib_dir_buf.len - 1], "{s}/lib64", .{root}) catch
+            return Error.OutOfMemory;
+        host_lib_dir_buf[dir.len] = 0;
+        host_lib_dir = host_lib_dir_buf[0..dir.len :0];
+        return &loader;
+    }
+
+    fn dlopen(path: ?[*:0]const u8, flags: c_int, library_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+        const p = path orelse return host.dlopen(null, flags);
+        const name = std.mem.span(p);
+        const host_flags = flags | if (std.mem.endsWith(u8, name, "libjavacrypto.so"))
+            @as(c_int, 0x8) // RTLD_DEEPBIND
+        else
+            0;
+        if (host.dlopen(p, host_flags)) |handle| return handle;
+        if (std.mem.indexOfScalar(u8, name, '/') != null) return null;
+
+        if (library_path) |paths| {
+            var it = std.mem.splitScalar(u8, std.mem.span(paths), ':');
+            while (it.next()) |dir| {
+                if (dir.len == 0) continue;
+                if (openFrom(dir, name, host_flags)) |handle| return handle;
+            }
+        }
+        if (host_lib_dir) |dir| return openFrom(dir, name, host_flags);
+        return null;
+    }
+
+    fn openFrom(dir: []const u8, name: []const u8, flags: c_int) ?*anyopaque {
+        var full_buf: [4096]u8 = undefined;
+        const full = std.fmt.bufPrint(full_buf[0 .. full_buf.len - 1], "{s}/{s}", .{ dir, name }) catch return null;
+        full_buf[full.len] = 0;
+        return host.dlopen(full_buf[0..full.len :0].ptr, flags);
+    }
+
+    fn dlsym(handle: ?*anyopaque, symbol: [*:0]const u8) callconv(.c) ?*anyopaque {
+        return host.dlsym(handle, symbol);
+    }
+
+    fn dlerror() callconv(.c) ?[*:0]const u8 {
+        return host.dlerror();
+    }
+
+    const host = struct {
+        extern "c" fn dlopen(path: ?[*:0]const u8, flags: c_int) ?*anyopaque;
+        extern "c" fn dlsym(handle: ?*anyopaque, symbol: [*:0]const u8) ?*anyopaque;
+        extern "c" fn dlerror() ?[*:0]const u8;
+    };
+};
+
 /// NativeLoader backed by bionic_translation's shim linker (libdl_bio.so from the
 /// runtime tree): System.loadLibrary() can then load Android (bionic-linked)
 /// native libraries, falling back to the host libc for host libraries.
@@ -250,7 +311,11 @@ pub const Runtime = struct {
         errdefer lib.close();
         const create_vm = lib.lookup(CreateFn, "JNI_CreateJavaVM") orelse return Error.SymbolNotFound;
         var native_loader = opts.native_loader;
-        if (opts.use_bionic_loader) native_loader = try BionicLoader.init(gpa, root, opts.bionic_lib_dir);
+        if (opts.use_bionic_loader) {
+            native_loader = try BionicLoader.init(gpa, root, opts.bionic_lib_dir);
+        } else if (native_loader == null) {
+            native_loader = try HostLoader.init(root);
+        }
         if (native_loader) |nl| {
             const SetLoader = *const fn (?*const NativeLoader) callconv(.c) void;
             const set = lib.lookup(SetLoader, "artzig_set_native_loader") orelse return Error.SymbolNotFound;

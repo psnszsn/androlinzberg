@@ -3,6 +3,7 @@ const std = @import("std");
 const resource_flags = @import("gen/resource_flags.zig");
 const declarations = @import("generator_sources.zig");
 const command = @import("command.zig");
+const SourceFiles = @import("artzig").SourceSet;
 
 const LazyPath = std.Build.LazyPath;
 
@@ -88,6 +89,13 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/base/telecomm/java/",
         "frameworks/base/mms/java/",
         "hardware/interfaces/gnss/aidl/",
+        "hardware/interfaces/biometrics/common/aidl/",
+        "hardware/interfaces/biometrics/face/aidl/",
+        "hardware/interfaces/common/aidl/",
+        "hardware/interfaces/keymaster/aidl/",
+        "hardware/interfaces/security/keymint/aidl/",
+        "system/hardware/interfaces/keystore2/aidl/",
+        "system/core/gatekeeperd/binder/",
         "hardware/interfaces/graphics/common/aidl/",
         "hardware/interfaces/health/aidl/",
         "hardware/interfaces/radio/aidl/",
@@ -156,6 +164,13 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/telecomm/java",
         "frameworks/base/mms/java",
         "hardware/interfaces/gnss/aidl",
+        "hardware/interfaces/biometrics/common/aidl",
+        "hardware/interfaces/biometrics/face/aidl",
+        "hardware/interfaces/common/aidl",
+        "hardware/interfaces/keymaster/aidl",
+        "hardware/interfaces/security/keymint/aidl",
+        "system/hardware/interfaces/keystore2/aidl",
+        "system/core/gatekeeperd/binder",
         "hardware/interfaces/graphics/common/aidl",
         "hardware/interfaces/health/aidl",
         "hardware/interfaces/radio/aidl",
@@ -195,8 +210,16 @@ fn aidlJava(
     for (declarations.aidl) |input| {
         const run = b.addRunArtifact(runner);
         run.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
-        if (input.source == .aosp and std.mem.startsWith(u8, input.path, "hardware/interfaces/")) {
-            run.addArgs(&.{ "--structured", "--stability", "vintf", "--min_sdk_version=35" });
+        if (input.source == .aosp and
+            (std.mem.startsWith(u8, input.path, "hardware/interfaces/") or
+                std.mem.startsWith(u8, input.path, "system/hardware/interfaces/")))
+        {
+            run.addArgs(&.{ "--structured", "--min_sdk_version=35" });
+            // Virtual HAL control APIs are explicitly unstable; the device
+            // HAL interfaces alongside them are VINTF-stable.
+            if (std.mem.indexOf(u8, input.path, "/virtualhal/") == null) {
+                run.addArgs(&.{ "--stability", "vintf" });
+            }
         }
         addAidlIncludes(run, aosp, compat_dir);
         run.addArg("-o");
@@ -376,6 +399,7 @@ fn statsJava(
         .{ .module = "statsd", .package = "com.android.internal.statsd", .class = "StatsdStatsLog" },
         .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },
         .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
+        .{ .module = "expresslog", .package = "com.android.modules.expresslog", .class = "StatsExpressLog" },
     };
     const result = b.allocator.alloc(LazyPath, specs.len) catch @panic("OOM");
     inline for (specs, 0..) |spec, index| {
@@ -392,6 +416,71 @@ fn statsJava(
         result[index] = java;
     }
     _ = exposePaths(b, "gen-stats", "Generate stats-log Java sources", result);
+    return result;
+}
+
+fn expressMetricIdsJava(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
+    const guava = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
+    const kotlin_stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
+
+    const compile = command.create(b);
+    compile.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
+    compile.addArgs(&.{ "-no-reflect", "-jvm-target", "21", "-classpath" });
+    compile.addJoinedPathInputs(":", &.{ .{ .file = guava }, .{ .file = kotlin_stdlib } });
+    compile.addArg("-d");
+    const generator_jar = compile.addOutputFileArg("express-metric-ids-generator.jar");
+    compile.addFileArg(b.path("src/java/dev/artzig/tools/GenerateExpressMetricIds.kt"));
+    compile.run.setName("compile express metric ID generator");
+
+    const run = command.create(b);
+    run.addArgs(&.{ "java", "-cp" });
+    run.addJoinedPathInputs(":", &.{
+        .{ .file = generator_jar },
+        .{ .file = guava },
+        .{ .file = kotlin_stdlib },
+    });
+    run.addArg("dev.artzig.tools.GenerateExpressMetricIdsKt");
+    run.addDirectoryArg(aosp.path("frameworks/proto_logging/stats/express/catalog"));
+    const output = run.addOutputFileArg("MetricIds.java");
+    run.run.setName("generate MetricIds.java");
+    return output;
+}
+
+fn apexInfoListJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
+    var sources = SourceFiles.Collector.init(b);
+    const root = SourceFiles.Root.dependency(b, aosp, "system/tools/xsdc/src/main/java");
+    sources.addTree(root, .{});
+    const java_sources = sources.select(".java");
+
+    const compile = command.create(b);
+    compile.addArgs(&.{ "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-classpath" });
+    const commons_cli = aosp.path("prebuilts/misc/common/commons-cli/commons-cli-1.2.jar");
+    compile.addFileArg(commons_cli);
+    compile.addArg("-d");
+    const classes = compile.addOutputDirectoryArg("xsdc-classes");
+    const rsp = java_sources.responseFile(b, "xsdc-sources.rsp");
+    compile.addPrefixedFileArg("@", rsp);
+    java_sources.addInputs(compile.run);
+    compile.run.setName("compile AOSP XSD Java generator");
+
+    const run = command.create(b);
+    run.addArgs(&.{ "java", "-cp" });
+    run.addJoinedPathInputs(":", &.{ .{ .directory = classes }, .{ .file = commons_cli } });
+    run.addArgs(&.{ "com.android.xsdc.Main", "-p", "com.android.apex", "-o" });
+    const output = run.addOutputDirectoryArg("apex-info-list-java");
+    run.addArgs(&.{ "-j", "-w", "-r", "apex-info-list" });
+    run.addFileArg(aosp.path("system/apex/apexd/ApexInfoList.xsd"));
+    run.run.setName("generate apex-info-list Java");
+
+    const paths = [_][]const u8{
+        "com/android/apex/ApexInfo.java",
+        "com/android/apex/ApexInfoList.java",
+        "com/android/apex/XmlParser.java",
+        "com/android/apex/XmlWriter.java",
+    };
+    const result = b.allocator.alloc(LazyPath, paths.len) catch @panic("OOM");
+    for (paths, 0..) |path, index| result[index] = output.path(b, path);
+    _ = exposePaths(b, "gen-apex-info-list", "Generate apex-info-list Java sources", result);
     return result;
 }
 
@@ -558,12 +647,15 @@ pub fn build(b: *std.Build, o: Options) Result {
     const nano_java = nanoJava(b, o.aosp, o.protoc, o.javanano_tool);
     const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool);
     const stats_java = statsJava(b, o.aosp, stats_tool);
+    const express_metric_ids_java = expressMetricIdsJava(b, o.aosp);
+    const apex_info_list_java = apexInfoListJava(b, o.aosp);
     const res = resources(b, o.aosp, filter);
     const fixtures = fixtureApks(b, o.aosp, res.apk);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ aidl_java, logtags_java, aconfig_java, sysprop_java, nano_java, proto_java, stats_java, res.java_sources }) |generated_set| {
+    inline for (.{ aidl_java, logtags_java, aconfig_java, sysprop_java, nano_java, proto_java, stats_java, apex_info_list_java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
+    java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");
 
     const aggregate = b.step("generators", "Generate all framework sources, resources, and fixture APKs");
     for (java_files.items) |path| path.addStepDependencies(aggregate);

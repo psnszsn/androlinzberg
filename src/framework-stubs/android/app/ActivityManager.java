@@ -1,6 +1,8 @@
 /* artzig stub. */
 package android.app;
 public class ActivityManager {
+    /** AOSP broadcast flag used when resolving stopped users. */
+    public static final int FLAG_OR_STOPPED = 1 << 0;
     public static class AppTask {
         public void finishAndRemoveTask() {}
         public void setExcludeFromRecents(boolean exclude) {}

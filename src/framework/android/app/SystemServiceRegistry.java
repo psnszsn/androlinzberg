@@ -177,8 +177,11 @@ public final class SystemServiceRegistry {
                 return new android.os.PowerManager(ctx.getOuterContext(), powerService, thermalService,
                         ctx.mMainThread.getHandler());
             }});
-        registerService(Context.USER_SERVICE, android.os.UserManager.class, new NewServiceFetcher<android.os.UserManager>() {
-            @Override public android.os.UserManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.UserManager(); }});
+        registerService(Context.USER_SERVICE, android.os.UserManager.class, new CachedServiceFetcher<android.os.UserManager>() {
+            @Override public android.os.UserManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder binder = android.os.ServiceManager.getServiceOrThrow(Context.USER_SERVICE);
+                return new android.os.UserManager(ctx, android.os.IUserManager.Stub.asInterface(binder));
+            }});
         registerService(Context.STORAGE_SERVICE, android.os.storage.StorageManager.class, new NewServiceFetcher<android.os.storage.StorageManager>() {
             @Override public android.os.storage.StorageManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.os.storage.StorageManager(); }});
         registerService(Context.STORAGE_STATS_SERVICE, android.app.usage.StorageStatsManager.class,
@@ -362,9 +365,10 @@ public final class SystemServiceRegistry {
         registerService(Context.PERMISSION_SERVICE, android.permission.PermissionManager.class, new NewServiceFetcher<android.permission.PermissionManager>() {
             @Override public android.permission.PermissionManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.permission.PermissionManager(); }});
         registerService(Context.PERMISSION_CONTROLLER_SERVICE, android.permission.PermissionControllerManager.class,
-                new NewServiceFetcher<android.permission.PermissionControllerManager>() {
-            @Override public android.permission.PermissionControllerManager createService(ContextImpl ctx) throws ServiceNotFoundException {
-                return new android.permission.PermissionControllerManager();
+                new CachedServiceFetcher<android.permission.PermissionControllerManager>() {
+            @Override public android.permission.PermissionControllerManager createService(ContextImpl ctx) {
+                return new android.permission.PermissionControllerManager(
+                        ctx.getOuterContext(), ctx.getMainThreadHandler());
             }});
         registerService(Context.DEVICE_POLICY_SERVICE, android.app.admin.DevicePolicyManager.class, new NewServiceFetcher<android.app.admin.DevicePolicyManager>() {
             @Override public android.app.admin.DevicePolicyManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.app.admin.DevicePolicyManager(); }});

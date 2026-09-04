@@ -58,6 +58,17 @@ fn extractConscryptCompileClasses(b: *std.Build, archive: LazyPath) LazyPath {
     return output;
 }
 
+fn extractI18nCompileClasses(b: *std.Build, archive: LazyPath) LazyPath {
+    const extract = b.addSystemCommand(&.{ "unzip", "-q" });
+    extract.addFileArg(archive);
+    extract.addArg("android/icu/*");
+    extract.addArg("com/android/i18n/timezone/*");
+    extract.addArg("-d");
+    const output = extract.addOutputDirectoryArg("i18n-compile-classes");
+    extract.setName("extract modular i18n compile classes");
+    return output;
+}
+
 pub fn build(b: *std.Build, o: Options) Result {
     const dep = o.artzig;
     const aosp = o.aosp;
@@ -65,6 +76,13 @@ pub fn build(b: *std.Build, o: Options) Result {
     const conscrypt_compile_classes = extractConscryptCompileClasses(
         b,
         dep.namedLazyPath("conscrypt-classes"),
+    );
+    // Time and TimeUtils use the modular i18n implementation. ART supplies
+    // this JAR at runtime; fold its classes into the compile-only system image
+    // without repackaging them into framework.jar.
+    const i18n_compile_classes = extractI18nCompileClasses(
+        b,
+        aosp.path("prebuilts/runtime/mainline/i18n/sdk/java/core-icu4j.jar"),
     );
     const sources = java_sources.configure(b, aosp);
     var kotlinc_input_collector = SourceFiles.Collector.init(b);
@@ -93,26 +111,45 @@ pub fn build(b: *std.Build, o: Options) Result {
     sources.addAnnotationInputs(annotation_javac);
     annotation_javac.setName("compile runtime annotations");
 
+    const plus_base = b.addSystemCommand(&.{ "jar", "--create", "--file" });
+    const core_plus_base = plus_base.addOutputFileArg("core-all-plus-base.jar");
+    plus_base.addArg("-C");
+    plus_base.addDirectoryArg(core_all_classes);
+    plus_base.addArg(".");
+    plus_base.addArg("-C");
+    plus_base.addDirectoryArg(boot_annotation_classes);
+    plus_base.addArg("android/annotation/SuppressLint.class");
+    plus_base.addArg("-C");
+    plus_base.addDirectoryArg(boot_annotation_classes);
+    plus_base.addArg("android/annotation/TargetApi.class");
+    plus_base.addArg("-C");
+    plus_base.addDirectoryArg(conscrypt_compile_classes);
+    plus_base.addArg(".");
+
+    // The modular i18n JAR is authoritative for android.icu and timezone.
+    // Materialize the base JAR as a directory and overlay those classes so
+    // duplicate core-all entries are replaced rather than duplicated.
+    const merge_i18n = b.addSystemCommand(&.{
+        "bash", "-c",
+        "unzip -q \"$1\" -d \"$2\" && cp -R \"$3/.\" \"$2\"",
+        "merge-core-i18n",
+    });
+    merge_i18n.addFileArg(core_plus_base);
+    const core_plus_classes = merge_i18n.addOutputDirectoryArg("core-all-plus-classes");
+    merge_i18n.addDirectoryArg(i18n_compile_classes);
+    merge_i18n.setName("overlay modular i18n compile classes");
+
     const plus = b.addSystemCommand(&.{ "jar", "--create", "--file" });
     const core_plus = plus.addOutputFileArg("core-all-plus.jar");
     plus.addArg("-C");
-    plus.addDirectoryArg(core_all_classes);
-    plus.addArg(".");
-    plus.addArg("-C");
-    plus.addDirectoryArg(boot_annotation_classes);
-    plus.addArg("android/annotation/SuppressLint.class");
-    plus.addArg("-C");
-    plus.addDirectoryArg(boot_annotation_classes);
-    plus.addArg("android/annotation/TargetApi.class");
-    plus.addArg("-C");
-    plus.addDirectoryArg(conscrypt_compile_classes);
+    plus.addDirectoryArg(core_plus_classes);
     plus.addArg(".");
 
     const sysmod_dir = @import("artzig").systemModules(
         b,
         aosp.path(""),
         core_plus,
-        &.{ core_all_classes, boot_annotation_classes, conscrypt_compile_classes },
+        &.{core_plus_classes},
         b.path("artzig/tools/build-command.zig"),
     );
 
@@ -140,6 +177,56 @@ pub fn build(b: *std.Build, o: Options) Result {
         "error-prone-annotation-classes",
     );
     const guava_host_jar = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
+
+    var property_cache_sources = SourceFiles.Collector.init(b);
+    const property_cache_root = SourceFiles.Root.dependency(
+        b,
+        aosp,
+        "frameworks/base/tools/processors/property_cache/src/java",
+    );
+    property_cache_sources.addTree(property_cache_root, .{});
+    const modules_utils_root = SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils");
+    inline for (.{
+        "java/com/android/internal/annotations/CacheModifier.java",
+        "java/com/android/internal/annotations/CachedProperty.java",
+        "java/com/android/internal/annotations/CachedPropertyDefaults.java",
+    }) |path| property_cache_sources.addFile(modules_utils_root, path);
+    const property_cache_java = property_cache_sources.select(".java");
+    const property_cache_rsp = property_cache_java.responseFile(b, "property-cache-processor-sources.rsp");
+
+    const property_cache_javac = command.create(b);
+    property_cache_javac.addArgs(&.{ "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-classpath" });
+    property_cache_javac.addJoinedPathInputs(":", &.{
+        .{ .file = guava_host_jar },
+        .{ .directory = annotation_classes },
+    });
+    property_cache_javac.addArg("-d");
+    const property_cache_classes = property_cache_javac.addOutputDirectoryArg("property-cache-processor-classes");
+    property_cache_javac.addPrefixedFileArg("@", property_cache_rsp);
+    property_cache_java.addInputs(property_cache_javac.run);
+    property_cache_javac.run.setName("compile property cache annotation processor");
+
+    const property_cache_jar_cmd = b.addSystemCommand(&.{ "jar", "--create", "--file" });
+    const property_cache_jar = property_cache_jar_cmd.addOutputFileArg("property-cache-processor.jar");
+    property_cache_jar_cmd.addArg("-C");
+    property_cache_jar_cmd.addDirectoryArg(property_cache_classes);
+    property_cache_jar_cmd.addArg(".");
+    property_cache_jar_cmd.setName("package property cache annotation processor");
+    b.step("property-cache-processor", "Build the AOSP property cache annotation processor")
+        .dependOn(&property_cache_jar_cmd.step);
+
+    const package_manager_internal_processor = command.create(b);
+    package_manager_internal_processor.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
+    package_manager_internal_processor.addArgs(&.{ "-no-reflect", "-jvm-target", "21", "-classpath" });
+    package_manager_internal_processor.addFileArg(kotlin_stdlib);
+    package_manager_internal_processor.addArg("-d");
+    const package_manager_internal_processor_jar =
+        package_manager_internal_processor.addOutputFileArg("package-manager-internal-processor.jar");
+    package_manager_internal_processor.addFileArg(
+        b.path("src/java/dev/artzig/tools/PackageManagerInternalProcessor.kt"),
+    );
+    package_manager_internal_processor.run.setName("compile PackageManagerInternal adapter processor");
+
     var safeparcel_sources = SourceFiles.Collector.init(b);
     const jsilver_root = SourceFiles.Root.dependency(b, aosp, "external/jsilver/src");
     const javapoet_root = SourceFiles.Root.dependency(b, aosp, "external/javapoet/src/main/java");
@@ -221,10 +308,16 @@ pub fn build(b: *std.Build, o: Options) Result {
     javac.addArg("-processorpath");
     javac.addJoinedPathInputs(":", &.{
         .{ .file = safeparcel_jar },
+        .{ .file = property_cache_jar },
+        .{ .file = package_manager_internal_processor_jar },
+        .{ .file = kotlin_stdlib },
         .{ .file = guava_host_jar },
         .{ .directory = androidx_annotation_classes },
     });
-    javac.addArgs(&.{ "-processor", "android.app.appsearch.safeparcel.SafeParcelProcessor" });
+    javac.addArgs(&.{
+        "-processor",
+        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor",
+    });
     javac.addArg("-d");
     const java_classes = javac.addOutputDirectoryArg("java-classes");
     javac.addPrefixedFileArg("@", sources.java_rsp);

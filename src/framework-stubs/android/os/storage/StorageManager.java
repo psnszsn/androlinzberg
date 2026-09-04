@@ -4,6 +4,10 @@ import java.io.File;
 import java.io.IOException;
 import java.util.UUID;
 public class StorageManager {
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface StorageFlags {}
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface AllocateFlags {}
     /** No credential-encrypted storage on this host. */
     public static boolean isEncrypted() { return false; }
     public static boolean isFileEncrypted() { return false; }
@@ -12,6 +16,11 @@ public class StorageManager {
     public static final int FLAG_FOR_WRITE = 1 << 8;
     public static final int FLAG_REAL_STATE = 1 << 9;
     public static final int FLAG_INCLUDE_INVISIBLE = 1 << 10;
+    public static final int FLAG_STORAGE_DE = 0x1;
+    public static final int FLAG_STORAGE_CE = 0x2;
+    public static final int FLAG_ALLOCATE_AGGRESSIVE = 1 << 0;
+    public static final int FLAG_ALLOCATE_NON_CACHE_ONLY = 1 << 3;
+    public static final int FLAG_ALLOCATE_CACHE_ONLY = 1 << 4;
     /**
      * AOSP StorageManager.getVolumeList (via the mount service): this host has
      * one primary emulated volume, rooted at $EXTERNAL_STORAGE (the launcher
@@ -36,6 +45,8 @@ public class StorageManager {
     public StorageVolume getPrimaryStorageVolume() {
         return primaryVolume(android.os.UserHandle.myUserId());
     }
+    public StorageVolume getPrimaryVolume() { return getPrimaryStorageVolume(); }
+    public long getStorageBytesUntilLow(File path) { return path.getUsableSpace(); }
     public java.util.List<StorageVolume> getStorageVolumes() {
         return java.util.Collections.singletonList(getPrimaryStorageVolume());
     }

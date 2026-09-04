@@ -46,7 +46,6 @@ class HostedShortcutService(private val context: Context, private val permission
         if (shortcut.getPackage() != null && shortcut.getPackage() != packageName) {
             throw SecurityException("Shortcut package name mismatch: ${shortcut.getPackage()} vs $packageName")
         }
-        shortcut.setUserIdAndPackage(userId, packageName)
         return shortcut
     }
 
@@ -172,7 +171,7 @@ class HostedShortcutService(private val context: Context, private val permission
                     s.addFlags(ShortcutInfo.FLAG_DISABLED)
                     s.clearFlags(ShortcutInfo.FLAG_DYNAMIC)
                     s.setDisabledReason(ShortcutInfo.DISABLED_REASON_BY_APP)
-                    if (disabledMessage != null) s.setDisabledMessage(disabledMessage)
+                    if (disabledMessage != null) s.setDisabledMessage(disabledMessage.toString())
                 } else {
                     table.remove(id)
                 }

@@ -13,6 +13,11 @@ import java.util.List;
 import java.util.Map;
 
 public class WebView extends android.view.ViewGroup {
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface RendererPriority {}
+    public static final int RENDERER_PRIORITY_WAIVED = 0;
+    public static final int RENDERER_PRIORITY_BOUND = 1;
+    public static final int RENDERER_PRIORITY_IMPORTANT = 2;
     private final WebSettings mSettings;
     private final HostedWebViewProvider mProvider;
     private final Map<String, Object> mJavascriptInterfaces = new HashMap<>();

@@ -78,6 +78,13 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
     try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyStatsLog.java");
     try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyCommonStatsLog.java");
     try putForbidden(&result, allocator, "com/android/internal/logging/nano/MetricsProto.java");
+    try putForbidden(&result, allocator, "android/os/UserManagerCache.java");
+    try putForbidden(&result, allocator, "com/android/modules/expresslog/MetricIds.java");
+    try putForbidden(&result, allocator, "com/android/modules/expresslog/StatsExpressLog.java");
+    try putForbidden(&result, allocator, "com/android/apex/ApexInfo.java");
+    try putForbidden(&result, allocator, "com/android/apex/ApexInfoList.java");
+    try putForbidden(&result, allocator, "com/android/apex/XmlParser.java");
+    try putForbidden(&result, allocator, "com/android/apex/XmlWriter.java");
     for (generator_sources.sysprop) |entry| {
         if (entry.input.source != .aosp) continue;
         const path = try std.fs.path.join(allocator, &.{ aosp_root, entry.input.path });

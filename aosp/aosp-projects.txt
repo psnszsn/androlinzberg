@@ -115,6 +115,7 @@ platform/packages/modules/Connectivity
 platform/packages/modules/IPsec
 platform/packages/modules/Media
 platform/packages/modules/Permission
+platform/packages/modules/RuntimeI18n
 platform/packages/modules/SdkExtensions
 platform/packages/modules/StatsD
 platform/packages/modules/Uwb
@@ -139,6 +140,7 @@ platform/prebuilts/tools
 platform/system/apex
 platform/system/core
 platform/system/extras
+platform/system/hardware/interfaces
 platform/system/incremental_delivery
 platform/system/libbase
 platform/system/libprocinfo
@@ -147,6 +149,7 @@ platform/system/libziparchive
 platform/system/logging
 platform/system/memory/libmeminfo
 platform/system/sepolicy
+platform/system/security
 platform/system/server_configurable_flags
 platform/system/testing/gtest_extras
 platform/system/tools/aidl
