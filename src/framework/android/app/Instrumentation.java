@@ -109,8 +109,8 @@ public class Instrumentation {
         public android.content.Intent getResultData() { return mResultData; }
     }
 
-    /** AOSP Instrumentation.execStartActivity (ContextImpl/Activity.startActivity): the launch
-     * goes to the in-process activity runtime instead of ActivityTaskManager; no monitors. */
+    /** AOSP Instrumentation.execStartActivity. Transaction-managed APK activities cross the
+     * hosted ActivityTaskManager transport; isolated legacy smokes retain the local fallback. */
     public ActivityResult execStartActivity(Context who, android.os.IBinder contextThread,
             android.os.IBinder token, Activity target, android.content.Intent intent, int requestCode,
             android.os.Bundle options) {
@@ -127,12 +127,14 @@ public class Instrumentation {
 
     public void execStartActivities(Context who, android.os.IBinder contextThread, android.os.IBinder token,
             Activity target, android.content.Intent[] intents, android.os.Bundle options) {
-        for (android.content.Intent intent : intents) ActivityThread.startActivityInProcess(intent);
+        execStartActivitiesAsUser(who, contextThread, token, target, intents, options,
+                who.getUserId());
     }
     public int execStartActivitiesAsUser(Context who, android.os.IBinder contextThread, android.os.IBinder token,
             Activity target, android.content.Intent[] intents, android.os.Bundle options, int userId) {
-        execStartActivities(who, contextThread, token, target, intents, options);
-        return ActivityManager.START_SUCCESS;
+        int result = ActivityThread.startActivitiesInProcess(target, intents, options, userId);
+        checkStartActivityResult(result, intents != null && intents.length != 0 ? intents[0] : null);
+        return result;
     }
 
     /** AOSP Instrumentation.checkStartActivityResult. */

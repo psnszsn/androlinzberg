@@ -469,7 +469,7 @@ public final class ApkHost {
             // --- MainActivity
             Log.i(TAG, "starting " + mainActivity)
             if (mainActivity == null) throw IllegalStateException("manifest has no launcher activity")
-            android.app.ActivityThread.launchMainActivity(mainActivity)
+            android.app.ActivityThread.launchMainActivityThroughManager(mainActivity)
             Log.i(TAG, "activity up")
         }
 

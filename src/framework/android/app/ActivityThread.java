@@ -1316,7 +1316,39 @@ public final class ActivityThread extends ClientTransactionHandler {
                 android.view.Display.DEFAULT_DISPLAY, overrideConfig);
     }
     public static Activity launchMainActivity(String activityClassName) { return HostedActivityRuntime.launchMain(activityClassName); }
-    public static Activity currentActivity() { return HostedActivityRuntime.currentActivity(); }
+    /** Host launcher entry point. The launch crosses the same IActivityTaskManager transport as an
+     * Android launcher, then pumps this main looper until the Launch+Resume transaction presents
+     * the activity. HostedActivityRuntime remains only for isolated legacy framework smokes. */
+    public static Activity launchMainActivityThroughManager(String activityClassName) {
+        final HostAdapter adapter = sActivityHost;
+        if (adapter == null) throw new IllegalStateException("activity host is not configured");
+        final Context context = adapter.getActivityContext();
+        final Intent intent = new Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER)
+                .setComponent(new ComponentName(context.getPackageName(), activityClassName));
+        final int result = startActivityThroughManager(null, null, intent, -1);
+        Instrumentation.checkStartActivityResult(result, intent);
+
+        final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
+        final android.os.MessageQueue queue = Looper.myQueue();
+        while (sPresentedTransactionActivity == null
+                && android.os.SystemClock.uptimeMillis() < deadline) {
+            final android.os.Message message = queue.pollDueMessage$artzig();
+            if (message != null) {
+                message.getTarget().dispatchMessage(message);
+            } else {
+                android.os.SystemClock.sleep(1);
+            }
+        }
+        if (sPresentedTransactionActivity == null) {
+            throw new IllegalStateException("activity launch transaction timed out: " + intent);
+        }
+        return sPresentedTransactionActivity;
+    }
+    public static Activity currentActivity() {
+        final Activity transactionActivity = sPresentedTransactionActivity;
+        return transactionActivity != null ? transactionActivity : HostedActivityRuntime.currentActivity();
+    }
     /** AOSP ActivityThread.sCurrentBroadcastIntent: the Intent a receiver on this thread is handling. */
     private static final ThreadLocal<Intent> sCurrentBroadcastIntent = new ThreadLocal<>();
     public static Intent getIntentBeingBroadcast() { return sCurrentBroadcastIntent.get(); }
@@ -1324,7 +1356,79 @@ public final class ActivityThread extends ClientTransactionHandler {
     public static void setIntentBeingBroadcast$artzig(Intent intent) { sCurrentBroadcastIntent.set(intent); }
     public static int getManifestOrientation(String activityClassName) { return HostedActivityRuntime.manifestOrientation(activityClassName); }
     public static boolean applyConfigurationInProcess(Configuration config, int changes, int width, int height) {
+        final ActivityThread thread = currentActivityThread();
+        final Activity presented = sPresentedTransactionActivity;
+        final ActivityClientRecord record = presented != null
+                ? thread.mActivities.get(presented.getActivityToken()) : null;
+        if (record != null && record.activity == presented) {
+            return thread.applyConfigurationToTransactionActivity(
+                    record, config, changes, width, height);
+        }
         return HostedActivityRuntime.applyConfiguration(config, changes, width, height);
+    }
+
+    /** Host-compositor counterpart of AOSP ActivityTaskManager/ActivityThread configuration
+     * dispatch for an activity launched through ClientTransaction. Resources have already been
+     * updated by ApkHost; this preserves the remaining Application callback, handled-change
+     * callback, or save/stop/destroy/create/start/restore/post-create/resume ordering. */
+    private boolean applyConfigurationToTransactionActivity(ActivityClientRecord r,
+            Configuration config, int changes, int width, int height) {
+        if (changes != 0 && mInitialApplication != null) {
+            mInitialApplication.onConfigurationChanged(config);
+        }
+        if (r == null || r.activity == null) return false;
+
+        final int handledChanges = r.activityInfo != null
+                ? r.activityInfo.getRealConfigChanged()
+                : r.activity.getActivityInfo().getRealConfigChanged();
+        if ((changes & ~handledChanges) == 0) {
+            final HostAdapter adapter = sActivityHost;
+            if (adapter != null) adapter.resizeActivityRoot(r.activity, width, height);
+            if (changes != 0) {
+                r.activity.mConfigChangeFlags = 0;
+                r.activity.mCalled = false;
+                r.activity.mCurrentConfig = new Configuration(config);
+                r.activity.onConfigurationChanged(config);
+                if (!r.activity.mCalled) {
+                    throw new android.util.SuperNotCalledException("Activity "
+                            + r.activity.getLocalClassName()
+                            + " did not call through to super.onConfigurationChanged()");
+                }
+            }
+            return false;
+        }
+
+        final Activity destroyed = r.activity;
+        final int requestedOrientation = destroyed.getRequestedOrientation();
+        r.activity.mConfigChangeFlags |= changes;
+        r.activity.setChangingConfigurations$artzig(true);
+        final Intent customIntent = r.activity.getIntent();
+        if (r.getLifecycleState()
+                == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
+            performPauseActivity(r, false, "host configuration change", null);
+        }
+        performStopActivityInner(r, true, "host configuration change");
+        performDestroyActivity(r, false, true, "host configuration change");
+        // WindowManager removes every window owned by the old activity during a relaunch. The
+        // host adapter owns that boundary; clearing it prevents dialogs from the destroyed
+        // instance remaining stacked underneath the replacement activity.
+        clearPresentedTransactionActivity(destroyed);
+
+        r.activity = null;
+        r.overrideConfig = new Configuration();
+        final android.app.servertransaction.PendingTransactionActions pendingActions =
+                new android.app.servertransaction.PendingTransactionActions();
+        final Activity replacement = handleLaunchActivity(
+                r, pendingActions, Context.DEVICE_ID_DEFAULT, customIntent);
+        if (replacement == null) {
+            throw new IllegalStateException("configuration relaunch failed for " + customIntent);
+        }
+        // ActivityRecord owns this value on Android; retain it locally because the compositor
+        // initiated this relaunch without a second server-side ActivityRecord transaction.
+        replacement.setRequestedOrientation(requestedOrientation);
+        handleStartActivity(r, pendingActions, null);
+        handleResumeActivity(r, true, false, false, "host configuration change");
+        return true;
     }
     public static void shutdownActivitiesInProcess() {
         HostedActivityRuntime.shutdown();
@@ -1332,22 +1436,87 @@ public final class ActivityThread extends ClientTransactionHandler {
         sActivityHost = null;
     }
     public static void startActivityInProcess(Intent intent) {
-        if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.startActivity(intent);
+        if (sPresentedTransactionActivity != null) {
+            final int result = startActivityThroughManager(
+                    sPresentedTransactionActivity, null, intent, -1);
+            Instrumentation.checkStartActivityResult(result, intent);
+        } else if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.startActivity(intent);
         else Log.w(TAG, "startActivity dropped (no launcher): " + intent);
     }
     public static void startActivityInProcess(Activity caller, String resultWho, Intent intent,
             int requestCode) {
-        if (HostedActivityRuntime.isConfigured()) {
+        final ActivityThread thread = currentActivityThread();
+        final IBinder callerToken = caller != null ? caller.getActivityToken() : null;
+        final ActivityClientRecord callerRecord = callerToken != null
+                ? thread.mActivities.get(callerToken) : null;
+        if (callerRecord != null && callerRecord.activity == caller) {
+            final int result = startActivityThroughManager(caller, resultWho, intent, requestCode);
+            Instrumentation.checkStartActivityResult(result, intent);
+        } else if (HostedActivityRuntime.isConfigured()) {
             HostedActivityRuntime.startActivity(caller, resultWho, intent, requestCode);
         } else {
             Log.w(TAG, "startActivity dropped (no launcher): " + intent);
+        }
+    }
+    private static int startActivityThroughManager(Activity caller, String resultWho,
+            Intent intent, int requestCode) {
+        final ActivityThread thread = currentActivityThread();
+        final HostAdapter adapter = sActivityHost;
+        final Context context = caller != null ? caller
+                : adapter != null ? adapter.getActivityContext() : thread.getSystemContext();
+        try {
+            intent.migrateExtraStreamToClipData(context);
+            intent.prepareToLeaveProcess(context);
+            return ActivityTaskManager.getService().startActivity(
+                    thread.getApplicationThread(), context.getOpPackageName(),
+                    context.getAttributionTag(), intent,
+                    intent.resolveTypeIfNeeded(context.getContentResolver()),
+                    caller != null ? caller.getActivityToken() : null,
+                    resultWho, requestCode, 0, null, null);
+        } catch (RemoteException e) {
+            throw new RuntimeException("Failure from activity task manager", e);
+        }
+    }
+    public static int startActivitiesInProcess(Activity caller, Intent[] intents,
+            Bundle options, int userId) {
+        if (intents == null || intents.length == 0) {
+            return ActivityManager.START_INTENT_NOT_RESOLVED;
+        }
+        final ActivityThread thread = currentActivityThread();
+        final IBinder callerToken = caller != null ? caller.getActivityToken() : null;
+        final ActivityClientRecord callerRecord = callerToken != null
+                ? thread.mActivities.get(callerToken) : null;
+        if (callerRecord == null || callerRecord.activity != caller) {
+            for (Intent intent : intents) startActivityInProcess(caller, null, intent, -1);
+            return ActivityManager.START_SUCCESS;
+        }
+        final String[] resolvedTypes = new String[intents.length];
+        try {
+            for (int i = 0; i < intents.length; i++) {
+                intents[i].migrateExtraStreamToClipData(caller);
+                intents[i].prepareToLeaveProcess(caller);
+                resolvedTypes[i] = intents[i].resolveTypeIfNeeded(caller.getContentResolver());
+            }
+            return ActivityTaskManager.getService().startActivities(
+                    thread.getApplicationThread(), caller.getOpPackageName(),
+                    caller.getAttributionTag(), intents, resolvedTypes, callerToken, options,
+                    userId);
+        } catch (RemoteException e) {
+            throw new RuntimeException("Failure from activity task manager", e);
         }
     }
     public static ComponentName resolveActivityInProcess(Intent intent) {
         return HostedActivityRuntime.isConfigured() ? HostedActivityRuntime.resolveActivity(intent) : null;
     }
     public static void finishActivityInProcess(Activity activity) {
-        if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.finishActivity(activity);
+        final ActivityThread thread = currentActivityThread();
+        final ActivityClientRecord record = thread.mActivities.get(activity.getActivityToken());
+        if (record != null && record.activity == activity) {
+            ActivityClient.getInstance().finishActivity(activity.getActivityToken(),
+                    activity.getResultCode$artzig(), activity.getResultData$artzig(), 0);
+        } else if (HostedActivityRuntime.isConfigured()) {
+            HostedActivityRuntime.finishActivity(activity);
+        }
     }
     public static void recreateActivityInProcess(Activity activity) {
         if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.recreateActivity(activity);
