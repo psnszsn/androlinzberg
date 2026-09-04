@@ -723,6 +723,8 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/com/android/internal/util/FastMath.java");
     try c.file("$CJ/android/app/WindowConfiguration.java");
     try c.file("$CJ/android/app/StatusBarManager.java");
+    try c.file("$CJ/android/os/IncidentManager.java");
+    try c.file("$CJ/android/os/IncidentReportArgs.java");
     try c.file("$CJ/android/media/NearbyMediaDevicesProvider.java");
     try c.file("$CJ/com/android/internal/statusbar/AppClipsServiceConnector.java");
     try c.file("$CJ/com/android/internal/statusbar/DisableStates.java");
@@ -1176,8 +1178,8 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.add("$CJ/android/os/strictmode", .{});
     // Real android.net.Uri + android.content.Intent (one unit: Intent parcels its
     // data Uri through Uri.writeToParcel) and Intent's import closure. Service
-    // facades without a host service (ContactsContract, StatusBarManager,
-    // IncidentManager, PhoneAccount) are stubs in src/framework-stubs.
+    // Facades without a host service (ContactsContract and PhoneAccount) are
+    // stubs in src/framework-stubs.
     try c.file("$CJ/android/net/Uri.java");
     try c.file("$CJ/android/net/UriCodec.java");
     try c.file("$CJ/android/content/Intent.java");

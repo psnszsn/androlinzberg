@@ -280,6 +280,8 @@ internal object SystemServices {
         storageStats.packageService = packageManager
         android.os.ServiceManager.addService(Context.STORAGE_STATS_SERVICE, storageStats)
         android.os.ServiceManager.addService(Context.STATUS_BAR_SERVICE, HostedStatusBarService())
+        android.os.ServiceManager.addService(Context.INCIDENT_SERVICE, HostedIncidentManagerService())
+        android.os.ServiceManager.addService(Context.INCIDENT_COMPANION_SERVICE, HostedIncidentCompanionService())
         android.os.ServiceManager.addService(Context.DEVICE_IDLE_CONTROLLER, HostedDeviceIdleController())
         // Phase 3: media sessions and media metrics (the audio service stays pending, see docs/stubs.md).
         val mediaSessions = HostedMediaSessionService()

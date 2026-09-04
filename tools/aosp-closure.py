@@ -73,6 +73,7 @@ AIDL_ROOTS = (
     "frameworks/native/libs/input",
     "frameworks/native/aidl/binder",
     "frameworks/native/libs/binder/aidl",
+    "frameworks/native/libs/incidentcompanion/binder",
     "frameworks/native/libs/permission/aidl",
     "frameworks/base/apex/jobscheduler/framework/java",
     "frameworks/base/native/android/aidl",

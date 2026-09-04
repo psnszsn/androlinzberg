@@ -673,6 +673,27 @@ internal object FrameworkModuleSmoke {
         check(tileResult.get() ==
             android.app.StatusBarManager.TILE_ADD_REQUEST_ERROR_NO_STATUS_BAR_SERVICE)
 
+        val incidentManager = checkNotNull(
+            context.getSystemService(android.os.IncidentManager::class.java),
+        )
+        check(incidentManager === context.getSystemService(Context.INCIDENT_SERVICE))
+        incidentManager.reportIncident(android.os.IncidentReportArgs())
+        check(incidentManager.pendingReports.isEmpty())
+        check(incidentManager.getIncidentReportList("HostedReceiver").isEmpty())
+        val incidentDenied = java.util.concurrent.CountDownLatch(1)
+        incidentManager.requestAuthorization(
+            android.os.Process.myUid(),
+            context.packageName,
+            0,
+            { command -> command.run() },
+            object : android.os.IncidentManager.AuthListener() {
+                override fun onReportDenied() {
+                    incidentDenied.countDown()
+                }
+            },
+        )
+        check(incidentDenied.await(5, java.util.concurrent.TimeUnit.SECONDS))
+
         val clipboardManager =
             checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         check(clipboardManager === context.getSystemService(Context.CLIPBOARD_SERVICE))

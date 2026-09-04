@@ -9,7 +9,7 @@ closure tool sees today: `replaceable` means the real class compiles once the so
 the tool lists are added; `blocked` names the first classes of the real closure that
 need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).
 
-Pending: 84 (budget 84). Survivors: 78. Total: 162.
+Pending: 83 (budget 83). Survivors: 78. Total: 161.
 
 ## Survivors
 
@@ -176,12 +176,6 @@ Pending: 84 (budget 84). Survivors: 78. Total: 162.
 | `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (20 to add), not vendored; android.security.IKeyChainAliasCallback: AIDL outside the configured include roots (via IKeyChainAliasCallback < KeyChain < DeviceAdminReceiver); android.security.IKeyChainService: AIDL outside the config |
 | `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (150 to add), not vendored; android.app.admin.SecurityLog.SecurityEvent: JNI natives (via SecurityEvent < DevicePolicyManager); android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < DevicePolicyMan |
 | `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (44 to add), not vendored; android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < IDevicePolicyManager < DevicePolicyResourcesManager); android.stats.devicepolicy.DevicePolicyEnums: no sour |
-
-### incident
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/os/IncidentManager.java` | blocked | frameworks/base/core/java/android/os/IncidentManager.java (7 to add), not vendored; android.os.IIncidentAuthListener: AIDL outside the configured include roots (via IIncidentAuthListener < IncidentManager); android.os.IIncidentCompanion: AIDL outside the configured include roots (via IIncidentCompan |
 
 ### inputmethod
 

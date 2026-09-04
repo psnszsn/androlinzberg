@@ -189,6 +189,11 @@ public final class SystemServiceRegistry {
             @Override public StatusBarManager createService(ContextImpl ctx) {
                 return new StatusBarManager(ctx.getOuterContext());
             }});
+        registerService(Context.INCIDENT_SERVICE, android.os.IncidentManager.class,
+                new CachedServiceFetcher<android.os.IncidentManager>() {
+            @Override public android.os.IncidentManager createService(ContextImpl ctx) {
+                return new android.os.IncidentManager(ctx.getOuterContext());
+            }});
         registerService(Context.STORAGE_STATS_SERVICE, android.app.usage.StorageStatsManager.class,
                 new CachedServiceFetcher<android.app.usage.StorageStatsManager>() {
             @Override public android.app.usage.StorageStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException {

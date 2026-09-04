@@ -3004,3 +3004,12 @@ F aosp frameworks/base/media/java/android/media/INearbyMediaDevicesUpdateCallbac
 F aosp frameworks/base/media/java/android/media/MediaRoute2Info.aidl
 F aosp frameworks/base/media/java/android/media/NearbyDevice.aidl
 F aosp frameworks/base/media/java/android/media/NearbyDevice.java
+F aosp frameworks/base/core/java/android/os/IIncidentDumpCallback.aidl
+F aosp frameworks/base/core/java/android/os/IIncidentManager.aidl
+F aosp frameworks/base/core/java/android/os/IIncidentReportStatusListener.aidl
+F aosp frameworks/base/core/java/android/os/IncidentManager.java
+F aosp frameworks/base/core/java/android/os/IncidentReportArgs.aidl
+F aosp frameworks/base/core/java/android/os/IncidentReportArgs.java
+F aosp frameworks/native/libs/incidentcompanion/binder/android/os/IIncidentAuthListener.aidl
+F aosp frameworks/native/libs/incidentcompanion/binder/android/os/IIncidentCompanion.aidl
+F aosp frameworks/native/libs/incidentcompanion/binder/android/os/IncidentManager.aidl
