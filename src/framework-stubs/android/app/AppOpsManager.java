@@ -26,6 +26,8 @@ public class AppOpsManager {
     public static final int OP_LEGACY_STORAGE = 87;
     public static final int OP_MANAGE_EXTERNAL_STORAGE = 92;
     public static final int OP_NO_ISOLATED_STORAGE = 99;
+    public static final int OP_READ_EXTERNAL_STORAGE = 59;
+    public static final int OP_READ_MEDIA_IMAGES = 85;
     public static final int _NUM_OP = 148;
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface SamplingStrategy {}
@@ -39,6 +41,17 @@ public class AppOpsManager {
     public static int strOpToOp(String op) { throw new IllegalArgumentException("Unknown operation string: " + op); }
     /** AOSP maps op codes to public op names; this host has no table. */
     public static String opToPublicName(int op) { return "op:" + op; }
+    public static String opToName(int op) { return op == OP_NONE ? "NONE" : "op:" + op; }
+    public static String modeToName(int mode) {
+        switch (mode) {
+            case MODE_ALLOWED: return "allow";
+            case MODE_IGNORED: return "ignore";
+            case MODE_ERRORED: return "deny";
+            case MODE_DEFAULT: return "default";
+            case MODE_FOREGROUND: return "foreground";
+            default: return "mode=" + mode;
+        }
+    }
     public static final int OP_SYSTEM_ALERT_WINDOW = 24;
     public static final int OP_WRITE_SETTINGS = 23;
     public static final int OP_READ_CLIPBOARD = 29;

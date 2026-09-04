@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 75 (budget 75). Survivors: 69. Total: 144.
+Pending: 72 (budget 72). Survivors: 69. Total: 141.
 
 ## Survivors
 
@@ -137,7 +137,7 @@ Pending: 75 (budget 75). Survivors: 69. Total: 144.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/BatteryStats.java` | blocked | frameworks/base/core/java/android/os/BatteryStats.java (31 to add), not vendored; android.os.BatteryStats.BitDescription: existing stub android.app.ActivityManager lacks member PROCESS_STATE_HEAVY_WEIGHT (via BitDescription < BatteryStatsHistory < BatteryUsageStats < BatteryStats); android.os.Batter |
+| `android/os/BatteryStats.java` | blocked | frameworks/base/core/java/android/os/BatteryStats.java (31 to add), not vendored; android.os.BatteryStatsManager.WifiState: existing host class com.android.internal.app.IBatteryStats lacks method getBatteryUsageStats (via WifiState < BatteryStats); android.os.BatteryStatsManager.WifiState: existing  |
 
 ### biometrics
 
@@ -230,14 +230,6 @@ Pending: 75 (budget 75). Survivors: 69. Total: 144.
 | `android/os/INetworkManagementService.java` | replaceable | frameworks/base/core/java/android/os/INetworkManagementService.aidl (3 to add, AIDL interface), not vendored |
 | `com/android/internal/os/BinderCallsStats.java` | blocked | frameworks/base/core/java/com/android/internal/os/BinderCallsStats.java (10 to add), not vendored; com.android.internal.os.BinderLatencyProto.ApiStats: no source in the checkout (via ApiStats < BinderLatencyObserver < BinderCallsStats); com.android.internal.os.BinderLatencyProto.Dims: no source in t |
 | `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (72 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < ZygoteInit < SystemServerClassLoaderFactory); android.net.http.Flags: no source in the checko |
-
-### storage
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/os/storage/IStorageManager.java` | blocked | frameworks/base/core/java/android/os/storage/IStorageManager.aidl (9 to add, AIDL interface), not vendored; android.os.IVoldTaskListener: no source in the checkout (via IVoldTaskListener < IStorageManager) |
-| `android/os/storage/StorageManager.java` | blocked | frameworks/base/core/java/android/os/storage/StorageManager.java (23 to add), not vendored; android.content.res.ObbScanner: JNI natives (via ObbScanner < StorageManager); android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < IInstalld < StorageManager); and |
-| `android/os/storage/VolumeInfo.java` | blocked | frameworks/base/core/java/android/os/storage/VolumeInfo.java (3 to add), not vendored; android.os.IVold: no source in the checkout (via IVold < VolumeInfo); android.os.storage.VolumeInfo: existing host class android.os.storage.StorageManager lacks method findPrivateForEmulated (via VolumeInfo); andr |
 
 ### systemserver
 

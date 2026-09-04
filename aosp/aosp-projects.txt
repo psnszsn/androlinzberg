@@ -158,6 +158,7 @@ platform/system/tools/aidl
 platform/system/tools/sysprop
 platform/system/tools/xsdc
 platform/system/unwinding
+platform/system/vold
 platform/test/app_compat/csuite
 platform/tools/apksig
 platform/tools/dexter

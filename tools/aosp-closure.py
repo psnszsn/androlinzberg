@@ -90,6 +90,7 @@ AIDL_ROOTS = (
     "hardware/interfaces/security/keymint/aidl",
     "system/hardware/interfaces/keystore2/aidl",
     "system/core/gatekeeperd/binder",
+    "system/vold/binder",
     "hardware/interfaces/graphics/common/aidl",
     "hardware/interfaces/health/aidl",
     "hardware/interfaces/radio/aidl",

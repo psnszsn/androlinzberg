@@ -1097,9 +1097,19 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/android/os/LocaleList.java");
     try c.file("$CJ/android/os/UserHandle.java");
     // Real Environment (vendored patch: data root from ARTZIG_DATA_DIR) over the
-    // StorageManager stub's single emulated volume.
+    // hosted stock IStorageManager's single emulated volume.
     try c.file("$CJ/android/os/Environment.java");
+    try c.file("$CJ/android/content/res/ObbInfo.java");
+    try c.file("$CJ/android/os/ProxyFileDescriptorCallback.java");
+    try c.file("$CJ/android/os/storage/DiskInfo.java");
+    try c.file("$CJ/android/os/storage/OnObbStateChangeListener.java");
+    try c.file("$CJ/android/os/storage/StorageEventListener.java");
+    try c.file("$CJ/android/os/storage/StorageManager.java");
     try c.file("$CJ/android/os/storage/StorageVolume.java");
+    try c.file("$CJ/android/os/storage/VolumeInfo.java");
+    try c.file("$CJ/android/os/storage/VolumeRecord.java");
+    try c.file("$CJ/com/android/internal/os/AppFuseMount.java");
+    try c.file("$CJ/com/android/internal/os/RoSystemProperties.java");
     // Real BroadcastReceiver; ArtzigBroadcastManager.Args extends its PendingResult (LoadedApk.ReceiverDispatcher.Args).
     try c.file("$CJ/android/content/BroadcastReceiver.java");
     // Real ContentProvider over ContentProviderNative (the AOSP provider transport)

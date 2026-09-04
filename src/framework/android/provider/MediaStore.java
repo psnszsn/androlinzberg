@@ -58,6 +58,15 @@ public final class MediaStore {
         return resolver.openAssetFileDescriptor(uri, mode, cancellationSignal);
     }
 
+    /** Android 16 MediaStore.getVolumeName: the first path segment of a media URI. */
+    public static String getVolumeName(Uri uri) {
+        Objects.requireNonNull(uri, "uri");
+        if (!AUTHORITY.equals(uri.getAuthority()) || uri.getPathSegments().isEmpty()) {
+            throw new IllegalArgumentException("Missing volume name in " + uri);
+        }
+        return uri.getPathSegments().get(0);
+    }
+
     public interface MediaColumns extends BaseColumns {
         String DATA = "_data";
         String SIZE = "_size";
@@ -68,6 +77,7 @@ public final class MediaStore {
         String MIME_TYPE = "mime_type";
         String WIDTH = "width";
         String HEIGHT = "height";
+        String VOLUME_NAME = "volume_name";
     }
 
     public interface DownloadColumns extends MediaColumns {

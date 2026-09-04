@@ -384,6 +384,11 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/appwidget/IAppWidgetService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/IPackageInstallerCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/usage/IStorageStatsManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/storage/IObbActionListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/storage/IStorageEventListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/storage/IStorageManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/storage/IStorageShutdownObserver.aidl" },
+    .{ .source = .aosp, .path = "system/vold/binder/android/os/IVoldTaskListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/usage/IUsageStatsManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IBatteryPropertiesRegistrar.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IPowerManager.aidl" },
@@ -799,6 +804,8 @@ pub const aconfig = [_]Aconfig{
 };
 
 pub const sysprop = [_]Sysprop{
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/CryptoProperties.sysprop" } },
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/HdmiProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/InputProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/DisplayProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/MemoryProperties.sysprop" } },

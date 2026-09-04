@@ -41,6 +41,7 @@ framework_patches = tuple(
         (23, "-resources-make-early-RRO-constraint-flag-read-only.patch"),
         (24, "-WindowOrganizer-tolerate-host-SurfaceControl-apply-t.patch"),
         (25, "-TaskStackListener-tolerate-host-TaskSnapshot-buffer-.patch"),
+        (26, "-StorageManager-cut-unavailable-vold-OBB-and-AppFuse-.patch"),
     )
 )
 
