@@ -523,7 +523,10 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/DnsResolver.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/IpPrefix.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/InetAddresses.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/LinkAddress.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/LinkProperties.java");
     try c.file("$A/frameworks/base/core/java/android/net/MatchAllNetworkSpecifier.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/Network.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkCapabilities.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkInfo.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkRequest.java");
@@ -537,6 +540,8 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/TransportInfo.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/UidRange.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/util/DnsUtils.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/CaptivePortalData.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/connectivity/ConnectivityCompatChanges.java");
     try c.file("$A/packages/modules/SdkExtensions/java/android/os/ext/SdkExtensions.java");
     try c.file("$A/packages/modules/Permission/framework-s/java/android/permission/internal/compat/UserHandleCompat.java");
     try c.file("$A/packages/modules/ConfigInfrastructure/framework/java/android/provider/DeviceConfig.java");
@@ -589,6 +594,7 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$A/frameworks/libs/modules-utils/java/com/android/modules/utils/build/SdkLevel.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/BitUtils.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/CollectionUtils.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/ConnectivityUtils.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/DnsPacket.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/DnsPacketUtils.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/DnsSvcbRecord.java");
@@ -598,6 +604,7 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetworkCapabilitiesUtils.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetworkStackConstants.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetworkStatsUtils.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/LinkPropertiesUtils.java");
     try c.file("$A/external/jspecify/src/main/java/org/jspecify/annotations/NonNull.java");
     try c.file("$A/external/jspecify/src/main/java/org/jspecify/annotations/Nullable.java");
     try c.file("$MU/java/com/android/internal/util/Preconditions.java");

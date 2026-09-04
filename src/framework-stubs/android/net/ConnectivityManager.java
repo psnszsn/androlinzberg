@@ -1,11 +1,17 @@
 /* artzig stub: pretend to be online via the default network. */
 package android.net;
 public class ConnectivityManager {
+    private static ConnectivityManager sInstance;
     public static final int TYPE_NONE = -1;
     public static final int TYPE_WIFI = 1;
     /** AOSP ConnectivityManager.NETID_UNSET; the hosted process has no selected Android netId. */
     public static final int NETID_UNSET = 0;
     public static final int REQUEST_ID_UNSET = 0;
+    public ConnectivityManager() { sInstance = this; }
+    /** Pinned Network.openConnection helper; the hosted network has no configured proxy. */
+    static ConnectivityManager getInstanceOrNull() { return sInstance; }
+    /** Pinned Network.openConnection helper; the hosted network always routes directly. */
+    public ProxyInfo getProxyForNetwork(Network network) { return null; }
     public static boolean isNetworkTypeValid(int networkType) {
         return networkType >= 0 && networkType <= 17;
     }
