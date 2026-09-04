@@ -7,6 +7,8 @@
 package android.app;
 
 import android.content.Context;
+import android.content.Intent;
+import com.android.internal.content.ReferrerIntent;
 
 public class Instrumentation {
     private ActivityThread mThread;
@@ -51,6 +53,41 @@ public class Instrumentation {
 
     /** AOSP Instrumentation.callActivityOnPause delegates through Activity.performPause. */
     public void callActivityOnPause(Activity activity) { activity.performPause(); }
+
+    public void callActivityOnNewIntent(Activity activity, Intent intent) {
+        if (android.security.Flags.contentUriPermissionApis()) {
+            activity.performNewIntent(intent,
+                    new ComponentCaller(activity.getActivityToken(), null));
+        } else {
+            activity.performNewIntent(intent);
+        }
+    }
+
+    public void callActivityOnNewIntent(Activity activity, Intent intent,
+            ComponentCaller caller) {
+        activity.performNewIntent(intent, caller);
+    }
+
+    public void callActivityOnNewIntent(Activity activity, ReferrerIntent intent) {
+        final String oldReferrer = activity.mReferrer;
+        try {
+            if (intent != null) activity.mReferrer = intent.mReferrer;
+            callActivityOnNewIntent(activity, intent != null ? new Intent(intent) : null);
+        } finally {
+            activity.mReferrer = oldReferrer;
+        }
+    }
+
+    public void callActivityOnNewIntent(Activity activity, ReferrerIntent intent,
+            ComponentCaller caller) {
+        final String oldReferrer = activity.mReferrer;
+        try {
+            if (intent != null) activity.mReferrer = intent.mReferrer;
+            callActivityOnNewIntent(activity, intent != null ? new Intent(intent) : null, caller);
+        } finally {
+            activity.mReferrer = oldReferrer;
+        }
+    }
 
     /** AOSP Instrumentation.ActivityResult. */
     public static final class ActivityResult {

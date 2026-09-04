@@ -20,6 +20,7 @@ import android.view.accessibility.AccessibilityEvent;
 import com.android.internal.policy.PhoneWindow;
 public class Activity extends ContextWrapper implements Window.Callback,
         KeyEvent.Callback, android.view.LayoutInflater.Factory2 {
+    private static final String TAG = "Activity";
     public static final int RESULT_OK = -1, RESULT_CANCELED = 0, RESULT_FIRST_USER = 1;
     static final String FRAGMENTS_TAG = "android:fragments";
     private static final String REQUEST_PERMISSIONS_WHO_PREFIX = "@android:requestPermissions:";
@@ -43,6 +44,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     boolean mCalled;
     /** Caller identity is visible only while a caller-aware result/new-intent callback runs. */
     private ComponentCaller mCurrentCaller;
+    String mReferrer;
     /** AOSP configuration cached for deciding and reporting handled configuration changes. */
     Configuration mCurrentConfig = new Configuration();
     int mConfigChangeFlags;
@@ -192,6 +194,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
             ComponentCaller caller) {
         onActivityResult(requestCode, resultCode, data);
     }
+    /** Flagged AOSP callback; the default preserves legacy one-argument overrides. */
+    public void onNewIntent(Intent intent, ComponentCaller caller) { onNewIntent(intent); }
     /** AOSP caller scope: valid only from a caller-aware onActivityResult/onNewIntent callback. */
     public ComponentCaller getCurrentCaller() {
         if (mCurrentCaller == null) {
@@ -329,7 +333,23 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void reportFullyDrawn() {}
     public void postponeEnterTransition() {}
     public void startPostponedEnterTransition() {}
-    public android.net.Uri getReferrer() { return null; }
+    public android.net.Uri getReferrer() {
+        final Intent intent = getIntent();
+        if (intent != null) {
+            try {
+                final android.net.Uri referrer = intent.getParcelableExtra(
+                        Intent.EXTRA_REFERRER, android.net.Uri.class);
+                if (referrer != null) return referrer;
+                final String referrerName = intent.getStringExtra(Intent.EXTRA_REFERRER_NAME);
+                if (referrerName != null) return android.net.Uri.parse(referrerName);
+            } catch (android.os.BadParcelableException e) {
+                android.util.Log.w(TAG, "Cannot read referrer from malformed intent extras", e);
+            }
+        }
+        return mReferrer != null
+                ? new android.net.Uri.Builder().scheme("android-app").authority(mReferrer).build()
+                : null;
+    }
     public int getLaunchedFromUid() { return android.os.Process.myUid(); }
     public String getCallingPackage() { return null; }
     public android.content.ComponentName getCallingActivity() { return null; }
@@ -513,6 +533,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     protected void onRestart() {}
     protected void onStart() { mFragments.doLoaderStart(); }
     protected void onResume() {}
+    @Deprecated public void onStateNotSaved() {}
     protected void onPostResume() {}
     protected void onPause() { mCalled = true; }
     protected void onStop() {}
@@ -616,6 +637,14 @@ public class Activity extends ContextWrapper implements Window.Callback,
     }
     /** AOSP Activity.performNewIntent dispatches without replacing the Activity's current Intent. */
     final void performNewIntent(Intent intent) { onNewIntent(intent); }
+    final void performNewIntent(Intent intent, ComponentCaller caller) {
+        mCurrentCaller = caller;
+        try {
+            onNewIntent(intent, caller);
+        } finally {
+            mCurrentCaller = null;
+        }
+    }
     public final void performSaveInstanceState(Bundle outState) {
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreSaveInstanceState(this, outState);

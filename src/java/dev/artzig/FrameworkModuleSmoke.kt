@@ -3,12 +3,15 @@
 package dev.artzig
 
 import android.app.Activity
+import android.app.ActivityClient
 import android.app.ActivityGroup
 import android.app.ActivityManager
 import android.app.ActivityThread
 import android.app.ComponentCaller
 import android.app.DownloadManager
 import android.app.GrammaticalInflectionManager
+import android.app.IActivityClientController
+import android.app.Instrumentation
 import android.app.LocalActivityManager
 import android.app.Notification
 import android.app.Person
@@ -18,11 +21,16 @@ import android.app.RemoteAction
 import android.app.ResultInfo
 import android.app.UiModeManager
 import android.app.servertransaction.ActivityConfigurationChangeItem
+import android.app.servertransaction.ActivityRelaunchItem
 import android.app.servertransaction.ClientTransaction
 import android.app.servertransaction.ClientTransactionListenerController
+import android.app.servertransaction.ConfigurationChangeItem
+import android.app.servertransaction.LaunchActivityItem
 import android.app.servertransaction.PendingTransactionActions
+import android.app.servertransaction.ResumeActivityItem
 import android.content.AttributionSource
 import android.content.ComponentName
+import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -74,6 +82,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.opengl.GLSurfaceView
 import android.util.Rational
+import android.util.MergedConfiguration
 import android.util.SparseArray
 import android.util.proto.ProtoOutputStream
 import android.view.Choreographer
@@ -107,6 +116,7 @@ import android.widget.EditText
 import android.widget.SeekBar
 import com.android.internal.util.RingBuffer
 import com.android.internal.util.TraceBuffer
+import com.android.internal.content.ReferrerIntent
 import java.io.ByteArrayInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -125,9 +135,11 @@ internal object FrameworkModuleSmoke {
     private val activityGroupEvents = mutableListOf<String>()
     private val activityResultEvents = mutableListOf<String>()
     private val activityConfigurationEvents = mutableListOf<String>()
+    private val activityRelaunchEvents = mutableListOf<String>()
     private val changingConfigurationEvents = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
     private var expectedLocalActivityParent: Activity? = null
+    private var activityRelaunchGeneration = 0
 
     private var permissionsFixtureApk: String? = null
 
@@ -175,6 +187,7 @@ internal object FrameworkModuleSmoke {
         testLocalActivityManagerLifecycleAndRecreation()
         testActivityThreadResultDelivery()
         testActivityThreadConfigurationChange()
+        testActivityThreadRelaunch()
         testActivityGroupLifecycleStateAndResults()
         testLegacyFragmentTransactionsAndRecreation()
         testLegacyFragmentHostedResultsAndRetention()
@@ -3369,6 +3382,599 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private fun testActivityThreadRelaunch() {
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        val activityName = RelaunchActivity::class.java.name
+        val info = activityInfo(activityName).apply {
+            exported = false
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION_CODES.VANILLA_ICE_CREAM
+        }
+        ActivityThread.configureActivityHost(
+            LocalActivityHostAdapter(context),
+            mapOf(activityName to info),
+        )
+
+        val thread = ActivityThread.currentActivityThread()
+        val token = Binder()
+        val application = checkNotNull(ActivityThread.currentApplication())
+        val processConfigSeqs = mutableListOf<Int>()
+        val processConfigCallback = object : ComponentCallbacks {
+            override fun onConfigurationChanged(newConfig: Configuration) {
+                processConfigSeqs += newConfig.seq
+            }
+
+            override fun onLowMemory() = Unit
+        }
+        application.registerComponentCallbacks(processConfigCallback)
+        val windowInfoEvents = mutableListOf<Pair<android.os.IBinder, ActivityWindowInfo>>()
+        val windowInfoListener = java.util.function.BiConsumer<android.os.IBinder, ActivityWindowInfo> {
+                changedToken, windowInfo ->
+            windowInfoEvents += changedToken to ActivityWindowInfo(windowInfo)
+        }
+        ClientTransactionListenerController.getInstance()
+            .registerActivityWindowInfoChangedListener(windowInfoListener)
+        var record: ActivityThread.ActivityClientRecord? = null
+        activityRelaunchGeneration = 0
+        activityRelaunchEvents.clear()
+        try {
+            val baseOrientation = context.resources.configuration.orientation
+            val coalescedOrientation = if (
+                baseOrientation == Configuration.ORIENTATION_LANDSCAPE
+            ) {
+                Configuration.ORIENTATION_PORTRAIT
+            } else {
+                Configuration.ORIENTATION_LANDSCAPE
+            }
+            val olderProcessConfig = Configuration(context.resources.configuration).apply {
+                orientation = coalescedOrientation
+                fontScale = 1.1f
+                seq = 1000
+            }
+            val newerProcessConfig = Configuration(olderProcessConfig).apply {
+                fontScale = 1.2f
+                seq = 1001
+            }
+            thread.executeTransaction(ClientTransaction().apply {
+                addTransactionItem(
+                    ConfigurationChangeItem(olderProcessConfig, Context.DEVICE_ID_DEFAULT),
+                )
+                addTransactionItem(
+                    ConfigurationChangeItem(newerProcessConfig, Context.DEVICE_ID_DEFAULT),
+                )
+            })
+            check(processConfigSeqs == listOf(1001)) {
+                "process configuration items did not coalesce to newest: $processConfigSeqs"
+            }
+
+            val launchConfig = Configuration(newerProcessConfig).apply {
+                orientation = baseOrientation
+                fontScale = 1.3f
+                seq = 1002
+            }
+            val launchAssistToken = Binder()
+            val launchShareableToken = Binder()
+            val launchIntent = RecordingReferrerIntent(
+                Intent().putExtra("relaunch-intent", "launch"),
+                "launch-intent-referrer",
+            )
+            val launchResult = Intent().putExtra("relaunch-result", "launch")
+            withContentUriPermissionApis(false) {
+                thread.executeTransaction(ClientTransaction().apply {
+                    addTransactionItem(
+                        LaunchActivityItem(
+                            token,
+                            Intent().setComponent(ComponentName("org.example", activityName)),
+                            0,
+                            info,
+                            launchConfig,
+                            Configuration(),
+                            Context.DEVICE_ID_DEFAULT,
+                            "launch-referrer",
+                            null,
+                            ActivityManager.PROCESS_STATE_UNKNOWN,
+                            null,
+                            null,
+                            listOf(ResultInfo(null, 40, Activity.RESULT_OK, launchResult)),
+                            listOf(launchIntent),
+                            null,
+                            false,
+                            null,
+                            launchAssistToken,
+                            null,
+                            launchShareableToken,
+                            false,
+                            null,
+                            Binder(),
+                            ActivityWindowInfo(),
+                        ),
+                    )
+                })
+            }
+            record = checkNotNull(thread.getActivityClient(token))
+            val oldActivity = record.activity as RelaunchActivity
+            check(oldActivity.resources.configuration.orientation == baseOrientation)
+            check(processConfigSeqs == listOf(1001, 1002)) {
+                "LaunchActivityItem preExecute config was not consumed before launch: " +
+                    processConfigSeqs
+            }
+            check(oldActivity.assistToken === launchAssistToken)
+            check(oldActivity.shareableActivityToken === launchShareableToken)
+            check(oldActivity.referrer.toString() == "android-app://launch-referrer")
+            thread.handleStartActivity(
+                record,
+                PendingTransactionActions().apply { setCallOnPostCreate(true) },
+                null,
+            )
+            check(withContentUriPermissionApis(false) {
+                thread.performResumeActivity(record, false, "relaunch-smoke-launch")
+            })
+            check(launchIntent.preparedForProcess && launchIntent.fromProtectedComponent)
+            check(activityRelaunchEvents == listOf(
+                "1:create:fresh:no-retained:launch",
+                "1:start",
+                "1:post-create:null",
+                "1:state-not-saved",
+                "1:new-intent-legacy:launch:no-caller",
+                "1:result:40:${Activity.RESULT_OK}:launch",
+                "1:resume",
+            )) { "LaunchActivityItem payload/token/config mismatch: $activityRelaunchEvents" }
+            val oldWindow = oldActivity.window
+            oldActivity.intent = Intent(oldActivity.intent).putExtra("relaunch-custom", "custom")
+
+            val currentOrientation = oldActivity.resources.configuration.orientation
+            val targetOrientation = if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
+                Configuration.ORIENTATION_PORTRAIT
+            } else {
+                Configuration.ORIENTATION_LANDSCAPE
+            }
+            val globalConfig = Configuration(oldActivity.resources.configuration).apply {
+                orientation = targetOrientation
+                seq = 1100
+            }
+            val olderOverride = Configuration().apply {
+                fontScale = 1.25f
+                seq = 1101
+            }
+            val newerOverride = Configuration().apply {
+                fontScale = 1.5f
+                seq = 1102
+            }
+            val olderWindowInfo = ActivityWindowInfo().apply {
+                set(false, Rect(0, 0, 100, 100), Rect(0, 0, 100, 100))
+            }
+            val newerWindowInfo = ActivityWindowInfo().apply {
+                set(true, Rect(0, 0, 300, 200), Rect(10, 10, 290, 190))
+            }
+            val firstResult = Intent().putExtra("relaunch-result", "first")
+            val secondResult = Intent().putExtra("relaunch-result", "second")
+            val firstIntent = RecordingReferrerIntent(
+                Intent().putExtra("relaunch-intent", "first"),
+                "first-referrer",
+            )
+            val secondIntent = RecordingReferrerIntent(
+                Intent().putExtra("relaunch-intent", "second"),
+                "second-referrer",
+            )
+
+            activityRelaunchEvents.clear()
+            val transaction = ClientTransaction().apply {
+                addTransactionItem(
+                    ConfigurationChangeItem(globalConfig, Context.DEVICE_ID_DEFAULT),
+                )
+                addTransactionItem(
+                    ActivityRelaunchItem(
+                        token,
+                        listOf(ResultInfo(null, 41, Activity.RESULT_OK, firstResult)),
+                        listOf(firstIntent),
+                        ActivityInfo.CONFIG_ORIENTATION,
+                        MergedConfiguration(globalConfig, olderOverride),
+                        true,
+                        olderWindowInfo,
+                    ),
+                )
+                addTransactionItem(
+                    ActivityRelaunchItem(
+                        token,
+                        listOf(ResultInfo(null, 42, Activity.RESULT_CANCELED, secondResult)),
+                        listOf(secondIntent),
+                        ActivityInfo.CONFIG_FONT_SCALE,
+                        MergedConfiguration(globalConfig, newerOverride),
+                        true,
+                        newerWindowInfo,
+                    ),
+                )
+                addTransactionItem(ResumeActivityItem(token, false, false))
+            }
+            val controllerEvents = withContentUriPermissionApis(false) {
+                withRecordingActivityClientController {
+                    thread.executeTransaction(transaction)
+                }
+            }
+
+            val replacement = record.activity as RelaunchActivity
+            check(replacement !== oldActivity)
+            check(thread.getActivityClient(token) === record)
+            check(record.lifecycleState ==
+                android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+            check(replacement.window !== oldWindow) {
+                "preserveWindow crossed the hosted WindowManager fence"
+            }
+            check(record.overrideConfig.fontScale == 1.5f)
+            check(record.lastNonConfigurationInstances == null)
+            check(record.activityWindowInfo == newerWindowInfo)
+            check(record.activityWindowInfo !== newerWindowInfo)
+            check(windowInfoEvents == listOf(token to newerWindowInfo)) {
+                "coalesced relaunch did not notify only the newest window info: $windowInfoEvents"
+            }
+            newerWindowInfo.set(false, Rect(), Rect())
+            check(record.activityWindowInfo?.isEmbedded == true)
+            check(windowInfoEvents.single().second.isEmbedded)
+            check(firstIntent.preparedForProcess && firstIntent.fromProtectedComponent)
+            check(secondIntent.preparedForProcess && secondIntent.fromProtectedComponent)
+            check(runCatching { replacement.currentCaller }.exceptionOrNull()
+                is IllegalStateException)
+            check(replacement.observedReferrer == "android-app://second-referrer")
+            check(replacement.referrer.toString() == "android-app://launch-referrer")
+            check(controllerEvents == listOf("relaunched", "relaunched", "resumed")) {
+                "ActivityClient reports were not emitted by transaction postExecute: " +
+                    controllerEvents
+            }
+            check(activityRelaunchGeneration == 2) {
+                "coalesced relaunch created $activityRelaunchGeneration Activity instances"
+            }
+            check(activityRelaunchEvents == listOf(
+                "1:pause:$targetOrientation",
+                "1:stop:true:${ActivityInfo.CONFIG_ORIENTATION or ActivityInfo.CONFIG_FONT_SCALE}",
+                "1:save",
+                "1:retain",
+                "1:destroy:true",
+                "2:create:saved:retained:custom",
+                "2:start",
+                "2:restore:saved",
+                "2:post-create:saved",
+                "2:state-not-saved",
+                "2:new-intent-legacy:first:no-caller",
+                "2:new-intent-legacy:second:no-caller",
+                "2:result:41:${Activity.RESULT_OK}:first",
+                "2:result:42:${Activity.RESULT_CANCELED}:second",
+                "2:resume",
+            )) { "Activity relaunch ordering/coalescing mismatch: $activityRelaunchEvents" }
+
+            val standaloneGlobal = Configuration(replacement.resources.configuration).apply {
+                orientation = currentOrientation
+                seq = 1200
+            }
+            val standaloneOverride = Configuration().apply {
+                fontScale = 1.75f
+                seq = 1201
+            }
+            val standaloneWindowInfo = ActivityWindowInfo().apply {
+                set(false, Rect(0, 0, 640, 480), Rect(0, 0, 640, 480))
+            }
+            val standaloneCallerToken = Binder()
+            val standaloneIntent = RecordingReferrerIntent(
+                Intent().putExtra("relaunch-intent", "third"),
+                "third-referrer",
+                standaloneCallerToken,
+            )
+            val replacementWindow = replacement.window
+            activityRelaunchEvents.clear()
+            val standaloneReports = withContentUriPermissionApis(true) {
+                withRecordingActivityClientController {
+                    thread.executeTransaction(ClientTransaction().apply {
+                        addTransactionItem(
+                            ActivityRelaunchItem(
+                                token,
+                                null,
+                                listOf(standaloneIntent),
+                                ActivityInfo.CONFIG_ORIENTATION,
+                                MergedConfiguration(standaloneGlobal, standaloneOverride),
+                                true,
+                                standaloneWindowInfo,
+                            ),
+                        )
+                        addTransactionItem(ResumeActivityItem(token, false, false))
+                    })
+                }
+            }
+            val standaloneReplacement = record.activity as RelaunchActivity
+            check(standaloneReplacement !== replacement)
+            check(standaloneReplacement.window !== replacementWindow)
+            check(standaloneReplacement.resources.configuration.orientation == currentOrientation) {
+                "standalone relaunch did not install its createdConfig before launch"
+            }
+            check(ActivityThread.currentApplication()?.resources?.configuration?.orientation ==
+                currentOrientation) {
+                "standalone relaunch did not install createdConfig for the Application"
+            }
+            check(record.overrideConfig.fontScale == 1.75f)
+            check(record.lastNonConfigurationInstances == null)
+            check(record.activityWindowInfo == standaloneWindowInfo)
+            check(windowInfoEvents == listOf(
+                token to ActivityWindowInfo(windowInfoEvents.first().second),
+                token to standaloneWindowInfo,
+            ))
+            check(record.lifecycleState ==
+                android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+            check(standaloneReports == listOf("relaunched", "resumed"))
+            check(standaloneIntent.preparedForProcess &&
+                standaloneIntent.fromProtectedComponent)
+            check(standaloneReplacement.observedNewIntentCaller ==
+                ComponentCaller(token, standaloneCallerToken))
+            check(standaloneReplacement.currentCallerMatchedCallback)
+            check(standaloneReplacement.observedReferrer == "android-app://third-referrer")
+            check(standaloneReplacement.referrer.toString() ==
+                "android-app://launch-referrer")
+            check(runCatching { standaloneReplacement.currentCaller }.exceptionOrNull()
+                is IllegalStateException)
+            check(activityRelaunchEvents == listOf(
+                "2:pause:$currentOrientation",
+                "2:stop:true:${ActivityInfo.CONFIG_ORIENTATION}",
+                "2:save",
+                "2:retain",
+                "2:destroy:true",
+                "3:create:saved:retained:custom",
+                "3:start",
+                "3:restore:saved",
+                "3:post-create:saved",
+                "3:state-not-saved",
+                "3:new-intent-caller:third:true",
+                "3:resume",
+            )) { "standalone Activity relaunch ordering mismatch: $activityRelaunchEvents" }
+
+            val staleGlobal = Configuration(standaloneGlobal).apply {
+                orientation = targetOrientation
+                seq = 1150
+            }
+            activityRelaunchEvents.clear()
+            val staleReports = withRecordingActivityClientController {
+                thread.executeTransaction(ClientTransaction().apply {
+                    addTransactionItem(
+                        ActivityRelaunchItem(
+                            token,
+                            null,
+                            null,
+                            ActivityInfo.CONFIG_ORIENTATION,
+                            MergedConfiguration(staleGlobal, standaloneOverride),
+                            true,
+                            standaloneWindowInfo,
+                        ),
+                    )
+                    addTransactionItem(ResumeActivityItem(token, false, false))
+                })
+            }
+            val staleReplacement = record.activity as RelaunchActivity
+            check(staleReplacement.resources.configuration.orientation == currentOrientation) {
+                "older createdConfig regressed Activity resources"
+            }
+            check(ActivityThread.currentApplication()?.resources?.configuration?.orientation ==
+                currentOrientation) {
+                "older createdConfig regressed Application resources"
+            }
+            check(record.lastNonConfigurationInstances == null)
+            check(windowInfoEvents.size == 2) {
+                "unchanged relaunch window info was notified again: $windowInfoEvents"
+            }
+            check(staleReports == listOf("relaunched", "resumed"))
+            check(activityRelaunchEvents == listOf(
+                "3:pause:$currentOrientation",
+                "3:stop:true:${ActivityInfo.CONFIG_ORIENTATION}",
+                "3:save",
+                "3:retain",
+                "3:destroy:true",
+                "4:create:saved:retained:custom",
+                "4:start",
+                "4:restore:saved",
+                "4:post-create:saved",
+                "4:state-not-saved",
+                "4:resume",
+            )) { "stale createdConfig relaunch ordering mismatch: $activityRelaunchEvents" }
+
+            val instrumentation = Instrumentation()
+            activityRelaunchEvents.clear()
+            withContentUriPermissionApis(false) {
+                instrumentation.callActivityOnNewIntent(
+                    staleReplacement,
+                    Intent().putExtra("relaunch-intent", "direct-legacy"),
+                )
+                instrumentation.callActivityOnNewIntent(
+                    staleReplacement,
+                    ReferrerIntent(
+                        Intent().putExtra("relaunch-intent", "direct-referrer-legacy"),
+                        "direct-legacy-referrer",
+                    ),
+                )
+            }
+            withContentUriPermissionApis(true) {
+                instrumentation.callActivityOnNewIntent(
+                    staleReplacement,
+                    Intent().putExtra("relaunch-intent", "direct-caller"),
+                )
+                instrumentation.callActivityOnNewIntent(
+                    staleReplacement,
+                    ReferrerIntent(
+                        Intent().putExtra("relaunch-intent", "direct-referrer-caller"),
+                        "direct-caller-referrer",
+                    ),
+                )
+            }
+            check(activityRelaunchEvents == listOf(
+                "4:new-intent-legacy:direct-legacy:no-caller",
+                "4:new-intent-legacy:direct-referrer-legacy:no-caller",
+                "4:new-intent-caller:direct-caller:true",
+                "4:new-intent-caller:direct-referrer-caller:true",
+            )) { "direct Instrumentation new-intent flag routing mismatch: $activityRelaunchEvents" }
+            check(staleReplacement.observedNewIntentCaller == ComponentCaller(token, null))
+            check(staleReplacement.observedReferrer == "android-app://direct-caller-referrer")
+            check(staleReplacement.referrer.toString() == "android-app://launch-referrer")
+            check(runCatching { staleReplacement.currentCaller }.exceptionOrNull()
+                is IllegalStateException)
+
+            staleReplacement.intent = MalformedReferrerIntent()
+            activityRelaunchEvents.clear()
+            withContentUriPermissionApis(false) {
+                instrumentation.callActivityOnNewIntent(
+                    staleReplacement,
+                    ReferrerIntent(
+                        Intent().putExtra("relaunch-intent", "malformed-referrer"),
+                        "safe-fallback",
+                    ),
+                )
+            }
+            check(activityRelaunchEvents == listOf(
+                "4:new-intent-legacy:malformed-referrer:no-caller",
+            ))
+            check(staleReplacement.observedReferrer == "android-app://safe-fallback")
+            check(staleReplacement.referrer.toString() == "android-app://launch-referrer")
+
+            val sameContentNewSequence = Configuration(
+                application.resources.configuration,
+            ).apply { seq = 1300 }
+            activityRelaunchEvents.clear()
+            val sequenceOnlyReports = withRecordingActivityClientController {
+                thread.executeTransaction(ClientTransaction().apply {
+                    // All preExecute calls run first: the later process item therefore supplies
+                    // the sequence-only pending config consumed by the earlier relaunch item.
+                    addTransactionItem(
+                        ActivityRelaunchItem(
+                            token,
+                            null,
+                            null,
+                            0,
+                            MergedConfiguration(standaloneGlobal, standaloneOverride),
+                            true,
+                            standaloneWindowInfo,
+                        ),
+                    )
+                    addTransactionItem(
+                        ConfigurationChangeItem(
+                            sameContentNewSequence,
+                            Context.DEVICE_ID_DEFAULT,
+                        ),
+                    )
+                    addTransactionItem(ResumeActivityItem(token, false, false))
+                })
+            }
+            check(sequenceOnlyReports == listOf("relaunched", "resumed"))
+            check(activityRelaunchEvents == listOf(
+                "4:pause:$currentOrientation",
+                "4:stop:true:0",
+                "4:save",
+                "4:retain",
+                "4:destroy:true",
+                "5:create:saved:retained:launch",
+                "5:start",
+                "5:restore:saved",
+                "5:post-create:saved",
+                "5:state-not-saved",
+                "5:resume",
+            )) { "sequence-only pending relaunch mismatch: $activityRelaunchEvents" }
+            check(record.lastNonConfigurationInstances == null)
+
+            record.activityInfo.applicationInfo.targetSdkVersion =
+                android.os.Build.VERSION_CODES.O
+            activityRelaunchEvents.clear()
+            val oreoReports = withRecordingActivityClientController {
+                thread.executeTransaction(ClientTransaction().apply {
+                    addTransactionItem(
+                        ActivityRelaunchItem(
+                            token,
+                            null,
+                            null,
+                            0,
+                            MergedConfiguration(sameContentNewSequence, standaloneOverride),
+                            true,
+                            standaloneWindowInfo,
+                        ),
+                    )
+                    addTransactionItem(ResumeActivityItem(token, false, false))
+                })
+            }
+            check(oreoReports == listOf("relaunched", "resumed"))
+            check(activityRelaunchEvents == listOf(
+                "5:pause:$currentOrientation",
+                "5:save",
+                "5:stop:true:0",
+                "5:retain",
+                "5:destroy:true",
+                "6:create:saved:retained:launch",
+                "6:start",
+                "6:restore:saved",
+                "6:post-create:saved",
+                "6:state-not-saved",
+                "6:resume",
+            )) { "target-O relaunch save ordering mismatch: $activityRelaunchEvents" }
+            check(record.lastNonConfigurationInstances == null)
+            val staleChangedSequence = Configuration(sameContentNewSequence).apply {
+                orientation = targetOrientation
+                seq = 1250
+            }
+            thread.handleConfigurationChanged(
+                staleChangedSequence,
+                Context.DEVICE_ID_DEFAULT,
+            )
+            check(application.resources.configuration.seq == 1300)
+            check(application.resources.configuration.orientation ==
+                currentOrientation) {
+                "sequence-only config did not block a later stale changed delta"
+            }
+            check(processConfigSeqs == listOf(1001, 1002, 1100, 1200)) {
+                "zero-mask/stale configurations dispatched callbacks: $processConfigSeqs"
+            }
+        } finally {
+            application.unregisterComponentCallbacks(processConfigCallback)
+            ClientTransactionListenerController.getInstance()
+                .unregisterActivityWindowInfoChangedListener(windowInfoListener)
+            thread.getActivityClient(token)?.let {
+                thread.handleDestroyActivity(it, true, false, "relaunch-smoke-cleanup")
+            }
+            ActivityThread.shutdownActivitiesInProcess()
+        }
+    }
+
+    private fun <T> withRecordingActivityClientController(block: () -> T): List<String> {
+        val singletonField = ActivityClient::class.java.getDeclaredField("INTERFACE_SINGLETON")
+            .apply { isAccessible = true }
+        val singleton = singletonField.get(null)
+        val knownInstanceField = singleton.javaClass.getDeclaredField("mKnownInstance")
+            .apply { isAccessible = true }
+        val original = knownInstanceField.get(singleton)
+        val reports = mutableListOf<String>()
+        val controller = Proxy.newProxyInstance(
+            IActivityClientController::class.java.classLoader,
+            arrayOf(IActivityClientController::class.java),
+        ) { proxy, method, args ->
+            when (method.name) {
+                "activityRelaunched" -> {
+                    reports += "relaunched"
+                    null
+                }
+                "activityResumed" -> {
+                    reports += "resumed"
+                    null
+                }
+                "asBinder" -> Binder()
+                "toString" -> "FrameworkModuleSmokeActivityClientController"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.firstOrNull()
+                else -> error("unexpected IActivityClientController call: ${method.name}")
+            }
+        } as IActivityClientController
+        ActivityClient.setActivityClientController(controller)
+        return try {
+            block()
+            reports
+        } finally {
+            knownInstanceField.set(singleton, original)
+        }
+    }
+
     private fun configurationLifecycleCallback(label: String) =
         object : android.app.Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
@@ -4180,6 +4786,33 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    class RecordingReferrerIntent : ReferrerIntent {
+        var preparedForProcess = false
+            private set
+        var fromProtectedComponent = false
+            private set
+
+        constructor(intent: Intent, referrer: String) : super(intent, referrer)
+
+        constructor(intent: Intent, referrer: String, callerToken: android.os.IBinder) :
+            super(intent, referrer, callerToken)
+
+        override fun prepareToEnterProcess(
+            fromProtectedComponent: Boolean,
+            source: AttributionSource?,
+        ) {
+            preparedForProcess = true
+            this.fromProtectedComponent = fromProtectedComponent
+            super.prepareToEnterProcess(fromProtectedComponent, source)
+        }
+    }
+
+    class MalformedReferrerIntent : Intent() {
+        override fun <T : Any?> getParcelableExtra(name: String?, clazz: Class<T>): T? {
+            throw android.os.BadParcelableException("malformed referrer")
+        }
+    }
+
     class ResultDeliveryActivity : Activity() {
         override fun onPause() {
             activityResultEvents += "pause"
@@ -4230,6 +4863,109 @@ internal object FrameworkModuleSmoke {
 
         override fun onPause() {
             pauseCalls++
+        }
+    }
+
+    class RelaunchActivity : Activity() {
+        private var generation = 0
+        var observedNewIntentCaller: ComponentCaller? = null
+            private set
+        var currentCallerMatchedCallback = false
+            private set
+        var observedReferrer: String? = null
+            private set
+
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            generation = ++activityRelaunchGeneration
+            activityRelaunchEvents += "$generation:create:" +
+                (savedInstanceState?.getString("relaunch-state") ?: "fresh") + ":" +
+                (lastNonConfigurationInstance ?: "no-retained") + ":" +
+                (intent.getStringExtra("relaunch-custom") ?: "launch")
+        }
+
+        override fun onStart() {
+            activityRelaunchEvents += "$generation:start"
+            super.onStart()
+        }
+
+        override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+            activityRelaunchEvents +=
+                "$generation:restore:${savedInstanceState.getString("relaunch-state")}"
+            super.onRestoreInstanceState(savedInstanceState)
+        }
+
+        override fun onPostCreate(savedInstanceState: Bundle?) {
+            activityRelaunchEvents +=
+                "$generation:post-create:${savedInstanceState?.getString("relaunch-state")}"
+            super.onPostCreate(savedInstanceState)
+        }
+
+        override fun onResume() {
+            activityRelaunchEvents += "$generation:resume"
+            super.onResume()
+        }
+
+        override fun onStateNotSaved() {
+            activityRelaunchEvents += "$generation:state-not-saved"
+            super.onStateNotSaved()
+        }
+
+        override fun onPause() {
+            activityRelaunchEvents +=
+                "$generation:pause:${resources.configuration.orientation}"
+            super.onPause()
+        }
+
+        override fun onStop() {
+            activityRelaunchEvents +=
+                "$generation:stop:${isChangingConfigurations}:${changingConfigurations}"
+            super.onStop()
+        }
+
+        override fun onSaveInstanceState(outState: Bundle) {
+            activityRelaunchEvents += "$generation:save"
+            super.onSaveInstanceState(outState)
+            outState.putString("relaunch-state", "saved")
+        }
+
+        override fun onRetainNonConfigurationInstance(): Any {
+            activityRelaunchEvents += "$generation:retain"
+            return "retained"
+        }
+
+        override fun onDestroy() {
+            activityRelaunchEvents += "$generation:destroy:$isChangingConfigurations"
+            super.onDestroy()
+        }
+
+        override fun onNewIntent(intent: Intent) {
+            val callerState = if (runCatching { currentCaller }.isSuccess) {
+                "caller"
+            } else {
+                "no-caller"
+            }
+            observedReferrer = referrer?.toString()
+            activityRelaunchEvents +=
+                "$generation:new-intent-legacy:" +
+                "${intent.getStringExtra("relaunch-intent")}:$callerState"
+            super.onNewIntent(intent)
+        }
+
+        override fun onNewIntent(intent: Intent, caller: ComponentCaller) {
+            observedNewIntentCaller = caller
+            currentCallerMatchedCallback = currentCaller === caller
+            observedReferrer = referrer?.toString()
+            activityRelaunchEvents +=
+                "$generation:new-intent-caller:${intent.getStringExtra("relaunch-intent")}:" +
+                currentCallerMatchedCallback
+        }
+
+        override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+            activityRelaunchEvents +=
+                "$generation:result:$requestCode:$resultCode:" +
+                data?.getStringExtra("relaunch-result")
+            super.onActivityResult(requestCode, resultCode, data)
         }
     }
 

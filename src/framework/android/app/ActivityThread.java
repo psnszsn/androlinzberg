@@ -633,7 +633,9 @@ public final class ActivityThread extends ClientTransactionHandler {
             final Intent launchIntent = customIntent != null ? customIntent : r.intent;
             activity.attach(activityContext, info, launchIntent, r.parent, r.embeddedID, r.token,
                     r.assistToken, r.shareableActivityToken);
+            activity.mReferrer = r.referrer;
             activity.setLastNonConfigurationInstances$artzig(r.lastNonConfigurationInstances);
+            r.lastNonConfigurationInstances = null;
             final int theme = info.getThemeResource();
             if (theme != 0) activity.setTheme(theme);
 
@@ -661,7 +663,16 @@ public final class ActivityThread extends ClientTransactionHandler {
                 || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
             return false;
         }
+        r.activity.onStateNotSaved();
         r.activity.mFragments.noteStateNotSaved();
+        if (r.pendingIntents != null) {
+            handleNewIntent(r, r.pendingIntents);
+            r.pendingIntents = null;
+        }
+        if (r.pendingResults != null) {
+            deliverResults(r, r.pendingResults, reason);
+            r.pendingResults = null;
+        }
         r.activity.performResume();
         r.state = null;
         r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME);
@@ -711,12 +722,21 @@ public final class ActivityThread extends ClientTransactionHandler {
         if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
             performPauseActivity(r, false, reason, null);
         }
+        final int targetSdk = r.activityInfo != null && r.activityInfo.applicationInfo != null
+                ? r.activityInfo.applicationInfo.targetSdkVersion : 0;
+        final boolean saveBeforeStop = targetSdk >= android.os.Build.VERSION_CODES.HONEYCOMB
+                && targetSdk < android.os.Build.VERSION_CODES.P;
+        final boolean saveAfterStop = targetSdk >= android.os.Build.VERSION_CODES.P;
+        if (saveState && saveBeforeStop && !r.activity.mFinished && r.state == null) {
+            r.state = new Bundle();
+            r.activity.performSaveInstanceState(r.state);
+        }
         if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_START
                 || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE) {
             r.activity.performStop();
             r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_STOP);
         }
-        if (saveState && !r.activity.mFinished && r.state == null) {
+        if (saveState && saveAfterStop && !r.activity.mFinished && r.state == null) {
             r.state = new Bundle();
             r.activity.performSaveInstanceState(r.state);
         }
@@ -752,6 +772,8 @@ public final class ActivityThread extends ClientTransactionHandler {
     private final android.app.servertransaction.TransactionExecutor mTransactionExecutor =
             new android.app.servertransaction.TransactionExecutor(this);
     final ArrayMap<IBinder, ActivityClientRecord> mActivities = new ArrayMap<>();
+    private final ArrayList<ActivityClientRecord> mRelaunchingActivities = new ArrayList<>();
+    private Configuration mPendingConfiguration;
     /** Pinned AOSP ordering guard populated by configuration transaction preExecute. */
     private final ArrayMap<IBinder, Configuration> mPendingOverrideConfigs = new ArrayMap<>();
     @Override android.app.servertransaction.TransactionExecutor getTransactionExecutor() { return mTransactionExecutor; }
@@ -768,7 +790,48 @@ public final class ActivityThread extends ClientTransactionHandler {
     }
     @Override public Activity getActivity(IBinder token) { ActivityClientRecord r = mActivities.get(token); return r != null ? r.activity : null; }
     @Override public ActivityClientRecord getActivityClient(IBinder token) { return mActivities.get(token); }
-    @Override public void updatePendingConfiguration(Configuration config) {}
+    @Override public void updatePendingConfiguration(Configuration config) {
+        synchronized (mRelaunchingActivities) {
+            if (mPendingConfiguration == null
+                    || mPendingConfiguration.isOtherSeqNewer(config)) {
+                mPendingConfiguration = new Configuration(config);
+            }
+        }
+    }
+
+    private Configuration consumePendingConfiguration(Configuration requested) {
+        synchronized (mRelaunchingActivities) {
+            if (mPendingConfiguration != null
+                    && (requested == null || requested.isOtherSeqNewer(mPendingConfiguration))) {
+                requested = mPendingConfiguration;
+            }
+            mPendingConfiguration = null;
+            return requested;
+        }
+    }
+
+    private int applyProcessConfiguration(Configuration requested,
+            boolean dispatchHostedActivityPolicy) {
+        if (requested == null) return 0;
+        final Configuration current = ResourcesManager.getInstance().getConfiguration();
+        if (!current.isOtherSeqNewer(requested) && current.diff(requested) != 0) {
+            return 0;
+        }
+        final Configuration next = new Configuration(current);
+        final int changes = next.updateFrom(requested);
+        // Sequence-only updates still become the canonical process configuration, so a delayed
+        // lower-sequence delta cannot subsequently be mistaken for a new request.
+        ResourcesManager.getInstance().applyConfigurationToResources(next, null);
+        if (changes == 0) return 0;
+        if (dispatchHostedActivityPolicy) {
+            final android.util.DisplayMetrics metrics =
+                    android.content.res.Resources.getSystem().getDisplayMetrics();
+            applyConfigurationInProcess(next, changes, metrics.widthPixels, metrics.heightPixels);
+        } else if (mInitialApplication != null) {
+            mInitialApplication.onConfigurationChanged(next);
+        }
+        return changes;
+    }
     @Override public void updateProcessState(int processState, boolean fromIpc) {}
     @Override public void countLaunchingActivities(int num) {}
     @Override public java.util.Map<IBinder, android.app.servertransaction.DestroyActivityItem> getActivitiesToBeDestroyed() { return new ArrayMap<>(); }
@@ -875,11 +938,14 @@ public final class ActivityThread extends ClientTransactionHandler {
                         + " did not call through to super.onConfigurationChanged()");
             }
         }
-        if (!r.mActivityWindowInfo.equals(r.mLastReportedActivityWindowInfo)) {
-            r.mLastReportedActivityWindowInfo.set(r.mActivityWindowInfo);
-            android.app.servertransaction.ClientTransactionListenerController.getInstance()
-                    .onActivityWindowInfoChanged(r.token, r.mActivityWindowInfo);
-        }
+        handleActivityWindowInfoChanged(r);
+    }
+
+    private void handleActivityWindowInfoChanged(ActivityClientRecord r) {
+        if (r.mActivityWindowInfo.equals(r.mLastReportedActivityWindowInfo)) return;
+        r.mLastReportedActivityWindowInfo.set(r.mActivityWindowInfo);
+        android.app.servertransaction.ClientTransactionListenerController.getInstance()
+                .onActivityWindowInfoChanged(r.token, r.mActivityWindowInfo);
     }
     @Override public void handleWindowContextInfoChanged(IBinder clientToken, android.window.WindowContextInfo info) { throw notHosted("handleWindowContextInfoChanged"); }
     @Override public void handleWindowContextWindowRemoval(IBinder clientToken) { throw notHosted("handleWindowContextWindowRemoval"); }
@@ -942,8 +1008,15 @@ public final class ActivityThread extends ClientTransactionHandler {
         if (r == null || r.activity == null || intents == null || intents.isEmpty()) return;
         for (com.android.internal.content.ReferrerIntent intent : intents) {
             intent.setExtrasClassLoader(r.activity.getClassLoader());
+            intent.prepareToEnterProcess(isProtectedComponent(r.activityInfo),
+                    r.activity.getAttributionSource());
             r.activity.mFragments.noteStateNotSaved();
-            r.activity.performNewIntent(intent);
+            if (android.security.Flags.contentUriPermissionApis()) {
+                final ComponentCaller caller = new ComponentCaller(r.token, intent.mCallerToken);
+                mInstrumentation.callActivityOnNewIntent(r.activity, intent, caller);
+            } else {
+                mInstrumentation.callActivityOnNewIntent(r.activity, intent);
+            }
         }
     }
     @Override public void handlePictureInPictureRequested(ActivityClientRecord r) { throw notHosted("handlePictureInPictureRequested"); }
@@ -951,7 +1024,19 @@ public final class ActivityThread extends ClientTransactionHandler {
     @Override public boolean isHandleSplashScreenExit(IBinder token) { return false; }
     @Override public void handleAttachSplashScreenView(ActivityClientRecord r, android.window.SplashScreenView.SplashScreenViewParcelable parcelable, android.view.SurfaceControl startingWindowLeash) { throw notHosted("handleAttachSplashScreenView"); }
     @Override public Activity handleLaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, int deviceId, Intent customIntent) {
-        return performLaunchActivity(r, customIntent);
+        applyProcessConfiguration(consumePendingConfiguration(null), false);
+        final Activity activity = performLaunchActivity(r, customIntent);
+        if (activity != null) {
+            r.createdConfig = new Configuration(
+                    ResourcesManager.getInstance().getConfiguration());
+            if (!activity.mFinished && pendingActions != null) {
+                pendingActions.setOldState(r.state);
+                pendingActions.setRestoreInstanceState(true);
+                pendingActions.setCallOnPostCreate(true);
+            }
+            handleActivityWindowInfoChanged(r);
+        }
+        return activity;
     }
     /** AOSP ActivityThread.handleStartActivity, with presentation owned by the local parent. */
     @Override public void handleStartActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, ActivityOptions.SceneTransitionInfo sceneTransitionInfo) {
@@ -973,17 +1058,124 @@ public final class ActivityThread extends ClientTransactionHandler {
      * the activities and components). */
     @Override public void handleConfigurationChanged(Configuration config, int deviceId) {
         if (config == null) return;
-        Configuration current = ResourcesManager.getInstance().getConfiguration();
-        Configuration next = new Configuration(current);
-        int changes = next.updateFrom(config);
-        if (changes == 0) return;
-        android.util.DisplayMetrics metrics = android.content.res.Resources.getSystem().getDisplayMetrics();
-        ResourcesManager.getInstance().applyConfigurationToResources(next, null);
-        applyConfigurationInProcess(next, changes, metrics.widthPixels, metrics.heightPixels);
+        applyProcessConfiguration(consumePendingConfiguration(config), true);
     }
-    @Override public ActivityClientRecord prepareRelaunchActivity(IBinder token, List<ResultInfo> pendingResults, List<com.android.internal.content.ReferrerIntent> pendingNewIntents, int configChanges, android.util.MergedConfiguration config, boolean preserveWindow, android.window.ActivityWindowInfo activityWindowInfo) { throw notHosted("prepareRelaunchActivity"); }
-    @Override public void handleRelaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions) { throw notHosted("handleRelaunchActivity"); }
-    @Override public void reportRelaunch(ActivityClientRecord r) { throw notHosted("reportRelaunch"); }
+    /** Pinned AOSP relaunch coalescing. Window preservation is deliberately forced off at the
+     * hosted WindowManager fence; a relaunched Activity always receives a fresh PhoneWindow. */
+    @Override public ActivityClientRecord prepareRelaunchActivity(IBinder token,
+            List<ResultInfo> pendingResults,
+            List<com.android.internal.content.ReferrerIntent> pendingNewIntents,
+            int configChanges, android.util.MergedConfiguration config, boolean preserveWindow,
+            android.window.ActivityWindowInfo activityWindowInfo) {
+        ActivityClientRecord target = null;
+        boolean scheduleRelaunch = false;
+        synchronized (mRelaunchingActivities) {
+            for (int i = 0; i < mRelaunchingActivities.size(); i++) {
+                final ActivityClientRecord candidate = mRelaunchingActivities.get(i);
+                if (candidate.token == token) {
+                    target = candidate;
+                    if (pendingResults != null) {
+                        if (target.pendingResults != null) {
+                            target.pendingResults.addAll(pendingResults);
+                        } else {
+                            target.pendingResults = pendingResults;
+                        }
+                    }
+                    if (pendingNewIntents != null) {
+                        if (target.pendingIntents != null) {
+                            target.pendingIntents.addAll(pendingNewIntents);
+                        } else {
+                            target.pendingIntents = pendingNewIntents;
+                        }
+                    }
+                    break;
+                }
+            }
+            if (target == null) {
+                target = new ActivityClientRecord();
+                target.token = token;
+                target.pendingResults = pendingResults;
+                target.pendingIntents = pendingNewIntents;
+                // preserveWindow requires WindowManagerGlobal/ViewRoot reparenting which is not
+                // part of the hosted boundary.
+                target.mPreserveWindow = false;
+                mRelaunchingActivities.add(target);
+                scheduleRelaunch = true;
+            }
+            target.createdConfig = config.getGlobalConfiguration();
+            target.overrideConfig = config.getOverrideConfiguration();
+            target.pendingConfigChanges |= configChanges;
+            target.mActivityWindowInfo.set(activityWindowInfo);
+        }
+        return scheduleRelaunch ? target : null;
+    }
+
+    @Override public void handleRelaunchActivity(ActivityClientRecord tmp,
+            android.app.servertransaction.PendingTransactionActions pendingActions) {
+        int configChanges = 0;
+        synchronized (mRelaunchingActivities) {
+            final IBinder token = tmp.token;
+            tmp = null;
+            for (int i = 0; i < mRelaunchingActivities.size(); i++) {
+                final ActivityClientRecord candidate = mRelaunchingActivities.get(i);
+                if (candidate.token == token) {
+                    tmp = candidate;
+                    configChanges |= candidate.pendingConfigChanges;
+                    mRelaunchingActivities.remove(i--);
+                }
+            }
+        }
+        if (tmp == null) return;
+
+        final Configuration current = ResourcesManager.getInstance().getConfiguration();
+        Configuration newest = null;
+        final Configuration pending = consumePendingConfiguration(null);
+        if (pending != null && current.isOtherSeqNewer(pending)) {
+            newest = pending;
+        }
+        if (tmp.createdConfig != null
+                && (newest != null ? newest : current).isOtherSeqNewer(tmp.createdConfig)
+                && (newest != null ? newest : current).diff(tmp.createdConfig) != 0) {
+            newest = tmp.createdConfig;
+        }
+        if (newest != null) {
+            // Do not enter HostedActivityRuntime's top-level relaunch policy from this separate
+            // transaction-owned Activity stack.
+            applyProcessConfiguration(newest, false);
+        }
+
+        final ActivityClientRecord r = mActivities.get(tmp.token);
+        if (r == null || r.activity == null) return;
+
+        r.activity.mConfigChangeFlags |= configChanges;
+        r.activity.setChangingConfigurations$artzig(true);
+        final Intent customIntent = r.activity.getIntent();
+        if (r.getLifecycleState()
+                == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
+            performPauseActivity(r, false, "handleRelaunchActivity", null);
+        }
+        performStopActivityInner(r, true, "handleRelaunchActivity");
+        performDestroyActivity(r, false, true, "handleRelaunchActivity");
+
+        r.activity = null;
+        if (tmp.pendingResults != null) {
+            if (r.pendingResults == null) r.pendingResults = tmp.pendingResults;
+            else r.pendingResults.addAll(tmp.pendingResults);
+        }
+        if (tmp.pendingIntents != null) {
+            if (r.pendingIntents == null) r.pendingIntents = tmp.pendingIntents;
+            else r.pendingIntents.addAll(tmp.pendingIntents);
+        }
+        r.overrideConfig = tmp.overrideConfig;
+        r.mActivityWindowInfo.set(tmp.mActivityWindowInfo);
+        r.activityWindowInfo = r.mActivityWindowInfo;
+        r.mPreserveWindow = false;
+        handleLaunchActivity(r, pendingActions, Context.DEVICE_ID_DEFAULT, customIntent);
+    }
+
+    @Override public void reportRelaunch(ActivityClientRecord r) {
+        ActivityClient.getInstance().activityRelaunched(r.token);
+    }
 
     /** AOSP ActivityThread.ActivityClientRecord: the fields the servertransaction executor reads. */
     public static final class ActivityClientRecord {
@@ -997,10 +1189,16 @@ public final class ActivityThread extends ClientTransactionHandler {
         public LoadedApk packageInfo;
         public Activity parent;
         public String embeddedID;
+        String referrer;
         public Activity.NonConfigurationInstances lastNonConfigurationInstances;
         public IBinder assistToken;
         public IBinder shareableActivityToken;
         public Configuration overrideConfig;
+        Configuration createdConfig;
+        List<ResultInfo> pendingResults;
+        List<com.android.internal.content.ReferrerIntent> pendingIntents;
+        int pendingConfigChanges;
+        boolean mPreserveWindow;
         final Configuration tmpConfig = new Configuration();
         private int mLifecycleState = android.app.servertransaction.ActivityLifecycleItem.PRE_ON_CREATE;
         public android.window.ActivityWindowInfo activityWindowInfo;
@@ -1011,6 +1209,11 @@ public final class ActivityThread extends ClientTransactionHandler {
         public ActivityClientRecord() {}
         public ActivityClientRecord(IBinder token, Intent intent, int ident, ActivityInfo info, Configuration overrideConfig, String referrer, com.android.internal.app.IVoiceInteractor voiceInteractor, Bundle state, android.os.PersistableBundle persistentState, List<ResultInfo> pendingResults, List<com.android.internal.content.ReferrerIntent> pendingNewIntents, ActivityOptions.SceneTransitionInfo sceneTransitionInfo, boolean isForward, ProfilerInfo profilerInfo, ClientTransactionHandler client, IBinder assistToken, IBinder shareableActivityToken, boolean launchedFromBubble, IBinder taskFragmentToken, IBinder initialCallerInfoAccessToken, android.window.ActivityWindowInfo activityWindowInfo) {
             this.token = token; this.intent = intent; this.activityInfo = info; this.state = state; this.isForward = isForward;
+            this.referrer = referrer;
+            this.pendingResults = pendingResults;
+            this.pendingIntents = pendingNewIntents;
+            this.assistToken = assistToken;
+            this.shareableActivityToken = shareableActivityToken;
             this.overrideConfig = overrideConfig;
             this.activityWindowInfo = activityWindowInfo;
             if (activityWindowInfo != null) this.mActivityWindowInfo.set(activityWindowInfo);
