@@ -4,6 +4,11 @@ Date: Mon, 24 Aug 2026 05:08:34 +0200
 Subject: [PATCH] Hyphenator: always use the C++ implementation on host (no
  Rust hyphenator)
 
+Linux selects the Rust hyphenator in stock source, but the Artzig host build
+does not build or link Minikin's Rust/cxx bridge. Select the existing C++
+implementation unconditionally so the host artifact has no unresolved Rust
+hyphenator dependency.
+
 ---
  libs/minikin/Hyphenator.cpp | 6 +-----
  1 file changed, 1 insertion(+), 5 deletions(-)

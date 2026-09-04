@@ -4,6 +4,11 @@ Date: Tue, 1 Sep 2026 13:30:11 +0200
 Subject: [PATCH] host: prop_info_cmp operator() must be const (libc++ std::set
  comparator requirement under recent clang)
 
+The host build instantiates prop_info_cmp as the transparent comparator for a
+standard ordered container. The host compiler and standard library invoke that
+stored comparator through a const object, so all three overloads must be const;
+without the qualifiers the container fails its comparator requirements.
+
 ---
  properties.cpp | 6 +++---
  1 file changed, 3 insertions(+), 3 deletions(-)

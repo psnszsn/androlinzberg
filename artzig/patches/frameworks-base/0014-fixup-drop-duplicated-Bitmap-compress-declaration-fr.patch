@@ -1,8 +1,12 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Tue, 1 Sep 2026 11:20:29 +0200
-Subject: [PATCH 14/14] fixup: drop duplicated Bitmap::compress declaration
- from the android-16.0.0_r1 rebase resolution
+Subject: [PATCH 14/14] hwui: remove duplicate Bitmap::compress declaration
+
+The fenced host-HWUI patch 0009 carries a rebase resolution that declares
+the static Bitmap::compress overload twice. Keep that host integration patch
+unchanged and apply this required corrective follow-up so Bitmap.h has the
+single stock-compatible declaration expected by the C++ compiler.
 
 ---
  libs/hwui/hwui/Bitmap.h | 3 ---
