@@ -89,6 +89,22 @@ public class ActivityManager {
     public static final int PROCESS_STATE_TOP = 2;
     public static final int PROCESS_STATE_BOUND_TOP = 3, PROCESS_STATE_FOREGROUND_SERVICE = 4,
             PROCESS_STATE_BOUND_FOREGROUND_SERVICE = 5;
+    /** Remaining pinned ProcessStateEnum values consumed by stock BatteryStats. */
+    public static final int PROCESS_STATE_IMPORTANT_FOREGROUND = 6;
+    public static final int PROCESS_STATE_IMPORTANT_BACKGROUND = 7;
+    public static final int PROCESS_STATE_TRANSIENT_BACKGROUND = 8;
+    public static final int PROCESS_STATE_BACKUP = 9;
+    public static final int PROCESS_STATE_SERVICE = 10;
+    public static final int PROCESS_STATE_RECEIVER = 11;
+    public static final int PROCESS_STATE_TOP_SLEEPING = 12;
+    public static final int PROCESS_STATE_HEAVY_WEIGHT = 13;
+    public static final int PROCESS_STATE_HOME = 14;
+    public static final int PROCESS_STATE_LAST_ACTIVITY = 15;
+    public static final int PROCESS_STATE_CACHED_ACTIVITY = 16;
+    public static final int PROCESS_STATE_CACHED_ACTIVITY_CLIENT = 17;
+    public static final int PROCESS_STATE_CACHED_RECENT = 18;
+    public static final int PROCESS_STATE_CACHED_EMPTY = 19;
+    public static final int PROCESS_STATE_NONEXISTENT = 20;
     /** AOSP ActivityManager.isStartResultFatalError: START_* codes in [-100, -1]. */
     public static boolean isStartResultFatalError(int result) { return -100 <= result && result <= -1; }
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
