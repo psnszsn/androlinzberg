@@ -71,6 +71,9 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
             try putForbidden(&result, allocator, try std.fmt.allocPrint(allocator, "{s}/{s}.java", .{ package_path, class }));
         }
     }
+    for (generator_sources.hidl) |entry| {
+        for (entry.outputs) |output| try putForbidden(&result, allocator, output);
+    }
     for (generator_sources.logtags) |entry| try putForbidden(&result, allocator, entry.output);
     for (generator_sources.proto_outputs) |output| try putForbidden(&result, allocator, output);
     try putForbidden(&result, allocator, "com/android/internal/util/FrameworkStatsLog.java");

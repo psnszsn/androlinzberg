@@ -7,6 +7,26 @@ pub const SourcePath = struct { source: Source, path: []const u8 };
 pub const Logtags = struct { input: SourcePath, output: []const u8 };
 pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8 };
 pub const Sysprop = struct { scope: []const u8, input: SourcePath };
+pub const HidlLanguage = enum { java, java_constants };
+pub const Hidl = struct {
+    fqname: []const u8,
+    language: HidlLanguage,
+    outputs: []const []const u8,
+};
+
+/// HIDL Java is generated from the pinned .hal declarations, matching Soong's
+/// hidl_interface backend. Only outputs required by framework clients are compiled.
+pub const hidl = [_]Hidl{
+    .{ .fqname = "android.hardware.health@1.0", .language = .java_constants, .outputs = &.{
+        "android/hardware/health/V1_0/Constants.java",
+    } },
+    .{ .fqname = "android.hardware.vibrator@1.0", .language = .java, .outputs = &.{
+        "android/hardware/vibrator/V1_0/EffectStrength.java",
+    } },
+    .{ .fqname = "android.hardware.vibrator@1.3", .language = .java, .outputs = &.{
+        "android/hardware/vibrator/V1_3/Effect.java",
+    } },
+};
 
 pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/biometrics/AuthenticationStateListener.aidl" },
@@ -1190,6 +1210,14 @@ test "generator declarations map typed inputs to unique Java outputs" {
     var outputs: std.StringHashMapUnmanaged(void) = .empty;
     defer outputs.deinit(std.testing.allocator);
 
+    for (hidl) |entry| {
+        try std.testing.expect(std.mem.indexOfScalar(u8, entry.fqname, '@') != null);
+        try std.testing.expect(entry.outputs.len != 0);
+        for (entry.outputs) |output| {
+            try std.testing.expect(std.mem.endsWith(u8, output, ".java"));
+            try expectUniqueOutput(&outputs, output);
+        }
+    }
     for (aidl) |input| try std.testing.expect(std.mem.endsWith(u8, input.path, ".aidl"));
     for (logtags) |entry| {
         try std.testing.expect(std.mem.endsWith(u8, entry.input.path, ".logtags"));

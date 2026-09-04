@@ -244,6 +244,37 @@ fn aidlJava(
     return result;
 }
 
+fn hidlJava(
+    b: *std.Build,
+    aosp: *std.Build.Dependency,
+    runner: *std.Build.Step.Compile,
+) []const LazyPath {
+    var files: std.ArrayList(LazyPath) = .empty;
+    for (declarations.hidl, 0..) |entry, index| {
+        const run = b.addRunArtifact(runner);
+        run.addArg("--library-dir");
+        run.addDirectoryArg(aosp.path("prebuilts/build-tools/linux-x86/lib64"));
+        run.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/hidl-gen"));
+        run.addArg(switch (entry.language) {
+            .java => "-Ljava",
+            .java_constants => "-Ljava-constants",
+        });
+        run.addArg("-R");
+        run.addPrefixedDirectoryArg("-randroid.hardware:", aosp.path("hardware/interfaces"));
+        run.addPrefixedDirectoryArg("-randroid.hidl:", aosp.path("system/libhidl/transport"));
+        run.addArg("-o");
+        const output = run.addOutputDirectoryArg(b.fmt("hidl-java-{d}", .{index}));
+        run.addArg(entry.fqname);
+        run.setName(b.fmt("generate HIDL Java {s}", .{entry.fqname}));
+        for (entry.outputs) |path| {
+            files.append(b.allocator, output.path(b, path)) catch @panic("OOM");
+        }
+    }
+    const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
+    _ = exposePaths(b, "gen-hidl", "Generate framework HIDL Java sources", result);
+    return result;
+}
+
 fn aidlCpp(
     b: *std.Build,
     aosp: *std.Build.Dependency,
@@ -642,6 +673,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     _ = expose(b, "stats-tool", "Build stats-log-api-gen", &stats_tool.step);
 
     const aidl_java = aidlJava(b, o.aosp, runner);
+    const hidl_java = hidlJava(b, o.aosp, runner);
     const aidl_cpp = aidlCpp(b, o.aosp, runner);
     const logtags_java = logtagsJava(b, o.aosp);
     const aconfig_java = aconfigJava(b, o.aosp, runner);
@@ -654,7 +686,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const res = resources(b, o.aosp, filter);
     const fixtures = fixtureApks(b, o.aosp, res.apk);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ aidl_java, logtags_java, aconfig_java, sysprop_java, nano_java, proto_java, stats_java, apex_info_list_java, res.java_sources }) |generated_set| {
+    inline for (.{ aidl_java, hidl_java, logtags_java, aconfig_java, sysprop_java, nano_java, proto_java, stats_java, apex_info_list_java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
     java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");

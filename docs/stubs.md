@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 78 (budget 78). Survivors: 77. Total: 155.
+Pending: 78 (budget 78). Survivors: 74. Total: 152.
 
 ## Survivors
 
@@ -26,12 +26,9 @@ Pending: 78 (budget 78). Survivors: 77. Total: 155.
 | `android/hardware/SyncFence.java` | window seam (JNI natives) | blocked |
 | `android/hardware/camera2/CameraManager.java` | camera stack (cameraserver, CameraMetadataNative JNI, frameworks/av camera AIDL) not hosted; android.telecom.Connection javadoc import | blocked |
 | `android/hardware/display/IDeviceProductInfoConstants.java` | host-only (no AOSP class) | blocked |
-| `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | hardware/interfaces GNSS HAL constants not vendored | no-aosp-source |
-| `android/hardware/health/V1_0/Constants.java` | hardware/interfaces health HAL constants not vendored | no-aosp-source |
+| `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | generated callback requires the legacy libhwbinder runtime | no-aosp-source |
 | `android/hardware/usb/UsbDevice.java` | stock USB device uses libandroid_runtime JNI and no USB service is hosted | blocked |
 | `android/hardware/usb/UsbManager.java` | no hosted IUsbManager; device connection/request use JNI and legacy HIDL plus gadget AIDL generation is unwired | blocked |
-| `android/hardware/vibrator/V1_0/EffectStrength.java` | hardware/interfaces vibrator HAL constants not vendored | no-aosp-source |
-| `android/hardware/vibrator/V1_3/Effect.java` | hardware/interfaces vibrator HAL constants not vendored | no-aosp-source |
 | `android/media/MediaCommunicationManager.java` | no media_communication service; stock closure crosses fenced media/audio/camera JNI | blocked |
 | `android/media/MediaCrypto.java` | JNI natives (libmedia_jni; DRM is not supported) | blocked |
 | `android/media/MediaMetadataRetriever.java` | JNI natives (libmedia_jni) | blocked |
