@@ -146,6 +146,7 @@ public final class ViewHost {
             sActivity.attach(sContext)
             sActivity.performCreate(null)
             sActivity.performStart()
+            sActivity.performPostCreate(null)
             sActivity.performResume()
             sRoot = android.view.ViewRootImpl(sContext)
             val decor: android.view.View = sActivity.getWindow().getDecorView()

@@ -2837,6 +2837,7 @@ internal object FrameworkModuleSmoke {
         first.performCreate(null)
         val original = checkNotNull(first.fragment)
         first.performStart()
+        first.performPostCreate(null)
         first.performResume()
         check(legacyFragmentEvents == listOf(
             "activity:create",
@@ -2875,6 +2876,7 @@ internal object FrameworkModuleSmoke {
         check(restored.restoredMarker == "saved")
         restoredActivity.performStart()
         restoredActivity.performRestoreInstanceState(savedState)
+        restoredActivity.performPostCreate(savedState)
         restoredActivity.performResume()
         check(legacyFragmentEvents == listOf(
             "activity:create:saved",

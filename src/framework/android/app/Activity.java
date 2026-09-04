@@ -25,9 +25,16 @@ public class Activity extends ContextWrapper implements Window.Callback,
     private static final String REQUEST_PERMISSIONS_WHO_PREFIX = "@android:requestPermissions:";
     private Window mWindow;
     private ActivityInfo mActivityInfo = new ActivityInfo();
+    private android.os.IBinder mToken;
+    private android.os.IBinder mAssistToken = new android.os.Binder();
+    private android.os.IBinder mShareableActivityToken;
+    private Activity mParent;
+    private String mEmbeddedID;
     private int mRequestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
     private boolean mChangingConfigurations;
-    private boolean mFinished;
+    // AOSP Activity.mFinished is package-private: ActivityThread and the legacy
+    // LocalActivityManager lifecycle both own transitions of this flag.
+    boolean mFinished;
     private int mResultCode = RESULT_CANCELED;
     private Intent mResultData;
     private String mResultWho;
@@ -41,9 +48,37 @@ public class Activity extends ContextWrapper implements Window.Callback,
     NonConfigurationInstances mLastNonConfigurationInstances;
     public Activity() { super(null); }
     public void attach(Context base) {
+        attach(base, null, mIntent);
+    }
+    public void attach(Context base, ActivityInfo activityInfo) {
+        attach(base, activityInfo, mIntent);
+    }
+    /** Top-level hosted attach with AOSP's intent-before-attachBaseContext ordering. */
+    final void attach(Context base, ActivityInfo activityInfo, Intent intent) {
+        attach(base, activityInfo, intent, null, null, tokenFromContext(base), null, null);
+    }
+    private static android.os.IBinder tokenFromContext(Context base) {
+        android.os.IBinder token = base instanceof ContextImpl
+                ? ((ContextImpl) base).getActivityToken() : null;
+        return token != null ? token : new android.os.Binder();
+    }
+    /** Hosted subset of AOSP Activity.attach used by ActivityThread's local-activity path. */
+    final void attach(Context base, ActivityInfo activityInfo, Intent intent, Activity parent,
+            String id, android.os.IBinder token, android.os.IBinder assistToken,
+            android.os.IBinder shareableActivityToken) {
+        // Pinned AOSP sets mIntent before attachBaseContext because Activity overrides may inspect
+        // their launch identity while attaching.
+        mIntent = intent != null ? intent : new Intent();
         attachBaseContext(base);
         if (base instanceof ContextImpl) ((ContextImpl) base).setOuterContext(this);
         mFragments.attachHost(null);
+        mActivityInfo = activityInfo != null ? new ActivityInfo(activityInfo) : new ActivityInfo();
+        mRequestedOrientation = mActivityInfo.screenOrientation;
+        mParent = parent;
+        mEmbeddedID = id;
+        mToken = token;
+        if (assistToken != null) mAssistToken = assistToken;
+        mShareableActivityToken = shareableActivityToken;
         mWindow = new PhoneWindow(this);
         mWindow.setCallback(this);
         // Real Activity.attach makes the Activity the inflater's private
@@ -51,12 +86,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
         // AndroidX <fragment> tags through its FragmentController.
         mWindow.getLayoutInflater().setPrivateFactory(this);
         mWindow.setWindowManager((WindowManager) base.getSystemService(Context.WINDOW_SERVICE),
-                null, getClass().getName(), false);
-    }
-    public void attach(Context base, ActivityInfo activityInfo) {
-        attach(base);
-        mActivityInfo = activityInfo != null ? new ActivityInfo(activityInfo) : new ActivityInfo();
-        mRequestedOrientation = mActivityInfo.screenOrientation;
+                mToken, getClass().getName(), false);
+        if (mParent != null) mWindow.setContainer(mParent.getWindow());
     }
     public Application getApplication() {
         return ActivityThread.currentApplication();
@@ -149,7 +180,20 @@ public class Activity extends ContextWrapper implements Window.Callback,
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {}
     public void startActivityForResult(Intent intent, int requestCode) { startActivityForResult(intent, requestCode, null); }
     public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
+        if (mParent != null) {
+            mParent.startActivityFromChild(this, intent, requestCode, options);
+            return;
+        }
         startActivityForResult((String) null, intent, requestCode, options);
+    }
+    /** AOSP child launch routing; the embedded id is the result recipient in the parent. */
+    @Deprecated public void startActivityFromChild(Activity child, Intent intent, int requestCode) {
+        startActivityFromChild(child, intent, requestCode, null);
+    }
+    @Deprecated public void startActivityFromChild(Activity child, Intent intent, int requestCode,
+            Bundle options) {
+        startActivityForResult(child != null ? child.mEmbeddedID : null, intent, requestCode,
+                options);
     }
     public void startActivityForResult(String who, Intent intent, int requestCode, Bundle options) {
         Instrumentation instrumentation = ActivityThread.currentActivityThread().getInstrumentation();
@@ -322,25 +366,38 @@ public class Activity extends ContextWrapper implements Window.Callback,
         if (mMenuInflater == null) mMenuInflater = new android.view.MenuInflater(this);
         return mMenuInflater;
     }
-    public android.os.IBinder getActivityToken() { return null; }
-    public android.os.IBinder getShareableActivityToken() { return null; }
+    public android.os.IBinder getActivityToken() {
+        return mParent != null ? mParent.getActivityToken() : mToken;
+    }
+    public android.os.IBinder getShareableActivityToken() {
+        return mParent != null ? mParent.getShareableActivityToken() : mShareableActivityToken;
+    }
+    public final Activity getParent() { return mParent; }
+    public final boolean isChild() { return mParent != null; }
     public Window getWindow() { return mWindow; }
     public WindowManager getWindowManager() { return mWindow != null ? mWindow.getWindowManager() : null; }
     public boolean isResumed() { return true; }
     public boolean isFinishing() { return mFinished; }
     public boolean isDestroyed() { return false; }
     public void finish() {
-        mFinished = true;
-        ActivityThread.finishActivityInProcess(this);
+        if (mParent != null) {
+            mParent.finishFromChild(this);
+        } else {
+            mFinished = true;
+            ActivityThread.finishActivityInProcess(this);
+        }
     }
+    /** AOSP's default finishes the parent; ActivityGroup subclasses may route to their manager. */
+    @Deprecated public void finishFromChild(Activity child) { finish(); }
     public void finishAndRemoveTask() {}
     public boolean moveTaskToBack(boolean nonRoot) { return false; }
     public ActivityInfo getActivityInfo() { return mActivityInfo; }
     public void runOnUiThread(Runnable action) { action.run(); }
     public int getTaskId() { return 0; }
     /** AOSP: the assist token the activity manager issued; a process-local binder here. */
-    private final android.os.IBinder mAssistToken = new android.os.Binder();
-    public final android.os.IBinder getAssistToken() { return mAssistToken; }
+    public final android.os.IBinder getAssistToken() {
+        return mParent != null ? mParent.getAssistToken() : mAssistToken;
+    }
     private com.android.internal.app.IVoiceInteractor mVoiceInteractor;
     public void setVoiceInteractor(com.android.internal.app.IVoiceInteractor voiceInteractor) { mVoiceInteractor = voiceInteractor; }
     public VoiceInteractor getVoiceInteractor() { return null; }
@@ -401,12 +458,16 @@ public class Activity extends ContextWrapper implements Window.Callback,
         mFragments.dispatchCreate();
     }
     protected void onPostCreate(Bundle savedInstanceState) {}
+    /** AOSP Activity.onRestart; dispatched before a stopped activity starts again. */
+    protected void onRestart() {}
     protected void onStart() { mFragments.doLoaderStart(); }
     protected void onResume() {}
     protected void onPostResume() {}
     protected void onPause() {}
     protected void onStop() {}
     protected void onDestroy() {}
+    /** AOSP Activity.onNewIntent; used when LocalActivityManager reuses a child activity. */
+    protected void onNewIntent(Intent intent) {}
     protected void onSaveInstanceState(Bundle outState) {
         android.os.Parcelable fragmentState = mFragments.saveAllState();
         if (fragmentState != null) outState.putParcelable(FRAGMENTS_TAG, fragmentState);
@@ -422,8 +483,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
         mFragments.dispatchActivityCreated();
         if (app != null) app.dispatchActivityPostCreated(this, state);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostCreated(this, state);
-        onPostCreate(state);
     }
+    /** AOSP invokes onPostCreate after start and saved-state restoration. */
+    public final void performPostCreate(Bundle state) { onPostCreate(state); }
     public final void performStart() {
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreStarted(this);
@@ -437,6 +499,12 @@ public class Activity extends ContextWrapper implements Window.Callback,
         mFragments.reportLoaderStart();
         if (app != null) app.dispatchActivityPostStarted(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostStarted(this);
+    }
+    /** AOSP Activity.performRestart, limited to the lifecycle state owned by ActivityThread. */
+    final void performRestart(boolean start) {
+        mFragments.noteStateNotSaved();
+        onRestart();
+        if (start) performStart();
     }
     public final void performResume() {
         Application app = appOrNull();
@@ -488,6 +556,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
         if (app != null) app.dispatchActivityPostDestroyed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostDestroyed(this);
     }
+    /** AOSP Activity.performNewIntent dispatches without replacing the Activity's current Intent. */
+    final void performNewIntent(Intent intent) { onNewIntent(intent); }
     public final void performSaveInstanceState(Bundle outState) {
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreSaveInstanceState(this, outState);

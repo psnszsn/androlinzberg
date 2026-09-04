@@ -40,6 +40,11 @@ object HostedActivityRuntime {
     @JvmStatic
     fun isConfigured(): Boolean = host != null
 
+    /** ActivityThread's local-activity path must instantiate host-only and APK components with
+     * the same loader the desktop launcher used for the application. */
+    @JvmStatic
+    fun activityClassLoaderOrNull(): ClassLoader? = host?.activityClassLoader
+
     @JvmStatic
     fun currentActivity(): Activity? = current
 
@@ -79,6 +84,15 @@ object HostedActivityRuntime {
     @JvmStatic
     fun resolveActivity(intent: Intent): ComponentName? =
         intent.component ?: requireHost().resolveActivity(Intent(intent))
+
+    /** The host launcher registry is the ActivityTaskManager-side source of ActivityInfo for
+     * host-only components that have no installed APK/package-manager record (module smokes and
+     * desktop adapters). Return a copy just like PackageManager does. */
+    @JvmStatic
+    fun resolveActivityInfo(intent: Intent): ActivityInfo? {
+        val component = resolveActivity(intent) ?: return null
+        return activities[component.className]?.let(::ActivityInfo)
+    }
 
     @JvmStatic
     fun finishActivity(activity: Activity) {
@@ -216,7 +230,11 @@ object HostedActivityRuntime {
             }
             // AOSP performLaunchActivity: every Activity gets its own base context
             // (ContextImpl.createActivityContext) over the package's LoadedApk.
-            activity.attach(ActivityThread.currentActivityThread().createActivityContext(info), info)
+            activity.attach(
+                ActivityThread.currentActivityThread().createActivityContext(info),
+                info,
+                intent,
+            )
             activity.`setLastNonConfigurationInstances$artzig`(lastNonConfigurationInstances)
             activity.`setResultTarget$artzig`(resultWho, resultRequestCode)
             activity.setResult(resultCode, resultData)
@@ -232,6 +250,7 @@ object HostedActivityRuntime {
             activity.performCreate(savedState)
             activity.performStart()
             if (savedState != null) activity.performRestoreInstanceState(savedState)
+            activity.performPostCreate(savedState)
             activity.performResume()
 
             if (addCurrentToBackStack && previous != null) {

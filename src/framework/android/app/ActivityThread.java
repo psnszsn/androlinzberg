@@ -562,6 +562,185 @@ public final class ActivityThread extends ClientTransactionHandler {
         }
     }
 
+    // ------------------------------------------------------------ local activities
+
+    /** AOSP ActivityThread.resolveActivityInfo. LocalActivityManager is an in-process caller, but
+     * resolution and ActivityNotFoundException behavior still belong to PackageManager. */
+    public final ActivityInfo resolveActivityInfo(Intent intent) {
+        final Context context = mInitialApplication != null ? mInitialApplication : getSystemContext();
+        ActivityInfo info = intent.resolveActivityInfo(context.getPackageManager(),
+                android.content.pm.PackageManager.GET_SHARED_LIBRARY_FILES);
+        // Host-only components (including framework smokes) deliberately have no installed APK
+        // metadata. Keep PackageManager authoritative, then consult the ActivityTaskManager-side
+        // host registry before reporting START_CLASS_NOT_FOUND.
+        if (info == null && HostedActivityRuntime.isConfigured()) {
+            info = HostedActivityRuntime.resolveActivityInfo(intent);
+        }
+        if (info == null) {
+            Instrumentation.checkStartActivityResult(ActivityManager.START_CLASS_NOT_FOUND, intent);
+        }
+        return info;
+    }
+
+    /** AOSP ActivityThread.startActivityNow. This is the local-token path used by the deprecated
+     * LocalActivityManager; it intentionally creates no desktop top-level window of its own. */
+    public final Activity startActivityNow(Activity parent, String id, Intent intent,
+            ActivityInfo activityInfo, IBinder token, Bundle state,
+            Activity.NonConfigurationInstances lastNonConfigurationInstances, IBinder assistToken,
+            IBinder shareableActivityToken) {
+        final ActivityClientRecord r = new ActivityClientRecord();
+        r.token = token;
+        r.intent = intent;
+        r.state = state;
+        r.parent = parent;
+        r.embeddedID = id;
+        r.activityInfo = activityInfo;
+        r.lastNonConfigurationInstances = lastNonConfigurationInstances;
+        r.assistToken = assistToken;
+        r.shareableActivityToken = shareableActivityToken;
+        return performLaunchActivity(r, null);
+    }
+
+    /** Hosted adaptation of AOSP ActivityThread.performLaunchActivity for a process-local token.
+     * Package/class resolution, context attachment, theme application, record publication, and
+     * onCreate ordering are retained; system_server reporting and WindowManagerService are absent. */
+    private Activity performLaunchActivity(ActivityClientRecord r, Intent customIntent) {
+        Activity activity = null;
+        final ActivityInfo info = r.activityInfo != null ? r.activityInfo : resolveActivityInfo(r.intent);
+        r.activityInfo = info;
+        try {
+            r.packageInfo = info.applicationInfo != null && info.applicationInfo.sourceDir != null
+                    ? getPackageInfoNoCheck(info.applicationInfo, mCompatibilityInfo)
+                    : getSystemContext().mPackageInfo;
+            final ContextImpl activityContext = createActivityContext(info, r.packageInfo, r.token);
+            final ClassLoader hostedClassLoader = HostedActivityRuntime.activityClassLoaderOrNull();
+            final ClassLoader classLoader = hostedClassLoader != null
+                    ? hostedClassLoader : activityContext.getClassLoader();
+            ComponentName component = r.intent.getComponent();
+            if (component == null) {
+                component = new ComponentName(info.packageName, info.name);
+                r.intent.setComponent(component);
+            }
+            if (info.targetActivity != null) {
+                component = new ComponentName(info.packageName, info.targetActivity);
+            }
+            activity = r.packageInfo.getAppFactory().instantiateActivity(
+                    classLoader, component.getClassName(), r.intent);
+            r.intent.setExtrasClassLoader(classLoader);
+            if (r.state != null) r.state.setClassLoader(classLoader);
+
+            final Intent launchIntent = customIntent != null ? customIntent : r.intent;
+            activity.attach(activityContext, info, launchIntent, r.parent, r.embeddedID, r.token,
+                    r.assistToken, r.shareableActivityToken);
+            activity.setLastNonConfigurationInstances$artzig(r.lastNonConfigurationInstances);
+            final int theme = info.getThemeResource();
+            if (theme != 0) activity.setTheme(theme);
+
+            // Publish before onCreate, matching AOSP callbacks that look their token up here.
+            r.activity = activity;
+            mActivities.put(r.token, r);
+            activity.performCreate(r.state);
+            r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_CREATE);
+            return activity;
+        } catch (Exception e) {
+            mActivities.remove(r.token);
+            if (!mInstrumentation.onException(activity, e)) {
+                throw new RuntimeException("Unable to start local activity " + r.intent + ": "
+                        + e.toString(), e);
+            }
+            return activity;
+        }
+    }
+
+    /** AOSP ActivityThread.performResumeActivity, with window visibility owned by the embedding
+     * parent rather than WindowManagerService. */
+    public boolean performResumeActivity(ActivityClientRecord r, boolean finalStateRequest,
+            String reason) {
+        if (r == null || r.activity == null || r.activity.mFinished
+                || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
+            return false;
+        }
+        r.activity.mFragments.noteStateNotSaved();
+        r.activity.performResume();
+        r.state = null;
+        r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME);
+        return true;
+    }
+
+    /** AOSP hidden API retained for LocalActivityManager. */
+    final Bundle performPauseActivity(IBinder token, boolean finished, String reason,
+            android.app.servertransaction.PendingTransactionActions pendingActions) {
+        final ActivityClientRecord r = mActivities.get(token);
+        return r != null ? performPauseActivity(r, finished, reason, pendingActions) : null;
+    }
+
+    private Bundle performPauseActivity(ActivityClientRecord r, boolean finished, String reason,
+            android.app.servertransaction.PendingTransactionActions pendingActions) {
+        if (finished) r.activity.mFinished = true;
+        // Pinned AOSP saves pre-Honeycomb activities before onPause. Synthetic host ActivityInfo
+        // defaults targetSdkVersion to 0, so this path is also required by framework smokes.
+        final boolean preHoneycomb = r.activityInfo != null
+                && r.activityInfo.applicationInfo != null
+                && r.activityInfo.applicationInfo.targetSdkVersion
+                        < android.os.Build.VERSION_CODES.HONEYCOMB;
+        final boolean shouldSaveState = !r.activity.mFinished && preHoneycomb;
+        if (shouldSaveState) {
+            r.state = new Bundle();
+            r.activity.performSaveInstanceState(r.state);
+        }
+        if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
+            r.activity.performPause();
+            r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE);
+        }
+        final Bundle oldState = pendingActions != null ? pendingActions.getOldState() : null;
+        if (oldState != null && preHoneycomb) r.state = oldState;
+        return shouldSaveState ? r.state : null;
+    }
+
+    /** AOSP hidden API retained for LocalActivityManager. */
+    final void performStopActivity(IBinder token, boolean saveState, String reason) {
+        performStopActivityInner(mActivities.get(token), saveState, reason);
+    }
+
+    private void performStopActivityInner(ActivityClientRecord r, boolean saveState, String reason) {
+        if (r == null || r.activity == null
+                || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_STOP) {
+            return;
+        }
+        if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
+            performPauseActivity(r, false, reason, null);
+        }
+        if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_START
+                || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE) {
+            r.activity.performStop();
+            r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_STOP);
+        }
+        if (saveState && !r.activity.mFinished && r.state == null) {
+            r.state = new Bundle();
+            r.activity.performSaveInstanceState(r.state);
+        }
+    }
+
+    /** AOSP ActivityThread.performDestroyActivity for a process-local activity record. */
+    void performDestroyActivity(ActivityClientRecord r, boolean finishing,
+            boolean getNonConfigInstance, String reason) {
+        if (r == null || r.activity == null) return;
+        if (finishing) r.activity.mFinished = true;
+        if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
+            performPauseActivity(r, finishing, reason, null);
+        }
+        if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_START
+                || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE) {
+            performStopActivityInner(r, false, reason);
+        }
+        if (getNonConfigInstance) {
+            r.lastNonConfigurationInstances = r.activity.retainNonConfigurationInstances();
+        }
+        r.activity.performDestroy();
+        r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_DESTROY);
+        mActivities.remove(r.token);
+    }
+
     // ------------------------------------------------------------ ClientTransactionHandler
 
     /** AOSP ActivityThread.H message ids the transaction handler uses. */
@@ -590,26 +769,65 @@ public final class ActivityThread extends ClientTransactionHandler {
     @Override public void updateProcessState(int processState, boolean fromIpc) {}
     @Override public void countLaunchingActivities(int num) {}
     @Override public java.util.Map<IBinder, android.app.servertransaction.DestroyActivityItem> getActivitiesToBeDestroyed() { return new ArrayMap<>(); }
-    @Override public void handleDestroyActivity(ActivityClientRecord r, boolean finishing, boolean getNonConfigInstance, String reason) { throw notHosted("handleDestroyActivity"); }
-    @Override public void handlePauseActivity(ActivityClientRecord r, boolean finished, boolean userLeaving, boolean autoEnteringPip, android.app.servertransaction.PendingTransactionActions pendingActions, String reason) { throw notHosted("handlePauseActivity"); }
-    @Override public void handleResumeActivity(ActivityClientRecord r, boolean finalStateRequest, boolean isForward, boolean shouldSendCompatFakeFocus, String reason) { throw notHosted("handleResumeActivity"); }
+    @Override public void handleDestroyActivity(ActivityClientRecord r, boolean finishing, boolean getNonConfigInstance, String reason) {
+        performDestroyActivity(r, finishing, getNonConfigInstance, reason);
+    }
+    @Override public void handlePauseActivity(ActivityClientRecord r, boolean finished, boolean userLeaving, boolean autoEnteringPip, android.app.servertransaction.PendingTransactionActions pendingActions, String reason) {
+        performPauseActivity(r, finished, reason, pendingActions);
+    }
+    @Override public void handleResumeActivity(ActivityClientRecord r, boolean finalStateRequest, boolean isForward, boolean shouldSendCompatFakeFocus, String reason) {
+        performResumeActivity(r, finalStateRequest, reason);
+    }
     @Override public void handleTopResumedActivityChanged(ActivityClientRecord r, boolean isTopResumedActivity, String reason) { throw notHosted("handleTopResumedActivityChanged"); }
-    @Override public void handleStopActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, boolean finalStateRequest, String reason) { throw notHosted("handleStopActivity"); }
-    @Override public void reportStop(android.app.servertransaction.PendingTransactionActions pendingActions) { throw notHosted("reportStop"); }
-    @Override public void performRestartActivity(ActivityClientRecord r, boolean start) { throw notHosted("performRestartActivity"); }
+    @Override public void handleStopActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, boolean finalStateRequest, String reason) {
+        performStopActivityInner(r, true, reason);
+    }
+    @Override public void reportStop(android.app.servertransaction.PendingTransactionActions pendingActions) {}
+    /** AOSP ActivityThread.performRestartActivity: restart a stopped local activity, optionally
+     * carrying it through start. Window visibility remains owned by the embedding parent. */
+    @Override public void performRestartActivity(ActivityClientRecord r, boolean start) {
+        if (r == null || r.activity == null || r.activity.mFinished) return;
+        if (r.getLifecycleState() != android.app.servertransaction.ActivityLifecycleItem.ON_STOP) return;
+        r.activity.performRestart(start);
+        // AOSP leaves the record stopped when start=false; LocalActivityManager uses start=true.
+        if (start) r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_START);
+    }
     @Override public void reportRefresh(ActivityClientRecord r) { throw notHosted("reportRefresh"); }
     @Override public void updatePendingActivityConfiguration(IBinder token, Configuration overrideConfig) { throw notHosted("updatePendingActivityConfiguration"); }
     @Override public void handleActivityConfigurationChanged(ActivityClientRecord r, Configuration overrideConfig, int displayId, android.window.ActivityWindowInfo activityWindowInfo) { throw notHosted("handleActivityConfigurationChanged"); }
     @Override public void handleWindowContextInfoChanged(IBinder clientToken, android.window.WindowContextInfo info) { throw notHosted("handleWindowContextInfoChanged"); }
     @Override public void handleWindowContextWindowRemoval(IBinder clientToken) { throw notHosted("handleWindowContextWindowRemoval"); }
     @Override public void handleSendResult(ActivityClientRecord r, List<ResultInfo> results, String reason) { throw notHosted("handleSendResult"); }
-    @Override public void handleNewIntent(ActivityClientRecord r, List<com.android.internal.content.ReferrerIntent> intents) { throw notHosted("handleNewIntent"); }
+    /** AOSP ActivityThread.handleNewIntent/deliverNewIntents. The caller owns lifecycle moves. */
+    @Override public void handleNewIntent(ActivityClientRecord r, List<com.android.internal.content.ReferrerIntent> intents) {
+        if (r == null || r.activity == null || intents == null || intents.isEmpty()) return;
+        for (com.android.internal.content.ReferrerIntent intent : intents) {
+            intent.setExtrasClassLoader(r.activity.getClassLoader());
+            r.activity.mFragments.noteStateNotSaved();
+            r.activity.performNewIntent(intent);
+        }
+    }
     @Override public void handlePictureInPictureRequested(ActivityClientRecord r) { throw notHosted("handlePictureInPictureRequested"); }
     @Override public void handlePictureInPictureStateChanged(ActivityClientRecord r, PictureInPictureUiState pipState) { throw notHosted("handlePictureInPictureStateChanged"); }
     @Override public boolean isHandleSplashScreenExit(IBinder token) { return false; }
     @Override public void handleAttachSplashScreenView(ActivityClientRecord r, android.window.SplashScreenView.SplashScreenViewParcelable parcelable, android.view.SurfaceControl startingWindowLeash) { throw notHosted("handleAttachSplashScreenView"); }
-    @Override public Activity handleLaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, int deviceId, Intent customIntent) { throw notHosted("handleLaunchActivity"); }
-    @Override public void handleStartActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, ActivityOptions.SceneTransitionInfo sceneTransitionInfo) { throw notHosted("handleStartActivity"); }
+    @Override public Activity handleLaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, int deviceId, Intent customIntent) {
+        return performLaunchActivity(r, customIntent);
+    }
+    /** AOSP ActivityThread.handleStartActivity, with presentation owned by the local parent. */
+    @Override public void handleStartActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, ActivityOptions.SceneTransitionInfo sceneTransitionInfo) {
+        if (r == null || r.activity == null || r.activity.mFinished) return;
+        if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_CREATE) {
+            r.activity.performStart();
+            r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_START);
+        }
+        if (pendingActions != null && pendingActions.shouldRestoreInstanceState() && r.state != null) {
+            r.activity.performRestoreInstanceState(r.state);
+        }
+        if (pendingActions != null && pendingActions.shouldCallOnPostCreate()) {
+            r.activity.performPostCreate(r.state);
+        }
+    }
     /** A system-sent configuration (a ConfigurationChangeItem): the hosted system sends deltas in
      * Configuration.updateFrom form (only the changed fields defined), so merge into the process
      * configuration and apply it as a launcher-driven change (AOSP: ResourcesManager first, then
@@ -638,6 +856,11 @@ public final class ActivityThread extends ClientTransactionHandler {
         public boolean isForward;
         public boolean isTopResumedActivity;
         public LoadedApk packageInfo;
+        public Activity parent;
+        public String embeddedID;
+        public Activity.NonConfigurationInstances lastNonConfigurationInstances;
+        public IBinder assistToken;
+        public IBinder shareableActivityToken;
         private int mLifecycleState = android.app.servertransaction.ActivityLifecycleItem.PRE_ON_CREATE;
         public android.window.ActivityWindowInfo activityWindowInfo;
         public android.window.ActivityWindowInfo mActivityWindowInfo = new android.window.ActivityWindowInfo();
@@ -673,7 +896,11 @@ public final class ActivityThread extends ClientTransactionHandler {
         LoadedApk packageInfo = info.applicationInfo != null && info.applicationInfo.sourceDir != null
                 ? getPackageInfoNoCheck(info.applicationInfo, mCompatibilityInfo)
                 : getSystemContext().mPackageInfo;
-        return ContextImpl.createActivityContext(this, packageInfo, info, new android.os.Binder(),
+        return createActivityContext(info, packageInfo, new android.os.Binder());
+    }
+    private ContextImpl createActivityContext(ActivityInfo info, LoadedApk packageInfo,
+            IBinder token) {
+        return ContextImpl.createActivityContext(this, packageInfo, info, token,
                 android.view.Display.DEFAULT_DISPLAY, null);
     }
     public static Activity launchMainActivity(String activityClassName) { return HostedActivityRuntime.launchMain(activityClassName); }
