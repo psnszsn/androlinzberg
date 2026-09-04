@@ -722,6 +722,15 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/com/android/internal/util/VirtualRefBasePtr.java");
     try c.file("$CJ/com/android/internal/util/FastMath.java");
     try c.file("$CJ/android/app/WindowConfiguration.java");
+    try c.file("$CJ/android/app/StatusBarManager.java");
+    try c.file("$CJ/android/media/NearbyMediaDevicesProvider.java");
+    try c.file("$CJ/com/android/internal/statusbar/AppClipsServiceConnector.java");
+    try c.file("$CJ/com/android/internal/statusbar/DisableStates.java");
+    try c.file("$CJ/com/android/internal/statusbar/LetterboxDetails.java");
+    try c.file("$CJ/com/android/internal/statusbar/NotificationVisibility.java");
+    try c.file("$CJ/com/android/internal/statusbar/RegisterStatusBarResult.java");
+    try c.file("$CJ/com/android/internal/statusbar/StatusBarIcon.java");
+    try c.file("$FB/media/java/android/media/NearbyDevice.java");
     try c.file("$CJ/android/app/ActionBar.java");
     try c.file("$CJ/android/app/Presentation.java");
     try c.file("$CJ/android/widget/CalendarView.java");

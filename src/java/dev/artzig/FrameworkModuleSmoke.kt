@@ -644,6 +644,35 @@ internal object FrameworkModuleSmoke {
         val activityManager = context.getSystemService(ActivityManager::class.java)
         check(activityManager != null && !activityManager.isBackgroundRestricted)
 
+        val statusBarManager =
+            checkNotNull(context.getSystemService(android.app.StatusBarManager::class.java))
+        check(statusBarManager === context.getSystemService(Context.STATUS_BAR_SERVICE))
+        statusBarManager.disable(android.app.StatusBarManager.DISABLE_NONE)
+        statusBarManager.collapsePanels()
+        val statusBarService = com.android.internal.statusbar.IStatusBarService.Stub.asInterface(
+            android.os.ServiceManager.getServiceOrThrow(Context.STATUS_BAR_SERVICE),
+        )
+        check(statusBarService.getDisableFlags(android.os.Binder(), 0).contentEquals(intArrayOf(0, 0)))
+        check(statusBarService.lastSystemKey == -1)
+        check(statusBarService.navBarMode == android.app.StatusBarManager.NAV_BAR_MODE_DEFAULT)
+        val tileResult = AtomicInteger(Int.MIN_VALUE)
+        val tileResultDelivered = java.util.concurrent.CountDownLatch(1)
+        statusBarService.requestAddTile(
+            ComponentName("dev.artzig", "HostedTile"),
+            "Hosted tile",
+            null,
+            0,
+            object : com.android.internal.statusbar.IAddTileResultCallback.Stub() {
+                override fun onTileRequest(userResponse: Int) {
+                    tileResult.set(userResponse)
+                    tileResultDelivered.countDown()
+                }
+            },
+        )
+        check(tileResultDelivered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        check(tileResult.get() ==
+            android.app.StatusBarManager.TILE_ADD_REQUEST_ERROR_NO_STATUS_BAR_SERVICE)
+
         val clipboardManager =
             checkNotNull(context.getSystemService(android.content.ClipboardManager::class.java))
         check(clipboardManager === context.getSystemService(Context.CLIPBOARD_SERVICE))
