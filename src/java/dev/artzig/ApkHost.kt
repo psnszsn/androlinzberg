@@ -36,6 +36,12 @@ public final class ApkHost {
         private var sProcessInitialized: Boolean = false
         private lateinit var sActivity: Activity
         private var sActivityActive: Boolean = false
+        private class BackRoute(
+            val root: android.view.ViewRootImpl,
+            val callback: android.window.OnBackInvokedCallback,
+        )
+        private var sSyntheticBackRoute: BackRoute? = null
+        private var sPhysicalBackRoute: BackRoute? = null
         private lateinit var sContext: android.content.Context
         private lateinit var sRoot: android.view.ViewRootImpl
         private var sRootActive: Boolean = false
@@ -171,6 +177,22 @@ public final class ApkHost {
         ) {
             if (!sActivityActive) return
             try {
+                if (code == android.view.KeyEvent.KEYCODE_BACK) {
+                    if (action == 0) {
+                        sSyntheticBackRoute = topBackRoute()
+                        if (sSyntheticBackRoute != null) return
+                    } else {
+                        val route = sSyntheticBackRoute
+                        sSyntheticBackRoute = null
+                        if (route != null) {
+                            val current = topBackRoute()
+                            if (current != null && route.root === current.root &&
+                                route.callback === current.callback
+                            ) route.callback.onBackInvoked()
+                            return
+                        }
+                    }
+                }
                 android.view.HostedInputDispatcher.dispatchSyntheticKey(
                     sRoot,
                     if (action == 0) android.view.KeyEvent.ACTION_DOWN else android.view.KeyEvent.ACTION_UP,
@@ -190,6 +212,22 @@ public final class ApkHost {
             _keysym: Int,
         ) {
             if (!sActivityActive) return
+            if (scanCode == 158) {
+                if (action == 0) {
+                    sPhysicalBackRoute = topBackRoute()
+                    if (sPhysicalBackRoute != null) return
+                } else {
+                    val route = sPhysicalBackRoute
+                    sPhysicalBackRoute = null
+                    if (route != null) {
+                        val current = topBackRoute()
+                        if (current != null && route.root === current.root &&
+                            route.callback === current.callback
+                        ) route.callback.onBackInvoked()
+                        return
+                    }
+                }
+            }
             android.view.HostedInputDispatcher.dispatchPhysicalKey(
                 sRoot,
                 if (action == 0) android.view.KeyEvent.ACTION_DOWN else android.view.KeyEvent.ACTION_UP,
@@ -218,7 +256,10 @@ public final class ApkHost {
         @JvmStatic public fun inputReset(kind: Int) {
             when (kind) {
                 0 -> android.view.HostedInputDispatcher.cancelMouse(if (sRootActive) sRoot else null)
-                1 -> android.view.HostedInputDispatcher.resetKeyboard()
+                1 -> {
+                    sPhysicalBackRoute = null
+                    android.view.HostedInputDispatcher.resetKeyboard()
+                }
                 2 -> android.view.HostedInputDispatcher.cancelTouch(if (sRootActive) sRoot else null)
             }
         }
@@ -248,7 +289,9 @@ public final class ApkHost {
         @JvmStatic public fun back() {
             if (!sActivityActive) return
             try {
-                val win: android.view.ArtzigWindowStack.Entry? = android.view.ArtzigWindowStack.top()
+                if (invokeTopBackCallback()) return
+                val win: android.view.ArtzigWindowStack.Entry? =
+                    android.view.ArtzigWindowStack.topFocusable()
                 if (win != null) {
                     if (win.onBack != null) {
                         win.onBack.run()
@@ -272,6 +315,20 @@ public final class ApkHost {
             } catch (t: Throwable) {
                 Log.w(TAG, "back failed", t)
             }
+        }
+
+        /** Hosted WMS has no window session to invoke the callback registered by
+         * WindowOnBackInvokedDispatcher, so complete that final dispatch locally. */
+        private fun topBackRoute(): BackRoute? {
+            val root = android.view.ArtzigWindowStack.topFocusable()?.root ?: return null
+            val callback = root.onBackInvokedDispatcher.topCallback ?: return null
+            return BackRoute(root, callback)
+        }
+
+        private fun invokeTopBackCallback(): Boolean {
+            val route = topBackRoute() ?: return false
+            route.callback.onBackInvoked()
+            return true
         }
 
 /** Explicit synthetic touchscreen input used by AZK_TAP/PRESS/SWIPE. */
@@ -551,6 +608,8 @@ public final class ApkHost {
 
                     public override fun clearActivityWindows() {
                         sActivityActive = false
+                        sSyntheticBackRoute = null
+                        sPhysicalBackRoute = null
                         android.view.ArtzigWindowStack.clear()
                         if (sRootActive) sRoot.destroy()
                         sRootActive = false
@@ -659,6 +718,8 @@ public final class ApkHost {
                 Log.w(TAG, "application shutdown failed", t)
             }
             sActivityActive = false
+            sSyntheticBackRoute = null
+            sPhysicalBackRoute = null
             sProcessInitialized = false
             android.view.HostedInputDispatcher.reset()
             sAppFullscreenRequested = false

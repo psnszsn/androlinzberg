@@ -746,6 +746,11 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/android/app/SharedElementCallback.java");
     try c.file("$CJ/android/content/Loader.java");
     try c.file("$CJ/android/util/LogWriter.java");
+    try c.file("$CJ/android/app/Dialog.java");
+    try c.file("$CJ/com/android/internal/app/NavItemSelectedListener.java");
+    try c.file("$CJ/com/android/internal/app/WindowDecorActionBar.java");
+    try c.file("$CJ/com/android/internal/widget/ActionBarContainer.java");
+    try c.file("$CJ/com/android/internal/widget/ActionBarOverlayLayout.java");
     try c.file("$CJ/android/media/NearbyMediaDevicesProvider.java");
     try c.file("$CJ/com/android/internal/statusbar/AppClipsServiceConnector.java");
     try c.file("$CJ/com/android/internal/statusbar/DisableStates.java");

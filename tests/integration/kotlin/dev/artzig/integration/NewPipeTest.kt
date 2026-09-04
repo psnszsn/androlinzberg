@@ -25,6 +25,18 @@ class NewPipeTest {
     }
 
     @Test
+    fun backHonorsNonCancelableKeepAndroidOpenDialog() = app.run {
+        expectVisible(text = "Keep Android Open")
+        key(value = "Back", text = "Keep Android Open")
+        expectVisible(text = "Keep Android Open")
+        key(value = "Back", text = "Keep Android Open")
+        expectVisible(text = "Keep Android Open")
+        click(text = "OK")
+        waitFor(text = "Keep Android Open", absent = true)
+        expectVisible(text = "Live")
+    }
+
+    @Test
     fun hostF11EntersAndExitsFullscreen() = app.run {
         dismissKeepAndroidOpenDialog()
         waitForFullscreen(false)

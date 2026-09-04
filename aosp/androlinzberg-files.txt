@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=120 F=2825 total=2945
+# Rules: D=120 F=2830 total=2950
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -3034,3 +3034,8 @@ F aosp frameworks/base/core/java/android/app/LoaderManager.java
 F aosp frameworks/base/core/java/android/app/SharedElementCallback.java
 F aosp frameworks/base/core/java/android/content/Loader.java
 F aosp frameworks/base/core/java/android/util/LogWriter.java
+F aosp frameworks/base/core/java/android/app/Dialog.java
+F aosp frameworks/base/core/java/com/android/internal/app/NavItemSelectedListener.java
+F aosp frameworks/base/core/java/com/android/internal/app/WindowDecorActionBar.java
+F aosp frameworks/base/core/java/com/android/internal/widget/ActionBarContainer.java
+F aosp frameworks/base/core/java/com/android/internal/widget/ActionBarOverlayLayout.java

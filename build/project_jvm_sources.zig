@@ -160,7 +160,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/javax/microedition/khronos/opengles/GL10.kt",
     "src/framework/android/app/Activity.java",
     "src/framework/android/app/ActivityThread.java",
-    "src/framework/android/app/Dialog.java",
     "src/framework/android/app/DownloadManager.kt",
     "src/framework/android/app/HostedActivityRuntime.kt",
     "src/framework/android/app/HostedApplicationThread.kt",
