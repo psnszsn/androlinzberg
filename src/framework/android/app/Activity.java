@@ -21,14 +21,29 @@ import com.android.internal.policy.PhoneWindow;
 public class Activity extends ContextWrapper implements Window.Callback,
         KeyEvent.Callback, android.view.LayoutInflater.Factory2 {
     public static final int RESULT_OK = -1, RESULT_CANCELED = 0, RESULT_FIRST_USER = 1;
+    static final String FRAGMENTS_TAG = "android:fragments";
+    private static final String REQUEST_PERMISSIONS_WHO_PREFIX = "@android:requestPermissions:";
     private Window mWindow;
     private ActivityInfo mActivityInfo = new ActivityInfo();
     private int mRequestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
     private boolean mChangingConfigurations;
+    private boolean mFinished;
+    private int mResultCode = RESULT_CANCELED;
+    private Intent mResultData;
+    private String mResultWho;
+    private int mResultRequestCode = -1;
+    static final class NonConfigurationInstances {
+        Object activity;
+        java.util.HashMap<String, Object> children;
+        FragmentManagerNonConfig fragments;
+        android.util.ArrayMap<String, LoaderManager> loaders;
+    }
+    NonConfigurationInstances mLastNonConfigurationInstances;
     public Activity() { super(null); }
     public void attach(Context base) {
         attachBaseContext(base);
         if (base instanceof ContextImpl) ((ContextImpl) base).setOuterContext(this);
+        mFragments.attachHost(null);
         mWindow = new PhoneWindow(this);
         mWindow.setCallback(this);
         // Real Activity.attach makes the Activity the inflater's private
@@ -48,8 +63,34 @@ public class Activity extends ContextWrapper implements Window.Callback,
     }
     public void setIntent(Intent newIntent) { mIntent = newIntent; }
     public android.view.LayoutInflater getLayoutInflater() { return mWindow.getLayoutInflater(); }
-    public Object getLastNonConfigurationInstance() { return null; }
+    public Object getLastNonConfigurationInstance() {
+        return mLastNonConfigurationInstances != null
+                ? mLastNonConfigurationInstances.activity : null;
+    }
     public Object onRetainNonConfigurationInstance() { return null; }
+    java.util.HashMap<String, Object> onRetainNonConfigurationChildInstances() { return null; }
+    java.util.HashMap<String, Object> getLastNonConfigurationChildInstances() {
+        return mLastNonConfigurationInstances != null
+                ? mLastNonConfigurationInstances.children : null;
+    }
+    NonConfigurationInstances retainNonConfigurationInstances() {
+        Object activity = onRetainNonConfigurationInstance();
+        java.util.HashMap<String, Object> children = onRetainNonConfigurationChildInstances();
+        FragmentManagerNonConfig fragments = mFragments.retainNestedNonConfig();
+        mFragments.doLoaderStart();
+        mFragments.doLoaderStop(true);
+        android.util.ArrayMap<String, LoaderManager> loaders = mFragments.retainLoaderNonConfig();
+        if (activity == null && children == null && fragments == null && loaders == null) return null;
+        NonConfigurationInstances result = new NonConfigurationInstances();
+        result.activity = activity;
+        result.children = children;
+        result.fragments = fragments;
+        result.loaders = loaders;
+        return result;
+    }
+    void setLastNonConfigurationInstances$artzig(NonConfigurationInstances instances) {
+        mLastNonConfigurationInstances = instances;
+    }
     public boolean isChangingConfigurations() { return mChangingConfigurations; }
     public void setChangingConfigurations$artzig(boolean changing) {
         mChangingConfigurations = changing;
@@ -86,7 +127,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void recreate() { ActivityThread.recreateActivityInProcess(this); }
     public void finishAffinity() {}
     public boolean shouldShowRequestPermissionRationale(String permission) { return false; }
-    public void requestPermissions(String[] permissions, int requestCode) {}
+    public void requestPermissions(String[] permissions, int requestCode) {
+        requestPermissions(null, permissions, requestCode);
+    }
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {}
     /** AOSP Activity.startActivity -> startActivityForResult -> Instrumentation.execStartActivity
      * (an Activity context launches without FLAG_ACTIVITY_NEW_TASK, unlike ContextImpl). */
@@ -96,6 +139,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
     @Override public void startActivities(Intent[] intents, Bundle options) { startActivities(intents); }
     /** AOSP Activity.mHandler: the main-thread handler package-private helpers post to (KeyguardManager). */
     final android.os.Handler mHandler = new android.os.Handler();
+    /** AOSP Activity.mFragments: stock legacy fragments hosted behind the Activity seam. */
+    final FragmentController mFragments = FragmentController.createController(new HostCallbacks());
     /** AOSP Activity.getLaunchedFromPackage: the activity task manager knows the launcher; this host has no record. */
     public String getLaunchedFromPackage() { return null; }
     /** AOSP Activity.requestWindowFeature: a feature request on the activity window. */
@@ -104,11 +149,21 @@ public class Activity extends ContextWrapper implements Window.Callback,
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {}
     public void startActivityForResult(Intent intent, int requestCode) { startActivityForResult(intent, requestCode, null); }
     public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
-        ActivityThread.currentActivityThread().getInstrumentation().execStartActivity(
-                this, ActivityThread.currentActivityThread().getApplicationThread().asBinder(),
-                getActivityToken(), this, intent, requestCode, options);
+        startActivityForResult((String) null, intent, requestCode, options);
     }
-    /** AOSP startIntentSenderForResult: the sender is sent as its creator (no activity result token yet). */
+    public void startActivityForResult(String who, Intent intent, int requestCode, Bundle options) {
+        Instrumentation instrumentation = ActivityThread.currentActivityThread().getInstrumentation();
+        if (who == null) {
+            instrumentation.execStartActivity(this,
+                    ActivityThread.currentActivityThread().getApplicationThread().asBinder(),
+                    getActivityToken(), this, intent, requestCode, options);
+        } else {
+            instrumentation.execStartActivity(this,
+                    ActivityThread.currentActivityThread().getApplicationThread().asBinder(),
+                    getActivityToken(), who, intent, requestCode, options);
+        }
+    }
+    /** Activity IntentSender dispatch requires the still-unhosted activity task manager seam. */
     public void startIntentSenderForResult(android.content.IntentSender intent, int requestCode,
             Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
             throws android.content.IntentSender.SendIntentException {
@@ -117,7 +172,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void startIntentSenderForResult(android.content.IntentSender intent, int requestCode,
             Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options)
             throws android.content.IntentSender.SendIntentException {
-        intent.sendIntent(this, 0, fillInIntent, null, null);
+        startIntentSenderForResult(null, intent, requestCode, fillInIntent,
+                flagsMask, flagsValues, extraFlags, options);
     }
     /** AOSP convertToTranslucent: no translucent conversion without the activity task manager. */
     public interface TranslucentConversionListener { void onTranslucentConversionComplete(boolean drawComplete); }
@@ -126,8 +182,54 @@ public class Activity extends ContextWrapper implements Window.Callback,
         return false;
     }
     public void convertFromTranslucent() {}
-        public void setResult(int resultCode) {}
-    public void setResult(int resultCode, Intent data) {}
+    private void startIntentSenderForResult(String who, android.content.IntentSender intent,
+            int requestCode, Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags,
+            Bundle options) throws android.content.IntentSender.SendIntentException {
+        throw new android.content.IntentSender.SendIntentException(
+                "Activity IntentSender launches are not hosted without ActivityTaskManager");
+    }
+    public void setResult(int resultCode) { setResult(resultCode, null); }
+    public void setResult(int resultCode, Intent data) {
+        mResultCode = resultCode;
+        mResultData = data;
+    }
+    void setResultTarget$artzig(String who, int requestCode) {
+        mResultWho = who;
+        mResultRequestCode = requestCode;
+    }
+    String getResultWho$artzig() { return mResultWho; }
+    int getResultRequestCode$artzig() { return mResultRequestCode; }
+    int getResultCode$artzig() { return mResultCode; }
+    Intent getResultData$artzig() { return mResultData; }
+    void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data) {
+        mFragments.noteStateNotSaved();
+        if (who == null) {
+            onActivityResult(requestCode, resultCode, data);
+            return;
+        }
+        Fragment fragment = mFragments.findFragmentByWho(who);
+        if (fragment != null) fragment.onActivityResult(requestCode, resultCode, data);
+    }
+    private void requestPermissions(String who, String[] permissions, int requestCode) {
+        String[] requested = permissions.clone();
+        int[] results = new int[requested.length];
+        for (int i = 0; i < requested.length; i++) {
+            results[i] = checkSelfPermission(requested[i]);
+        }
+        mHandler.post(() -> {
+            mFragments.noteStateNotSaved();
+            if (who == null) {
+                onRequestPermissionsResult(requestCode, requested, results);
+            } else {
+                String fragmentWho = who.startsWith(REQUEST_PERMISSIONS_WHO_PREFIX)
+                        ? who.substring(REQUEST_PERMISSIONS_WHO_PREFIX.length()) : who;
+                Fragment fragment = mFragments.findFragmentByWho(fragmentWho);
+                if (fragment != null) {
+                    fragment.onRequestPermissionsResult(requestCode, requested, results);
+                }
+            }
+        });
+    }
     public boolean isActivityTransitionRunning() { return false; }
     public void reportFullyDrawn() {}
     public void postponeEnterTransition() {}
@@ -147,10 +249,11 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public boolean shouldUpRecreateTask(Intent targetIntent) { return false; }
     public boolean onNavigateUp() { return false; }
     public ActionBar getActionBar() { return null; }
-    private FragmentManager mFragmentManager;
     public android.app.FragmentManager getFragmentManager() {
-        if (mFragmentManager == null) mFragmentManager = new FragmentManager();
-        return mFragmentManager;
+        return mFragments.getFragmentManager();
+    }
+    public android.app.LoaderManager getLoaderManager() {
+        return mFragments.getLoaderManager();
     }
     public boolean releaseInstance() { return false; }
     private Intent mIntent = new Intent();
@@ -224,9 +327,12 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public Window getWindow() { return mWindow; }
     public WindowManager getWindowManager() { return mWindow != null ? mWindow.getWindowManager() : null; }
     public boolean isResumed() { return true; }
-    public boolean isFinishing() { return false; }
+    public boolean isFinishing() { return mFinished; }
     public boolean isDestroyed() { return false; }
-    public void finish() { ActivityThread.finishActivityInProcess(this); }
+    public void finish() {
+        mFinished = true;
+        ActivityThread.finishActivityInProcess(this);
+    }
     public void finishAndRemoveTask() {}
     public boolean moveTaskToBack(boolean nonRoot) { return false; }
     public ActivityInfo getActivityInfo() { return mActivityInfo; }
@@ -245,7 +351,10 @@ public class Activity extends ContextWrapper implements Window.Callback,
     @Override public View onCreateView(String name, Context context,
             android.util.AttributeSet attrs) { return null; }
     @Override public View onCreateView(View parent, String name, Context context,
-            android.util.AttributeSet attrs) { return onCreateView(name, context, attrs); }
+            android.util.AttributeSet attrs) {
+        if (!"fragment".equals(name)) return onCreateView(name, context, attrs);
+        return mFragments.onCreateView(parent, name, context, attrs);
+    }
     public View getCurrentFocus() { return mWindow != null ? mWindow.getCurrentFocus() : null; }
     public Intent getIntent() { return mIntent; }
     public View getDecorView() { return mWindow.getDecorView(); }
@@ -279,15 +388,29 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void setTitleColor(int textColor) {}
     public void setTitle(CharSequence title) { mTitle = title; if (mWindow != null) mWindow.setTitle(title); }
     public void setTitle(int titleId) {}
-    protected void onCreate(Bundle savedInstanceState) {}
+    protected void onCreate(Bundle savedInstanceState) {
+        if (mLastNonConfigurationInstances != null) {
+            mFragments.restoreLoaderNonConfig(mLastNonConfigurationInstances.loaders);
+        }
+        if (savedInstanceState != null) {
+            mFragments.restoreAllState(savedInstanceState.getParcelable(FRAGMENTS_TAG),
+                    mLastNonConfigurationInstances != null
+                            ? mLastNonConfigurationInstances.fragments
+                            : (FragmentManagerNonConfig) null);
+        }
+        mFragments.dispatchCreate();
+    }
     protected void onPostCreate(Bundle savedInstanceState) {}
-    protected void onStart() {}
+    protected void onStart() { mFragments.doLoaderStart(); }
     protected void onResume() {}
     protected void onPostResume() {}
     protected void onPause() {}
     protected void onStop() {}
     protected void onDestroy() {}
-    protected void onSaveInstanceState(Bundle outState) {}
+    protected void onSaveInstanceState(Bundle outState) {
+        android.os.Parcelable fragmentState = mFragments.saveAllState();
+        if (fragmentState != null) outState.putParcelable(FRAGMENTS_TAG, fragmentState);
+    }
     protected void onRestoreInstanceState(Bundle savedInstanceState) {}
     public final void performCreate(Bundle state) {
         Application app = appOrNull();
@@ -296,6 +419,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         onCreate(state);
         if (app != null) app.dispatchActivityCreated(this, state);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityCreated(this, state);
+        mFragments.dispatchActivityCreated();
         if (app != null) app.dispatchActivityPostCreated(this, state);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostCreated(this, state);
         onPostCreate(state);
@@ -304,9 +428,13 @@ public class Activity extends ContextWrapper implements Window.Callback,
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreStarted(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreStarted(this);
+        mFragments.noteStateNotSaved();
+        mFragments.execPendingActions();
         onStart();
         if (app != null) app.dispatchActivityStarted(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityStarted(this);
+        mFragments.dispatchStart();
+        mFragments.reportLoaderStart();
         if (app != null) app.dispatchActivityPostStarted(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostStarted(this);
     }
@@ -314,9 +442,13 @@ public class Activity extends ContextWrapper implements Window.Callback,
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreResumed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreResumed(this);
+        mFragments.execPendingActions();
+        mLastNonConfigurationInstances = null;
         onResume();
         if (app != null) app.dispatchActivityResumed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityResumed(this);
+        mFragments.dispatchResume();
+        mFragments.execPendingActions();
         onPostResume();
         if (app != null) app.dispatchActivityPostResumed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostResumed(this);
@@ -325,6 +457,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPrePaused(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPrePaused(this);
+        mFragments.dispatchPause();
         onPause();
         if (app != null) app.dispatchActivityPaused(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPaused(this);
@@ -333,8 +466,10 @@ public class Activity extends ContextWrapper implements Window.Callback,
     }
     public final void performStop() {
         Application app = appOrNull();
+        mFragments.doLoaderStop(mChangingConfigurations);
         if (app != null) app.dispatchActivityPreStopped(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreStopped(this);
+        mFragments.dispatchStop();
         onStop();
         if (app != null) app.dispatchActivityStopped(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityStopped(this);
@@ -345,7 +480,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreDestroyed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreDestroyed(this);
+        mFragments.dispatchDestroy();
         onDestroy();
+        mFragments.doLoaderDestroy();
         if (app != null) app.dispatchActivityDestroyed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityDestroyed(this);
         if (app != null) app.dispatchActivityPostDestroyed(this);
@@ -373,25 +510,44 @@ public class Activity extends ContextWrapper implements Window.Callback,
     @Override public boolean dispatchPopulateAccessibilityEvent(AccessibilityEvent event) { return false; }
     @Override public View onCreatePanelView(int featureId) { return null; }
     @Override public boolean onCreatePanelMenu(int featureId, Menu menu) {
-        return featureId == Window.FEATURE_OPTIONS_PANEL && onCreateOptionsMenu(menu);
+        if (featureId != Window.FEATURE_OPTIONS_PANEL) return false;
+        boolean show = onCreateOptionsMenu(menu);
+        return mFragments.dispatchCreateOptionsMenu(menu, getMenuInflater()) || show;
     }
     @Override public boolean onPreparePanel(int featureId, View view, Menu menu) {
-        return featureId != Window.FEATURE_OPTIONS_PANEL || onPrepareOptionsMenu(menu);
+        if (featureId != Window.FEATURE_OPTIONS_PANEL) return true;
+        boolean show = onPrepareOptionsMenu(menu);
+        return mFragments.dispatchPrepareOptionsMenu(menu) || show;
     }
     @Override public boolean onMenuOpened(int featureId, Menu menu) { return true; }
     @Override public boolean onMenuItemSelected(int featureId, MenuItem item) {
-        if (featureId == Window.FEATURE_OPTIONS_PANEL) return onOptionsItemSelected(item);
+        if (featureId == Window.FEATURE_OPTIONS_PANEL) {
+            return onOptionsItemSelected(item) || mFragments.dispatchOptionsItemSelected(item);
+        }
+        if (featureId == Window.FEATURE_CONTEXT_MENU) {
+            return onContextItemSelected(item) || mFragments.dispatchContextItemSelected(item);
+        }
         return false;
     }
     public boolean onOptionsItemSelected(MenuItem item) { return false; }
+    public boolean onContextItemSelected(MenuItem item) { return false; }
     public boolean onCreateOptionsMenu(Menu menu) { return true; }
     public boolean onPrepareOptionsMenu(Menu menu) { return true; }
+    public void onOptionsMenuClosed(Menu menu) {}
+    public void onContextMenuClosed(Menu menu) {}
     @Override public void onWindowAttributesChanged(WindowManager.LayoutParams attrs) {}
     @Override public void onContentChanged() {}
     @Override public void onWindowFocusChanged(boolean hasFocus) {}
     @Override public void onAttachedToWindow() {}
     @Override public void onDetachedFromWindow() {}
-    @Override public void onPanelClosed(int featureId, Menu menu) {}
+    @Override public void onPanelClosed(int featureId, Menu menu) {
+        if (featureId == Window.FEATURE_OPTIONS_PANEL) {
+            mFragments.dispatchOptionsMenuClosed(menu);
+            onOptionsMenuClosed(menu);
+        } else if (featureId == Window.FEATURE_CONTEXT_MENU) {
+            onContextMenuClosed(menu);
+        }
+    }
     @Override public boolean onSearchRequested() { return false; }
     @Override public boolean onSearchRequested(android.view.SearchEvent searchEvent) { return false; }
     @Override public ActionMode onWindowStartingActionMode(ActionMode.Callback callback) { return null; }
@@ -403,10 +559,83 @@ public class Activity extends ContextWrapper implements Window.Callback,
     @Override public boolean onKeyLongPress(int keyCode, KeyEvent event) { return false; }
     @Override public boolean onKeyUp(int keyCode, KeyEvent event) { return false; }
     @Override public boolean onKeyMultiple(int keyCode, int count, KeyEvent event) { return false; }
-    public void onBackPressed() { finish(); }
+    public void onBackPressed() {
+        FragmentManager manager = mFragments.getFragmentManager();
+        if (!manager.isStateSaved() && manager.popBackStackImmediate()) return;
+        finish();
+    }
     public void onConfigurationChanged(Configuration newConfig) {
+        mFragments.dispatchConfigurationChanged(newConfig);
         if (mWindow != null) {
-            mWindow.getDecorView().dispatchConfigurationChanged(newConfig);
+            mWindow.onConfigurationChanged(newConfig);
+        }
+    }
+    public void onLowMemory() { mFragments.dispatchLowMemory(); }
+    public void onTrimMemory(int level) { mFragments.dispatchTrimMemory(level); }
+    public void onCreateContextMenu(android.view.ContextMenu menu, View view,
+            android.view.ContextMenu.ContextMenuInfo menuInfo) {}
+    public void onAttachFragment(Fragment fragment) {}
+
+    /** Adapted from AOSP Activity.HostCallbacks; the desktop Activity owns the real
+     * FragmentManager but replaces task-manager launches with its in-process host paths. */
+    class HostCallbacks extends FragmentHostCallback<Activity> {
+        HostCallbacks() { super(Activity.this); }
+
+        @Override public boolean onShouldSaveFragmentState(Fragment fragment) {
+            return !isFinishing();
+        }
+
+        @Override public android.view.LayoutInflater onGetLayoutInflater() {
+            android.view.LayoutInflater inflater = Activity.this.getLayoutInflater();
+            return onUseFragmentManagerInflaterFactory()
+                    ? inflater.cloneInContext(Activity.this) : inflater;
+        }
+
+        @Override public boolean onUseFragmentManagerInflaterFactory() {
+            return getApplicationInfo().targetSdkVersion >= android.os.Build.VERSION_CODES.LOLLIPOP;
+        }
+
+        @Override public Activity onGetHost() { return Activity.this; }
+        @Override public void onInvalidateOptionsMenu() { Activity.this.invalidateOptionsMenu(); }
+
+        @Override public void onStartActivityFromFragment(Fragment fragment, Intent intent,
+                int requestCode, Bundle options) {
+            Activity.this.startActivityForResult(fragment.mWho, intent, requestCode, options);
+        }
+
+        @Override public void onStartActivityAsUserFromFragment(Fragment fragment, Intent intent,
+                int requestCode, Bundle options, android.os.UserHandle user) {
+            Activity.this.startActivityForResult(fragment.mWho, intent, requestCode, options);
+        }
+
+        @Override public void onStartIntentSenderFromFragment(Fragment fragment,
+                android.content.IntentSender intent, int requestCode, Intent fillInIntent,
+                int flagsMask, int flagsValues, int extraFlags, Bundle options)
+                throws android.content.IntentSender.SendIntentException {
+            Activity.this.startIntentSenderForResult(fragment.mWho, intent, requestCode,
+                    fillInIntent, flagsMask, flagsValues, extraFlags, options);
+        }
+
+        @Override public void onRequestPermissionsFromFragment(Fragment fragment,
+                String[] permissions, int requestCode) {
+            Activity.this.requestPermissions(REQUEST_PERMISSIONS_WHO_PREFIX + fragment.mWho,
+                    permissions, requestCode);
+        }
+
+        @Override public boolean onHasWindowAnimations() { return getWindow() != null; }
+        @Override public int onGetWindowAnimations() {
+            Window window = getWindow();
+            return window == null ? 0 : window.getAttributes().windowAnimations;
+        }
+        @Override public void onAttachFragment(Fragment fragment) {
+            Activity.this.onAttachFragment(fragment);
+        }
+        @Override public <T extends View> T onFindViewById(int id) {
+            return Activity.this.findViewById(id);
+        }
+        @Override public boolean onHasView() {
+            Window window = getWindow();
+            return window != null && window.peekDecorView() != null;
         }
     }
     public Object getSystemService$override(String name) { return null; }

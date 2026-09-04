@@ -55,7 +55,10 @@ object HostedActivityRuntime {
         launch(activityClassName, Intent().setComponent(component(activityClassName)), null, false)
 
     @JvmStatic
-    fun startActivity(intent: Intent) {
+    fun startActivity(intent: Intent) = startActivity(null, null, intent, -1)
+
+    @JvmStatic
+    fun startActivity(caller: Activity?, resultWho: String?, intent: Intent, requestCode: Int) {
         // AOSP Instrumentation.execStartActivity() hands implicit intents to ActivityTaskManager,
         // which resolves them through PackageManager and may launch the system ResolverActivity.
         // system_server and the system resolver package are absent here, so the host adapter owns
@@ -63,7 +66,14 @@ object HostedActivityRuntime {
         val component = resolveActivity(intent)
             ?: throw android.content.ActivityNotFoundException("No Activity found to handle $intent")
         val resolvedIntent = if (intent.component == component) intent else Intent(intent).setComponent(component)
-        launch(component.className, resolvedIntent, null, true)
+        launch(
+            component.className,
+            resolvedIntent,
+            null,
+            true,
+            resultWho = if (caller === current) resultWho else null,
+            resultRequestCode = if (caller === current) requestCode else -1,
+        )
     }
 
     @JvmStatic
@@ -73,11 +83,23 @@ object HostedActivityRuntime {
     @JvmStatic
     fun finishActivity(activity: Activity) {
         if (activity !== current) return
+        val resultWho = activity.`getResultWho$artzig`()
+        val resultRequestCode = activity.`getResultRequestCode$artzig`()
+        val resultCode = activity.`getResultCode$artzig`()
+        val resultData = activity.`getResultData$artzig`()
         destroy(activity, changingConfigurations = false)
         current = null
         val previous = backStack.pollFirst()
         if (previous != null) {
             previous.performStart()
+            if (resultRequestCode >= 0) {
+                previous.dispatchActivityResult(
+                    resultWho,
+                    resultRequestCode,
+                    resultCode,
+                    resultData,
+                )
+            }
             previous.performResume()
             current = previous
             requireHost().showActivity(previous)
@@ -93,7 +115,11 @@ object HostedActivityRuntime {
         val className = activity.javaClass.name
         val intent = activity.intent?.let(::Intent)
         val requestedOrientation = activity.requestedOrientation
-        destroy(activity, changingConfigurations = true)
+        val resultWho = activity.`getResultWho$artzig`()
+        val resultRequestCode = activity.`getResultRequestCode$artzig`()
+        val resultCode = activity.`getResultCode$artzig`()
+        val resultData = activity.`getResultData$artzig`()?.let(::Intent)
+        val retained = destroy(activity, changingConfigurations = true)
         current = null
         val replacement = launch(
             activityClassName = className,
@@ -101,6 +127,11 @@ object HostedActivityRuntime {
             savedState = savedState,
             addCurrentToBackStack = false,
             requestedOrientation = requestedOrientation,
+            lastNonConfigurationInstances = retained,
+            resultWho = resultWho,
+            resultRequestCode = resultRequestCode,
+            resultCode = resultCode,
+            resultData = resultData,
         )
         Log.i(TAG, "recreated ${replacement.javaClass.name} for configuration change")
     }
@@ -155,6 +186,11 @@ object HostedActivityRuntime {
         savedState: Bundle?,
         addCurrentToBackStack: Boolean,
         requestedOrientation: Int? = null,
+        lastNonConfigurationInstances: Activity.NonConfigurationInstances? = null,
+        resultWho: String? = null,
+        resultRequestCode: Int = -1,
+        resultCode: Int = Activity.RESULT_CANCELED,
+        resultData: Intent? = null,
     ): Activity {
         val adapter = requireHost()
         // AOSP ActivityThread.performLaunchActivity: the intent's extras and the
@@ -181,6 +217,9 @@ object HostedActivityRuntime {
             // AOSP performLaunchActivity: every Activity gets its own base context
             // (ContextImpl.createActivityContext) over the package's LoadedApk.
             activity.attach(ActivityThread.currentActivityThread().createActivityContext(info), info)
+            activity.`setLastNonConfigurationInstances$artzig`(lastNonConfigurationInstances)
+            activity.`setResultTarget$artzig`(resultWho, resultRequestCode)
+            activity.setResult(resultCode, resultData)
             // AOSP ActivityRecord owns requested orientation across an ActivityThread relaunch.
             // system_server is absent, so the in-process lifecycle seam carries that state.
             activity.setRequestedOrientation(requestedOrientation ?: info.screenOrientation)
@@ -209,13 +248,18 @@ object HostedActivityRuntime {
         }
     }
 
-    private fun destroy(activity: Activity, changingConfigurations: Boolean) {
+    private fun destroy(
+        activity: Activity,
+        changingConfigurations: Boolean,
+    ): Activity.NonConfigurationInstances? {
         activity.`setChangingConfigurations$artzig`(changingConfigurations)
         activity.performPause()
         activity.performStop()
+        val retained = if (changingConfigurations) activity.retainNonConfigurationInstances() else null
         activity.performDestroy()
         activity.`setChangingConfigurations$artzig`(false)
         requireHost().clearActivityWindows()
+        return retained
     }
 
     private fun component(activityClassName: String): ComponentName {

@@ -107,6 +107,7 @@ import javax.net.ssl.X509TrustManager
 /** Behavioral smoke tests whose surface is the hosted framework modules. */
 internal object FrameworkModuleSmoke {
     private val events = mutableListOf<String>()
+    private val legacyFragmentEvents = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
 
     private var permissionsFixtureApk: String? = null
@@ -151,6 +152,8 @@ internal object FrameworkModuleSmoke {
         testHostedInputSiblingDispatch()
         testHostedInputWindowRouting()
         testWindowPresentation()
+        testLegacyFragmentTransactionsAndRecreation()
+        testLegacyFragmentHostedResultsAndRetention()
         testActivityLifecycle()
         testHostedPermissionGrants()
         println("hosted framework module smoke: PASS")
@@ -2548,6 +2551,156 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private fun testLegacyFragmentTransactionsAndRecreation() {
+        legacyFragmentEvents.clear()
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        val info = activityInfo(LegacyFragmentActivity::class.java.name)
+        val first = LegacyFragmentActivity()
+        first.attach(context, info)
+        first.registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+
+            override fun onActivityStarted(activity: Activity) {
+                legacyFragmentEvents += "callback:start"
+            }
+
+            override fun onActivityResumed(activity: Activity) {
+                legacyFragmentEvents += "callback:resume"
+            }
+
+            override fun onActivityPaused(activity: Activity) = Unit
+
+            override fun onActivityStopped(activity: Activity) = Unit
+
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        })
+        first.performCreate(null)
+        val original = checkNotNull(first.fragment)
+        first.performStart()
+        first.performResume()
+        check(legacyFragmentEvents == listOf(
+            "activity:create",
+            "fragment:create",
+            "fragment:activity-created",
+            "activity:start",
+            "callback:start",
+            "fragment:start",
+            "activity:resume",
+            "callback:resume",
+            "fragment:resume",
+        )) { "legacy fragment launch ordering: $legacyFragmentEvents" }
+
+        val savedState = Bundle()
+        first.performSaveInstanceState(savedState)
+        legacyFragmentEvents.clear()
+        first.performPause()
+        first.performStop()
+        first.performDestroy()
+        check(legacyFragmentEvents == listOf(
+            "fragment:pause",
+            "activity:pause",
+            "fragment:stop",
+            "activity:stop",
+            "fragment:destroy",
+            "activity:destroy",
+        )) { "legacy fragment teardown ordering: $legacyFragmentEvents" }
+
+        legacyFragmentEvents.clear()
+        val restoredActivity = LegacyFragmentActivity()
+        restoredActivity.attach(context, info)
+        restoredActivity.performCreate(savedState)
+        val restored = checkNotNull(restoredActivity.fragment)
+        check(restored !== original) { "saved fragment state reused the destroyed instance" }
+        check(restored.arguments?.getString("argument") == "preserved")
+        check(restored.restoredMarker == "saved")
+        restoredActivity.performStart()
+        restoredActivity.performRestoreInstanceState(savedState)
+        restoredActivity.performResume()
+        check(legacyFragmentEvents == listOf(
+            "activity:create:saved",
+            "fragment:create:saved",
+            "fragment:activity-created",
+            "activity:start",
+            "fragment:start",
+            "activity:resume",
+            "fragment:resume",
+        )) { "legacy fragment restore ordering: $legacyFragmentEvents" }
+        restoredActivity.performPause()
+        restoredActivity.performStop()
+        restoredActivity.performDestroy()
+    }
+
+    private fun testLegacyFragmentHostedResultsAndRetention() {
+        val hostName = HostedLegacyFragmentActivity::class.java.name
+        val resultName = LegacyResultActivity::class.java.name
+        ActivityThread.configureActivityHost(
+            LegacyFragmentHostAdapter(),
+            mapOf(hostName to activityInfo(hostName), resultName to activityInfo(resultName)),
+        )
+        try {
+            val first = ActivityThread.launchMainActivity(hostName) as HostedLegacyFragmentActivity
+            val retained = checkNotNull(first.fragment)
+            check(retained.createCount == 1)
+
+            retained.requestPermissions(arrayOf(android.Manifest.permission.INTERNET), 73)
+            drainMainQueue()
+            check(retained.permissionRequestCode == 73)
+            check(retained.permissionNames.contentEquals(arrayOf(android.Manifest.permission.INTERNET)))
+            check(retained.permissionResults.size == 1)
+
+            ActivityThread.applyConfigurationInProcess(
+                Configuration().apply { setToDefaults() },
+                ActivityInfo.CONFIG_ORIENTATION,
+                900,
+                600,
+            )
+            val replacement = ActivityThread.currentActivity() as HostedLegacyFragmentActivity
+            check(replacement !== first)
+            check(replacement.fragment === retained) {
+                "configuration recreation did not retain the legacy Fragment instance"
+            }
+            check(retained.activity === replacement) {
+                "retained legacy Fragment was not rebound to the replacement Activity"
+            }
+            check(retained.createCount == 1) {
+                "retained legacy Fragment was created more than once"
+            }
+
+            retained.startActivityForResult(
+                Intent().setComponent(ComponentName("org.example", resultName)),
+                91,
+            )
+            val resultActivity = ActivityThread.currentActivity() as LegacyResultActivity
+            resultActivity.setResult(
+                Activity.RESULT_OK,
+                Intent().putExtra("legacy-result", "delivered"),
+            )
+            ActivityThread.applyConfigurationInProcess(
+                Configuration().apply { setToDefaults() },
+                ActivityInfo.CONFIG_ORIENTATION,
+                640,
+                480,
+            )
+            val recreatedResultActivity = ActivityThread.currentActivity() as LegacyResultActivity
+            check(recreatedResultActivity !== resultActivity)
+            recreatedResultActivity.finish()
+            check(ActivityThread.currentActivity() === replacement)
+            check(retained.activityResultRequestCode == 91)
+            check(retained.activityResultCode == Activity.RESULT_OK)
+            check(retained.activityResultData == "delivered")
+        } finally {
+            ActivityThread.shutdownActivitiesInProcess()
+        }
+    }
+
     private fun activityInfo(className: String) = ActivityInfo().apply {
         name = className
         packageName = "org.example"
@@ -2584,13 +2737,196 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private class LegacyFragmentHostAdapter : ActivityThread.HostAdapter {
+        override fun getActivityContext(): Context? = null
+        override fun getActivityClassLoader(): ClassLoader = checkNotNull(javaClass.classLoader)
+        override fun showActivity(activity: Activity) {}
+        override fun clearActivityWindows() {}
+        override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) {}
+        override fun resolveActivity(intent: Intent): ComponentName? = null
+    }
+
+    class HostedLegacyFragmentActivity : Activity() {
+        var fragment: HostedLegacyFragment? = null
+            private set
+
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val manager = fragmentManager
+            val restored = manager.findFragmentByTag(HOSTED_FRAGMENT_TAG)
+            if (restored != null) {
+                fragment = restored as HostedLegacyFragment
+                return
+            }
+            val added = HostedLegacyFragment().apply { retainInstance = true }
+            manager.beginTransaction().add(added, HOSTED_FRAGMENT_TAG).commit()
+            check(manager.executePendingTransactions())
+            fragment = added
+        }
+
+        companion object {
+            private const val HOSTED_FRAGMENT_TAG = "hosted-legacy-fragment"
+        }
+    }
+
+    class HostedLegacyFragment : android.app.Fragment() {
+        var createCount = 0
+            private set
+        var permissionRequestCode = -1
+            private set
+        var permissionNames = emptyArray<String>()
+            private set
+        var permissionResults = IntArray(0)
+            private set
+        var activityResultRequestCode = -1
+            private set
+        var activityResultCode = Activity.RESULT_CANCELED
+            private set
+        var activityResultData: String? = null
+            private set
+
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            createCount++
+        }
+
+        override fun onRequestPermissionsResult(
+            requestCode: Int,
+            permissions: Array<out String>,
+            grantResults: IntArray,
+        ) {
+            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+            permissionRequestCode = requestCode
+            permissionNames = Array(permissions.size) { permissions[it] }
+            permissionResults = grantResults.copyOf()
+        }
+
+        override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+            super.onActivityResult(requestCode, resultCode, data)
+            activityResultRequestCode = requestCode
+            activityResultCode = resultCode
+            activityResultData = data?.getStringExtra("legacy-result")
+        }
+    }
+
+    class LegacyResultActivity : Activity()
+
+    class LegacyFragmentActivity : Activity() {
+        var fragment: RecordingLegacyFragment? = null
+            private set
+
+        override fun onCreate(savedInstanceState: Bundle?) {
+            legacyFragmentEvents += if (savedInstanceState == null) {
+                "activity:create"
+            } else {
+                "activity:create:saved"
+            }
+            super.onCreate(savedInstanceState)
+            val manager = fragmentManager
+            if (savedInstanceState == null) {
+                val added = RecordingLegacyFragment().apply {
+                    arguments = Bundle().apply { putString("argument", "preserved") }
+                }
+                manager.beginTransaction().add(added, LEGACY_FRAGMENT_TAG).commit()
+                check(manager.findFragmentByTag(LEGACY_FRAGMENT_TAG) == null) {
+                    "legacy FragmentTransaction committed synchronously"
+                }
+                check(manager.executePendingTransactions()) {
+                    "legacy FragmentManager did not execute its pending transaction"
+                }
+                check(manager.findFragmentByTag(LEGACY_FRAGMENT_TAG) === added)
+                fragment = added
+            } else {
+                fragment = manager.findFragmentByTag(LEGACY_FRAGMENT_TAG)
+                    as? RecordingLegacyFragment
+            }
+        }
+
+        override fun onStart() {
+            legacyFragmentEvents += "activity:start"
+            super.onStart()
+        }
+
+        override fun onResume() {
+            legacyFragmentEvents += "activity:resume"
+            super.onResume()
+        }
+
+        override fun onPause() {
+            legacyFragmentEvents += "activity:pause"
+            super.onPause()
+        }
+
+        override fun onStop() {
+            legacyFragmentEvents += "activity:stop"
+            super.onStop()
+        }
+
+        override fun onDestroy() {
+            legacyFragmentEvents += "activity:destroy"
+            super.onDestroy()
+        }
+
+        companion object {
+            private const val LEGACY_FRAGMENT_TAG = "legacy-fragment"
+        }
+    }
+
+    class RecordingLegacyFragment : android.app.Fragment() {
+        var restoredMarker: String? = null
+            private set
+
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            restoredMarker = savedInstanceState?.getString("fragment-marker")
+            legacyFragmentEvents += if (restoredMarker == "saved") {
+                "fragment:create:saved"
+            } else {
+                "fragment:create"
+            }
+        }
+
+        override fun onActivityCreated(savedInstanceState: Bundle?) {
+            super.onActivityCreated(savedInstanceState)
+            legacyFragmentEvents += "fragment:activity-created"
+        }
+
+        override fun onStart() {
+            super.onStart()
+            legacyFragmentEvents += "fragment:start"
+        }
+
+        override fun onResume() {
+            super.onResume()
+            legacyFragmentEvents += "fragment:resume"
+        }
+
+        override fun onPause() {
+            super.onPause()
+            legacyFragmentEvents += "fragment:pause"
+        }
+
+        override fun onStop() {
+            super.onStop()
+            legacyFragmentEvents += "fragment:stop"
+        }
+
+        override fun onDestroy() {
+            super.onDestroy()
+            legacyFragmentEvents += "fragment:destroy"
+        }
+
+        override fun onSaveInstanceState(outState: Bundle) {
+            super.onSaveInstanceState(outState)
+            outState.putString("fragment-marker", "saved")
+        }
+    }
+
     open class RecordingActivity(private val activityLabel: String) : Activity() {
         val label: String get() = activityLabel
 
         override fun attach(base: Context?, activityInfo: ActivityInfo?) {
-            setRequestedOrientation(
-                activityInfo?.screenOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
-            )
+            super.attach(checkNotNull(base), activityInfo)
         }
 
         override fun onCreate(savedInstanceState: Bundle?) {
@@ -2600,25 +2936,49 @@ internal object FrameworkModuleSmoke {
             } else {
                 "$activityLabel:create"
             }
+            super.onCreate(savedInstanceState)
         }
 
-        override fun onStart() { events += "$activityLabel:start" }
-        override fun onResume() { events += "$activityLabel:resume" }
-        override fun onPause() { events += "$activityLabel:pause" }
-        override fun onStop() { events += "$activityLabel:stop" }
-        override fun onDestroy() { events += "$activityLabel:destroy" }
+        override fun onStart() {
+            events += "$activityLabel:start"
+            super.onStart()
+        }
+
+        override fun onResume() {
+            events += "$activityLabel:resume"
+            super.onResume()
+        }
+
+        override fun onPause() {
+            events += "$activityLabel:pause"
+            super.onPause()
+        }
+
+        override fun onStop() {
+            events += "$activityLabel:stop"
+            super.onStop()
+        }
+
+        override fun onDestroy() {
+            events += "$activityLabel:destroy"
+            super.onDestroy()
+        }
+
         override fun onConfigurationChanged(newConfig: Configuration) {
             events += "$activityLabel:config"
+            super.onConfigurationChanged(newConfig)
         }
 
         override fun onSaveInstanceState(outState: Bundle) {
             events += "$activityLabel:save"
+            super.onSaveInstanceState(outState)
             outState.putString("state", "saved")
         }
 
         override fun onRestoreInstanceState(savedInstanceState: Bundle) {
             check(savedInstanceState.getString("state") == "saved")
             events += "$activityLabel:restore"
+            super.onRestoreInstanceState(savedInstanceState)
         }
     }
 

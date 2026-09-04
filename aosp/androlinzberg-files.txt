@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=120 F=2811 total=2931
+# Rules: D=120 F=2825 total=2945
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -3020,3 +3020,17 @@ F aosp frameworks/base/core/java/com/android/internal/widget/AlertDialogLayout.j
 F aosp frameworks/base/core/java/com/android/internal/widget/ButtonBarLayout.java
 F aosp frameworks/base/core/java/com/android/internal/widget/DialogTitle.java
 F aosp frameworks/base/core/java/com/android/internal/widget/WatchListDecorLayout.java
+F aosp frameworks/base/core/java/android/app/BackStackRecord.java
+F aosp frameworks/base/core/java/android/app/Fragment.java
+F aosp frameworks/base/core/java/android/app/FragmentContainer.java
+F aosp frameworks/base/core/java/android/app/FragmentController.java
+F aosp frameworks/base/core/java/android/app/FragmentHostCallback.java
+F aosp frameworks/base/core/java/android/app/FragmentManager.java
+F aosp frameworks/base/core/java/android/app/FragmentManagerNonConfig.java
+F aosp frameworks/base/core/java/android/app/FragmentState.java
+F aosp frameworks/base/core/java/android/app/FragmentTransaction.java
+F aosp frameworks/base/core/java/android/app/FragmentTransition.java
+F aosp frameworks/base/core/java/android/app/LoaderManager.java
+F aosp frameworks/base/core/java/android/app/SharedElementCallback.java
+F aosp frameworks/base/core/java/android/content/Loader.java
+F aosp frameworks/base/core/java/android/util/LogWriter.java

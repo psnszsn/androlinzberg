@@ -66,13 +66,14 @@ public class Instrumentation {
     public ActivityResult execStartActivity(Context who, android.os.IBinder contextThread,
             android.os.IBinder token, Activity target, android.content.Intent intent, int requestCode,
             android.os.Bundle options) {
-        ActivityThread.startActivityInProcess(intent);
+        ActivityThread.startActivityInProcess(target, null, intent, requestCode);
         return null;
     }
     public ActivityResult execStartActivity(Context who, android.os.IBinder contextThread,
             android.os.IBinder token, String target, android.content.Intent intent, int requestCode,
             android.os.Bundle options) {
-        ActivityThread.startActivityInProcess(intent);
+        Activity caller = who instanceof Activity ? (Activity) who : null;
+        ActivityThread.startActivityInProcess(caller, target, intent, requestCode);
         return null;
     }
 

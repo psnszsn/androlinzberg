@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 82 (budget 82). Survivors: 78. Total: 160.
+Pending: 79 (budget 79). Survivors: 78. Total: 157.
 
 ## Survivors
 
@@ -109,7 +109,7 @@ Pending: 82 (budget 82). Survivors: 78. Total: 160.
 |---|---|---|
 | `android/app/ActivityManager.java` | blocked | frameworks/base/core/java/android/app/ActivityManager.java (72 to add), not vendored; android.app.ActivityManager: existing host class android.app.ActivityTaskManager lacks method getInstance (via ActivityManager); android.app.ActivityManager: existing host class android.app.ActivityTaskManager lack |
 | `android/app/ActivityManagerInternal.java` | blocked | frameworks/base/core/java/android/app/ActivityManagerInternal.java (82 to add), not vendored; android.app.ActivityManager.ProcessCapability: existing host class android.app.ActivityTaskManager lacks method getInstance (via ProcessCapability < ActivityManagerInternal); android.app.ActivityManager.Pro |
-| `android/app/ActivityOptions.java` | blocked | frameworks/base/core/java/android/app/ActivityOptions.java (33 to add), not vendored; android.app.ActivityOptions.SourceInfo: existing stub android.window.SplashScreen lacks member SPLASH_SCREEN_STYLE_ICON (via SourceInfo < ActivityOptions); android.app.ActivityOptions.SourceInfo: existing stub andr |
+| `android/app/ActivityOptions.java` | blocked | frameworks/base/core/java/android/app/ActivityOptions.java (31 to add), not vendored; android.app.ActivityOptions.SourceInfo: existing stub android.window.SplashScreen lacks member SPLASH_SCREEN_STYLE_ICON (via SourceInfo < ActivityOptions); android.app.ActivityOptions.SourceInfo: existing stub andr |
 | `android/app/ActivityTaskManager.java` | blocked | frameworks/base/core/java/android/app/ActivityTaskManager.java (2 to add), not vendored; android.app.ActivityTaskManager: existing host class android.app.IActivityTaskManager lacks method canBeUniversalResizeable (via ActivityTaskManager); android.app.ActivityTaskManager: existing host class android |
 | `android/app/AppGlobals.java` | blocked | frameworks/base/core/java/android/app/AppGlobals.java (584 to add), not vendored; android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getIntCoreSetting (via AppGlobals); android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getPermissionM |
 | `android/app/IActivityTaskManager.java` | blocked | frameworks/base/core/java/android/app/IActivityTaskManager.aidl (30 to add, AIDL interface), not vendored; android.window.TransitionInfo.AnimationOptions: existing stub android.app.ActivityOptions lacks member ANIM_CLIP_REVEAL (via AnimationOptions < TaskFragmentAnimationParams < TaskFragmentOperati |
@@ -222,13 +222,13 @@ Pending: 82 (budget 82). Survivors: 78. Total: 160.
 | `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (15 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no  |
 | `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (3 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig); com.android.server.SystemConfig: existing host class android.os.incremental.IncrementalManager lacks method getVersion (vi |
 | `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3669 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3666 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
 | `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3667 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3783 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3664 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3780 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
 | `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (5 to add), not vendored; android.service.pm.PackageProto.UserInfoProto.ArchiveState.ArchiveActivityInfo: no source in the checkout (via ArchiveActivityInfo < PackageSetting); android.service.pm.PackageProto: generated: pro |
 | `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (21 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.C |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3681 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3678 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
 
 ### permission
 
@@ -256,9 +256,9 @@ Pending: 82 (budget 82). Survivors: 78. Total: 160.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3667 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3664 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
 | `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server. |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3667 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3664 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
 
 ### textclassifier
 
@@ -266,14 +266,6 @@ Pending: 82 (budget 82). Survivors: 78. Total: 160.
 |---|---|---|
 | `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (638 to add); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AidlConvers |
 | `android/speech/tts/TextToSpeech.java` | blocked | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (11 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < TextToSpeech); android.companion.virtual.VirtualDevice: ex |
-
-### ui
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/app/Fragment.java` | blocked | frameworks/base/core/java/android/app/Fragment.java (7 to add), not vendored; android.app.Fragment: existing host class android.app.Activity lacks method onCreateContextMenu (via Fragment); android.app.Fragment: existing stub android.app.Activity lacks member FRAGMENTS_TAG (via Fragment) |
-| `android/app/FragmentManager.java` | blocked | frameworks/base/core/java/android/app/FragmentManager.java (11 to add), not vendored; android.app.BackStackRecord: existing stub android.app.Fragment lacks nested type OnStartEnterTransitionListener (via BackStackRecord < FragmentManager); android.app.BackStackRecord: existing stub android.app.Fragm |
-| `android/app/FragmentTransaction.java` | blocked | frameworks/base/core/java/android/app/FragmentTransaction.java (1 to add), not vendored; android.app.FragmentTransaction: existing host class android.app.FragmentManager instantiates abstract class android.app.FragmentTransaction (via FragmentTransaction) |
 
 ### virtualdevice
 

@@ -692,6 +692,14 @@ public final class ActivityThread extends ClientTransactionHandler {
         if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.startActivity(intent);
         else Log.w(TAG, "startActivity dropped (no launcher): " + intent);
     }
+    public static void startActivityInProcess(Activity caller, String resultWho, Intent intent,
+            int requestCode) {
+        if (HostedActivityRuntime.isConfigured()) {
+            HostedActivityRuntime.startActivity(caller, resultWho, intent, requestCode);
+        } else {
+            Log.w(TAG, "startActivity dropped (no launcher): " + intent);
+        }
+    }
     public static ComponentName resolveActivityInProcess(Intent intent) {
         return HostedActivityRuntime.isConfigured() ? HostedActivityRuntime.resolveActivity(intent) : null;
     }
