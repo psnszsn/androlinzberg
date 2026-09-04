@@ -716,6 +716,7 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/android/util/EmptyArray.java");
     try c.file("$CJ/android/util/UtilConfig.java");
     try c.file("$CJ/android/util/Log.java");
+    try c.file("$CJ/android/util/EventLog.java");
     try c.file("$CJ/android/util/Slog.java");
     try c.file("$CJ/android/util/Dumpable.java");
     try c.file("$CJ/android/os/Parcelable.java");
@@ -1616,6 +1617,7 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     // classes and UiModeManager over hosted services, plus their closure.
     try c.file("$CJ/android/accounts/AccountManager.java");
     try c.file("$CJ/android/app/admin/DevicePolicyResources.java");
+    try c.file("$CJ/android/app/admin/SecurityLog.java");
     try c.file("$CJ/android/accounts/AccountManagerCallback.java");
     try c.file("$CJ/android/accounts/AccountManagerFuture.java");
     try c.file("$CJ/android/accounts/AccountsException.java");

@@ -88,7 +88,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/os/storage/VolumeInfo.java",
     "src/framework-stubs/android/service/voice/VisibleActivityInfo.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",
-    "src/framework-stubs/android/util/EventLog.java",
     "src/framework-stubs/android/util/MemoryIntArray.java",
     "src/framework-stubs/android/util/jar/StrictJarFile.java",
     "src/framework-stubs/android/view/HandwritingInitiator.java",

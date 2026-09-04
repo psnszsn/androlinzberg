@@ -982,6 +982,24 @@ public final class FrameworkCompatSmoke {
             require(android.util.StatsLog.logStart(17), "stats start breadcrumb")
             require(android.util.StatsLog.logStop(17), "stats stop breadcrumb")
             require(android.util.StatsLog.logEvent(17), "stats event breadcrumb")
+            // The host has no logd reader, but the stock binary-event clients still encode and
+            // submit every supported payload shape through the Zig/liblog boundary.
+            android.util.EventLog.writeEvent(42, 7)
+            android.util.EventLog.writeEvent(42, 9L)
+            android.util.EventLog.writeEvent(42, 1.5f)
+            android.util.EventLog.writeEvent(42, "event")
+            android.util.EventLog.writeEvent(42, "nested", 11, 13L, 2.5f)
+            val events = ArrayList<android.util.EventLog.Event>()
+            android.util.EventLog.readEvents(intArrayOf(42), events)
+            require(events.isEmpty(), "host event-log snapshot is empty without logd")
+
+            android.app.admin.SecurityLog.writeEvent(
+                android.app.admin.SecurityLog.TAG_ADB_SHELL_CMD,
+                "echo hosted",
+            )
+            val securityEvents = ArrayList<android.app.admin.SecurityLog.SecurityEvent>()
+            android.app.admin.SecurityLog.readEvents(securityEvents)
+            require(securityEvents.isEmpty(), "host security-log snapshot is empty without logd")
             require(
                 Class.forName("com.android.internal.statsd.StatsdStatsLog").name ==
                     "com.android.internal.statsd.StatsdStatsLog",

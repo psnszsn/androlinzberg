@@ -715,6 +715,7 @@ pub const aidl = [_]SourcePath{
 };
 
 pub const logtags = [_]Logtags{
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/SecurityLogTags.logtags" }, .output = "android/app/admin/SecurityLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/EventLogTags.logtags" }, .output = "android/view/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/services/core/java/com/android/server/am/EventLogTags.logtags" }, .output = "com/android/server/am/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/EventLogTags.logtags" }, .output = "android/os/EventLogTags.java" },

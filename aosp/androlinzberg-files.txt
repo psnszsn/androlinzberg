@@ -622,6 +622,8 @@ F aosp frameworks/base/core/java/android/app/WindowConfiguration.java
 F aosp frameworks/base/core/java/android/app/IBackgroundActivityLaunchCallback.aidl
 F aosp frameworks/base/core/java/android/app/IUnsafeIntentStrictModeCallback.aidl
 F aosp frameworks/base/core/java/android/app/activity_manager.aconfig
+F aosp frameworks/base/core/java/android/app/admin/SecurityLog.java
+F aosp frameworks/base/core/java/android/app/admin/SecurityLogTags.logtags
 F aosp frameworks/base/core/java/android/app/admin/flags/flags.aconfig
 F aosp frameworks/base/core/java/android/app/appfunctions/flags/flags.aconfig
 F aosp frameworks/base/core/java/android/app/assist/ActivityId.java
@@ -949,6 +951,7 @@ F aosp frameworks/base/core/java/android/util/DisplayMetrics.java
 F aosp frameworks/base/core/java/android/util/DisplayUtils.java
 F aosp frameworks/base/core/java/android/util/Dumpable.java
 F aosp frameworks/base/core/java/android/util/EmptyArray.java
+F aosp frameworks/base/core/java/android/util/EventLog.java
 F aosp frameworks/base/core/java/android/util/ExceptionUtils.java
 F aosp frameworks/base/core/java/android/util/FastImmutableArraySet.java
 F aosp frameworks/base/core/java/android/util/FloatProperty.java

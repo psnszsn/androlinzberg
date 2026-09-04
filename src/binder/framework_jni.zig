@@ -918,6 +918,10 @@ fn registerOverlayConfig(env: JNIEnvPtr) !void {
 // seam moves out of android.*.
 const LogIsLoggableFn = *const fn (priority: c_int, tag: [*c]const u8, default_priority: c_int) callconv(.c) c_int;
 const LogBufWriteFn = *const fn (buffer_id: c_int, priority: c_int, tag: [*c]const u8, message: [*c]const u8) callconv(.c) c_int;
+const LogBinaryWriteFn = *const fn (tag: i32, payload: ?*const anyopaque, len: usize) callconv(.c) c_int;
+const LogTypedWriteFn = *const fn (tag: i32, value_type: u8, payload: ?*const anyopaque, len: usize) callconv(.c) c_int;
+const LogStringWriteFn = *const fn (tag: i32, payload: [*:0]const u8) callconv(.c) c_int;
+const LogSecurityEnabledFn = *const fn () callconv(.c) c_int;
 
 const android_log_info: c_int = 4;
 const log_id_max: jni.jint = 8;
@@ -928,6 +932,11 @@ var g_record_log: jni.jmethodID = null;
 var g_platform_library: std.DynLib = undefined;
 var g_log_is_loggable: LogIsLoggableFn = undefined;
 var g_log_buf_write: LogBufWriteFn = undefined;
+var g_log_binary_write: LogBinaryWriteFn = undefined;
+var g_log_typed_write: LogTypedWriteFn = undefined;
+var g_log_string_write: LogStringWriteFn = undefined;
+var g_log_security_enabled: LogSecurityEnabledFn = undefined;
+var g_log_security_write: LogBinaryWriteFn = undefined;
 
 fn logIsLoggable(env: JNIEnvPtr, _: jni.jclass, tag_object: jni.jstring, level: jni.jint) callconv(.c) jni.jboolean {
     if (tag_object == null) return jni.JNI_FALSE;
@@ -969,6 +978,135 @@ fn logPrintln(
 
 fn logLoggerEntryMaxPayload(_: JNIEnvPtr, _: jni.jclass) callconv(.c) jni.jint {
     return logger_entry_max_payload;
+}
+
+// AOSP android_util_EventLog writes the standard binary event payload through liblog. The
+// hosted runtime has no logd reader, so reads are a valid empty nonblocking snapshot; writes
+// still use the platform liblog sink and retain Android's scalar/list encoding and return value.
+const event_type_int: u8 = 0;
+const event_type_long: u8 = 1;
+const event_type_float: u8 = 4;
+
+fn eventWriteInt(_: JNIEnvPtr, _: jni.jclass, tag: jni.jint, value_arg: jni.jint) callconv(.c) jni.jint {
+    var value = value_arg;
+    return g_log_typed_write(tag, event_type_int, &value, @sizeOf(jni.jint));
+}
+
+fn eventWriteLong(_: JNIEnvPtr, _: jni.jclass, tag: jni.jint, value_arg: jni.jlong) callconv(.c) jni.jint {
+    var value = value_arg;
+    return g_log_typed_write(tag, event_type_long, &value, @sizeOf(jni.jlong));
+}
+
+fn eventWriteFloat(_: JNIEnvPtr, _: jni.jclass, tag: jni.jint, value_arg: jni.jfloat) callconv(.c) jni.jint {
+    var value = value_arg;
+    return g_log_typed_write(tag, event_type_float, &value, @sizeOf(jni.jfloat));
+}
+
+fn eventWriteString(env: JNIEnvPtr, _: jni.jclass, tag: jni.jint, value: jni.jstring) callconv(.c) jni.jint {
+    if (value == null) return g_log_string_write(tag, "NULL");
+    const chars = env.*.*.GetStringUTFChars.?(env, value, null) orelse return -1;
+    defer env.*.*.ReleaseStringUTFChars.?(env, value, chars);
+    return g_log_string_write(tag, @ptrCast(chars));
+}
+
+fn eventWriteArray(env: JNIEnvPtr, _: jni.jclass, tag: jni.jint, value: jni.jobjectArray) callconv(.c) jni.jint {
+    if (value == null) return g_log_string_write(tag, "[NULL]");
+    // Reuse the pinned EventLog.Event encoder so nested payload validation, byte order, the
+    // 255-element limit, and IllegalArgumentException behavior stay in the stock Java class.
+    const event_cls = env.*.*.FindClass.?(env, "android/util/EventLog$Event") orelse return -1;
+    defer env.*.*.DeleteLocalRef.?(env, event_cls);
+    const encode = env.*.*.GetStaticMethodID.?(
+        env,
+        event_cls,
+        "encodeObject",
+        "(Ljava/lang/Object;)[B",
+    ) orelse return -1;
+    const bytes_object = env.*.*.CallStaticObjectMethod.?(env, event_cls, encode, value);
+    if (env.*.*.ExceptionCheck.?(env) == jni.JNI_TRUE or bytes_object == null) return -1;
+    const bytes: jni.jbyteArray = @ptrCast(bytes_object);
+    defer env.*.*.DeleteLocalRef.?(env, bytes);
+    const len: usize = @intCast(env.*.*.GetArrayLength.?(env, bytes));
+    const payload = env.*.*.GetByteArrayElements.?(env, bytes, null) orelse return -1;
+    defer env.*.*.ReleaseByteArrayElements.?(env, bytes, payload, 2); // JNI_ABORT
+    return g_log_binary_write(tag, payload, len);
+}
+
+fn eventRead(env: JNIEnvPtr, _: jni.jclass, tags: jni.jintArray, output: jni.jobject) callconv(.c) void {
+    if (tags == null or output == null) {
+        throwNamed(env, "java/lang/NullPointerException", "tags and output must be non-null");
+    }
+}
+
+fn eventReadOnWrapping(env: JNIEnvPtr, cls: jni.jclass, tags: jni.jintArray, _: jni.jlong, output: jni.jobject) callconv(.c) void {
+    eventRead(env, cls, tags, output);
+}
+
+fn securityLoggingEnabled(_: JNIEnvPtr, _: jni.jclass) callconv(.c) jni.jboolean {
+    return if (g_log_security_enabled() != 0) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+
+fn securityWriteArray(env: JNIEnvPtr, _: jni.jclass, tag: jni.jint, value: jni.jobjectArray) callconv(.c) jni.jint {
+    if (value == null) return g_log_security_write(tag, &[_]u8{ 2, 6, 0, 0, 0, '[', 'N', 'U', 'L', 'L', ']' }, 11);
+    const event_cls = env.*.*.FindClass.?(env, "android/util/EventLog$Event") orelse return -1;
+    defer env.*.*.DeleteLocalRef.?(env, event_cls);
+    const encode = env.*.*.GetStaticMethodID.?(env, event_cls, "encodeObject", "(Ljava/lang/Object;)[B") orelse return -1;
+    const bytes_object = env.*.*.CallStaticObjectMethod.?(env, event_cls, encode, value);
+    if (env.*.*.ExceptionCheck.?(env) == jni.JNI_TRUE or bytes_object == null) return -1;
+    const bytes: jni.jbyteArray = @ptrCast(bytes_object);
+    defer env.*.*.DeleteLocalRef.?(env, bytes);
+    const len: usize = @intCast(env.*.*.GetArrayLength.?(env, bytes));
+    const payload = env.*.*.GetByteArrayElements.?(env, bytes, null) orelse return -1;
+    defer env.*.*.ReleaseByteArrayElements.?(env, bytes, payload, 2); // JNI_ABORT
+    return g_log_security_write(tag, payload, len);
+}
+
+fn securityRead(env: JNIEnvPtr, _: jni.jclass, output: jni.jobject) callconv(.c) void {
+    if (output == null) throwNamed(env, "java/lang/NullPointerException", "output must be non-null");
+}
+
+fn securityReadSince(env: JNIEnvPtr, cls: jni.jclass, _: jni.jlong, output: jni.jobject) callconv(.c) void {
+    securityRead(env, cls, output);
+}
+
+fn registerSecurityLog(env: JNIEnvPtr) !void {
+    g_log_security_enabled = g_platform_library.lookup(LogSecurityEnabledFn, "__android_log_security") orelse
+        return error.NoMethod;
+    g_log_security_write = g_platform_library.lookup(LogBinaryWriteFn, "__android_log_security_bwrite") orelse
+        return error.NoMethod;
+
+    const cls = env.*.*.FindClass.?(env, "android/app/admin/SecurityLog") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method("isLoggingEnabled", "()Z", &securityLoggingEnabled),
+        method("writeEvent", "(I[Ljava/lang/Object;)I", &securityWriteArray),
+        method("readEvents", "(Ljava/util/Collection;)V", &securityRead),
+        method("readEventsSince", "(JLjava/util/Collection;)V", &securityReadSince),
+        method("readPreviousEvents", "(Ljava/util/Collection;)V", &securityRead),
+        method("readEventsOnWrapping", "(JLjava/util/Collection;)V", &securityReadSince),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
+
+fn registerEventLog(env: JNIEnvPtr) !void {
+    g_log_binary_write = g_platform_library.lookup(LogBinaryWriteFn, "__android_log_bwrite") orelse
+        return error.NoMethod;
+    g_log_typed_write = g_platform_library.lookup(LogTypedWriteFn, "__android_log_btwrite") orelse
+        return error.NoMethod;
+    g_log_string_write = g_platform_library.lookup(LogStringWriteFn, "__android_log_bswrite") orelse
+        return error.NoMethod;
+
+    const cls = env.*.*.FindClass.?(env, "android/util/EventLog") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method("writeEvent", "(II)I", &eventWriteInt),
+        method("writeEvent", "(IJ)I", &eventWriteLong),
+        method("writeEvent", "(IF)I", &eventWriteFloat),
+        method("writeEvent", "(ILjava/lang/String;)I", &eventWriteString),
+        method("writeEvent", "(I[Ljava/lang/Object;)I", &eventWriteArray),
+        method("readEvents", "([ILjava/util/Collection;)V", &eventRead),
+        method("readEventsOnWrapping", "([IJLjava/util/Collection;)V", &eventReadOnWrapping),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }
 
 fn registerLog(env: JNIEnvPtr) !void {
@@ -1044,6 +1182,8 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerCharsetUtils(env) catch return -1;
     registerOverlayConfig(env) catch return -1;
     registerLog(env) catch return -1;
+    registerEventLog(env) catch return -1;
+    registerSecurityLog(env) catch return -1;
     // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
     // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;
