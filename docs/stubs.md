@@ -19,37 +19,37 @@ Pending: 78 (budget 78). Survivors: 78. Total: 156.
 | `android/app/ondeviceintelligence/flags/Flags.java` | aconfig declaration lives in an unvendored module tree | no-aosp-source |
 | `android/app/servertransaction/WindowContextInfoChangeItem.java` | window seam (WindowManagerService token protocol) | replaceable |
 | `android/app/servertransaction/WindowContextWindowRemovalItem.java` | window seam (WindowManagerService token protocol) | replaceable |
-| `android/bluetooth/BluetoothDevice.java` | Bluetooth module tree not vendored | blocked |
+| `android/bluetooth/BluetoothDevice.java` | no hosted Bluetooth Binder/socket stack; stock client reaches LocalSocket and native networking | blocked |
 | `android/graphics/GraphicBuffer.java` | window seam (JNI natives over AHardwareBuffer) | blocked |
 | `android/gui/TouchOcclusionMode.java` | frameworks/native libgui AIDL enum outside the include roots | blocked |
-| `android/hardware/Camera.java` | JNI natives (libandroid_runtime Camera) and camera HAL AIDL outside the include roots | blocked |
+| `android/hardware/Camera.java` | legacy camera client is JNI/cameraserver-backed and no camera service is hosted | blocked |
 | `android/hardware/OverlayProperties.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/hardware/SyncFence.java` | window seam (JNI natives) | blocked |
 | `android/hardware/camera2/CameraManager.java` | camera stack (cameraserver, CameraMetadataNative JNI, frameworks/av camera AIDL) not hosted; android.telecom.Connection javadoc import | blocked |
 | `android/hardware/display/IDeviceProductInfoConstants.java` | host-only (no AOSP class) | blocked |
 | `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | hardware/interfaces GNSS HAL constants not vendored | no-aosp-source |
 | `android/hardware/health/V1_0/Constants.java` | hardware/interfaces health HAL constants not vendored | no-aosp-source |
-| `android/hardware/usb/UsbDevice.java` | hardware/interfaces USB HAL enums not vendored | blocked |
-| `android/hardware/usb/UsbManager.java` | hardware/interfaces USB HAL enums not vendored | blocked |
+| `android/hardware/usb/UsbDevice.java` | stock USB device uses libandroid_runtime JNI and no USB service is hosted | blocked |
+| `android/hardware/usb/UsbManager.java` | no hosted IUsbManager; device connection/request use JNI and legacy HIDL plus gadget AIDL generation is unwired | blocked |
 | `android/hardware/vibrator/V1_0/EffectStrength.java` | hardware/interfaces vibrator HAL constants not vendored | no-aosp-source |
 | `android/hardware/vibrator/V1_3/Effect.java` | hardware/interfaces vibrator HAL constants not vendored | no-aosp-source |
-| `android/media/MediaCommunicationManager.java` | Media module tree (packages/modules/Media) not vendored | blocked |
+| `android/media/MediaCommunicationManager.java` | no media_communication service; stock closure crosses fenced media/audio/camera JNI | blocked |
 | `android/media/MediaCrypto.java` | JNI natives (libmedia_jni; DRM is not supported) | blocked |
 | `android/media/MediaMetadataRetriever.java` | JNI natives (libmedia_jni) | blocked |
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
-| `android/net/ConnectivityManager.java` | Connectivity module tree not vendored (phase 4 decides whether to vendor framework/src) | blocked |
+| `android/net/ConnectivityManager.java` | hosted synthetic network has no IConnectivityManager/ConnectivityService; stock closure reaches NetworkUtils/BPF JNI | blocked |
 | `android/net/LinkAddress.java` | Connectivity module tree not vendored | blocked |
 | `android/net/LinkProperties.java` | Connectivity module tree not vendored | blocked |
 | `android/net/Network.java` | Connectivity module tree not vendored | blocked |
-| `android/net/NetworkAgent.java` | Connectivity module tree not vendored | blocked |
+| `android/net/NetworkAgent.java` | no hosted ConnectivityService/IConnectivityManager network-agent path; stock closure reaches BPF JNI and unwired stats generation | blocked |
 | `android/net/NetworkPolicyManager.java` | network policy service (INetworkPolicyManager over NetworkTemplate/NetworkStats from the Connectivity module) not hosted | blocked |
 | `android/net/ProxyInfo.java` | Connectivity module tree not vendored | blocked |
-| `android/net/TetheringManager.java` | Tethering module tree not vendored | blocked |
-| `android/net/TrafficStats.java` | Connectivity module tree not vendored | blocked |
-| `android/net/ipsec/ike/SaProposal.java` | IPsec module tree (packages/modules/IPsec) not vendored | blocked |
-| `android/net/wifi/SoftApConfiguration.java` | Wifi module tree not vendored | blocked |
-| `android/net/wifi/WifiManager.java` | Wifi module tree not vendored | blocked |
-| `android/net/wifi/p2p/WifiP2pManager.java` | Wifi module tree not vendored | blocked |
+| `android/net/TetheringManager.java` | no hosted ITetheringConnector/tethering service; stock client requires the connectivity and Wi-Fi runtime | blocked |
+| `android/net/TrafficStats.java` | native socket tagging and INetworkStatsService are unavailable; host uses Linux networking directly | blocked |
+| `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | blocked |
+| `android/net/wifi/SoftApConfiguration.java` | stock model requires the wider Wi-Fi model and stock WifiManager/IWifiManager seam; no Wi-Fi service is hosted | blocked |
+| `android/net/wifi/WifiManager.java` | no hosted IWifiManager or supplicant-backed Wi-Fi service | blocked |
+| `android/net/wifi/p2p/WifiP2pManager.java` | no hosted IWifiP2pManager or Wi-Fi P2P service | blocked |
 | `android/opengl/EGL14.java` | JNI natives (libandroid_runtime EGL) | blocked |
 | `android/opengl/GLES20.java` | JNI natives (libandroid_runtime GLES) | blocked |
 | `android/os/AppBackgroundRestrictionsInfo.java` | statsd atom enum constants (proto enum generator output is not wired) | no-aosp-source |
@@ -83,7 +83,7 @@ Pending: 78 (budget 78). Survivors: 78. Total: 156.
 | `android/window/WindowContext.java` | window seam (WindowManagerService token protocol) | blocked |
 | `android/window/WindowTokenClient.java` | window seam (WindowManagerService token protocol) | replaceable |
 | `android/window/WindowTokenClientController.java` | window seam (WindowManagerService token protocol) | blocked |
-| `com/android/internal/app/IBatteryStats.java` | AIDL parcels Bluetooth/Wi-Fi energy info from unvendored module trees | blocked |
+| `com/android/internal/app/IBatteryStats.java` | hosted batterystats implements a reduced three-method Binder contract; full AIDL requires BatteryStats/proto model closure | blocked |
 | `com/android/internal/content/NativeLibraryHelper.java` | JNI natives (libandroid_runtime NativeLibraryHelper) | blocked |
 | `com/android/internal/os/ApplicationSharedMemory.java` | JNI natives (shared memory nonce area) | blocked |
 | `com/android/internal/os/RuntimeInit.java` | JNI natives (libandroid_runtime RuntimeInit / zygote) | blocked |
