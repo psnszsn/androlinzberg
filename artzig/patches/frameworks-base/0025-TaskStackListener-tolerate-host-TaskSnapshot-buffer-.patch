@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Vlad Panazan <git@praznet.com>
+Date: Fri, 4 Sep 2026 20:09:00 +0000
+Subject: [PATCH 25/25] TaskStackListener: tolerate host TaskSnapshot buffer
+ boundary
+
+The fenced host TaskSnapshot is a parcel shape without a SurfaceFlinger-backed
+HardwareBuffer; its stock replacement is blocked by the fenced GraphicBuffer
+JNI seam. Preserve the remote-listener buffer release when getHardwareBuffer
+is available, but discover and close it reflectively so the stock listener can
+also compile against the hosted snapshot. With no buffer accessor there is no
+native buffer for the listener to release.
+---
+ core/java/android/app/TaskStackListener.java | 23 ++++++++++++++++++++---
+ 1 file changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/core/java/android/app/TaskStackListener.java b/core/java/android/app/TaskStackListener.java
+--- a/core/java/android/app/TaskStackListener.java
++++ b/core/java/android/app/TaskStackListener.java
+@@ -171,8 +171,25 @@ public class TaskStackListener extends ITaskStackListener.Stub {
+     @Override
+     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
+     public void onTaskSnapshotChanged(int taskId, TaskSnapshot snapshot) throws RemoteException {
+-        if (mIsRemote && snapshot != null && snapshot.getHardwareBuffer() != null) {
+-            // Preemptively clear any reference to the buffer
+-            snapshot.getHardwareBuffer().close();
++        if (!mIsRemote || snapshot == null) {
++            return;
++        }
++        final Object hardwareBuffer;
++        try {
++            hardwareBuffer = snapshot.getClass().getMethod("getHardwareBuffer").invoke(snapshot);
++        } catch (NoSuchMethodException e) {
++            // The hosted TaskSnapshot carries no SurfaceFlinger hardware buffer.
++            return;
++        } catch (ReflectiveOperationException e) {
++            throw new IllegalStateException("Unable to obtain the task snapshot buffer", e);
++        }
++        if (hardwareBuffer == null) {
++            return;
++        }
++        try {
++            // Preemptively clear any reference to the buffer.
++            hardwareBuffer.getClass().getMethod("close").invoke(hardwareBuffer);
++        } catch (ReflectiveOperationException e) {
++            throw new IllegalStateException("Unable to close the task snapshot buffer", e);
+         }
+     }

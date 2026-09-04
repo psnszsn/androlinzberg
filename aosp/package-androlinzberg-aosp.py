@@ -39,6 +39,8 @@ framework_patches = tuple(
         (21, "-ApplicationLoaders-the-system-class-loader-is-the-ba.patch"),
         (22, "-AlarmManager-time-zone-validation-without-ZoneInfoDb.patch"),
         (23, "-resources-make-early-RRO-constraint-flag-read-only.patch"),
+        (24, "-WindowOrganizer-tolerate-host-SurfaceControl-apply-t.patch"),
+        (25, "-TaskStackListener-tolerate-host-TaskSnapshot-buffer-.patch"),
     )
 )
 

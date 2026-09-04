@@ -753,6 +753,28 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/com/android/internal/widget/ActionBarOverlayLayout.java");
     try c.file("$CJ/android/app/LocalActivityManager.java");
     try c.file("$CJ/android/app/ActivityGroup.java");
+    // Stock ActivityTaskManager transport and window-organizer value graph. The generated
+    // Binder interface is compiled separately; hosting the service is a later seam.
+    try c.file("$CJ/android/app/ActivityTaskManager.java");
+    try c.file("$CJ/android/app/AppCompatTaskInfo.java");
+    try c.file("$CJ/android/app/CameraCompatTaskInfo.java");
+    try c.file("$CJ/android/app/TaskInfo.java");
+    try c.file("$CJ/android/app/TaskStackListener.java");
+    try c.file("$CJ/android/window/BackAnimationAdapter.java");
+    try c.file("$CJ/android/window/DisplayAreaAppearedInfo.java");
+    try c.file("$CJ/android/window/DisplayAreaInfo.java");
+    try c.file("$CJ/android/window/DisplayAreaOrganizer.java");
+    try c.file("$CJ/android/window/RemoteTransition.java");
+    try c.file("$CJ/android/window/StartingWindowInfo.java");
+    try c.file("$CJ/android/window/TaskAppearedInfo.java");
+    try c.file("$CJ/android/window/TaskFragmentAnimationParams.java");
+    try c.file("$CJ/android/window/TaskFragmentCreationParams.java");
+    try c.file("$CJ/android/window/TaskFragmentOperation.java");
+    try c.file("$CJ/android/window/TaskFragmentOrganizerToken.java");
+    try c.file("$CJ/android/window/TransitionInfo.java");
+    try c.file("$CJ/android/window/TransitionRequestInfo.java");
+    try c.file("$CJ/android/window/WindowContainerTransaction.java");
+    try c.file("$CJ/android/window/WindowOrganizer.java");
     try c.file("$CJ/android/media/NearbyMediaDevicesProvider.java");
     try c.file("$CJ/com/android/internal/statusbar/AppClipsServiceConnector.java");
     try c.file("$CJ/com/android/internal/statusbar/DisableStates.java");

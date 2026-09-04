@@ -772,6 +772,8 @@ public final class ActivityThread extends ClientTransactionHandler {
     private final android.app.servertransaction.TransactionExecutor mTransactionExecutor =
             new android.app.servertransaction.TransactionExecutor(this);
     final ArrayMap<IBinder, ActivityClientRecord> mActivities = new ArrayMap<>();
+    private final ArrayMap<IBinder, android.app.servertransaction.DestroyActivityItem>
+            mActivitiesToBeDestroyed = new ArrayMap<>();
     private final ArrayList<ActivityClientRecord> mRelaunchingActivities = new ArrayList<>();
     private Configuration mPendingConfiguration;
     /** Pinned AOSP ordering guard populated by configuration transaction preExecute. */
@@ -834,21 +836,71 @@ public final class ActivityThread extends ClientTransactionHandler {
     }
     @Override public void updateProcessState(int processState, boolean fromIpc) {}
     @Override public void countLaunchingActivities(int num) {}
-    @Override public java.util.Map<IBinder, android.app.servertransaction.DestroyActivityItem> getActivitiesToBeDestroyed() { return new ArrayMap<>(); }
+    @Override public java.util.Map<IBinder, android.app.servertransaction.DestroyActivityItem> getActivitiesToBeDestroyed() {
+        return mActivitiesToBeDestroyed;
+    }
     @Override public void handleDestroyActivity(ActivityClientRecord r, boolean finishing, boolean getNonConfigInstance, String reason) {
+        final Activity destroyed = r != null ? r.activity : null;
         performDestroyActivity(r, finishing, getNonConfigInstance, reason);
+        if (finishing && destroyed != null) {
+            clearPresentedTransactionActivity(destroyed);
+            // Pinned ActivityThread.performDestroyActivity reports only a final destroy. A local
+            // relaunch keeps the server-side ActivityRecord and is acknowledged separately by
+            // ActivityRelaunchItem.postExecute.
+            ActivityClient.getInstance().activityDestroyed(r.token);
+        }
     }
     @Override public void handlePauseActivity(ActivityClientRecord r, boolean finished, boolean userLeaving, boolean autoEnteringPip, android.app.servertransaction.PendingTransactionActions pendingActions, String reason) {
         performPauseActivity(r, finished, reason, pendingActions);
     }
     @Override public void handleResumeActivity(ActivityClientRecord r, boolean finalStateRequest, boolean isForward, boolean shouldSendCompatFakeFocus, String reason) {
-        performResumeActivity(r, finalStateRequest, reason);
+        if (performResumeActivity(r, finalStateRequest, reason)) {
+            final HostAdapter adapter = sActivityHost;
+            if (adapter != null) {
+                // Pinned ActivityThread makes the activity visible only after onResume. The host
+                // adapter owns the fenced ViewRoot/window presentation in place of WindowManager.
+                adapter.showActivity(r.activity);
+                sPresentedTransactionActivity = r.activity;
+            }
+        }
     }
     @Override public void handleTopResumedActivityChanged(ActivityClientRecord r, boolean isTopResumedActivity, String reason) { throw notHosted("handleTopResumedActivityChanged"); }
     @Override public void handleStopActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, boolean finalStateRequest, String reason) {
+        // Pinned performStopActivityInner pauses before asking the Activity for its description,
+        // then performs the target-SDK-dependent stop/save ordering.
+        if (r != null && r.activity != null && r.getLifecycleState()
+                == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
+            performPauseActivity(r, false, reason, pendingActions);
+        }
+        final android.app.servertransaction.PendingTransactionActions.StopInfo stopInfo =
+                new android.app.servertransaction.PendingTransactionActions.StopInfo();
+        if (r != null && r.activity != null) {
+            try {
+                stopInfo.setDescription(r.activity.onCreateDescription());
+            } catch (Exception e) {
+                if (!mInstrumentation.onException(r.activity, e)) {
+                    throw new RuntimeException("Unable to create description for activity "
+                            + r.intent + ": " + e.toString(), e);
+                }
+            }
+        }
         performStopActivityInner(r, true, reason);
+        if (r != null) {
+            // A final StopActivityItem makes the client invisible before its asynchronous stop
+            // acknowledgement. If another activity was presented in the meantime, identity keeps
+            // that newer activity intact.
+            clearPresentedTransactionActivity(r.activity);
+            stopInfo.setActivity(r);
+            stopInfo.setState(r.state);
+            stopInfo.setPersistentState(r.persistentState);
+            pendingActions.setStopInfo(stopInfo);
+        }
     }
-    @Override public void reportStop(android.app.servertransaction.PendingTransactionActions pendingActions) {}
+    @Override public void reportStop(android.app.servertransaction.PendingTransactionActions pendingActions) {
+        final android.app.servertransaction.PendingTransactionActions.StopInfo stopInfo =
+                pendingActions.getStopInfo();
+        if (stopInfo != null) mH.post(stopInfo);
+    }
     /** AOSP ActivityThread.performRestartActivity: restart a stopped local activity, optionally
      * carrying it through start. Window visibility remains owned by the embedding parent. */
     @Override public void performRestartActivity(ActivityClientRecord r, boolean start) {
@@ -1184,6 +1236,7 @@ public final class ActivityThread extends ClientTransactionHandler {
         public Intent intent;
         public ActivityInfo activityInfo;
         public Bundle state;
+        public android.os.PersistableBundle persistentState;
         public boolean isForward;
         public boolean isTopResumedActivity;
         public LoadedApk packageInfo;
@@ -1208,7 +1261,8 @@ public final class ActivityThread extends ClientTransactionHandler {
                 new android.window.ActivityWindowInfo();
         public ActivityClientRecord() {}
         public ActivityClientRecord(IBinder token, Intent intent, int ident, ActivityInfo info, Configuration overrideConfig, String referrer, com.android.internal.app.IVoiceInteractor voiceInteractor, Bundle state, android.os.PersistableBundle persistentState, List<ResultInfo> pendingResults, List<com.android.internal.content.ReferrerIntent> pendingNewIntents, ActivityOptions.SceneTransitionInfo sceneTransitionInfo, boolean isForward, ProfilerInfo profilerInfo, ClientTransactionHandler client, IBinder assistToken, IBinder shareableActivityToken, boolean launchedFromBubble, IBinder taskFragmentToken, IBinder initialCallerInfoAccessToken, android.window.ActivityWindowInfo activityWindowInfo) {
-            this.token = token; this.intent = intent; this.activityInfo = info; this.state = state; this.isForward = isForward;
+            this.token = token; this.intent = intent; this.activityInfo = info; this.state = state;
+            this.persistentState = persistentState; this.isForward = isForward;
             this.referrer = referrer;
             this.pendingResults = pendingResults;
             this.pendingIntents = pendingNewIntents;
@@ -1226,6 +1280,14 @@ public final class ActivityThread extends ClientTransactionHandler {
     // ------------------------------------------------------------ hosted activity seam (HostedActivityRuntime)
 
     /** Host-only presentation seam; lifecycle policy stays in HostedActivityRuntime. */
+    private static volatile HostAdapter sActivityHost;
+    private static Activity sPresentedTransactionActivity;
+    private static void clearPresentedTransactionActivity(Activity activity) {
+        if (activity == null || activity != sPresentedTransactionActivity) return;
+        final HostAdapter adapter = sActivityHost;
+        if (adapter != null) adapter.clearActivityWindows();
+        sPresentedTransactionActivity = null;
+    }
     public interface HostAdapter {
         Context getActivityContext();
         ClassLoader getActivityClassLoader();
@@ -1236,6 +1298,8 @@ public final class ActivityThread extends ClientTransactionHandler {
     }
     public static void configureActivityHost(HostAdapter adapter, java.util.Map<String, ActivityInfo> activities) {
         HostedActivityRuntime.configure(adapter, activities);
+        sActivityHost = adapter;
+        sPresentedTransactionActivity = null;
     }
     /** AOSP ContextImpl.createActivityContext for an activity this process launches (fresh token,
      * default display): the per-activity base context of ActivityThread.performLaunchActivity. */
@@ -1262,7 +1326,11 @@ public final class ActivityThread extends ClientTransactionHandler {
     public static boolean applyConfigurationInProcess(Configuration config, int changes, int width, int height) {
         return HostedActivityRuntime.applyConfiguration(config, changes, width, height);
     }
-    public static void shutdownActivitiesInProcess() { HostedActivityRuntime.shutdown(); }
+    public static void shutdownActivitiesInProcess() {
+        HostedActivityRuntime.shutdown();
+        sPresentedTransactionActivity = null;
+        sActivityHost = null;
+    }
     public static void startActivityInProcess(Intent intent) {
         if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.startActivity(intent);
         else Log.w(TAG, "startActivity dropped (no launcher): " + intent);

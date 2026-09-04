@@ -538,6 +538,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
     protected void onPause() { mCalled = true; }
     protected void onStop() {}
     protected void onDestroy() {}
+    /** Pinned AOSP Activity.onCreateDescription; captured by the stop transaction report. */
+    public CharSequence onCreateDescription() { return null; }
     /** AOSP Activity.onNewIntent; used when LocalActivityManager reuses a child activity. */
     protected void onNewIntent(Intent intent) {}
     protected void onSaveInstanceState(Bundle outState) {

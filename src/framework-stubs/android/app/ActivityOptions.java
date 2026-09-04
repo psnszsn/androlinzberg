@@ -1,6 +1,18 @@
 /* artzig stub (auto-generated placeholder; members added on demand). */
 package android.app;
 public class ActivityOptions {
+    /** Pinned AOSP ActivityOptions animation ABI used by stock TransitionInfo.AnimationOptions.
+     * The full class still crosses hosted SplashScreen/window-transition seams, so only these
+     * value constants are carried until that client closure can replace this adaptation. */
+    public static final int ANIM_CUSTOM = 1;
+    public static final int ANIM_SCALE_UP = 2;
+    public static final int ANIM_THUMBNAIL_SCALE_UP = 3;
+    public static final int ANIM_THUMBNAIL_SCALE_DOWN = 4;
+    public static final int ANIM_SCENE_TRANSITION = 5;
+    public static final int ANIM_CLIP_REVEAL = 11;
+    public static final int ANIM_OPEN_CROSS_PROFILE_APPS = 12;
+    public static final int ANIM_FROM_STYLE = 14;
+
     /** AOSP ActivityOptions.BackgroundActivityStartMode and its values. */
     @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
     public @interface BackgroundActivityStartMode {}

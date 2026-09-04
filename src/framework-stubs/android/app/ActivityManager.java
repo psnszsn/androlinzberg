@@ -144,23 +144,79 @@ public class ActivityManager {
             @Override public ProcessErrorStateInfo[] newArray(int size) { return new ProcessErrorStateInfo[size]; }
         };
     }
-    /** AOSP ActivityManager.RecentTaskInfo. */
+    /** Pinned AOSP ActivityManager.RecentTaskInfo parcel contract. The enclosing
+     * ActivityManager remains hosted while its system-service closure is unavailable. */
     public static class RecentTaskInfo extends TaskInfo implements android.os.Parcelable {
         public int id, persistentId;
+        /** @deprecated Pinned public compatibility field; not part of the parcel stream. */
+        @Deprecated public CharSequence description;
+        /** @deprecated Pinned public compatibility field; not part of the parcel stream. */
+        @Deprecated public int affiliatedTaskId;
+
+        public RecentTaskInfo() {}
+
+        private RecentTaskInfo(android.os.Parcel source) {
+            readFromParcel(source);
+        }
+
+        @Override public int describeContents() { return 0; }
+
+        public void readFromParcel(android.os.Parcel source) {
+            id = source.readInt();
+            persistentId = source.readInt();
+            super.readTaskFromParcel(source);
+        }
+
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeInt(id);
+            dest.writeInt(persistentId);
+            super.writeTaskToParcel(dest, flags);
+        }
+
         public static final Creator<RecentTaskInfo> CREATOR = new Creator<RecentTaskInfo>() {
-            @Override public RecentTaskInfo createFromParcel(android.os.Parcel source) { RecentTaskInfo r = new RecentTaskInfo(); r.id = source.readInt(); r.persistentId = source.readInt(); return r; }
+            @Override public RecentTaskInfo createFromParcel(android.os.Parcel source) {
+                return new RecentTaskInfo(source);
+            }
             @Override public RecentTaskInfo[] newArray(int size) { return new RecentTaskInfo[size]; }
         };
-        @Override public void writeToParcel(android.os.Parcel dest, int flags) { dest.writeInt(id); dest.writeInt(persistentId); }
     }
     public static boolean isSystemReady() { return true; }
     public boolean isLowRamDevice() { return false; }
     public int getLauncherLargeIconDensity() { return 160; }
     public int getLauncherLargeIconSize() { return 48; }
-    public static class RunningTaskInfo extends TaskInfo {
+    /** Pinned AOSP ActivityManager.RunningTaskInfo parcel contract; see RecentTaskInfo. */
+    public static class RunningTaskInfo extends TaskInfo implements android.os.Parcelable {
+        public int id;
+        /** @deprecated Pinned public compatibility field; not part of the parcel stream. */
+        @Deprecated public android.graphics.Bitmap thumbnail;
+        /** @deprecated Pinned public compatibility field; not part of the parcel stream. */
+        @Deprecated public CharSequence description;
+        /** @deprecated Pinned public compatibility field; not part of the parcel stream. */
+        @Deprecated public int numRunning;
+
+        public RunningTaskInfo() {}
+
+        private RunningTaskInfo(android.os.Parcel source) {
+            readFromParcel(source);
+        }
+
+        @Override public int describeContents() { return 0; }
+
+        public void readFromParcel(android.os.Parcel source) {
+            id = source.readInt();
+            super.readTaskFromParcel(source);
+        }
+
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeInt(id);
+            super.writeTaskToParcel(dest, flags);
+        }
+
         public static final android.os.Parcelable.Creator<RunningTaskInfo> CREATOR =
                 new android.os.Parcelable.Creator<RunningTaskInfo>() {
-            public RunningTaskInfo createFromParcel(android.os.Parcel in) { return new RunningTaskInfo(); }
+            public RunningTaskInfo createFromParcel(android.os.Parcel in) {
+                return new RunningTaskInfo(in);
+            }
             public RunningTaskInfo[] newArray(int size) { return new RunningTaskInfo[size]; }
         };
     }

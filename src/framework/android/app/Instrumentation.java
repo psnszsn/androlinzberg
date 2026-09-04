@@ -11,6 +11,14 @@ import android.content.Intent;
 import com.android.internal.content.ReferrerIntent;
 
 public class Instrumentation {
+    /** Pinned AOSP Instrumentation logging ABI used by WindowContainerTransaction. The complete
+     * stock class cannot replace this hosted launch/lifecycle adapter until an instrumentation
+     * runner and ActivityTaskManager service are available. */
+    public static final String TAG = "Instrumentation";
+    public static final boolean DEBUG_START_ACTIVITY = android.os.Build.IS_DEBUGGABLE
+            && android.os.SystemProperties.getBoolean(
+                    "persist.wm.debug.start_activity", false);
+
     private ActivityThread mThread;
     private Context mInstrContext;
     private Context mAppContext;

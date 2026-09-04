@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=120 F=2914 total=3034
+# Rules: D=120 F=2965 total=3085
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -3055,3 +3055,54 @@ F aosp frameworks/base/core/java/com/android/internal/widget/ActionBarContainer.
 F aosp frameworks/base/core/java/com/android/internal/widget/ActionBarOverlayLayout.java
 F aosp frameworks/base/core/java/android/app/LocalActivityManager.java
 F aosp frameworks/base/core/java/android/app/ActivityGroup.java
+F aosp frameworks/base/core/java/android/app/ActivityTaskManager.java
+F aosp frameworks/base/core/java/android/app/AppCompatTaskInfo.java
+F aosp frameworks/base/core/java/android/app/CameraCompatTaskInfo.java
+F aosp frameworks/base/core/java/android/app/IActivityTaskManager.aidl
+F aosp frameworks/base/core/java/android/app/IAssistDataReceiver.aidl
+F aosp frameworks/base/core/java/android/app/IScreenCaptureObserver.aidl
+F aosp frameworks/base/core/java/android/app/PictureInPictureUiState.aidl
+F aosp frameworks/base/core/java/android/app/TaskInfo.java
+F aosp frameworks/base/core/java/android/app/TaskStackListener.java
+F aosp frameworks/base/core/java/android/window/BackAnimationAdapter.aidl
+F aosp frameworks/base/core/java/android/window/BackAnimationAdapter.java
+F aosp frameworks/base/core/java/android/window/BackNavigationInfo.aidl
+F aosp frameworks/base/core/java/android/window/DisplayAreaAppearedInfo.aidl
+F aosp frameworks/base/core/java/android/window/DisplayAreaAppearedInfo.java
+F aosp frameworks/base/core/java/android/window/DisplayAreaInfo.aidl
+F aosp frameworks/base/core/java/android/window/DisplayAreaInfo.java
+F aosp frameworks/base/core/java/android/window/DisplayAreaOrganizer.java
+F aosp frameworks/base/core/java/android/window/IBackAnimationFinishedCallback.aidl
+F aosp frameworks/base/core/java/android/window/IBackAnimationRunner.aidl
+F aosp frameworks/base/core/java/android/window/IDisplayAreaOrganizer.aidl
+F aosp frameworks/base/core/java/android/window/IDisplayAreaOrganizerController.aidl
+F aosp frameworks/base/core/java/android/window/ITaskFragmentOrganizerController.aidl
+F aosp frameworks/base/core/java/android/window/ITaskOrganizer.aidl
+F aosp frameworks/base/core/java/android/window/ITaskOrganizerController.aidl
+F aosp frameworks/base/core/java/android/window/ITransitionMetricsReporter.aidl
+F aosp frameworks/base/core/java/android/window/ITransitionPlayer.aidl
+F aosp frameworks/base/core/java/android/window/IWindowOrganizerController.aidl
+F aosp frameworks/base/core/java/android/window/IWindowlessStartingSurfaceCallback.aidl
+F aosp frameworks/base/core/java/android/window/RemoteTransition.aidl
+F aosp frameworks/base/core/java/android/window/RemoteTransition.java
+F aosp frameworks/base/core/java/android/window/SplashScreenView.aidl
+F aosp frameworks/base/core/java/android/window/StartingWindowInfo.aidl
+F aosp frameworks/base/core/java/android/window/StartingWindowInfo.java
+F aosp frameworks/base/core/java/android/window/StartingWindowRemovalInfo.aidl
+F aosp frameworks/base/core/java/android/window/TaskAppearedInfo.aidl
+F aosp frameworks/base/core/java/android/window/TaskAppearedInfo.java
+F aosp frameworks/base/core/java/android/window/TaskFragmentAnimationParams.aidl
+F aosp frameworks/base/core/java/android/window/TaskFragmentAnimationParams.java
+F aosp frameworks/base/core/java/android/window/TaskFragmentCreationParams.aidl
+F aosp frameworks/base/core/java/android/window/TaskFragmentCreationParams.java
+F aosp frameworks/base/core/java/android/window/TaskFragmentOperation.aidl
+F aosp frameworks/base/core/java/android/window/TaskFragmentOperation.java
+F aosp frameworks/base/core/java/android/window/TaskFragmentOrganizerToken.java
+F aosp frameworks/base/core/java/android/window/TransitionInfo.aidl
+F aosp frameworks/base/core/java/android/window/TransitionInfo.java
+F aosp frameworks/base/core/java/android/window/TransitionRequestInfo.aidl
+F aosp frameworks/base/core/java/android/window/TransitionRequestInfo.java
+F aosp frameworks/base/core/java/android/window/WindowContainerToken.aidl
+F aosp frameworks/base/core/java/android/window/WindowContainerTransaction.aidl
+F aosp frameworks/base/core/java/android/window/WindowContainerTransaction.java
+F aosp frameworks/base/core/java/android/window/WindowOrganizer.java
