@@ -168,6 +168,7 @@ def strip_code(text: str) -> str:
 PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;?", re.M)
 IMPORT_RE = re.compile(r"^\s*import\s+(static\s+)?([\w.]+)(\.\*)?\s*;?", re.M)
 QUALIFIED_RE = re.compile(r"(?<![\w.])((?:[a-z_][\w]*\.)+[A-Z]\w*(?:\.[A-Z]\w*)*)")
+SIMPLE_QUALIFIED_RE = re.compile(r"\b([A-Z]\w*(?:\.[A-Z]\w*)+)\b")
 ACONFIG_PACKAGE_RE = re.compile(r'^\s*package:\s*"([\w.]+)"', re.M)
 SIMPLE_RE = re.compile(r"\b([A-Z]\w*)\b")
 NATIVE_RE = re.compile(r"\bnative\b\s+[\w<>\[\], .]+\s*\(|\bSystem\.loadLibrary\b|\bRuntime\.getRuntime\(\)\.loadLibrary\b")
@@ -401,7 +402,7 @@ class Stubs:
 
 
 class Node:
-    __slots__ = ("fqn", "kind", "path", "vendored", "selected", "exclusion", "native", "aidl_decl", "aidl_root", "generated", "refs", "referrers", "blockers")
+    __slots__ = ("fqn", "kind", "path", "vendored", "selected", "exclusion", "native", "aidl_decl", "aidl_root", "generated", "refs", "referrers", "blockers", "abi_blockers")
 
     def __init__(self, fqn: str):
         self.fqn = fqn
@@ -417,12 +418,14 @@ class Node:
         self.refs: list[str] = []
         self.referrers: set[str] = set()
         self.blockers: list[str] = []
+        self.abi_blockers: list[str] = []
 
 
 class Resolver:
     def __init__(self, aosp: Path, index: SourceIndex, manifest: Manifest, rules: SourceRules, classes: Classes, stubs: Stubs):
         self.aosp, self.index, self.manifest, self.rules, self.classes, self.stubs = aosp, index, manifest, rules, classes, stubs
         self.parsed: dict[str, list[str]] = {}
+        self.parsed_abi_blockers: dict[str, list[str]] = {}
         self.nodes: dict[str, Node] = {}
         # Parcelable .aidl declarations of present stubs that new AIDL interfaces import.
         self.extra_manifest: set[str] = set()
@@ -435,18 +438,36 @@ class Resolver:
         text = strip_code(read(self.aosp / rel_path))
         pkg = PACKAGE_RE.search(text)
         pkg = pkg.group(1) if pkg else ""
+        current_fqn = self.fqn_of(rel_path)
         explicit: dict[str, str] = {}
         wildcards: list[str] = []
+        abi_blockers: set[str] = set()
         for m in IMPORT_RE.finditer(text):
             static, name, star = m.group(1), m.group(2), m.group(3)
             if star:
                 wildcards.append(name)
             elif static:
-                explicit.setdefault(name.rsplit(".", 1)[0].rsplit(".", 1)[-1], name.rsplit(".", 1)[0])
+                owner, member = name.rsplit(".", 1)
+                explicit.setdefault(owner.rsplit(".", 1)[-1], owner)
+                if (owner != current_fqn and owner in self.stubs.by_fqn
+                        and not self.stub_declares(owner, member)):
+                    abi_blockers.add(f"existing stub {owner} lacks member {member}")
             else:
                 explicit[name.rsplit(".", 1)[-1]] = name
         body = IMPORT_RE.sub(" ", text)
         found: set[str] = set()
+        # Package-qualified references are handled below.  Also inspect
+        # source-local Outer.Nested references: a compiled Outer stub is not
+        # sufficient when it omits the nested type required by stock source.
+        for m in SIMPLE_QUALIFIED_RE.finditer(body):
+            parts = m.group(1).split(".")
+            outer = explicit.get(parts[0], f"{pkg}.{parts[0]}" if pkg else parts[0])
+            if outer != current_fqn and outer in self.stubs.by_fqn:
+                member = parts[1]
+                nested = f"{outer}.{member}"
+                if not self.classes.has(nested) and not self.stub_declares(outer, member):
+                    kind = "member" if member.isupper() else "nested type"
+                    abi_blockers.add(f"existing stub {outer} lacks {kind} {member}")
         for m in QUALIFIED_RE.finditer(body):
             if m.group(1).split(".", 1)[0] in self.root_packages:
                 found.add(m.group(1))
@@ -464,7 +485,12 @@ class Resolver:
         refs = sorted(self.canonical(f) for f in found)
         refs = sorted({r for r in refs if r and r != self.fqn_of(rel_path)})
         self.parsed[rel_path] = refs
+        self.parsed_abi_blockers[rel_path] = sorted(abi_blockers)
         return refs
+
+    def stub_declares(self, fqn: str, member: str) -> bool:
+        path = self.stubs.by_fqn.get(fqn)
+        return bool(path and re.search(rf"\b{re.escape(member)}\b", strip_code(read(path))))
 
     def fqn_of(self, rel_path: str) -> str:
         text = read(self.aosp / rel_path)
@@ -549,6 +575,7 @@ class Resolver:
             if n.kind in ("java", "kt"):
                 n.native = bool(NATIVE_RE.search(text))
                 n.refs = self.refs_of(path)
+                n.abi_blockers = self.parsed_abi_blockers.get(path, [])
             elif n.kind == "aidl-interface" or n.kind == "aidl-structured":
                 n.refs = self.aidl_refs(path, text)
             elif n.kind == "aidl-parcelable":
@@ -633,7 +660,7 @@ class Resolver:
 
 
 def blockers_of(n: Node) -> list[str]:
-    b: list[str] = []
+    b: list[str] = list(n.abi_blockers)
     if n.kind == "missing":
         b.append("no source in the checkout")
     elif n.kind == "aconfig":
@@ -783,7 +810,7 @@ AUDIT_HEADER = """# Stub audit: generated by `tools/aosp-closure.py audit --upda
 # across regeneration. Fields: stub path|audit status|family|detail.
 #   status  replaceable      the real class compiles once the listed sources are added
 #           blocked          the real closure reaches a JNI class, an unvendored module,
-#                            an AIDL file outside the include roots, or an unwired generator
+#                            an AIDL/generator gap, or a member absent from a compiled stub
 #           no-aosp-source   no class with this name in the checkout (host-only or module not synced)
 #           generated        the class is produced by a generator (aconfig/proto/...)
 #   family  a manager family this milestone replaces (notification, alarm, ...), another
@@ -847,7 +874,8 @@ def write_markdown(path: Path, rows: list, hubs: list[tuple[str, int]], budget: 
            "the real AOSP class in the family's milestone phase. The audit status is what the",
            "closure tool sees today: `replaceable` means the real class compiles once the sources",
            "the tool lists are added; `blocked` names the first classes of the real closure that",
-           "need a host seam (JNI, an unvendored module tree, an AIDL root, a generator).", "",
+           "need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a",
+           "member absent from a compiled stub).", "",
            f"Pending: {len(pending)} (budget {budget}). Survivors: {len(survivors)}. Total: {len(rows)}.", "",
            "## Survivors", "", "| Stub | Reason | Audit |", "|---|---|---|"]
     for p, fqn, status, family, detail in survivors:
