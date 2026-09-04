@@ -62,7 +62,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/net/NetworkAgent.java",
     "src/framework-stubs/android/net/NetworkPolicyManager.java",
     "src/framework-stubs/android/net/NetworkScoreManager.java",
-    "src/framework-stubs/android/net/ProxyInfo.java",
     "src/framework-stubs/android/net/TetheringManager.java",
     "src/framework-stubs/android/net/TrafficStats.java",
     "src/framework-stubs/android/net/ipsec/ike/SaProposal.java",

@@ -388,6 +388,8 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/com/android/internal/org/bouncycastle/util/io/StreamOverflowException.java");
     try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/com/android/internal/org/bouncycastle/util/io/Streams.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/ParseException.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/ProxyInfo.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/ProxyUtils.java");
     // Exact zero-blocker stock closure for the modular framework APIs.
     try c.file("$A/frameworks/base/core/java/android/app/appfunctions/AppFunctionException.java");
     try c.file("$A/frameworks/base/core/java/android/app/appfunctions/AppFunctionManager.java");

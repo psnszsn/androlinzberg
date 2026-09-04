@@ -62,6 +62,7 @@ import android.media.MediaFormat
 import android.net.InetAddresses
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.ProxyInfo
 import android.os.Bundle
 import android.os.Binder
 import android.os.Handler
@@ -235,6 +236,22 @@ internal object FrameworkModuleSmoke {
             .build()
         check(request.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))
         check(!request.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+
+        val proxy = ProxyInfo.buildDirectProxy("proxy.example", 8080, listOf("localhost", "*.test"))
+        check(proxy.host == "proxy.example")
+        check(proxy.port == 8080)
+        check(proxy.exclusionListAsString == "localhost,*.test")
+        check(proxy.isValid)
+        val proxyParcel = Parcel.obtain()
+        val restoredProxy = try {
+            proxy.writeToParcel(proxyParcel, 0)
+            proxyParcel.setDataPosition(0)
+            ProxyInfo.CREATOR.createFromParcel(proxyParcel)
+        } finally {
+            proxyParcel.recycle()
+        }
+        check(restoredProxy == proxy)
+        check(ProxyInfo.buildPacProxy(Uri.parse("https://proxy.example/proxy.pac")).isValid)
 
         check(android.hardware.thermal.TemperatureType.CPU == 0)
         check(android.hardware.vibrator.Braking.CLAB == 1)

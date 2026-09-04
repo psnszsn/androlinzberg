@@ -166,10 +166,12 @@ activity manager's process attach/death, app standby disabled),
 `StorageStatsManager` over `HostedStorageStatsService` (`IStorageStatsManager`:
 APK and per-package data directory sizes on the host filesystem) and
 `DeviceIdleManager`/`PowerExemptionManager` over `HostedDeviceIdleController`
-(`IDeviceIdleController`: nobody is idle, allowlists empty). The HAL enum
-packages these clients re-export (`android.hardware.{health,vibrator,thermal}`)
-are marked stubs because `hardware/interfaces` is not vendored. Media sessions
-are real: `MediaSession`, `MediaController` and `MediaSessionManager` over
+(`IDeviceIdleController`: nobody is idle, allowlists empty). The HAL types these
+clients re-export (`android.hardware.{health,vibrator,thermal}`) are generated
+from the pinned `hardware/interfaces` stable AIDL and the dependency-free
+health/vibrator HIDL declarations. The hosted services still report no thermal
+sensors or vibrators; importing the transport types does not add hardware.
+Media sessions are real: `MediaSession`, `MediaController` and `MediaSessionManager` over
 `HostedMediaSessionService` (`ISessionManager`: session records with the AOSP
 `ISession`/`ISessionController` binders, controller callback fan-out, the
 media-button session stack and media-key dispatch, the MEDIA_CONTENT_CONTROL
@@ -189,9 +191,14 @@ with no sensors), `SystemLightsManager` over `HostedLightsService`
 (`ILightsManager`: no lights, CONTROL_DEVICE_LIGHTS enforced),
 `ColorDisplayManager` over `HostedColorDisplayService` (`IColorDisplayManager`:
 no transforms, night display off) and the input-device lights, sensor and
-vibrator managers over the hosted input service. `ConnectivityManager` and the
-Wi-Fi managers stay marked stubs: their module trees (`packages/modules/
-Connectivity`, `Wifi`) are not vendored. Telephony and telecom are real: the
+vibrator managers over the hosted input service. Selected Connectivity client
+and value classes compile from the imported `packages/modules/Connectivity`
+framework trees. `ConnectivityManager` remains a stub because there is no
+hosted `IConnectivityManager`/`ConnectivityService` and its stock closure
+reaches NetworkUtils/BPF natives. The Wi-Fi projects are synced too, but their
+managers remain stubs because the host has no `IWifiManager`, Wi-Fi P2P, or
+supplicant-backed service and their stock closure crosses the same connectivity
+native boundary. Telephony and telecom are real: the
 `frameworks/base/telephony/java`, `telephony/common`, `telecomm/java` and
 `mms/java` trees compile verbatim (only the MMS PDU persister, which needs the
 `android.drm` JNI client, and the satellite HAL service base, which needs the

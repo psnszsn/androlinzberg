@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 75 (budget 75). Survivors: 74. Total: 149.
+Pending: 75 (budget 75). Survivors: 73. Total: 148.
 
 ## Survivors
 
@@ -39,7 +39,6 @@ Pending: 75 (budget 75). Survivors: 74. Total: 149.
 | `android/net/Network.java` | Connectivity module tree not vendored | blocked |
 | `android/net/NetworkAgent.java` | no hosted ConnectivityService/IConnectivityManager network-agent path; stock closure reaches BPF JNI and unwired stats generation | blocked |
 | `android/net/NetworkPolicyManager.java` | network policy service (INetworkPolicyManager over NetworkTemplate/NetworkStats from the Connectivity module) not hosted | blocked |
-| `android/net/ProxyInfo.java` | Connectivity module tree not vendored | blocked |
 | `android/net/TetheringManager.java` | no hosted ITetheringConnector/tethering service; stock client requires the connectivity and Wi-Fi runtime | blocked |
 | `android/net/TrafficStats.java` | native socket tagging and INetworkStatsService are unavailable; host uses Linux networking directly | blocked |
 | `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | blocked |
@@ -167,7 +166,7 @@ Pending: 75 (budget 75). Survivors: 74. Total: 149.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (20 to add), not vendored; android.app.admin.DeviceAdminReceiver: existing host class android.app.admin.DevicePolicyManager lacks method isValidOperationSafetyReason (via DeviceAdminReceiver); android.app.admin.DeviceAdminReceiver: |
-| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (150 to add), not vendored; android.app.admin.DevicePolicyManager: existing host class android.net.ProxyInfo lacks method buildDirectProxy (via DevicePolicyManager); android.app.admin.SecurityLog.SecurityEvent: JNI natives (via Sec |
+| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (150 to add), not vendored; android.app.admin.SecurityLog.SecurityEvent: JNI natives (via SecurityEvent < DevicePolicyManager); android.app.admin.SecurityLog: JNI natives (via SecurityLog < IAuditLogEventsCallback < DevicePolicyMan |
 | `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (44 to add), not vendored; android.app.admin.PreferentialNetworkServiceConfig: existing stub android.app.admin.DevicePolicyManager lacks member PREFERENTIAL_NETWORK_SERVICE_ENABLED_DEFAULT (via PreferentialNetworkServiceCo |
 
 ### inputmethod
@@ -293,13 +292,12 @@ decides where to cut.
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
 | `android.net.NetworkUtils` | 40 | 1 |
-| `android.net.wifi.ScanResult` | 37 | 1 |
 | `android.net.wifi.WifiConfiguration` | 37 | 1 |
-| `android.net.wifi.SecurityParams` | 37 | 2 |
 | `android.net.IpPrefix` | 36 | 1 |
 | `android.net.wifi.WifiScanner` | 36 | 2 |
 | `android.net.wifi.IScanDataListener` | 36 | 3 |
 | `android.net.wifi.WifiAnnotations` | 35 | 2 |
+| `android.net.wifi.ScanResult` | 30 | 1 |
 | `android.net.LocalSocket` | 29 | 2 |
 | `android.bluetooth.BluetoothAdapter` | 28 | 1 |
 | `android.bluetooth.BluetoothPan` | 28 | 2 |
@@ -332,3 +330,4 @@ decides where to cut.
 | `android.media.audio.common.AudioConfig` | 26 | 2 |
 | `android.media.AudioHwModule` | 26 | 3 |
 | `android.media.audio.common.AudioAttributes` | 26 | 3 |
+| `android.media.audio.common.AudioHalEngineConfig` | 26 | 3 |
