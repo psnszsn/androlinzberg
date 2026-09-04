@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 79 (budget 79). Survivors: 78. Total: 157.
+Pending: 78 (budget 78). Survivors: 78. Total: 156.
 
 ## Survivors
 
@@ -113,7 +113,6 @@ Pending: 79 (budget 79). Survivors: 78. Total: 157.
 | `android/app/ActivityTaskManager.java` | blocked | frameworks/base/core/java/android/app/ActivityTaskManager.java (2 to add), not vendored; android.app.ActivityTaskManager: existing host class android.app.IActivityTaskManager lacks method canBeUniversalResizeable (via ActivityTaskManager); android.app.ActivityTaskManager: existing host class android |
 | `android/app/AppGlobals.java` | blocked | frameworks/base/core/java/android/app/AppGlobals.java (584 to add), not vendored; android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getIntCoreSetting (via AppGlobals); android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getPermissionM |
 | `android/app/IActivityTaskManager.java` | blocked | frameworks/base/core/java/android/app/IActivityTaskManager.aidl (30 to add, AIDL interface), not vendored; android.window.TransitionInfo.AnimationOptions: existing stub android.app.ActivityOptions lacks member ANIM_CLIP_REVEAL (via AnimationOptions < TaskFragmentAnimationParams < TaskFragmentOperati |
-| `android/app/LocalActivityManager.java` | blocked | frameworks/base/core/java/android/app/LocalActivityManager.java (1 to add), not vendored; android.app.LocalActivityManager: existing host class android.app.ActivityThread lacks method performPauseActivity (via LocalActivityManager); android.app.LocalActivityManager: existing host class android.app.A |
 | `android/app/TaskInfo.java` | blocked | frameworks/base/core/java/android/app/TaskInfo.java (27 to add), not vendored; android.window.TransitionInfo.AnimationOptions: existing stub android.app.ActivityOptions lacks member ANIM_CLIP_REVEAL (via AnimationOptions < TaskFragmentAnimationParams < TaskFragmentOperation < WindowContainerTransact |
 
 ### appops

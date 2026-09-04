@@ -7,6 +7,7 @@ import android.app.ActivityManager
 import android.app.ActivityThread
 import android.app.DownloadManager
 import android.app.GrammaticalInflectionManager
+import android.app.LocalActivityManager
 import android.app.Notification
 import android.app.Person
 import android.app.PendingIntent
@@ -108,7 +109,9 @@ import javax.net.ssl.X509TrustManager
 internal object FrameworkModuleSmoke {
     private val events = mutableListOf<String>()
     private val legacyFragmentEvents = mutableListOf<String>()
+    private val localActivityEvents = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
+    private var expectedLocalActivityParent: Activity? = null
 
     private var permissionsFixtureApk: String? = null
 
@@ -153,6 +156,7 @@ internal object FrameworkModuleSmoke {
         testHostedInputSiblingDispatch()
         testHostedInputWindowRouting()
         testWindowPresentation()
+        testLocalActivityManagerLifecycleAndRecreation()
         testLegacyFragmentTransactionsAndRecreation()
         testLegacyFragmentHostedResultsAndRetention()
         testActivityLifecycle()
@@ -2682,6 +2686,217 @@ internal object FrameworkModuleSmoke {
         check(HostedWindowPresentation.requestsFullscreen(0, 0, modernImmersive, false))
     }
 
+    private fun testLocalActivityManagerLifecycleAndRecreation() {
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        val parentName = LocalParentActivity::class.java.name
+        val firstName = LocalFirstActivity::class.java.name
+        val secondName = LocalSecondActivity::class.java.name
+        val parentInfo = activityInfo(parentName).apply {
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
+        }
+        val firstInfo = activityInfo(firstName).apply {
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION_CODES.GINGERBREAD_MR1
+        }
+        val secondInfo = activityInfo(secondName).apply {
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
+        }
+        val adapter = LocalActivityHostAdapter(context)
+        val firstIntent = Intent().setComponent(ComponentName("org.example", firstName))
+        val secondIntent = Intent().setComponent(ComponentName("org.example", secondName))
+        var activeManager: LocalActivityManager? = null
+
+        ActivityThread.configureActivityHost(
+            adapter,
+            mapOf(parentName to parentInfo, firstName to firstInfo, secondName to secondInfo),
+        )
+        try {
+            val parent = ActivityThread.launchMainActivity(parentName) as LocalParentActivity
+            expectedLocalActivityParent = parent
+            checkNotNull(parent.activityToken)
+            check(adapter.presentedActivities == listOf(parent))
+
+            val manager = LocalActivityManager(parent, true)
+            activeManager = manager
+            val prematureStart = runCatching {
+                manager.startActivity("first", Intent(firstIntent))
+            }.exceptionOrNull()
+            check(prematureStart is IllegalStateException) {
+                "LocalActivityManager accepted a child before dispatchCreate: $prematureStart"
+            }
+
+            manager.dispatchCreate(null)
+            manager.dispatchResume()
+            localActivityEvents.clear()
+            val firstWindow = checkNotNull(manager.startActivity("first", Intent(firstIntent)))
+            val first = manager.getActivity("first") as LocalFirstActivity
+            check(firstWindow === first.window)
+            check(first.isChild && first.parent === parent)
+            check(first.activityToken === parent.activityToken)
+            check(first.window.container === parent.window)
+            check(parent.window.hasChildren())
+            check(manager.currentActivity === first && manager.currentId == "first")
+            check(localActivityEvents == listOf(
+                "first:create",
+                "first:start",
+                "first:post-create",
+                "first:resume",
+            )) { "first embedded launch ordering: $localActivityEvents" }
+
+            localActivityEvents.clear()
+            check(manager.startActivity("first", Intent(firstIntent)) === firstWindow)
+            check(manager.getActivity("first") === first)
+            check(localActivityEvents.isEmpty()) {
+                "same embedded intent recreated or redispatched the child: $localActivityEvents"
+            }
+
+            val singleTopIntent = Intent(firstIntent)
+                .setAction("dev.artzig.LOCAL_ACTIVITY_SINGLE_TOP")
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra("new-intent-marker", "delivered")
+            check(manager.startActivity("first", singleTopIntent) === firstWindow)
+            check(manager.getActivity("first") === first)
+            check(first.receivedNewIntents.size == 1)
+            check(first.receivedNewIntents.single().action == singleTopIntent.action)
+            check(first.receivedNewIntents.single().getStringExtra("new-intent-marker") == "delivered")
+            check(localActivityEvents == listOf("first:new-intent")) {
+                "SINGLE_TOP dispatch changed lifecycle state: $localActivityEvents"
+            }
+
+            localActivityEvents.clear()
+            val secondWindow = checkNotNull(manager.startActivity("second", Intent(secondIntent)))
+            val second = manager.getActivity("second") as LocalSecondActivity
+            check(secondWindow === second.window)
+            check(second.isChild && second.parent === parent)
+            check(second.activityToken === parent.activityToken)
+            check(second.window.container === parent.window)
+            check(manager.currentActivity === second && manager.currentId == "second")
+            check(localActivityEvents == listOf(
+                "first:save",
+                "first:pause",
+                "second:create",
+                "second:start",
+                "second:post-create",
+                "second:resume",
+            )) { "single-mode child switch ordering: $localActivityEvents" }
+
+            localActivityEvents.clear()
+            val firstReentryIntent = Intent(singleTopIntent).setFlags(0)
+            check(manager.startActivity("first", firstReentryIntent) === firstWindow)
+            check(manager.currentActivity === first && manager.currentId == "first")
+            check(localActivityEvents == listOf("second:pause", "first:resume")) {
+                "modern child pause or existing-child resume ordering: $localActivityEvents"
+            }
+
+            localActivityEvents.clear()
+            manager.dispatchPause(false)
+            manager.dispatchStop()
+            check(localActivityEvents == listOf(
+                "first:save",
+                "first:pause",
+                "first:stop",
+                "second:stop",
+            )) { "embedded pause/stop ordering: $localActivityEvents" }
+
+            localActivityEvents.clear()
+            manager.dispatchResume()
+            check(localActivityEvents == listOf(
+                "first:restart",
+                "first:start",
+                "first:resume",
+            )) { "embedded restart ordering: $localActivityEvents" }
+            check(adapter.presentedActivities == listOf(parent)) {
+                "embedded children escaped into the desktop presentation stack"
+            }
+
+            localActivityEvents.clear()
+            manager.dispatchDestroy(true)
+            activeManager = null
+            check(localActivityEvents == listOf(
+                "first:pause",
+                "first:stop",
+                "first:destroy",
+                "second:destroy",
+            )) { "embedded destroy ordering: $localActivityEvents" }
+            check(manager.getActivity("first") == null && manager.getActivity("second") == null)
+
+            val saveManager = LocalActivityManager(parent, true)
+            activeManager = saveManager
+            saveManager.dispatchCreate(null)
+            saveManager.dispatchResume()
+            localActivityEvents.clear()
+            val originalWindow = checkNotNull(
+                saveManager.startActivity("saved", Intent(secondIntent)),
+            )
+            val original = saveManager.getActivity("saved") as LocalSecondActivity
+            localActivityEvents.clear()
+            val savedState = checkNotNull(saveManager.saveInstanceState())
+            check(savedState.getBundle("saved")?.getString("local-state") == "second")
+            check(localActivityEvents == listOf("second:save")) {
+                "embedded state save ordering: $localActivityEvents"
+            }
+
+            localActivityEvents.clear()
+            saveManager.dispatchDestroy(true)
+            activeManager = null
+            check(localActivityEvents == listOf(
+                "second:pause",
+                "second:stop",
+                "second:destroy",
+            )) { "saved child teardown ordering: $localActivityEvents" }
+            parent.finish()
+
+            val restoredParent =
+                ActivityThread.launchMainActivity(parentName) as LocalParentActivity
+            expectedLocalActivityParent = restoredParent
+            checkNotNull(restoredParent.activityToken)
+            check(restoredParent.activityToken !== parent.activityToken)
+            val restoredManager = LocalActivityManager(restoredParent, true)
+            activeManager = restoredManager
+            restoredManager.dispatchCreate(savedState)
+            restoredManager.dispatchResume()
+            localActivityEvents.clear()
+            val restoredWindow = checkNotNull(
+                restoredManager.startActivity("saved", Intent(secondIntent)),
+            )
+            val restored = restoredManager.getActivity("saved") as LocalSecondActivity
+            check(restored !== original && restoredWindow !== originalWindow)
+            check(restored.isChild && restored.parent === restoredParent)
+            check(restored.activityToken === restoredParent.activityToken)
+            check(restored.window.container === restoredParent.window)
+            check(localActivityEvents == listOf(
+                "second:create:saved",
+                "second:start",
+                "second:restore",
+                "second:post-create:saved",
+                "second:resume",
+            )) { "embedded saved-state restore ordering: $localActivityEvents" }
+            check(adapter.presentedActivities == listOf(parent, restoredParent)) {
+                "restored embedded child escaped into the desktop presentation stack"
+            }
+
+            localActivityEvents.clear()
+            check(restoredManager.destroyActivity("saved", true) === restoredWindow)
+            check(restoredManager.getActivity("saved") == null)
+            check(restoredManager.destroyActivity("saved", true) == null)
+            activeManager = null
+            check(localActivityEvents == listOf(
+                "second:pause",
+                "second:stop",
+                "second:destroy",
+            )) { "destroyActivity ordering: $localActivityEvents" }
+        } finally {
+            activeManager?.dispatchDestroy(true)
+            expectedLocalActivityParent = null
+            ActivityThread.shutdownActivitiesInProcess()
+        }
+    }
+
     private fun testActivityLifecycle() {
         events.clear()
         createdThemeResIds.clear()
@@ -2991,6 +3206,27 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private class LocalActivityHostAdapter(
+        private val context: Context,
+    ) : ActivityThread.HostAdapter {
+        val presentedActivities = mutableListOf<Activity>()
+
+        override fun getActivityContext(): Context = context
+
+        override fun getActivityClassLoader(): ClassLoader =
+            checkNotNull(javaClass.classLoader)
+
+        override fun showActivity(activity: Activity) {
+            presentedActivities += activity
+        }
+
+        override fun clearActivityWindows() = Unit
+
+        override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) = Unit
+
+        override fun resolveActivity(intent: Intent): ComponentName? = intent.component
+    }
+
     private class LegacyFragmentHostAdapter : ActivityThread.HostAdapter {
         override fun getActivityContext(): Context? = null
         override fun getActivityClassLoader(): ClassLoader = checkNotNull(javaClass.classLoader)
@@ -3201,6 +3437,89 @@ internal object FrameworkModuleSmoke {
             outState.putString("fragment-marker", "saved")
         }
     }
+
+    class LocalParentActivity : Activity()
+
+    open class LocalRecordingActivity(private val activityLabel: String) : Activity() {
+        val receivedNewIntents = mutableListOf<Intent>()
+
+        override fun onCreate(savedInstanceState: Bundle?) {
+            check(isChild)
+            check(parent === expectedLocalActivityParent)
+            check(activityToken === checkNotNull(parent).activityToken)
+            check(window.container === parent.window)
+            localActivityEvents += if (
+                savedInstanceState?.getString("local-state") == activityLabel
+            ) {
+                "$activityLabel:create:saved"
+            } else {
+                "$activityLabel:create"
+            }
+            super.onCreate(savedInstanceState)
+        }
+
+        override fun onStart() {
+            localActivityEvents += "$activityLabel:start"
+            super.onStart()
+        }
+
+        override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+            check(savedInstanceState.getString("local-state") == activityLabel)
+            localActivityEvents += "$activityLabel:restore"
+            super.onRestoreInstanceState(savedInstanceState)
+        }
+
+        override fun onPostCreate(savedInstanceState: Bundle?) {
+            localActivityEvents += if (
+                savedInstanceState?.getString("local-state") == activityLabel
+            ) {
+                "$activityLabel:post-create:saved"
+            } else {
+                "$activityLabel:post-create"
+            }
+            super.onPostCreate(savedInstanceState)
+        }
+
+        override fun onNewIntent(intent: Intent) {
+            receivedNewIntents += Intent(intent)
+            localActivityEvents += "$activityLabel:new-intent"
+            super.onNewIntent(intent)
+        }
+
+        override fun onResume() {
+            localActivityEvents += "$activityLabel:resume"
+            super.onResume()
+        }
+
+        override fun onSaveInstanceState(outState: Bundle) {
+            localActivityEvents += "$activityLabel:save"
+            super.onSaveInstanceState(outState)
+            outState.putString("local-state", activityLabel)
+        }
+
+        override fun onPause() {
+            localActivityEvents += "$activityLabel:pause"
+            super.onPause()
+        }
+
+        override fun onStop() {
+            localActivityEvents += "$activityLabel:stop"
+            super.onStop()
+        }
+
+        override fun onRestart() {
+            localActivityEvents += "$activityLabel:restart"
+            super.onRestart()
+        }
+
+        override fun onDestroy() {
+            localActivityEvents += "$activityLabel:destroy"
+            super.onDestroy()
+        }
+    }
+
+    class LocalFirstActivity : LocalRecordingActivity("first")
+    class LocalSecondActivity : LocalRecordingActivity("second")
 
     open class RecordingActivity(private val activityLabel: String) : Activity() {
         val label: String get() = activityLabel

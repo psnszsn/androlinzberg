@@ -15,7 +15,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/app/AppGlobals.java",
     "src/framework-stubs/android/app/AppOpsManager.java",
     "src/framework-stubs/android/app/IActivityTaskManager.java",
-    "src/framework-stubs/android/app/LocalActivityManager.java",
     "src/framework-stubs/android/app/TaskInfo.java",
     "src/framework-stubs/android/app/admin/DeviceAdminReceiver.java",
     "src/framework-stubs/android/app/admin/DevicePolicyManager.java",
