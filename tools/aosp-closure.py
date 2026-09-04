@@ -659,7 +659,11 @@ def render_closure(res: Resolver, seeds: list[str], nodes: dict[str, Node]) -> s
         if not n.vendored:
             manifest_lines.add(f"F aosp {n.path}")
         if n.kind in ("java", "kt"):
-            if not n.selected and not n.exclusion:
+            # An exclusion means the surrounding c.add tree does not select
+            # this file.  It still needs an explicit c.file entry; suppressing
+            # that line made the reported closure incomplete for patterns such
+            # as DatePicker*.java and android/window/*.java.
+            if not n.selected:
                 source_lines.add(f'    try c.file("{res.rules.spec_for(n.path)}");')
             for a in res.index.lookup(n.fqn).get("aidl", []):
                 if not res.manifest.vendored(a):
