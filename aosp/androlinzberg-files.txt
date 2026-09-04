@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=120 F=2900 total=3020
+# Rules: D=120 F=2901 total=3021
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -343,6 +343,7 @@ D aosp packages/modules/Connectivity/staticlibs/framework
 D aosp packages/modules/Media/apex/aidl/private
 D aosp packages/modules/Media/apex/aidl/stable
 D aosp packages/modules/Media/apex/framework/java
+F aosp packages/modules/NeuralNetworks/flags/ondevice_intelligence.aconfig
 D aosp packages/modules/Permission/flags
 D aosp packages/modules/Permission/framework-s/java
 D aosp packages/modules/SdkExtensions/java

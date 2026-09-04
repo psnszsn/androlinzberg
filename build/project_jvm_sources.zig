@@ -19,7 +19,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/app/admin/DeviceAdminReceiver.java",
     "src/framework-stubs/android/app/admin/DevicePolicyManager.java",
     "src/framework-stubs/android/app/admin/DevicePolicyResourcesManager.java",
-    "src/framework-stubs/android/app/ondeviceintelligence/flags/Flags.java",
     "src/framework-stubs/android/app/servertransaction/WindowContextInfoChangeItem.java",
     "src/framework-stubs/android/app/servertransaction/WindowContextWindowRemovalItem.java",
     "src/framework-stubs/android/bluetooth/BluetoothDevice.java",

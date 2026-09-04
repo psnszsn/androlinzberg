@@ -114,6 +114,7 @@ platform/packages/modules/ConfigInfrastructure
 platform/packages/modules/Connectivity
 platform/packages/modules/IPsec
 platform/packages/modules/Media
+platform/packages/modules/NeuralNetworks
 platform/packages/modules/Permission
 platform/packages/modules/RuntimeI18n
 platform/packages/modules/SdkExtensions

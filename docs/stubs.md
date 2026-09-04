@@ -10,13 +10,12 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 78 (budget 78). Survivors: 78. Total: 156.
+Pending: 78 (budget 78). Survivors: 77. Total: 155.
 
 ## Survivors
 
 | Stub | Reason | Audit |
 |---|---|---|
-| `android/app/ondeviceintelligence/flags/Flags.java` | aconfig declaration lives in an unvendored module tree | no-aosp-source |
 | `android/app/servertransaction/WindowContextInfoChangeItem.java` | window seam (WindowManagerService token protocol) | replaceable |
 | `android/app/servertransaction/WindowContextWindowRemovalItem.java` | window seam (WindowManagerService token protocol) | replaceable |
 | `android/bluetooth/BluetoothDevice.java` | no hosted Bluetooth Binder/socket stack; stock client reaches LocalSocket and native networking | blocked |

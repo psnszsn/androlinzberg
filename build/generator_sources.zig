@@ -689,6 +689,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "android.app.ondeviceintelligence.flags", .container = "system", .source = .aosp, .declarations = &.{"packages/modules/NeuralNetworks/flags/ondevice_intelligence.aconfig"} },
     .{ .package = "android.provider.flags", .container = "com.android.configinfrastructure", .source = .aosp, .declarations = &.{"packages/modules/ConfigInfrastructure/framework/flags.aconfig"} },
     .{ .package = "com.android.appsearch.flags", .container = "com.android.appsearch", .source = .aosp, .declarations = &.{"packages/modules/AppSearch/flags/appsearch.aconfig"} },
     .{ .package = "com.android.net.flags", .container = "com.android.tethering", .source = .aosp, .declarations = &.{"packages/modules/Connectivity/common/flags.aconfig"} },
