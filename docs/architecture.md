@@ -193,9 +193,12 @@ with no sensors), `SystemLightsManager` over `HostedLightsService`
 no transforms, night display off) and the input-device lights, sensor and
 vibrator managers over the hosted input service. Selected Connectivity client
 and value classes compile from the imported `packages/modules/Connectivity`
-framework trees. `ConnectivityManager` remains a stub because there is no
-hosted `IConnectivityManager`/`ConnectivityService` and its stock closure
-reaches NetworkUtils/BPF natives. The Wi-Fi projects are synced too, but their
+framework trees, including stock `NetworkUtils`. Its socket-to-network native
+validates Android network handles and live sockets, then uses the host's single
+physical route; there is no netd routing namespace to switch. `Network` carries
+the exact stock handle and bind contracts until its remaining proxy closure is
+ready. `ConnectivityManager` remains a stub because there is no hosted
+`IConnectivityManager`/`ConnectivityService`. The Wi-Fi projects are synced too, but their
 managers remain stubs because the host has no `IWifiManager`, Wi-Fi P2P, or
 supplicant-backed service and their stock closure crosses the same connectivity
 native boundary. Telephony and telecom are real: the

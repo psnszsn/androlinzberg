@@ -518,17 +518,25 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/Session2Link.java");
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/Session2Token.java");
     try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/EthernetNetworkSpecifier.java");
+    // Stock NetworkUtils and its Java signature closure. Only socket-to-network binding is
+    // hosted natively in this tranche; the netd asynchronous resolver surface stays outside it.
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/DnsResolver.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/IpPrefix.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/InetAddresses.java");
     try c.file("$A/frameworks/base/core/java/android/net/MatchAllNetworkSpecifier.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkCapabilities.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkInfo.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkRequest.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkUtils.java");
     try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/NetworkStats.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/QosSessionAttributes.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/RouteInfo.java");
     try c.file("$A/frameworks/base/core/java/android/net/TelephonyNetworkSpecifier.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/TestNetworkSpecifier.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/TcpRepairWindow.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/TransportInfo.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/UidRange.java");
+    try c.file("$A/packages/modules/Connectivity/framework/src/android/net/util/DnsUtils.java");
     try c.file("$A/packages/modules/SdkExtensions/java/android/os/ext/SdkExtensions.java");
     try c.file("$A/packages/modules/Permission/framework-s/java/android/permission/internal/compat/UserHandleCompat.java");
     try c.file("$A/packages/modules/ConfigInfrastructure/framework/java/android/provider/DeviceConfig.java");
@@ -581,7 +589,14 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$A/frameworks/libs/modules-utils/java/com/android/modules/utils/build/SdkLevel.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/BitUtils.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/CollectionUtils.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/DnsPacket.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/DnsPacketUtils.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/DnsSvcbRecord.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/HexDump.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/Inet4AddressUtils.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetUtils.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetworkCapabilitiesUtils.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetworkStackConstants.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetworkStatsUtils.java");
     try c.file("$A/external/jspecify/src/main/java/org/jspecify/annotations/NonNull.java");
     try c.file("$A/external/jspecify/src/main/java/org/jspecify/annotations/Nullable.java");

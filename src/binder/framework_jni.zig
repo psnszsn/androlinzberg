@@ -339,6 +339,55 @@ fn registerSharedMemory(env: JNIEnvPtr) !void {
     if (env.*.*.RegisterNatives.?(env, mf, &mf_methods, mf_methods.len) != 0) return error.RegisterFailed;
 }
 
+// ---------------------------------------------------------- NetworkUtils
+// AOSP NetworkUtils.bindSocketToNetworkHandle delegates to android_setsocknetwork,
+// which validates the encoded handle and asks netd to attach a fwmark to the socket.
+// This host exposes one physical route and has no netd/network namespaces, so a valid
+// Android handle is observationally already bound. Preserve validation and errno ABI.
+const NETWORK_HANDLE_MAGIC: u64 = 0xcafed00d;
+
+fn networkUtilsBindSocketToNetworkHandle(
+    env: JNIEnvPtr,
+    _: jni.jclass,
+    fdobj: jni.jobject,
+    network_handle: jni.jlong,
+) callconv(.c) jni.jint {
+    const handle: u64 = @bitCast(network_handle);
+    if (handle != 0 and @as(u32, @truncate(handle)) != NETWORK_HANDLE_MAGIC) {
+        return -@as(jni.jint, @intFromEnum(linux.E.INVAL));
+    }
+
+    // SO_TYPE is a side-effect-free validation that distinguishes a live socket
+    // from closed descriptors and non-socket FileDescriptors without changing it.
+    const fd = if (fdobj == null) -1 else fdInt(env, fdobj);
+    var socket_type: c_int = 0;
+    var socket_type_len: linux.socklen_t = @sizeOf(@TypeOf(socket_type));
+    const rc = linux.getsockopt(
+        fd,
+        linux.SOL.SOCKET,
+        linux.SO.TYPE,
+        @ptrCast(&socket_type),
+        &socket_type_len,
+    );
+    const socket_errno = linux.errno(rc);
+    if (socket_errno != .SUCCESS) {
+        return -@as(jni.jint, @intCast(@intFromEnum(socket_errno)));
+    }
+    return 0;
+}
+
+fn registerNetworkUtils(env: JNIEnvPtr) !void {
+    const cls = env.*.*.FindClass.?(env, "android/net/NetworkUtils") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method(
+            "bindSocketToNetworkHandle",
+            "(Ljava/io/FileDescriptor;J)I",
+            &networkUtilsBindSocketToNetworkHandle,
+        ),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+}
 
 // ------------------------------------------------------------------ Process
 // android.os.Process natives, following AOSP core/jni/android_util_Process.cpp
@@ -987,6 +1036,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     ndk.ensureJavaVm(env);
     registerSystemProperties(env) catch return -1;
     registerSharedMemory(env) catch return -1;
+    registerNetworkUtils(env) catch return -1;
     registerProcess(env) catch return -1;
     registerTrace(env) catch return -1;
     registerSystemClock(env) catch return -1;

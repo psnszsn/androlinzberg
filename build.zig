@@ -654,6 +654,17 @@ pub fn build(b: *std.Build) void {
     framework_compat_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_compat_smoke.run.setName("run framework compatibility smoke");
     jvm_test_step.dependOn(&framework_compat_smoke.run.step);
+    const connectivity_smoke = @import("build/command.zig").create(b);
+    setApplicationEnvironment(connectivity_smoke, application_tree);
+    connectivity_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    connectivity_smoke.addArg("--javatest");
+    connectivity_smoke.run.setEnvironmentVariable(
+        "AZK_TEST_CLASS",
+        "dev.artzig.ConnectivitySmoke",
+    );
+    connectivity_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    connectivity_smoke.run.setName("run connectivity handle and socket-binding smoke");
+    jvm_test_step.dependOn(&connectivity_smoke.run.step);
     // JNI true-sharing bridge: loads libbinder_ndk into the ART process and
     // round-trips a binder across the language boundary in both directions.
     const ndk_bridge_test = @import("build/command.zig").create(b);

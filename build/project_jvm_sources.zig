@@ -212,6 +212,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/AudioProbe.kt",
     "src/java/dev/artzig/BinderSession.kt",
     "src/java/dev/artzig/CodecProbe.kt",
+    "src/java/dev/artzig/ConnectivitySmoke.kt",
     "src/java/dev/artzig/FillProbe.kt",
     "src/java/dev/artzig/FontProbe.kt",
     "src/java/dev/artzig/FrameworkCompatSmoke.kt",

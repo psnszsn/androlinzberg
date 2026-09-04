@@ -32,6 +32,9 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.island, "lib/libandroid_platform.so");
     _ = tree.addCopyFile(options.stats_jni, "lib/art/libstats_jni.so");
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libbinder_ndk.so");
+    // Stock NetworkUtils loads this module name. Its hosted native is registered by the
+    // framework registrar already carried in libbinder_ndk, so expose that same Zig library.
+    _ = tree.addCopyFile(options.binder_ndk, "lib/art/libframework-connectivity-jni.so");
     _ = tree.addCopyFile(options.libart, "lib/art/libart.so");
     _ = tree.addCopyFile(options.libjavacrypto, "lib/art/libjavacrypto.so");
     for (options.bionic) |library| {
