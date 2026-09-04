@@ -711,12 +711,35 @@ class Resolver:
             r"[\w.$<>?\[\]]+\s+([a-zA-Z_]\w*)\s*\(",
             text,
         ))
-        if abstract_methods:
-            current_simple = current_fqn.rsplit(".", 1)[-1]
+        current_simple = current_fqn.rsplit(".", 1)[-1]
+        is_abstract_class = bool(re.search(
+            rf"\babstract\s+class\s+{re.escape(current_simple)}\b", text,
+        ))
+        if abstract_methods or is_abstract_class:
             for subclass, path in self.stubs.by_fqn.items():
                 if subclass == current_fqn:
                     continue
                 subclass_text = strip_code(read(path))
+                if is_abstract_class:
+                    subclass_package_match = PACKAGE_RE.search(subclass_text)
+                    subclass_package = (
+                        subclass_package_match.group(1) if subclass_package_match else ""
+                    )
+                    imported = {
+                        match.group(2).rsplit(".", 1)[-1]: match.group(2)
+                        for match in IMPORT_RE.finditer(subclass_text)
+                        if not match.group(1) and not match.group(3)
+                    }
+                    for instantiated in re.finditer(r"\bnew\s+([\w.]+)\s*\(", subclass_text):
+                        name = instantiated.group(1)
+                        resolved = (
+                            name if "." in name
+                            else imported.get(name, f"{subclass_package}.{name}")
+                        )
+                        if resolved == current_fqn:
+                            blockers.add(
+                                f"existing host class {subclass} instantiates abstract class {current_fqn}"
+                            )
                 declaration = re.search(
                     r"(?P<mods>(?:(?:public|protected|private|abstract|final)\s+)*)"
                     r"class\s+\w+\s+extends\s+(?P<base>[\w.]+)",

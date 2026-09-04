@@ -65,6 +65,13 @@ public abstract class Seed {
 public class Child extends Seed {}
 """
             )
+            (stubs / "seed/Factory.java").write_text(
+                """package seed;
+public class Factory {
+    public Seed create() { return new Seed(); }
+}
+"""
+            )
             # Classes only needs one entry to reject an accidentally empty live
             # build input; member validation reads the source fixtures above.
             (classes / "java/lang/Object.class").write_bytes(b"")
@@ -97,7 +104,11 @@ public class Child extends Seed {}
                 "existing host class seed.Child does not implement abstract method required",
                 blockers,
             )
-            self.assertEqual({"seed.Child"}, set(hosted.audit_by_fqn))
+            self.assertIn(
+                "existing host class seed.Factory instantiates abstract class seed.Seed",
+                blockers,
+            )
+            self.assertEqual({"seed.Child", "seed.Factory"}, set(hosted.audit_by_fqn))
 
             resolver.nodes = {}
             closure = resolver.closure(["seed.Seed", "host.Target"], absent={"seed.Seed", "host.Target"})

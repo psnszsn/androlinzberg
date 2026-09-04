@@ -274,7 +274,7 @@ Pending: 83 (budget 83). Survivors: 78. Total: 161.
 | `android/app/AlertDialog.java` | replaceable | frameworks/base/core/java/android/app/AlertDialog.java (3 to add), not vendored |
 | `android/app/Fragment.java` | blocked | frameworks/base/core/java/android/app/Fragment.java (7 to add), not vendored; android.app.Fragment: existing host class android.app.Activity lacks method onCreateContextMenu (via Fragment); android.app.Fragment: existing stub android.app.Activity lacks member FRAGMENTS_TAG (via Fragment) |
 | `android/app/FragmentManager.java` | blocked | frameworks/base/core/java/android/app/FragmentManager.java (11 to add), not vendored; android.app.BackStackRecord: existing stub android.app.Fragment lacks nested type OnStartEnterTransitionListener (via BackStackRecord < FragmentManager); android.app.BackStackRecord: existing stub android.app.Fragm |
-| `android/app/FragmentTransaction.java` | replaceable | frameworks/base/core/java/android/app/FragmentTransaction.java (1 to add), not vendored |
+| `android/app/FragmentTransaction.java` | blocked | frameworks/base/core/java/android/app/FragmentTransaction.java (1 to add), not vendored; android.app.FragmentTransaction: existing host class android.app.FragmentManager instantiates abstract class android.app.FragmentTransaction (via FragmentTransaction) |
 
 ### virtualdevice
 
