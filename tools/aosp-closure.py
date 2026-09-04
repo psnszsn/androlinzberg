@@ -372,6 +372,10 @@ class Classes:
 
     def add(self, entry: str) -> None:
         name = entry[:-6].replace("/", ".")
+        # Keep both the top-level class and its exact nested-class name.  A
+        # source may require Outer.Nested even when a hosted Outer shim is on
+        # the class path; collapsing every '$' entry to Outer hid that ABI gap.
+        self.names.add(name.replace("$", "."))
         self.names.add(name.split("$", 1)[0])
 
     def has(self, fqn: str) -> bool:
@@ -476,6 +480,13 @@ class Resolver:
     def canonical(self, fqn: str) -> str:
         """Reduce nested references (a.b.C.D, a.b.C.CONST) to the top-level class."""
         parts = fqn.split(".")
+        first_class = next((i for i, part in enumerate(parts) if part[:1].isupper()), None)
+        if first_class is not None and first_class + 1 < len(parts):
+            suffix = parts[-1]
+            # A missing nested type must not be collapsed to a present outer
+            # shim. Constants and member names still resolve through Outer.
+            if suffix[:1].isupper() and not suffix.isupper() and not self.exists(fqn):
+                return fqn
         for i in range(len(parts), 0, -1):
             cand = ".".join(parts[:i])
             if not parts[i - 1][:1].isupper():
@@ -495,6 +506,14 @@ class Resolver:
         n = Node(fqn)
         self.nodes[fqn] = n
         srcs = self.index.lookup(fqn)
+        if not srcs:
+            # Nested types live in their outer class's source file.  Resolve a
+            # missing nested ABI requirement to that file so the closure asks
+            # for the stock outer class instead of reporting "no source".
+            parts = fqn.split(".")
+            first_class = next((i for i, part in enumerate(parts) if part[:1].isupper()), None)
+            if first_class is not None and first_class + 1 < len(parts):
+                srcs = self.index.lookup(".".join(parts[: first_class + 1]))
         path = None
         if srcs.get("java"):
             path, n.kind = self.pick(srcs["java"]), "java"
