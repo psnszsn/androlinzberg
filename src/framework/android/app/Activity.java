@@ -246,6 +246,12 @@ public class Activity extends ContextWrapper implements Window.Callback,
     int getResultCode$artzig() { return mResultCode; }
     Intent getResultData$artzig() { return mResultData; }
     void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data) {
+        dispatchActivityResult(who, requestCode, resultCode, data, null,
+                "HostedActivityRuntime");
+    }
+    /** AOSP result dispatch shape overridden by ActivityGroup for embedded child ids. */
+    void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data,
+            ComponentCaller caller, String reason) {
         mFragments.noteStateNotSaved();
         if (who == null) {
             onActivityResult(requestCode, resultCode, data);

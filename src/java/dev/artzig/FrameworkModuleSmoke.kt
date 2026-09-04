@@ -3,6 +3,7 @@
 package dev.artzig
 
 import android.app.Activity
+import android.app.ActivityGroup
 import android.app.ActivityManager
 import android.app.ActivityThread
 import android.app.DownloadManager
@@ -110,6 +111,7 @@ internal object FrameworkModuleSmoke {
     private val events = mutableListOf<String>()
     private val legacyFragmentEvents = mutableListOf<String>()
     private val localActivityEvents = mutableListOf<String>()
+    private val activityGroupEvents = mutableListOf<String>()
     private val createdThemeResIds = mutableMapOf<String, Int>()
     private var expectedLocalActivityParent: Activity? = null
 
@@ -157,6 +159,7 @@ internal object FrameworkModuleSmoke {
         testHostedInputWindowRouting()
         testWindowPresentation()
         testLocalActivityManagerLifecycleAndRecreation()
+        testActivityGroupLifecycleStateAndResults()
         testLegacyFragmentTransactionsAndRecreation()
         testLegacyFragmentHostedResultsAndRetention()
         testActivityLifecycle()
@@ -2897,6 +2900,138 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private fun testActivityGroupLifecycleStateAndResults() {
+        val context = HostContexts.systemContext(
+            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
+            320,
+            240,
+            120,
+            0,
+        )
+        val groupName = RecordingActivityGroup::class.java.name
+        val childName = ActivityGroupChildActivity::class.java.name
+        val resultName = ActivityGroupResultActivity::class.java.name
+        val groupInfo = activityInfo(groupName).apply {
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
+        }
+        val childInfo = activityInfo(childName).apply {
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
+        }
+        val resultInfo = activityInfo(resultName).apply {
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
+        }
+        val adapter = LocalActivityHostAdapter(context)
+        val childIntent = Intent().setComponent(ComponentName("org.example", childName))
+        val resultIntent = Intent().setComponent(ComponentName("org.example", resultName))
+
+        ActivityThread.configureActivityHost(
+            adapter,
+            mapOf(groupName to groupInfo, childName to childInfo, resultName to resultInfo),
+        )
+        localActivityEvents.clear()
+        activityGroupEvents.clear()
+        try {
+            val group = ActivityThread.launchMainActivity(groupName) as RecordingActivityGroup
+            expectedLocalActivityParent = group
+            check(activityGroupEvents == listOf(
+                "group:create",
+                "group:start",
+                "group:post-create",
+                "group:resume",
+            )) { "ActivityGroup launch ordering: $activityGroupEvents" }
+
+            activityGroupEvents.clear()
+            val manager = group.localActivityManager
+            val childWindow = checkNotNull(manager.startActivity("group-child", childIntent))
+            val child = group.currentActivity as ActivityGroupChildActivity
+            check(manager.currentActivity === child && manager.currentId == "group-child")
+            check(childWindow === child.window && child.window.container === group.window)
+            check(localActivityEvents == listOf(
+                "group-child:create",
+                "group-child:start",
+                "group-child:post-create",
+                "group-child:resume",
+            )) { "ActivityGroup child launch ordering: $localActivityEvents" }
+
+            localActivityEvents.clear()
+            child.startActivityForResult(resultIntent, 73)
+            check(ActivityThread.currentActivity() is ActivityGroupResultActivity)
+            check(activityGroupEvents == listOf("group:pause", "group:stop"))
+            check(localActivityEvents == listOf("group-child:pause", "group-child:stop"))
+
+            val result = ActivityThread.currentActivity() as ActivityGroupResultActivity
+            result.setResult(
+                Activity.RESULT_OK,
+                Intent().putExtra("group-result", "delivered"),
+            )
+            result.finish()
+            check(ActivityThread.currentActivity() === group)
+            check(child.resultRequestCode == 73)
+            check(child.resultCode == Activity.RESULT_OK)
+            check(child.resultMarker == "delivered")
+            check(activityGroupEvents == listOf(
+                "group:pause",
+                "group:stop",
+                "group:start",
+                "group:resume",
+            )) { "ActivityGroup forwarded lifecycle ordering: $activityGroupEvents" }
+            check(localActivityEvents == listOf(
+                "group-child:pause",
+                "group-child:stop",
+                "group-child:result",
+                "group-child:restart",
+                "group-child:start",
+                "group-child:resume",
+            )) { "ActivityGroup child result/lifecycle ordering: $localActivityEvents" }
+
+            localActivityEvents.clear()
+            activityGroupEvents.clear()
+            group.recreate()
+            val restoredGroup = ActivityThread.currentActivity() as RecordingActivityGroup
+            expectedLocalActivityParent = restoredGroup
+            check(restoredGroup !== group)
+            check(restoredGroup.currentActivity == null)
+            check(activityGroupEvents == listOf(
+                "group:save",
+                "group:pause",
+                "group:stop",
+                "group:destroy",
+                "group:create:saved",
+                "group:start",
+                "group:restore",
+                "group:post-create:saved",
+                "group:resume",
+            )) { "ActivityGroup recreation ordering: $activityGroupEvents" }
+            check(localActivityEvents == listOf(
+                "group-child:save",
+                "group-child:pause",
+                "group-child:stop",
+                "group-child:destroy",
+            )) { "ActivityGroup child save/teardown ordering: $localActivityEvents" }
+
+            localActivityEvents.clear()
+            val restoredWindow = checkNotNull(
+                restoredGroup.localActivityManager.startActivity("group-child", childIntent),
+            )
+            val restoredChild = restoredGroup.currentActivity as ActivityGroupChildActivity
+            check(restoredChild !== child && restoredWindow !== childWindow)
+            check(restoredGroup.localActivityManager.currentId == "group-child")
+            check(localActivityEvents == listOf(
+                "group-child:create:saved",
+                "group-child:start",
+                "group-child:restore",
+                "group-child:post-create:saved",
+                "group-child:resume",
+            )) { "ActivityGroup child restore ordering: $localActivityEvents" }
+            check(adapter.presentedActivities.none { it is ActivityGroupChildActivity }) {
+                "ActivityGroup child escaped into the desktop presentation stack"
+            }
+        } finally {
+            expectedLocalActivityParent = null
+            ActivityThread.shutdownActivitiesInProcess()
+        }
+    }
+
     private fun testActivityLifecycle() {
         events.clear()
         createdThemeResIds.clear()
@@ -3437,6 +3572,82 @@ internal object FrameworkModuleSmoke {
             outState.putString("fragment-marker", "saved")
         }
     }
+
+    class RecordingActivityGroup : ActivityGroup() {
+        override fun onCreate(savedInstanceState: Bundle?) {
+            activityGroupEvents += if (savedInstanceState?.getString("group-state") == "saved") {
+                "group:create:saved"
+            } else {
+                "group:create"
+            }
+            super.onCreate(savedInstanceState)
+        }
+
+        override fun onStart() {
+            activityGroupEvents += "group:start"
+            super.onStart()
+        }
+
+        override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+            check(savedInstanceState.getString("group-state") == "saved")
+            activityGroupEvents += "group:restore"
+            super.onRestoreInstanceState(savedInstanceState)
+        }
+
+        override fun onPostCreate(savedInstanceState: Bundle?) {
+            activityGroupEvents += if (savedInstanceState?.getString("group-state") == "saved") {
+                "group:post-create:saved"
+            } else {
+                "group:post-create"
+            }
+            super.onPostCreate(savedInstanceState)
+        }
+
+        override fun onResume() {
+            activityGroupEvents += "group:resume"
+            super.onResume()
+        }
+
+        override fun onSaveInstanceState(outState: Bundle) {
+            activityGroupEvents += "group:save"
+            super.onSaveInstanceState(outState)
+            outState.putString("group-state", "saved")
+        }
+
+        override fun onPause() {
+            activityGroupEvents += "group:pause"
+            super.onPause()
+        }
+
+        override fun onStop() {
+            activityGroupEvents += "group:stop"
+            super.onStop()
+        }
+
+        override fun onDestroy() {
+            activityGroupEvents += "group:destroy"
+            super.onDestroy()
+        }
+    }
+
+    class ActivityGroupChildActivity : LocalRecordingActivity("group-child") {
+        var resultRequestCode = -1
+            private set
+        var resultCode = Activity.RESULT_CANCELED
+            private set
+        var resultMarker: String? = null
+            private set
+
+        override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+            localActivityEvents += "group-child:result"
+            resultRequestCode = requestCode
+            this.resultCode = resultCode
+            resultMarker = data?.getStringExtra("group-result")
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
+    class ActivityGroupResultActivity : Activity()
 
     class LocalParentActivity : Activity()
 
