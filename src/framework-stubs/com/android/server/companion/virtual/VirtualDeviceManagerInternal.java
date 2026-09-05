@@ -1,6 +1,7 @@
-/* artzig stub: no virtual devices on this host; nothing registers this in
- * LocalServices, so the reused services take their null (default-device)
- * paths. The class exists only so they compile. */
+/* artzig stub: the stock server class reaches VirtualDevice/IVirtualDevice and
+ * the fenced display, input, Bluetooth, and media stacks. The host registers
+ * a default-device-only implementation of this narrow LocalServices contract
+ * so reused services share one explicit empty virtual-device state. */
 package com.android.server.companion.virtual;
 public abstract class VirtualDeviceManagerInternal {
     public abstract android.util.ArraySet<Integer> getDeviceIdsForUid(int uid);

@@ -195,6 +195,7 @@ internal object FrameworkModuleSmoke {
         testPostedCallbackRunsAfterPendingTraversal()
         testTraversalRescheduleAndSharedQueue()
         testHostedSystemServices()
+        testHostedVirtualDeviceDefaults()
         testPictureInPictureContracts()
         testRemoteActionContract()
         testHostedActivityTaskServiceTransactions()
@@ -1308,6 +1309,16 @@ internal object FrameworkModuleSmoke {
             destination.delete()
         }
         check(!destination.exists())
+    }
+
+    private fun testHostedVirtualDeviceDefaults() {
+        val service = dev.artzig.system.HostedVirtualDeviceManagerInternal()
+        check(service.getDeviceOwnerUid(42) == -1)
+        check(service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).isEmpty())
+        check(service.getDisplayIdsForDevice(42).isEmpty())
+        // LocalService queries return snapshots; a caller cannot publish state by retaining one.
+        service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).add(42)
+        check(service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).isEmpty())
     }
 
     private fun testHostedActivityTaskServiceTransactions() {

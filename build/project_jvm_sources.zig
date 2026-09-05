@@ -277,6 +277,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedUriGrantsService.kt",
     "src/java/dev/artzig/system/HostedUsageStatsService.kt",
     "src/java/dev/artzig/system/HostedUserManagerService.kt",
+    "src/java/dev/artzig/system/HostedVirtualDeviceManagerInternal.kt",
     "src/java/dev/artzig/system/HostedVibratorManagerService.kt",
     "src/java/dev/artzig/system/HostedWallpaperManagerService.kt",
     "src/java/dev/artzig/system/PackageManagerServiceBase.kt",

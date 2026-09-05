@@ -176,6 +176,10 @@ internal object SystemServices {
             HostedWindowManagerInternal(),
         )
         LocalServices.addService(
+            com.android.server.companion.virtual.VirtualDeviceManagerInternal::class.java,
+            HostedVirtualDeviceManagerInternal(),
+        )
+        LocalServices.addService(
             com.android.server.uri.UriGrantsManagerInternal::class.java,
             HostedUriGrantsManagerInternal(),
         )
