@@ -689,6 +689,7 @@ internal object SystemTestClientA {
             "another package's stats need PACKAGE_USAGE_STATS",
         )
         StorageManagerSystemSmoke.run(context)
+        DevicePolicyManagerSystemSmoke.run(context)
 
         // --- device idle over the hosted IDeviceIdleController: nobody is exempt, nothing is idle.
         val exemptions = checkNotNull(context.getSystemService(android.os.PowerExemptionManager::class.java))

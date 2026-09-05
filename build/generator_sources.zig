@@ -13,6 +13,7 @@ pub const Hidl = struct {
     language: HidlLanguage,
     outputs: []const []const u8,
 };
+pub const Nano = struct { input: SourcePath, output: []const u8 };
 
 /// HIDL Java is generated from the pinned .hal declarations, matching Soong's
 /// hidl_interface backend. Only outputs required by framework clients are compiled.
@@ -29,6 +30,11 @@ pub const hidl = [_]Hidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/IAuditLogEventsCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/IDevicePolicyManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/StartInstallingUpdateCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/keystore/java/android/security/IKeyChainAliasCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/keystore/java/android/security/IKeyChainService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/biometrics/AuthenticationStateListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/biometrics/IAuthService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/biometrics/IBiometricEnabledOnKeyguardCallback.aidl" },
@@ -732,6 +738,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "android.view.contentprotection.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/contentprotection/flags/content_protection_flags.aconfig"} },
     .{ .package = "android.app.ondeviceintelligence.flags", .container = "system", .source = .aosp, .declarations = &.{"packages/modules/NeuralNetworks/flags/ondevice_intelligence.aconfig"} },
     .{ .package = "android.provider.flags", .container = "com.android.configinfrastructure", .source = .aosp, .declarations = &.{"packages/modules/ConfigInfrastructure/framework/flags.aconfig"} },
     .{ .package = "com.android.appsearch.flags", .container = "com.android.appsearch", .source = .aosp, .declarations = &.{"packages/modules/AppSearch/flags/appsearch.aconfig"} },
@@ -819,8 +826,9 @@ pub const sysprop = [_]Sysprop{
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/TelephonyProperties.sysprop" } },
 };
 
-pub const nano = [_]SourcePath{
-    .{ .source = .aosp, .path = "frameworks/base/proto/src/metrics_constants/metrics_constants.proto" },
+pub const nano = [_]Nano{
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/proto/src/metrics_constants/metrics_constants.proto" }, .output = "com/android/internal/logging/nano/MetricsProto.java" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/stats/devicepolicy/device_policy.proto" }, .output = "android/stats/devicepolicy/nano/StringList.java" },
 };
 
 pub const proto_inputs = [_]SourcePath{
@@ -882,6 +890,7 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/alarmmanager.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app_shared/app_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app/job/job_enums.proto" },
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/stats/devicepolicy/device_policy_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/os/enums.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/server/enums.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/server/location/enums.proto" },
@@ -981,6 +990,7 @@ pub const proto_outputs = [_][]const u8{
     "android/app/AlarmManagerProto.java",
     "android/app/AlarmClockInfoProto.java",
     "android/app/job/JobProtoEnums.java",
+    "android/stats/devicepolicy/DevicePolicyEnums.java",
     "android/os/PowerManagerInternalProto.java",
     "android/os/PowerManagerProto.java",
     "android/os/OsProtoEnums.java",
@@ -1303,7 +1313,11 @@ test "generator declarations map typed inputs to unique Java outputs" {
         for (entry.declarations) |path| try std.testing.expect(std.mem.endsWith(u8, path, ".aconfig"));
     }
     for (sysprop) |entry| try std.testing.expect(std.mem.endsWith(u8, entry.input.path, ".sysprop"));
-    for (nano) |input| try std.testing.expect(std.mem.endsWith(u8, input.path, ".proto"));
+    for (nano) |entry| {
+        try std.testing.expect(std.mem.endsWith(u8, entry.input.path, ".proto"));
+        try std.testing.expect(std.mem.endsWith(u8, entry.output, ".java"));
+        try expectUniqueOutput(&outputs, entry.output);
+    }
     for (proto_inputs) |input| try std.testing.expect(std.mem.endsWith(u8, input.path, ".proto"));
     for (proto_outputs) |output| {
         try std.testing.expect(std.mem.endsWith(u8, output, ".java"));

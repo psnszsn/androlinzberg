@@ -1,0 +1,174 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: artzig <artzig@localhost>
+Date: Fri, 4 Sep 2026 23:12:59 +0000
+Subject: [PATCH] DevicePolicyManager: cut unavailable host backends
+
+The hosted system exposes the stock device-policy client over a deliberately
+empty IDevicePolicyManager implementation. It has no Android zygote or ARM MTE,
+NFC stack, VPN-aware kernel traffic accounting, or Soong jarjar packaging.
+
+Keep the stock client surface and private-DNS TLS probe while cutting those
+unavailable implementation edges. NFC provisioning reports no result, MTE is
+not enforced on the x86_64 host, and the nano runtime uses its direct AOSP
+namespace.
+
+The platform build also jarjars modules-utils' string list parcelable into
+android.content.pm. Direct javac retains its source namespace, so use that
+equivalent type in the two internal AIDL declarations.
+
+diff --git a/core/java/android/app/admin/IDevicePolicyManager.aidl b/core/java/android/app/admin/IDevicePolicyManager.aidl
+index 102d227..7f1a5aa 100644
+--- a/core/java/android/app/admin/IDevicePolicyManager.aidl
++++ b/core/java/android/app/admin/IDevicePolicyManager.aidl
+@@ -42,7 +42,7 @@ import android.content.Intent;
+ import android.content.IntentFilter;
+ import android.content.pm.IPackageDataObserver;
+ import android.content.pm.ParceledListSlice;
+-import android.content.pm.StringParceledListSlice;
++import com.android.modules.utils.StringParceledListSlice;
+ import android.graphics.Bitmap;
+ import android.net.ProxyInfo;
+ import android.net.Uri;
+
+diff --git a/core/java/android/app/admin/DevicePolicyEventLogger.java b/core/java/android/app/admin/DevicePolicyEventLogger.java
+index bbc0bdf..ba5793b 100644
+--- a/core/java/android/app/admin/DevicePolicyEventLogger.java
++++ b/core/java/android/app/admin/DevicePolicyEventLogger.java
+@@ -20,7 +20,10 @@ import android.annotation.Nullable;
+ import android.content.ComponentName;
+ import android.stats.devicepolicy.nano.StringList;
+
+-import com.android.framework.protobuf.nano.MessageNano;
++// Host adaptation (artzig): Soong jarjars this dependency into
++// com.android.framework.protobuf.nano. The hosted direct-javac build compiles the same AOSP nano
++// runtime without the packaging rename.
++import com.google.protobuf.nano.MessageNano;
+ import com.android.internal.util.FrameworkStatsLog;
+
+ import java.util.Arrays;
+diff --git a/core/java/android/app/admin/DevicePolicyManager.java b/core/java/android/app/admin/DevicePolicyManager.java
+index c528db8..d590a91 100644
+--- a/core/java/android/app/admin/DevicePolicyManager.java
++++ b/core/java/android/app/admin/DevicePolicyManager.java
+@@ -114,7 +114,6 @@ import android.graphics.drawable.Drawable;
+ import android.net.PrivateDnsConnectivityChecker;
+ import android.net.ProxyInfo;
+ import android.net.Uri;
+-import android.nfc.NfcAdapter;
+ import android.os.Binder;
+ import android.os.Build;
+ import android.os.Bundle;
+@@ -130,7 +129,6 @@ import android.os.UserHandle;
+ import android.os.UserManager;
+ import android.os.UserManager.UserOperationException;
+ import android.os.UserManager.UserOperationResult;
+-import android.provider.CalendarContract;
+ import android.provider.ContactsContract.Directory;
+ import android.provider.Settings;
+ import android.security.AttestedKeyPair;
+@@ -143,7 +141,6 @@ import android.security.keystore.KeyAttestationException;
+ import android.security.keystore.KeyGenParameterSpec;
+ import android.security.keystore.ParcelableKeyGenParameterSpec;
+ import android.security.keystore.StrongBoxUnavailableException;
+-import android.service.restrictions.RestrictionsReceiver;
+ import android.telephony.TelephonyManager;
+ import android.telephony.data.ApnSetting;
+ import android.text.TextUtils;
+@@ -154,9 +151,7 @@ import android.util.Pair;
+
+ import com.android.internal.annotations.VisibleForTesting;
+ import com.android.internal.infra.AndroidFuture;
+-import com.android.internal.net.NetworkUtilsInternal;
+ import com.android.internal.os.BackgroundThread;
+-import com.android.internal.os.Zygote;
+ import com.android.internal.util.ArrayUtils;
+ import com.android.internal.util.Preconditions;
+ import com.android.org.conscrypt.TrustedCertificateStore;
+@@ -4248,7 +4243,9 @@ public class DevicePolicyManager {
+      * @return whether MTE is currently enabled on the device.
+      */
+     public static boolean isMtePolicyEnforced() {
+-        return Zygote.nativeSupportsMemoryTagging();
++        // Host adaptation (artzig): the desktop process is not forked from Android's zygote and
++        // the supported x86_64 host has no ARM Memory Tagging Extension.
++        return false;
+     }
+
+     /** Indicates that content protection is not controlled by policy, allowing user to choose. */
+@@ -16338,7 +16335,7 @@ public class DevicePolicyManager {
+             return PRIVATE_DNS_SET_ERROR_FAILURE_SETTING;
+         }
+
+-        if (NetworkUtilsInternal.isWeaklyValidatedHostname(privateDnsHost)) {
++        if (isWeaklyValidatedHostname(privateDnsHost)) {
+             if (!PrivateDnsConnectivityChecker.canConnectToPrivateDnsServer(privateDnsHost)) {
+                 return PRIVATE_DNS_SET_ERROR_HOST_NOT_SERVING;
+             }
+@@ -16352,6 +16349,18 @@ public class DevicePolicyManager {
+         }
+     }
+
++    /**
++     * The pure-Java portion of NetworkUtilsInternal.isWeaklyValidatedHostname. Keeping it here
++     * avoids importing that class's process-networking JNI, which has no hosted VPN counterpart.
++     */
++    private static boolean isWeaklyValidatedHostname(String hostname) {
++        if (!hostname.matches("^[a-zA-Z0-9_.-]+$")) {
++            return false;
++        }
++        return android.system.Os.inet_pton(android.system.OsConstants.AF_INET, hostname) == null
++                && android.system.Os.inet_pton(android.system.OsConstants.AF_INET6, hostname) == null;
++    }
++
+     /**
+      * Called by device owner or profile owner of an organization-owned managed profile to install
+      * a system update from the given file. The device will be
+@@ -17789,7 +17798,7 @@ public class DevicePolicyManager {
+      * <p>Prerequisites to create the provisioning intent:
+      *
+      * <ul>
+-     * <li>{@code nfcIntent}'s action is {@link NfcAdapter#ACTION_NDEF_DISCOVERED}</li>
++     * <li>{@code nfcIntent}'s action is the NFC NDEF-discovered action</li>
+      * <li>{@code nfcIntent}'s NFC properties contain either
+      * {@link #EXTRA_PROVISIONING_DEVICE_ADMIN_PACKAGE_NAME} or
+      * {@link #EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME} </li>
+@@ -17808,7 +17817,10 @@ public class DevicePolicyManager {
+     @Nullable
+     @SystemApi
+     public Intent createProvisioningIntentFromNfcIntent(@NonNull Intent nfcIntent) {
+-        return ProvisioningIntentHelper.createProvisioningIntentFromNfcIntent(nfcIntent);
++        Objects.requireNonNull(nfcIntent);
++        // Host adaptation (artzig): packages/modules/Nfc is not part of the hosted platform and
++        // no NFC transport can produce an NDEF provisioning intent.
++        return null;
+     }
+
+     /**
+diff --git a/core/java/android/net/PrivateDnsConnectivityChecker.java b/core/java/android/net/PrivateDnsConnectivityChecker.java
+index ac97b36..467aba0 100644
+--- a/core/java/android/net/PrivateDnsConnectivityChecker.java
++++ b/core/java/android/net/PrivateDnsConnectivityChecker.java
+@@ -44,7 +44,8 @@ public class PrivateDnsConnectivityChecker {
+      */
+     public static boolean canConnectToPrivateDnsServer(@NonNull String hostname) {
+         final SocketFactory factory = SSLSocketFactory.getDefault();
+-        TrafficStats.setThreadStatsTagApp();
++        // Host adaptation (artzig): Android kernel traffic-accounting tags do not exist for the
++        // host JVM's sockets. The TLS reachability test itself remains unchanged.
+
+         try (SSLSocket socket = (SSLSocket) factory.createSocket()) {
+             socket.setSoTimeout(CONNECTION_TIMEOUT_MS);
+diff --git a/keystore/java/android/security/IKeyChainService.aidl b/keystore/java/android/security/IKeyChainService.aidl
+index 9d70681..57d3bb0 100644
+--- a/keystore/java/android/security/IKeyChainService.aidl
++++ b/keystore/java/android/security/IKeyChainService.aidl
+@@ -15,6 +15,6 @@
+ package android.security;
+
+-import android.content.pm.StringParceledListSlice;
++import com.android.modules.utils.StringParceledListSlice;
+ import android.security.keymaster.KeymasterCertificateChain;
+ import android.security.keystore.ParcelableKeyGenParameterSpec;
+ import android.security.AppUriAuthenticationPolicy;
+--
+2.55.0

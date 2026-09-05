@@ -42,6 +42,7 @@ framework_patches = tuple(
         (24, "-WindowOrganizer-tolerate-host-SurfaceControl-apply-t.patch"),
         (25, "-TaskStackListener-tolerate-host-TaskSnapshot-buffer-.patch"),
         (26, "-StorageManager-cut-unavailable-vold-OBB-and-AppFuse-.patch"),
+        (27, "-DevicePolicyManager-cut-unavailable-host-backends.patch"),
     )
 )
 
@@ -63,6 +64,12 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "frameworks/minikin",
         patch_root / "minikin" / "0001-Hyphenator-always-use-the-C-implementation-on-host-n.patch",
+    ),
+    (
+        "packages/modules/Wifi",
+        patch_root
+        / "packages-modules-Wifi"
+        / "0001-WifiSsid-keep-legacy-unknown-SSID-without-WifiManage.patch",
     ),
 )
 

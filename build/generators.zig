@@ -77,6 +77,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/base/core/java/",
         "frameworks/base/graphics/java/",
         "frameworks/base/media/java/",
+        "frameworks/base/keystore/java/",
         "frameworks/base/apex/jobscheduler/framework/java/",
         "frameworks/base/native/android/aidl/",
         "frameworks/native/libs/input/",
@@ -155,6 +156,8 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
     run.addPrefixedDirectoryArg("-I", compat);
     inline for (.{
         "frameworks/base/media/java",
+        "frameworks/base/keystore/java",
+        "frameworks/libs/modules-utils/java",
         "frameworks/native/libs/input",
         "frameworks/native/aidl/binder",
         "frameworks/native/libs/binder/aidl",
@@ -209,6 +212,10 @@ fn aidlJava(
     const compat = b.addWriteFiles();
     _ = compat.addCopyDirectory(b.path("aidl-compat"), "", .{});
     _ = compat.addCopyDirectory(aosp.path(permission_aidl), "", .{ .include_extensions = &.{".aidl"} });
+    _ = compat.addCopyFile(
+        aosp.path("packages/modules/Connectivity/framework/aidl-export/android/net/ProxyInfo.aidl"),
+        "android/net/ProxyInfo.aidl",
+    );
     const compat_dir = compat.getDirectory();
 
     var files: std.ArrayList(LazyPath) = .empty;
@@ -387,14 +394,15 @@ fn syspropJava(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step
 fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) []const LazyPath {
     var files: std.ArrayList(LazyPath) = .empty;
     var index: usize = 0;
-    for (declarations.nano) |input| {
+    for (declarations.nano) |declaration| {
+        const input = declaration.input;
         const run = b.addRunArtifact(protoc);
         run.addPrefixedFileArg("--plugin=protoc-gen-javanano=", plugin.getEmittedBin());
         const output = run.addPrefixedOutputDirectoryArg("--javanano_out=", b.fmt("nano-java-{d}", .{index}));
         run.addPrefixedDirectoryArg("-I", sourceDir(b, aosp, input));
         run.addFileArg(sourcePath(b, aosp, input));
         run.setName(b.fmt("generate nano Java {s}", .{std.fs.path.basename(input.path)}));
-        files.append(b.allocator, output.path(b, "com/android/internal/logging/nano/MetricsProto.java")) catch @panic("OOM");
+        files.append(b.allocator, output.path(b, declaration.output)) catch @panic("OOM");
         index += 1;
     }
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");

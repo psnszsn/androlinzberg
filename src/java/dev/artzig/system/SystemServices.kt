@@ -289,6 +289,10 @@ internal object SystemServices {
         // AOSP StorageManager uses the historical ServiceManager name "mount";
         // Context.STORAGE_SERVICE is the Context wrapper name, not the transport.
         android.os.ServiceManager.addService("mount", HostedStorageManagerService(packageManager))
+        android.os.ServiceManager.addService(
+            Context.DEVICE_POLICY_SERVICE,
+            HostedDevicePolicyManagerService(),
+        )
         android.os.ServiceManager.addService(Context.STATUS_BAR_SERVICE, HostedStatusBarService())
         android.os.ServiceManager.addService(Context.INCIDENT_SERVICE, HostedIncidentManagerService())
         android.os.ServiceManager.addService(Context.INCIDENT_COMPANION_SERVICE, HostedIncidentCompanionService())

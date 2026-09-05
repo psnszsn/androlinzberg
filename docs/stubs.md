@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 70 (budget 70). Survivors: 68. Total: 138.
+Pending: 66 (budget 66). Survivors: 68. Total: 135.
 
 ## Survivors
 
@@ -159,9 +159,6 @@ Pending: 70 (budget 70). Survivors: 68. Total: 138.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/admin/DeviceAdminReceiver.java` | blocked | frameworks/base/core/java/android/app/admin/DeviceAdminReceiver.java (20 to add), not vendored; android.app.admin.DeviceAdminReceiver: existing host class android.app.admin.DevicePolicyManager lacks method isValidOperationSafetyReason (via DeviceAdminReceiver); android.app.admin.DeviceAdminReceiver: |
-| `android/app/admin/DevicePolicyManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyManager.java (144 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalServerSocket < Zygote < DevicePolicyManager); android.net.PrivateDnsConnectivityChecker: existing host class android.net.TrafficStats  |
-| `android/app/admin/DevicePolicyResourcesManager.java` | blocked | frameworks/base/core/java/android/app/admin/DevicePolicyResourcesManager.java (42 to add), not vendored; android.app.admin.PreferentialNetworkServiceConfig: existing stub android.app.admin.DevicePolicyManager lacks member PREFERENTIAL_NETWORK_SERVICE_ENABLED_DEFAULT (via PreferentialNetworkServiceCo |
 
 ### inputmethod
 

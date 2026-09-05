@@ -399,8 +399,17 @@ public final class SystemServiceRegistry {
                 return new android.permission.PermissionControllerManager(
                         ctx.getOuterContext(), ctx.getMainThreadHandler());
             }});
-        registerService(Context.DEVICE_POLICY_SERVICE, android.app.admin.DevicePolicyManager.class, new NewServiceFetcher<android.app.admin.DevicePolicyManager>() {
-            @Override public android.app.admin.DevicePolicyManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.app.admin.DevicePolicyManager(); }});
+        registerService(Context.DEVICE_POLICY_SERVICE, android.app.admin.DevicePolicyManager.class,
+                new NewServiceFetcher<android.app.admin.DevicePolicyManager>() {
+            @Override
+            public android.app.admin.DevicePolicyManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                android.os.IBinder binder = android.os.ServiceManager.getService(
+                        Context.DEVICE_POLICY_SERVICE);
+                return new android.app.admin.DevicePolicyManager(
+                        ctx.getOuterContext(),
+                        android.app.admin.IDevicePolicyManager.Stub.asInterface(binder));
+            }});
     }
 
     /** AOSP ContextAwareServiceProducerWithBinder / WithoutBinder (the framework initializers' API). */
