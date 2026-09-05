@@ -75,7 +75,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/os/AppBackgroundRestrictionsInfo.java",
     "src/framework-stubs/android/os/Debug.java",
     "src/framework-stubs/android/os/GraphicsEnvironment.java",
-    "src/framework-stubs/android/os/INetworkManagementService.java",
     "src/framework-stubs/android/os/InputEventInjectionSync.java",
     "src/framework-stubs/android/os/PerfettoTrace.java",
     "src/framework-stubs/android/os/PerformanceHintManager.java",

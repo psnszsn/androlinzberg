@@ -1354,6 +1354,7 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/android/app/backup/BackupAnnotations.java");
     try c.file("$CJ/android/app/backup/BackupRestoreEventLogger.java");
     try c.file("$CJ/android/app/backup/NotificationLoggingConstants.java");
+    try c.file("$CJ/android/net/InterfaceConfiguration.java");
     try c.file("$CJ/android/net/NetworkSpecifier.java");
     try c.file("$CJ/android/service/notification/Adjustment.java");
     try c.file("$CJ/android/service/notification/Condition.java");

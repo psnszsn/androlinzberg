@@ -2123,7 +2123,11 @@ F aosp frameworks/base/core/java/android/appwidget/flags.aconfig
 F aosp frameworks/base/core/java/android/content/om/FabricatedOverlay.java
 F aosp frameworks/base/core/java/android/content/om/OverlayManagerTransaction.aidl
 F aosp frameworks/base/core/java/android/content/om/OverlayManagerTransaction.java
+F aosp frameworks/base/core/java/android/net/INetworkManagementEventObserver.aidl
+F aosp frameworks/base/core/java/android/net/InterfaceConfiguration.aidl
+F aosp frameworks/base/core/java/android/net/InterfaceConfiguration.java
 F aosp frameworks/base/core/java/android/net/NetworkSpecifier.java
+F aosp frameworks/base/core/java/android/os/INetworkManagementService.aidl
 F aosp frameworks/base/core/java/android/service/notification/Adjustment.aidl
 F aosp frameworks/base/core/java/android/service/notification/Adjustment.java
 F aosp frameworks/base/core/java/android/service/notification/Condition.aidl

@@ -64,12 +64,16 @@ import android.media.AudioTrack
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.net.InetAddresses
+import android.net.INetworkManagementEventObserver
+import android.net.InterfaceConfiguration
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.ProxyInfo
 import android.os.Bundle
 import android.os.Binder
 import android.os.Handler
+import android.os.IBinder
+import android.os.INetworkManagementService
 import android.os.Looper
 import com.android.internal.pm.pkg.parsing.ParsingUtils
 import android.os.Parcel
@@ -267,6 +271,29 @@ internal object FrameworkModuleSmoke {
         }
         check(restoredProxy == proxy)
         check(ProxyInfo.buildPacProxy(Uri.parse("https://proxy.example/proxy.pac")).isValid)
+
+        val configuration = InterfaceConfiguration().apply {
+            hardwareAddress = "02:00:00:00:00:01"
+            setInterfaceUp()
+        }
+        val configurationParcel = Parcel.obtain()
+        val restoredConfiguration = try {
+            configuration.writeToParcel(configurationParcel, 0)
+            configurationParcel.setDataPosition(0)
+            InterfaceConfiguration.CREATOR.createFromParcel(configurationParcel)
+        } finally {
+            configurationParcel.recycle()
+        }
+        check(restoredConfiguration.hardwareAddress == "02:00:00:00:00:01")
+        check(restoredConfiguration.isUp)
+        check(
+            INetworkManagementService.Stub::class.java
+                .getDeclaredMethod("asInterface", IBinder::class.java) != null,
+        )
+        check(
+            INetworkManagementEventObserver.Stub::class.java
+                .getDeclaredMethod("asInterface", IBinder::class.java) != null,
+        )
 
         check(android.hardware.thermal.TemperatureType.CPU == 0)
         check(android.hardware.vibrator.Braking.CLAB == 1)

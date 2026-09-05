@@ -317,6 +317,8 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/IUidObserver.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/IUserSwitchObserver.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/ReceiverInfo.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkManagementEventObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/INetworkManagementService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IProgressListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/instrumentation/ExecutableMethodFileOffsets.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/instrumentation/IOffsetCallback.aidl" },
