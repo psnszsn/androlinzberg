@@ -100,6 +100,7 @@ AIDL_ROOTS = (
     "packages/modules/AppSearch/framework/java",
     "packages/modules/Bluetooth/android/app/aidl",
     "packages/modules/Bluetooth/common/bluetooth/constants",
+    "packages/modules/Bluetooth/framework/aidl-export",
     "packages/modules/Bluetooth/service/aidl",
     "packages/modules/ConfigInfrastructure/framework/java",
     "packages/modules/Connectivity/Tethering/common/TetheringLib/src",

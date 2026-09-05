@@ -77,8 +77,15 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
         }
     }
 
-    /** IBatteryStats reduced to what BatteryManager binds (see the stub interface). */
-    val batteryStats: IBatteryStats.Stub = object : IBatteryStats.Stub() {
+    /**
+     * Stock IBatteryStats transport with the BatteryManager client path served.
+     * Every method outside that path deliberately fails through the shared
+     * unsupported delegate so an exercised API is recorded as unimplemented.
+     */
+    val batteryStats: IBatteryStats.Stub = object : IBatteryStats.Stub(),
+        IBatteryStats by unsupported<IBatteryStats>() {
+        override fun asBinder(): android.os.IBinder = this
+
         override fun isCharging(): Boolean {
             val s = synchronized(lock) { snapshot }
             // BatteryStatsImpl.isCharging: plugged in and not discharging.

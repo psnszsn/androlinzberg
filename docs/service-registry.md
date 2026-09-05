@@ -7,7 +7,7 @@ framework jar (over a hosted service or, where AOSP tolerates it, over no servic
 *stub* client is a `src/framework-stubs` replacement; *not registered* means
 `getSystemService` returns null on this host.
 
-AOSP registers 144 services; the hosted registry registers 66: 59 real clients, 7 stub clients. 93 AOSP services are not registered.
+AOSP registers 144 services; the hosted registry registers 67: 61 real clients, 6 stub clients. 92 AOSP services are not registered.
 
 | Context name | binder name | AOSP client | hosted client | in AOSP registry |
 |---|---|---|---|---|
@@ -31,7 +31,7 @@ AOSP registers 144 services; the hosted registry registers 66: 59 real clients, 
 | AUTOFILL_MANAGER_SERVICE | `autofill` | `AutofillManager` | `AutofillManager` real | yes |
 | BACKGROUND_INSTALL_CONTROL_SERVICE | `background_install_control` | `BackgroundInstallControlManager` | not registered | yes |
 | BATTERY_SERVICE | `batterymanager` | `BatteryManager` | `BatteryManager` real | yes |
-| BATTERY_STATS_SERVICE | `batterystats` | `BatteryStatsManager` | not registered | yes |
+| BATTERY_STATS_SERVICE | `batterystats` | `BatteryStatsManager` | `BatteryStatsManager` real | yes |
 | BINARY_TRANSPARENCY_SERVICE | `transparency` | `BinaryTransparencyManager` | not registered | yes |
 | BIOMETRIC_SERVICE | `biometric` | `BiometricManager` | not registered | yes |
 | BUGREPORT_SERVICE | `bugreport` | `BugreportManager` | not registered | yes |
@@ -131,7 +131,7 @@ AOSP registers 144 services; the hosted registry registers 66: 59 real clients, 
 | SMS_SERVICE | `sms` | `-` | `SmsManager` real (initializer) | host-only |
 | SOUND_TRIGGER_SERVICE | `soundtrigger` | `SoundTriggerManager` | not registered | yes |
 | STATUS_BAR_SERVICE | `statusbar` | `StatusBarManager` | `StatusBarManager` real | yes |
-| STORAGE_SERVICE | `storage` | `StorageManager` | `StorageManager` stub | yes |
+| STORAGE_SERVICE | `storage` | `StorageManager` | `StorageManager` real | yes |
 | STORAGE_STATS_SERVICE | `storagestats` | `StorageStatsManager` | `StorageStatsManager` real | yes |
 | SUPERVISION_SERVICE | `supervision` | `SupervisionManager` | not registered | yes |
 | SYSTEM_CONFIG_SERVICE | `system_config` | `SystemConfigManager` | not registered | yes |

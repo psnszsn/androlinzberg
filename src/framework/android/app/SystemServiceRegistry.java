@@ -230,6 +230,18 @@ public final class SystemServiceRegistry {
                         .asInterface(android.os.ServiceManager.getServiceOrThrow("batteryproperties"));
                 return new android.os.BatteryManager(ctx, stats, registrar);
             }});
+        // AOSP SystemServiceRegistry registers the stock BatteryStatsManager over
+        // the batterystats Binder published by system_server. The hosted service
+        // publishes the same generated IBatteryStats transport in-process.
+        registerService(Context.BATTERY_STATS_SERVICE, android.os.BatteryStatsManager.class,
+                new CachedServiceFetcher<android.os.BatteryStatsManager>() {
+            @Override public android.os.BatteryStatsManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                android.os.IBinder binder = android.os.ServiceManager.getServiceOrThrow(
+                        Context.BATTERY_STATS_SERVICE);
+                return new android.os.BatteryStatsManager(
+                        com.android.internal.app.IBatteryStats.Stub.asInterface(binder));
+            }});
         registerService(Context.INPUT_SERVICE, android.hardware.input.InputManager.class, new CachedServiceFetcher<android.hardware.input.InputManager>() {
             @Override public android.hardware.input.InputManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.hardware.input.InputManager(ctx); }});
         registerService(Context.DISPLAY_SERVICE, android.hardware.display.DisplayManager.class, new CachedServiceFetcher<android.hardware.display.DisplayManager>() {

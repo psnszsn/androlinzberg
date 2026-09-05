@@ -1414,7 +1414,8 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     // Managers over hosted services, phase 2: the real PowerManager (+ thermal and power-save
     // value types, the dreams client types it references), the Vibrator family (VibrationEffect
     // and its segments, the XML (de)serializers, SystemVibrator/SystemVibratorManager),
-    // BatteryManager/BatteryState, UsageStatsManager and StorageStatsManager over the hosted
+    // BatteryManager/BatteryState, the stock BatteryStats model and generated IBatteryStats,
+    // UsageStatsManager and StorageStatsManager over the hosted
     // IPowerManager/IThermalService/IVibratorManagerService/IBatteryPropertiesRegistrar/
     // IUsageStatsManager/IStorageStatsManager services.
     try c.file("$CJ/android/app/usage/AppLaunchEstimateInfo.java");
@@ -1432,24 +1433,59 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.file("$CJ/android/app/usage/UsageStats.java");
     try c.file("$CJ/android/app/usage/UsageStatsManager.java");
     try c.file("$CJ/android/hardware/BatteryState.java");
+    try c.file("$CJ/android/location/GnssSignalQuality.java");
+    try c.file("$CJ/android/net/NetworkStack.java");
+    try c.file("$CJ/android/os/AggregateBatteryConsumer.java");
+    try c.file("$CJ/android/os/BatteryConsumer.java");
     try c.file("$CJ/android/os/BatteryManager.java");
     try c.file("$CJ/android/os/BatteryProperty.java");
     try c.file("$CJ/android/os/BatterySaverPolicyConfig.java");
+    try c.file("$CJ/android/os/BatteryStats.java");
+    try c.file("$CJ/android/os/BatteryStatsManager.java");
+    try c.file("$CJ/android/os/BatteryUsageStats.java");
+    try c.file("$CJ/android/os/BatteryUsageStatsQuery.java");
+    try c.file("$CJ/android/os/BluetoothBatteryStats.java");
     try c.file("$CJ/android/os/CombinedVibration.java");
     try c.file("$CJ/android/os/CoolingDevice.java");
     try c.file("$CJ/android/os/NullVibrator.java");
     try c.file("$CJ/android/os/ParcelDuration.java");
     try c.file("$CJ/android/os/PowerManager.java");
+    try c.file("$CJ/android/os/PowerComponents.java");
     try c.file("$CJ/android/os/PowerSaveState.java");
     try c.file("$CJ/android/os/SystemVibrator.java");
     try c.file("$CJ/android/os/SystemVibratorManager.java");
     try c.file("$CJ/android/os/Temperature.java");
+    try c.file("$CJ/android/os/UidBatteryConsumer.java");
+    try c.file("$CJ/android/os/UserBatteryConsumer.java");
     try c.file("$CJ/android/os/VibrationAttributes.java");
     try c.file("$CJ/android/os/VibrationEffect.java");
     try c.file("$CJ/android/os/Vibrator.java");
     try c.file("$CJ/android/os/VibratorInfo.java");
     try c.file("$CJ/android/os/VibratorManager.java");
+    try c.file("$CJ/android/os/WakeLockStats.java");
+    try c.file("$CJ/android/os/connectivity/CellularBatteryStats.java");
+    try c.file("$CJ/android/os/connectivity/GpsBatteryStats.java");
+    try c.file("$CJ/android/os/connectivity/WifiActivityEnergyInfo.java");
+    try c.file("$CJ/android/os/connectivity/WifiBatteryStats.java");
+    try c.file("$CJ/android/os/health/HealthKeys.java");
+    try c.file("$CJ/android/os/health/HealthStats.java");
+    try c.file("$CJ/android/os/health/HealthStatsParceler.java");
+    try c.file("$CJ/android/os/health/HealthStatsWriter.java");
+    try c.file("$CJ/android/os/health/TimerStat.java");
     try c.file("$CJ/android/os/storage/CrateInfo.java");
+    try c.file("$CJ/android/util/MutableBoolean.java");
+    try c.file("$CJ/android/util/SparseDoubleArray.java");
+    try c.file("$CJ/com/android/internal/os/BatteryStatsHistory.java");
+    try c.file("$CJ/com/android/internal/os/BatteryStatsHistoryIterator.java");
+    try c.file("$CJ/com/android/internal/os/Clock.java");
+    try c.file("$CJ/com/android/internal/os/CpuScalingPolicies.java");
+    try c.file("$CJ/com/android/internal/os/MonotonicClock.java");
+    try c.file("$CJ/com/android/internal/os/PowerProfile.java");
+    try c.file("$CJ/com/android/internal/os/PowerStats.java");
+    try c.file("$CJ/com/android/internal/power/ModemPowerProfile.java");
+    try c.file("$A/packages/modules/Bluetooth/framework/java/android/bluetooth/BluetoothActivityEnergyInfo.java");
+    try c.file("$A/packages/modules/Bluetooth/framework/java/android/bluetooth/UidTraffic.java");
+    try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/PermissionUtils.java");
     try c.file("$CJ/android/os/vibrator/BasicPwleSegment.java");
     try c.file("$CJ/android/os/vibrator/MultiVibratorInfo.java");
     try c.file("$CJ/android/os/vibrator/PrebakedSegment.java");

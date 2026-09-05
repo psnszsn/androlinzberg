@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 71 (budget 71). Survivors: 69. Total: 140.
+Pending: 70 (budget 70). Survivors: 68. Total: 138.
 
 ## Survivors
 
@@ -74,7 +74,6 @@ Pending: 71 (budget 71). Survivors: 69. Total: 140.
 | `android/window/WindowContext.java` | window seam (WindowManagerService token protocol) | blocked |
 | `android/window/WindowTokenClient.java` | window seam (WindowManagerService token protocol) | replaceable |
 | `android/window/WindowTokenClientController.java` | window seam (WindowManagerService token protocol) | blocked |
-| `com/android/internal/app/IBatteryStats.java` | hosted batterystats implements a reduced three-method Binder contract; full AIDL requires BatteryStats/proto model closure | blocked |
 | `com/android/internal/content/NativeLibraryHelper.java` | JNI natives (libandroid_runtime NativeLibraryHelper) | blocked |
 | `com/android/internal/os/ApplicationSharedMemory.java` | JNI natives (shared memory nonce area) | blocked |
 | `com/android/internal/os/RuntimeInit.java` | JNI natives (libandroid_runtime RuntimeInit / zygote) | blocked |
@@ -137,7 +136,6 @@ Pending: 71 (budget 71). Survivors: 69. Total: 140.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/BatteryStats.java` | blocked | frameworks/base/core/java/android/os/BatteryStats.java (31 to add), not vendored; android.os.BatteryStatsManager.WifiState: existing host class com.android.internal.app.IBatteryStats lacks method getBatteryUsageStats (via WifiState < BatteryStats); android.os.BatteryStatsManager.WifiState: existing  |
 
 ### biometrics
 

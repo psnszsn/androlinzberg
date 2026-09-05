@@ -625,7 +625,20 @@ internal object SystemTestClientA {
                 batterySticky.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1),
             "BATTERY_PROPERTY_STATUS agrees with the sticky broadcast",
         )
-        check(runCatching { battery.isCharging }.isSuccess, "isCharging reaches the hosted battery stats")
+        val charging = runCatching { battery.isCharging }.getOrElse { throw AssertionError("isCharging reaches the hosted battery stats", it) }
+        check(battery.computeChargeTimeRemaining() == -1L, "unknown charge time is reported by the hosted battery stats")
+        val batteryStats = checkNotNull(context.getSystemService(android.os.BatteryStatsManager::class.java))
+        check(
+            batteryStats.javaClass == android.os.BatteryStatsManager::class.java,
+            "BATTERY_STATS_SERVICE returns the stock BatteryStatsManager",
+        )
+        val batteryStatsBinder = com.android.internal.app.IBatteryStats.Stub.asInterface(
+            ServiceManager.getServiceOrThrow(Context.BATTERY_STATS_SERVICE),
+        )
+        check(
+            batteryStatsBinder.isCharging == charging && batteryStatsBinder.computeChargeTimeRemaining() == -1L,
+            "generated IBatteryStats transports the served charging client path",
+        )
 
         // --- vibrator: no vibrators on the host (VibratorManagerService with no HAL vibrators).
         val vibratorManager = checkNotNull(context.getSystemService(android.os.VibratorManager::class.java))

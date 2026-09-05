@@ -158,9 +158,11 @@ dump, always interactive, no power save or idle mode) and `HostedThermalService`
 (`IThermalService`: status NONE, no temperatures), the `Vibrator` family over
 `HostedVibratorManagerService` (`IVibratorManagerService`: no vibrators, requests
 validated then dropped as AOSP does without hardware), `BatteryManager` over
-`HostedBatteryService` (`IBatteryPropertiesRegistrar` and `IBatteryStats` read
-from `/sys/class/power_supply`, the sticky `ACTION_BATTERY_CHANGED` broadcast on
-the real queue, "not present, 100%, AC" without a battery), `UsageStatsManager`
+`HostedBatteryService` (the stock `BatteryManager`, `BatteryStatsManager` and
+`BatteryStats` model over generated `IBatteryPropertiesRegistrar` and
+`IBatteryStats` transports; the service reads `/sys/class/power_supply` and
+sends the sticky `ACTION_BATTERY_CHANGED` broadcast on the real queue, with
+"not present, 100%, AC" reported without a battery), `UsageStatsManager`
 over `HostedUsageStatsService` (`IUsageStatsManager`: foreground spans from the
 activity manager's process attach/death, app standby disabled),
 `StorageStatsManager` over `HostedStorageStatsService` (`IStorageStatsManager`:

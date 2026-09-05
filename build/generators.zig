@@ -107,6 +107,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "packages/modules/AppSearch/framework/java/",
         "packages/modules/Bluetooth/android/app/aidl/",
         "packages/modules/Bluetooth/common/bluetooth/constants/",
+        "packages/modules/Bluetooth/framework/aidl-export/",
         "packages/modules/Bluetooth/service/aidl/",
         "packages/modules/ConfigInfrastructure/framework/java/",
         "packages/modules/Connectivity/Tethering/common/TetheringLib/src/",
@@ -184,6 +185,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "packages/modules/AppSearch/framework/java",
         "packages/modules/Bluetooth/android/app/aidl",
         "packages/modules/Bluetooth/common/bluetooth/constants",
+        "packages/modules/Bluetooth/framework/aidl-export",
         "packages/modules/Bluetooth/service/aidl",
         "packages/modules/ConfigInfrastructure/framework/java",
         "packages/modules/Connectivity/Tethering/common/TetheringLib/src",
@@ -401,13 +403,19 @@ fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.
 }
 
 fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) []const LazyPath {
-    const run = b.addRunArtifact(protoc);
+    const run = command.create(b);
+    run.addFileArg(protoc.getEmittedBin());
     run.addPrefixedFileArg("--plugin=protoc-gen-javastream=", plugin.getEmittedBin());
     const output = run.addPrefixedOutputDirectoryArg("--javastream_out=", "javastream-java");
     run.addPrefixedDirectoryArg("-I", aosp.path(""));
     run.addPrefixedDirectoryArg("-I", aosp.path("external/protobuf/src"));
     for (declarations.proto_inputs) |input| run.addFileArg(sourcePath(b, aosp, input));
-    run.setName("generate javastream proto Java");
+    // The pinned battery usage schema retains a stats enum import that protoc
+    // diagnoses as unused. Soong permits that warning; keep it visible only as
+    // a filtered, known diagnostic while preserving strict stderr handling for
+    // every other generator message.
+    run.filterStderr("frameworks/base/core/proto/android/os/batteryusagestats.proto:22:1: warning: Import frameworks/proto_logging/stats/enums/os/enums.proto is unused.");
+    run.run.setName("generate javastream proto Java");
     const files = b.allocator.alloc(LazyPath, declarations.proto_outputs.len) catch @panic("OOM");
     for (declarations.proto_outputs, 0..) |path, index| files[index] = output.path(b, path);
     return files;
