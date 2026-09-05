@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 66 (budget 66). Survivors: 68. Total: 135.
+Pending: 66 (budget 66). Survivors: 68. Total: 134.
 
 ## Survivors
 
@@ -91,7 +91,7 @@ Pending: 66 (budget 66). Survivors: 68. Total: 135.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (622 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < Bluetooth |
+| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (615 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < Bluetooth |
 
 ### activity
 
@@ -100,42 +100,37 @@ Pending: 66 (budget 66). Survivors: 68. Total: 135.
 | `android/app/ActivityManager.java` | blocked | frameworks/base/core/java/android/app/ActivityManager.java (69 to add), not vendored; android.app.ActivityManager: existing host class android.app.AppGlobals lacks method getPermissionManager (via ActivityManager); android.app.ActivityManager: existing stub android.app.Instrumentation lacks member D |
 | `android/app/ActivityManagerInternal.java` | blocked | frameworks/base/core/java/android/app/ActivityManagerInternal.java (79 to add), not vendored; android.app.ActivityManager.ProcessCapability: existing host class android.app.AppGlobals lacks method getPermissionManager (via ProcessCapability < ActivityManagerInternal); android.app.ActivityManager.Pro |
 | `android/app/ActivityOptions.java` | blocked | frameworks/base/core/java/android/app/ActivityOptions.java (7 to add), not vendored; android.app.ActivityOptions.SourceInfo: existing stub android.window.SplashScreen lacks member SPLASH_SCREEN_STYLE_ICON (via SourceInfo < ActivityOptions); android.app.ActivityOptions.SourceInfo: existing stub andro |
-| `android/app/AppGlobals.java` | blocked | frameworks/base/core/java/android/app/AppGlobals.java (569 to add), not vendored; android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getIntCoreSetting (via AppGlobals); android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getPermissionM |
+| `android/app/AppGlobals.java` | blocked | frameworks/base/core/java/android/app/AppGlobals.java (562 to add), not vendored; android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getIntCoreSetting (via AppGlobals); android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getPermissionM |
 
 ### appops
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (635 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < PermissionUsa |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (631 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < PermissionUsa |
 
 ### audio
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (565 to add), not vendored; android.audio.policy.configuration.V7_0.AudioUsage: no source in the checkout (via AudioUsage < AudioAttributes); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks  |
+| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (558 to add), not vendored; android.audio.policy.configuration.V7_0.AudioUsage: no source in the checkout (via AudioUsage < AudioAttributes); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks  |
 | `android/media/AudioDeviceCallback.java` | replaceable | frameworks/base/media/java/android/media/AudioDeviceCallback.java (1 to add), not vendored |
-| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (567 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioDev |
+| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (560 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioDev |
 | `android/media/AudioFocusRequest.java` | blocked | frameworks/base/media/java/android/media/AudioFocusRequest.java (1 to add), not vendored; android.media.AudioFocusRequest: existing host class android.media.AudioAttributes lacks method getBundle (via AudioFocusRequest); android.media.AudioFocusRequest: existing stub android.media.AudioManager lacks |
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (789 to add), not vendored; android.audio.policy.configuration.V7_0.AudioUsage: no source in the checkout (via AudioUsage < AttributeSystemUsage < AudioManager); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.Bluet |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (782 to add), not vendored; android.audio.policy.configuration.V7_0.AudioUsage: no source in the checkout (via AudioUsage < AttributeSystemUsage < AudioManager); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.Bluet |
 | `android/media/AudioRouting.kt` | replaceable | frameworks/base/media/java/android/media/AudioRouting.java (1 to add), not vendored |
-| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (569 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothProfile < BluetoothProfileConnectionInfo < IA |
+| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (562 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothProfile < BluetoothProfileConnectionInfo < IA |
 | `android/media/MediaRoute2Info.java` | blocked | frameworks/base/media/java/android/media/MediaRoute2Info.java (2 to add), not vendored; android.media.MediaRoute2Info: existing stub android.media.AudioDeviceInfo lacks member TYPE_AUX_LINE (via MediaRoute2Info); android.media.MediaRoute2Info: existing stub android.media.AudioDeviceInfo lacks member |
-| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (580 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioRecord |
-| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (564 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothProfile < BluetoothProfileConnectionInfo < IAudioService < |
-| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (607 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < Utils <  |
+| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (573 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioRecord |
+| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (557 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothProfile < BluetoothProfileConnectionInfo < IAudioService < |
+| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (600 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < Utils <  |
 | `android/media/RouteDiscoveryPreference.java` | replaceable | frameworks/base/media/java/android/media/RouteDiscoveryPreference.java (1 to add), not vendored |
-| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (568 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioDeviceA |
+| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (561 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioDeviceA |
 
 ### autofill
 
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/widget/inline/InlineContentView.java` | blocked | frameworks/base/core/java/android/widget/inline/InlineContentView.java (1 to add); android.widget.inline.InlineContentView: existing host class android.view.SurfaceControl lacks method addOnReparentListener (via InlineContentView); android.widget.inline.InlineContentView: existing host class android |
-
-### battery
-
-| Stub | Audit | Closure |
-|---|---|---|
 
 ### biometrics
 
@@ -147,18 +142,13 @@ Pending: 66 (budget 66). Survivors: 68. Total: 135.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/CompanionDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/CompanionDeviceManager.java (263 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < CompanionDeviceManager); android.bluetooth.Bluetooth |
+| `android/companion/CompanionDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/CompanionDeviceManager.java (256 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < CompanionDeviceManager); android.bluetooth.Bluetooth |
 
 ### connectivity
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/net/NetworkScoreManager.java` | blocked | frameworks/base/core/java/android/net/NetworkScoreManager.java (52 to add), not vendored; android.net.NetworkKey: existing stub android.net.wifi.WifiManager lacks member UNKNOWN_SSID (via NetworkKey < NetworkScoreManager); android.net.wifi.ScanResult: existing stub android.net.wifi.WifiManager lacks |
-
-### devicepolicy
-
-| Stub | Audit | Closure |
-|---|---|---|
+| `android/net/NetworkScoreManager.java` | blocked | frameworks/base/core/java/android/net/NetworkScoreManager.java (49 to add), not vendored; android.net.NetworkKey: existing stub android.net.wifi.WifiManager lacks member UNKNOWN_SSID (via NetworkKey < NetworkScoreManager); android.net.wifi.ScanResult: existing stub android.net.wifi.WifiManager lacks |
 
 ### inputmethod
 
@@ -203,13 +193,13 @@ Pending: 66 (budget 66). Survivors: 68. Total: 135.
 | `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (15 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no  |
 | `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (3 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig); com.android.server.SystemConfig: existing host class android.os.incremental.IncrementalManager lacks method getVersion (vi |
 | `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3573 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3468 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
 | `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3571 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3686 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3466 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3581 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
 | `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (5 to add), not vendored; android.service.pm.PackageProto.UserInfoProto.ArchiveState.ArchiveActivityInfo: no source in the checkout (via ArchiveActivityInfo < PackageSetting); android.service.pm.PackageProto: generated: pro |
 | `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (21 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.C |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3585 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3480 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
 
 ### permission
 
@@ -221,31 +211,30 @@ Pending: 66 (budget 66). Survivors: 68. Total: 135.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/os/INetworkManagementService.java` | replaceable | frameworks/base/core/java/android/os/INetworkManagementService.aidl (3 to add, AIDL interface), not vendored |
 | `com/android/internal/os/BinderCallsStats.java` | blocked | frameworks/base/core/java/com/android/internal/os/BinderCallsStats.java (10 to add), not vendored; com.android.internal.os.BinderLatencyProto.ApiStats: no source in the checkout (via ApiStats < BinderLatencyObserver < BinderCallsStats); com.android.internal.os.BinderLatencyProto.Dims: no source in t |
-| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (69 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < ZygoteInit < SystemServerClassLoaderFactory); android.net.http.Flags: no source in the checko |
+| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (72 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < ZygoteInit < SystemServerClassLoaderFactory); android.net.http.Flags: no source in the checko |
 
 ### systemserver
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3571 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3466 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
 | `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server. |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3571 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3466 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
 
 ### textclassifier
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (623 to add); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AidlConvers |
+| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (616 to add); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AidlConvers |
 | `android/speech/tts/TextToSpeech.java` | blocked | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (11 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < TextToSpeech); android.companion.virtual.VirtualDevice: ex |
 
 ### virtualdevice
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (596 to add, AIDL interface), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfi |
-| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (617 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothLeUtils < ScanRecord < ScanResult < A |
+| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (589 to add, AIDL interface), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfi |
+| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (610 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothLeUtils < ScanRecord < ScanResult < A |
 | `android/companion/virtual/VirtualDeviceParams.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add), not vendored; android.companion.virtual.VirtualDeviceParams: existing stub android.media.AudioManager lacks member AUDIO_SESSION_ID_GENERATE (via VirtualDeviceParams); android.companion.virtual.sensor.VirtualSen |
 | `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceMan |
 
@@ -253,9 +242,9 @@ Pending: 66 (budget 66). Survivors: 68. Total: 135.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (69 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < CookieManager); android.net.http.Flags: no source in the checkout (via Flags < ZygoteI |
-| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (71 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebChromeClient); android.net.http.Flags: no source in the checkout (via Flags < Zyg |
-| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (69 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebSettings); android.net.http.Flags: no source in the checkout (via Flags < ZygoteInit  |
+| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (72 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < CookieManager); android.net.http.Flags: no source in the checkout (via Flags < ZygoteI |
+| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (74 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebChromeClient); android.net.http.Flags: no source in the checkout (via Flags < Zyg |
+| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (72 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebSettings); android.net.http.Flags: no source in the checkout (via Flags < ZygoteInit  |
 | `android/webkit/WebViewClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebViewClient.java (1 to add), not vendored; android.webkit.WebViewClient: existing host class android.view.ViewRootImpl lacks method dispatchUnhandledInputEvent (via WebViewClient) |
 
 ### window
