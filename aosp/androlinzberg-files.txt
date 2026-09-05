@@ -251,6 +251,7 @@ D aosp external/kotlinc
 D aosp external/libphonenumber/repackaged/geocoder/src
 D aosp external/libphonenumber/repackaged/internal/prefixmapper/src
 D aosp external/libphonenumber/repackaged/libphonenumber/src
+D aosp external/perfetto/protos
 D aosp external/protobuf
 D aosp external/skia
 D aosp external/tagsoup/src/org/ccil/cowan/tagsoup
@@ -958,6 +959,8 @@ F aosp frameworks/base/core/java/android/service/textclassifier/ITextClassifierC
 F aosp frameworks/base/core/java/android/service/textclassifier/ITextClassifierService.aidl
 F aosp frameworks/base/core/java/android/service/translation/ITranslationCallback.aidl
 F aosp frameworks/base/core/java/android/tracing/flags.aconfig
+F aosp frameworks/base/core/java/android/tracing/inputmethod/InputMethodDataSource.java
+D aosp frameworks/base/core/java/android/tracing/perfetto
 F aosp frameworks/base/core/java/android/util/AndroidException.java
 F aosp frameworks/base/core/java/android/util/AndroidRuntimeException.java
 F aosp frameworks/base/core/java/android/util/ArrayMap.java
@@ -1615,6 +1618,7 @@ F aosp frameworks/base/core/java/com/android/internal/inputmethod/IRemoteAccessi
 F aosp frameworks/base/core/java/com/android/internal/inputmethod/IRemoteAccessibilityInputConnectionInvoker.java
 F aosp frameworks/base/core/java/com/android/internal/inputmethod/IRemoteInputConnection.aidl
 F aosp frameworks/base/core/java/com/android/internal/inputmethod/ImeTracing.java
+F aosp frameworks/base/core/java/com/android/internal/inputmethod/ImeTracingPerfettoImpl.java
 F aosp frameworks/base/core/java/com/android/internal/inputmethod/ImeTracingClientImpl.java
 F aosp frameworks/base/core/java/com/android/internal/inputmethod/InlineSuggestionsRequestCallback.java
 F aosp frameworks/base/core/java/com/android/internal/inputmethod/InlineSuggestionsRequestInfo.java

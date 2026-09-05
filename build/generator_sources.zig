@@ -979,6 +979,35 @@ pub const proto_outputs = [_][]const u8{
     "android/telephony/TelephonyProtoEnums.java",
 };
 
+/// Perfetto's framework javastream library is generated from only the message
+/// types selected by its Soong `include_filter`, then relocated by the
+/// framework JarJar rule from perfetto.protos to android.internal.perfetto.protos.
+pub const perfetto_proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/config/data_source_config.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/config/android/protolog_config.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/common/protolog_common.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/interned_data/interned_data.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/profiling/profile_common.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/android/protolog.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/trace_packet.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/android/inputmethodeditor.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/android/winscope_extensions_impl.proto" },
+};
+
+pub const perfetto_proto_include_filter = "include_filter:perfetto.protos.TracePacket,perfetto.protos.ProtoLogMessage,perfetto.protos.ProtoLogViewerConfig,perfetto.protos.ProtoLogGroup,perfetto.protos.ProtoLogConfig,perfetto.protos.DataSourceConfig,perfetto.protos.InternedString,perfetto.protos.InternedData,perfetto.protos.ProtoLogLevel,perfetto.protos.WinscopeExtensionsImpl,perfetto.protos.InputMethodClientsTraceProto,perfetto.protos.InputMethodManagerServiceTraceProto,perfetto.protos.InputMethodServiceTraceProto";
+
+pub const perfetto_proto_outputs = [_][]const u8{
+    "android/internal/perfetto/protos/DataSourceConfigOuterClass.java",
+    "android/internal/perfetto/protos/Inputmethodeditor.java",
+    "android/internal/perfetto/protos/InternedDataOuterClass.java",
+    "android/internal/perfetto/protos/ProfileCommon.java",
+    "android/internal/perfetto/protos/Protolog.java",
+    "android/internal/perfetto/protos/ProtologCommon.java",
+    "android/internal/perfetto/protos/ProtologConfig.java",
+    "android/internal/perfetto/protos/TracePacketOuterClass.java",
+    "android/internal/perfetto/protos/WinscopeExtensionsImplOuterClass.java",
+};
+
 pub const stats_protos = [_][]const u8{
     "frameworks/proto_logging/stats/atom_field_options.proto",
     "frameworks/proto_logging/stats/atoms.proto",
@@ -1269,6 +1298,13 @@ test "generator declarations map typed inputs to unique Java outputs" {
     for (nano) |input| try std.testing.expect(std.mem.endsWith(u8, input.path, ".proto"));
     for (proto_inputs) |input| try std.testing.expect(std.mem.endsWith(u8, input.path, ".proto"));
     for (proto_outputs) |output| {
+        try std.testing.expect(std.mem.endsWith(u8, output, ".java"));
+        try expectUniqueOutput(&outputs, output);
+    }
+    try std.testing.expect(std.mem.startsWith(u8, perfetto_proto_include_filter, "include_filter:"));
+    for (perfetto_proto_inputs) |input| try std.testing.expect(std.mem.endsWith(u8, input.path, ".proto"));
+    for (perfetto_proto_outputs) |output| {
+        try std.testing.expect(std.mem.startsWith(u8, output, "android/internal/perfetto/protos/"));
         try std.testing.expect(std.mem.endsWith(u8, output, ".java"));
         try expectUniqueOutput(&outputs, output);
     }

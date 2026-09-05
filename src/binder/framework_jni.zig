@@ -801,6 +801,75 @@ fn registerTrace(env: JNIEnvPtr) !void {
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }
 
+// ---------------------------------------------------------- Perfetto tracing
+// AOSP android.tracing.perfetto delegates to libperfetto_client_experimental.
+// The hosted application process has no Perfetto producer socket or tracing
+// service, so the native seam registers data sources but leaves them inactive.
+// Returning false from iterateBegin preserves DataSource.trace's normal
+// disabled fast path; stock Java clients therefore keep their lifecycle and
+// reentrancy behavior without manufacturing trace packets that have no sink.
+
+fn perfettoProducerInit(_: JNIEnvPtr, _: jni.jclass, _: jni.jint, _: jni.jint) callconv(.c) void {}
+fn perfettoDataSourceCreate(_: JNIEnvPtr, _: jni.jclass, _: jni.jobject, _: jni.jstring) callconv(.c) jni.jlong {
+    return 0;
+}
+fn perfettoDataSourceRegister(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jint, _: jni.jboolean, _: jni.jboolean) callconv(.c) void {}
+fn perfettoDataSourceLongVoid(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong) callconv(.c) void {}
+fn perfettoDataSourceFinalizer(_: JNIEnvPtr, _: jni.jclass) callconv(.c) jni.jlong {
+    return 0;
+}
+fn perfettoDataSourceGetInstance(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jint) callconv(.c) jni.jobject {
+    return null;
+}
+fn perfettoDataSourceReleaseInstance(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jint) callconv(.c) void {}
+fn perfettoDataSourceIterate(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong) callconv(.c) jni.jboolean {
+    return jni.JNI_FALSE;
+}
+fn perfettoDataSourceIndex(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong) callconv(.c) jni.jint {
+    return 0;
+}
+fn perfettoDataSourceWrite(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jobjectArray) callconv(.c) void {}
+fn perfettoStateGet(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong) callconv(.c) jni.jobject {
+    return null;
+}
+fn perfettoStateSet(_: JNIEnvPtr, _: jni.jclass, _: jni.jlong, _: jni.jobject) callconv(.c) void {}
+
+fn registerPerfetto(env: JNIEnvPtr) !void {
+    const producer = env.*.*.FindClass.?(env, "android/tracing/perfetto/Producer") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, producer);
+    const producer_methods = [_]jni.JNINativeMethod{
+        method("nativePerfettoProducerInit", "(II)V", &perfettoProducerInit),
+    };
+    if (env.*.*.RegisterNatives.?(env, producer, &producer_methods, producer_methods.len) != 0) return error.RegisterFailed;
+
+    const data_source = env.*.*.FindClass.?(env, "android/tracing/perfetto/DataSource") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, data_source);
+    const data_source_methods = [_]jni.JNINativeMethod{
+        method("nativeRegisterDataSource", "(JIZZ)V", &perfettoDataSourceRegister),
+        method("nativeCreate", "(Landroid/tracing/perfetto/DataSource;Ljava/lang/String;)J", &perfettoDataSourceCreate),
+        method("nativeFlushAll", "(J)V", &perfettoDataSourceLongVoid),
+        method("nativeGetFinalizer", "()J", &perfettoDataSourceFinalizer),
+        method("nativeGetPerfettoInstanceLocked", "(JI)Landroid/tracing/perfetto/DataSourceInstance;", &perfettoDataSourceGetInstance),
+        method("nativeReleasePerfettoInstanceLocked", "(JI)V", &perfettoDataSourceReleaseInstance),
+        method("nativePerfettoDsTraceIterateBegin", "(J)Z", &perfettoDataSourceIterate),
+        method("nativePerfettoDsTraceIterateNext", "(J)Z", &perfettoDataSourceIterate),
+        method("nativePerfettoDsTraceIterateBreak", "(J)V", &perfettoDataSourceLongVoid),
+        method("nativeGetPerfettoDsInstanceIndex", "(J)I", &perfettoDataSourceIndex),
+        method("nativeWritePackets", "(J[[B)V", &perfettoDataSourceWrite),
+    };
+    if (env.*.*.RegisterNatives.?(env, data_source, &data_source_methods, data_source_methods.len) != 0) return error.RegisterFailed;
+
+    const tracing_context = env.*.*.FindClass.?(env, "android/tracing/perfetto/TracingContext") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, tracing_context);
+    const tracing_context_methods = [_]jni.JNINativeMethod{
+        method("nativeGetCustomTls", "(J)Ljava/lang/Object;", &perfettoStateGet),
+        method("nativeSetCustomTls", "(JLjava/lang/Object;)V", &perfettoStateSet),
+        method("nativeGetIncrementalState", "(J)Ljava/lang/Object;", &perfettoStateGet),
+        method("nativeSetIncrementalState", "(JLjava/lang/Object;)V", &perfettoStateSet),
+    };
+    if (env.*.*.RegisterNatives.?(env, tracing_context, &tracing_context_methods, tracing_context_methods.len) != 0) return error.RegisterFailed;
+}
+
 // ---------------------------------------------------- ClassLoaderFactory
 // AOSP com_android_internal_os_ClassLoaderFactory.cpp asks libnativeloader for
 // a linker namespace per app class loader. The bionic bridge on this host has
@@ -1177,6 +1246,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerNetworkUtils(env) catch return -1;
     registerProcess(env) catch return -1;
     registerTrace(env) catch return -1;
+    registerPerfetto(env) catch return -1;
     registerSystemClock(env) catch return -1;
     registerClassLoaderFactory(env) catch return -1;
     registerCharsetUtils(env) catch return -1;

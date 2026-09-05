@@ -61,6 +61,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
     build_tools_test.dependOn(&b.addRunArtifact(generator_declaration_tests).step);
+    const rewrite_java_package_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/rewrite-java-package.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    build_tools_test.dependOn(&b.addRunArtifact(rewrite_java_package_tests).step);
 
     // --- zig-wayland: generate protocol bindings
     const scanner = Scanner.create(b, .{});

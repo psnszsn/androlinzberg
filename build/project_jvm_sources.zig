@@ -113,7 +113,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/com/android/internal/accessibility/AccessibilityShortcutController.java",
     "src/framework-stubs/com/android/internal/app/IBatteryStats.java",
     "src/framework-stubs/com/android/internal/content/NativeLibraryHelper.java",
-    "src/framework-stubs/com/android/internal/inputmethod/ImeTracingPerfettoImpl.java",
     "src/framework-stubs/com/android/internal/os/ApplicationSharedMemory.java",
     "src/framework-stubs/com/android/internal/os/BinderCallsStats.java",
     "src/framework-stubs/com/android/internal/os/RuntimeInit.java",

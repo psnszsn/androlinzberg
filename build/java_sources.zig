@@ -629,6 +629,8 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.add("$FB/core/java/android/view/autofill", .{ .max_depth = 1, .not_names = &.{"AutofillClientController.java"} });
     try c.add("$FB/core/java/android/view/contentcapture", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/inputmethod", .{ .max_depth = 1 });
+    try c.file("$FB/core/java/android/tracing/inputmethod/InputMethodDataSource.java");
+    try c.add("$FB/core/java/android/tracing/perfetto", .{});
     try c.add("$FB/core/java/android/view/translation", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/inspector", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/widget", .{ .max_depth = 1, .not_names = &.{ "VideoView.java", "RemoteViewsService.java", "MediaController.java", "QuickContactBadge.java", "DayPicker*.java", "DatePicker*.java", "TimePicker*.java", "RadialTimePickerView.java", "SimpleMonthView.java", "CalendarView*.java", "YearPickerView.java", "TextViewWithCircularIndicator.java", "DateTimeView.java", "TextInputTimePickerView.java", "ActivityChooserModel.java", "ActivityChooserView.java", "ShareActionProvider.java" } });
@@ -641,7 +643,7 @@ try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/co
     try c.add("$FB/core/java/com/android/internal/policy", .{ .max_depth = 1, .not_names = &.{ "TransitionAnimation.java", "PhoneFallbackEventHandler.java", "FoldLockSettingsObserver.java", "ForceShowNavBarSettingsObserver.java", "GestureNavigationSettingsObserver.java", "AttributeCache.java" } });
     try c.add("$FB/core/java/com/android/internal/view", .{ .max_depth = 1 });
     try c.add("$FB/core/java/com/android/internal/view/menu", .{});
-    try c.add("$FB/core/java/com/android/internal/inputmethod", .{ .max_depth = 1, .not_names = &.{"ImeTracingPerfettoImpl.java"} });
+    try c.add("$FB/core/java/com/android/internal/inputmethod", .{ .max_depth = 1 });
     try c.add("$FB/core/java/com/android/internal/protolog/common", .{});
     try c.file("$FB/core/java/com/android/internal/protolog/ProtoLogGroup.java");
     try c.add("$FB/core/java/com/android/internal/infra", .{ .max_depth = 1, .not_names = &.{ "AbstractRemoteService.java", "ServiceConnector.java", "AbstractMultiplePendingRequestsRemoteService.java", "AbstractSinglePendingRequestRemoteService.java" } });

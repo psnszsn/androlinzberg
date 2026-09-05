@@ -400,7 +400,7 @@ fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.
     return result;
 }
 
-fn protoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) []const LazyPath {
+fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) []const LazyPath {
     const run = b.addRunArtifact(protoc);
     run.addPrefixedFileArg("--plugin=protoc-gen-javastream=", plugin.getEmittedBin());
     const output = run.addPrefixedOutputDirectoryArg("--javastream_out=", "javastream-java");
@@ -410,8 +410,52 @@ fn protoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step
     run.setName("generate javastream proto Java");
     const files = b.allocator.alloc(LazyPath, declarations.proto_outputs.len) catch @panic("OOM");
     for (declarations.proto_outputs, 0..) |path, index| files[index] = output.path(b, path);
-    _ = exposePaths(b, "gen-proto", "Generate framework javastream proto sources", files);
     return files;
+}
+
+fn perfettoProtoJava(
+    b: *std.Build,
+    aosp: *std.Build.Dependency,
+    protoc: *std.Build.Step.Compile,
+    plugin: *std.Build.Step.Compile,
+    package_rewriter: *std.Build.Step.Compile,
+) []const LazyPath {
+    const run = b.addRunArtifact(protoc);
+    run.addPrefixedFileArg("--plugin=protoc-gen-javastream=", plugin.getEmittedBin());
+    run.addArg(b.fmt("--javastream_opt={s}", .{declarations.perfetto_proto_include_filter}));
+    const output = run.addPrefixedOutputDirectoryArg("--javastream_out=", "perfetto-javastream-java");
+    run.addPrefixedDirectoryArg("-I", aosp.path("external/perfetto"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("external/protobuf/src"));
+    for (declarations.perfetto_proto_inputs) |input| run.addFileArg(sourcePath(b, aosp, input));
+    run.setName("generate filtered Perfetto javastream proto Java");
+
+    const files = b.allocator.alloc(LazyPath, declarations.perfetto_proto_outputs.len) catch @panic("OOM");
+    for (declarations.perfetto_proto_outputs, 0..) |path, index| {
+        const basename = std.fs.path.basename(path);
+        const rewrite = b.addRunArtifact(package_rewriter);
+        rewrite.addFileArg(output.path(b, b.fmt("perfetto/protos/{s}", .{basename})));
+        files[index] = rewrite.addOutputFileArg(basename);
+        rewrite.addArgs(&.{ "perfetto.protos", "android.internal.perfetto.protos" });
+        rewrite.setName(b.fmt("relocate Perfetto proto package in {s}", .{basename}));
+    }
+    return files;
+}
+
+fn protoJava(
+    b: *std.Build,
+    aosp: *std.Build.Dependency,
+    protoc: *std.Build.Step.Compile,
+    plugin: *std.Build.Step.Compile,
+    package_rewriter: *std.Build.Step.Compile,
+) []const LazyPath {
+    const framework_files = frameworkProtoJava(b, aosp, protoc, plugin);
+    const perfetto_files = perfettoProtoJava(b, aosp, protoc, plugin, package_rewriter);
+    var files: std.ArrayList(LazyPath) = .empty;
+    files.appendSlice(b.allocator, framework_files) catch @panic("OOM");
+    files.appendSlice(b.allocator, perfetto_files) catch @panic("OOM");
+    const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
+    _ = exposePaths(b, "gen-proto", "Generate framework javastream proto sources", result);
+    return result;
 }
 
 fn statsJava(
@@ -666,6 +710,7 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
 pub fn build(b: *std.Build, o: Options) Result {
     const runner = hostTool(b, "aosp-tool-runner", "tools/aosp-tool-runner.zig");
     const filter = hostTool(b, "filter-flagged-api", "tools/filter-flagged-api.zig");
+    const package_rewriter = hostTool(b, "rewrite-java-package", "tools/rewrite-java-package.zig");
     const stats_tool = @import("stats_tool.zig").build(b, .{
         .aosp = o.aosp.path(""),
         .target = b.graph.host,
@@ -681,7 +726,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aconfig_java = aconfigJava(b, o.aosp, runner);
     const sysprop_java = syspropJava(b, o.aosp, o.sysprop_tool);
     const nano_java = nanoJava(b, o.aosp, o.protoc, o.javanano_tool);
-    const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool);
+    const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool, package_rewriter);
     const stats_java = statsJava(b, o.aosp, stats_tool);
     const express_metric_ids_java = expressMetricIdsJava(b, o.aosp);
     const apex_info_list_java = apexInfoListJava(b, o.aosp);

@@ -157,6 +157,14 @@ public final class ActivityThread extends ClientTransactionHandler {
     }
     public static String currentOpPackageName() {
         ActivityThread am = sCurrentActivityThread;
+        if (am != null && am.mBoundApplication != null) {
+            return am.mBoundApplication.appInfo.packageName;
+        }
+        // Hosted JVM smokes bootstrap the platform resources before the broker assigns
+        // their application uid. Until AMS delivers a local bind, report no op package so
+        // stock clients use PackageManager.getPackagesForUid(), just as AOSP does before
+        // bindApplication. Never authenticate an app-uid Binder call as the platform package.
+        if (android.os.Process.myUid() != android.os.Process.SYSTEM_UID) return null;
         return (am != null && am.getApplication() != null) ? am.getApplication().getOpPackageName() : null;
     }
     /** AOSP ActivityThread.currentAttributionSource: this process's identity (broker uid, bound package). */

@@ -281,6 +281,14 @@ public final class FrameworkCompatSmoke {
             if (android.app.ActivityThread.currentApplication() == null) {
                 android.app.ActivityThread.currentActivityThread().`bindSystemApplication$artzig`()
             }
+            // A real application process is installed and attached before framework clients run.
+            // The direct --javatest entry has no launcher bindApplication handshake, so establish
+            // the broker/PackageManager identity explicitly before static clients such as
+            // Environment ask StorageManager for this UID's volumes.
+            val fixtureApk: String = requireNotNull(args.getOrNull(1)) { "fixture APK argument missing" }
+            val installer = requireNotNull(android.app.HostedServiceClient.installerOrNull())
+            require(installer.installPackage(fixtureApk, null) == "org.example", "fixture install")
+            android.app.ActivityThread.attachApplicationHosted("org.example")
             testStockInternalUtilMetadata()
             testStockCompatChanges()
             testGeneratedAppProtoEnums()
@@ -290,6 +298,7 @@ public final class FrameworkCompatSmoke {
             testStockTextSpans()
             testStockHtml()
             testStockProtoStreams()
+            testStockImePerfettoTracing()
             testParcelRoundTrips()
             testSystemProperties()
             testOsTail()
@@ -312,9 +321,6 @@ public final class FrameworkCompatSmoke {
             // Server-side install: the org.example fixture APK's manifest
             // declares the launcher activity and the PLAYBACK service the
             // assertions below resolve through real IntentFilters.
-            val fixtureApk: String = requireNotNull(args.getOrNull(1)) { "fixture APK argument missing" }
-            val installer = requireNotNull(android.app.HostedServiceClient.installerOrNull())
-            require(installer.installPackage(fixtureApk, null) == "org.example", "fixture install")
             testLoadedApk()
 
             val hostedSystemContext = HostContexts.systemContext(
@@ -835,6 +841,42 @@ public final class FrameworkCompatSmoke {
             }
             require(rejectedWireType, "stock proto input rejects a mismatched wire type")
             android.util.Log.i("FrameworkCompatSmoke", "stock proto streams ok")
+        }
+
+        /** Stock IME tracing over the inert hosted Perfetto producer seam. */
+        @JvmStatic
+        private fun testStockImePerfettoTracing() {
+            require(
+                Class.forName("android.internal.perfetto.protos.TracePacketOuterClass\$TracePacket")
+                    .getField("TIMESTAMP").getLong(null) != 0L,
+                "filtered Perfetto TracePacket constants generated",
+            )
+            require(
+                Class.forName(
+                    "android.internal.perfetto.protos.WinscopeExtensionsImplOuterClass\$WinscopeExtensionsImpl",
+                ).getField("INPUTMETHOD_CLIENTS").getLong(null) != 0L,
+                "filtered Winscope extension constants generated",
+            )
+            require(
+                Class.forName(
+                    "android.internal.perfetto.protos.Inputmethodeditor\$InputMethodClientsTraceProto",
+                ).getField("WHERE").getLong(null) != 0L,
+                "filtered input-method constants generated",
+            )
+
+            val tracingClass = Class.forName(
+                "com.android.internal.inputmethod.ImeTracingPerfettoImpl",
+            ).asSubclass(com.android.internal.inputmethod.ImeTracing::class.java)
+            val constructor = tracingClass.getDeclaredConstructor()
+            constructor.isAccessible = true
+            val tracing = constructor.newInstance()
+            require(!tracing.isEnabled, "host Perfetto producer starts with no tracing sessions")
+            var dumped = false
+            tracing.triggerServiceDump("disabled", { _, _ -> dumped = true }, null)
+            require(!dumped, "disabled Perfetto data source skips IME dumps")
+            tracing.startTrace(null)
+            tracing.stopTrace(null)
+            android.util.Log.i("FrameworkCompatSmoke", "stock IME Perfetto tracing ok")
         }
 
         /** Stock StrictMode registers its unsafe-intent callback through the hosted AMS. */
