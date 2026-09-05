@@ -167,6 +167,16 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void closeOptionsMenu() {}
     public void openOptionsMenu() {}
     public void recreate() { ActivityThread.recreateActivityInProcess(this); }
+
+    /** AOSP Activity.onTopResumedActivityChanged. */
+    public void onTopResumedActivityChanged(boolean isTopResumedActivity) {}
+
+    /** AOSP Activity.performTopResumedActivityChanged. EventLogTags is not part of the hosted
+     * client closure, so the observable application callback is retained at this boundary. */
+    final void performTopResumedActivityChanged$artzig(boolean isTopResumedActivity,
+            String reason) {
+        onTopResumedActivityChanged(isTopResumedActivity);
+    }
     public void finishAffinity() {}
     public boolean shouldShowRequestPermissionRationale(String permission) { return false; }
     public void requestPermissions(String[] permissions, int requestCode) {

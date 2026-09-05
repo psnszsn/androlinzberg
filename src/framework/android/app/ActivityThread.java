@@ -4,11 +4,11 @@
  * provider connections, service handlers, bind-application ordering, system
  * context), plus the AOSP ClientTransactionHandler contract so the real
  * IApplicationThread's scheduleTransaction drives the AOSP TransactionExecutor.
- * What is host-specific: the activity lifecycle still runs in
- * HostedActivityRuntime behind the HostAdapter seam (real Activity/
- * performLaunchActivity arrive with the activity-core milestone), and a
- * process is bound to its package by the host entry points below instead of a
- * zygote/AMS handshake. */
+ * What is host-specific: top-level window presentation stops at HostAdapter,
+ * while lifecycle is driven by the stock transaction protocol; a process is
+ * bound to its package by the host entry points below instead of a zygote/AMS
+ * handshake. HostedActivityRuntime remains only for legacy in-process module
+ * smokes that deliberately do not install a system service session. */
 package android.app;
 
 import android.content.ComponentName;
@@ -872,7 +872,22 @@ public final class ActivityThread extends ClientTransactionHandler {
             }
         }
     }
-    @Override public void handleTopResumedActivityChanged(ActivityClientRecord r, boolean isTopResumedActivity, String reason) { throw notHosted("handleTopResumedActivityChanged"); }
+    /** AOSP ActivityThread.handleTopResumedActivityChanged/reportTopResumedActivityChanged. */
+    @Override public void handleTopResumedActivityChanged(ActivityClientRecord r,
+            boolean isTopResumedActivity, String reason) {
+        if (r == null || r.activity == null) return;
+        if (r.isTopResumedActivity == isTopResumedActivity) {
+            Log.w(TAG, "Activity top position already set to onTop=" + isTopResumedActivity);
+            return;
+        }
+        r.isTopResumedActivity = isTopResumedActivity;
+        if (r.getLifecycleState()
+                == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME
+                && r.lastReportedTopResumedState != isTopResumedActivity) {
+            r.lastReportedTopResumedState = isTopResumedActivity;
+            r.activity.performTopResumedActivityChanged$artzig(isTopResumedActivity, reason);
+        }
+    }
     @Override public void handleStopActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, boolean finalStateRequest, String reason) {
         // Pinned performStopActivityInner pauses before asking the Activity for its description,
         // then performs the target-SDK-dependent stop/save ordering.
@@ -918,7 +933,10 @@ public final class ActivityThread extends ClientTransactionHandler {
         // AOSP leaves the record stopped when start=false; LocalActivityManager uses start=true.
         if (start) r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_START);
     }
-    @Override public void reportRefresh(ActivityClientRecord r) { throw notHosted("reportRefresh"); }
+    /** AOSP ActivityThread.reportRefresh: acknowledge the refresh transaction to system_server. */
+    @Override public void reportRefresh(ActivityClientRecord r) {
+        if (r != null) ActivityClient.getInstance().activityRefreshed(r.token);
+    }
     @Override public void updatePendingActivityConfiguration(IBinder token,
             Configuration overrideConfig) {
         synchronized (mPendingOverrideConfigs) {
@@ -1247,6 +1265,7 @@ public final class ActivityThread extends ClientTransactionHandler {
         public android.os.PersistableBundle persistentState;
         public boolean isForward;
         public boolean isTopResumedActivity;
+        boolean lastReportedTopResumedState;
         public LoadedApk packageInfo;
         public Activity parent;
         public String embeddedID;
@@ -1527,7 +1546,36 @@ public final class ActivityThread extends ClientTransactionHandler {
         }
     }
     public static void recreateActivityInProcess(Activity activity) {
-        if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.recreateActivity(activity);
+        final ActivityThread thread = currentActivityThread();
+        final ActivityClientRecord r = activity != null
+                ? thread.mActivities.get(activity.getActivityToken()) : null;
+        if (r != null && r.activity == activity) {
+            // AOSP Activity.recreate -> ActivityThread.scheduleRelaunchActivity. The Android
+            // implementation posts RELAUNCH_ACTIVITY through H; this hosted thread performs the
+            // same pause/save/stop/destroy/create/start/resume sequence synchronously because its
+            // bounded Handler does not carry the private ActivityThread message protocol.
+            final Configuration global = new Configuration(
+                    ResourcesManager.getInstance().getConfiguration());
+            final android.util.MergedConfiguration merged =
+                    new android.util.MergedConfiguration(global,
+                            r.overrideConfig != null ? r.overrideConfig : new Configuration());
+            final android.window.ActivityWindowInfo windowInfo =
+                    new android.window.ActivityWindowInfo(r.getActivityWindowInfo());
+            final ActivityClientRecord relaunch = thread.prepareRelaunchActivity(
+                    r.token, null, null, 0, merged, false, windowInfo);
+            if (relaunch != null) {
+                final android.app.servertransaction.PendingTransactionActions pendingActions =
+                        new android.app.servertransaction.PendingTransactionActions();
+                thread.handleRelaunchActivity(relaunch, pendingActions);
+                final ActivityClientRecord replacement = thread.mActivities.get(r.token);
+                thread.handleStartActivity(replacement, pendingActions, null);
+                thread.handleResumeActivity(replacement, true, false, false,
+                        "Activity.recreate");
+                thread.reportRelaunch(replacement);
+            }
+        } else if (HostedActivityRuntime.isConfigured()) {
+            HostedActivityRuntime.recreateActivity(activity);
+        }
     }
     /** Registers this process with the activity manager (AOSP attachApplication). */
     public static void attachApplicationHosted(String packageName) { HostedServiceClient.attachApplication(packageName); }
