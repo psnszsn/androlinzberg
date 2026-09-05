@@ -162,6 +162,10 @@ internal object SystemServices {
             },
         )
         android.os.ServiceManager.addService(Context.INPUT_METHOD_SERVICE, HostedInputMethodManagerService())
+        android.os.ServiceManager.addService(
+            Context.ACCESSIBILITY_SERVICE,
+            HostedAccessibilityManagerService(),
+        )
         val manager = SystemServiceManager(context)
         LocalServices.addService(SystemServiceManager::class.java, manager)
         LocalServices.addService(UserManagerInternal::class.java, HostedUserManagerInternal(context))
