@@ -169,11 +169,15 @@ seed it and rerun the tool rather than hand-fixing the source list.
 for p in platform/packages/modules/Connectivity platform/hardware/interfaces \
          platform/external/libphonenumber platform/packages/modules/Wifi \
          platform/packages/modules/Media platform/packages/modules/Permission \
-         platform/packages/modules/Bluetooth platform/packages/modules/Tethering \
+         platform/packages/modules/Bluetooth \
          platform/packages/modules/SdkExtensions platform/packages/modules/IPsec \
          platform/packages/modules/ConfigInfrastructure platform/packages/modules/AppSearch \
          platform/packages/services/Telecomm; do repo sync -c -j5 $p; done
 ```
+
+The pinned Android 16 manifest keeps the Tethering sources under the
+`platform/packages/modules/Connectivity` project; there is no separate
+`platform/packages/modules/Tethering` Repo project to sync or inventory.
 
 Add each to `aosp-projects.txt`, keep it sorted. Then:
 
