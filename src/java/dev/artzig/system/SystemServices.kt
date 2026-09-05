@@ -9,6 +9,7 @@ import android.util.Log
 import com.android.server.LocalServices
 import com.android.server.SystemService
 import com.android.server.SystemServiceManager
+import com.android.server.companion.virtual.VirtualDeviceManagerInternal
 import com.android.server.pm.UserManagerInternal
 import com.android.server.utils.TimingsTraceAndSlog
 
@@ -176,7 +177,7 @@ internal object SystemServices {
             HostedWindowManagerInternal(),
         )
         LocalServices.addService(
-            com.android.server.companion.virtual.VirtualDeviceManagerInternal::class.java,
+            VirtualDeviceManagerInternal::class.java,
             HostedVirtualDeviceManagerInternal(),
         )
         LocalServices.addService(
