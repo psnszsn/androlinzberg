@@ -247,6 +247,8 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/ArtzigGpuPipeline.cpp",
         "src/native/HardwareBufferRender.cpp",
         "src/native/HwuiRenderProxyBridge.cpp",
+        "src/native/binder/Binder.cpp",
+        "src/native/binder/Parcel.cpp",
     };
     if (files.len != expected.len) return error.AuditFailed;
     for (files, expected) |actual, suffix| {

@@ -12,6 +12,7 @@ pub const Options = struct {
     skia: *std.Build.Step.Compile,
     /// libbinder_ndk.so — the hwui parcel JNI (android 16) calls its AParcel ABI.
     binder_ndk: *std.Build.Step.Compile,
+    binder_cpp: *std.Build.Step.Compile,
     art: *std.Build.Module,
     aidl_header_roots: []const std.Build.LazyPath,
     host_include_roots: []const std.Build.LazyPath,
@@ -117,6 +118,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         binder_inc,
     };
     var common_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    common_includes.append(b.allocator, b.path("src/native/binder/include")) catch @panic("oom");
     for (gen.include_dirs) |d| common_includes.append(b.allocator, r.resolve(b, d)) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &binder_ndk_includes) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native")) catch @panic("oom");
@@ -219,9 +221,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     const fn_inc = o.aosp.path(b, "frameworks/native/include");
 
     g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
-    g.add(o.aosp.path(b, "system/logging/liblog"), &gen.liblog_srcs, &.{o.aosp.path(b, "system/logging/liblog")}, &.{ "-DLIBLOG_LOG_TAG=1006", "-DANDROID_DEBUGGABLE=0" });
-    g.add(o.aosp.path(b, "system/core/libcutils"), &gen.libcutils_srcs, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
-    g.add(o.aosp.path(b, "system/core/libutils"), &gen.libutils_srcs, &.{o.aosp.path(b, "system/core/libutils")}, &.{"-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION"});
+    for (gen.libcutils_srcs) |file| {
+        if (!std.mem.eql(u8, file, "native_handle.cpp")) g.add(o.aosp.path(b, "system/core/libcutils"), &.{file}, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
+    }
+    for (gen.libutils_srcs) |file| {
+        if (!@import("binder_cpp.zig").sharedUtils(file)) g.add(o.aosp.path(b, "system/core/libutils"), &.{file}, &.{o.aosp.path(b, "system/core/libutils")}, &.{"-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION"});
+    }
     g.add(o.aosp.path(b, "external/fmtlib"), &gen.fmtlib_srcs, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/minikin"), &minikin_srcs, &.{ o.aosp.path(b, "frameworks/minikin/libs"), o.aosp.path(b, "frameworks/minikin/libs/minikin") }, &.{});
     g.add(o.aosp.path(b, "external/skia"), &skia_extra_srcs, &.{}, &.{});
@@ -256,6 +261,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (objects.items) |object| link.addFileArg(object);
     link.addFileArg(o.skia.getEmittedBin());
     link.addFileArg(o.binder_ndk.getEmittedBin());
+    link.addFileArg(o.binder_cpp.getEmittedBin());
     for (o.host_library_roots) |root| {
         link.addPrefixedDirectoryArg("-L", root);
         link.addPrefixedDirectoryArg("-Wl,-rpath,", root);

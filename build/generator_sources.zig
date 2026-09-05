@@ -1332,3 +1332,6 @@ test "generator declarations map typed inputs to unique Java outputs" {
     }
     for (stats_protos) |path| try std.testing.expect(std.mem.endsWith(u8, path, ".proto"));
 }
+
+// The permanent native Binder regression compiles this pinned graphics Bp/Bn.
+pub const binder_graphics_aidl = "frameworks/native/libs/gui/aidl/android/gui/IFpsListener.aidl";

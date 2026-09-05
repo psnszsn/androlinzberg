@@ -93,7 +93,7 @@ fn closeFd(fd: fd_t) void {
 /// copied into another parcel); returns -1 on failure.
 fn dupFd(fd: fd_t) fd_t {
     if (fd < 0) return -1;
-    const rc = std.os.linux.dup(fd);
+    const rc = std.os.linux.fcntl(fd, std.os.linux.F.DUPFD_CLOEXEC, 0);
     return if (std.os.linux.errno(rc) != .SUCCESS) -1 else @intCast(rc);
 }
 
@@ -110,13 +110,13 @@ fn dupz(bytes: []const u8) ?[:0]u8 {
 /// ones the hosted protocol produces are enumerated.
 const STATUS_OK: i32 = 0;
 const STATUS_UNKNOWN_ERROR: i32 = std.math.minInt(i32);
-const STATUS_BAD_VALUE: i32 = -@as(i32, @intCast(@intFromEnum(E.INVAL)));
-const STATUS_NAME_NOT_FOUND: i32 = -@as(i32, @intCast(@intFromEnum(E.NOENT)));
-const STATUS_DEAD_OBJECT: i32 = -@as(i32, @intCast(@intFromEnum(E.PIPE)));
+const STATUS_BAD_VALUE: i32 = -@as(i32, @intCast(@backingInt(E.INVAL)));
+const STATUS_NAME_NOT_FOUND: i32 = -@as(i32, @intCast(@backingInt(E.NOENT)));
+const STATUS_DEAD_OBJECT: i32 = -@as(i32, @intCast(@backingInt(E.PIPE)));
 const STATUS_FAILED_TRANSACTION: i32 = STATUS_UNKNOWN_ERROR + 2;
 const STATUS_UNEXPECTED_NULL: i32 = STATUS_UNKNOWN_ERROR + 8;
 const STATUS_BAD_TYPE: i32 = STATUS_UNKNOWN_ERROR + 1;
-const STATUS_UNKNOWN_TRANSACTION: i32 = -@as(i32, @intCast(@intFromEnum(E.BADMSG)));
+const STATUS_UNKNOWN_TRANSACTION: i32 = -@as(i32, @intCast(@backingInt(E.BADMSG)));
 
 const EX_NONE: i32 = 0;
 const EX_TRANSACTION_FAILED: i32 = -129;
@@ -160,6 +160,13 @@ const Entry = struct {
     value: u64,
     /// Owned duplicate fd for `file_descriptor` entries the parcel must close.
     fd: fd_t = -1,
+    /// Every non-null Binder entry owns a strong ref, independent of reads.
+    binder: ?*AIBinder = null,
+
+    fn release(e: Entry) void {
+        if (e.fd >= 0) closeFd(e.fd);
+        if (e.binder) |b| AIBinder_decStrong(b);
+    }
 };
 
 pub const AParcel = struct {
@@ -180,6 +187,11 @@ pub const AParcel = struct {
     /// disposable wrapper over such a parcel; here the pointer is shared, so
     /// AParcel_delete on it is the wrapper's no-op delete, not the parcel's.
     java_owned: bool = false,
+    /// One optional language view, owned by this native Parcel, never by TLS.
+    cpp_view: ?*anyopaque = null,
+    cpp_destroy: ?*const fn (*anyopaque) callconv(.c) void = null,
+    err: i32 = STATUS_OK,
+    sensitive: bool = false,
 
     fn create() *AParcel {
         const p = alloc.create(AParcel) catch @panic("oom");
@@ -187,37 +199,111 @@ pub const AParcel = struct {
         return p;
     }
     fn destroy(p: *AParcel) void {
-        if (p.owns_fds) {
-            for (p.fds.items) |fd| if (fd >= 0) closeFd(fd);
-        }
-        for (p.entries.items) |e| if (e.fd >= 0) closeFd(e.fd);
+        p.clearContents();
         p.data.deinit(alloc);
         p.entries.deinit(alloc);
         p.fds.deinit(alloc);
+        if (p.cpp_view) |view| if (p.cpp_destroy) |destroy_view| destroy_view(view);
         alloc.destroy(p);
     }
     /// Clears data, object entries, and any received descriptors, resetting the
     /// read/write position — the shared teardown for reset()/unmarshal(), which
     /// must not leak the fds a received parcel owns.
     fn clearContents(p: *AParcel) void {
-        if (p.owns_fds) {
-            for (p.fds.items) |fd| if (fd >= 0) closeFd(fd);
-        }
-        p.fds.clearRetainingCapacity();
+        var entries = p.entries;
+        p.entries = .empty;
+        var fds = p.fds;
+        p.fds = .empty;
+        const owned = p.owns_fds;
         p.owns_fds = false;
-        for (p.entries.items) |e| if (e.fd >= 0) closeFd(e.fd);
-        p.entries.clearRetainingCapacity();
+        if (p.sensitive) std.crypto.secureZero(u8, p.data.allocatedSlice());
         p.data.clearRetainingCapacity();
         p.pos = 0;
+        p.err = STATUS_OK;
+        // Detach before calling object destructors: they can reenter Binder.
+        for (entries.items) |e| e.release();
+        entries.deinit(alloc);
+        if (owned) for (fds.items) |fd| {
+            if (fd >= 0) closeFd(fd);
+        };
+        fds.deinit(alloc);
+    }
+
+    /// A write or truncation invalidates every intersecting object slot. Remove
+    /// before releasing, because an object destructor can reenter Binder.
+    fn removeEntries(p: *AParcel, start: usize, end: usize) void {
+        var removed = std.ArrayListUnmanaged(Entry).empty;
+        defer removed.deinit(alloc);
+        var i: usize = 0;
+        while (i < p.entries.items.len) {
+            const e = p.entries.items[i];
+            if (e.offset < end and @as(usize, e.offset) + 4 > start) {
+                removed.append(alloc, p.entries.orderedRemove(i)) catch @panic("oom");
+            } else i += 1;
+        }
+        for (removed.items) |e| e.release();
+    }
+
+    fn setSize(p: *AParcel, n: usize) i32 {
+        if (n > std.math.maxInt(i32)) return STATUS_BAD_VALUE;
+        if (n < p.data.items.len) p.removeEntries(n, p.data.items.len);
+        const old = p.data.items.len;
+        if (p.sensitive and n < old) std.crypto.secureZero(u8, p.data.items[n..]);
+        const reserved = p.reserve(n);
+        if (reserved != STATUS_OK) return reserved;
+        p.data.resize(alloc, n) catch return STATUS_NO_MEMORY;
+        if (n > old) @memset(p.data.items[old..n], 0);
+        p.pos = @min(p.pos, n);
+        return STATUS_OK;
+    }
+
+    fn wireStatus(p: *const AParcel) i32 {
+        if (p.err != STATUS_OK) return p.err;
+        if (p.data.items.len > Client.limits.max_data_len or p.entries.items.len > Client.limits.max_objects) return STATUS_FAILED_TRANSACTION;
+        var fds: usize = 0;
+        for (p.entries.items) |entry| {
+            if (entry.kind == .file_descriptor) fds += 1;
+        }
+        return if (fds > Client.limits.max_fds) STATUS_FAILED_TRANSACTION else STATUS_OK;
+    }
+
+    fn reserve(p: *AParcel, size: usize) i32 {
+        if (size > std.math.maxInt(i32)) return STATUS_BAD_VALUE;
+        if (size <= p.data.capacity) return STATUS_OK;
+        if (!p.sensitive) {
+            p.data.ensureTotalCapacity(alloc, size) catch return STATUS_NO_MEMORY;
+        } else {
+            // realloc may free the old allocation without wiping it.
+            var next = std.ArrayListUnmanaged(u8).empty;
+            next.ensureTotalCapacity(alloc, size) catch return STATUS_NO_MEMORY;
+            next.appendSliceAssumeCapacity(p.data.items);
+            std.crypto.secureZero(u8, p.data.allocatedSlice());
+            p.data.deinit(alloc);
+            p.data = next;
+        }
+        return STATUS_OK;
     }
 
     fn ensure(p: *AParcel, n: usize) void {
+        if (n > std.math.maxInt(i32) or p.pos > std.math.maxInt(i32) - n) {
+            p.err = STATUS_BAD_VALUE;
+            return;
+        }
         if (p.pos + n > p.data.items.len) {
-            p.data.resize(alloc, p.pos + n) catch @panic("oom");
+            const old = p.data.items.len;
+            p.err = p.reserve(p.pos + n);
+            if (p.err != STATUS_OK) return;
+            p.data.resize(alloc, p.pos + n) catch {
+                p.err = STATUS_NO_MEMORY;
+                return;
+            };
+            @memset(p.data.items[old..], 0);
         }
     }
     fn writeBytes(p: *AParcel, bytes: []const u8) void {
         p.ensure(bytes.len);
+        if (p.err != STATUS_OK) return;
+        p.removeEntries(p.pos, p.pos + bytes.len);
         @memcpy(p.data.items[p.pos .. p.pos + bytes.len], bytes);
         p.pos += bytes.len;
     }
@@ -232,10 +318,10 @@ pub const AParcel = struct {
         p.writeBytes(&buf);
     }
     fn pad4(p: *AParcel) void {
-        while (p.pos & 3 != 0) p.writeBytes(&[_]u8{0});
+        while (p.pos & 3 != 0 and p.err == STATUS_OK) p.writeBytes(&[_]u8{0});
     }
     fn readSlice(p: *AParcel, n: usize) ?[]const u8 {
-        if (p.pos + n > p.data.items.len) return null;
+        if (p.pos > p.data.items.len or n > p.data.items.len - p.pos) return null;
         const s = p.data.items[p.pos .. p.pos + n];
         p.pos += n;
         return s;
@@ -377,35 +463,40 @@ pub const AParcel = struct {
 
     /// Appends `len` bytes from `other` starting at `offset`, copying any object
     /// entries that fall in that range (offsets rebased). Used by nativeAppendFrom.
-    fn appendRange(p: *AParcel, other: *AParcel, offset: usize, len: usize) void {
-        if (offset > other.data.items.len) return;
-        const end = @min(offset + len, other.data.items.len);
-        const base: u32 = @intCast(p.pos);
-        p.writeBytes(other.data.items[offset..end]);
-        for (other.entries.items) |e| {
-            if (e.offset >= offset and e.offset < end) {
-                const new_off = base + (e.offset - @as(u32, @intCast(offset)));
-                var copy = e;
-                copy.offset = new_off;
-                // A copied fd entry must dup so both parcels can close it. A
-                // received parcel keeps its descriptors in `fds` and the entry
-                // holds the ordinal; the copy has no table, so it takes a dup as
-                // an owned entry (Bundle.unparcel copies a received parcel and
-                // reads the fd later, e.g. an ashmem-backed Bitmap in metadata).
-                if (e.kind == .file_descriptor) {
-                    if (e.fd >= 0) {
-                        copy.fd = dupFd(e.fd);
-                    } else {
-                        const ordinal: usize = @intCast(e.value);
-                        if (ordinal < other.fds.items.len and other.fds.items[ordinal] >= 0) {
-                            copy.fd = dupFd(other.fds.items[ordinal]);
-                            copy.value = 0;
-                        }
-                    }
-                }
-                p.entries.append(alloc, copy) catch @panic("oom");
-            }
+    fn appendRange(p: *AParcel, other: *AParcel, offset: usize, len: usize) i32 {
+        if (offset > other.data.items.len or len > other.data.items.len - offset) return STATUS_BAD_VALUE;
+        if (len > std.math.maxInt(i32) or p.pos > std.math.maxInt(i32) - len) return STATUS_BAD_VALUE;
+        const end = offset + len;
+        var copies = std.ArrayListUnmanaged(Entry).empty;
+        defer {
+            for (copies.items) |e| e.release();
+            copies.deinit(alloc);
         }
+        for (other.entries.items) |e| {
+            if (e.offset >= end or @as(usize, e.offset) + 4 <= offset) continue;
+            if (e.offset < offset or @as(usize, e.offset) + 4 > end) return STATUS_BAD_VALUE;
+            if (e.kind == .file_descriptor and !p.allow_fds) return STATUS_FDS_NOT_ALLOWED;
+            var copy = e;
+            copy.offset = @intCast(p.pos + e.offset - offset);
+            if (e.fd >= 0) {
+                copy.fd = dupFd(e.fd);
+                if (copy.fd < 0) return STATUS_NO_MEMORY;
+            }
+            if (e.binder) |binder| AIBinder_incStrong(binder);
+            copies.append(alloc, copy) catch {
+                copy.release();
+                return STATUS_NO_MEMORY;
+            };
+        }
+        // Snapshot also makes self-append and overlapping source/destination safe.
+        const bytes = alloc.dupe(u8, other.data.items[offset..end]) catch return STATUS_NO_MEMORY;
+        defer alloc.free(bytes);
+        p.entries.ensureUnusedCapacity(alloc, copies.items.len) catch return STATUS_NO_MEMORY;
+        p.writeBytes(bytes);
+        if (p.err != STATUS_OK) return p.err;
+        p.entries.appendSliceAssumeCapacity(copies.items);
+        copies.clearRetainingCapacity();
+        return STATUS_OK;
     }
 };
 
@@ -487,8 +578,8 @@ fn decWeak(b: *AIBinder) void {
 /// A stable total order over binders by (kind, broker id, address); shared by
 /// AIBinder_lt and AIBinder_Weak_lt so the two agree.
 fn aibinderLt(a: *const AIBinder, b: *const AIBinder) bool {
-    const ak = @intFromEnum(a.kind);
-    const bk = @intFromEnum(b.kind);
+    const ak = @backingInt(a.kind);
+    const bk = @backingInt(b.kind);
     if (ak != bk) return ak < bk;
     if (a.id != b.id) return a.id < b.id;
     return @intFromPtr(a) < @intFromPtr(b);
@@ -497,6 +588,10 @@ fn aibinderLt(a: *const AIBinder, b: *const AIBinder) bool {
 const AIBinder_DeathRecipient = struct {
     on_died: ?*const fn (?*anyopaque) callconv(.c) void,
     on_unlinked: ?*const fn (?*anyopaque) callconv(.c) void = null,
+    refs: std.atomic.Value(u32) = .init(1),
+    fn release(d: *AIBinder_DeathRecipient) void {
+        if (d.refs.fetchSub(1, .acq_rel) == 1) alloc.destroy(d);
+    }
 };
 
 // ------------------------------------------------------------------- Runtime
@@ -563,7 +658,8 @@ const Runtime = struct {
     locals: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
     export_uses: std.AutoHashMapUnmanaged(u64, u64) = .empty,
     proxies: std.AutoHashMapUnmanaged(u64, *AIBinder) = .empty,
-    death_links: std.ArrayListUnmanaged(DeathLink) = .empty,
+    death_links: std.ArrayListUnmanaged(*DeathLink) = .empty,
+    death_mu: Io.Mutex = .init,
     /// Per-local-target FIFO queues serializing incoming oneway transactions.
     oneway_queues: std.AutoHashMapUnmanaged(u64, *SerialQueue) = .empty,
     /// Two-way inbound transactions are dispatched by a small elastic pool of
@@ -578,6 +674,7 @@ const Runtime = struct {
     dispatch_cv: Io.Condition = .init,
     dispatch_idle: usize = 0,
     dispatch_total: usize = 0,
+    max_dispatch_workers: usize = 32,
     disconnected: std.atomic.Value(bool) = .init(false),
     /// BinderInternal.joinThreadPool parks a thread here until the broker
     /// connection drops (onDisconnected broadcasts it), so a service process
@@ -588,12 +685,37 @@ const Runtime = struct {
     /// nested-transaction parent tracking.
     servicing: Io.Mutex = .init,
 
-    const DeathLink = struct { global_id: u64, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque };
+    const DeathLink = struct {
+        global_id: u64,
+        recipient: *AIBinder_DeathRecipient,
+        cookie: ?*anyopaque,
+        refs: std.atomic.Value(u32) = .init(1),
+        on_unlinked: ?*const fn (?*anyopaque) callconv(.c) void,
+        fn retain(l: *DeathLink) void {
+            _ = l.refs.fetchAdd(1, .monotonic);
+        }
+        fn release(l: *DeathLink) void {
+            if (l.refs.fetchSub(1, .acq_rel) != 1) return;
+            if (l.on_unlinked) |cb| cb(l.cookie);
+            l.recipient.release();
+            alloc.destroy(l);
+        }
+    };
+
+    fn hasDeathLinkLocked(r: *Runtime, id: u64) bool {
+        for (r.death_links.items) |l| if (l.global_id == id) return true;
+        return false;
+    }
+    /// death_mu orders subscriptions with unsubscribe messages. Never call an
+    /// observer with either death_mu or mu held.
+    fn deathSubscription(r: *Runtime, id: u64, link: bool) void {
+        var body: [@sizeOf(ObjectRef)]u8 = undefined;
+        @memcpy(&body, std.mem.asBytes(&ObjectRef.remote(id)));
+        r.sendFrame(.{ .tag = if (link) .link_death else .unlink_death, .bytes_len = body.len }, &body, &.{}) catch {};
+    }
 
     /// Upper bound on persistent two-way dispatch workers. Generous so reentrant
     /// call chains cannot deadlock the pool; a steady app uses only a few.
-    const max_dispatch_workers = 32;
-
     var instance: ?*Runtime = null;
     var connect_mu: Io.Mutex = .init;
     threadlocal var current_routing: u64 = 0;
@@ -604,6 +726,8 @@ const Runtime = struct {
     /// (AIBinder_getCallingUid/Pid), valid only inside an onTransact callback.
     threadlocal var current_caller_uid: u32 = 0;
     threadlocal var current_caller_pid: i32 = 0;
+    threadlocal var current_flags: u32 = 0;
+    threadlocal var serving_stack: ?*const anyopaque = null;
 
     fn get() *Runtime {
         if (instance) |r| return r;
@@ -685,6 +809,7 @@ const Runtime = struct {
         header.fd_count = @intCast(fds.len);
         r.write_mu.lockUncancelable(g_io);
         defer r.write_mu.unlock(g_io);
+        errdefer r.conn.stream.shutdown(g_io, .both) catch {};
         const w = &r.conn.writer.interface;
         if (fds.len > 0) {
             var files: [Client.limits.max_fds]Io.File = undefined;
@@ -737,7 +862,8 @@ const Runtime = struct {
             .transact => {
                 const t = std.mem.bytesToValue(Server.Message.Transact, body[0..@sizeOf(Server.Message.Transact)]);
                 const rest = body[@sizeOf(Server.Message.Transact)..];
-                const parcel = r.inflate(rest, t.object_count, t.data_len, fds) catch return true;
+                const parcel = r.inflate(rest, t.object_count, t.data_len, fds) catch return false;
+                parcel.sensitive = t.flags & 0x20 != 0;
                 const in = alloc.create(Incoming) catch @panic("oom");
                 in.* = .{ .target = t.target, .code = t.code, .flags = t.flags, .caller_pid = t.caller_pid, .caller_uid = t.caller_uid, .routing_id = header.routing_id, .parcel = parcel };
                 if (header.request_id != 0) {
@@ -770,7 +896,14 @@ const Runtime = struct {
                 r.mu.unlock(g_io);
                 if (call) |kv| {
                     const c = kv.value;
-                    const parcel = r.inflate(rest, rep.object_count, rep.data_len, fds) catch AParcel.create();
+                    const parcel = r.inflate(rest, rep.object_count, rep.data_len, fds) catch {
+                        c.mu.lockUncancelable(g_io);
+                        c.failed = true;
+                        c.done = true;
+                        c.cv.signal(g_io);
+                        c.mu.unlock(g_io);
+                        return false;
+                    };
                     c.mu.lockUncancelable(g_io);
                     c.reply = parcel;
                     c.reply_status = rep.status;
@@ -779,7 +912,8 @@ const Runtime = struct {
                     c.cv.signal(g_io);
                     c.mu.unlock(g_io);
                 } else {
-                    for (fds) |fd| if (fd >= 0) closeFd(fd);
+                    const discarded = r.inflate(rest, rep.object_count, rep.data_len, fds) catch return true;
+                    discarded.destroy();
                 }
             },
             .service_result => {
@@ -830,7 +964,7 @@ const Runtime = struct {
     fn dispatchSubmit(r: *Runtime, in: *Incoming) void {
         r.mu.lockUncancelable(g_io);
         var spawn_worker = false;
-        if (r.dispatch_idle == 0 and r.dispatch_total < max_dispatch_workers) {
+        if (r.dispatch_idle == 0 and r.dispatch_total < r.max_dispatch_workers) {
             r.dispatch_total += 1;
             spawn_worker = true;
         }
@@ -861,11 +995,17 @@ const Runtime = struct {
     /// parking on `dispatch_cv` while the queue is empty.
     fn dispatchWorker(r: *Runtime) void {
         _ = jniEnv(); // attach this worker thread to the JVM once, if one exists
+        defer detachCurrentThread();
         while (true) {
             r.mu.lockUncancelable(g_io);
             r.dispatch_idle += 1;
-            while (r.dispatch_queue.items.len == 0) r.dispatch_cv.waitUncancelable(g_io, &r.mu);
+            while (r.dispatch_queue.items.len == 0 and !r.disconnected.load(.acquire)) r.dispatch_cv.waitUncancelable(g_io, &r.mu);
             r.dispatch_idle -= 1;
+            if (r.dispatch_queue.items.len == 0) {
+                r.dispatch_total -= 1;
+                r.mu.unlock(g_io);
+                return;
+            }
             const in = r.dispatch_queue.orderedRemove(0);
             r.mu.unlock(g_io);
             r.dispatch(in);
@@ -921,12 +1061,18 @@ const Runtime = struct {
             const prev_uid = current_caller_uid;
             const prev_pid = current_caller_pid;
             const prev_in_transaction = current_in_transaction;
+            const prev_flags = current_flags;
+            const prev_stack = serving_stack;
+            current_flags = in.flags;
+            serving_stack = &prev_flags;
             current_routing = in.routing_id;
             current_in_transaction = true;
             current_caller_uid = in.caller_uid;
             // Oneway transactions have no waiting caller; AOSP reports pid 0.
             current_caller_pid = if (oneway) 0 else in.caller_pid;
             binder_status = target.?.class.?.on_transact.?(target.?, in.code, in.parcel, out);
+            current_flags = prev_flags;
+            serving_stack = prev_stack;
             current_in_transaction = prev_in_transaction;
             current_routing = prev_routing;
             current_caller_uid = prev_uid;
@@ -935,12 +1081,13 @@ const Runtime = struct {
         if (!oneway) r.sendReply(in.routing_id, status, binder_status, out);
     }
 
-    fn sendReply(r: *Runtime, routing_id: u64, status: Client.Message.Reply.Status, binder_status: i32, out: *AParcel) void {
+    fn sendReply(r: *Runtime, routing_id: u64, requested_status: Client.Message.Reply.Status, binder_status: i32, out: *AParcel) void {
+        const status: Client.Message.Reply.Status = if (out.wireStatus() == STATUS_OK) requested_status else .failed;
         var body = std.ArrayListUnmanaged(u8).empty;
         defer body.deinit(alloc);
         var fds = std.ArrayListUnmanaged(fd_t).empty;
         defer fds.deinit(alloc);
-        const wire = r.flatten(out, &fds);
+        const wire = if (status == .ok) r.flatten(out, &fds) else alloc.alloc(ObjectEntry, 0) catch @panic("oom");
         defer alloc.free(wire);
         const data: []const u8 = if (status == .ok) out.data.items else &.{};
         const rep = Client.Message.Reply{
@@ -964,7 +1111,7 @@ const Runtime = struct {
 
     /// Flattens a locally built parcel's side table into wire entries; local
     /// binders are exported, fds are appended to `fds`.
-    fn flatten(_: *Runtime, p: *AParcel, fds: *std.ArrayListUnmanaged(fd_t)) []ObjectEntry {
+    fn flatten(r: *Runtime, p: *AParcel, fds: *std.ArrayListUnmanaged(fd_t)) []ObjectEntry {
         const out = alloc.alloc(ObjectEntry, p.entries.items.len) catch @panic("oom");
         for (p.entries.items, 0..) |e, i| {
             switch (e.kind) {
@@ -972,6 +1119,7 @@ const Runtime = struct {
                     fds.append(alloc, e.fd) catch @panic("oom");
                     out[i] = .{ .offset = e.offset, .kind = .file_descriptor, .value = @intCast(fds.items.len - 1) };
                 },
+                .binder_local => out[i] = .{ .offset = e.offset, .kind = e.kind, .value = r.exportLocal(e.binder.?) },
                 else => out[i] = .{ .offset = e.offset, .kind = e.kind, .value = e.value },
             }
         }
@@ -981,18 +1129,40 @@ const Runtime = struct {
     /// Builds a received parcel from wire bytes; remote refs become proxy ids,
     /// fd ordinals resolve into the frame's descriptors.
     fn inflate(r: *Runtime, rest: []const u8, object_count: u32, data_len: u32, fds: []fd_t) !*AParcel {
-        _ = r;
         const entries_len = @as(usize, object_count) * @sizeOf(ObjectEntry);
-        if (rest.len != entries_len + data_len) return error.Malformed;
         const p = AParcel.create();
+        errdefer p.destroy();
         p.owns_fds = true;
         p.fds.appendSlice(alloc, fds) catch @panic("oom");
+        if (rest.len != entries_len + data_len) return error.Malformed;
         var off: usize = 0;
         while (off < entries_len) : (off += @sizeOf(ObjectEntry)) {
             const e = std.mem.bytesToValue(ObjectEntry, rest[off .. off + @sizeOf(ObjectEntry)]);
-            p.entries.append(alloc, .{ .offset = e.offset, .kind = e.kind, .value = e.value }) catch @panic("oom");
+            if (e.offset > data_len or data_len - e.offset < 4) return error.Malformed;
+            var entry = Entry{ .offset = e.offset, .kind = e.kind, .value = e.value };
+            switch (e.kind) {
+                .binder_remote => entry.binder = r.proxyFor(e.value),
+                .binder_local => {
+                    r.mu.lockUncancelable(g_io);
+                    entry.binder = r.locals.get(e.value);
+                    if (entry.binder) |binder| AIBinder_incStrong(binder);
+                    r.mu.unlock(g_io);
+                    if (entry.binder == null) return error.Malformed;
+                },
+                .file_descriptor => {
+                    if (e.value >= fds.len) return error.Malformed;
+                    entry.fd = dupFd(fds[@intCast(e.value)]);
+                    if (entry.fd < 0) return error.OutOfMemory;
+                },
+                .binder_null => {},
+                else => return error.Malformed,
+            }
+            p.entries.append(alloc, entry) catch @panic("oom");
         }
         p.data.appendSlice(alloc, rest[entries_len..]) catch @panic("oom");
+        for (p.fds.items) |fd| closeFd(fd);
+        p.fds.clearRetainingCapacity();
+        p.owns_fds = false;
         return p;
     }
 
@@ -1153,21 +1323,42 @@ const Runtime = struct {
     }
 
     fn notifyDeath(r: *Runtime, global_id: u64) void {
+        var links = std.ArrayListUnmanaged(*DeathLink).empty;
         r.mu.lockUncancelable(g_io);
-        if (r.proxies.get(global_id)) |b| b.dead.store(true, .monotonic);
-        var links = std.ArrayListUnmanaged(DeathLink).empty;
-        defer links.deinit(alloc);
-        for (r.death_links.items) |l| {
-            if (l.global_id == global_id) links.append(alloc, l) catch @panic("oom");
+        if (r.proxies.get(global_id)) |binder| binder.dead.store(true, .monotonic);
+        var i: usize = 0;
+        while (i < r.death_links.items.len) {
+            if (r.death_links.items[i].global_id == global_id) {
+                links.append(alloc, r.death_links.orderedRemove(i)) catch @panic("oom");
+            } else i += 1;
         }
         r.mu.unlock(g_io);
-        for (links.items) |l| if (l.recipient.on_died) |cb| cb(l.cookie);
+        deliverDeaths(links);
+    }
+
+    fn deliverDeaths(links: std.ArrayListUnmanaged(*DeathLink)) void {
+        if (links.items.len == 0) {
+            var empty = links;
+            empty.deinit(alloc);
+            return;
+        }
+        const thread = std.Thread.spawn(.{}, deathWorker, .{links}) catch @panic("cannot dispatch Binder death notification");
+        thread.detach();
+    }
+    fn deathWorker(owned: std.ArrayListUnmanaged(*DeathLink)) void {
+        var links = owned;
+        defer links.deinit(alloc);
+        _ = jniEnv();
+        defer detachCurrentThread();
+        for (links.items) |l| {
+            if (l.recipient.on_died) |cb| cb(l.cookie);
+            l.release();
+        }
     }
 
     fn onDisconnected(r: *Runtime) void {
-        r.disconnected.store(true, .monotonic);
-        var links = std.ArrayListUnmanaged(DeathLink).empty;
-        defer links.deinit(alloc);
+        if (r.disconnected.swap(true, .acq_rel)) return;
+        var links = std.ArrayListUnmanaged(*DeathLink).empty;
         r.mu.lockUncancelable(g_io);
         var it = r.pending.valueIterator();
         while (it.next()) |cp| {
@@ -1178,14 +1369,28 @@ const Runtime = struct {
             c.cv.signal(g_io);
             c.mu.unlock(g_io);
         }
+        r.pending.clearRetainingCapacity();
+        r.dispatch_cv.broadcast(g_io);
         // Every remote object is now unreachable: mark proxies dead so
         // AIBinder_isAlive reports false, and deliver each registered death
         // notification (the broker will send no more object_dead frames).
         var pit = r.proxies.valueIterator();
         while (pit.next()) |bp| bp.*.dead.store(true, .monotonic);
-        for (r.death_links.items) |l| links.append(alloc, l) catch @panic("oom");
+        links = r.death_links;
+        r.death_links = .empty;
+        var locals = r.locals;
+        r.locals = .empty;
+        r.export_uses.clearRetainingCapacity();
+        var queues = r.oneway_queues.valueIterator();
+        while (queues.next()) |q| {
+            q.*.retired = true;
+            q.*.cv.signal(g_io);
+        }
         r.mu.unlock(g_io);
-        for (links.items) |l| if (l.recipient.on_died) |cb| cb(l.cookie);
+        deliverDeaths(links);
+        var objects = locals.valueIterator();
+        while (objects.next()) |object| dropLocal(object.*);
+        locals.deinit(alloc);
         // Wake any thread parked in BinderInternal.joinThreadPool.
         r.join_mu.lockUncancelable(g_io);
         r.join_cv.broadcast(g_io);
@@ -1199,8 +1404,10 @@ const Runtime = struct {
     fn transact(r: *Runtime, target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel, flags: u32) i32 {
         // A local target is an in-process object (AOSP short-circuits these to
         // a direct call rather than a kernel/broker round-trip).
-        if (target.kind == .local) return localTransact(target, code, in, out);
+        if (target.kind == .local) return localTransact(target, code, in, out, flags);
         if (target.dead.load(.monotonic) or r.disconnected.load(.monotonic)) return STATUS_DEAD_OBJECT;
+        const check = in.wireStatus();
+        if (check != STATUS_OK) return check;
         const oneway = flags & FLAG_ONEWAY != 0;
         const request_id: u64 = if (oneway) 0 else r.next_request_id.fetchAdd(1, .monotonic);
 
@@ -1236,26 +1443,21 @@ const Runtime = struct {
             .request_id = request_id,
             .routing_id = current_routing,
         }, body.items, fds.items) catch {
-            if (call) |c| {
-                r.mu.lockUncancelable(g_io);
-                _ = r.pending.remove(request_id);
-                r.mu.unlock(g_io);
-                alloc.destroy(c);
-            }
+            // sendFrame shuts down the socket on failure. Let its reader finish
+            // an already-arriving reply or mark this call failed before freeing
+            // it; it may already have removed the pointer from pending.
+            if (call) |c| return r.awaitReply(c, out);
             return STATUS_DEAD_OBJECT;
         };
         if (oneway) return STATUS_OK;
         return r.awaitReply(call.?, out);
     }
 
-    /// In-process dispatch to a local object (self-call short-circuit). The
-    /// caller identity is this process; the reply parcel is left positioned at
-    /// the start for the caller to read.
     /// In-process dispatch to a local object (self-call short-circuit). Needs no
     /// broker connection — a local object is serviced entirely in this process —
     /// so a JNI-bridge or unexported local binder is transactable even before
     /// (or without) the library ever connects.
-    fn localTransact(target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel) i32 {
+    fn localTransact(target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel, flags: u32) i32 {
         const class = target.class orelse return STATUS_UNEXPECTED_NULL;
         const on_transact = class.on_transact orelse return STATUS_UNEXPECTED_NULL;
         in.pos = 0;
@@ -1278,16 +1480,23 @@ const Runtime = struct {
         const prev_uid = current_caller_uid;
         const prev_pid = current_caller_pid;
         const prev_in_transaction = current_in_transaction;
-        current_routing = std.math.maxInt(u64); // nonzero: "handling a transaction"
+        const prev_flags = current_flags;
+        const prev_stack = serving_stack;
+        current_flags = flags;
+        serving_stack = &prev_flags;
         current_in_transaction = true;
         // Self identity: the connected runtime's uid if there is one, else this
         // process's own (a bridge-only process may never connect). v1 limitation:
         // when only the Java runtime is connected, the native side cannot see its
         // broker-assigned Android uid and falls back to the host uid — observable
         // only via AIBinder_getCallingUid inside a self-call.
-        current_caller_uid = if (Runtime.instance) |r| r.uid else std.os.linux.getuid();
-        current_caller_pid = if (Runtime.instance) |r| r.pid else @intCast(std.os.linux.getpid());
+        if (!prev_in_transaction) {
+            current_caller_uid = if (Runtime.instance) |r| r.uid else std.os.linux.getuid();
+            current_caller_pid = if (Runtime.instance) |r| r.pid else @intCast(std.os.linux.getpid());
+        }
         const rc = on_transact(target, code, in, reply);
+        current_flags = prev_flags;
+        serving_stack = prev_stack;
         current_in_transaction = prev_in_transaction;
         current_routing = prev_routing;
         current_caller_uid = prev_uid;
@@ -1326,7 +1535,21 @@ const Runtime = struct {
             }
             if (call.reply) |p| {
                 if (out) |o| {
+                    const view = o.cpp_view;
+                    const destroy = o.cpp_destroy;
+                    const java_owned = o.java_owned;
+                    const sensitive = o.sensitive;
+                    const allow_fds = o.allow_fds;
+                    o.clearContents();
+                    o.data.deinit(alloc);
+                    o.entries.deinit(alloc);
+                    o.fds.deinit(alloc);
                     o.* = p.*;
+                    o.cpp_view = view;
+                    o.cpp_destroy = destroy;
+                    o.java_owned = java_owned;
+                    o.sensitive = sensitive;
+                    o.allow_fds = allow_fds;
                     alloc.destroy(p);
                 } else p.destroy();
             }
@@ -1350,14 +1573,9 @@ const Runtime = struct {
         r.mu.lockUncancelable(g_io);
         r.pending.put(alloc, request_id, call) catch @panic("oom");
         r.mu.unlock(g_io);
-        r.sendFrame(.{ .tag = tag, .bytes_len = @intCast(body_extra.len), .request_id = request_id }, body_extra, &.{}) catch {
-            r.mu.lockUncancelable(g_io);
-            _ = r.pending.remove(request_id);
-            r.mu.unlock(g_io);
-            call.failed = true;
-            call.done = true;
-            return call;
-        };
+        // A write failure shuts down the socket. The reader owns completion,
+        // including a reply that raced with the failed write.
+        r.sendFrame(.{ .tag = tag, .bytes_len = @intCast(body_extra.len), .request_id = request_id }, body_extra, &.{}) catch {};
         // Wait, servicing nested transactions like awaitReply.
         while (true) {
             call.mu.lockUncancelable(g_io);
@@ -1374,9 +1592,7 @@ const Runtime = struct {
     }
 };
 
-
 // ================================================================= C exports
-
 
 export fn AStatus_newOk() callconv(.c) *AStatus {
     return AStatus.create(EX_NONE);
@@ -1442,45 +1658,45 @@ export fn AParcel_getDataPosition(parcel: *const AParcel) callconv(.c) i32 {
 }
 export fn AParcel_writeInt32(parcel: *AParcel, value: i32) callconv(.c) i32 {
     parcel.writeI32(value);
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeUint32(parcel: *AParcel, value: u32) callconv(.c) i32 {
     parcel.writeI32(@bitCast(value));
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeInt64(parcel: *AParcel, value: i64) callconv(.c) i32 {
     parcel.writeI64(value);
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeUint64(parcel: *AParcel, value: u64) callconv(.c) i32 {
     parcel.writeI64(@bitCast(value));
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeBool(parcel: *AParcel, value: bool) callconv(.c) i32 {
     parcel.writeI32(if (value) 1 else 0);
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeByte(parcel: *AParcel, value: i8) callconv(.c) i32 {
     parcel.writeI32(value);
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeChar(parcel: *AParcel, value: u16) callconv(.c) i32 {
     parcel.writeI32(value);
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeFloat(parcel: *AParcel, value: f32) callconv(.c) i32 {
     parcel.writeI32(@bitCast(value));
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_writeDouble(parcel: *AParcel, value: f64) callconv(.c) i32 {
     parcel.writeI64(@bitCast(value));
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_readInt32(parcel: *const AParcel, value: *i32) callconv(.c) i32 {
     value.* = @constCast(parcel).readI32() orelse return STATUS_NOT_ENOUGH_DATA;
     return STATUS_OK;
 }
-const STATUS_NOT_ENOUGH_DATA: i32 = -@as(i32, @intCast(@intFromEnum(E.NODATA)));
+const STATUS_NOT_ENOUGH_DATA: i32 = -@as(i32, @intCast(@backingInt(E.NODATA)));
 export fn AParcel_readUint32(parcel: *const AParcel, value: *u32) callconv(.c) i32 {
     const v = @constCast(parcel).readI32() orelse return STATUS_NOT_ENOUGH_DATA;
     value.* = @bitCast(v);
@@ -1524,11 +1740,11 @@ export fn AParcel_readDouble(parcel: *const AParcel, value: *f64) callconv(.c) i
 export fn AParcel_writeString(parcel: *AParcel, string: ?[*]const u8, length: i32) callconv(.c) i32 {
     if (string == null and length < 0) {
         parcel.writeString(&.{}, -1);
-        return STATUS_OK;
+        return parcel.err;
     }
     const s = if (length <= 0) "" else string.?[0..@intCast(length)];
     parcel.writeString(s, if (length < 0) -1 else @intCast(s.len));
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_readString(parcel: *const AParcel, string_data: ?*anyopaque, allocator: AParcel_stringAllocator) callconv(.c) i32 {
     const p = @constCast(parcel);
@@ -1550,63 +1766,68 @@ export fn AParcel_readString(parcel: *const AParcel, string_data: ?*anyopaque, a
     }
     return STATUS_OK;
 }
-const STATUS_NO_MEMORY: i32 = -@as(i32, @intCast(@intFromEnum(E.NOMEM)));
+const STATUS_FDS_NOT_ALLOWED: i32 = std.math.minInt(i32) + 7;
+const STATUS_NO_MEMORY: i32 = -@as(i32, @intCast(@backingInt(E.NOMEM)));
 const AParcel_stringAllocator = *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool;
 
 export fn AParcel_writeStrongBinder(parcel: *AParcel, binder: ?*AIBinder) callconv(.c) i32 {
     const off: u32 = @intCast(parcel.pos);
-    if (binder) |b| {
-        parcel.writeI32(1);
-        if (b.kind == .local) {
-            const id = Runtime.get().exportLocal(b);
-            parcel.entries.append(alloc, .{ .offset = off, .kind = .binder_local, .value = id }) catch @panic("oom");
-        } else {
-            parcel.entries.append(alloc, .{ .offset = off, .kind = .binder_remote, .value = b.id }) catch @panic("oom");
-        }
-    } else {
-        parcel.writeI32(0);
-        parcel.entries.append(alloc, .{ .offset = off, .kind = .binder_null, .value = 0 }) catch @panic("oom");
+    // Retain before overwriting: the old slot may hold the last other ref.
+    if (binder) |b| AIBinder_incStrong(b);
+    parcel.writeI32(if (binder != null) 1 else 0);
+    if (parcel.err != STATUS_OK) {
+        if (binder) |b| AIBinder_decStrong(b);
+        return parcel.err;
     }
-    return STATUS_OK;
+    if (binder == null) return parcel.err;
+    parcel.entries.append(alloc, .{
+        .offset = off,
+        .kind = if (binder) |b| (if (b.kind == .local) .binder_local else .binder_remote) else .binder_null,
+        .value = if (binder) |b| b.id else 0,
+        .binder = binder,
+    }) catch @panic("oom");
+    return parcel.err;
 }
 export fn AParcel_readStrongBinder(parcel: *const AParcel, binder: *?*AIBinder) callconv(.c) i32 {
     const p = @constCast(parcel);
     const off: u32 = @intCast(p.pos);
-    _ = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    const marker = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    binder.* = null;
+    if (marker == 0) return STATUS_OK;
     for (p.entries.items) |e| {
         if (e.offset != off) continue;
         switch (e.kind) {
-            .binder_null => binder.* = null,
-            .binder_remote => binder.* = Runtime.get().proxyFor(e.value),
-            .binder_local => {
-                Runtime.get().mu.lockUncancelable(g_io);
-                const local = Runtime.get().locals.get(e.value);
-                Runtime.get().mu.unlock(g_io);
-                if (local) |l| {
-                    _ = l.strong.fetchAdd(1, .monotonic);
-                    binder.* = l;
-                } else binder.* = null;
+            .binder_null => return STATUS_OK,
+            .binder_local, .binder_remote => {
+                if (e.binder) |b| {
+                    AIBinder_incStrong(b);
+                    binder.* = b;
+                    return STATUS_OK;
+                }
+                return STATUS_BAD_TYPE;
             },
-            else => binder.* = null,
+            else => return STATUS_BAD_TYPE,
         }
-        return STATUS_OK;
     }
-    binder.* = null;
-    return STATUS_OK;
+    return STATUS_BAD_TYPE;
 }
 
 export fn AParcel_writeParcelFileDescriptor(parcel: *AParcel, fd: i32) callconv(.c) i32 {
+    if (!parcel.allow_fds) return STATUS_FDS_NOT_ALLOWED;
     const off: u32 = @intCast(parcel.pos);
     if (fd < 0) {
         parcel.writeI32(0);
-        return STATUS_OK;
+        return parcel.err;
     }
-    const dup_rc = std.os.linux.dup(fd);
-    if (std.os.linux.errno(dup_rc) != .SUCCESS) return STATUS_BAD_VALUE;
-    const dup: fd_t = @intCast(dup_rc);
+    const dup = dupFd(fd);
+    if (dup < 0) return STATUS_BAD_VALUE;
     parcel.writeI32(1);
+    if (parcel.err != STATUS_OK) {
+        closeFd(dup);
+        return parcel.err;
+    }
     parcel.entries.append(alloc, .{ .offset = off, .kind = .file_descriptor, .value = 0, .fd = dup }) catch @panic("oom");
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_readParcelFileDescriptor(parcel: *const AParcel, fd: *i32) callconv(.c) i32 {
     const p = @constCast(parcel);
@@ -1636,37 +1857,64 @@ export fn AParcel_readParcelFileDescriptor(parcel: *const AParcel, fd: *i32) cal
     return STATUS_OK;
 }
 
+// Source note: pinned binder::Status::writeToParcel/readFromParcel. NDK and
+// C++ must share exception headers, including the remote-stack size field.
 export fn AParcel_writeStatusHeader(parcel: *AParcel, status: *const AStatus) callconv(.c) i32 {
-    // A low-level status (AStatus_fromStatus) is reported to the caller and
-    // written as nothing (AOSP AParcel_writeStatusHeader contract).
-    if (status.low_level and status.status != STATUS_OK) return status.status;
-    // AOSP status-header layout: exception code, then (for non-EX_NONE) a
-    // message string and, for service-specific, the error code.
+    if (status.exception == EX_TRANSACTION_FAILED) return status.status;
     parcel.writeI32(status.exception);
     if (status.exception != EX_NONE) {
-        parcel.writeString(if (status.message) |m| m else "", @intCast(if (status.message) |m| m.len else 0));
+        const message: []const u8 = if (status.message) |m| m else "";
+        parcel.writeString(message, @intCast(message.len));
+        parcel.writeI32(0); // Empty remote stack trace header.
         if (status.exception == -8) parcel.writeI32(status.service_specific);
+        if (status.exception == -9) parcel.writeI32(0); // No native Parcelable blob.
     }
+    return parcel.err;
+}
+fn skipStatusHeader(p: *AParcel, zero_keeps_cursor: bool) i32 {
+    const start = p.pos;
+    const available = p.data.items.len - @min(start, p.data.items.len);
+    const size = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    if (size < 0 or @as(usize, @intCast(size)) > available) return STATUS_UNKNOWN_ERROR;
+    if (size != 0 or !zero_keeps_cursor) p.pos = start + @as(usize, @intCast(size));
     return STATUS_OK;
 }
 export fn AParcel_readStatusHeader(parcel: *const AParcel, status: *?*AStatus) callconv(.c) i32 {
+    status.* = null;
     const p = @constCast(parcel);
-    const ex = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
-    const s = AStatus.create(ex);
-    if (ex != EX_NONE) {
-        if (p.readString()) |m| {
-            defer alloc.free(m);
-            s.message = dupz(m);
-        } else |_| {}
-        if (ex == -8) s.service_specific = p.readI32() orelse 0;
+    var ex = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+    if (ex == -127) {
+        const rc = skipStatusHeader(p, false);
+        if (rc != STATUS_OK) return rc;
+        ex = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
     }
-    status.* = s;
+    if (ex == -128) {
+        const rc = skipStatusHeader(p, false);
+        if (rc != STATUS_OK) return rc;
+        ex = EX_NONE;
+    }
+    const result = AStatus.create(ex);
+    var succeeded = false;
+    defer if (!succeeded) result.destroy();
+    if (ex != EX_NONE) {
+        const message = p.readString() catch return STATUS_NOT_ENOUGH_DATA;
+        defer alloc.free(message);
+        result.message = dupz(message) orelse return STATUS_NO_MEMORY;
+        const rc = skipStatusHeader(p, true);
+        if (rc != STATUS_OK) return rc;
+        if (ex == -8) result.service_specific = p.readI32() orelse return STATUS_NOT_ENOUGH_DATA;
+        if (ex == -9) {
+            const parcelable_rc = skipStatusHeader(p, false);
+            if (parcelable_rc != STATUS_OK) return parcelable_rc;
+        }
+    }
+    status.* = result;
+    succeeded = true;
     return STATUS_OK;
 }
 
-// ----- azk_parcel_*: small C shim for the island's libbinder Parcel stand-in
-// (src/native/AospParcelAbi.cpp), which reaches the Java Parcel's AParcel
-// through mNativePtr. String8 is the AOSP layout CursorWindow writes.
+// ----- Legacy String8/FD C helpers sharing the same native Parcel storage.
+// Retained for existing native consumers; new C++ callers use binder/Parcel.h.
 
 export fn azk_parcel_writeString8(parcel: *AParcel, str: ?[*]const u8, len: usize) callconv(.c) i32 {
     if (str) |s| parcel.writeString8(s[0..len], @intCast(len)) else parcel.writeString8("", -1);
@@ -1882,7 +2130,7 @@ export fn AParcel_writeByteArray(parcel: *AParcel, data: ?[*]const i8, length: i
     if (length < -1) return STATUS_BAD_VALUE;
     if (length < 0) {
         parcel.writeI32(-1);
-        return STATUS_OK;
+        return parcel.err;
     }
     const n: usize = @intCast(length);
     if (n > 0 and data == null) return STATUS_BAD_VALUE;
@@ -1891,7 +2139,7 @@ export fn AParcel_writeByteArray(parcel: *AParcel, data: ?[*]const i8, length: i
         parcel.writeBytes(std.mem.sliceAsBytes(data.?[0..n]));
         parcel.pad4();
     }
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_readByteArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: ByteArrayAllocator) callconv(.c) i32 {
     const p = @constCast(parcel);
@@ -1916,12 +2164,12 @@ export fn AParcel_writeBoolArray(parcel: *AParcel, arrayData: ?*const anyopaque,
     if (length < -1) return STATUS_BAD_VALUE;
     if (length < 0) {
         parcel.writeI32(-1);
-        return STATUS_OK;
+        return parcel.err;
     }
     parcel.writeI32(length);
     const n: usize = @intCast(length);
     for (0..n) |i| parcel.writeI32(if (getter(arrayData, i)) 1 else 0);
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_readBoolArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: BoolArrayAllocator, setter: BoolArraySetter) callconv(.c) i32 {
     const p = @constCast(parcel);
@@ -1938,7 +2186,7 @@ export fn AParcel_writeStringArray(parcel: *AParcel, arrayData: ?*const anyopaqu
     if (length < -1) return STATUS_BAD_VALUE;
     if (length < 0) {
         parcel.writeI32(-1);
-        return STATUS_OK;
+        return parcel.err;
     }
     parcel.writeI32(length);
     const n: usize = @intCast(length);
@@ -1951,7 +2199,7 @@ export fn AParcel_writeStringArray(parcel: *AParcel, arrayData: ?*const anyopaqu
             parcel.writeString(s.?[0..@intCast(out_len)], out_len);
         }
     }
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_readStringArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: StringArrayAllocator, elementAllocator: StringArrayElementAllocator) callconv(.c) i32 {
     const p = @constCast(parcel);
@@ -1985,7 +2233,7 @@ export fn AParcel_writeParcelableArray(parcel: *AParcel, arrayData: ?*const anyo
     if (length < -1) return STATUS_BAD_VALUE;
     if (length < 0) {
         parcel.writeI32(-1);
-        return STATUS_OK;
+        return parcel.err;
     }
     parcel.writeI32(length);
     const n: usize = @intCast(length);
@@ -1993,7 +2241,7 @@ export fn AParcel_writeParcelableArray(parcel: *AParcel, arrayData: ?*const anyo
         const rc = elementWriter(parcel, arrayData, i);
         if (rc != STATUS_OK) return rc;
     }
-    return STATUS_OK;
+    return parcel.err;
 }
 export fn AParcel_readParcelableArray(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: ParcelableArrayAllocator, elementReader: ReadParcelableElement) callconv(.c) i32 {
     const len = @constCast(parcel).readI32() orelse return STATUS_NOT_ENOUGH_DATA;
@@ -2018,31 +2266,16 @@ export fn AParcel_reset(parcel: *AParcel) callconv(.c) i32 {
     return STATUS_OK;
 }
 export fn AParcel_getAllowFds(parcel: *const AParcel) callconv(.c) bool {
-    _ = parcel;
-    // Hosted parcels always carry FDs (the broker's SCM_RIGHTS path); the
-    // platform "no FDs allowed" parcel restriction has no hosted equivalent.
-    return true;
+    return parcel.allow_fds;
 }
 export fn AParcel_getDataSize(parcel: *const AParcel) callconv(.c) i32 {
     return @intCast(parcel.data.items.len);
 }
 export fn AParcel_appendFrom(from: *const AParcel, to: *AParcel, start: i32, size: i32) callconv(.c) i32 {
     if (start < 0 or size < 0) return STATUS_BAD_VALUE;
-    const s: usize = @intCast(start);
-    const n: usize = @intCast(size);
-    const src = @constCast(from);
-    if (s > src.data.items.len or n > src.data.items.len - s) return STATUS_BAD_VALUE;
-    // Object/fd entries cannot be shared across parcels without transferring
-    // their broker export uses / dup'ing their descriptors; the hosted callers
-    // of appendFrom copy object-free data ranges, so reject a range that spans
-    // any binder or fd entry rather than corrupt its ownership.
-    for (src.entries.items) |e| {
-        const off: usize = e.offset;
-        if (off + 4 > s and off < s + n) return STATUS_INVALID_OPERATION;
-    }
-    to.writeBytes(src.data.items[s .. s + n]);
-    return STATUS_OK;
+    return to.appendRange(@constCast(from), @intCast(start), @intCast(size));
 }
+
 export fn AParcel_marshal(parcel: *const AParcel, buffer: [*]u8, start: usize, len: usize) callconv(.c) i32 {
     // A marshalled parcel is raw bytes only; any object entry — binder or fd,
     // including a null-binder marker — cannot be flattened (AOSP rejects them).
@@ -2061,7 +2294,7 @@ export fn AParcel_unmarshal(parcel: *AParcel, buffer: [*]const u8, len: usize) c
     return STATUS_OK;
 }
 export fn AParcel_markSensitive(parcel: *const AParcel) callconv(.c) void {
-    _ = parcel; // The hosted parcel does not pool/reuse buffers; nothing to scrub.
+    @constCast(parcel).sensitive = true;
 }
 
 // ----- AIBinder_Class / AIBinder
@@ -2112,10 +2345,19 @@ export fn AIBinder_incStrong(binder: *AIBinder) callconv(.c) void {
     _ = binder.strong.fetchAdd(1, .monotonic);
 }
 export fn AIBinder_decStrong(binder: *AIBinder) callconv(.c) void {
+    if (binder.kind == .remote) {
+        const r = Runtime.get();
+        r.mu.lockUncancelable(g_io);
+        const prev = binder.strong.fetchSub(1, .acq_rel);
+        if (prev == 1 and r.proxies.get(binder.id) == binder) _ = r.proxies.remove(binder.id);
+        r.mu.unlock(g_io);
+        if (prev == 1) r.releaseProxy(binder);
+        return;
+    }
     const prev = binder.strong.fetchSub(1, .acq_rel);
     if (prev != 1) return;
     switch (binder.kind) {
-        .remote => Runtime.get().releaseProxy(binder),
+        .remote => unreachable,
         .local => {
             destroyLocalPayload(binder);
             decWeak(binder);
@@ -2152,7 +2394,7 @@ export fn AIBinder_transact(binder: *AIBinder, code: u32, in: *?*AParcel, out: *
     // A local target is serviced in-process (no broker); only a remote target
     // needs the connection, so don't force one for a purely local call.
     const rc = if (binder.kind == .local)
-        Runtime.localTransact(binder, code, in_parcel, reply)
+        Runtime.localTransact(binder, code, in_parcel, reply, flags)
     else
         Runtime.get().transact(binder, code, in_parcel, reply, flags);
     out.* = reply;
@@ -2185,58 +2427,68 @@ export fn AIBinder_DeathRecipient_setOnUnlinked(recipient: *AIBinder_DeathRecipi
     recipient.on_unlinked = onUnlinked;
 }
 export fn AIBinder_DeathRecipient_delete(recipient: *AIBinder_DeathRecipient) callconv(.c) void {
-    // Remove every link this recipient still holds so a later object_dead
-    // notification cannot dereference it, and run onUnlinked per removed link.
-    const r = Runtime.get();
-    var unlinked: usize = 0;
-    r.mu.lockUncancelable(g_io);
-    var i: usize = 0;
-    while (i < r.death_links.items.len) {
-        if (r.death_links.items[i].recipient == recipient) {
-            _ = r.death_links.orderedRemove(i);
-            unlinked += 1;
-        } else i += 1;
+    if (Runtime.instance) |r| {
+        var removed = std.ArrayListUnmanaged(*Runtime.DeathLink).empty;
+        defer removed.deinit(alloc);
+        r.death_mu.lockUncancelable(g_io);
+        r.mu.lockUncancelable(g_io);
+        var i: usize = 0;
+        while (i < r.death_links.items.len) {
+            if (r.death_links.items[i].recipient == recipient) {
+                removed.append(alloc, r.death_links.orderedRemove(i)) catch @panic("oom");
+            } else i += 1;
+        }
+        for (removed.items) |l| {
+            if (!r.hasDeathLinkLocked(l.global_id)) r.deathSubscription(l.global_id, false);
+        }
+        r.mu.unlock(g_io);
+        r.death_mu.unlock(g_io);
+        for (removed.items) |l| l.release();
     }
-    r.mu.unlock(g_io);
-    if (recipient.on_unlinked) |cb| {
-        var k: usize = 0;
-        while (k < unlinked) : (k += 1) cb(null);
-    }
-    alloc.destroy(recipient);
+    recipient.release();
 }
 export fn AIBinder_linkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque) callconv(.c) i32 {
     if (binder.kind != .remote) return STATUS_INVALID_OPERATION;
     const r = Runtime.get();
+    const l = alloc.create(Runtime.DeathLink) catch return STATUS_NO_MEMORY;
+    l.* = .{ .global_id = binder.id, .recipient = recipient, .cookie = cookie, .on_unlinked = recipient.on_unlinked };
+    _ = recipient.refs.fetchAdd(1, .monotonic);
+    r.death_mu.lockUncancelable(g_io);
     r.mu.lockUncancelable(g_io);
-    r.death_links.append(alloc, .{ .global_id = binder.id, .recipient = recipient, .cookie = cookie }) catch @panic("oom");
+    if (binder.dead.load(.acquire) or r.disconnected.load(.acquire)) {
+        r.mu.unlock(g_io);
+        r.death_mu.unlock(g_io);
+        l.release();
+        return STATUS_DEAD_OBJECT;
+    }
+    const first = !r.hasDeathLinkLocked(binder.id);
+    r.death_links.append(alloc, l) catch @panic("oom");
     r.mu.unlock(g_io);
-    var body: [@sizeOf(ObjectRef)]u8 = undefined;
-    @memcpy(&body, std.mem.asBytes(&ObjectRef.remote(binder.id)));
-    r.sendFrame(.{ .tag = Client.Message.Tag.link_death, .bytes_len = body.len }, &body, &.{}) catch {};
+    if (first) r.deathSubscription(binder.id, true);
+    r.death_mu.unlock(g_io);
     return STATUS_OK;
 }
-const STATUS_INVALID_OPERATION: i32 = -@as(i32, @intCast(@intFromEnum(E.NOSYS)));
+const STATUS_INVALID_OPERATION: i32 = -@as(i32, @intCast(@backingInt(E.NOSYS)));
 export fn AIBinder_unlinkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRecipient, cookie: ?*anyopaque) callconv(.c) i32 {
     const r = Runtime.get();
+    r.death_mu.lockUncancelable(g_io);
     r.mu.lockUncancelable(g_io);
-    var i: usize = 0;
-    var found = false;
-    while (i < r.death_links.items.len) {
-        const l = r.death_links.items[i];
+    var found: ?*Runtime.DeathLink = null;
+    for (r.death_links.items, 0..) |l, i| {
         if (l.global_id == binder.id and l.recipient == recipient and l.cookie == cookie) {
-            _ = r.death_links.orderedRemove(i);
-            found = true;
+            found = r.death_links.orderedRemove(i);
             break;
         }
-        i += 1;
     }
+    const last = !r.hasDeathLinkLocked(binder.id);
     r.mu.unlock(g_io);
-    if (!found) return STATUS_NAME_NOT_FOUND;
-    var body: [@sizeOf(ObjectRef)]u8 = undefined;
-    @memcpy(&body, std.mem.asBytes(&ObjectRef.remote(binder.id)));
-    r.sendFrame(.{ .tag = Client.Message.Tag.unlink_death, .bytes_len = body.len }, &body, &.{}) catch {};
-    if (recipient.on_unlinked) |cb| cb(cookie);
-    return STATUS_OK;
+    if (found != null and last) r.deathSubscription(binder.id, false);
+    r.death_mu.unlock(g_io);
+    if (found) |l| {
+        l.release();
+        return STATUS_OK;
+    }
+    return STATUS_NAME_NOT_FOUND;
 }
 
 // ----- AServiceManager
@@ -2244,10 +2496,12 @@ export fn AIBinder_unlinkToDeath(binder: *AIBinder, recipient: *AIBinder_DeathRe
 export fn AServiceManager_addService(binder: *AIBinder, instance: [*:0]const u8) callconv(.c) i32 {
     const name = std.mem.span(instance);
     const r = Runtime.get();
-    const id = r.exportLocal(binder);
+    if (name.len > Client.limits.max_name_len) return EX_ILLEGAL_STATE;
+    if (r.disconnected.load(.acquire)) return EX_TRANSACTION_FAILED;
+    const object = if (binder.kind == .local) ObjectRef.local(r.exportLocal(binder)) else ObjectRef.remote(binder.id);
     var body = std.ArrayListUnmanaged(u8).empty;
     defer body.deinit(alloc);
-    const reg = Client.Message.RegisterService{ .object = ObjectRef.local(id), .name_len = @intCast(name.len) };
+    const reg = Client.Message.RegisterService{ .object = object, .name_len = @intCast(name.len) };
     body.appendSlice(alloc, std.mem.asBytes(&reg)) catch @panic("oom");
     body.appendSlice(alloc, name) catch @panic("oom");
     const call = r.serviceRequest(.register_service, body.items);
@@ -2345,7 +2599,13 @@ export fn ABinderProcess_startThreadPool() callconv(.c) void {
     _ = Runtime.get();
 }
 export fn ABinderProcess_setThreadPoolMaxThreadCount(count: u32) callconv(.c) bool {
-    _ = count;
+    if (count > 1023) return false;
+    const r = Runtime.get();
+    r.mu.lockUncancelable(g_io);
+    defer r.mu.unlock(g_io);
+    const limit: usize = @as(usize, count) + 1;
+    if (limit < r.dispatch_total) return false;
+    r.max_dispatch_workers = limit;
     return true;
 }
 export fn ABinderProcess_isThreadPoolStarted() callconv(.c) bool {
@@ -2547,10 +2807,10 @@ const ServiceNotification = struct {};
 
 export fn ABinderProcess_setupPolling(fd: *i32) callconv(.c) i32 {
     fd.* = -1;
-    return STATUS_OK;
+    return STATUS_INVALID_OPERATION;
 }
 export fn ABinderProcess_handlePolledCommands() callconv(.c) i32 {
-    return STATUS_OK;
+    return STATUS_INVALID_OPERATION;
 }
 
 // ----- JNI true-sharing bridge
@@ -2938,7 +3198,7 @@ fn pSetDataSize(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, size: jni.ji
     _ = cls;
     const p = parcelOf(handle);
     const n: usize = @intCast(@max(size, 0));
-    p.data.resize(alloc, n) catch @panic("oom");
+    _ = p.setSize(n);
 }
 fn pSetDataCapacity(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, size: jni.jint) callconv(.c) void {
     _ = env;
@@ -3255,11 +3515,17 @@ fn pCompareDataInRange(env: JNIEnvPtr, cls: jni.jclass, a: jni.jlong, off_a: jni
     if (oa + n > pa.data.items.len or ob + n > pb.data.items.len) return jni.JNI_FALSE;
     return if (std.mem.eql(u8, pa.data.items[oa .. oa + n], pb.data.items[ob .. ob + n])) jni.JNI_TRUE else jni.JNI_FALSE;
 }
+// Source note: android_os_Parcel_appendFrom signals errors from Parcel::appendFrom.
 fn pAppendFrom(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, other: jni.jlong, offset: jni.jint, length: jni.jint) callconv(.c) void {
-    _ = env;
     _ = cls;
-    parcelOf(handle).appendRange(parcelOf(other), @intCast(@max(offset, 0)), @intCast(@max(length, 0)));
+    if (offset < 0 or length < 0) {
+        throwRuntime(env, "invalid Parcel append range");
+        return;
+    }
+    const rc = parcelOf(handle).appendRange(parcelOf(other), @intCast(offset), @intCast(length));
+    if (rc != STATUS_OK) throwRuntime(env, "Parcel append failed");
 }
+
 fn pHasFileDescriptorsInRange(env: JNIEnvPtr, cls: jni.jclass, handle: jni.jlong, offset: jni.jint, length: jni.jint) callconv(.c) jni.jboolean {
     _ = env;
     _ = cls;
@@ -3577,7 +3843,7 @@ fn bpTransactNative(env: JNIEnvPtr, this: jni.jobject, code: jni.jint, data: jni
 
 /// Shared native DeathRecipient: its cookie is a global ref to the Java
 /// IBinder.DeathRecipient, invoked when the linked object dies.
-var g_java_death_recipient = AIBinder_DeathRecipient{ .on_died = javaDeathDied };
+var g_java_death_recipient = AIBinder_DeathRecipient{ .on_died = javaDeathDied, .on_unlinked = javaDeathUnlinked };
 fn javaDeathDied(cookie: ?*anyopaque) callconv(.c) void {
     const fw = g_fw orelse return;
     const env = jniEnv();
@@ -3585,24 +3851,15 @@ fn javaDeathDied(cookie: ?*anyopaque) callconv(.c) void {
     const recipient: jni.jobject = @ptrCast(cookie orelse return);
     env.*.*.CallVoidMethod.?(env, recipient, fw.death_binder_died);
     _ = clearException(env);
-    // A death notification is delivered once; like BpBinder::sendObituary the
-    // link is gone afterwards, so a later unlinkToDeath reports it missing.
-    const r = Runtime.get();
-    r.mu.lockUncancelable(g_io);
-    var i: usize = 0;
-    while (i < r.death_links.items.len) : (i += 1) {
-        const l = r.death_links.items[i];
-        if (l.recipient == &g_java_death_recipient and l.cookie == cookie) {
-            _ = r.death_links.orderedRemove(i);
-            break;
-        }
-    }
-    r.mu.unlock(g_io);
-    env.*.*.DeleteGlobalRef.?(env, recipient);
+}
+fn javaDeathUnlinked(cookie: ?*anyopaque) callconv(.c) void {
+    const env = jniEnv() orelse return;
+    env.*.*.DeleteGlobalRef.?(env, @ptrCast(cookie));
 }
 fn bpLinkToDeathNative(env: JNIEnvPtr, this: jni.jobject, recipient: jni.jobject, flags: jni.jint) callconv(.c) void {
     _ = flags;
     const nd = proxyData(env, this) orelse return;
+    if (nd.aibinder.kind != .remote) return;
     const cookie = env.*.*.NewGlobalRef.?(env, recipient) orelse return;
     _ = AIBinder_linkToDeath(nd.aibinder, &g_java_death_recipient, cookie);
 }
@@ -3611,19 +3868,20 @@ fn bpUnlinkToDeathNative(env: JNIEnvPtr, this: jni.jobject, recipient: jni.jobje
     const nd = proxyData(env, this) orelse return jni.JNI_FALSE;
     const r = Runtime.get();
     r.mu.lockUncancelable(g_io);
-    defer r.mu.unlock(g_io);
-    var i: usize = 0;
-    while (i < r.death_links.items.len) : (i += 1) {
-        const l = r.death_links.items[i];
+    var selected: ?*Runtime.DeathLink = null;
+    for (r.death_links.items) |l| {
         if (l.global_id != nd.aibinder.id or l.recipient != &g_java_death_recipient) continue;
-        const cookie: jni.jobject = @ptrCast(l.cookie);
-        if (env.*.*.IsSameObject.?(env, cookie, recipient) != jni.JNI_TRUE) continue;
-        env.*.*.DeleteGlobalRef.?(env, cookie);
-        _ = r.death_links.orderedRemove(i);
-        return jni.JNI_TRUE;
+        if (env.*.*.IsSameObject.?(env, @ptrCast(l.cookie), recipient) != jni.JNI_TRUE) continue;
+        l.retain();
+        selected = l;
+        break;
     }
-    return jni.JNI_FALSE;
+    r.mu.unlock(g_io);
+    const l = selected orelse return jni.JNI_FALSE;
+    defer l.release();
+    return if (AIBinder_unlinkToDeath(nd.aibinder, &g_java_death_recipient, l.cookie) == STATUS_OK) jni.JNI_TRUE else jni.JNI_FALSE;
 }
+
 fn bpAddFrozenStateChangeCallbackNative(env: JNIEnvPtr, this: jni.jobject, cb: jni.jobject) callconv(.c) void {
     _ = this;
     _ = cb;
@@ -3920,4 +4178,105 @@ pub fn registerBinderFrameworkNatives(env_opaque: ?*anyopaque) c_int {
     if (env.*.*.RegisterNatives.?(env, bs_cls, &bs_methods, bs_methods.len) != 0) return -1;
 
     return 0;
+}
+
+// ---- Source-built C++ libbinder facade. No C++ object or transport state is
+// authoritative here: language views borrow the same native Parcel as JNI/NDK.
+export fn azk_parcel_setSize(p: *AParcel, size: usize) callconv(.c) i32 {
+    return p.setSize(size);
+}
+export fn azk_parcel_setCapacity(p: *AParcel, size: usize) callconv(.c) i32 {
+    if (size > std.math.maxInt(i32)) return STATUS_BAD_VALUE;
+    return p.reserve(size);
+}
+export fn azk_parcel_capacity(p: *const AParcel) callconv(.c) usize {
+    return p.data.capacity;
+}
+export fn azk_parcel_error(p: *const AParcel) callconv(.c) i32 {
+    return p.err;
+}
+export fn azk_parcel_setError(p: *AParcel, err: i32) callconv(.c) void {
+    p.err = err;
+}
+export fn azk_parcel_data(p: *const AParcel) callconv(.c) ?*const anyopaque {
+    return p.data.items.ptr;
+}
+export fn azk_parcel_writeInplace(p: *AParcel, size: usize) callconv(.c) ?*anyopaque {
+    if (size > std.math.maxInt(i32) - 3) {
+        p.err = STATUS_BAD_VALUE;
+        return null;
+    }
+    const padded = (size + 3) & ~@as(usize, 3);
+    p.ensure(padded);
+    if (p.err != STATUS_OK) return null;
+    p.removeEntries(p.pos, p.pos + padded);
+    const result = p.data.items.ptr + p.pos;
+    @memset(result[size..padded], 0);
+    p.pos += padded;
+    return result;
+}
+export fn azk_parcel_readInplace(p_const: *const AParcel, size: usize) callconv(.c) ?*const anyopaque {
+    const p = @constCast(p_const);
+    if (size > std.math.maxInt(i32) - 3) return null;
+    const bytes = p.readSlice((size + 3) & ~@as(usize, 3)) orelse return null;
+    return bytes.ptr;
+}
+export fn azk_parcel_allowFds(p: *AParcel, allowed: bool) callconv(.c) bool {
+    const old = p.allow_fds;
+    p.allow_fds = allowed;
+    return old;
+}
+export fn azk_parcel_hasFds(p: *const AParcel) callconv(.c) bool {
+    for (p.entries.items) |e| if (e.kind == .file_descriptor) return true;
+    return false;
+}
+export fn azk_parcel_writeFd(p: *AParcel, fd: i32, take: bool) callconv(.c) i32 {
+    const rc = AParcel_writeParcelFileDescriptor(p, fd);
+    if (take and rc == STATUS_OK) closeFd(fd);
+    return rc;
+}
+export fn azk_parcel_dupFd(fd: i32) callconv(.c) i32 {
+    return dupFd(fd);
+}
+export fn azk_parcel_closeFd(fd: i32) callconv(.c) void {
+    closeFd(fd);
+}
+export fn azk_parcel_cppView(p: *AParcel, create: *const fn (*AParcel) callconv(.c) ?*anyopaque, destroy_view: *const fn (*anyopaque) callconv(.c) void) callconv(.c) ?*anyopaque {
+    if (p.cpp_view == null) {
+        p.cpp_view = create(p);
+        p.cpp_destroy = destroy_view;
+    }
+    return p.cpp_view;
+}
+export fn azk_binder_transact(binder: *AIBinder, code: u32, input: *const AParcel, output: ?*AParcel, flags: u32) callconv(.c) i32 {
+    const in = AParcel.create();
+    defer in.destroy();
+    const rc = in.appendRange(@constCast(input), 0, input.data.items.len);
+    if (rc != STATUS_OK) return rc;
+    if (output) |out| out.clearContents();
+    return if (binder.kind == .local) Runtime.localTransact(binder, code, in, output, flags) else Runtime.get().transact(binder, code, in, output, flags);
+}
+export fn azk_binder_callFlags() callconv(.c) u32 {
+    return Runtime.current_flags;
+}
+export fn azk_binder_servingStack() callconv(.c) ?*const anyopaque {
+    return Runtime.serving_stack;
+}
+export fn azk_binder_clearCallingIdentity() callconv(.c) u64 {
+    const token = (@as(u64, @intCast(AIBinder_getCallingUid())) << 32) | @as(u32, @bitCast(AIBinder_getCallingPid()));
+    Runtime.current_caller_uid = Runtime.get().uid;
+    Runtime.current_caller_pid = Runtime.get().pid;
+    return token;
+}
+export fn azk_binder_restoreCallingIdentity(token: u64) callconv(.c) void {
+    Runtime.current_caller_uid = @truncate(token >> 32);
+    Runtime.current_caller_pid = @bitCast(@as(u32, @truncate(token)));
+}
+export fn azk_binder_flush() callconv(.c) void {
+    // Frames and releases are flushed synchronously by sendFrame. Acquiring its
+    // write lock waits for any already-started writer; there is no command buffer.
+    if (Runtime.instance) |r| {
+        r.write_mu.lockUncancelable(g_io);
+        r.write_mu.unlock(g_io);
+    }
 }

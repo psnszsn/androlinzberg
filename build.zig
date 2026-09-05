@@ -264,6 +264,37 @@ pub fn build(b: *std.Build) void {
     b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
         .dependOn(&binder_ndk.step);
 
+    const binder_cpp = @import("build/binder_cpp.zig").build(b, target, optimize, aosp, binder_ndk);
+    b.step("binder-cpp", "Build the hosted C++ libbinder facade").dependOn(&binder_cpp.step);
+
+    const facade_test = b.addExecutable(.{ .name = "binder-facade-test", .root_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+    }) });
+    facade_test.root_module.addIncludePath(b.path("src/native/binder/include"));
+    for (@import("build/binder_cpp.zig").includes) |path| facade_test.root_module.addIncludePath(aosp.path(b, path));
+    facade_test.root_module.addIncludePath(generated.native.binder_graphics_headers);
+    const facade_flags = &.{ "-std=gnu++23", "-fno-rtti", "-fno-exceptions", "-UNDEBUG" };
+    facade_test.root_module.addCSourceFile(.{ .file = b.path("tests/native/BinderFacadeTest.cpp"), .flags = facade_flags });
+    facade_test.root_module.addCSourceFile(.{ .file = generated.native.binder_graphics_sources.path(b, "android/gui/IFpsListener.cpp"), .flags = facade_flags });
+    facade_test.root_module.linkLibrary(binder_cpp);
+    facade_test.root_module.linkLibrary(binder_ndk);
+    const facade_run = b.addSystemCommand(&.{"python3"});
+    facade_run.addFileArg(b.path("tools/binder-facade-test.py"));
+    facade_run.addArg("--probe");
+    facade_run.addArtifactArg(facade_test);
+    facade_run.addArg("--library");
+    facade_run.addArtifactArg(binder_cpp);
+    facade_run.addArg("--library");
+    facade_run.addArtifactArg(binder_ndk);
+    facade_run.addArg("--broker");
+    facade_run.addArtifactArg(binder_broker);
+    facade_run.addArgs(&.{ "--output", b.pathResolve(&.{"zig-out/test-results/binder-facade"}) });
+    facade_run.has_side_effects = true;
+    b.step("binder-cpp-test", "Test generated graphics Binder and shared Parcel ownership").dependOn(&facade_run.step);
+
     // Stock StatsLog loads libstats_jni itself. The host has no statsd daemon,
     // so this tiny JNI library supplies AOSP's Ravenwood-equivalent no-op sink.
     const stats_jni = b.addLibrary(.{
@@ -285,6 +316,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .skia = skia_lib,
         .binder_ndk = binder_ndk,
+        .binder_cpp = binder_cpp,
         .art = art_mod,
         .aidl_header_roots = generated.native.aidl_header_roots,
         .host_include_roots = host_toolchain.island.include_roots,
@@ -536,12 +568,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_binder_broker_tests = b.addRunArtifact(binder_broker_tests);
+    b.step("binder-broker-test", "Run broker protocol unit tests").dependOn(&run_binder_broker_tests.step);
     const application_tree = @import("build/application.zig").build(b, .{
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
         .island = island.file,
         .stats_jni = stats_jni.getEmittedBin(),
         .binder_ndk = binder_ndk.getEmittedBin(),
+        .binder_cpp = binder_cpp.getEmittedBin(),
         .art_runtime = artzig_dep.namedLazyPath("art-runtime"),
         .libart = libart_overlay,
         .libjavacrypto = libjavacrypto_overlay,

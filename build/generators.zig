@@ -30,6 +30,8 @@ pub const GeneratedJvm = struct {
 
 pub const GeneratedNative = struct {
     aidl_header_roots: []const LazyPath,
+    binder_graphics_headers: LazyPath,
+    binder_graphics_sources: LazyPath,
 };
 
 pub const FrameworkResources = struct {
@@ -738,6 +740,16 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aidl_java = aidlJava(b, o.aosp, runner);
     const hidl_java = hidlJava(b, o.aosp, runner);
     const aidl_cpp = aidlCpp(b, o.aosp, runner);
+    const graphics = b.addRunArtifact(runner);
+    graphics.addFileArg(o.aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
+    graphics.addArgs(&.{ "--lang=cpp", "-I" });
+    graphics.addDirectoryArg(o.aosp.path("frameworks/native/libs/gui/aidl"));
+    graphics.addArg("-h");
+    const graphics_headers = graphics.addOutputDirectoryArg("binder-graphics-headers");
+    graphics.addArg("-o");
+    const graphics_sources = graphics.addOutputDirectoryArg("binder-graphics-sources");
+    graphics.addFileArg(o.aosp.path(declarations.binder_graphics_aidl));
+    graphics.setName("generate graphics Binder test interface");
     const logtags_java = logtagsJava(b, o.aosp);
     const aconfig_java = aconfigJava(b, o.aosp, runner);
     const sysprop_java = syspropJava(b, o.aosp, o.sysprop_tool);
@@ -762,7 +774,7 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     return .{
         .jvm = .{ .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM") },
-        .native = .{ .aidl_header_roots = aidl_cpp },
+        .native = .{ .aidl_header_roots = aidl_cpp, .binder_graphics_headers = graphics_headers, .binder_graphics_sources = graphics_sources },
         .resources = res,
         .fixtures = fixtures,
         .aggregate_step = aggregate,

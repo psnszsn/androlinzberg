@@ -124,6 +124,16 @@ fn serviceResult(body: []const u8) !Server.Message.ServiceResult {
     return fixedStruct(Server.Message.ServiceResult, body);
 }
 
+fn expectReleased(peer: *Peer, local_id: u64, uses: u64) !void {
+    const msg = try peer.next();
+    defer testing.allocator.free(msg.fds);
+    try testing.expectEqual(Server.Message.Tag.object_released, msg.header.tag);
+    const released = try fixedStruct(Server.Message.ObjectReleased, msg.body);
+    try testing.expectEqual(local_id, released.object.value);
+    try testing.expectEqual(uses, released.uses);
+    try peer.client.serveObjectRefMessage(.release_ack, ObjectRef.local(local_id));
+}
+
 test "hello with a bad cookie is rejected" {
     const io = testing.io;
     const h = try Harness.start(testing.allocator, io);
@@ -186,6 +196,8 @@ test "registry, transaction routing, nesting, oneway, release and death" {
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.ServiceResult.Status.already_registered, (try serviceResult(msg.body)).status);
     }
+
+    try expectReleased(&client, 5, 1);
 
     // Sync call client -> server carrying a client-local callback object.
     const entries = [_]ObjectEntry{.{ .offset = 4, .kind = .binder_local, .value = 42 }};
@@ -339,7 +351,9 @@ test "registry, transaction routing, nesting, oneway, release and death" {
     }
     try testing.expect(saw_dead and saw_reply);
     // Stale id: the broker answers dead_object instead of routing.
-    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 6, .request_id = 31 });
+    const abandoned = [_]ObjectEntry{.{ .offset = 0, .kind = .binder_local, .value = 99 }};
+    try client.client.serveTransact(.{ .target = ObjectRef.remote(svc_gid), .code = 6, .request_id = 31, .entries = &abandoned, .data = "\x00\x00\x00\x00" });
+    try expectReleased(&client, 99, 1);
     {
         const msg = try client.next();
         defer gpa.free(msg.fds);
@@ -487,6 +501,7 @@ test "per-package uids, system role, and registry policy" {
         defer gpa.free(msg.fds);
         try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
         try testing.expectEqual(case.status, (try serviceResult(msg.body)).status);
+        if (case.status == .denied) try expectReleased(case.peer, @intCast(i + 1), 1);
     }
 
     // The calling identity seen by a callee is the caller's own uid.
@@ -834,4 +849,40 @@ test "context object serves the IServiceManager AIDL over the broker" {
         try testing.expectEqual(Server.Message.Tag.service_result, msg.header.tag);
         try testing.expectEqual(Server.Message.ServiceResult.Status.ok, (try serviceResult(msg.body)).status);
     }
+}
+
+test "invalid reply retains pending call until protocol disconnect fails caller" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+    var server: Peer = undefined;
+    try server.connect(io, h.path, cookie);
+    defer server.close();
+    try server.expectWelcome();
+    var client: Peer = undefined;
+    try client.connect(io, h.path, cookie);
+    defer client.close();
+    try client.expectWelcome();
+    try server.client.serveRegisterService(1, ObjectRef.local(1), "dev.artzig.test.invalidreply");
+    gpa.free((try server.next()).fds);
+    try client.client.serveLookupService(2, "dev.artzig.test.invalidreply", false);
+    const msg = try client.next();
+    defer gpa.free(msg.fds);
+    const target = (try serviceResult(msg.body)).object;
+    try client.client.serveTransact(.{ .target = target, .code = 1, .request_id = 3 });
+    const request = try server.next();
+    defer gpa.free(request.fds);
+    // Structurally valid payload, but the callee does not hold this remote ID.
+    const invalid = [_]ObjectEntry{.{ .offset = 0, .kind = .binder_remote, .value = 999999 }};
+    try server.client.serveReply(.{ .routing_id = request.header.routing_id, .entries = &invalid, .data = "\x01\x00\x00\x00" });
+    const rejected = try server.next();
+    defer gpa.free(rejected.fds);
+    try testing.expectEqual(Server.Message.Tag.protocol_error, rejected.header.tag);
+    const reply = try client.next();
+    defer gpa.free(reply.fds);
+    try testing.expectEqual(Server.Message.Tag.reply, reply.header.tag);
+    try testing.expectEqual(@as(u64, 3), reply.header.request_id);
+    const result, _ = try replyBody(reply.body);
+    try testing.expectEqual(Client.Message.Reply.Status.dead_object, result.status);
 }

@@ -3273,3 +3273,8 @@ F aosp external/bouncycastle/repackaged_platform/bcprov/src/main/java/com/androi
 F aosp packages/modules/Wifi/framework/aidl-export/android/net/wifi/WifiSsid.aidl
 F aosp packages/modules/Wifi/framework/java/android/net/wifi/WifiSsid.java
 F aosp packages/modules/Wifi/framework/java/android/net/wifi/util/HexEncoding.java
+
+# Hosted C++ Binder facade and generated graphics callback regression.
+F aosp frameworks/native/libs/binder/IInterface.cpp
+F aosp frameworks/native/libs/binder/Status.cpp
+F aosp frameworks/native/libs/gui/aidl/android/gui/IFpsListener.aidl

@@ -8,6 +8,7 @@ pub const Options = struct {
     island: LazyPath,
     stats_jni: LazyPath,
     binder_ndk: LazyPath,
+    binder_cpp: LazyPath,
     art_runtime: LazyPath,
     libart: LazyPath,
     libjavacrypto: LazyPath,
@@ -32,6 +33,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.island, "lib/libandroid_platform.so");
     _ = tree.addCopyFile(options.stats_jni, "lib/art/libstats_jni.so");
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libbinder_ndk.so");
+    _ = tree.addCopyFile(options.binder_cpp, "lib/art/libbinder.so");
     // Stock NetworkUtils loads this module name. Its hosted native is registered by the
     // framework registrar already carried in libbinder_ndk, so expose that same Zig library.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libframework-connectivity-jni.so");

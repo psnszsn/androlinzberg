@@ -764,6 +764,7 @@ fn handleTransact(peer: *Peer, header: Client.Message.Header, body: []const u8, 
     }
     const owner: ?*Peer = if (object.dead) null else b.peers.get(object.owner);
     if (owner == null or !owner.?.alive) {
+        try b.discardEntries(peer, payload);
         b.closeAll(fds);
         gpa.free(fds);
         if (!oneway) {
@@ -824,9 +825,10 @@ fn handleReply(peer: *Peer, header: Client.Message.Header, body: []const u8, fds
     defer b.mutex.unlock(io);
     const call = b.calls.get(header.routing_id) orelse return protocolError(peer, "reply for unknown call");
     if (call.target != peer.id) return protocolError(peer, "reply from the wrong peer");
-    _ = b.calls.remove(header.routing_id);
     const caller = b.peers.get(call.caller);
     if (caller == null or !caller.?.alive) {
+        _ = b.calls.remove(header.routing_id);
+        try b.discardEntries(peer, payload);
         b.closeAll(fds);
         gpa.free(fds);
         return;
@@ -849,7 +851,23 @@ fn handleReply(peer: *Peer, header: Client.Message.Header, body: []const u8, fds
         .fd_count = header.fd_count,
     }});
     frame.fds = fds;
+    _ = b.calls.remove(header.routing_id);
     caller.?.enqueue(frame);
+}
+
+/// Consume local export announcements even when a valid frame has no recipient.
+/// The owner counts each announcement and needs the normal release/ack handshake.
+fn discardEntries(b: *Broker, peer: *Peer, payload: Client.Payload) ServeError!void {
+    for (0..payload.entries.len) |i| {
+        const e = payload.entry(i);
+        if (e.kind == .binder_local) {
+            const object = resolveRef(peer, ObjectRef.local(e.value)) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.Invalid => return protocolError(peer, "invalid discarded object"),
+            };
+            try b.maybeReleaseObject(object);
+        }
+    }
 }
 
 fn closeAll(b: *Broker, fds: []Io.File) void {
@@ -954,15 +972,16 @@ fn handleRegister(peer: *Peer, header: Client.Message.Header, body: []const u8) 
     const name = try readName(peer, body[@sizeOf(Client.Message.RegisterService)..], reg.name_len);
     b.mutex.lockUncancelable(io);
     defer b.mutex.unlock(io);
+    const object = resolveRef(peer, reg.object) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Invalid => return protocolError(peer, "register_service with an object the peer does not hold"),
+    };
+    defer b.maybeReleaseObject(object) catch {};
     if (!mayRegister(peer, name)) {
         log.warn("peer {d} ({s}) may not register '{s}'", .{ peer.id, peer.package, name });
         peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .denied, ObjectRef.null_ref, "" }));
         return;
     }
-    const object = resolveRef(peer, reg.object) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Invalid => return protocolError(peer, "register_service with an object the peer does not hold"),
-    };
     if (object.dead) {
         peer.enqueue(try b.encode(Server.serveServiceResult, .{ header.request_id, .not_found, ObjectRef.null_ref, "" }));
         return;
