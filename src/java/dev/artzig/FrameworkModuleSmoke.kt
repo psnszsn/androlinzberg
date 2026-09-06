@@ -261,6 +261,7 @@ internal object FrameworkModuleSmoke {
         StockAudioTransportSmoke.run()
         StockAudioFoundationSmoke.run()
         StockVoiceTypesSmoke.run()
+        StockMainlineTypesSmoke.run()
         StockWifiManagerSmoke.run()
         com.android.server.pm.StockApexManagerSmoke.run()
         com.android.server.pm.StockSharedUserSmoke.run()

@@ -27,6 +27,19 @@ in force.
 
 Follow-up changes in the current tree:
 
+- ActivityThread's mainline closure now selects 120 original Java files
+  for NFC/secure elements, SDK sandbox, profiling, media communication/transcoding
+  and process support, with 45 additional AIDL inputs. Versioned AIDL uses the
+  frozen OMAPI V1 schema, version and hash selected by the pinned framework build.
+  MediaCommunicationManager replaces its stub; the redundant Session2Token AIDL
+  placeholder is removed. Client/value contracts and generated protocols do not
+  supply NFC hardware, a sandbox process, a profiler or a transcoding daemon.
+  All 206 inputs match the rebuilt, repinned AOSP archive; ART is unchanged.
+  JVM/system tests pass, including NDEF parsing and rejection, profiling validation,
+  SDK result transport, media capability declarations and frozen AIDL metadata.
+  The inventory is 39 stubs (22 pending, 17 survivors). Native/Binder/build checks
+  and all 11 APK tests pass (41 steps without runtime issues).
+
 - Activity now compiles verbatim and the 1,161-line hosted Activity replacement
   is deleted. ActivityThread uses stock lifecycle signatures, Instrumentation
   creation/post-create dispatch and super-call checks, outer-context attachment,

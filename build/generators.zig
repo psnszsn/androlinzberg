@@ -86,6 +86,15 @@ fn replaceExtension(b: *std.Build, path: []const u8, extension: []const u8) []co
 
 fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
     inline for (.{
+        "frameworks/base/omapi/aidl/aidl_api/android.se.omapi/1/",
+        "packages/modules/AdServices/sdksandbox/framework/java/",
+        "packages/modules/Nfc/framework/java/",
+        "packages/modules/Profiling/aidl/",
+        "frameworks/av/media/module/libmediatranscoding/aidl/",
+        "frameworks/base/packages/services/PacProcessor/src/",
+        "frameworks/base/nfc-non-updatable/java/",
+        "packages/modules/Media/apex/aidl/stable/",
+
         "aidl-compat/",
         "frameworks/base/core/java/",
         "frameworks/base/graphics/java/",
@@ -179,6 +188,14 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
     run.addPrefixedDirectoryArg("-I", compat);
     inline for (.{
+        "frameworks/base/omapi/aidl/aidl_api/android.se.omapi/1",
+        "packages/modules/AdServices/sdksandbox/framework/java",
+        "packages/modules/Nfc/framework/java",
+        "packages/modules/Profiling/aidl",
+        "frameworks/av/media/module/libmediatranscoding/aidl",
+        "frameworks/base/packages/services/PacProcessor/src",
+        "frameworks/base/nfc-non-updatable/java",
+        "packages/modules/Media/apex/aidl/stable",
         "packages/modules/Connectivity/framework-t/src",
         "frameworks/base/media/java",
         "frameworks/base/media/aidl",
@@ -276,6 +293,13 @@ fn aidlJava(
             // HAL interfaces alongside them are VINTF-stable.
             if (std.mem.indexOf(u8, input.path, "/virtualhal/") == null) {
                 run.addArgs(&.{ "--stability", "vintf" });
+            }
+        }
+        for (declarations.versioned_aidl) |version| {
+            if (input.source == .aosp and std.mem.startsWith(u8, input.path, version.prefix)) {
+                run.addArgs(&.{ "--structured", "--stability=vintf", "--min_sdk_version=35" });
+                run.addArg(b.fmt("--version={s}", .{version.version}));
+                run.addArg(b.fmt("--hash={s}", .{version.hash}));
             }
         }
         addAidlIncludes(run, aosp, compat_dir);
