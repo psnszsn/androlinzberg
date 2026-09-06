@@ -1564,6 +1564,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/MemoryFile.java");
     // Real AOSP binder stack (natives from libbinder_ndk via framework_jni.zig),
     // replacing the hosted Parcel/Binder/ServiceManager and HostedBinderRuntime.
+    try c.file("$CJ/android/os/PerformanceHintManager.java");
+    try c.file("$CJ/android/os/WorkDuration.java");
     try c.file("$CJ/android/os/Parcel.java");
     try c.file("$CJ/android/os/Binder.java");
     try c.file("$CJ/android/os/BinderProxy.java");

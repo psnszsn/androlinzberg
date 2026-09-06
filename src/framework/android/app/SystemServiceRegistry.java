@@ -192,6 +192,14 @@ public final class SystemServiceRegistry {
             @Override public android.view.inputmethod.InputMethodManager getService(ContextImpl ctx) {
                 return android.view.inputmethod.InputMethodManager.forContext(ctx.getOuterContext());
             }});
+        // Pinned SystemServiceRegistry registration; native acquisition reports absence.
+        registerService(Context.PERFORMANCE_HINT_SERVICE, android.os.PerformanceHintManager.class,
+                new CachedServiceFetcher<android.os.PerformanceHintManager>() {
+            @Override public android.os.PerformanceHintManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                return android.os.PerformanceHintManager.create();
+            }
+        });
         registerService(Context.POWER_SERVICE, android.os.PowerManager.class,
                 new CachedServiceFetcher<android.os.PowerManager>() {
             @Override public android.os.PowerManager createService(ContextImpl ctx) throws ServiceNotFoundException {
@@ -506,7 +514,12 @@ public final class SystemServiceRegistry {
         SYSTEM_SERVICE_CLASS_NAMES.put(serviceName, serviceClass.getSimpleName());
     }
 
-    static void onServiceNotFound(ServiceNotFoundException e) {
-        Slog.wtf(TAG, e.getMessage(), e);
+    public static void onServiceNotFound(ServiceNotFoundException e) {
+        // Pinned SystemServiceRegistry: absent optional services are warnings for apps.
+        if (android.os.Process.myUid() < android.os.Process.FIRST_APPLICATION_UID) {
+            android.util.Log.wtf(TAG, e.getMessage(), e);
+        } else {
+            android.util.Log.w(TAG, e.getMessage());
+        }
     }
 }

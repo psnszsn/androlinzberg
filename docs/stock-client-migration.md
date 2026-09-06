@@ -27,6 +27,20 @@ in force.
 
 Follow-up changes in the current tree:
 
+- PerformanceHintManager and WorkDuration now compile verbatim from pinned AOSP.
+  The eleven-method native adapter follows APerformanceHintManager::create's
+  unavailable-service path: no Android hint manager, Power HAL or FMQ is hosted,
+  so Java throws ServiceNotFoundException and no manager/session handles are
+  issued. Invalid hidden handles fail explicitly instead of accepting fake hints.
+  The service registry uses the stock registration and app-versus-system logging
+  policy for missing services. Tests cover acquisition failure, argument checks,
+  work-duration values/equality, rejected setter state and closed sessions.
+  JVM/system suites, the NewPipe launch regression, native/Binder/build checks
+  and all 11 APK tests pass (39 steps without runtime issues). The AOSP archive is rebuilt
+  and pinned; the ART archive is unchanged and current. The inventory is now
+  48 stubs: 27 pending and 21 survivors. This does not provide performance or
+  power management, and the broader activity/service migration remains open.
+
 - Activity attachment now captures the pinned launch component and UI thread.
   getComponentName/getLocalClassName use that component, including aliases,
   instead of a hard-coded package and runtime class; setIntent does not change
