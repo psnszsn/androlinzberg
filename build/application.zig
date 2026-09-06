@@ -38,6 +38,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     // Stock NetworkUtils loads this module name. Its hosted native is registered by the
     // framework registrar already carried in libbinder_ndk, so expose that same Zig library.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libframework-connectivity-jni.so");
+    _ = tree.addCopyFile(options.binder_ndk, "lib/art/libframework-connectivity-tiramisu-jni.so");
     // VintfRuntimeInfo uses the same registered framework JNI library.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libvintf_jni.so");
     // Stock MediaCrypto loads this name; its no-plugin JNI is registered in the same library.

@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 27 (budget 27). Survivors: 21. Total: 48.
+Pending: 27 (budget 27). Survivors: 20. Total: 47.
 
 ## Survivors
 
@@ -25,8 +25,7 @@ Pending: 27 (budget 27). Survivors: 21. Total: 48.
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
 | `android/net/ConnectivityManager.java` | hosted synthetic network has no IConnectivityManager/ConnectivityService; stock closure reaches NetworkUtils/BPF JNI | blocked |
 | `android/net/NetworkAgent.java` | no hosted ConnectivityService/IConnectivityManager network-agent path; stock closure reaches BPF JNI and unwired stats generation | blocked |
-| `android/net/NetworkPolicyManager.java` | network policy service (INetworkPolicyManager over NetworkTemplate/NetworkStats from the Connectivity module) not hosted | blocked |
-| `android/net/TrafficStats.java` | native socket tagging and INetworkStatsService are unavailable; host uses Linux networking directly | blocked |
+| `android/net/NetworkPolicyManager.java` | network policy service (INetworkPolicyManager over NetworkTemplate/NetworkStats from the Connectivity module) not hosted | replaceable |
 | `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | blocked |
 | `android/os/VintfObject.java` | JNI natives (libvintf) | blocked |
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | blocked |
@@ -50,7 +49,7 @@ Pending: 27 (budget 27). Survivors: 21. Total: 48.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (680 to add); android.app.AppOpEnums: generated: proto generator (build/generator_sources.zig) (via AppOpEnums < AppOpsManager); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (677 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < PermissionUsageHelper < AppOpsManager); android.companion.virtual.VirtualDevi |
 
 ### audio
 
@@ -75,10 +74,10 @@ Pending: 27 (budget 27). Survivors: 21. Total: 48.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3158 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3156 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3268 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3170 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3121 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3119 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3231 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3133 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
 
 ### runtime
 
@@ -90,8 +89,8 @@ Pending: 27 (budget 27). Survivors: 21. Total: 48.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3156 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3156 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3119 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3119 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
 
 ### textclassifier
 
@@ -126,43 +125,43 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `android.hardware.camera2.CameraCharacteristics` | 24 | 1 |
-| `android.hardware.camera2.CaptureRequest` | 24 | 1 |
-| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 24 | 1 |
-| `android.media.AudioHalVersionInfo` | 24 | 1 |
-| `android.media.AudioMix` | 24 | 1 |
-| `android.media.AudioPlaybackConfiguration` | 24 | 1 |
-| `android.media.AudioRecord` | 24 | 1 |
-| `android.media.AudioSystem` | 24 | 1 |
-| `android.media.IAudioService` | 24 | 1 |
-| `android.media.VolumeShaper` | 24 | 1 |
-| `android.hardware.camera2.params.StreamConfigurationMap` | 24 | 2 |
-| `android.media.AudioMixMatchCriterion` | 24 | 2 |
-| `android.media.AudioPolicyConfig` | 24 | 2 |
-| `android.media.AudioProductStrategy` | 24 | 2 |
-| `android.media.AudioVolumeGroup` | 24 | 2 |
-| `android.media.CamcorderProfile` | 24 | 2 |
-| `android.media.INativeAudioVolumeGroupCallback` | 24 | 2 |
-| `android.media.INativeSpatializerCallback` | 24 | 2 |
-| `android.media.ISoundDose` | 24 | 2 |
-| `android.media.ISpatializer` | 24 | 2 |
-| `android.media.audio.common.AidlConversion` | 24 | 2 |
-| `android.media.audio.common.AudioConfig` | 24 | 2 |
-| `android.media.AudioHwModule` | 24 | 3 |
-| `android.media.audio.common.AudioAttributes` | 24 | 3 |
-| `android.media.audio.common.AudioHalEngineConfig` | 24 | 3 |
-| `android.media.audio.common.AudioOffloadInfo` | 24 | 3 |
-| `android.media.audio.common.AudioPortExt` | 24 | 3 |
-| `android.renderscript.Allocation` | 24 | 3 |
-| `android.media.audio.common.AudioHalCapCriterionV2` | 24 | 4 |
-| `android.media.audio.common.AudioHalCapDomain` | 24 | 4 |
-| `android.media.audio.common.AudioHalProductStrategy` | 24 | 4 |
-| `android.media.audio.common.AudioHalVolumeGroup` | 24 | 4 |
-| `android.media.audio.common.AudioPortMixExt` | 24 | 4 |
-| `android.media.audio.common.AudioHalCapConfiguration` | 24 | 5 |
-| `android.hardware.camera2.CameraDevice` | 23 | 2 |
-| `android.hardware.Camera.CameraInfo` | 23 | 3 |
-| `android.hardware.camera2.TotalCaptureResult` | 23 | 3 |
-| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 23 | 4 |
-| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 23 | 4 |
-| `android.media.MediaRecorder` | 22 | 1 |
+| `android.hardware.camera2.CameraCharacteristics` | 23 | 1 |
+| `android.hardware.camera2.CaptureRequest` | 23 | 1 |
+| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 23 | 1 |
+| `android.media.AudioHalVersionInfo` | 23 | 1 |
+| `android.media.AudioMix` | 23 | 1 |
+| `android.media.AudioPlaybackConfiguration` | 23 | 1 |
+| `android.media.AudioRecord` | 23 | 1 |
+| `android.media.AudioSystem` | 23 | 1 |
+| `android.media.IAudioService` | 23 | 1 |
+| `android.media.VolumeShaper` | 23 | 1 |
+| `android.hardware.camera2.params.StreamConfigurationMap` | 23 | 2 |
+| `android.media.AudioMixMatchCriterion` | 23 | 2 |
+| `android.media.AudioPolicyConfig` | 23 | 2 |
+| `android.media.AudioProductStrategy` | 23 | 2 |
+| `android.media.AudioVolumeGroup` | 23 | 2 |
+| `android.media.CamcorderProfile` | 23 | 2 |
+| `android.media.INativeAudioVolumeGroupCallback` | 23 | 2 |
+| `android.media.INativeSpatializerCallback` | 23 | 2 |
+| `android.media.ISoundDose` | 23 | 2 |
+| `android.media.ISpatializer` | 23 | 2 |
+| `android.media.audio.common.AidlConversion` | 23 | 2 |
+| `android.media.audio.common.AudioConfig` | 23 | 2 |
+| `android.media.AudioHwModule` | 23 | 3 |
+| `android.media.audio.common.AudioAttributes` | 23 | 3 |
+| `android.media.audio.common.AudioHalEngineConfig` | 23 | 3 |
+| `android.media.audio.common.AudioOffloadInfo` | 23 | 3 |
+| `android.media.audio.common.AudioPortExt` | 23 | 3 |
+| `android.renderscript.Allocation` | 23 | 3 |
+| `android.media.audio.common.AudioHalCapCriterionV2` | 23 | 4 |
+| `android.media.audio.common.AudioHalCapDomain` | 23 | 4 |
+| `android.media.audio.common.AudioHalProductStrategy` | 23 | 4 |
+| `android.media.audio.common.AudioHalVolumeGroup` | 23 | 4 |
+| `android.media.audio.common.AudioPortMixExt` | 23 | 4 |
+| `android.media.audio.common.AudioHalCapConfiguration` | 23 | 5 |
+| `android.hardware.camera2.CameraDevice` | 22 | 2 |
+| `android.hardware.Camera.CameraInfo` | 22 | 3 |
+| `android.hardware.camera2.TotalCaptureResult` | 22 | 3 |
+| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 22 | 4 |
+| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 22 | 4 |
+| `android.media.MediaRecorder` | 21 | 1 |

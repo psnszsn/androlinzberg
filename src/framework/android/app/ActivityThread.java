@@ -581,6 +581,10 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
         synchronized (mCoreSettings) { mCoreSettings.putAll(data.coreSettings); }
         android.os.Process.setArgV0(data.processName);
         data.info = getPackageInfoNoCheck(data.appInfo, mCompatibilityInfo);
+        // Pinned handleBindApplication initializes traffic statistics before app code.
+        if (!android.os.Process.isIsolated()) {
+            android.net.TrafficStats.init(ContextImpl.createAppContext(this, data.info));
+        }
         mInstrumentation = new Instrumentation();
         mInstrumentation.basicInit(this);
         final Application app = data.info.makeApplicationInner(false, null);

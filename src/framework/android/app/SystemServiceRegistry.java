@@ -144,6 +144,13 @@ public final class SystemServiceRegistry {
                 IAlarmManager service = IAlarmManager.Stub.asInterface(b);
                 return new AlarmManager(service, ctx);
             }});
+        registerService(Context.NETWORK_STATS_SERVICE, android.app.usage.NetworkStatsManager.class,
+                new CachedServiceFetcher<android.app.usage.NetworkStatsManager>() {
+            @Override public android.app.usage.NetworkStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder binder = android.os.ServiceManager.getServiceOrThrow(Context.NETWORK_STATS_SERVICE);
+                return new android.app.usage.NetworkStatsManager(ctx.getOuterContext(),
+                        android.net.INetworkStatsService.Stub.asInterface(binder));
+            }});
         registerService(Context.CONNECTIVITY_SERVICE, android.net.ConnectivityManager.class, new NewServiceFetcher<android.net.ConnectivityManager>() {
             @Override public android.net.ConnectivityManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.ConnectivityManager(); }});
         // Telephony and telecom (AOSP: ActivityThread installs the TelephonyServiceManager,

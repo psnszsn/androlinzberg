@@ -23,6 +23,7 @@ public class AppOpsManager {
     public static final String OPSTR_USE_ICC_AUTH_WITH_DEVICE_IDENTIFIER = "android:use_icc_auth_with_device_identifier";
     public static final int OP_NONE = -1;
     public static final int OP_GET_USAGE_STATS = 43;
+    public static final String OPSTR_GET_USAGE_STATS = "android:get_usage_stats";
     public static final int OP_LEGACY_STORAGE = 87;
     public static final int OP_MANAGE_EXTERNAL_STORAGE = 92;
     public static final int OP_NO_ISOLATED_STORAGE = 99;

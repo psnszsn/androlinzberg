@@ -5,11 +5,11 @@ const std = @import("std");
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
 
-// SyncFence imports ImageWriter only for Javadoc. Its exact pinned SDK header
-// satisfies javac without the producer stack; the audit forbids runtime use.
+// SyncFence imports ImageWriter and TrafficStats imports MediaPlayer only for
+// Javadoc. Pinned SDK headers satisfy javac; the audit forbids runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
-    .classes = [_][]const u8{"android/media/ImageWriter"},
+    .classes = [_][]const u8{ "android/media/ImageWriter", "android/media/MediaPlayer" },
 };
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
@@ -201,6 +201,9 @@ pub const mime_types = [_]MimeTypes{
 /// These Connectivity parcelables share a package with legacy include roots.
 /// Stage only their pinned declarations to avoid duplicate AIDL definitions.
 pub const aidl_exports = [_]struct { input: SourcePath, output: []const u8 }{
+    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/NetworkTemplate.aidl" }, .output = "android/net/NetworkTemplate.aidl" },
+    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/NetworkStateSnapshot.aidl" }, .output = "android/net/NetworkStateSnapshot.aidl" },
+
     .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/ProxyInfo.aidl" }, .output = "android/net/ProxyInfo.aidl" },
     .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/TetheringManager.aidl" }, .output = "android/net/TetheringManager.aidl" },
     .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/DhcpInfo.aidl" }, .output = "android/net/DhcpInfo.aidl" },
@@ -209,6 +212,14 @@ pub const aidl_exports = [_]struct { input: SourcePath, output: []const u8 }{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsService.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsSession.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/StatsResult.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/TrafficStatsRateLimitCacheConfig.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/IUsageCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/provider/INetworkStatsProvider.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/provider/INetworkStatsProviderCallback.aidl" },
+
     .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexInfo.aidl" },
     .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexInfoList.aidl" },
     .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexSessionInfo.aidl" },
@@ -1270,6 +1281,7 @@ pub const nano = [_]Nano{
 };
 
 pub const proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/proto/netstats.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app_shared/app_op_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/package.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/server/activitymanagerservice.proto" },
@@ -1349,6 +1361,17 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/service/NetworkStatsServiceDumpProto.java",
+    "android/service/NetworkInterfaceProto.java",
+    "android/service/NetworkIdentitySetProto.java",
+    "android/service/NetworkIdentityProto.java",
+    "android/service/NetworkStatsRecorderProto.java",
+    "android/service/NetworkStatsCollectionProto.java",
+    "android/service/NetworkStatsCollectionStatsProto.java",
+    "android/service/NetworkStatsCollectionKeyProto.java",
+    "android/service/NetworkStatsHistoryProto.java",
+    "android/service/NetworkStatsHistoryBucketProto.java",
+
     "android/app/AppOpEnums.java",
     "android/service/pm/PackageProto.java",
     "android/service/pm/PackageServiceDumpProto.java",

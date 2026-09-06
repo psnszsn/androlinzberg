@@ -173,6 +173,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
     run.addPrefixedDirectoryArg("-I", compat);
     inline for (.{
+        "packages/modules/Connectivity/framework-t/src",
         "frameworks/base/media/java",
         "frameworks/base/keystore/java",
         "frameworks/libs/modules-utils/java",

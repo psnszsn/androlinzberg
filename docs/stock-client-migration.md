@@ -27,6 +27,22 @@ in force.
 
 Follow-up changes in the current tree:
 
+- TrafficStats, NetworkStatsManager and the statistics/template/history closure
+  now compile verbatim, with generated statistics Binder interfaces and proto
+  constants. A hosted netstats service supplies Linux interface/total byte and
+  packet counters; missing interfaces and unavailable UID accounting follow the
+  stock UNSUPPORTED result. Activity startup initializes the stock client before
+  application code. The stock socket tagger replaces HostedTrafficSocketTagger;
+  its JNI boundary preserves descriptor errors and the absent-netd result while
+  retaining the explicit missing-accounting diagnostic. Historical queries and
+  provider/UID accounting remain unsupported backend work. Module tests cover
+  snapshots, overflow, unavailable counters, Parcel transport, thread tag/UID
+  isolation and JNI errors; a separate-process test observes a real 4 KiB UDP
+  transfer through Binder. JVM/system suites, NewPipe launch, native/Binder/build
+  checks and all 11 APK tests pass (38 steps without runtime issues). All 18 newly
+  selected Java sources match the existing archive; both tarballs remain current
+  and unchanged. The inventory is 47 stubs: 27 pending and 20 survivors.
+
 - AppOps prerequisites now include verbatim PermissionGroupUsage and generated
   AppOpEnums and SettingsLib flags. The latter uses the pinned bp2a read-only,
   enabled WRITE_SYSTEM_PREFERENCE permission value. Parcel tests preserve UID,

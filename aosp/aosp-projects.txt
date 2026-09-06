@@ -155,6 +155,7 @@ platform/system/libvintf
 platform/system/libziparchive
 platform/system/logging
 platform/system/memory/libmeminfo
+platform/system/netd
 platform/system/security
 platform/system/sepolicy
 platform/system/server_configurable_flags

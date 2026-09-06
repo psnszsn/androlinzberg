@@ -126,6 +126,38 @@ internal object SystemTestClientA {
         }
     }
 
+    private fun testNetworkStatistics(context: Context) {
+        val manager = context.getSystemService(android.app.usage.NetworkStatsManager::class.java)
+        check(manager != null && manager === context.getSystemService(Context.NETWORK_STATS_SERVICE),
+            "stock network stats manager is registered and cached")
+        val rxBefore = android.net.TrafficStats.getRxBytes("lo")
+        val txBefore = android.net.TrafficStats.getTxBytes("lo")
+        check(rxBefore >= 0 && txBefore >= 0, "loopback counters are available through netstats Binder")
+        val address = java.net.InetAddress.getByName("127.0.0.1")
+        java.net.DatagramSocket(0, address).use { receiver ->
+            receiver.soTimeout = 5000
+            java.net.DatagramSocket().use { sender ->
+                val payload = ByteArray(4096) { (it % 251).toByte() }
+                sender.send(java.net.DatagramPacket(payload, payload.size, address, receiver.localPort))
+                val received = java.net.DatagramPacket(ByteArray(8192), 8192)
+                receiver.receive(received)
+                check(received.length == payload.size &&
+                    received.data.copyOf(received.length).contentEquals(payload),
+                    "network counter probe transfers the complete UDP payload")
+            }
+        }
+        check(android.net.TrafficStats.getRxBytes("lo") >= rxBefore + 4096 &&
+            android.net.TrafficStats.getTxBytes("lo") >= txBefore + 4096,
+            "stock TrafficStats observes real received and transmitted traffic")
+        check(android.net.TrafficStats.getTotalRxBytes() >= android.net.TrafficStats.getRxBytes("lo"),
+            "total counter includes loopback traffic")
+        check(android.net.TrafficStats.getUidRxBytes(Process.myUid()) == android.net.TrafficStats.UNSUPPORTED.toLong() &&
+            android.net.TrafficStats.getUidTxBytes(Process.myUid() + 1) == android.net.TrafficStats.UNSUPPORTED.toLong(),
+            "unavailable per-UID accounting is not reported as zero traffic")
+        check(android.net.TrafficStats.getRxBytes("azk-no-such-interface") == android.net.TrafficStats.UNSUPPORTED.toLong(),
+            "missing interface follows the stock unsupported result")
+    }
+
     private fun testNetworkRecommendations(context: Context, manager: android.net.NetworkScoreManager) {
         val resolver = context.contentResolver
         val packageName = context.packageName
@@ -214,6 +246,7 @@ internal object SystemTestClientA {
         check(try { networkScores.updateScores(emptyArray()); false } catch (_: SecurityException) { true },
             "only the active scorer may submit scores")
         testNetworkRecommendations(context, networkScores)
+        testNetworkStatistics(context)
         val fingerprints = context.getSystemService(android.hardware.fingerprint.FingerprintManager::class.java)
         check(fingerprints != null && fingerprints === context.getSystemService(android.content.Context.FINGERPRINT_SERVICE),
             "stock fingerprint manager is registered and cached")
