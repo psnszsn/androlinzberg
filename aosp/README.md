@@ -79,6 +79,13 @@ selected, also add and sync that project as described above.
 
 ## Regenerate the tarballs
 
+The Androlinzberg package includes the pinned `prebuilts/r8/keepanno-annotations.jar`
+and R8's license. This is AOSP's `keepanno-annotations` Java import, containing
+the original generated annotation API. The build extracts its annotation class
+package into the framework classpath without including the R8 compiler there.
+The annotation artifact's SHA-256 is
+`85925982c269c0c3a1edc121cfc5cf3dbde86e869bdcaa5f0fb9acd1d84181a9`.
+
 Run the packagers from the repository root, one after the other:
 
 ```sh

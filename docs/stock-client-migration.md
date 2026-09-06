@@ -27,6 +27,15 @@ in force.
 
 Follow-up changes in the current tree:
 
+- R8 keep annotations now come from AOSP's pinned `keepanno-annotations` Java
+  import. The three handwritten KeepTarget, TypePattern and UsesReflection
+  stubs are deleted; all 22 original annotation classes are included and match
+  the pinned artifact byte for byte. The compiler itself stays outside the
+  framework classpath. The rebuilt AOSP package includes the jar and its license.
+  Java, JVM, system, native, Binder and build checks pass, along with all 11
+  integration tests (38 steps without runtime issues). The inventory is now
+  53 stubs: 28 pending and 25 survivors.
+
 - EmulatorClipboardMonitor now uses its pinned AOSP source. ClipboardService
   already selects it only for an emulator, and hosted SystemServer verifies
   `Build.IS_EMULATOR` is false. The replacement therefore needs no QEMU/vsock
@@ -46,9 +55,9 @@ Follow-up changes in the current tree:
   Java SyncFence remains blocked by Image/ImageWriter's compilation closure;
   this native prerequisite does not reduce the 57-stub inventory.
 
-- The latest validated inventory is 56 stubs: 28 pending and 28 documented
-  survivors, down from 134 at the start of this follow-up. Of these, 49 are
-  outside `com.android.server` (21 pending, 28 survivors). The inventory does
+- The latest validated inventory is 53 stubs: 28 pending and 25 documented
+  survivors, down from 134 at the start of this follow-up. Of these, 46 are
+  outside `com.android.server` (21 pending, 25 survivors). The inventory does
   not count the adapted Activity and ActivityThread implementations and is not
   an overall completion percentage. Those classes and the remaining service
   and native dependencies still prevent completion of the stock-client goal.

@@ -1743,6 +1743,8 @@ F aosp prebuilts/build-tools/linux-x86/bin/aconfig
 F aosp prebuilts/build-tools/linux-x86/bin/hidl-gen
 F aosp prebuilts/build-tools/linux-x86/lib64/libc++.so
 F aosp prebuilts/r8/r8.jar
+F aosp prebuilts/r8/LICENSE
+F aosp prebuilts/r8/keepanno-annotations.jar
 F aosp prebuilts/runtime/mainline/platform/sdk/x86_64/lib/libbinder_ndk.so
 F aosp prebuilts/sdk/current/androidx/m2repository/androidx/annotation/annotation-jvm/1.9.0-rc01/annotation-jvm-1.9.0-rc01.jar
 F aosp prebuilts/sdk/tools/linux/bin/aidl

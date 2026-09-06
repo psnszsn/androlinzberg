@@ -177,6 +177,9 @@ pub fn build(b: *std.Build, o: Options) Result {
         "error-prone-annotation-classes",
     );
     const guava_host_jar = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
+    // Reuse AOSP's keepanno-annotations java_import, including its generated API.
+    const r8_keepanno_jar = aosp.path("prebuilts/r8/keepanno-annotations.jar");
+    const r8_keepanno_classes = extractJarPackage(b, r8_keepanno_jar, "com/android/tools/r8/keepanno/annotations/*", "r8-keepanno-classes");
 
     const compat_declaration = @import("generator_sources.zig").compat_config;
     var compat_sources = SourceFiles.Collector.init(b);
@@ -297,6 +300,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .file = kotlin_stdlib },
         .{ .directory = androidx_annotation_classes },
         .{ .directory = error_prone_annotation_classes },
+        .{ .directory = r8_keepanno_classes },
     });
     kotlinc.addArg("-d");
     const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
@@ -320,6 +324,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = annotation_classes },
         .{ .directory = androidx_annotation_classes },
         .{ .directory = error_prone_annotation_classes },
+        .{ .directory = r8_keepanno_classes },
         .{ .file = kotlin_stdlib },
     });
     javac.addArg("-processorpath");
@@ -370,6 +375,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(error_prone_annotation_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(r8_keepanno_classes);
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(o.generated.jvm.resources);
