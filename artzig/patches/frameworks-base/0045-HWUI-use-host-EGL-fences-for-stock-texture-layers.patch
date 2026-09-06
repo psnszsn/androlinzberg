@@ -1,0 +1,91 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] HWUI: use the host EGL fence seam for stock texture layers
+
+--- a/libs/hwui/DeferredLayerUpdater.cpp
++++ b/libs/hwui/DeferredLayerUpdater.cpp
+@@ -23,6 +23,7 @@
+ #include <surfacetexture/surface_texture_platform.h>
+ 
+ #include "AutoBackendTextureRelease.h"
++#include "HardwareBufferRender.h"
+ #include "Matrix.h"
+ #include "Properties.h"
+ #include "android/hdr_metadata.h"
+@@ -106,38 +107,12 @@
+ status_t DeferredLayerUpdater::createReleaseFence(bool useFenceSync, EGLSyncKHR* eglFence,
+                                                   EGLDisplay* display, int* releaseFence,
+                                                   void* handle) {
+-    *display = EGL_NO_DISPLAY;
+-    DeferredLayerUpdater* dlu = (DeferredLayerUpdater*)handle;
+-    RenderState& renderState = dlu->mRenderState;
+-    status_t err;
+-    if (Properties::getRenderPipelineType() == RenderPipelineType::SkiaGL) {
+-        EglManager& eglManager = renderState.getRenderThread().eglManager();
+-        *display = eglManager.eglDisplay();
+-        err = eglManager.createReleaseFence(useFenceSync, eglFence, releaseFence);
+-    } else {
+-        int previousSlot = dlu->mCurrentSlot;
+-        if (previousSlot != -1) {
+-            dlu->mImageSlots[previousSlot].releaseQueueOwnership(
+-                    renderState.getRenderThread().getGrContext());
+-        }
+-        err = renderState.getRenderThread().vulkanManager().createReleaseFence(
+-                releaseFence, renderState.getRenderThread().getGrContext());
+-    }
+-    return err;
++    // Pinned EglManager fence ownership, using the active host EGL context.
++    return artzig::createGpuReleaseFence(useFenceSync, eglFence, display, releaseFence);
+ }
+ 
+ status_t DeferredLayerUpdater::fenceWait(int fence, void* handle) {
+-    // Wait on the producer fence for the buffer to be ready.
+-    status_t err;
+-    DeferredLayerUpdater* dlu = (DeferredLayerUpdater*)handle;
+-    RenderState& renderState = dlu->mRenderState;
+-    if (Properties::getRenderPipelineType() == RenderPipelineType::SkiaGL) {
+-        err = renderState.getRenderThread().eglManager().fenceWait(fence);
+-    } else {
+-        err = renderState.getRenderThread().vulkanManager().fenceWait(
+-                fence, renderState.getRenderThread().getGrContext());
+-    }
+-    return err;
++    return artzig::waitOnGpuFence(fence);
+ }
+ 
+ void DeferredLayerUpdater::apply() {
+--- a/libs/hwui/AutoBackendTextureRelease.cpp
++++ b/libs/hwui/AutoBackendTextureRelease.cpp
+@@ -54,6 +54,7 @@
+                                                              createProtectedImage,
+                                                              backendFormat,
+                                                              false);
++#if defined(SK_VULKAN)
+     } else if (backend == GrBackendApi::kVulkan) {
+         backendFormat =
+                 GrAHardwareBufferUtils::GetVulkanBackendFormat(context,
+@@ -71,6 +72,7 @@
+                                                                  createProtectedImage,
+                                                                  backendFormat,
+                                                                  false);
++#endif
+     } else {
+         LOG_ALWAYS_FATAL("Unexpected backend %d", backend);
+     }
+@@ -137,6 +139,7 @@
+ }
+ 
+ void AutoBackendTextureRelease::releaseQueueOwnership(GrDirectContext* context) {
++#if defined(SK_VULKAN)
+     if (!context) {
+         return;
+     }
+@@ -164,6 +167,9 @@
+         // is not on the graphics queue and will do the transition automatically.
+         context->setBackendTextureState(mBackendTexture, newState, nullptr, releaseProc, this);
+     }
++#else
++    LOG_ALWAYS_FATAL("Vulkan queue ownership is unavailable in the host GL build");
++#endif
+ }
+ 
+ } /* namespace uirenderer */

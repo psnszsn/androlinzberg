@@ -22,8 +22,8 @@ pub fn register(env: Env) !void {
     const initialize = env.*.*.GetStaticMethodID.?(env, backend, "initialize", "()V") orelse return error.NoMethod;
     create_method = env.*.*.GetStaticMethodID.?(env, backend, "create", "()I") orelse return error.NoMethod;
     duplicate_method = env.*.*.GetStaticMethodID.?(env, backend, "duplicateReadOnly", "(I)I") orelse return error.NoMethod;
-    // The island's stock registration precedes Binder JNI registration in each
-    // launcher path. Initialize against its factory before replacing two ports.
+    // The island's runtime bootstrap installs the stock memory factories before
+    // Binder registration. Initialize against that factory before replacing two ports.
     env.*.*.CallStaticVoidMethod.?(env, backend, initialize);
     if (env.*.*.ExceptionCheck.?(env) != 0) return error.InitializationFailed;
     const cls = env.*.*.FindClass.?(env, "com/android/internal/os/ApplicationSharedMemory") orelse return error.NoClass;

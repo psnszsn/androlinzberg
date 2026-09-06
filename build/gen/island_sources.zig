@@ -373,7 +373,10 @@ pub const hwui_srcs = [_][]const u8{
     "renderthread/ReliableSurface.cpp",
     "platform/host/renderthread/RenderThread.cpp",
     "platform/host/ProfileDataContainer.cpp",
-    "platform/host/Readback.cpp",
+    "Readback.cpp",
+    "DeferredLayerUpdater.cpp",
+    "AutoBackendTextureRelease.cpp",
+    "pipeline/skia/LayerDrawable.cpp",
     "WebViewFunctorManager.cpp",
 };
 
@@ -504,7 +507,6 @@ pub const surface_jni_srcs = [_][]const u8{
     "android_media_Utils.cpp",
     "android_media_PublicFormatUtils.cpp",
     "android_hardware_camera2_utils_SurfaceUtils.cpp",
-    "android_hardware_OverlayProperties.cpp",
     "android_view_SurfaceSession.cpp",
     "android_view_SurfaceControl.cpp",
     "android_view_DisplayEventReceiver.cpp",

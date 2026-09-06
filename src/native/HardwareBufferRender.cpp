@@ -1,5 +1,5 @@
 // HWUI/Skia side of the stock AHardwareBuffer/GraphicBuffer seam. GBM storage
-// lives in graphics_buffer.zig; opaque Java handles remain in platform_abi.zig.
+// lives in graphics_buffer.zig; Java handles use the stock framework JNI.
 #include "HardwareBufferRender.h"
 
 #define LOG_TAG "HardwareBufferRender"
@@ -18,6 +18,11 @@
 #include <cstring>
 #include <new>
 #include <utility>
+#include <cerrno>
+#include <unistd.h>
+#include <android-base/unique_fd.h>
+#include <sync/sync.h>
+#include <utils/Errors.h>
 
 #include <include/core/SkColorSpace.h>
 #include <include/core/SkColorType.h>
@@ -75,6 +80,84 @@ void releaseImportedTexture(void* context) {
 }  // namespace
 
 namespace artzig {
+
+// EglManager::fenceWait/createReleaseFence over the context owned by our host
+// pipeline. Android EglManager/VulkanManager cannot own that GBM context.
+int waitOnGpuFence(int fence) {
+    if (fence == -1) return android::OK;
+    const EGLDisplay display = eglGetCurrentDisplay();
+    if (display == EGL_NO_DISPLAY || eglGetCurrentContext() == EGL_NO_CONTEXT)
+        return android::INVALID_OPERATION;
+    const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
+    auto create = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(eglGetProcAddress("eglCreateSyncKHR"));
+    auto destroy = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(eglGetProcAddress("eglDestroySyncKHR"));
+    auto wait = reinterpret_cast<PFNEGLWAITSYNCKHRPROC>(eglGetProcAddress("eglWaitSyncKHR"));
+    if (create && destroy && wait && extensions &&
+        std::strstr(extensions, "EGL_ANDROID_native_fence_sync") &&
+        std::strstr(extensions, "EGL_KHR_wait_sync")) {
+        android::base::unique_fd copy(::dup(fence));
+        if (copy.get() < 0) return -errno;
+        const EGLint attrs[] = {EGL_SYNC_NATIVE_FENCE_FD_ANDROID, copy.get(), EGL_NONE};
+        EGLSyncKHR sync = create(display, EGL_SYNC_NATIVE_FENCE_ANDROID, attrs);
+        if (sync == EGL_NO_SYNC_KHR) return android::UNKNOWN_ERROR;
+        copy.release(); // EGL owns a successfully imported descriptor.
+        wait(display, sync, 0);
+        const EGLint error = eglGetError();
+        destroy(display, sync);
+        return error == EGL_SUCCESS ? android::OK : android::UNKNOWN_ERROR;
+    }
+    int result = sync_wait(fence, 3000);
+    if (result < 0 && errno == ETIME) {
+        ALOGE("Host GPU acquire fence %d did not signal in 3000 ms", fence);
+        result = sync_wait(fence, -1);
+    }
+    return result < 0 ? -errno : android::OK;
+}
+
+int createGpuReleaseFence(bool useFenceSync, EGLSyncKHR* eglFence,
+                          EGLDisplay* display, int* nativeFence) {
+    *nativeFence = -1;
+    *display = eglGetCurrentDisplay();
+    if (*display == EGL_NO_DISPLAY || eglGetCurrentContext() == EGL_NO_CONTEXT)
+        return android::INVALID_OPERATION;
+    const char* extensions = eglQueryString(*display, EGL_EXTENSIONS);
+    auto create = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(eglGetProcAddress("eglCreateSyncKHR"));
+    auto destroy = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(eglGetProcAddress("eglDestroySyncKHR"));
+    auto duplicate = reinterpret_cast<PFNEGLDUPNATIVEFENCEFDANDROIDPROC>(
+            eglGetProcAddress("eglDupNativeFenceFDANDROID"));
+    if (create && destroy && duplicate && extensions &&
+        std::strstr(extensions, "EGL_ANDROID_native_fence_sync")) {
+        EGLSyncKHR sync = create(*display, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
+        if (sync == EGL_NO_SYNC_KHR) return android::UNKNOWN_ERROR;
+        glFlush();
+        const int fd = duplicate(*display, sync);
+        destroy(*display, sync);
+        if (fd == EGL_NO_NATIVE_FENCE_FD_ANDROID) return android::UNKNOWN_ERROR;
+        *nativeFence = fd;
+        *eglFence = EGL_NO_SYNC_KHR;
+        return android::OK;
+    }
+    auto wait = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(
+            eglGetProcAddress("eglClientWaitSyncKHR"));
+    if (useFenceSync && create && destroy && wait && extensions &&
+        std::strstr(extensions, "EGL_KHR_fence_sync")) {
+        if (*eglFence != EGL_NO_SYNC_KHR) {
+            const EGLint result = wait(*display, *eglFence, 0, 1000000000);
+            if (result == EGL_FALSE) return android::UNKNOWN_ERROR;
+            if (result == EGL_TIMEOUT_EXPIRED_KHR) return android::TIMED_OUT;
+            destroy(*display, *eglFence);
+        }
+        *eglFence = create(*display, EGL_SYNC_FENCE_KHR, nullptr);
+        if (*eglFence == EGL_NO_SYNC_KHR) return android::UNKNOWN_ERROR;
+        glFlush();
+        return android::OK;
+    }
+    // Host EGL implementations without transferable fences must complete writes
+    // before returning a buffer to its producer.
+    glFinish();
+    *eglFence = EGL_NO_SYNC_KHR;
+    return android::OK;
+}
 
 bool describeDmabuf(const AHardwareBuffer* buffer, DmabufDescription* description) {
     if (!buffer || !description) return false;

@@ -557,6 +557,8 @@ pub fn build(b: *std.Build) void {
 
     // --- native island: hwui + JNI + our shims, linked against static Skia
     const island = @import("build/island.zig").build(b, .{
+        .hwui_stats = generated.native.hwui_stats,
+        .surfaceflinger_generated = generated.native.surfaceflinger,
         .target = target,
         .optimize = optimize,
         .skia = skia_lib,
@@ -938,6 +940,7 @@ pub fn build(b: *std.Build) void {
     system_test_run.addFileArg(ndk_system_client.getEmittedBin());
     system_test_run.addFileArg(java.fixtures.identity_a);
     system_test_run.addFileArg(java.fixtures.identity_b);
+    system_test_run.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
     system_test_run.run.setName("run hosted system-service tests");
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.run.step);
 

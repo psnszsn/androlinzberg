@@ -318,14 +318,16 @@ const Headless = struct {
 /// for now; the android.os migration grows this). The library also backs the
 /// NDK binder ABI, so it is opened RTLD-global from the install tree — the
 /// same copy the island links and bionic maps by soname.
-fn registerBinderJni(arena: std.mem.Allocator, tree: []const u8, env: *anyopaque, process_exit: ProcessExitFn) !void {
+fn registerBinderJni(arena: std.mem.Allocator, tree: []const u8, env: *anyopaque, platform: *std.DynLib) !void {
+    const bootstrap = platform.lookup(RegisterFn, "azk_register_runtime_jni") orelse return error.SymbolNotFound;
+    if (bootstrap(env) != 0) return error.JniRegistrationFailed;
     const path = try std.fs.path.join(arena, &.{ tree, "lib", "art", "libbinder_ndk.so" });
     var lib = try std.DynLib.open(path);
     const RegisterBinderFn = *const fn (*anyopaque) callconv(.c) c_int;
     const register = lib.lookup(RegisterBinderFn, "azk_register_binder_jni") orelse return error.SymbolNotFound;
     const SetProcessExitFn = *const fn (ProcessExitFn) callconv(.c) void;
     const set_process_exit = lib.lookup(SetProcessExitFn, "azk_binder_set_process_exit") orelse return error.SymbolNotFound;
-    set_process_exit(process_exit);
+    set_process_exit(try lookupProcessExit(platform));
     if (register(env) != 0) return error.JniRegistrationFailed;
 }
 
@@ -399,7 +401,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
         // AndroidRuntime registers properties/Binder before display JNI: native
         // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
-        try registerBinderJni(arena, tree, @ptrCast(rt.env), try lookupProcessExit(&lib));
+        try registerBinderJni(arena, tree, @ptrCast(rt.env), &lib);
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
         try host_natives.register(init.io, @ptrCast(rt.env), hwui, looper_poll);
     }
@@ -451,7 +453,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
         // AndroidRuntime registers properties/Binder before display JNI: native
         // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
-        try registerBinderJni(arena, tree, @ptrCast(rt.env), try lookupProcessExit(&lib));
+        try registerBinderJni(arena, tree, @ptrCast(rt.env), &lib);
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
         try host_natives.register(init.io, @ptrCast(rt.env), hwui, looper_poll);
     }
@@ -559,7 +561,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     // ART boot overlapped with the system process boot; services must be
     // published before any Java runs.
     if (session) |s| try s.awaitSystemReady();
-    try registerBinderJni(arena, tree, @ptrCast(env), try lookupProcessExit(&lib));
+    try registerBinderJni(arena, tree, @ptrCast(env), &lib);
     if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
     try host_natives.register(init.io, @ptrCast(env), hwui, looper_poll);
     defer host_natives.deinitWakeups();

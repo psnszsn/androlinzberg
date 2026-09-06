@@ -66,6 +66,9 @@ framework_patches = tuple(
         (41, "-WM-match-host-SF-capability-properties.patch"),
         (42, "-AppOps-route-optional-module-queries-through-host.patch"),
         (43, "-ATMS-use-the-session-user-authority.patch"),
+        (44, "-HWUI-initialize-host-context-for-offscreen-work.patch"),
+        (45, "-HWUI-use-host-EGL-fences-for-stock-texture-layers.patch"),
+        (46, "-WM-reuse-stock-session-diagnostics.patch"),
     )
 )
 
@@ -154,6 +157,14 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "external/skia",
         patch_root / "external" / "skia-host" / "0001-ahardwarebuffer-use-host-dmabuf-import.patch",
+    ),
+    (
+        "external/skia",
+        patch_root / "external" / "skia-host" / "0002-enable-stock-AHardwareBuffer-image-factories-on-host.patch",
+    ),
+    (
+        "external/skia",
+        patch_root / "external" / "skia-host" / "0003-use-2D-textures-for-host-DMA-BUF-images.patch",
     ),
     (
         "frameworks/minikin",

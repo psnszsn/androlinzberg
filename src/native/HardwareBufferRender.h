@@ -2,6 +2,8 @@
 
 #include <android/hardware_buffer.h>
 #include <jni.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
 
 #include <cstdint>
 
@@ -14,6 +16,12 @@ class SkSurface;
 struct gbm_device;
 
 namespace artzig {
+
+// Pinned EglManager's acquire/release ordering for the active host EGL context.
+// The wait borrows its fd; a returned native fence transfers to the caller.
+int waitOnGpuFence(int fence);
+int createGpuReleaseFence(bool useFenceSync, EGLSyncKHR* eglFence,
+                          EGLDisplay* display, int* nativeFence);
 
 struct DmabufPlane {
     int fd = -1;  // Borrowed; valid while the AHardwareBuffer is alive.

@@ -88,7 +88,9 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
     inline for (generator_sources.cronet.templates) |entry| try putForbidden(&result, allocator, entry.output);
     for (generator_sources.logtags) |entry| try putForbidden(&result, allocator, entry.output);
     for (generator_sources.proto_outputs) |output| try putForbidden(&result, allocator, output);
-    for (generator_sources.nano) |entry| try putForbidden(&result, allocator, entry.output);
+    for (generator_sources.nano) |entry| {
+        for (entry.outputs) |output| try putForbidden(&result, allocator, output);
+    }
     try putForbidden(&result, allocator, generator_sources.aconfig_device_paths.output);
     try putForbidden(&result, allocator, generator_sources.system_features.output);
     try putForbidden(&result, allocator, generator_sources.system_features.metadata_output);

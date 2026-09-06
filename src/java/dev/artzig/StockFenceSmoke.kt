@@ -9,6 +9,7 @@ import java.time.Duration
 
 internal object StockFenceSmoke {
     @JvmStatic private external fun nativeTest()
+    @JvmStatic external fun nativeHostGpuTest()
 
     fun run() {
         nativeTest()

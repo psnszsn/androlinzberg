@@ -233,6 +233,7 @@ internal object FrameworkModuleSmoke {
         StockIpSecProposalSmoke.run()
         StockImageSmoke.run()
         testStockProtoLog()
+        com.android.server.criticalevents.StockCriticalEventLogSmoke.run()
         testStockActivityOptions()
         testStockInstrumentation()
         StockGlSurfaceViewSmoke.run()
@@ -1487,11 +1488,14 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testStockPixelCopy() {
+        HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         val dest = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
         val invalid = android.view.Surface()
-        // The existing hosted placeholder is Java-valid, with no Android native window.
-        val texture = android.graphics.SurfaceTexture(false)
-        val source = android.view.Surface(texture)
+        // A real stock queue is valid but has no previously queued frame.
+        val reader = android.media.ImageReader.newInstance(4, 4, android.graphics.PixelFormat.RGBA_8888, 2,
+            android.hardware.HardwareBuffer.USAGE_CPU_READ_OFTEN or
+                android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
+        val source = reader.surface
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         try {
             var delivered = false
@@ -1508,22 +1512,67 @@ internal object FrameworkModuleSmoke {
                     android.view.PixelCopy.request(source, immutable, {}, handler)
                 }.exceptionOrNull() is IllegalArgumentException)
             } finally { immutable.recycle() }
-            val work = ArrayList<Runnable>()
+            val work = java.util.concurrent.LinkedBlockingQueue<Runnable>()
             val executor = java.util.concurrent.Executor { work.add(it) }
             val builder = android.view.PixelCopy.Request.Builder.ofSurface(source).setDestinationBitmap(dest)
             val request = builder.build()
             check(request.destinationBitmap === dest)
             check(runCatching { builder.build() }.exceptionOrNull() is IllegalStateException)
             android.view.PixelCopy.request(request, executor) { result ->
-                check(result.status == android.view.PixelCopy.ERROR_SOURCE_INVALID)
+                check(result.status == android.view.PixelCopy.ERROR_SOURCE_NO_DATA) { "PixelCopy status=${result.status}" }
                 check(runCatching { result.bitmap }.exceptionOrNull() is IllegalStateException)
                 delivered = true
             }
-            check(!delivered && work.size == 1)
-            work.removeAt(0).run()
+            val completion = checkNotNull(work.poll(5, java.util.concurrent.TimeUnit.SECONDS))
+            check(!delivered)
+            completion.run()
+            check(delivered)
+            val canvas = source.lockCanvas(null)
+            try { canvas.drawColor(android.graphics.Color.rgb(37, 83, 149)) }
+            finally { source.unlockCanvasAndPost(canvas) }
+            val produced = checkNotNull(reader.acquireLatestImage()).use { image ->
+                val bytes = image.planes[0].buffer
+                val actual = (0 until 4).map { bytes.get(it).toInt() and 255 }
+                check(actual == listOf(37, 83, 149, 255)) { "Surface Canvas RGBA=$actual" }
+                checkNotNull(image.hardwareBuffer)
+            }
+            produced.use { buffer ->
+                // Hardware bitmap import must initialize HWUI before its first window.
+                val hardware = checkNotNull(android.graphics.Bitmap.wrapHardwareBuffer(buffer,
+                    android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB)))
+                try {
+                    val copied = checkNotNull(hardware.copy(android.graphics.Bitmap.Config.ARGB_8888, false))
+                    try {
+                        val actual = copied.getPixel(0, 0)
+                        check(actual == android.graphics.Color.rgb(37, 83, 149)) {
+                            "Hardware bitmap readback=${Integer.toHexString(actual)}, expected ff255395"
+                        }
+                    } finally { copied.recycle() }
+                } finally { hardware.recycle() }
+                val deferred = StockReadbackSmoke.pixel(buffer)
+                check(deferred == android.graphics.Color.rgb(37, 83, 149)) {
+                    "Deferred hardware image readback=${Integer.toHexString(deferred)}, expected ff255395"
+                }
+            }
+            delivered = false
+            android.view.PixelCopy.request(
+                android.view.PixelCopy.Request.Builder.ofSurface(source)
+                    .setDestinationBitmap(dest).build(), executor,
+            ) { result ->
+                check(result.status == android.view.PixelCopy.SUCCESS) { "PixelCopy status=${result.status}" }
+                check(result.bitmap === dest)
+                for (y in 0 until 4) for (x in 0 until 4) {
+                    val actual = dest.getPixel(x, y)
+                    check(actual == android.graphics.Color.rgb(37, 83, 149)) {
+                        "PixelCopy pixel ($x,$y)=${Integer.toHexString(actual)}, expected ff255395"
+                    }
+                }
+                delivered = true
+            }
+            checkNotNull(work.poll(5, java.util.concurrent.TimeUnit.SECONDS)).run()
             check(delivered)
         } finally {
-            source.release(); texture.release(); invalid.release(); dest.recycle()
+            source.release(); reader.close(); invalid.release(); dest.recycle()
         }
     }
 
@@ -3055,6 +3104,9 @@ internal object FrameworkModuleSmoke {
         check(service.getDeviceOwnerUid(42) == -1)
         check(service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).isEmpty())
         check(service.getDisplayIdsForDevice(42).isEmpty())
+        for (displayId in intArrayOf(Display.INVALID_DISPLAY, Display.DEFAULT_DISPLAY, 42)) {
+            check(service.getDeviceIdForDisplayId(displayId) == android.content.Context.DEVICE_ID_DEFAULT)
+        }
         // LocalService queries return snapshots; a caller cannot publish state by retaining one.
         service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).add(42)
         check(service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).isEmpty())
@@ -5147,6 +5199,14 @@ internal object FrameworkModuleSmoke {
 
     private fun testStockWindowContexts() {
         val base = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
+        val thread = android.app.ActivityThread.currentActivityThread()
+        val systemUi = thread.getSystemUiContext(Display.DEFAULT_DISPLAY)
+        check(systemUi !== thread.systemContext)
+        check(systemUi === thread.systemUiContext && systemUi === thread.systemUiContextNoCreate)
+        check(systemUi.displayId == Display.DEFAULT_DISPLAY)
+        thread.onSystemUiContextCleanup(systemUi)
+        check(thread.systemUiContextNoCreate == null)
+        check(thread.systemUiContext !== systemUi)
         val context = base.createWindowContext(
             android.view.ArtzigDisplay.get(), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null,
         ) as android.window.WindowContext

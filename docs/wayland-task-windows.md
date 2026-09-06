@@ -74,12 +74,30 @@ Rebase validation against committed main `8d17396`:
 - The merged Binder facade passes both branches' tests, including nullable
   output vectors, Unicode framing, generated interfaces and cross-process
   ownership. `cpp-audit` and `graph-audit` pass.
-- The fresh WMS/ATMS compile probe reports 101 errors, down from 127 before the
-  rebase. Remaining dependencies include watchdog/ANR reporting, shutdown,
+- The post-rebase WMS/ATMS compile probe reports 78 errors, down from 127
+  before the rebase, after compiling SensorPrivacyManager and restoring
+  ActivityThread display-specific system UI contexts and resource configuration. Remaining dependencies include watchdog/ANR reporting, shutdown,
   assist, sandbox services and desktop policy. Stock WMS/ATMS still do not boot.
-- Service, graphics and APK regressions are being rerun after reconciliation.
-  Earlier passing results below apply to their recorded checkpoints, not yet
-  to the combined tree.
+- The rebased native Perfetto test and real-SF input/task-output gate pass.
+  Runtime registration is ordered as stock memory factories, Binder/host memory
+  overrides, then graphics JNI. EGL clients use the shared graphics allocator.
+- The system-service suite and NewPipe launch integration pass after restoring
+  SF to the cross-process SurfaceSyncGroup fixture. The launch step records no
+  structured runtime issues (`/tmp/wayland-rebase-launch-1.log`).
+- PixelCopy exposed an empty `platform/host/Readback.cpp` implementation. The
+  native library now links pinned AOSP readback, texture-layer helpers and Skia
+  AHardwareBuffer image factories through the host EGL context/fence seam. The
+  framework regression checks asynchronous ERROR_SOURCE_NO_DATA for an empty
+  queue and exact copied pixels after posting a frame. The framework-module
+  gate passes (`/tmp/wayland-stock-readback-19.log`), including direct and lazy
+  AHardwareBuffer readback. The lazy Skia TUs require the same `SK_GANESH` and
+  `SK_GL` backend definitions as the base Skia library. Earlier passing results below apply to their recorded checkpoints.
+- The diagnostic dependency probe also compiles stock CriticalEventLog and
+  StackTracesDumpHelper with session data paths and the existing nano runtime.
+  Their persistence, retention and app-data redaction regression passes in the
+  framework-module gate. AssistDataRequester compiles
+  alongside WM but still requires ActivityTaskManagerInternal before it can join
+  the standalone framework source set.
 
 - `HostInputManagerBridge` now passes the real-SF input gate with the WM callback
   contract, no-focused-window ANR, input monitoring, pointer capture, display
@@ -110,7 +128,7 @@ Rebase validation against committed main `8d17396`:
   Bootstrap initializes both view and WM groups before use. WM local-service
   values, animation/display threads, snapshot/animation protos and SF sysprops
   are compiled; these types do not yet constitute registered stock services.
-  The latest WM compile inventory reports 127 errors (down from 233 after
+  The pre-rebase WM compile inventory reported 127 errors (down from 233 after
   adding the stock AppOps client and generated dependencies). Remaining gaps
   include watchdog/shutdown and assist collaborators, window-client contracts
   and desktop policy. Stock WM is still a separate compile probe; it does not

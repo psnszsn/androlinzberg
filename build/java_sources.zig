@@ -1431,6 +1431,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/ProgressReporter.java");
     try c.file("$FB/services/core/java/com/android/server/am/ActivityManagerDebugConfig.java");
     try c.file("$FB/services/core/java/com/android/server/am/AppTimeTracker.java");
+    try c.file("$FB/services/core/java/com/android/server/power/ShutdownCheckPoints.java");
+    try c.file("$FB/services/core/java/com/android/server/am/StackTracesDumpHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/criticalevents/CriticalEventLog.java");
     try c.file("$FB/services/core/java/com/android/server/am/HostingRecord.java");
     try c.file("$FB/services/core/java/com/android/server/am/UserState.java");
     // Stock task metadata and snapshot ownership now use shared libgui buffers.
@@ -1574,6 +1577,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/tracing/transition/TransitionDataSource.java");
     try c.file("$CJ/com/android/internal/graphics/SfVsyncFrameCallbackProvider.java");
     try c.file("$CJ/android/hardware/SensorPrivacyManagerInternal.java");
+    try c.file("$CJ/android/hardware/SensorPrivacyManager.java");
     try c.file("$CJ/android/service/notification/DeviceEffectsApplier.java");
     try c.file("$CJ/com/android/internal/util/ScreenshotRequest.java");
     try c.file("$FB/services/core/java/android/app/usage/UsageStatsManagerInternal.java");

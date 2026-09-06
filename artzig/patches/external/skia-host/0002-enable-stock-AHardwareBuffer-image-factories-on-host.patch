@@ -1,0 +1,25 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] Skia: enable stock AHardwareBuffer image factories over the host importer
+
+--- a/src/image/SkImage_AndroidFactories.cpp
++++ b/src/image/SkImage_AndroidFactories.cpp
+@@ -7,7 +7,7 @@
+ 
+ #include "include/core/SkTypes.h"
+ 
+-#if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
++#if (defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26) || defined(ARTZIG_HOST_GRAPHICS)
+ 
+ #include "include/android/SkImageAndroid.h"
+ 
+--- a/src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp
++++ b/src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp
+@@ -7,7 +7,7 @@
+ 
+ #include "include/core/SkTypes.h"
+ 
+-#if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
++#if (defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26) || defined(ARTZIG_HOST_GRAPHICS)
+ 
+ #include "src/gpu/ganesh/GrAHardwareBufferImageGenerator.h"
+ 

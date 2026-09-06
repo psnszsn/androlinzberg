@@ -1,8 +1,8 @@
 //! Multi-process hosted system-service test driver.
 //!
-//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-client> <identity-a.apk> <identity-b.apk>
+//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-client> <identity-a.apk> <identity-b.apk> <surfaceflinger>
 //!
-//! Starts one broker and one system process, then two ART app peers: package
+//! Starts the broker, SurfaceFlinger and system process, then two ART app peers: package
 //! `dev.artzig.test.b` hosting a real `android.app.Service` through the
 //! session's activity manager, and package `dev.artzig.test.a` binding it
 //! across processes. Every child must exit 0.
@@ -18,8 +18,8 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 8) {
-        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk>\n", .{});
+    if (args.len < 9) {
+        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk> <surfaceflinger>\n", .{});
         return error.InvalidArguments;
     }
     const launcher = args[1];
@@ -29,6 +29,7 @@ pub fn main(init: std.process.Init) !void {
     const ndk_client = args[5];
     const identity_a = args[6];
     const identity_b = args[7];
+    const surfaceflinger_exe = args[8];
 
     var random: [8]u8 = undefined;
     io.random(&random);
@@ -72,6 +73,23 @@ pub fn main(init: std.process.Init) !void {
     var system_env = try env.clone(gpa);
     defer system_env.deinit();
     try @import("session.zig").configureSystemData(gpa, io, &system_env, dir);
+    // Stock SurfaceSyncGroup submits its completed transaction through libgui,
+    // including empty transactions. Supply the same compositor as a real session.
+    var surfaceflinger = try std.process.spawn(io, .{
+        .argv = &.{surfaceflinger_exe},
+        .environ_map = &env,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    var surfaceflinger_checked = false;
+    defer if (!surfaceflinger_checked) {
+        if (surfaceflinger.stdin) |stdin| stdin.close(io);
+        surfaceflinger.stdin = null;
+        _ = surfaceflinger.wait(io) catch {};
+    };
+    try awaitReady(io, &surfaceflinger, "SurfaceFlinger");
+
     var system = try std.process.spawn(io, .{
         .argv = &.{ launcher, "--system-server" },
         .environ_map = &system_env,
@@ -155,6 +173,10 @@ pub fn main(init: std.process.Init) !void {
     system.stdin = null;
     system_checked = true;
     failed = !expectExit(io, &system, "system process") or failed;
+    if (surfaceflinger.stdin) |stdin| stdin.close(io);
+    surfaceflinger.stdin = null;
+    surfaceflinger_checked = true;
+    failed = !expectExit(io, &surfaceflinger, "SurfaceFlinger") or failed;
     broker.stdin.?.close(io);
     broker.stdin = null;
     broker_checked = true;

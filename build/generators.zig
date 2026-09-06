@@ -36,6 +36,7 @@ pub const GeneratedJvm = struct {
 };
 
 pub const GeneratedNative = struct {
+    hwui_stats: @import("graphics.zig").Generated,
     incremental_sysprop_headers: LazyPath,
     incremental_sysprop_source: LazyPath,
     aidl_header_roots: []const LazyPath,
@@ -656,7 +657,7 @@ fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.
         run.addPrefixedDirectoryArg("-I", sourceDir(b, aosp, input));
         run.addFileArg(sourcePath(b, aosp, input));
         run.setName(b.fmt("generate nano Java {s}", .{std.fs.path.basename(input.path)}));
-        files.append(b.allocator, output.path(b, declaration.output)) catch @panic("OOM");
+        for (declaration.outputs) |file| files.append(b.allocator, output.path(b, file)) catch @panic("OOM");
         index += 1;
     }
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
@@ -1173,6 +1174,15 @@ pub fn build(b: *std.Build, o: Options) Result {
     });
     _ = expose(b, "stats-tool", "Build stats-log-api-gen", &stats_tool.step);
     const surfaceflinger = @import("surfaceflinger.zig").generate(b, o.aosp.path(""), runner, o.protoc, perfetto, stats_tool);
+    const hwui_stats_headers = b.addWriteFiles();
+    const hwui_stats_sources = b.addWriteFiles();
+    const hwui_stats = b.addRunArtifact(stats_tool);
+    hwui_stats.setCwd(@import("stats_tool.zig").templates(b, o.aosp.path("")));
+    const hwui_stats_spec = declarations.hwui_native_stats;
+    hwui_stats.addArgs(&.{ "--module", hwui_stats_spec.module, "--namespace", hwui_stats_spec.namespace, "--bootstrap", "--importHeader", hwui_stats_spec.stem ++ ".h", "--header" });
+    _ = hwui_stats_headers.addCopyFile(hwui_stats.addOutputFileArg(hwui_stats_spec.stem ++ ".h"), hwui_stats_spec.stem ++ ".h");
+    hwui_stats.addArg("--cpp");
+    _ = hwui_stats_sources.addCopyFile(hwui_stats.addOutputFileArg(hwui_stats_spec.stem ++ ".cpp"), hwui_stats_spec.stem ++ ".cpp");
 
     const aidl_java = aidlJava(b, o.aosp, runner);
     const hidl_java = hidlJava(b, o.aosp, runner);
@@ -1241,6 +1251,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .system_features_processor_dependencies = system_features_java.dependencies,
         },
         .native = .{
+            .hwui_stats = .{ .headers = hwui_stats_headers.getDirectory(), .sources = hwui_stats_sources.getDirectory() },
             .aidl_header_roots = aidl_cpp.headers,
             .aidl_source_roots = aidl_cpp.sources,
             .hidl_header_roots = hidl_cpp.headers,

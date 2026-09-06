@@ -20,6 +20,10 @@ public:
   explicit ArtzigGpuPipeline(renderthread::RenderThread &thread);
   ~ArtzigGpuPipeline() override;
 
+  // RenderThread's offscreen work (including PixelCopy) can precede a window.
+  // This retains the same per-thread GBM/Ganesh context used by window pipelines.
+  static sk_sp<GrDirectContext> ensureThreadContext(renderthread::RenderThread &thread);
+
   bool pinImages(std::vector<SkImage *> &) override { return false; }
   bool pinImages(LsaVector<sk_sp<Bitmap>> &) override { return false; }
   void unpinImages() override {}

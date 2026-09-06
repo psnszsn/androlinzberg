@@ -4,6 +4,9 @@
 #include <nativehelper/JNIHelp.h>
 #include <ui/Fence.h>
 #include <unistd.h>
+#include <GLES2/gl2.h>
+#include <sync/sync.h>
+#include "HardwareBufferRender.h"
 
 using namespace android;
 
@@ -80,6 +83,34 @@ void testFence(JNIEnv* env, jclass) {
     CHECK_FENCE(empty->unflatten(buffer, size, descriptors, count) == NO_MEMORY);
 #undef CHECK_FENCE
 }
+
+// Called with the existing EGL smoke's context current. This exercises the
+// same acquire/release seam as stock DeferredLayerUpdater with a real sync_file.
+void testHostGpuFence(JNIEnv* env, jclass) {
+#define CHECK_GPU_FENCE(condition) \
+    do { \
+        if (!(condition)) { \
+            jniThrowException(env, "java/lang/AssertionError", #condition); \
+            return; \
+        } \
+    } while (0)
+    EGLSyncKHR eglFence = EGL_NO_SYNC_KHR;
+    EGLDisplay display = EGL_NO_DISPLAY;
+    int fd = -1;
+    CHECK_GPU_FENCE(artzig::createGpuReleaseFence(true, &eglFence, &display, &fd) == OK);
+    base::unique_fd owner(fd);
+    CHECK_GPU_FENCE(display == eglGetCurrentDisplay() && fd >= 0);
+    CHECK_GPU_FENCE(eglFence == EGL_NO_SYNC_KHR);
+    CHECK_GPU_FENCE(artzig::waitOnGpuFence(fd) == OK);
+    CHECK_GPU_FENCE(fcntl(fd, F_GETFD) >= 0); // The wait must only borrow this fd.
+    base::unique_fd copy(dup(fd));
+    CHECK_GPU_FENCE(copy.get() >= 0);
+    glFinish();
+    owner.reset();
+    CHECK_GPU_FENCE(sync_wait(copy.get(), 1000) == 0);
+    CHECK_GPU_FENCE(artzig::waitOnGpuFence(-1) == OK);
+#undef CHECK_GPU_FENCE
+}
 } // namespace
 
 int register_dev_artzig_StockFenceSmoke(JNIEnv* env) {
@@ -87,8 +118,9 @@ int register_dev_artzig_StockFenceSmoke(JNIEnv* env) {
     if (!cls) return JNI_ERR;
     const JNINativeMethod methods[] = {
         {"nativeTest", "()V", reinterpret_cast<void*>(testFence)},
+        {"nativeHostGpuTest", "()V", reinterpret_cast<void*>(testHostGpuFence)},
     };
-    int result = env->RegisterNatives(cls, methods, 1);
+    int result = env->RegisterNatives(cls, methods, sizeof(methods) / sizeof(methods[0]));
     env->DeleteLocalRef(cls);
     return result;
 }

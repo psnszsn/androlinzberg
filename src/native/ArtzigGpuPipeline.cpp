@@ -207,7 +207,7 @@ bool ArtzigGpuPipeline::ensureGrContext() {
     mRenderThread.setGrContext(mContext);
     return true;
   }
-  // nixpkgs' Skia selects GLX for GrGLMakeNativeInterface(). Artzig owns an EGL
+  // The Linux Skia native interface selects GLX. Artzig owns an EGL
   // context instead, so assemble the interface from that context's proc table.
   sk_sp<const GrGLInterface> gl =
       GrGLMakeAssembledInterface(nullptr, getEglProc);
@@ -227,6 +227,15 @@ bool ArtzigGpuPipeline::ensureGrContext() {
         renderer ? renderer : "unknown renderer",
         version ? version : "unknown version");
   return true;
+}
+
+sk_sp<GrDirectContext> ArtzigGpuPipeline::ensureThreadContext(renderthread::RenderThread &thread) {
+  // The thread owns this offscreen context, as AOSP RenderThread/EglManager do.
+  // ensureContext joins the existing shared GBM context when windows own it.
+  thread_local std::unique_ptr<ArtzigGpuPipeline> offscreen;
+  if (!offscreen) offscreen = std::make_unique<ArtzigGpuPipeline>(thread);
+  if (!offscreen->ensureGrContext()) return nullptr;
+  return offscreen->mContext;
 }
 
 void ArtzigGpuPipeline::clearSurface() {

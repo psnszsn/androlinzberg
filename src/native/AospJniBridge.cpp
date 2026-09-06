@@ -69,7 +69,6 @@ namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
 #include <nativehelper/JNIHelp.h>
 #include <Properties.h>
 #include <android_runtime/AndroidRuntime.h>
-#include <nativehelper/JNIHelp.h>
 #include <system/audio.h>
 #include <android/binder_ibinder_jni.h>
 #include <binder/IBinder.h>
@@ -241,7 +240,6 @@ extern int register_android_opengl_jni_GLES32(JNIEnv*);
 
 extern int register_android_media_ImageReader(JNIEnv*);
 extern int register_android_media_ImageWriter(JNIEnv*);
-extern int register_android_media_PublicFormatUtils(JNIEnv*);
 extern int register_android_hardware_camera2_utils_SurfaceUtils(JNIEnv*);
 
 namespace android {
@@ -350,6 +348,7 @@ extern int register_android_graphics_drawable_AnimatedImageDrawable(JNIEnv*);
 extern int register_android_graphics_ImageDecoder(JNIEnv*);
 extern "C" int azk_register_graphics_environment_backend(JNIEnv*);
 extern int register_dev_artzig_StockFenceSmoke(JNIEnv*);
+extern int register_dev_artzig_StockReadbackSmoke(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
 extern int register_android_hardware_UsbDevice(JNIEnv*);
 extern int register_android_hardware_UsbDeviceConnection(JNIEnv*);
@@ -373,7 +372,6 @@ static int registerPerfettoTrace(JNIEnv* env) {
 }
 extern int register_android_hardware_HardwareBuffer(JNIEnv*);
 extern int register_android_graphics_GraphicBuffer(JNIEnv*);
-extern int register_android_hardware_SyncFence(JNIEnv*);
 
 static jint azk_Bitmap_nativeConfig(JNIEnv*, jclass, jlong bitmap_handle) {
     android::Bitmap& bitmap = android::bitmap::toBitmap(bitmap_handle);
@@ -516,17 +514,12 @@ static int azk_register_android_view_HostedInputDispatcher(JNIEnv* env) {
 
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in
 // ApkAssets callbacks). The VM is stored at registration time.
-#include <android_runtime/AndroidRuntime.h>
 static JavaVM* g_azk_vm = nullptr;
 extern int register_android_hardware_display_DisplayManagerGlobal(JNIEnv*);
 namespace android {
 extern int register_com_android_server_display_DisplayControl(JNIEnv*);
 /*static*/ JavaVM* AndroidRuntime::getJavaVM() {
     return g_azk_vm;
-}
-/*static*/ int AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* className,
-                                                    const JNINativeMethod* methods, int count) {
-    return jniRegisterNativeMethods(env, className, methods, count);
 }
 /*static*/ JNIEnv* AndroidRuntime::getJNIEnv() {
     if (!g_azk_vm) return nullptr;
@@ -542,6 +535,14 @@ extern "C" {
 // libc cleanup can destroy native globals while its worker threads still run.
 [[noreturn]] void azk_android_runtime_exit(int status) {
     ::_exit(status);
+}
+
+// Memory factories must precede the Binder-side memfd overrides. Surface JNI
+// must follow Binder registration because its class initialization uses Binder.
+int azk_register_runtime_jni(JNIEnv* env) {
+    env->GetJavaVM(&g_azk_vm);
+    if (android::register_com_android_internal_os_ApplicationSharedMemory(env) != 0) return -1;
+    return android::register_android_util_MemoryIntArray(env);
 }
 
 int azk_register_graphics_jni(JNIEnv* env) {
@@ -596,12 +597,12 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(registerPerfettoTrace),
             E(android::register_android_os_PerfettoTrackEventExtra),
             E(android::register_android_util_jar_StrictJarFile),
-            E(android::register_android_util_MemoryIntArray),
             E(android::register_com_android_internal_security_VerityUtils),
             E(android::register_android_os_incremental_IncrementalManager),
             E(android::register_com_android_internal_content_NativeLibraryHelper),
             E(azk_register_graphics_environment_backend),
             E(register_dev_artzig_StockFenceSmoke),
+            E(register_dev_artzig_StockReadbackSmoke),
             E(android::register_android_os_GraphicsEnvironment),
             E(register_android_hardware_UsbDevice),
             E(register_android_hardware_UsbDeviceConnection),
@@ -671,7 +672,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_view_InputEventSender),
             E(android::register_jni_common),
             E(android::register_android_view_InputApplicationHandle),
-            E(register_android_hardware_OverlayProperties),
             E(android::register_android_view_SurfaceSession),
             E(android::register_android_view_SurfaceControl),
             E(android::register_android_graphics_SurfaceTexture),
@@ -684,7 +684,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_view_DisplayEventReceiver),
             E(android::register_android_window_ScreenCapture),
             E(register_android_hardware_camera2_utils_SurfaceUtils),
-            E(register_android_media_PublicFormatUtils),
             E(register_android_media_ImageReader),
             E(register_android_media_ImageWriter),
             E(android::register_android_view_VelocityTracker),

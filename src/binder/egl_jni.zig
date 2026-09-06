@@ -433,7 +433,7 @@ fn nativeMethod(name: [*:0]const u8, signature: [*:0]const u8, function: anytype
     return .{ .name = @constCast(name), .signature = @constCast(signature), .fnPtr = @ptrCast(@constCast(function)) };
 }
 pub fn register(env: Env, platform: *std.DynLib) !void {
-    get_gbm_device = platform.lookup(GetGbmDevice, "azk_hardware_buffer_gbm_device") orelse return error.NoMethod;
+    get_gbm_device = platform.lookup(GetGbmDevice, "azk_graphics_gbm_device") orelse return error.NoMethod;
     const cls = env.*.*.FindClass.?(env, "android/opengl/EGL14") orelse return error.NoClass;
     defer env.*.*.DeleteLocalRef.?(env, cls);
     const methods = [_]jni.JNINativeMethod{

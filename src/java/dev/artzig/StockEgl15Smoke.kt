@@ -52,6 +52,7 @@ internal object StockEgl15Smoke {
         val extensions = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS).orEmpty().split(' ')
         if ("EGL_ANDROID_native_fence_sync" in extensions) {
             nativeFence(display)
+            StockFenceSmoke.nativeHostGpuTest()
         } else {
             System.err.println("stock-egl15: driver does not advertise native fence export")
         }

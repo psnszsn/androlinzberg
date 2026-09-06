@@ -7,6 +7,8 @@ const std = @import("std");
 const gen = @import("gen/island_sources.zig");
 
 pub const Options = struct {
+    hwui_stats: @import("graphics.zig").Generated,
+    surfaceflinger_generated: @import("graphics.zig").Generated,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     skia: *std.Build.Step.Compile,
@@ -141,6 +143,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     // other hostgraphics headers while overriding only ui/Fence.h.
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "frameworks/native/libs/ui/include/ui/Fence.h"), "ui/Fence.h");
     var common_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    common_includes.appendSlice(b.allocator, &.{
+        o.hwui_stats.headers,                                     o.surfaceflinger_generated.headers,
+        o.aosp.path(b, "frameworks/native/libs/shaders/include"), o.aosp.path(b, "frameworks/native/libs/tonemap/include"),
+        o.aosp.path(b, "system/core/libstats/bootstrap/include"),
+    }) catch @panic("oom");
     common_includes.append(b.allocator, o.perfetto.headers) catch @panic("oom");
     common_includes.append(b.allocator, ashmem_headers.getDirectory()) catch @panic("oom");
     // The native Choreographer FD needs Android's Looper-driven ThreadBase.
@@ -430,6 +437,24 @@ pub fn build(b: *std.Build, o: Options) Result {
         if (!shared) g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &.{file}, &.{o.aosp.path(b, "frameworks/native/libs/ui/include_private")}, &.{});
     }
     g.add(b.path("tests/native"), &.{"FenceTest.cpp"}, &.{}, &.{});
+    g.add(b.path("tests/native"), &.{"ReadbackTest.cpp"}, &.{}, &.{"-DARTZIG_HOST_GRAPHICS"});
+    g.add(o.hwui_stats.sources, &.{"statslog_hwui.cpp"}, &.{}, &.{});
+    g.add(o.aosp.path(b, "system/core/libstats/bootstrap"), &.{ "StatsBootstrapAtomClient.cpp", "BootstrapClientInternal.cpp" }, &.{}, &.{});
+    for (@import("generator_sources.zig").surfaceflinger_stats_aidl) |file| {
+        const start = (std.mem.indexOf(u8, file, "/android/") orelse unreachable) + 1;
+        g.add(o.surfaceflinger_generated.sources, &.{b.fmt("{s}.cpp", .{file[start .. file.len - 5]})}, &.{}, &.{});
+    }
+    g.add(o.aosp.path(b, "frameworks/native/libs/shaders"), &.{"shaders.cpp"}, &.{}, &.{});
+    g.add(o.aosp.path(b, "external/skia"), &.{
+        "src/gpu/android/AHardwareBufferUtils.cpp",
+        "src/gpu/ganesh/GrAHardwareBufferUtils.cpp",
+        "src/gpu/ganesh/gl/AHardwareBufferGL.cpp",
+        "src/gpu/ganesh/GrAHardwareBufferImageGenerator.cpp",
+        "src/image/SkImage_AndroidFactories.cpp",
+    }, &.{b.path("src/native/graphics/include")}, &.{ "-DARTZIG_HOST_GRAPHICS", "-DSK_GANESH", "-DSK_GL" });
+
+    g.add(o.aosp.path(b, "frameworks/native/libs/tonemap"), &.{"tonemap.cpp"}, &.{}, &.{});
+
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGL15.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     const tracing_includes = &.{
         o.aosp.path(b, "frameworks/native/libs/tracing_perfetto/include"),
@@ -466,7 +491,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // and EXT4_SUPER_MAGIC. Declare those headers explicitly for host libc++.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
     // Match the Ganesh/OpenGL configuration of the linked Skia library.
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{ "-DSK_GANESH", "-DSK_GL" });
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{ "-DSK_GANESH", "-DSK_GL", "-DARTZIG_HOST_GRAPHICS" });
     g.add(o.aosp.path(b, "bionic/libc"), &.{"bionic/fortify.cpp"},
         &.{ o.aosp.path(b, "bionic/libc"), o.aosp.path(b, "bionic/libc/async_safe/include") },
         &.{"-DARTZIG_HOST_FORTIFY"});
@@ -537,7 +562,6 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/native/libs/nativewindow"), &.{"ANativeWindow.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_PublicFormatUtils.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
 
     const media_format_includes = &.{
         o.aosp.path(b, "frameworks/av/media/module/foundation/include"),

@@ -1,0 +1,61 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] WM: reuse stock diagnostics with the session data root
+
+StackTracesDumpHelper compares PIDs with the hosted system process in place
+of AMS.MY_PID; the host owns process startup rather than Android AMS. Both
+diagnostic directories follow Environment, which already selects the session
+data root. CriticalEventLog uses the same nano runtime without Soong jarjar.
+
+--- a/services/core/java/com/android/server/am/StackTracesDumpHelper.java
++++ b/services/core/java/com/android/server/am/StackTracesDumpHelper.java
+@@ -72,7 +72,9 @@
+     static final String ANR_FILE_PREFIX = "anr_";
+     static final String ANR_TEMP_FILE_PREFIX = "temp_anr_";
+ 
+-    public static final String ANR_TRACE_DIR = "/data/anr";
++    // The hosted Environment redirects the Android data root to the session directory.
++    public static final String ANR_TRACE_DIR =
++            new File(android.os.Environment.getDataDirectory(), "anr").getAbsolutePath();
+     private static final int NATIVE_DUMP_TIMEOUT_MS =
+             2000 * Build.HW_TIMEOUT_MULTIPLIER; // 2 seconds;
+     private static final int JAVA_DUMP_MINIMUM_SIZE = 100; // 100 bytes.
+@@ -230,7 +232,7 @@
+                 return firstPidEnd;
+             }
+              // We don't copy ANR traces from the system_server intentionally.
+-            if (firstPidTempDumpCopied && primaryPid != ActivityManagerService.MY_PID) {
++            if (firstPidTempDumpCopied && primaryPid != android.os.Process.myPid()) {
+                 firstPidEnd = new File(tracesFile).length();
+             }
+             // Append the Durations/latency comma separated array after the first PID.
+@@ -249,7 +251,7 @@
+             for (int i = firstPidTempDumpCopied ? 1 : 0; i < num; i++) {
+                 final int pid = firstPids.get(i);
+                 // We don't copy ANR traces from the system_server intentionally.
+-                final boolean firstPid = i == 0 && ActivityManagerService.MY_PID != pid;
++                final boolean firstPid = i == 0 && android.os.Process.myPid() != pid;
+                 Slog.i(TAG, "Collecting stacks for pid " + pid);
+                 final long timeTaken = dumpJavaTracesTombstoned(pid, tracesFile, remainingTime,
+                         latencyTracker);
+--- a/services/core/java/com/android/server/criticalevents/CriticalEventLog.java
++++ b/services/core/java/com/android/server/criticalevents/CriticalEventLog.java
+@@ -21,7 +21,8 @@
+ import android.server.ServerProtoEnums;
+ import android.util.Slog;
+ 
+-import com.android.framework.protobuf.nano.MessageNanoPrinter;
++// Soong renames nano for framework packaging; the host builds the same runtime directly.
++import com.google.protobuf.nano.MessageNanoPrinter;
+ import com.android.internal.annotations.VisibleForTesting;
+ import com.android.internal.util.RingBuffer;
+ import com.android.server.criticalevents.nano.CriticalEventLogProto;
+@@ -112,7 +113,8 @@
+     /** Returns a new instance with production settings. */
+     private CriticalEventLog() {
+         this(
+-                /* logDir= */"/data/misc/critical-events",
++                /* logDir= */new File(android.os.Environment.getDataMiscDirectory(),
++                        "critical-events").getAbsolutePath(),
+                 /* capacity= */ 20,
+                 /* windowMs= */ (int) Duration.ofMinutes(5).toMillis(),
+                 /* minTimeBetweenSavesMs= */ Duration.ofSeconds(2).toMillis(),

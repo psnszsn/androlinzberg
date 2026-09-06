@@ -21,6 +21,10 @@ pub export fn bionic_eglGetDisplay(display: ?*anyopaque) callconv(.c) ?*anyopaqu
     return if (display == null) azk_hwui_default_egl_display() else eglGetDisplay(display);
 }
 
+comptime {
+    _ = @import("legacy_gles.zig");
+}
+
 var g_io: std.Io = undefined;
 
 pub export fn azk_platform_bind_io(
