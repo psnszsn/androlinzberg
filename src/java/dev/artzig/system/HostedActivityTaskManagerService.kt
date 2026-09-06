@@ -1663,13 +1663,9 @@ internal class HostedActivityTaskManagerService(
             finishTask: Int,
         ): Boolean = finishActivityRecord(token, code, data, finishTask)
 
-        override fun finishActivityAffinity(token: IBinder?): Boolean {
-            val taskId = synchronized(lock) { activityForTokenLocked(token)?.task?.taskId }
-                ?: return false
-            // This is a capability-bearing ActivityClientController call, not the privileged
-            // public IActivityTaskManager.removeTask entry point.
-            return removeTaskInternal(taskId)
-        }
+        override fun finishActivityAffinity(token: IBinder?): Boolean =
+            finishActivityRecord(token, Activity.RESULT_CANCELED, null,
+                DONT_FINISH_TASK_WITH_ACTIVITY, finishAffinity = true)
 
         override fun finishSubActivity(token: IBinder?, resultWho: String?, requestCode: Int) {
             val children = synchronized(lock) {
@@ -1876,6 +1872,7 @@ internal class HostedActivityTaskManagerService(
         resultCode: Int,
         resultData: Intent?,
         finishTask: Int,
+        finishAffinity: Boolean = false,
     ): Boolean {
         if (resultData?.hasFileDescriptors() == true) {
             throw IllegalArgumentException("File descriptors passed in Intent")
@@ -1896,13 +1893,24 @@ internal class HostedActivityTaskManagerService(
         val removedTasks = ArrayList<Int>()
         synchronized(lock) {
             val record = activityForTokenLocked(token) ?: return false
-            if (record !== source || record.finishing) return false
+            if (record !== source || (record.finishing && !finishAffinity)) return false
             val finishWholeTask = finishTask == FINISH_TASK_WITH_ACTIVITY ||
                 (finishTask == FINISH_TASK_WITH_ROOT_ACTIVITY &&
                     record.task.activities.firstOrNull { !it.finishing } === record)
-            finishing = if (finishWholeTask) record.task.activities.toList() else listOf(record)
+            // ActivityClientController.finishActivityAffinity walks downward from the
+            // caller, stopping at the first different affinity (including null equality).
+            // Select and mark the whole range before choosing the revealed activity.
+            finishing = when {
+                finishAffinity -> record.task.activities
+                    .subList(0, record.task.activities.indexOf(record) + 1).asReversed()
+                    .takeWhile { it.info.taskAffinity == record.info.taskAffinity }
+                    .filter { !it.finishing }
+                finishWholeTask -> record.task.activities.filter { !it.finishing }
+                else -> listOf(record)
+            }
             finishing.forEach { it.finishing = true }
-            if (record.requestCode >= 0) {
+            finishing.filter { it !== record }.forEach(::queueCanceledActivityResultLocked)
+            if (record in finishing && record.requestCode >= 0) {
                 val resultTarget = record.resultTo?.let(activities::get)?.takeIf {
                     it !in finishing && !it.finishing && it.process != null
                 }

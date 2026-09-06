@@ -262,7 +262,17 @@ public class Activity extends ContextThemeWrapper implements Window.Callback,
         }
     }
 
-    public void finishAffinity() {}
+    public void finishAffinity() {
+        if (mParent != null) {
+            throw new IllegalStateException("Can not be called from an embedded activity");
+        }
+        if (mResultCode != RESULT_CANCELED || mResultData != null) {
+            throw new IllegalStateException("Can not be called to deliver a result");
+        }
+        if (ActivityClient.getInstance().finishActivityAffinity(mToken)) {
+            mFinished = true;
+        }
+    }
     public boolean shouldShowRequestPermissionRationale(String permission) { return false; }
     public void requestPermissions(String[] permissions, int requestCode) {
         requestPermissions(null, permissions, requestCode);

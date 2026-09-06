@@ -27,6 +27,17 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Activity.finishAffinity now uses the pinned ActivityClient call and result/
+  embedded-activity guards. The hosted controller closes only the contiguous
+  matching-affinity range at and below the caller, preserving a different
+  affinity boundary and activities above it; equal null affinities also match.
+  Group finishing queues canceled results for surviving recipients before their
+  next resume. Module and separate-process tests cover covered and foreground
+  callers, task preservation, null affinities, rejected results and exactly-once
+  result ordering. JVM/system suites, the NewPipe launch regression, native,
+  Binder and build checks, and all 11 APK tests pass (37 steps without runtime
+  issues). Both tarballs are unchanged and current; the inventory stays at 48.
+
 - Activity now inherits the verbatim ContextThemeWrapper, replacing its private
   theme/inflater implementation and empty applyOverrideConfiguration method.
   Stock resource isolation, one-time override checks, layered theme identity,

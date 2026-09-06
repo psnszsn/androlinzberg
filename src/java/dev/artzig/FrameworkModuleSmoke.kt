@@ -3595,9 +3595,9 @@ internal object FrameworkModuleSmoke {
                 Intent(action).setComponent(component(name)).setFlags(flags).apply { if (data != null) this.data = Uri.parse(data) }
             fun start(value: Intent, parent: android.os.IBinder? = null, request: Int = -1): Int =
                 service.startActivity(null, pkg, null, value, null, parent, null, request, 0, null, null)
-            fun launch(value: Intent, parent: android.os.IBinder? = null): android.os.IBinder {
+            fun launch(value: Intent, parent: android.os.IBinder? = null, request: Int = -1): android.os.IBinder {
                 observed.clear()
-                check(start(value, parent) == ActivityManager.START_SUCCESS)
+                check(start(value, parent, request) == ActivityManager.START_SUCCESS)
                 drain()
                 return observed.filterIsInstance<LaunchActivityItem>().single().activityToken
             }
@@ -3694,6 +3694,52 @@ internal object FrameworkModuleSmoke {
             val always = launch(intent("AlwaysOne", data = "content://documents/always"))
             val alwaysAgain = launch(intent("AlwaysOne", data = "content://documents/always"))
             check(taskId(always) != taskId(alwaysAgain))
+            // Affinity finishing removes a contiguous downward range, preserving both
+            // a different-affinity boundary and activities above the caller.
+            val affinityRoot = launch(intent("RootOne", multiple))
+            val boundary = launch(intent("OtherTwo"), affinityRoot)
+            val middle = launch(intent("RootOne"), boundary, 51)
+            val affinityCaller = launch(intent("ChildOne"), middle, 52)
+            val affinityCover = launch(intent("OtherTwo"), affinityCaller)
+            val affinityTask = taskId(affinityRoot)
+            observed.clear()
+            check(controller.finishActivityAffinity(affinityCaller))
+            drain()
+            check(observed.filterIsInstance<DestroyActivityItem>().map { it.activityToken }.toSet() ==
+                setOf(middle, affinityCaller))
+            check(observed.none { it is ResumeActivityItem || it is PauseActivityItem || it is ActivityResultItem })
+            check(top().taskId == affinityTask && top().numActivities == 3)
+            check(taskId(affinityRoot) == affinityTask && taskId(boundary) == affinityTask &&
+                taskId(affinityCover) == affinityTask && taskId(middle) == -1 && taskId(affinityCaller) == -1)
+            observed.clear()
+            check(controller.finishActivity(affinityCover, Activity.RESULT_CANCELED, null,
+                Activity.DONT_FINISH_TASK_WITH_ACTIVITY))
+            drain()
+            val resultIndex = observed.indexOfFirst { it is ActivityResultItem }
+            check(resultIndex >= 0 && observed.indexOfFirst { it is ResumeActivityItem } > resultIndex)
+            check((observed[resultIndex] as ActivityResultItem).activityToken == boundary)
+            val parcel = Parcel.obtain()
+            try {
+                observed[resultIndex].writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                check(parcel.readStrongBinder() == boundary)
+                val results = checkNotNull(parcel.createTypedArrayList(ResultInfo.CREATOR))
+                check(results.size == 1 && results.single().mRequestCode == 51 &&
+                    results.single().mResultCode == Activity.RESULT_CANCELED)
+            } finally { parcel.recycle() }
+            check(top().numActivities == 2 && top().topActivity == component("OtherTwo"))
+            check(!controller.finishActivityAffinity(Binder()))
+            check(controller.finishActivityAffinity(boundary))
+            drain()
+            check(top().numActivities == 1 && taskId(affinityRoot) == affinityTask)
+
+            val nullRoot = launch(intent("NoneOne", multiple))
+            val nullChild = launch(intent("NoneTwo"), nullRoot)
+            check(controller.finishActivityAffinity(nullChild))
+            drain()
+            check(taskId(nullRoot) == -1 && taskId(nullChild) == -1)
+            check(taskId(affinityRoot) == affinityTask)
+            System.err.println("stock-affinity-finish: bounded range, null affinity, preserved top/boundary and canceled-result ordering passed")
             System.err.println("stock-task-reuse: identity/affinity, front-door preservation, single-top, task clearing, single-task and documents passed")
         }
     }

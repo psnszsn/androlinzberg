@@ -121,6 +121,7 @@ internal object ActivityUriGrantSystemSmoke {
     private const val STOP = 13
     private const val MOVE_BACK = 14
     private const val UI_DISPATCH = 15
+    private const val FINISH_AFFINITY = 16
     private const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
     private const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
     val activities = HashMap<Int, UriGrantActivity>()
@@ -133,7 +134,7 @@ internal object ActivityUriGrantSystemSmoke {
         val handler = Handler(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-                if (code !in START..UI_DISPATCH) return false
+                if (code !in START..FINISH_AFFINITY) return false
                 data.enforceInterface(name)
                 val args = checkNotNull(data.readBundle())
                 val action = FutureTask {
@@ -180,6 +181,19 @@ internal object ActivityUriGrantSystemSmoke {
                             }
                         }
                         RECREATE -> checkNotNull(activities[id]).recreate()
+                        FINISH_AFFINITY -> {
+                            val activity = checkNotNull(activities[id])
+                            if (args.getBoolean("rejectResult")) {
+                                activity.setResult(Activity.RESULT_OK)
+                                check(runCatching { activity.finishAffinity() }.exceptionOrNull()
+                                    is IllegalStateException)
+                                check(!activity.isFinishing)
+                                activity.setResult(Activity.RESULT_CANCELED)
+                            } else {
+                                activity.finishAffinity()
+                                check(activity.isFinishing)
+                            }
+                        }
                         FINISH -> {
                             val activity = checkNotNull(activities[id])
                             args.getParcelable("intent", Intent::class.java)?.let {
@@ -442,7 +456,49 @@ internal object ActivityUriGrantSystemSmoke {
         check(checkNotNull(returned.getStringArrayList("callbacks")).count { it == "result:42" } == 1)
         call(A, FINISH, args(90).apply { putBoolean("removeTask", true) })
         awaitState(A, 90) { !it.getBoolean("live") }
+        verifyAffinityFinish()
         System.err.println("system-test: task reuse preserves the top screen, task identity/root/back APIs, new-intent ordering and canceled results across processes")
+    }
+
+    private fun verifyAffinityFinish() {
+        fun launchFrom(pkg: String, parent: Int, target: String, id: Int, request: Int = -1) {
+            call(pkg, START, args(parent).apply {
+                putParcelable("intent", activityIntent(target, id))
+                putInt("request", request)
+            })
+            awaitState(target, id) { it.getBoolean("resumed") }
+        }
+        start(-1, activityIntent(A, 130).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
+        val root = awaitState(A, 130) { it.getBoolean("resumed") }
+        launchFrom(A, 130, B, 131)
+        launchFrom(B, 131, A, 132, 51)
+        launchFrom(A, 132, A, 133, 52)
+        launchFrom(A, 133, B, 134)
+        val cover = call(B, STATUS, args(134))
+        check(cover.getInt("taskId") == root.getInt("taskId"))
+        call(A, FINISH_AFFINITY, args(133).apply { putBoolean("rejectResult", true) })
+        check(call(A, STATUS, args(133)).getBoolean("live"))
+        call(A, FINISH_AFFINITY, args(133))
+        awaitState(A, 132) { !it.getBoolean("live") }
+        awaitState(A, 133) { !it.getBoolean("live") }
+        val stillCovered = call(B, STATUS, args(131))
+        check(stillCovered.getBoolean("live") && !stillCovered.getBoolean("resumed") &&
+            stillCovered.getInt("resultRequest") != 51)
+        val stillTop = call(B, STATUS, args(134))
+        check(stillTop.getBoolean("resumed") &&
+            stillTop.getStringArrayList("callbacks") == cover.getStringArrayList("callbacks"))
+        call(B, FINISH, args(134))
+        val returned = awaitState(B, 131) { it.getBoolean("resumed") && it.getInt("resultRequest") == 51 }
+        check(returned.getInt("resultCode") == Activity.RESULT_CANCELED &&
+            returned.getStringArrayList("callbacks")?.takeLast(2) == listOf("result:51", "resume"))
+        check(returned.getStringArrayList("callbacks")?.count { it == "result:51" } == 1)
+        call(B, FINISH_AFFINITY, args(131))
+        awaitState(B, 131) { !it.getBoolean("live") }
+        awaitState(A, 130) { it.getBoolean("resumed") }
+        call(A, FINISH_AFFINITY, args(130))
+        awaitState(A, 130) { !it.getBoolean("live") }
+        System.err.println("system-test: finishAffinity preserves different-affinity and covering activities, rejects results and delivers canceled results before resume")
     }
 
     /** Run from a separately signed process; both peers share a test key but not a UID. */
