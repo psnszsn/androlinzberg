@@ -821,15 +821,17 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
             r.intent.setExtrasClassLoader(classLoader);
             if (r.state != null) r.state.setClassLoader(classLoader);
 
-            final Intent launchIntent = customIntent != null ? customIntent : r.intent;
             // AOSP performLaunchActivity carries the initial ComponentCaller token through
             // the stock attach signature; it must survive launch and local recreation.
             activity.attach(activityContext, this, mInstrumentation, r.token, 0,
-                    currentApplication(), launchIntent, info, "", r.parent, r.embeddedID,
+                    currentApplication(), r.intent, info, "", r.parent, r.embeddedID,
                     r.lastNonConfigurationInstances,
                     new Configuration(activityContext.getResources().getConfiguration()),
                     r.referrer, null, null, null, r.assistToken, r.shareableActivityToken,
                     r.initialCallerInfoAccessToken);
+            // Pinned performLaunchActivity restores the app's mutable intent only after
+            // attachment establishes the immutable launch component and base-context identity.
+            if (customIntent != null) activity.mIntent = customIntent;
             activity.mReferrer = r.referrer;
             activity.mLastNonConfigurationInstances = r.lastNonConfigurationInstances;
             r.lastNonConfigurationInstances = null;

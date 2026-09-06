@@ -1,5 +1,6 @@
-/* artzig shim: android.app.Activity — ContextWrapper + real PhoneWindow host.
- * Grows toward real-Activity semantics as androidx demands (M4..M6). */
+/* Hosted adaptation of pinned AOSP Activity. Direct compilation still requires
+ * the voice/audio and window-controller closure. Host-only attach overloads
+ * supply the resolved launch identity used by the standard attach entry point. */
 package android.app;
 import android.content.Context;
 import android.content.ContextWrapper;
@@ -31,6 +32,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
     private Window mWindow;
     private android.content.ComponentCallbacksController mCallbacksController;
     private ActivityInfo mActivityInfo = new ActivityInfo();
+    private android.content.ComponentName mComponent;
+    private Thread mUiThread;
     private android.os.IBinder mToken;
     private android.os.IBinder mAssistToken = new android.os.Binder();
     private android.os.IBinder mShareableActivityToken;
@@ -94,9 +97,17 @@ public class Activity extends ContextWrapper implements Window.Callback,
     final void attach(Context base, ActivityInfo activityInfo, Intent intent, Activity parent,
             String id, android.os.IBinder token, android.os.IBinder assistToken,
             android.os.IBinder shareableActivityToken) {
+        // The host's direct-Activity test/entry adapter has no package-resolution step.
+        // Supply that launch component here; APK launches already resolve it before attach.
+        Intent resolvedIntent = intent != null ? intent : new Intent();
+        if (resolvedIntent.getComponent() == null) {
+            resolvedIntent.setComponent(new android.content.ComponentName(base.getPackageName(),
+                    activityInfo != null && activityInfo.name != null
+                            ? activityInfo.name : getClass().getName()));
+        }
         ActivityThread thread = ActivityThread.currentActivityThread();
         attach(base, thread, thread != null ? thread.getInstrumentation() : new Instrumentation(),
-                token, 0, ActivityThread.currentApplication(), intent != null ? intent : new Intent(),
+                token, 0, ActivityThread.currentApplication(), resolvedIntent,
                 activityInfo != null ? activityInfo : new ActivityInfo(), "", parent, id,
                 null, new Configuration(base.getResources().getConfiguration()), null, null, null,
                 null, assistToken, shareableActivityToken, null);
@@ -124,6 +135,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
             mWindow.setSoftInputMode(info.softInputMode);
         }
         if (info.uiOptions != 0) mWindow.setUiOptions(info.uiOptions);
+        mUiThread = Thread.currentThread();
         mMainThread = thread;
         mIdent = ident;
         mInstrumentation = instrumentation;
@@ -132,15 +144,15 @@ public class Activity extends ContextWrapper implements Window.Callback,
         mAssistToken = assistToken;
         mShareableActivityToken = shareableActivityToken;
         mReferrer = referrer;
+        mComponent = intent.getComponent();
         mTitle = title;
         mParent = parent;
         mEmbeddedID = id;
         mLastNonConfigurationInstances = retained;
         mVoiceInteractor = voiceInteractor;
         mRequestedOrientation = info.screenOrientation;
-        android.content.ComponentName component = intent.getComponent();
         mWindow.setWindowManager((WindowManager) base.getSystemService(Context.WINDOW_SERVICE),
-                token, component != null ? component.flattenToString() : getClass().getName(),
+                token, mComponent.flattenToString(),
                 (info.flags & ActivityInfo.FLAG_HARDWARE_ACCELERATED) != 0);
         if (parent != null) mWindow.setContainer(parent.getWindow());
         mCurrentConfig = config;
@@ -530,7 +542,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         return mFragments.getLoaderManager();
     }
     public boolean releaseInstance() { return false; }
-    private Intent mIntent = new Intent();
+    Intent mIntent = new Intent();
     private android.window.OnBackInvokedDispatcher mBackDispatcher;
     public android.window.OnBackInvokedDispatcher getOnBackInvokedDispatcher() {
         if (mBackDispatcher == null) {
@@ -660,7 +672,13 @@ public class Activity extends ContextWrapper implements Window.Callback,
         return ActivityClient.getInstance().moveActivityTaskToBack(mToken, nonRoot);
     }
     public ActivityInfo getActivityInfo() { return mActivityInfo; }
-    public void runOnUiThread(Runnable action) { action.run(); }
+    public final void runOnUiThread(Runnable action) {
+        if (Thread.currentThread() != mUiThread) {
+            mHandler.post(action);
+        } else {
+            action.run();
+        }
+    }
     public int getTaskId() {
         return ActivityClient.getInstance().getTaskForActivity(mToken, false /* onlyRoot */);
     }
@@ -672,7 +690,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void setVoiceInteractor(com.android.internal.app.IVoiceInteractor voiceInteractor) { mVoiceInteractor = voiceInteractor; }
     public VoiceInteractor getVoiceInteractor() { return null; }
     public android.content.ComponentName getComponentName() {
-        return new android.content.ComponentName("dev.artzig", getClass().getName());
+        return mComponent;
     }
     public void addDumpable(Object dumpable) {}
     @Override public View onCreateView(String name, Context context,
@@ -699,10 +717,14 @@ public class Activity extends ContextWrapper implements Window.Callback,
     private CharSequence mTitle = "";
     public CharSequence getTitle() { return mTitle; }
     public String getLocalClassName() {
-        String className = getClass().getName();
-        String packageName = getPackageName();
-        return className.startsWith(packageName + ".")
-                ? className.substring(packageName.length() + 1) : className;
+        final String pkg = getPackageName();
+        final String cls = mComponent.getClassName();
+        int packageLen = pkg.length();
+        if (!cls.startsWith(pkg) || cls.length() <= packageLen
+                || cls.charAt(packageLen) != '.') {
+            return cls;
+        }
+        return cls.substring(packageLen+1);
     }
     public final @NonNull SplashScreen getSplashScreen() {
         return getOrCreateSplashScreen();

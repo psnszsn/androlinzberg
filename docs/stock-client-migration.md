@@ -27,6 +27,21 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Activity attachment now captures the pinned launch component and UI thread.
+  getComponentName/getLocalClassName use that component, including aliases,
+  instead of a hard-coded package and runtime class; setIntent does not change
+  activity identity. runOnUiThread uses AOSP's immediate-on-UI/post-from-worker
+  behavior and final signature. Direct hosted attachment supplies its missing
+  resolved component before calling the standard entry point. Relaunch now
+  follows ActivityThread.performLaunchActivity: attach with the original launch
+  intent, then restore the application's custom intent. This preserves both
+  identity and getIntent even when the custom intent has no component.
+  Module and separate-process tests cover alias/name boundaries, dispatch
+  threading/order and recreation with a custom intent. JVM and system suites,
+  the NewPipe launch regression, native/Binder/build checks and all 11 APK tests
+  pass (37 steps without runtime issues). Both tarballs remain unchanged and
+  current; the stub inventory stays at 49.
+
 - The hosted activity controller now follows ActivityStarter/Task task reuse:
   component and document matches precede affinity candidates; repeated launcher
   intents preserve the existing top screen; changed intent filters add an

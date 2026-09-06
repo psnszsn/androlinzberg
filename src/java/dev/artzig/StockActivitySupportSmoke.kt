@@ -19,6 +19,44 @@ import java.io.StringWriter
 import java.util.concurrent.TimeUnit
 
 internal object StockActivitySupportSmoke {
+    private fun testActivityAttachment(base: Context, pump: () -> Unit) {
+        val pkg = base.packageName
+        for ((className, localName) in listOf(
+            "$pkg.Alias" to "Alias", "${pkg}x.Alias" to "${pkg}x.Alias", pkg to pkg,
+        )) {
+            val activity = android.app.Activity()
+            check(activity.componentName == null)
+            val component = android.content.ComponentName(pkg, className)
+            activity.intent = android.content.Intent().setComponent(component)
+            activity.attach(base)
+            try {
+                check(activity.componentName == component && activity.localClassName == localName)
+                activity.intent = android.content.Intent().setComponent(android.content.ComponentName("other", "Other"))
+                check(activity.componentName == component && activity.localClassName == localName)
+                val uiThread = Thread.currentThread()
+                var inline = false
+                activity.runOnUiThread { inline = true }
+                check(inline) { "UI-thread action was unnecessarily deferred" }
+                val posted = java.util.concurrent.atomic.AtomicBoolean()
+                val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+                val worker = kotlin.concurrent.thread(name = "activity-ui-dispatch") {
+                    try {
+                        activity.runOnUiThread {
+                            check(Thread.currentThread() === uiThread)
+                            posted.set(true)
+                        }
+                    } catch (error: Throwable) { failure.set(error) }
+                }
+                worker.join(3000)
+                check(!worker.isAlive && failure.get() == null) { "worker dispatch failed: ${failure.get()}" }
+                check(!posted.get()) { "worker action ran before the UI queue was pumped" }
+                pump()
+                check(posted.get())
+            } finally { activity.window.destroy() }
+        }
+        System.err.println("stock-activity-attachment: component/alias identity, local names, setIntent stability and UI-thread dispatch passed")
+    }
+
     private fun testLegacyActionBar(base: Context) {
         val themed = android.view.ContextThemeWrapper(base, android.R.style.Theme_Holo)
         val window = com.android.internal.policy.PhoneWindow(themed)
@@ -40,6 +78,7 @@ internal object StockActivitySupportSmoke {
         val base = HostContexts.systemContext(
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
         testLegacyActionBar(base)
+        testActivityAttachment(base, pump)
         val provider = object : dev.artzig.systemtest.TestProvider() {
             override fun query(uri: Uri, projection: Array<String>?, selection: String?,
                 selectionArgs: Array<String>?, sortOrder: String?): Cursor {

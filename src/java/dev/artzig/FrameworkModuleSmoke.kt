@@ -7364,6 +7364,7 @@ internal object FrameworkModuleSmoke {
                 is IllegalStateException)
 
             staleReplacement.intent = MalformedReferrerIntent()
+            val retainedCustomIntent = staleReplacement.intent
             activityRelaunchEvents.clear()
             withContentUriPermissionApis(false) {
                 instrumentation.callActivityOnNewIntent(
@@ -7409,6 +7410,8 @@ internal object FrameworkModuleSmoke {
                 })
             }
             check(sequenceOnlyReports == listOf("relaunched", "resumed"))
+            check(record.activity.intent === retainedCustomIntent)
+            check(record.activity.componentName == record.intent.component)
             check(activityRelaunchEvents == listOf(
                 "4:pause:$currentOrientation",
                 "4:stop:true:0",

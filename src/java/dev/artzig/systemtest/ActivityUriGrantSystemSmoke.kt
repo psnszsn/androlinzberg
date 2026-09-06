@@ -29,6 +29,8 @@ open class UriGrantActivity : Activity() {
         id = intent.getIntExtra("id", -1)
         observation = ActivityUriGrantSystemSmoke.observations.getOrPut(id) { Bundle() }
         observation.putInt("creates", observation.getInt("creates") + 1)
+        observation.putParcelable("component", componentName)
+        observation.putString("localClass", localClassName)
         ActivityUriGrantSystemSmoke.activities[id] = this
         verifyUris(intent)
         rememberCaller("initial", initialCaller)
@@ -118,6 +120,7 @@ internal object ActivityUriGrantSystemSmoke {
     private const val IDENTITY = 12
     private const val STOP = 13
     private const val MOVE_BACK = 14
+    private const val UI_DISPATCH = 15
     private const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
     private const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
     val activities = HashMap<Int, UriGrantActivity>()
@@ -130,7 +133,7 @@ internal object ActivityUriGrantSystemSmoke {
         val handler = Handler(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-                if (code !in START..MOVE_BACK) return false
+                if (code !in START..UI_DISPATCH) return false
                 data.enforceInterface(name)
                 val args = checkNotNull(data.readBundle())
                 val action = FutureTask {
@@ -139,6 +142,27 @@ internal object ActivityUriGrantSystemSmoke {
                         CALLER_APIS -> setCallerApis(args.getBoolean("enabled"))
                         STOP -> handler.postDelayed({ Runtime.getRuntime().exit(0) }, 100)
                         MOVE_BACK -> check(checkNotNull(activities[id]).moveTaskToBack(args.getBoolean("nonRoot")) == args.getBoolean("expected"))
+                        UI_DISPATCH -> {
+                            val activity = checkNotNull(activities[id])
+                            var inline = false
+                            activity.runOnUiThread { inline = true }
+                            check(inline)
+                            val ran = java.util.concurrent.atomic.AtomicBoolean()
+                            val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+                            val worker = kotlin.concurrent.thread(name = "activity-ui-worker") {
+                                try {
+                                    activity.runOnUiThread {
+                                        check(Looper.myLooper() === Looper.getMainLooper())
+                                        ran.set(true)
+                                        checkNotNull(observations[id]).putBoolean("uiDispatch", true)
+                                    }
+                                } catch (error: Throwable) { failure.set(error) }
+                            }
+                            worker.join(3000)
+                            check(!worker.isAlive && failure.get() == null && !ran.get()) {
+                                "runOnUiThread failed to enqueue the worker action: ${failure.get()}"
+                            }
+                        }
                         GRANT, REVOKE -> {
                             val uri = Uri.parse(checkNotNull(args.getString("uri")))
                             val target = args.getString("target")
@@ -367,6 +391,10 @@ internal object ActivityUriGrantSystemSmoke {
         val separateTask = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
         start(-1, activityIntent(A, 80).addFlags(separateTask))
         val root = awaitState(A, 80) { it.getBoolean("resumed") }
+        check(root.getParcelable("component", android.content.ComponentName::class.java) == activityIntent(A, 80).component)
+        check(root.getString("localClass") == AUriGrantActivity::class.java.name)
+        call(A, UI_DISPATCH, args(80))
+        awaitState(A, 80) { it.getBoolean("uiDispatch") }
         start(80, activityIntent(A, 81))
         val child = awaitState(A, 81) { it.getBoolean("resumed") }
         check(root.getInt("taskId") == child.getInt("taskId"))
