@@ -197,6 +197,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         // from PackageStateInternal, so the scan-derived flags must be set on
         // the package itself before it is frozen (AOSP sets them during scan).
         parsed.setSystem(true).setPrivileged(true)
+        (parsed as PackageImpl).addActivity(HostedPermissionController.activity())
         val pkg = parsed.hideAsFinal()
         check(pkg.packageName == "android") { "framework-res parsed as " + pkg.packageName }
         synchronized(lock) {
@@ -209,6 +210,13 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
             "platform installed: " + permissionDefs.size + " permissions, " +
                 permissionGroups.size + " groups",
         )
+    }
+
+    override fun getPermissionControllerPackageName(): String = synchronized(lock) {
+        check(packages.containsKey(HostedPermissionController.PACKAGE)) {
+            "PermissionController is not found"
+        }
+        HostedPermissionController.PACKAGE
     }
 
     /** installd's job: the CE/DE package directories (Environment layout) exist after install. */

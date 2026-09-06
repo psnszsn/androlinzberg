@@ -1835,6 +1835,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/Debug.java");
     try c.file("$CJ/android/os/GraphicsEnvironment.java");
     try c.file("$CJ/com/android/internal/util/TypedProperties.java");
+    try c.file("$CJ/android/app/Activity.java");
     try c.file("$CJ/android/app/Instrumentation.java");
     // Stock Activity support closure; Activity itself still awaits the voice/window boundary.
     try c.file("$CJ/android/app/DirectAction.java");

@@ -829,6 +829,7 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
 
             // AOSP performLaunchActivity carries the initial ComponentCaller token through
             // the stock attach signature; it must survive launch and local recreation.
+            activityContext.setOuterContext(activity);
             activity.attach(activityContext, this, mInstrumentation, r.token, 0,
                     currentApplication(), r.intent, info, "", r.parent, r.embeddedID,
                     r.lastNonConfigurationInstances,
@@ -851,7 +852,17 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
             // Publish before onCreate, matching AOSP callbacks that look their token up here.
             r.activity = activity;
             mActivities.put(r.token, r);
-            activity.performCreate(r.state);
+            activity.mCalled = false;
+            if (r.isPersistable()) {
+                mInstrumentation.callActivityOnCreate(activity, r.state, r.persistentState);
+            } else {
+                mInstrumentation.callActivityOnCreate(activity, r.state);
+            }
+            if (!activity.mCalled) {
+                throw new android.util.SuperNotCalledException("Activity "
+                        + r.intent.getComponent().toShortString()
+                        + " did not call through to super.onCreate()");
+            }
             r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_CREATE);
             return activity;
         } catch (Exception e) {
@@ -872,6 +883,7 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
                 || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
             return false;
         }
+        if (finalStateRequest) r.activity.mStartedActivity = false;
         r.activity.onStateNotSaved();
         r.activity.mFragments.noteStateNotSaved();
         if (r.pendingIntents != null) {
@@ -882,8 +894,9 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
             deliverResults(r, r.pendingResults, reason);
             r.pendingResults = null;
         }
-        r.activity.performResume();
+        r.activity.performResume(r.startsNotResumed, reason);
         r.state = null;
+        r.persistentState = null;
         r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME);
         return true;
     }
@@ -906,8 +919,7 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
                         < android.os.Build.VERSION_CODES.HONEYCOMB;
         final boolean shouldSaveState = !r.activity.mFinished && preHoneycomb;
         if (shouldSaveState) {
-            r.state = new Bundle();
-            r.activity.performSaveInstanceState(r.state);
+            callActivityOnSaveInstanceState(r);
         }
         if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
             r.activity.performPause();
@@ -916,6 +928,19 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
         final Bundle oldState = pendingActions != null ? pendingActions.getOldState() : null;
         if (oldState != null && preHoneycomb) r.state = oldState;
         return shouldSaveState ? r.state : null;
+    }
+
+    /** Pinned ActivityThread.callActivityOnSaveInstanceState, including persistable state
+     * and the framework's prohibition on file descriptors in saved activity state. */
+    private void callActivityOnSaveInstanceState(ActivityClientRecord r) {
+        r.state = new Bundle();
+        r.state.setAllowFds(false);
+        if (r.isPersistable()) {
+            r.persistentState = new android.os.PersistableBundle();
+            mInstrumentation.callActivityOnSaveInstanceState(r.activity, r.state, r.persistentState);
+        } else {
+            mInstrumentation.callActivityOnSaveInstanceState(r.activity, r.state);
+        }
     }
 
     /** AOSP hidden API retained for LocalActivityManager. */
@@ -937,17 +962,15 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
                 && targetSdk < android.os.Build.VERSION_CODES.P;
         final boolean saveAfterStop = targetSdk >= android.os.Build.VERSION_CODES.P;
         if (saveState && saveBeforeStop && !r.activity.mFinished && r.state == null) {
-            r.state = new Bundle();
-            r.activity.performSaveInstanceState(r.state);
+            callActivityOnSaveInstanceState(r);
         }
         if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_START
                 || r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE) {
-            r.activity.performStop();
+            r.activity.performStop(r.mPreserveWindow, reason);
             r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_STOP);
         }
         if (saveState && saveAfterStop && !r.activity.mFinished && r.state == null) {
-            r.state = new Bundle();
-            r.activity.performSaveInstanceState(r.state);
+            callActivityOnSaveInstanceState(r);
         }
     }
 
@@ -1303,7 +1326,7 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
             }
         }
         deliverResults(r, results, reason);
-        if (resumed) r.activity.performResume();
+        if (resumed) r.activity.performResume(false, reason);
     }
     /** AOSP ActivityThread.handleNewIntent/deliverNewIntents. The caller owns lifecycle moves. */
     @Override public void handleNewIntent(ActivityClientRecord r, List<com.android.internal.content.ReferrerIntent> intents) {
@@ -1361,13 +1384,32 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
         }
         if (r.activity.mFinished) return;
         if (sceneTransitionInfo != null) r.activity.mSceneTransitionInfo = sceneTransitionInfo;
-        r.activity.performStart();
+        r.activity.performStart("handleStartActivity");
         r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_START);
-        if (pendingActions != null && pendingActions.shouldRestoreInstanceState() && r.state != null) {
-            r.activity.performRestoreInstanceState(r.state);
+        if (pendingActions != null && pendingActions.shouldRestoreInstanceState()) {
+            if (r.isPersistable()) {
+                if (r.state != null || r.persistentState != null) {
+                    mInstrumentation.callActivityOnRestoreInstanceState(
+                            r.activity, r.state, r.persistentState);
+                }
+            } else if (r.state != null) {
+                mInstrumentation.callActivityOnRestoreInstanceState(r.activity, r.state);
+            }
         }
         if (pendingActions != null && pendingActions.shouldCallOnPostCreate()) {
-            r.activity.performPostCreate(r.state);
+            r.activity.mCalled = false;
+            android.os.Trace.traceBegin(android.os.Trace.TRACE_TAG_WINDOW_MANAGER, "onPostCreate");
+            if (r.isPersistable()) {
+                mInstrumentation.callActivityOnPostCreate(r.activity, r.state, r.persistentState);
+            } else {
+                mInstrumentation.callActivityOnPostCreate(r.activity, r.state);
+            }
+            android.os.Trace.traceEnd(android.os.Trace.TRACE_TAG_WINDOW_MANAGER);
+            if (!r.activity.mCalled) {
+                throw new android.util.SuperNotCalledException("Activity "
+                        + r.intent.getComponent().toShortString()
+                        + " did not call through to super.onPostCreate()");
+            }
         }
     }
     /** A system-sent configuration (a ConfigurationChangeItem): the hosted system sends deltas in
@@ -1521,6 +1563,7 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
         List<com.android.internal.content.ReferrerIntent> pendingIntents;
         int pendingConfigChanges;
         boolean mPreserveWindow;
+        boolean startsNotResumed;
         final Configuration tmpConfig = new Configuration();
         private int mLifecycleState = android.app.servertransaction.ActivityLifecycleItem.PRE_ON_CREATE;
         public android.window.ActivityWindowInfo activityWindowInfo;
@@ -1542,6 +1585,9 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
             this.overrideConfig = overrideConfig;
             this.activityWindowInfo = activityWindowInfo;
             if (activityWindowInfo != null) this.mActivityWindowInfo.set(activityWindowInfo);
+        }
+        public boolean isPersistable() {
+            return activityInfo.persistableMode == ActivityInfo.PERSIST_ACROSS_REBOOTS;
         }
         public int getLifecycleState() { return mLifecycleState; }
         public void setState(int newLifecycleState) { mLifecycleState = newLifecycleState; }

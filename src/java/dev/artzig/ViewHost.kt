@@ -27,10 +27,11 @@ public final class ViewHost {
 
     internal final class DemoActivity : Activity() {
         protected override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
             // theme-resolved window background
             val tv: TypedValue = TypedValue()
             getTheme().resolveAttribute(android.R.attr.colorBackground, tv, true)
-            getDecorView().setBackgroundColor(tv.data)
+            window.decorView.setBackgroundColor(tv.data)
 
             val content: FrameLayout = FrameLayout(getBaseContext())
             // one "colored View" that also exercises onDraw through the real Canvas
@@ -142,12 +143,22 @@ public final class ViewHost {
             // no manifest/providers, but framework code still relies on
             // currentApplication() for process configuration.
             android.app.ActivityThread.currentActivityThread().`bindSystemApplication$artzig`()
-            sActivity = DemoActivity()
-            sActivity.attach(sContext)
-            sActivity.performCreate(null)
-            sActivity.performStart()
-            sActivity.performPostCreate(null)
-            sActivity.performResume()
+            val thread = android.app.ActivityThread.currentActivityThread()
+            val record = android.app.ActivityThread.ActivityClientRecord().apply {
+                token = android.os.Binder()
+                intent = android.content.Intent().setComponent(android.content.ComponentName(
+                    sContext.packageName, DemoActivity::class.java.name))
+                activityInfo = android.content.pm.ActivityInfo().apply {
+                    packageName = sContext.packageName
+                    name = DemoActivity::class.java.name
+                    applicationInfo = sContext.applicationInfo
+                    theme = android.R.style.Theme_DeviceDefault_NoActionBar
+                }
+            }
+            val pending = android.app.servertransaction.PendingTransactionActions()
+            sActivity = checkNotNull(thread.handleLaunchActivity(record, pending, 0, null))
+            thread.handleStartActivity(record, pending, null)
+            thread.handleResumeActivity(record, true, false, false, "demo launch")
             sRoot = HostedWindowRoots.attachActivity(sActivity, width, height)
             ArtzigAccessibilityBridge.setActivityRoot(sRoot)
         }

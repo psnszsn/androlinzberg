@@ -316,6 +316,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     kotlinc.addPrefixedFileArg("@", sources.java_rsp);
     kotlinc.addPrefixedFileArg("@", sources.kotlin_rsp);
     for (o.generated.jvm.sources) |file| kotlinc.addFileArg(file);
+    // K2 also needs package roots to resolve fully qualified Java annotation constants
+    // inherited from Activity. These roots contain only the declared aconfig outputs.
+    for (o.generated.jvm.aconfig_source_roots) |root| {
+        kotlinc.addPrefixedDirectoryArg("-Xjava-source-roots=", root);
+    }
     sources.addKotlincInputs(kotlinc.run);
     kotlinc_inputs.addInputs(kotlinc.run);
     kotlinc.run.step.dependOn(o.source_audit);

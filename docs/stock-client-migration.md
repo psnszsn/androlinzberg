@@ -27,6 +27,26 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Activity now compiles verbatim and the 1,161-line hosted Activity replacement
+  is deleted. ActivityThread uses stock lifecycle signatures, Instrumentation
+  creation/post-create dispatch and super-call checks, outer-context attachment,
+  and fresh persistent-state saving. Direct-object test helpers live in dev.artzig;
+  the demo enters through ActivityThread. Window diagnostics describe the hosted
+  root and frame queue, and the native linker-warning boundary preserves the
+  no-deferred-warning result. Kotlin receives explicit aconfig output roots to
+  resolve inherited flag annotations without modifying AOSP source. ActivityThread
+  itself remains adapted. A registered hosted permission controller now returns
+  the administrator-managed grant state through stock activity-result transactions,
+  authenticating the caller's package, process and result token. This preserves the
+  existing permission policy; it does not add an interactive grant dialog. Tests
+  cover launch-time result deferral, fragment routing, denied and granted results,
+  forged caller rejection and persistent-state lifecycle behavior. Activity and its
+  JNI note add no new AOSP inputs, so both tarballs remain current. The task service
+  also retains dispatched activities when another start beats their resume
+  acknowledgement, with a deterministic regression for that race. JVM/system
+  suites, native/Binder/build checks and all 11 APK tests pass (39 steps without
+  runtime issues).
+
 - VisibleActivityInfo and its voice-session/sound-trigger client closure now
   compile verbatim, with 40 additional generated AIDL inputs and two original
   flag packages. Activity identity now has the stock task/token type and Parcel

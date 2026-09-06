@@ -73,6 +73,10 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
         .apply { isAccessible = true }
     private val originalPackages = ActivityThread.getPackageManager()
     private val fixturePackages = object : IPackageManager by originalPackages {
+        override fun getPermissionControllerPackageName(): String = packages.permissionControllerPackageName
+        override fun checkPermission(permission: String?, name: String?, userId: Int): Int =
+            if (name == PACKAGE) packages.checkPermission(permission, name, userId)
+            else originalPackages.checkPermission(permission, name, userId)
         override fun getActivityInfo(name: ComponentName?, flags: Long, userId: Int): ActivityInfo? =
             activityInfos[name?.className]?.let(::ActivityInfo)
                 ?: originalPackages.getActivityInfo(name, flags, userId)
@@ -183,4 +187,52 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
     }
 
     private companion object { const val PACKAGE = "org.example" }
+}
+
+/** Direct-object fixtures use stock hidden entry points without adding methods to Activity. */
+internal fun Activity.attach(base: Context, activityInfo: ActivityInfo? = null) {
+    val info = activityInfo ?: ActivityInfo().apply {
+        packageName = base.packageName
+        name = this@attach.javaClass.name
+        applicationInfo = base.applicationInfo
+    }
+    val launchIntent = intent ?: Intent()
+    if (launchIntent.component == null) {
+        launchIntent.component = ComponentName(base.packageName, info.name ?: javaClass.name)
+    }
+    val thread = ActivityThread.currentActivityThread()
+    val contextType = Class.forName("android.app.ContextImpl")
+    val contextToken = if (contextType.isInstance(base)) {
+        contextType.getDeclaredMethod("getActivityToken").apply { isAccessible = true }.invoke(base) as? IBinder
+    } else null
+    val token = contextToken ?: android.os.Binder()
+    val method = Activity::class.java.declaredMethods.single { it.name == "attach" && it.parameterCount == 20 }
+    method.isAccessible = true
+    try {
+        method.invoke(this, base, thread, thread.instrumentation, token, 0,
+            ActivityThread.currentApplication(), launchIntent, info, "", null, null, null,
+            android.content.res.Configuration(base.resources.configuration), null, null,
+            null, null, null, null, null)
+    } catch (failure: java.lang.reflect.InvocationTargetException) { throw failure.targetException }
+}
+
+private fun Activity.fixtureLifecycle(name: String, vararg arguments: Any?) {
+    val method = Activity::class.java.declaredMethods.single {
+        it.name == name && it.parameterCount == arguments.size
+    }
+    method.isAccessible = true
+    try { method.invoke(this, *arguments) }
+    catch (failure: java.lang.reflect.InvocationTargetException) { throw failure.targetException }
+}
+
+internal fun Activity.performCreate(state: android.os.Bundle?) = fixtureLifecycle("performCreate", state)
+internal fun Activity.performStart() = fixtureLifecycle("performStart", "module fixture")
+internal fun Activity.performResume() = fixtureLifecycle("performResume", false, "module fixture")
+internal fun Activity.performPause() = fixtureLifecycle("performPause")
+internal fun Activity.performStop() = fixtureLifecycle("performStop", false, "module fixture")
+internal fun Activity.performDestroy() = fixtureLifecycle("performDestroy")
+internal fun Activity.performSaveInstanceState(state: android.os.Bundle) = fixtureLifecycle("performSaveInstanceState", state)
+internal fun Activity.performRestoreInstanceState(state: android.os.Bundle) = fixtureLifecycle("performRestoreInstanceState", state)
+internal fun Activity.performPostCreate(state: android.os.Bundle?) {
+    ActivityThread.currentActivityThread().instrumentation.callActivityOnPostCreate(this, state)
 }

@@ -311,6 +311,7 @@ internal object FrameworkModuleSmoke {
             testActivityThreadResultDelivery()
             testInstrumentationResultTransactions()
             testActivityThreadTransactionCompletion()
+            testActivityThreadTransactionCompletion(persistable = true)
             testActivityThreadConfigurationChange()
             testActivityThreadConfigurationChange(true)
             testActivityThreadRelaunch()
@@ -3189,7 +3190,33 @@ internal object FrameworkModuleSmoke {
         val firstLaunch = threadOne.removeFirstTransaction()
         check(hasItems(firstLaunch, LaunchActivityItem::class.java, ResumeActivityItem::class.java))
         val firstToken = launchToken(firstLaunch)
+        val permissionRequest = Intent(PackageManager.ACTION_REQUEST_PERMISSIONS)
+            .setPackage(packages.permissionControllerPackageName)
+            .putExtra(PackageManager.EXTRA_REQUEST_PERMISSIONS_NAMES,
+                arrayOf(android.Manifest.permission.WAKE_LOCK, "", android.Manifest.permission.CAMERA))
+            // The caller may not choose whose grants are returned.
+            .putExtra(Intent.EXTRA_PACKAGE_NAME, "android")
+        check(packages.resolveActivityInfo(permissionRequest, null)?.packageName == "android")
+        fun requestPermissions(caller: IApplicationThread, token: android.os.IBinder) = service.startActivity(
+            caller, callerPackage, null, permissionRequest, null, token, "permission-test", 91, 0, null, null)
+        check(requestPermissions(threadOne, firstToken) == ActivityManager.START_SUCCESS)
+        check(threadOne.transactions.isEmpty()) { "permission result escaped the initial resume gate" }
+        check(runCatching { requestPermissions(threadTwo, firstToken) }.exceptionOrNull() is SecurityException)
+        check(requestPermissions(threadOne, Binder()) == ActivityManager.START_CANCELED)
         controller.activityResumed(firstToken, false)
+        val permissionItem = threadOne.removeFirstTransaction().transactionItems.single() as ActivityResultItem
+        val permissionResultField = ActivityResultItem::class.java.getDeclaredField("mResultInfoList")
+            .apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val permissionResult = (permissionResultField.get(permissionItem) as List<ResultInfo>).single()
+        check(permissionResult.mRequestCode == 91 && permissionResult.mResultWho == "permission-test")
+        check(permissionResult.mResultCode == Activity.RESULT_OK && permissionResult.mCallerToken != null)
+        check(permissionResult.mData.getStringExtra(Intent.EXTRA_PACKAGE_NAME) == callerPackage)
+        check(permissionResult.mData.getStringArrayExtra(PackageManager.EXTRA_REQUEST_PERMISSIONS_NAMES)
+            .contentEquals(arrayOf(android.Manifest.permission.WAKE_LOCK, android.Manifest.permission.CAMERA)))
+        check(permissionResult.mData.getIntArrayExtra(PackageManager.EXTRA_REQUEST_PERMISSIONS_RESULTS)
+            .contentEquals(intArrayOf(PackageManager.PERMISSION_GRANTED, PackageManager.PERMISSION_DENIED)))
+        check(packages.checkPermission(android.Manifest.permission.CAMERA, callerPackage, 0) == PackageManager.PERMISSION_DENIED)
 
         threadOne.transactions.clear()
         threadTwo.transactions.clear()
@@ -3548,6 +3575,23 @@ internal object FrameworkModuleSmoke {
         check(raceThreadTwo.transactions.last().transactionItems.single() is DestroyActivityItem)
         raceController.activityDestroyed(reentrantChild)
 
+        // An external start may arrive after dispatch but before the target's oneway
+        // resume acknowledgement. Preserve that activity and background it normally.
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        check(raceLaunch("DispatchedTwo") == ActivityManager.START_SUCCESS)
+        raceController.activityPaused(reentrantParent)
+        val dispatched = raceThreadTwo.transactions.flatMap { it.transactionItems }
+            .filterIsInstance<LaunchActivityItem>().single().activityToken
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        check(raceLaunch("LaterOne") == ActivityManager.START_SUCCESS)
+        raceController.activityResumed(dispatched, false)
+        check((raceThreadOne.transactions + raceThreadTwo.transactions).flatMap { it.transactionItems }
+            .none { it is DestroyActivityItem && it.activityToken == dispatched })
+        check(raceService.getTasks(20, false, true, Display.DEFAULT_DISPLAY)
+            .any { it.topActivity == component("DispatchedTwo") })
+        check(raceThreadTwo.transactions.flatMap { it.transactionItems }.any { it is StopActivityItem })
     }
 
     private fun testHostedTaskReuse() {
@@ -6603,7 +6647,7 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    private fun testActivityThreadTransactionCompletion() {
+    private fun testActivityThreadTransactionCompletion(persistable: Boolean = false) {
         val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             320,
@@ -6614,6 +6658,7 @@ internal object FrameworkModuleSmoke {
         val activityName = TransactionCompletionActivity::class.java.name
         val info = activityInfo(activityName).apply {
             exported = false
+            persistableMode = if (persistable) ActivityInfo.PERSIST_ACROSS_REBOOTS else ActivityInfo.PERSIST_ROOT_ONLY
             applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
         }
         val presented = mutableListOf<Activity>()
@@ -6641,13 +6686,30 @@ internal object FrameworkModuleSmoke {
                         val state = args?.get(1) as Bundle?
                         val persistentState = args?.get(2) as PersistableBundle?
                         check(state?.getString("saved") == "state")
-                        check(persistentState?.getString("persistent") == "kept")
+                        check(persistentState?.getString("persistent") == if (persistable) "saved-persistent" else null) {
+                            "persistable=$persistable stopped persistent state=$persistentState"
+                        }
                         check(args?.get(3) == "transaction-description")
                     }
                 },
             ) {
+                if (persistable) {
+                    // Pinned LaunchActivityItem copies ActivityInfo, whose copy constructor
+                    // omits persistableMode. Supply incoming metadata directly to exercise
+                    // ActivityThread's persistable lifecycle without altering that AOSP class.
+                    val record = ActivityThread.ActivityClientRecord().also {
+                        it.token = token
+                        it.intent = Intent().setComponent(ComponentName("org.example", activityName))
+                        it.activityInfo = info
+                        it.persistentState = stoppedState
+                        it.overrideConfig = Configuration()
+                    }
+                    val pending = PendingTransactionActions()
+                    thread.handleLaunchActivity(record, pending, Context.DEVICE_ID_DEFAULT, null)
+                    thread.handleStartActivity(record, pending, null)
+                }
                 thread.executeTransaction(ClientTransaction().apply {
-                    addTransactionItem(
+                    if (!persistable) addTransactionItem(
                         LaunchActivityItem(
                             token,
                             Intent().setComponent(ComponentName("org.example", activityName)),
@@ -6688,6 +6750,8 @@ internal object FrameworkModuleSmoke {
                     "transaction launch was presented before resume: $transactionCompletionEvents"
                 }
                 check(presented.single() === thread.getActivityClient(token)?.activity)
+                check(thread.getActivityClient(token)?.state == null)
+                check(thread.getActivityClient(token)?.persistentState == null)
 
                 thread.executeTransaction(ClientTransaction().apply {
                     addTransactionItem(StopActivityItem(token))
@@ -7623,6 +7687,11 @@ internal object FrameworkModuleSmoke {
                     onReport?.invoke("destroyed", args)
                     null
                 }
+                "setTaskDescription" -> {
+                    // Stock Activity sends its themed task metadata during creation.
+                    check(args?.get(0) is IBinder && args.get(1) is ActivityManager.TaskDescription)
+                    null
+                }
                 "asBinder" -> Binder()
                 "toString" -> "FrameworkModuleSmokeActivityClientController"
                 "hashCode" -> System.identityHashCode(proxy)
@@ -8170,7 +8239,8 @@ internal object FrameworkModuleSmoke {
             drainMainQueue()
             check(retained.permissionRequestCode == 73)
             check(retained.permissionNames.contentEquals(arrayOf(android.Manifest.permission.INTERNET)))
-            check(retained.permissionResults.size == 1)
+            // org.example does not declare INTERNET; the controller must preserve denial.
+            check(retained.permissionResults.contentEquals(intArrayOf(PackageManager.PERMISSION_DENIED)))
 
             ActivityThread.applyConfigurationInProcess(
                 Configuration().apply { setToDefaults() },
@@ -8526,6 +8596,16 @@ internal object FrameworkModuleSmoke {
         override fun onCreate(savedInstanceState: Bundle?) {
             transactionCompletionEvents += "create"
             super.onCreate(savedInstanceState)
+        }
+
+        override fun onCreate(savedInstanceState: Bundle?, persistentState: PersistableBundle?) {
+            check(persistentState?.getString("persistent") == "kept")
+            super.onCreate(savedInstanceState, persistentState)
+        }
+
+        override fun onSaveInstanceState(outState: Bundle, outPersistentState: PersistableBundle) {
+            super.onSaveInstanceState(outState, outPersistentState)
+            outPersistentState.putString("persistent", "saved-persistent")
         }
 
         override fun onStart() {
@@ -8955,10 +9035,6 @@ internal object FrameworkModuleSmoke {
 
     open class RecordingActivity(private val activityLabel: String) : Activity() {
         val label: String get() = activityLabel
-
-        override fun attach(base: Context?, activityInfo: ActivityInfo?) {
-            super.attach(checkNotNull(base), activityInfo)
-        }
 
         override fun onCreate(savedInstanceState: Bundle?) {
             createdThemeResIds[activityLabel] = themeResId

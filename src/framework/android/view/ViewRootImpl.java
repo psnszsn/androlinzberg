@@ -1149,6 +1149,49 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         mRenderNode.discardDisplayList();
     }
 
+    /** Pinned ViewRootImpl.dump: dump the state present at the hosted window boundary.
+     * The complete root still requires Android input stages and SurfaceFlinger synchronization. */
+    public void dump(String prefix, java.io.PrintWriter writer) {
+        String innerPrefix = prefix + "  ";
+        writer.println(prefix + "ViewRoot:");
+        writer.println(innerPrefix + "mAdded=" + mAdded);
+        writer.println(innerPrefix + "mRemoved=" + mRemoved);
+        writer.println(innerPrefix + "mStopped=" + mStopped);
+        writer.println(innerPrefix + "mPausedForTransition=" + mPausedForTransition);
+        writer.println(innerPrefix + "mTraversalScheduled=" + mTraversalScheduled);
+        if (mAttachInfo != null) {
+            writer.print(innerPrefix + "mAttachInfo= ");
+            mAttachInfo.dump(innerPrefix, writer);
+        } else {
+            writer.println(innerPrefix + "mAttachInfo=<null>");
+        }
+        mChoreographer.dump(prefix, writer);
+        if (mInsetsController != null) mInsetsController.dump(prefix, writer);
+        writer.println(prefix + "View Hierarchy:");
+        dumpViewHierarchy(innerPrefix, writer, mView);
+    }
+
+    private void dumpViewHierarchy(String prefix, java.io.PrintWriter writer, View view) {
+        writer.print(prefix);
+        if (view == null) {
+            writer.println("null");
+            return;
+        }
+        writer.println(view.toString());
+        if (!(view instanceof ViewGroup)) {
+            return;
+        }
+        ViewGroup grp = (ViewGroup)view;
+        final int N = grp.getChildCount();
+        if (N <= 0) {
+            return;
+        }
+        prefix = prefix + "  ";
+        for (int i=0; i<N; i++) {
+            dumpViewHierarchy(prefix, writer, grp.getChildAt(i));
+        }
+    }
+
     // AOSP die/doDie ordering: deferred removal leaves the registry intact
     // while closeAll iterates, and never tears down a hierarchy during traversal.
     boolean die(boolean immediate) {

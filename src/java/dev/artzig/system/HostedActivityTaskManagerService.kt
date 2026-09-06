@@ -455,6 +455,26 @@ internal class HostedActivityTaskManagerService(
         if (callingPackage != null && !packages.isSameAppInternal(callingPackage, callingUid)) {
             throw SecurityException("uid $callingUid does not own $callingPackage")
         }
+        if (ComponentName(info.packageName, info.name) == HostedPermissionController.component) {
+            // GrantPermissionsActivity obtains its target from the calling activity, never
+            // Intent.EXTRA_PACKAGE_NAME. Authenticate both package and result token before
+            // returning the host's administrator-managed permission state.
+            val target = synchronized(lock) {
+                activityForTokenLocked(resultTo)?.takeUnless { it.finishing }
+            } ?: return ActivityManager.START_CANCELED
+            if (target.info.packageName != callingPackage ||
+                target.process?.uid != callingUid ||
+                caller?.asBinder() != target.process?.binder) {
+                throw SecurityException("Permission request does not own its result activity")
+            }
+            val data = HostedPermissionController.result(packages, intent, target.info.packageName, callingUid)
+            if (requestCode >= 0) {
+                deliverPendingActivityResult(target.token, resultWho, requestCode,
+                    Activity.RESULT_OK, data, android.os.Process.SYSTEM_UID,
+                    HostedPermissionController.PACKAGE)
+            }
+            return ActivityManager.START_SUCCESS
+        }
         // AOSP ActivityStarter.Request.resolveActivity collects grants before changing the
         // activity graph. UriGrantsManagerService owns URI traversal and access validation.
         val grants = uriGrants()
@@ -588,7 +608,6 @@ internal class HostedActivityTaskManagerService(
         var record: ActivityRecord? = null
         var deliveredToTop: ActivityRecord? = null
         var previous: ActivityRecord? = null
-        var supersededLaunch: ActivityRecord? = null
         var supersededTaskId: Int? = null
         var createdTask = false
         var reusedTop: ActivityRecord? = null
@@ -696,7 +715,7 @@ internal class HostedActivityTaskManagerService(
                 // top; continue gating on the real resumed predecessor instead of launching both.
                 if (taskOverride == null && focused != null &&
                     focused !== source && focused.state == STATE_INITIALIZING &&
-                    focused.previousToStop != null
+                    focused.previousToStop != null && !focused.launchScheduled
                 ) {
                     val predecessor = focused.previousToStop?.let(activities::get)?.takeIf {
                         !it.finishing && it.process != null
@@ -704,11 +723,7 @@ internal class HostedActivityTaskManagerService(
                     if (predecessor != null) {
                         previous = predecessor
                         focused.finishing = true
-                        if (focused.launchScheduled) {
-                            supersededLaunch = focused
-                        } else {
-                            removeActivityRecordLocked(focused)?.let { supersededTaskId = it }
-                        }
+                        removeActivityRecordLocked(focused)?.let { supersededTaskId = it }
                     }
                 }
                 val token = Binder()
@@ -751,7 +766,6 @@ internal class HostedActivityTaskManagerService(
 
         supersededTaskId?.takeIf { taskId -> synchronized(lock) { !tasks.containsKey(taskId) } }
             ?.let(::notifyTaskRemoved)
-        supersededLaunch?.let(::scheduleDestroy)
         synchronized(lock) {
             cleared.filter { it.process == null }.forEach { removeActivityRecordLocked(it) }
         }
@@ -882,6 +896,10 @@ internal class HostedActivityTaskManagerService(
                 // concurrent superseding start. No client callback is made synchronously here.
                 process.thread.scheduleTransaction(transaction)
                 record.launchScheduled = true
+                // ActivityRecord.activityResumedLocked does not finish an activity because
+                // another task gained focus. Once dispatched, its late acknowledgement
+                // must background the activity while retaining its task history.
+                record.cancelIfStale = false
             } catch (e: RemoteException) {
                 failed = e
             }

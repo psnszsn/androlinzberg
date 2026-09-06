@@ -27,6 +27,7 @@ pub const Result = struct {
 
 pub const GeneratedJvm = struct {
     sources: []const LazyPath,
+    aconfig_source_roots: []const LazyPath,
     resources: LazyPath,
     system_features_processor: LazyPath,
     system_features_processor_dependencies: LazyPath,
@@ -380,8 +381,9 @@ fn aconfigJava(
     b: *std.Build,
     aosp: *std.Build.Dependency,
     runner: *std.Build.Step.Compile,
-) struct { java: []const LazyPath, cpp_headers: []const LazyPath } {
+) struct { java: []const LazyPath, java_roots: []const LazyPath, cpp_headers: []const LazyPath } {
     var files: std.ArrayList(LazyPath) = .empty;
+    var roots: std.ArrayList(LazyPath) = .empty;
     var headers: std.ArrayList(LazyPath) = .empty;
     var index: usize = 0;
     for (declarations.aconfig) |entry| {
@@ -422,6 +424,7 @@ fn aconfigJava(
         java.addFileArg(cache_file);
         java.addArg("--out");
         const output = java.addOutputDirectoryArg(b.fmt("aconfig-java-{d}", .{index}));
+        roots.append(b.allocator, output) catch @panic("OOM");
         java.addArgs(&.{ "--mode", mode });
         java.setName(b.fmt("generate aconfig Java {s}", .{entry.package}));
         const package_path = std.mem.replaceOwned(u8, b.allocator, entry.package, ".", "/") catch @panic("OOM");
@@ -433,7 +436,7 @@ fn aconfigJava(
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
     _ = exposePaths(b, "gen-aconfig", "Generate aconfig Java sources", result);
     _ = exposePaths(b, "gen-aconfig-cpp", "Generate fixed read-only aconfig C++ headers", headers.items);
-    return .{ .java = result, .cpp_headers = headers.toOwnedSlice(b.allocator) catch @panic("OOM") };
+    return .{ .java = result, .java_roots = roots.toOwnedSlice(b.allocator) catch @panic("OOM"), .cpp_headers = headers.toOwnedSlice(b.allocator) catch @panic("OOM") };
 }
 
 fn syspropJava(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step.Compile) []const LazyPath {
@@ -941,6 +944,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     return .{
         .jvm = .{
             .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM"),
+            .aconfig_source_roots = aconfig_java.java_roots,
             .resources = mime_resources,
             .system_features_processor = system_features_java.processor,
             .system_features_processor_dependencies = system_features_java.dependencies,

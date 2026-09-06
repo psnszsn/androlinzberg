@@ -89,6 +89,19 @@ public final class Choreographer {
     public boolean isTheLooperSame(Looper looper) { return mLooper == looper; }
     public static Choreographer getSfInstance() { return getInstance(); }
 
+    /** Pinned Choreographer.dump, using the callback queue and wake time owned by
+     * the hosted frame driver instead of DisplayEventReceiver's vsync schedule. */
+    void dump(String prefix, java.io.PrintWriter writer) {
+        String innerPrefix = prefix + "  ";
+        writer.println(prefix + "Choreographer:");
+        synchronized (mCallbacks) {
+            writer.println(innerPrefix + "mPendingCallbackCount=" + mCallbacks.size());
+            writer.println(innerPrefix + "mWakeTime=" + mWakeTime);
+        }
+        writer.println(innerPrefix + "mLastFrameTime="
+                + android.util.TimeUtils.formatUptime(mLastFrameTimeNanos / 1000000));
+    }
+
     public void postFrameCallback(FrameCallback callback) {
         postFrameCallbackDelayed(callback, 0);
     }
