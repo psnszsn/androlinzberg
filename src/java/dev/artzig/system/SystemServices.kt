@@ -281,7 +281,12 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.JOB_SCHEDULER_SERVICE, jobs)
         // Managers over hosted services, phase 2: power (+ thermal), vibrator, battery
         // (properties, sticky broadcast, battery stats), usage and storage stats, device idle.
-        android.os.ServiceManager.addService(Context.POWER_SERVICE, HostedPowerManagerService())
+        val power = HostedPowerManagerService()
+        android.os.ServiceManager.addService(Context.POWER_SERVICE, power)
+        LocalServices.addService(android.os.PowerManagerInternal::class.java,
+            Class.forName("android.os.HostedPowerManagerInternal")
+                .getConstructor(HostedPowerManagerService::class.java)
+                .newInstance(power) as android.os.PowerManagerInternal)
         android.os.ServiceManager.addService(Context.THERMAL_SERVICE, HostedThermalService())
         android.os.ServiceManager.addService(Context.VIBRATOR_MANAGER_SERVICE, HostedVibratorManagerService())
         val battery = HostedBatteryService(activityManager)

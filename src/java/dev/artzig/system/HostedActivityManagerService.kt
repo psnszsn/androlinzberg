@@ -353,6 +353,20 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** getContentProvider calls blocked until the owning package publishes. */
     private val providerWaiters = LinkedHashMap<String, MutableList<ProviderWaiter>>()
     @Volatile var processLauncher: ProcessLauncher? = null
+    private val processObservers by lazy {
+        HostedProcessObservers(com.android.server.UiThread.getHandler())
+    }
+
+    override fun registerProcessObserver(observer: android.app.IProcessObserver) {
+        enforceCallingPermission(android.Manifest.permission.SET_ACTIVITY_WATCHER,
+            "registerProcessObserver()")
+        processObservers.register(observer)
+    }
+
+    override fun unregisterProcessObserver(observer: android.app.IProcessObserver) {
+        processObservers.unregister(observer)
+    }
+
     /** Foreground-service notifications are posted and cancelled through the hosted notification service. */
     @Volatile var notificationService: HostedNotificationManagerService? = null
     /** Process attach (foreground = true) and death, for the usage stats service (UsageStatsService's activity events). */
@@ -428,6 +442,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
             return
         }
         Log.i(TAG, "attached " + packageName + " pid=" + record.pid + " uid=" + record.uid)
+        processObservers.started(record.pid, record.uid,
+            packageService?.getApplicationInfo(record.packageName, 0L,
+                UserHandle.getUserId(record.uid))?.uid ?: record.uid,
+            record.packageName, record.processName)
         // ActivityManagerService.attachApplicationLocked sends bindApplication
         // before ATMS launch transactions or pending service/broadcast work.
         val identity = Binder.clearCallingIdentity()
@@ -573,6 +591,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
         }
         Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
+        processObservers.died(record.pid, record.uid)
         activityTaskManager?.onProcessDied(record.binder)
         val remainingState = uidProcessState(record.uid)
         appOps?.updateUidProcState(record.uid, remainingState,

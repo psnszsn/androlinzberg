@@ -41,6 +41,29 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Power and process observer checkpoint (2026-09-06)
+
+The existing power Binder service now also backs the generated stock
+PowerManagerInternal adapter. Low-power queries and observers follow stock
+PowerManagerService's battery-saver-unsupported branch. Android launch/display
+performance hints use the same existing advisory power implementation. A real
+per-window screen-off deadline remains explicitly unsupported by the desktop
+compositor; clearing the default override is accepted.
+
+AMS and its generated local adapter share the process-observer registry and
+SET_ACTIVITY_WATCHER permission gate. The registry follows ProcessList's
+RemoteCallbackList ownership, pending PID coalescing, activities-before-services
+ordering and cancellation of pending changes on death. Attach and death feed it;
+foreground activity/service updates still require the actual task/service state
+connections. The usage-stats attach callback is not used as foreground truth.
+
+Module checks pass (`/tmp/wayland-power-observers-1.log`), including observer
+registration/death/failure behavior and denied Binder/local registration. JVM,
+system, full APK integration, graph and build-tools regressions pass
+(`/tmp/wayland-power-observers-regressions-1.log`). The earlier power-only run
+failed before the test because the required Mesa environment was omitted.
+Stock WMS/ATMS startup and desktop policy integration remain unfinished.
+
 ## Session display checkpoint (2026-09-06)
 
 HostedSessionDisplayService and its generated DisplayManagerInternal adapter

@@ -21,6 +21,11 @@ class HostActivityManagerInternalAccess internal constructor(
 ) {
     private val ready = AtomicBoolean(false)
 
+    fun registerProcessObserver(observer: android.app.IProcessObserver) =
+        activities.registerProcessObserver(observer)
+    fun unregisterProcessObserver(observer: android.app.IProcessObserver) =
+        activities.unregisterProcessObserver(observer)
+
     fun setSystemReady() { ready.set(true) }
     fun isSystemReady(): Boolean = ready.get()
     fun isPendingTopUid(uid: Int): Boolean = false

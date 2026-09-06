@@ -225,6 +225,27 @@ class HostedPowerManagerService : android.os.IPowerManager.Stub(), android.os.IP
     override fun acquireLowPowerStandbyPorts(token: IBinder?, ports: MutableList<IPowerManager.LowPowerStandbyPortDescription?>?) {}
     override fun releaseLowPowerStandbyPorts(token: IBinder?) {}
     override fun getActiveLowPowerStandbyPorts(): MutableList<IPowerManager.LowPowerStandbyPortDescription?>? = ArrayList()
+    /** PowerManagerService.LocalService, with the same disabled battery-saver policy as IPowerManager. */
+    fun getLowPowerState(serviceType: Int): PowerSaveState = checkNotNull(getPowerSaveState(serviceType))
+
+    fun registerLowPowerModeObserver(listener: android.os.PowerManagerInternal.LowPowerModeListener?) {
+        // Stock PowerManagerService does not register or notify listeners when
+        // battery saver is unsupported. In particular there is no initial callback.
+        check(!isBatterySaverSupported())
+        Log.w(TAG, "Battery saver is not supported, no low power mode observer registered")
+    }
+
+    fun setUserActivityTimeoutOverrideFromWindowManager(timeoutMillis: Long) {
+        // PowerManagerService only applies nonnegative overrides. Desktop screen
+        // power belongs to the compositor; an Android window cannot set its idle
+        // deadline through core Wayland. Keep the absence of an override cheap,
+        // and make an actual unsupported screen-off request explicit.
+        if (timeoutMillis < 0) return
+        throw dev.artzig.ArtzigTestDiagnostics.unsupported("PowerManagerInternal",
+            "setUserActivityTimeoutOverrideFromWindowManager",
+            "The desktop compositor does not expose per-window screen-off deadlines")
+    }
+
     override fun setPowerBoost(boost: Int, durationMs: Int) {}
     override fun setPowerMode(mode: Int, enabled: Boolean) {}
     override fun setPowerModeChecked(mode: Int, enabled: Boolean): Boolean = false
