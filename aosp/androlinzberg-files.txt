@@ -5939,3 +5939,6 @@ F aosp packages/modules/Connectivity/staticlibs/device/com/android/net/module/ut
 F aosp packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/JniUtil.java
 F aosp packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/Struct.java
 F aosp packages/modules/Connectivity/staticlibs/native/bpfmapjni/com_android_net_module_util_BpfMap.cpp
+
+# Stock renderer, with desktop presentation owned by dev.artzig.
+F aosp frameworks/base/core/java/android/view/ThreadedRenderer.java

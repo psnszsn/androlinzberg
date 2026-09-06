@@ -12,6 +12,8 @@ public final class Choreographer {
     public static final int CALLBACK_INPUT = 0, CALLBACK_ANIMATION = 1,
             CALLBACK_INSETS_ANIMATION = 2, CALLBACK_TRAVERSAL = 3, CALLBACK_COMMIT = 4;
     private static final int CALLBACK_LAST = CALLBACK_COMMIT;
+    // AOSP frame timing consumed by stock ThreadedRenderer through ViewRootImpl.
+    final android.graphics.FrameInfo mFrameInfo = new android.graphics.FrameInfo();
     private static final long FRAME_INTERVAL_MS = 16;
     private static final Object FRAME_CALLBACK_TOKEN = new Object();
     private static final ThreadLocal<Choreographer> sThreadInstance = new ThreadLocal<>();
@@ -203,7 +205,14 @@ public final class Choreographer {
     /** Called once for the Wayland frame immediately before view traversal. */
     public void doFrame$artzig(long frameTimeNanos) {
         mLastFrameTimeNanos = frameTimeNanos;
+        long interval = getFrameIntervalNanos();
+        mFrameInfo.setVsync(frameTimeNanos, frameTimeNanos,
+                android.graphics.FrameInfo.INVALID_VSYNC_ID, frameTimeNanos + interval,
+                System.nanoTime(), interval);
         for (int type = CALLBACK_INPUT; type <= CALLBACK_LAST; ++type) {
+            if (type == CALLBACK_INPUT) mFrameInfo.markInputHandlingStart();
+            else if (type == CALLBACK_ANIMATION) mFrameInfo.markAnimationsStart();
+            else if (type == CALLBACK_TRAVERSAL) mFrameInfo.markPerformTraversalsStart();
             long phaseStart = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
             ArrayList<CallbackRecord> due = takeDue(type, SystemClock.uptimeMillis());
             for (int i = 0; i < due.size(); ++i) {

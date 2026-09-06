@@ -448,11 +448,15 @@ const BindPlatformIoFn = *const fn (
 ) callconv(.c) void;
 const ConfigureHostFn = *const fn (proxy: *anyopaque, display: ?*anyopaque, surface: ?*anyopaque, width: c_int, height: c_int) callconv(.c) void;
 const DestroyHostFn = *const fn (proxy: *anyopaque) callconv(.c) void;
+const RetainRenderNodeFn = *const fn (node: *anyopaque) callconv(.c) void;
 
 fn lookupHwuiBridges(lib: *std.DynLib) !host_natives.HwuiBridges {
     return .{
+        .bind_egl_display = lib.lookup(RetainRenderNodeFn, "azk_hwui_bind_egl_display") orelse return error.SymbolNotFound,
         .configure = lib.lookup(ConfigureHostFn, "azk_hwui_configure_host_surface") orelse return error.SymbolNotFound,
         .destroy = lib.lookup(DestroyHostFn, "azk_hwui_destroy_host_surface") orelse return error.SymbolNotFound,
+        .retain_render_node = lib.lookup(RetainRenderNodeFn, "azk_hwui_retain_render_node") orelse return error.SymbolNotFound,
+        .release_render_node = lib.lookup(RetainRenderNodeFn, "azk_hwui_release_render_node") orelse return error.SymbolNotFound,
     };
 }
 

@@ -14,6 +14,7 @@ namespace android::uirenderer::skiapipeline {
 // surface and presents Android display lists directly to the Wayland surface.
 class ArtzigGpuPipeline final : public SkiaPipeline {
 public:
+    static void bindHostDisplay(void* display);
     explicit ArtzigGpuPipeline(renderthread::RenderThread& thread);
     ~ArtzigGpuPipeline() override;
 
@@ -67,6 +68,7 @@ private:
     EGLContext mEglContext = EGL_NO_CONTEXT;
     EGLSurface mEglSurface = EGL_NO_SURFACE;
     bool mUsingGbmDisplay = false;
+    bool mSurfaceless = false;
     wl_egl_window* mWaylandWindow = nullptr;
     sk_sp<GrDirectContext> mContext;
     sk_sp<SkSurface> mSurface;

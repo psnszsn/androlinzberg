@@ -218,7 +218,7 @@ public final class ViewHost {
             }
             // drain main-looper messages posted by views (clicks, invalidations)
             drainLooper()
-            android.view.ThreadedRenderer
+            dev.artzig.HostedRenderer
                 .getInstance()
                 .render(sRoot.doTraversal(), bufferWidth, bufferHeight)
         }

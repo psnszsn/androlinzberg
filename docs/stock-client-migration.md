@@ -27,6 +27,19 @@ in force.
 
 Follow-up changes in the current tree:
 
+- ThreadedRenderer now compiles verbatim. The existing desktop frame adapter lives
+  in dev.artzig.HostedRenderer, and stock HardwareRenderer snapshots draw through
+  HardwareBufferRenderer below JNI instead of returning transparent bitmaps.
+  EGL/Ganesh context ownership follows RenderThread lifetime so temporary renderers
+  cannot invalidate surviving hardware bitmaps or the desktop renderer. Offscreen
+  rendering supports surfaceless EGL and waits for completion when native fences
+  cannot be exported. Pixel tests cover clipping, repeat snapshots and RenderNode
+  ownership; the Cage probe also verifies a new desktop frame after snapshot
+  renderer teardown. JVM/system, native/Binder/build checks and all 11 APK tests pass
+  (37 captured steps, zero structured runtime issues). The AOSP tarball is rebuilt,
+  repinned and byte-verified; ART remains current. The stub inventory remains
+  37 (22 pending, 15 survivors); this removes an adaptation outside that inventory.
+
 - Stock ConnectivityManager and NetworkAgent replace their survivor stubs, with
   55 original Java sources, generated request protocols and FrameworkConnectivityStatsLog.
   A hosted Binder service observes Linux routes, addresses and DNS configuration,

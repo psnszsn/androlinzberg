@@ -5,7 +5,7 @@ import android.graphics.RecordingCanvas
 import android.graphics.RenderNode
 import android.hardware.HardwareBuffer
 import android.util.Log
-import android.view.ThreadedRenderer
+import dev.artzig.HostedRenderer
 
 /** Regression probe for the host's GBM-backed Bitmap/HardwareBuffer contract. */
 public final class HardwareBitmapProbe {
@@ -14,11 +14,14 @@ public final class HardwareBitmapProbe {
     companion object {
         private val TAG: String = "HardwareBitmapProbe"
         private val ROOT: RenderNode = RenderNode("hardware-bitmap-probe")
+        private var presenter: HostedRenderer? = null
         private var sChecked: Boolean = false
         private var sFrames: Int = 0
 
+        @JvmStatic public fun needsFrame(): Boolean = sFrames < 2
+
         @JvmStatic public fun wantsFullscreen(): Boolean {
-            val mode: String = System.getenv("AZK_PROBE_FULLSCREEN")
+            val mode: String? = System.getenv("AZK_PROBE_FULLSCREEN")
             return "1".equals(mode) || ("toggle".equals(mode) && sFrames == 1)
         }
 
@@ -32,11 +35,21 @@ public final class HardwareBitmapProbe {
             sFrames++
             ROOT.setPosition(0, 0, bufferWidth, bufferHeight)
             val canvas: RecordingCanvas = ROOT.beginRecording(bufferWidth, bufferHeight)
-            canvas.drawColor(0xff20242b.toInt())
+            canvas.drawColor(if (sChecked) 0xff207040.toInt() else 0xff20242b.toInt())
             ROOT.endRecording()
-            ThreadedRenderer.getInstance().render(ROOT, bufferWidth, bufferHeight)
+            val renderer = presenter ?: run {
+                if (android.os.Looper.myLooper() == null) android.os.Looper.prepareMainLooper()
+                val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
+                    logicalWidth, logicalHeight, scale120, 0)
+                HostedRenderer.getInstance(context).also { presenter = it }
+            }
+            renderer.render(ROOT, bufferWidth, bufferHeight)
 
-            if (sChecked) return
+            if (sChecked) {
+                if (sFrames == 2) Log.i(TAG, "PASS: desktop frame submitted after snapshot renderer teardown")
+                return
+            }
+            StockRendererSmoke.run()
             verifyGraphicBufferPixels()
             val usage: Long =
                 HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or

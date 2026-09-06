@@ -1,6 +1,10 @@
 //! Explicit repository-owned JVM source declarations.
 //! Add new sources here so graph membership changes with this Zig file.
 pub const framework = [_][]const u8{
+    "src/java/dev/artzig/HostedRenderer.kt",
+    "src/java/dev/artzig/HostedHardwareSnapshot.kt",
+    "src/java/dev/artzig/StockRendererSmoke.kt",
+
     "src/framework-stubs/android/companion/virtual/VirtualDeviceParams.java",
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
     "src/framework-stubs/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java",
@@ -79,7 +83,6 @@ pub const framework = [_][]const u8{
     "src/framework/android/view/HostedSystemUiController.kt",
     "src/framework/android/view/HostedWindowPresentation.kt",
     "src/framework/android/view/SurfaceView.java",
-    "src/framework/android/view/ThreadedRenderer.java",
     "src/framework/android/view/ViewRootImpl.java",
     "src/framework/com/android/internal/content/om/OverlayManagerImpl.java",
     "src/java/dev/artzig/ApkHost.kt",

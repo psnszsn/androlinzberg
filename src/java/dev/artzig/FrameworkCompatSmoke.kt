@@ -482,8 +482,10 @@ public final class FrameworkCompatSmoke {
             val snapshot: Bitmap? = ThreadedRenderer.createHardwareBitmap(snapshotNode, 3, 2)
             require(
                 snapshot != null && snapshot.getWidth() == 3 && snapshot.getHeight() == 2,
-                "host RenderNode bitmap fallback",
+                "stock RenderNode hardware snapshot",
             )
+            require(snapshot!!.config == Bitmap.Config.HARDWARE, "snapshot keeps hardware storage")
+            snapshot.recycle()
             val mutableIconBitmap: Bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
             require(
                 mutableIconBitmap.getConfig() === Bitmap.Config.ARGB_8888,

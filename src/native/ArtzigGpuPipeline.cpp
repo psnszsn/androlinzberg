@@ -3,6 +3,7 @@
 #include "HardwareBufferRender.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -36,6 +37,26 @@ namespace android::uirenderer::skiapipeline {
 
 namespace {
 
+// AOSP EglManager gives every CanvasContext on RenderThread the same EGL/Ganesh
+// context. Keep that ownership here too: closing a HardwareBufferRenderer must
+// not abandon images still owned by Bitmap or another renderer. RenderThread
+// and its EGL resources live until process exit; individual pipelines own only
+// their window surfaces and imported buffer surfaces.
+struct SharedGpuContext {
+    EGLDisplay display = EGL_NO_DISPLAY;
+    EGLConfig config = nullptr;
+    EGLContext context = EGL_NO_CONTEXT;
+    EGLSurface offscreen = EGL_NO_SURFACE;
+    bool gbm = false;
+    bool surfaceless = false;
+    sk_sp<GrDirectContext> ganesh;
+};
+SharedGpuContext& sharedGpuContext() {
+    static auto* context = new SharedGpuContext;
+    return *context;
+}
+std::atomic<void*> gHostDisplay{nullptr};
+
 int gSwapInterval = 1;
 bool gOverrideSwapInterval = false;
 bool gTraceFramePacing = false;
@@ -49,6 +70,10 @@ GrGLFuncPtr getEglProc(void*, const char name[]) {
 
 }  // namespace
 
+void ArtzigGpuPipeline::bindHostDisplay(void* display) {
+    gHostDisplay.store(display, std::memory_order_release);
+}
+
 ArtzigGpuPipeline::ArtzigGpuPipeline(renderthread::RenderThread& thread) : SkiaPipeline(thread) {}
 
 ArtzigGpuPipeline::~ArtzigGpuPipeline() {
@@ -58,6 +83,16 @@ ArtzigGpuPipeline::~ArtzigGpuPipeline() {
 
 bool ArtzigGpuPipeline::ensureContext() {
     if (mEglContext != EGL_NO_CONTEXT) return true;
+    auto& shared = sharedGpuContext();
+    if (shared.context != EGL_NO_CONTEXT) {
+        mDisplay = shared.display;
+        mConfig = shared.config;
+        mEglContext = shared.context;
+        mUsingGbmDisplay = shared.gbm;
+        mSurfaceless = shared.surfaceless;
+        return true;
+    }
+    mNativeDisplay = gHostDisplay.load(std::memory_order_acquire);
     ALOGI("artzig: initializing %s HWUI EGL/OpenGL context",
           mNativeDisplay ? "Wayland" : "GBM offscreen");
 
@@ -95,9 +130,15 @@ bool ArtzigGpuPipeline::ensureContext() {
         return false;
     }
 
+    // GBM drivers need not advertise pbuffer configs. HardwareBuffer rendering
+    // uses FBOs and EGL_KHR_surfaceless_context when the display supports it.
+    const char* extensions = eglQueryString(mDisplay, EGL_EXTENSIONS);
+    mSurfaceless = extensions &&
+                   std::strstr(extensions, "EGL_KHR_surfaceless_context");
     const EGLint configAttributes[] = {
             EGL_SURFACE_TYPE,
-            mUsingGbmDisplay ? EGL_PBUFFER_BIT : EGL_WINDOW_BIT,
+            mUsingGbmDisplay ? (mSurfaceless ? 0 : EGL_PBUFFER_BIT)
+                             : (EGL_WINDOW_BIT | (mSurfaceless ? 0 : EGL_PBUFFER_BIT)),
             EGL_RENDERABLE_TYPE,
             EGL_OPENGL_BIT,
             EGL_RED_SIZE,
@@ -124,7 +165,7 @@ bool ArtzigGpuPipeline::ensureContext() {
         destroyContext();
         return false;
     }
-    if (mUsingGbmDisplay) {
+    if (!mSurfaceless) {
         const EGLint pbufferAttributes[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
         mEglSurface = eglCreatePbufferSurface(mDisplay, mConfig, pbufferAttributes);
         if (mEglSurface == EGL_NO_SURFACE) {
@@ -133,6 +174,13 @@ bool ArtzigGpuPipeline::ensureContext() {
             return false;
         }
     }
+    shared.display = mDisplay;
+    shared.config = mConfig;
+    shared.context = mEglContext;
+    shared.offscreen = mEglSurface;
+    shared.gbm = mUsingGbmDisplay;
+    shared.surfaceless = mSurfaceless;
+    mEglSurface = EGL_NO_SURFACE;
     if (const char* value = std::getenv("ARTZIG_EGL_SWAP_INTERVAL")) {
         gSwapInterval = std::atoi(value) == 0 ? 0 : 1;
         gOverrideSwapInterval = true;
@@ -143,7 +191,13 @@ bool ArtzigGpuPipeline::ensureContext() {
 
 bool ArtzigGpuPipeline::ensureGrContext() {
     if (makeCurrent() == MakeCurrentResult::Failed) return false;
-    if (mContext) return true;
+    auto& shared = sharedGpuContext();
+    if (shared.ganesh && !shared.ganesh->abandoned()) {
+        mContext = shared.ganesh;
+        return true;
+    }
+    mBufferSurface.reset();
+    mSurface.reset();
     // nixpkgs' Skia selects GLX for GrGLMakeNativeInterface(). Artzig owns an EGL
     // context instead, so assemble the interface from that context's proc table.
     sk_sp<const GrGLInterface> gl = GrGLMakeAssembledInterface(nullptr, getEglProc);
@@ -154,6 +208,7 @@ bool ArtzigGpuPipeline::ensureGrContext() {
         return false;
     }
     mRenderThread.setGrContext(mContext);
+    shared.ganesh = mContext;
     const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
     const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     ALOGI("artzig: HWUI Ganesh/OpenGL renderer initialized (%s; %s)",
@@ -164,7 +219,12 @@ bool ArtzigGpuPipeline::ensureGrContext() {
 void ArtzigGpuPipeline::clearSurface() {
     mSurface.reset();
     if (mDisplay != EGL_NO_DISPLAY && mEglSurface != EGL_NO_SURFACE) {
-        eglMakeCurrent(mDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        const auto& shared = sharedGpuContext();
+        if (shared.context != EGL_NO_CONTEXT) {
+            eglMakeCurrent(mDisplay, shared.offscreen, shared.offscreen, shared.context);
+        } else {
+            eglMakeCurrent(mDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        }
         eglDestroySurface(mDisplay, mEglSurface);
     }
     mEglSurface = EGL_NO_SURFACE;
@@ -175,20 +235,18 @@ void ArtzigGpuPipeline::clearSurface() {
 }
 
 void ArtzigGpuPipeline::destroyContext() {
-    if (mDisplay != EGL_NO_DISPLAY && mEglSurface != EGL_NO_SURFACE &&
-        mEglContext != EGL_NO_CONTEXT) {
-        eglMakeCurrent(mDisplay, mEglSurface, mEglSurface, mEglContext);
+    auto& shared = sharedGpuContext();
+    if (mEglContext != EGL_NO_CONTEXT) {
+        const EGLSurface target = mEglSurface != EGL_NO_SURFACE ? mEglSurface : shared.offscreen;
+        eglMakeCurrent(mDisplay, target, target, mEglContext);
     }
     mBufferSurface.reset();
     mBufferColorSpace.reset();
     mSurface.reset();
-    if (mContext) {
-        mContext->abandonContext();
-        mContext.reset();
-        mRenderThread.setGrContext(nullptr);
-    }
+    mContext.reset();
     clearSurface();
-    if (mDisplay != EGL_NO_DISPLAY) {
+    // Only failed initialization owns unpublished EGL resources locally.
+    if (mDisplay != EGL_NO_DISPLAY && shared.context == EGL_NO_CONTEXT) {
         if (mEglContext != EGL_NO_CONTEXT) eglDestroyContext(mDisplay, mEglContext);
         eglTerminate(mDisplay);
     }
@@ -197,6 +255,7 @@ void ArtzigGpuPipeline::destroyContext() {
     mDisplay = EGL_NO_DISPLAY;
     mNativeDisplay = nullptr;
     mUsingGbmDisplay = false;
+    mSurfaceless = false;
 }
 
 sk_sp<SkSurface> ArtzigGpuPipeline::makeWindowSurface(int width, int height) {
@@ -237,7 +296,11 @@ bool ArtzigGpuPipeline::setHostSurface(void* nativeDisplay, void* nativeSurface,
         return false;
     }
 
-    if (mUsingGbmDisplay || (mNativeDisplay && mNativeDisplay != nativeDisplay)) destroyContext();
+    if (sharedGpuContext().context != EGL_NO_CONTEXT &&
+        (mUsingGbmDisplay || gHostDisplay.load(std::memory_order_acquire) != nativeDisplay)) {
+        ALOGE("artzig: presentation display must be bound before creating HWUI renderers");
+        return false;
+    }
     mNativeDisplay = nativeDisplay;
     if (!ensureContext()) return false;
 
@@ -280,11 +343,13 @@ bool ArtzigGpuPipeline::setHostSurface(void* nativeDisplay, void* nativeSurface,
 }
 
 MakeCurrentResult ArtzigGpuPipeline::makeCurrent() {
-    if (!ensureContext() || mEglSurface == EGL_NO_SURFACE) return MakeCurrentResult::Failed;
-    if (eglGetCurrentContext() == mEglContext && eglGetCurrentSurface(EGL_DRAW) == mEglSurface) {
+    if (!ensureContext()) return MakeCurrentResult::Failed;
+    const EGLSurface target = mEglSurface != EGL_NO_SURFACE ? mEglSurface : sharedGpuContext().offscreen;
+    if (target == EGL_NO_SURFACE && !mSurfaceless) return MakeCurrentResult::Failed;
+    if (eglGetCurrentContext() == mEglContext && eglGetCurrentSurface(EGL_DRAW) == target) {
         return MakeCurrentResult::AlreadyCurrent;
     }
-    if (!eglMakeCurrent(mDisplay, mEglSurface, mEglSurface, mEglContext)) {
+    if (!eglMakeCurrent(mDisplay, target, target, mEglContext)) {
         ALOGE("artzig: eglMakeCurrent failed (0x%x)", eglGetError());
         return MakeCurrentResult::Failed;
     }
@@ -411,9 +476,12 @@ android::base::unique_fd ArtzigGpuPipeline::flush() {
             glFlush();
             const int fd = dupFence(mDisplay, sync);
             destroySync(mDisplay, sync);
-            return android::base::unique_fd(fd);
+            if (fd >= 0) return android::base::unique_fd(fd);
         }
     }
+    // An invalid fence promises completion to SyncFence callers. Synchronously
+    // finish when the driver cannot export a native fence.
+    glFinish();
     return android::base::unique_fd(-1);
 }
 

@@ -668,7 +668,7 @@ public final class ApkHost {
             ArtzigAccessibilityBridge.setActivityRoot(null)
             Log.i(TAG, "views detached")
             try {
-                android.view.ThreadedRenderer.destroyInstance()
+                dev.artzig.HostedRenderer.destroyInstance()
             } catch (t: Throwable) {
                 Log.w(TAG, "renderer shutdown failed", t)
             }
@@ -799,12 +799,12 @@ public final class ApkHost {
                     } finally {
                         sComposite.endRecording()
                     }
-                    android.view.ThreadedRenderer
+                    dev.artzig.HostedRenderer
                         .getInstance()
                         .render(sComposite, width, height)
                     return
                 }
-                android.view.ThreadedRenderer
+                dev.artzig.HostedRenderer
                     .getInstance()
                     .render(base, width, height)
                 return
@@ -857,7 +857,7 @@ public final class ApkHost {
             } finally {
                 sComposite.endRecording()
             }
-            android.view.ThreadedRenderer
+            dev.artzig.HostedRenderer
                 .getInstance()
                 .render(sComposite, width, height)
         }

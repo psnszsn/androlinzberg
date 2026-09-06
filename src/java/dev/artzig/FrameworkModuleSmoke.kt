@@ -262,6 +262,7 @@ internal object FrameworkModuleSmoke {
         StockAudioFoundationSmoke.run()
         StockVoiceTypesSmoke.run()
         StockMainlineTypesSmoke.run()
+        StockRendererSmoke.run()
         StockConnectivitySmoke.run(checkNotNull(permissionsFixtureApk), ::drainMainQueue)
         StockWifiManagerSmoke.run()
         com.android.server.pm.StockApexManagerSmoke.run()

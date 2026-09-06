@@ -63,6 +63,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     boolean mTraversalScheduled;
     int mTraversalBarrier = -1;
     boolean mLayoutRequested;
+    boolean mForceNextWindowRelayout;
     boolean mInLayout;
     boolean mHandlingLayoutInLayoutRequest;
     private final ArrayList<View> mLayoutRequesters = new ArrayList<>();
@@ -235,7 +236,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             mAttachInfo.mIWindowId = windowId;
             mAttachInfo.mWindowId = new WindowId(windowId);
             mAttachInfo.mHardwareAccelerated = true;
-            mAttachInfo.mThreadedRenderer = ThreadedRenderer.getInstance();
+            mAttachInfo.mThreadedRenderer = dev.artzig.HostedRenderer.getInstance(mContext).renderer;
             mAttachInfo.mInTouchMode = true; // pointer taps act as touches; no focus rings
             mAttachInfo.mWindowVisibility = View.VISIBLE;
             mAttachInfo.mHasWindowFocus = true;
@@ -1487,6 +1488,10 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
 
     private void performTraversal() {
         if (mView == null || mStopped) return;
+        if (mForceNextWindowRelayout) {
+            mLayoutRequested = true;
+            mForceNextWindowRelayout = false;
+        }
         int previousWidth = mWidth;
         int previousHeight = mHeight;
         long traceStart = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
@@ -2073,6 +2078,15 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         invalidate();
     }
     public final ViewFrameInfo mViewFrameInfo = new ViewFrameInfo();
+
+    // AOSP getUpdatedFrameInfo: merge this root's timing into the shared frame,
+    // then reset it. Hosted input has no InputEventAssigner timeline to finish.
+    protected android.graphics.FrameInfo getUpdatedFrameInfo() {
+        android.graphics.FrameInfo info = mChoreographer.mFrameInfo;
+        mViewFrameInfo.populateFrameInfo(info);
+        mViewFrameInfo.reset();
+        return info;
+    }
     public Thread mThread = Thread.currentThread();
     public void addObserver(android.graphics.HardwareRendererObserver observer) {}
     public void removeObserver(android.graphics.HardwareRendererObserver observer) {}
@@ -2212,11 +2226,11 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public SurfaceControl getSurfaceControl() { return new SurfaceControl(); }
     public void mergeWithNextTransaction(SurfaceControl.Transaction t, long frameNumber) { t.apply(); }
     public void registerAnimatingRenderNode(android.graphics.RenderNode renderNode) {
-        ThreadedRenderer.getInstance().registerAnimatingRenderNode(renderNode);
+        dev.artzig.HostedRenderer.getInstance(mContext).renderer.registerAnimatingRenderNode(renderNode);
         scheduleTraversals();
     }
     public void registerVectorDrawableAnimator(NativeVectorDrawableAnimator animator) {
-        ThreadedRenderer.getInstance().registerVectorDrawableAnimator(animator);
+        dev.artzig.HostedRenderer.getInstance(mContext).renderer.registerVectorDrawableAnimator(animator);
         scheduleTraversals();
     }
     public void requestTransitionStart(android.animation.LayoutTransition transition) {}

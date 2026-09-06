@@ -132,6 +132,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/pm/SharedUserSetting.java");
     try c.file("$FB/services/core/java/com/android/server/pm/ApexSystemServiceInfo.java");
 
+    try c.file("$CJ/android/view/ThreadedRenderer.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/DhcpInfo.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/DhcpOption.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/DscpPolicy.java");
