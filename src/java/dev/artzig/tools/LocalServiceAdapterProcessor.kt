@@ -4,6 +4,7 @@ import java.io.Writer
 import javax.annotation.processing.AbstractProcessor
 import javax.annotation.processing.RoundEnvironment
 import javax.lang.model.SourceVersion
+import javax.lang.model.element.ElementKind
 import javax.lang.model.element.ExecutableElement
 import javax.lang.model.element.Modifier
 import javax.lang.model.element.TypeElement
@@ -39,7 +40,7 @@ abstract class LocalServiceAdapterProcessor : AbstractProcessor() {
         processingEnv.filer.createSourceFile(
             adapterName,
             target,
-        ).openWriter().use { writer -> writeClass(writer, methods) }
+        ).openWriter().use { writer -> writeClass(writer, target, methods) }
         generated = true
         return false
     }
@@ -53,11 +54,12 @@ abstract class LocalServiceAdapterProcessor : AbstractProcessor() {
         append(')')
     }
 
-    private fun writeClass(writer: Writer, methods: List<ExecutableElement>) {
+    private fun writeClass(writer: Writer, target: TypeElement, methods: List<ExecutableElement>) {
         writer.appendLine("// Generated from the stock $targetName abstract API.")
         writer.appendLine("package ${adapterName.substringBeforeLast('.')};")
         val modifier = if (isFinal) "final " else ""
-        writer.appendLine("public ${modifier}class ${adapterName.substringAfterLast('.')} extends $targetName {")
+        val inheritance = if (target.kind == ElementKind.INTERFACE) "implements" else "extends"
+        writer.appendLine("public ${modifier}class ${adapterName.substringAfterLast('.')} $inheritance $targetName {")
         writeFieldsAndConstructor(writer)
         for (method in methods) {
             writer.appendLine()

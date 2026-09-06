@@ -41,6 +41,22 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Desktop window policy checkpoint (2026-09-06)
+
+HostedDesktopWindowPolicy now has a generated WindowManagerPolicy interface
+adapter that inherits the pinned Java default methods for window/subwindow
+layers. The host policy follows PhoneWindowManager's add-window permission
+ordering and absent-keyguard callbacks, and uses stock DisplayPolicy's screen
+state plus WMS waitForAllWindowsDrawn for the draw barrier. It is not yet
+installed in normal startup. Screen lifecycle integration still needs the
+stock WMS/ATMS boot gate; the passing module checks do not prove that gate.
+
+Framework-module-test and graph audit pass (`/tmp/wayland-desktop-policy-1.log`).
+Checks cover inherited default methods/overload failures, permission output
+mutation and ordering, token-validated window categories, keyboard configuration,
+and absent-keyguard dismissal failure. The preceding complete power/process
+observer regression has 14 integration step files, 42 steps and no runtime issues.
+
 ## Power and process observer checkpoint (2026-09-06)
 
 The existing power Binder service now also backs the generated stock

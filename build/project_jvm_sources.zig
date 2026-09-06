@@ -21,6 +21,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockRendererSmoke.kt",
     "src/java/dev/artzig/StockSplashScreenSmoke.kt",
     "src/java/dev/artzig/window/HostedSessionDisplaySmoke.kt",
+    "src/java/dev/artzig/window/HostedDesktopWindowPolicy.kt",
+    "src/java/dev/artzig/window/HostedDesktopWindowPolicySmoke.kt",
     "src/java/dev/artzig/window/SurfaceFlingerDisplayOutput.kt",
     "src/java/dev/artzig/window/HostedLogicalDisplay.kt",
     "src/java/dev/artzig/window/HostedLogicalDisplaySmoke.kt",
