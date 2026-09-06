@@ -27,6 +27,14 @@ in force.
 
 Follow-up changes in the current tree:
 
+- The launcher now synchronizes fullscreen requests after input/Handler work even
+  when it submits no Java frame. A window-state change after the last rendered
+  frame previously left the compositor unchanged, causing intermittent desktop
+  video fullscreen timeouts. The desktop regression now explicitly pauses playback
+  before entering fullscreen. The focused test and all 11 APK tests pass (39 steps
+  without runtime issues); temporary state tracing is removed. This changes the
+  launcher boundary, not the existing Wayland backend.
+
 - TextToSpeech, TtsEngines, UtteranceProgressListener and Voice now compile
   verbatim, with five generated Binder interfaces and the stock TTS manager,
   per-user session service and shared server infrastructure. SystemServices

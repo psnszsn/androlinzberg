@@ -1235,10 +1235,12 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 vsync_pending = true;
                 vsync_requires_frame = true;
             }
-            syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen) catch |err| {
-                std.debug.print("azk: fullscreen state error: {} (continuing)\n", .{err});
-            };
         }
+        // Handler/input callbacks can change window presentation without invalidating pixels.
+        // Observe their state even when there is no Java frame to submit.
+        syncAppFullscreen(win, env, cls, wants_fullscreen, &app_fullscreen) catch |err| {
+            std.debug.print("azk: fullscreen state error: {} (continuing)\n", .{err});
+        };
         syncAppPointerCapture(win, env, cls, wants_pointer_capture, &app_pointer_capture) catch |err| {
             std.debug.print("azk: pointer capture state error: {} (continuing)\n", .{err});
         };

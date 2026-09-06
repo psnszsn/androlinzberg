@@ -171,6 +171,8 @@ class NewPipeDesktopTest {
         // A playing live stream keeps drawing; wait for presentation instead of global idleness.
         click(description = "Play video, duration:", settle = WaitKind.FRAME_PRESENTED)
         revealPlayerControls()
+        // Exercise presentation changes without continuous video frames to poll them.
+        pausePlayer()
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
         waitForFullscreen(true)
     }
@@ -295,4 +297,17 @@ private fun AppSession.revealPlayerControls() {
         Thread.sleep(700)
     }
     waitFor(description = "Toggle screen orientation")
+}
+
+private fun AppSession.pausePlayer() {
+    repeat(30) {
+        if (isVisible(description = "Pause")) {
+            click(description = "Pause", settle = WaitKind.FRAME_PRESENTED)
+            waitFor(description = "Play")
+            return
+        }
+        if (isVisible(description = "Play")) return
+        Thread.sleep(100)
+    }
+    throw AssertionError("player did not expose its play/pause control")
 }
