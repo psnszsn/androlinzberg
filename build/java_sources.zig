@@ -213,6 +213,15 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/net/http/HttpResponseCache.java");
     try c.file("$CJ/android/os/VintfObject.java");
     try c.file("$FB/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java");
+    try c.file("$FB/core/java/android/hardware/devicestate/DeviceStateManagerInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/devicestate/DeviceStateManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/devicestate/DeviceStateManagerShellCommand.java");
+    try c.file("$FB/services/core/java/com/android/server/devicestate/DeviceStateNotificationController.java");
+    try c.file("$FB/services/core/java/com/android/server/devicestate/DeviceStatePolicy.java");
+    try c.file("$FB/services/core/java/com/android/server/devicestate/DeviceStateProvider.java");
+    try c.file("$FB/services/core/java/com/android/server/devicestate/OverrideRequest.java");
+    try c.file("$FB/services/core/java/com/android/server/devicestate/OverrideRequestController.java");
+
     // Stock WM/ATMS graph. Desktop input, process and optional services stay at host seams.
     try c.add("$FB/services/core/java/com/android/server/wm", .{});
     try c.file("$FB/services/core/java/com/android/server/policy/WindowManagerPolicy.java");

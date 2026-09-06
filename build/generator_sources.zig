@@ -645,10 +645,19 @@ pub const mime_types = [_]MimeTypes{
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/mime/java-res/vendor.mime.types" }, .output = "vendor.mime.types", .vendor = true },
 };
 
+// Frozen android.frameworks.devicestate-V1 from Android 16 services/core/Android.bp.
+// Hash is the frozen API's aidl_api/android.frameworks.devicestate/1/.hash.
+pub const device_state_aidl = .{
+    .root = "frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/",
+    .version = "1",
+    .hash = "be9013fedb7fc3886980eca0e588bce998d315d2",
+};
+
 pub const VersionedAidl = struct { prefix: []const u8, version: []const u8, hash: []const u8 };
 pub const versioned_aidl = [_]VersionedAidl{
     // hardware/interfaces/cas/aidl/Android.bp: frozen V1 and its original API hash.
     .{ .prefix = "hardware/interfaces/cas/aidl/android/hardware/cas/", .version = "1", .hash = "bc51d8d70a55ec4723d3f73d0acf7003306bf69f" },
+    .{ .prefix = device_state_aidl.root, .version = device_state_aidl.version, .hash = device_state_aidl.hash },
     // frameworks/base/Android.bp: android.se.omapi-V1-java; hash from V1/.hash.
     .{ .prefix = "frameworks/base/omapi/aidl/aidl_api/android.se.omapi/1/", .version = "1", .hash = "894069bcfe4f35ceb2088278ddf87c83adee8014" },
 };
@@ -1091,6 +1100,10 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "packages/modules/Profiling/aidl/android/os/IProfilingResultCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Profiling/aidl/android/os/IProfilingService.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Profiling/aidl/android/os/ProfilingTriggerValueParcel.aidl" },
+    .{ .source = .aosp, .path = "frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/DeviceStateConfiguration.aidl" },
+    .{ .source = .aosp, .path = "frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/ErrorCode.aidl" },
+    .{ .source = .aosp, .path = "frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/IDeviceStateListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/IDeviceStateService.aidl" },
 
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IPermissionController.aidl" },
     // Voice manager and sound-trigger middleware transport.

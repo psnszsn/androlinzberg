@@ -1,0 +1,26 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] DeviceStatePolicy: use the desktop posture provider
+
+Keep the stock device-state service and policy factory. The desktop has no
+Android lid-switch or sensor hardware provider.
+
+--- a/services/core/java/com/android/server/devicestate/DeviceStatePolicy.java
++++ b/services/core/java/com/android/server/devicestate/DeviceStatePolicy.java
+@@ -22,7 +22,7 @@
+ import android.text.TextUtils;
+ import android.util.Dumpable;
+ 
+-import com.android.server.policy.DeviceStatePolicyImpl;
++import dev.artzig.system.HostedDesktopDeviceStatePolicy;
+ 
+ /**
+  * Interface for the component responsible for supplying the current device state as well as
+@@ -54,7 +54,7 @@
+     static final class DefaultProvider implements DeviceStatePolicy.Provider {
+         @Override
+         public DeviceStatePolicy instantiate(@NonNull Context context) {
+-            return new DeviceStatePolicyImpl(context);
++            return new HostedDesktopDeviceStatePolicy(context);
+         }
+     }
+ 

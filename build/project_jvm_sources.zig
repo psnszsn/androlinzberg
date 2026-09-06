@@ -21,6 +21,9 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockRendererSmoke.kt",
     "src/java/dev/artzig/StockSplashScreenSmoke.kt",
 
+    "src/java/com/android/server/devicestate/StockDeviceStateSmoke.kt",
+    "src/java/dev/artzig/system/HostedDesktopDeviceStatePolicy.kt",
+    "src/java/dev/artzig/system/DesktopDeviceStateSmoke.kt",
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
     "src/framework-stubs/android/media/ToneGenerator.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",

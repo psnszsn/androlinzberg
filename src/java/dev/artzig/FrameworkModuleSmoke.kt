@@ -236,6 +236,8 @@ internal object FrameworkModuleSmoke {
         com.android.server.criticalevents.StockCriticalEventLogSmoke.run()
         com.android.server.StockWatchdogSmoke.run()
         dev.artzig.system.StockSdkSandboxSmoke.run()
+        dev.artzig.system.DesktopDeviceStateSmoke.run(ActivityThread.currentActivityThread().systemContext)
+        com.android.server.devicestate.StockDeviceStateSmoke.run(ActivityThread.currentActivityThread().systemContext)
         dev.artzig.system.StockOptionalWmServicesSmoke.run(
             ActivityThread.currentActivityThread().systemContext, checkNotNull(permissionsFixtureApk))
         dev.artzig.system.StockSaferIntentSmoke.run()

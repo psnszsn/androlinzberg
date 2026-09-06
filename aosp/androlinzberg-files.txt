@@ -9051,3 +9051,17 @@ F aosp frameworks/native/opengl/libs/ETC1/etc1.cpp
 
 F aosp frameworks/base/core/java/android/os/IPermissionController.aidl
 F aosp frameworks/base/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp
+
+# Stock device-state service and frozen V1 HAL protocol; desktop posture provider.
+F aosp frameworks/base/core/java/android/hardware/devicestate/DeviceStateManagerInternal.java
+F aosp frameworks/base/services/core/java/com/android/server/devicestate/DeviceStateManagerService.java
+F aosp frameworks/base/services/core/java/com/android/server/devicestate/DeviceStateManagerShellCommand.java
+F aosp frameworks/base/services/core/java/com/android/server/devicestate/DeviceStateNotificationController.java
+F aosp frameworks/base/services/core/java/com/android/server/devicestate/DeviceStatePolicy.java
+F aosp frameworks/base/services/core/java/com/android/server/devicestate/DeviceStateProvider.java
+F aosp frameworks/base/services/core/java/com/android/server/devicestate/OverrideRequest.java
+F aosp frameworks/base/services/core/java/com/android/server/devicestate/OverrideRequestController.java
+F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/DeviceStateConfiguration.aidl
+F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/ErrorCode.aidl
+F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/IDeviceStateListener.aidl
+F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/IDeviceStateService.aidl

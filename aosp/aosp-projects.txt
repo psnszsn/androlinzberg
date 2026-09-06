@@ -103,6 +103,7 @@ platform/external/zopfli
 platform/external/zstd
 platform/frameworks/av
 platform/frameworks/base
+platform/frameworks/hardware/interfaces
 platform/frameworks/libs/modules-utils
 platform/frameworks/minikin
 platform/frameworks/native

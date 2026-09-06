@@ -207,9 +207,6 @@ internal object SystemServices {
         activityManager.processLauncher = sessionProcessLauncher()
         activityManager.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
-        // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
-        android.os.ServiceManager.addService("permission",
-            HostedNativePermissionController(context, activityManager, appOps))
         android.os.ServiceManager.addService(Context.WIFI_SERVICE,
             HostedWifiService(HostedPermissions(packageManager)))
         android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
@@ -234,6 +231,9 @@ internal object SystemServices {
             HostedSensorPrivacyService(context))
         val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
         activityManager.appOps = appOps
+        // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
+        android.os.ServiceManager.addService("permission",
+            HostedNativePermissionController(context, activityManager, appOps))
         LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
             HostedPermissionPolicy(packageManager))
         com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())

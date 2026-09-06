@@ -129,6 +129,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "packages/modules/Media/apex/aidl/stable/",
         "packages/providers/MediaProvider/apex/framework/java/",
 
+        declarations.device_state_aidl.root,
         "aidl-compat/",
         "frameworks/base/core/java/",
         "frameworks/base/graphics/java/",
@@ -244,6 +245,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
     run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/apex/blobstore/framework/java"));
     run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Connectivity/framework/aidl-export"));
     inline for (.{
+        declarations.device_state_aidl.root,
         "frameworks/base/core/java",
         "frameworks/base/graphics/java",
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));

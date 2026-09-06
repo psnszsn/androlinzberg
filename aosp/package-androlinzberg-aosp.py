@@ -78,6 +78,7 @@ framework_patches = tuple(
         (53, "-GLUtils-normalize-host-bitmap-upload-byte-order.patch"),
         (54, "-WM-bind-optional-services-to-hosted-authorities.patch"),
         (55, "-WM-release-FPS-callbacks-on-transport-failure.patch"),
+        (56, "-DeviceStatePolicy-use-desktop-posture-provider.patch"),
     )
 )
 

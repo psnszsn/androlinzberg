@@ -41,6 +41,39 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Device-state service checkpoint (2026-09-06)
+
+The normal framework now compiles the stock DeviceStateManagerService,
+request controller, notifications and shell command. Its default policy factory
+selects HostedDesktopDeviceStatePolicy: the stock default state `0:DEFAULT`,
+without foldable hardware properties. The provider preserves supported-states
+before current-state delivery, single listener registration, and configuration
+completion. WMS/ATMS boot remains unfinished; the service is not yet published
+in the legacy startup path.
+
+The device-state HAL types are generated from frozen V1 AIDL in the pinned
+`platform/frameworks/hardware/interfaces` project (commit
+`1fbcd8ad465856725dd004a282d5be142fe8fccc`). Generator declarations retain its
+version and frozen hash; no generated interface is handwritten. Source package
+58 is pinned by `build.zig.zon` (archive SHA-256
+`63a17f06d3e265058f9c6003b27ed057ec7e4f4bc27c8d02d9a811b4f38f4ac2`).
+
+Validation: Java compilation, C++/graph audits and framework-module-test pass
+(`/tmp/wayland-device-state-java-1.log`,
+`/tmp/wayland-device-state-runtime-1.log`). Tests call the stock service Binder
+API with scoped broadcast and permission adapters, checking initial delivery,
+registration ownership, invalid state/token failures, denied controls, base
+state requests, callback death and failed death-link cleanup. They do not
+replace global service registrations. The previous main-rebase checkpoint's
+complete JVM, system and 14-APK regression run remains recorded below.
+
+Next boot dependencies are the session logical display and power LocalService,
+stock ATMS startup, and its process/screen observer connections. The full stock
+LogicalDisplay closure still pulls 429 Java sources, 49 AIDL and 112 blockers
+(`/tmp/wayland-stock-logical-display-closure-1.log`); its hardware/service graph
+is not independently reusable. The desktop display adapter must preserve the
+stock override-field and traversal contracts while hiding private task outputs.
+
 ## Baseline inventory
 
 The table records the pre-implementation baseline. Current progress is recorded
