@@ -92,6 +92,7 @@ internal class HostedActivityTaskManagerService(
         ),
     ) {
         val activities = ArrayList<ActivityRecord>()
+        var inRecents = true
         var description: ActivityManager.TaskDescription? = null
         var lastActiveTime: Long = android.os.SystemClock.elapsedRealtime()
     }
@@ -123,6 +124,7 @@ internal class HostedActivityTaskManagerService(
         val destroyAfterResume = ArrayList<IBinder>()
         val afterPause = ArrayList<() -> Unit>()
         val pendingResults = ArrayList<ResultInfo>()
+        var sceneTransitionInfo: android.app.ActivityOptions.SceneTransitionInfo? = null
         var launchScheduled = false
         var cancelIfStale = true
     }
@@ -514,7 +516,10 @@ internal class HostedActivityTaskManagerService(
                     resultTo,
                     resultWho,
                     requestCode,
-                ).also { it.cancelIfStale = cancelIfStale }
+                ).also {
+                    it.cancelIfStale = cancelIfStale
+                    it.sceneTransitionInfo = android.app.ActivityOptions.fromBundle(options)?.sceneTransitionInfo
+                }
                 task.activities += checkNotNull(record)
                 checkNotNull(record).previousToStop = previous?.token
                 task.lastActiveTime = android.os.SystemClock.elapsedRealtime()
@@ -599,6 +604,9 @@ internal class HostedActivityTaskManagerService(
             ) return
             val results = record.pendingResults.takeIf { it.isNotEmpty() }?.toList()
             record.pendingResults.clear()
+            // AOSP ActivityRecord.takeSceneTransitionInfo consumes launch options once.
+            val sceneTransitionInfo = record.sceneTransitionInfo
+            record.sceneTransitionInfo = null
             val transaction = ClientTransaction(process.thread)
             transaction.addTransactionItem(
                 LaunchActivityItem(
@@ -616,7 +624,7 @@ internal class HostedActivityTaskManagerService(
                     record.persistentState,
                     results,
                     null,
-                    null,
+                    sceneTransitionInfo,
                     true,
                     null,
                     record.assistToken,
@@ -816,12 +824,14 @@ internal class HostedActivityTaskManagerService(
         val token = synchronized(lock) {
             tasks[taskId]?.activities?.lastOrNull { !it.finishing }?.token
         } ?: return false
-        return finishActivityRecord(
+        val removed = finishActivityRecord(
             token,
             Activity.RESULT_CANCELED,
             null,
             FINISH_TASK_WITH_ACTIVITY,
         )
+        if (removed) synchronized(lock) { tasks[taskId]?.inRecents = false }
+        return removed
     }
 
     override fun unhandledBack() {
@@ -854,7 +864,7 @@ internal class HostedActivityTaskManagerService(
             if (target !== previous) target?.previousToStop = previous?.token
             value
         }
-        target?.let { record ->
+        target?.takeIf { it !== previous || it.state != STATE_RESUMED }?.let { record ->
             val resume: () -> Unit = { scheduleResume(record); Unit }
             previous?.takeIf { it !== record }?.let { gateAfterPause(it, false, resume) }
                 ?: resume()
@@ -878,6 +888,92 @@ internal class HostedActivityTaskManagerService(
         startActivityFromRecentsInternal(task)
     }
 
+    /** RecentTasks.getAppTasksList: handles are scoped to the requesting uid and base package. */
+    override fun getAppTasks(callingPackage: String?): MutableList<IBinder> {
+        val uid = Binder.getCallingUid()
+        assertCallingPackage(callingPackage)
+        return synchronized(lock) {
+            tasks.values.toList().asReversed().filter { task ->
+                task.inRecents && task.baseIntent.component?.packageName == callingPackage &&
+                    task.activities.firstOrNull()?.let {
+                        packages.getPackageUidInternal(it.info.packageName) == uid
+                    } == true
+            }.mapTo(ArrayList()) { HostedAppTask(it.taskId, uid).asBinder() }
+        }
+    }
+
+    private fun assertCallingPackage(callingPackage: String?) {
+        if (callingPackage == null || !packages.isSameAppInternal(callingPackage, Binder.getCallingUid())) {
+            throw SecurityException("uid ${Binder.getCallingUid()} does not own $callingPackage")
+        }
+    }
+
+    private fun recentTaskInfoLocked(task: TaskRecord): ActivityManager.RecentTaskInfo =
+        ActivityManager.RecentTaskInfo().also {
+            fillTaskInfoLocked(task, it, true)
+            it.id = task.taskId
+            it.persistentId = task.taskId
+        }
+
+    /** AppTaskImpl control flow; the hosted task owner emits the lifecycle transactions. */
+    private inner class HostedAppTask(private val taskId: Int, private val ownerUid: Int) :
+        android.app.IAppTask.Stub() {
+        private fun checkCaller() {
+            val caller = Binder.getCallingUid()
+            if (caller != ownerUid && caller != android.os.Process.SYSTEM_UID && caller != android.os.Process.ROOT_UID) {
+                throw SecurityException("Caller $caller does not match caller of getAppTasks(): $ownerUid")
+            }
+        }
+
+        private fun taskLocked(): TaskRecord = tasks[taskId]
+            ?: throw IllegalArgumentException("Unable to find task ID $taskId")
+
+        override fun getTaskInfo(): ActivityManager.RecentTaskInfo {
+            checkCaller()
+            return synchronized(lock) { recentTaskInfoLocked(taskLocked()) }
+        }
+
+        override fun finishAndRemoveTask() {
+            checkCaller()
+            if (!removeTaskInternal(taskId)) throw IllegalArgumentException("Unable to find task ID $taskId")
+        }
+
+        override fun moveToFront(appThread: IApplicationThread?, callingPackage: String?) {
+            checkCaller()
+            assertCallingPackage(callingPackage)
+            synchronized(lock) { taskLocked() }
+            startActivityFromRecentsInternal(taskId)
+        }
+
+        override fun startActivity(
+            whoThread: IBinder?, callingPackage: String?, callingFeatureId: String?,
+            intent: Intent?, resolvedType: String?, options: Bundle?,
+        ): Int {
+            checkCaller()
+            assertCallingPackage(callingPackage)
+            val task = synchronized(lock) { taskLocked() }
+            val appThread = IApplicationThread.Stub.asInterface(whoThread)
+                ?: throw IllegalArgumentException("Bad app thread null")
+            return startActivityInternal(appThread, callingPackage, Binder.getCallingUid(), intent,
+                resolvedType, null, null, -1, options, taskOverride = task)
+        }
+
+        override fun setExcludeFromRecents(exclude: Boolean) {
+            checkCaller()
+            synchronized(lock) {
+                val intent = taskLocked().baseIntent
+                intent.flags = if (exclude) intent.flags or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                    else intent.flags and Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS.inv()
+            }
+        }
+    }
+
+    // RecentTasks.isInVisibleRange keeps an excluded task while its activity is visible.
+    // Hosted lifecycle state supplies visibility until server WindowStates are available.
+    private fun visibleInRecentsLocked(task: TaskRecord): Boolean =
+        task.inRecents && (task.baseIntent.flags and Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS == 0 ||
+            task.activities.any { !it.finishing && (it.state == STATE_RESUMED || it.state == STATE_PAUSED) })
+
     override fun getTasks(
         maxNum: Int,
         filterOnlyVisibleRecents: Boolean,
@@ -896,8 +992,7 @@ internal class HostedActivityTaskManagerService(
                         packages.getPackageUidInternal(it.info.packageName) == callingUid
                     } == true
                 }
-                // Every hosted task is a standard, recents-eligible task; the flag therefore
-                // excludes no additional records at this fence.
+                .filter { !filterOnlyVisibleRecents || visibleInRecentsLocked(it) }
                 .take(maxNum.coerceAtLeast(0))
                 .mapTo(ArrayList()) { runningTaskInfoLocked(it, keepIntentExtra) }
         }
@@ -918,12 +1013,9 @@ internal class HostedActivityTaskManagerService(
             allowed || task.activities.lastOrNull { !it.finishing }?.let {
                 packages.getPackageUidInternal(it.info.packageName) == callingUid
             } == true
-        }.take(maxNum.coerceAtLeast(0)).map { task ->
-            ActivityManager.RecentTaskInfo().also { info ->
-                fillTaskInfoLocked(task, info, true)
-                info.id = task.taskId
-                info.persistentId = task.taskId
-            }
+        }.filter { it.inRecents && (flags and ActivityManager.RECENT_WITH_EXCLUDED != 0 || visibleInRecentsLocked(it)) }
+        .take(maxNum.coerceAtLeast(0)).map { task ->
+            recentTaskInfoLocked(task)
         }.toList()
             ParceledListSlice(result)
         }
@@ -1094,7 +1186,7 @@ internal class HostedActivityTaskManagerService(
         val top = task.activities.lastOrNull { !it.finishing }
         info.userId = UserHandle.USER_SYSTEM
         info.taskId = task.taskId
-        info.effectiveUid = top?.let { packages.getPackageUidInternal(it.info.packageName) } ?: -1
+        info.effectiveUid = task.activities.firstOrNull()?.let { packages.getPackageUidInternal(it.info.packageName) } ?: -1
         info.displayId = Display.DEFAULT_DISPLAY
         info.isRunning = top != null
         info.baseIntent = Intent(task.baseIntent).also { if (!keepExtras) it.replaceExtras(null as Bundle?) }

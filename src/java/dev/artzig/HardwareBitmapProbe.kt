@@ -37,6 +37,7 @@ public final class HardwareBitmapProbe {
             ThreadedRenderer.getInstance().render(ROOT, bufferWidth, bufferHeight)
 
             if (sChecked) return
+            verifyGraphicBufferPixels()
             val usage: Long =
                 HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or
                     HardwareBuffer.USAGE_GPU_COLOR_OUTPUT
@@ -67,6 +68,50 @@ public final class HardwareBitmapProbe {
             buffer.close()
             sChecked = true
             Log.i(TAG, "PASS: Config.HARDWARE -> GBM/dma-buf HardwareBuffer.RGBA_8888")
+        }
+
+        private fun verifyGraphicBufferPixels() {
+            val usage = HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_GPU_COLOR_OUTPUT or
+                HardwareBuffer.USAGE_CPU_READ_OFTEN or HardwareBuffer.USAGE_CPU_WRITE_OFTEN
+            val graphic = checkNotNull(android.graphics.GraphicBuffer.create(8, 8, 1, usage.toInt()))
+            var imported: HardwareBuffer? = null
+            try {
+                val canvas = checkNotNull(graphic.lockCanvas())
+                canvas.drawColor(android.graphics.Color.RED)
+                graphic.unlockCanvasAndPost(canvas)
+                val clipped = checkNotNull(graphic.lockCanvas(android.graphics.Rect(2, 2, 6, 6)))
+                clipped.drawColor(android.graphics.Color.BLUE)
+                graphic.unlockCanvasAndPost(clipped)
+                HardwareBuffer.createFromGraphicBuffer(graphic).use { owner ->
+                    val parcel = android.os.Parcel.obtain()
+                    try {
+                        owner.writeToParcel(parcel, 0)
+                        parcel.setDataPosition(0)
+                        imported = HardwareBuffer.CREATOR.createFromParcel(parcel)
+                    } finally { parcel.recycle() }
+                }
+                graphic.destroy()
+                val bitmap = checkNotNull(Bitmap.wrapHardwareBuffer(checkNotNull(imported),
+                    android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB)))
+                try {
+                    val pixels = checkNotNull(bitmap.copy(Bitmap.Config.ARGB_8888, false))
+                    try {
+                        for ((point, expected) in listOf(
+                            (0 to 0) to android.graphics.Color.RED,
+                            (3 to 3) to android.graphics.Color.BLUE,
+                            (7 to 7) to android.graphics.Color.RED)) {
+                            val actual = pixels.getPixel(point.first, point.second)
+                            check(actual == expected) {
+                                "GraphicBuffer pixel $point: ${Integer.toHexString(actual)}, expected ${Integer.toHexString(expected)}"
+                            }
+                        }
+                    } finally { pixels.recycle() }
+                } finally { bitmap.recycle() }
+                Log.i(TAG, "PASS: stock GraphicBuffer Canvas clipping and parcelled DMA-BUF pixel readback")
+            } finally {
+                imported?.close()
+                graphic.destroy()
+            }
         }
 
         @JvmStatic public fun motion(

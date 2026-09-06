@@ -37,8 +37,15 @@ public class AppOpsManager {
     public static int permissionToOpCode(String permission) { return OP_NONE; }
     public static String permissionToOp(String permission) { return null; }
     public static String opToPermission(int op) { return null; }
-    /** AOSP throws for an unknown op string; every string is unknown here. */
-    public static int strOpToOp(String op) { throw new IllegalArgumentException("Unknown operation string: " + op); }
+    /** AOSP public-name mapping used by the stock stats service. The full op table remains pending. */
+    public static int strOpToOp(String op) {
+        if ("android:get_usage_stats".equals(op)) return OP_GET_USAGE_STATS;
+        throw new IllegalArgumentException("Unknown operation string: " + op);
+    }
+    /** AOSP noteOp(String, int, String, String, String) delegates through the op table. */
+    public int noteOp(String op, int uid, String packageName, String attributionTag, String message) {
+        return noteOp(strOpToOp(op), uid, packageName, attributionTag, message);
+    }
     /** AOSP maps op codes to public op names; this host has no table. */
     public static String opToPublicName(int op) { return "op:" + op; }
     public static String opToName(int op) { return op == OP_NONE ? "NONE" : "op:" + op; }

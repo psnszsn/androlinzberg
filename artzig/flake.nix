@@ -16,7 +16,7 @@
       # and the native dependencies used by Artzig and Androlinzberg.
       devShells.${system} = {
         default = pkgs.mkShell {
-          packages = [ zigPinned ] ++ (with pkgs; [ openjdk21_headless python3 git-repo zlib libpng libcap icu pkg-config e2fsprogs unzip libglvnd elfutils libunwind libbsd libmd
+          packages = [ zigPinned ] ++ (with pkgs; [ openjdk21_headless python3 git-repo zlib libpng libcap libselinux icu pkg-config e2fsprogs unzip libglvnd elfutils libunwind libbsd libmd
             # app subproject: Skia + Wayland platform
             wayland wayland-protocols wayland-scanner libxkbcommon cage aapt grim wlr-randr wl-clipboard xdg-utils freetype harfbuzz fontconfig expat libjpeg_turbo libwebp gn harfbuzzFull vulkan-headers openssl sqlite pipewire
             # MediaCodec video: system FFmpeg provides VA-API/DRM hwcontexts;

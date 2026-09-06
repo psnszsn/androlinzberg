@@ -12,6 +12,7 @@ pub const Options = struct {
     protobuf: *std.Build.Step.Compile,
     protoc: *std.Build.Step.Compile,
     sysprop_tool: *std.Build.Step.Compile,
+    sysprop_cpp_tool: *std.Build.Step.Compile,
     javastream_tool: *std.Build.Step.Compile,
     javanano_tool: *std.Build.Step.Compile,
 };
@@ -26,10 +27,17 @@ pub const Result = struct {
 
 pub const GeneratedJvm = struct {
     sources: []const LazyPath,
+    resources: LazyPath,
+    system_features_processor: LazyPath,
+    system_features_processor_dependencies: LazyPath,
 };
 
 pub const GeneratedNative = struct {
+    incremental_sysprop_headers: LazyPath,
+    incremental_sysprop_source: LazyPath,
     aidl_header_roots: []const LazyPath,
+    aidl_source_roots: []const LazyPath,
+    aconfig_header_roots: []const LazyPath,
     binder_graphics_headers: LazyPath,
     binder_graphics_sources: LazyPath,
 };
@@ -83,10 +91,14 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/base/apex/jobscheduler/framework/java/",
         "frameworks/base/native/android/aidl/",
         "frameworks/native/libs/input/",
+        "frameworks/native/libs/gui/",
+        "frameworks/native/aidl/",
         "frameworks/native/libs/binder/aidl/",
         "frameworks/native/libs/incidentcompanion/binder/",
         "frameworks/native/libs/permission/aidl/",
         "packages/modules/StatsD/aidl/",
+        "frameworks/native/cmds/installd/binder/",
+        "system/apex/apexd/aidl/",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core/",
         "frameworks/base/location/java/",
         "frameworks/base/telephony/java/",
@@ -95,6 +107,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "hardware/interfaces/gnss/aidl/",
         "hardware/interfaces/biometrics/common/aidl/",
         "hardware/interfaces/biometrics/face/aidl/",
+        "hardware/interfaces/biometrics/fingerprint/aidl/",
         "hardware/interfaces/common/aidl/",
         "hardware/interfaces/keymaster/aidl/",
         "hardware/interfaces/security/keymint/aidl/",
@@ -109,10 +122,11 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "hardware/interfaces/vibrator/aidl/",
         "packages/modules/AppSearch/framework/java/",
         "packages/modules/Bluetooth/android/app/aidl/",
-        "packages/modules/Bluetooth/common/bluetooth/constants/",
+        "packages/modules/Bluetooth/common/",
         "packages/modules/Bluetooth/framework/aidl-export/",
         "packages/modules/Bluetooth/service/aidl/",
         "packages/modules/ConfigInfrastructure/framework/java/",
+        "packages/modules/HealthFitness/framework/java/",
         "packages/modules/Connectivity/Tethering/common/TetheringLib/src/",
         "packages/modules/Connectivity/framework-t/src/",
         "packages/modules/Connectivity/framework/src/",
@@ -161,10 +175,14 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/keystore/java",
         "frameworks/libs/modules-utils/java",
         "frameworks/native/libs/input",
+        "frameworks/native/libs/gui",
         "frameworks/native/aidl/binder",
+        "frameworks/native/aidl",
         "frameworks/native/libs/binder/aidl",
         "frameworks/native/libs/incidentcompanion/binder",
         "packages/modules/StatsD/aidl",
+        "frameworks/native/cmds/installd/binder",
+        "system/apex/apexd/aidl",
         "frameworks/base/apex/jobscheduler/framework/java",
         "frameworks/base/native/android/aidl",
         "frameworks/base/cmds/idmap2/idmap2d/aidl/core",
@@ -175,6 +193,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "hardware/interfaces/gnss/aidl",
         "hardware/interfaces/biometrics/common/aidl",
         "hardware/interfaces/biometrics/face/aidl",
+        "hardware/interfaces/biometrics/fingerprint/aidl",
         "hardware/interfaces/common/aidl",
         "hardware/interfaces/keymaster/aidl",
         "hardware/interfaces/security/keymint/aidl",
@@ -189,16 +208,18 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "hardware/interfaces/vibrator/aidl",
         "packages/modules/AppSearch/framework/java",
         "packages/modules/Bluetooth/android/app/aidl",
-        "packages/modules/Bluetooth/common/bluetooth/constants",
+        "packages/modules/Bluetooth/common",
         "packages/modules/Bluetooth/framework/aidl-export",
         "packages/modules/Bluetooth/service/aidl",
         "packages/modules/ConfigInfrastructure/framework/java",
+        "packages/modules/HealthFitness/framework/java",
         "packages/modules/Connectivity/Tethering/common/TetheringLib/src",
         "packages/modules/Connectivity/framework-t/src",
         "packages/modules/Connectivity/framework/src",
         "packages/modules/Media/apex/aidl/private",
         "packages/modules/Permission/framework-s/java",
         "packages/modules/Wifi/framework/java",
+        "packages/modules/Wifi/framework/aidl-export",
     }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
 }
 
@@ -214,11 +235,18 @@ fn aidlJava(
     const compat = b.addWriteFiles();
     _ = compat.addCopyDirectory(b.path("aidl-compat"), "", .{});
     _ = compat.addCopyDirectory(aosp.path(permission_aidl), "", .{ .include_extensions = &.{".aidl"} });
-    _ = compat.addCopyFile(
-        aosp.path("packages/modules/Connectivity/framework/aidl-export/android/net/ProxyInfo.aidl"),
-        "android/net/ProxyInfo.aidl",
-    );
+    for (declarations.aidl_exports) |entry| {
+        _ = compat.addCopyFile(sourcePath(b, aosp, entry.input), entry.output);
+    }
     const compat_dir = compat.getDirectory();
+
+    // Mainline Bluetooth's socket AIDL refers to the SDK parcelable by its
+    // short name. Supply the same preprocessed SDK declaration Soong sees.
+    const sdk_parcelables = b.addRunArtifact(runner);
+    sdk_parcelables.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
+    sdk_parcelables.addArg("--preprocess");
+    const sdk_preprocessed = sdk_parcelables.addOutputFileArg("framework-parcelables.aidl");
+    sdk_parcelables.addFileArg(aosp.path("frameworks/base/core/java/android/content/AttributionSource.aidl"));
 
     var files: std.ArrayList(LazyPath) = .empty;
     var index: usize = 0;
@@ -237,6 +265,7 @@ fn aidlJava(
             }
         }
         addAidlIncludes(run, aosp, compat_dir);
+        run.addPrefixedFileArg("-p", sdk_preprocessed);
         run.addArg("-o");
         const output = run.addOutputDirectoryArg(b.fmt("aidl-java-{d}", .{index}));
         if (input.source == .repo) {
@@ -288,22 +317,17 @@ fn hidlJava(
     return result;
 }
 
+const CppAidlResult = struct { headers: []const LazyPath, sources: []const LazyPath };
+
 fn aidlCpp(
     b: *std.Build,
     aosp: *std.Build.Dependency,
     runner: *std.Build.Step.Compile,
-) []const LazyPath {
-    const inputs = [_][]const u8{
-        "IInputConstants.aidl",
-        "InputConfig.aidl",
-        "MotionEventFlag.aidl",
-        "PointerIconType.aidl",
-        "InputEventInjectionSync.aidl",
-        "InputEventInjectionResult.aidl",
-    };
-    const root = aosp.path("frameworks/native/libs/input");
+) CppAidlResult {
     var roots: std.ArrayList(LazyPath) = .empty;
-    inline for (inputs, 0..) |name, index| {
+    var files: std.ArrayList(LazyPath) = .empty;
+    for (declarations.cpp_aidl, 0..) |entry, index| {
+        const root = aosp.path(entry.root);
         const run = b.addRunArtifact(runner);
         run.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
         run.addArgs(&.{ "--lang=cpp", "-I" });
@@ -312,14 +336,14 @@ fn aidlCpp(
         const headers = run.addOutputDirectoryArg(b.fmt("aidl-cpp-headers-{d}", .{index}));
         run.addArg("-o");
         const sources = run.addOutputDirectoryArg(b.fmt("aidl-cpp-sources-{d}", .{index}));
-        run.addFileArg(root.path(b, "android/os/" ++ name));
-        run.setName(b.fmt("generate C++ AIDL {s}", .{name}));
+        run.addFileArg(root.path(b, entry.input));
+        run.setName(b.fmt("generate C++ AIDL {s}", .{entry.input}));
         roots.append(b.allocator, headers) catch @panic("OOM");
-        _ = sources;
+        files.append(b.allocator, sources) catch @panic("OOM");
     }
-    const result = roots.toOwnedSlice(b.allocator) catch @panic("OOM");
-    _ = exposePaths(b, "gen-aidl-cpp", "Generate native input AIDL headers", result);
-    return result;
+    const headers = roots.toOwnedSlice(b.allocator) catch @panic("OOM");
+    _ = exposePaths(b, "gen-aidl-cpp", "Generate native AIDL headers and parcelables", headers);
+    return .{ .headers = headers, .sources = files.toOwnedSlice(b.allocator) catch @panic("OOM") };
 }
 
 fn logtagsJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
@@ -342,10 +366,15 @@ fn aconfigJava(
     b: *std.Build,
     aosp: *std.Build.Dependency,
     runner: *std.Build.Step.Compile,
-) []const LazyPath {
+) struct { java: []const LazyPath, cpp_headers: []const LazyPath } {
     var files: std.ArrayList(LazyPath) = .empty;
+    var headers: std.ArrayList(LazyPath) = .empty;
     var index: usize = 0;
     for (declarations.aconfig) |entry| {
+        const mode = switch (entry.mode) {
+            .production => "production",
+            .force_read_only => "force-read-only",
+        };
         const cache = b.addRunArtifact(runner);
         cache.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/aconfig"));
         cache.addArgs(&.{ "create-cache", "--package", entry.package, "--container", entry.container });
@@ -353,17 +382,32 @@ fn aconfigJava(
             cache.addArg("--declarations");
             cache.addFileArg(sourcePath(b, aosp, .{ .source = entry.source, .path = declaration }));
         }
+        for (entry.values) |value| {
+            cache.addArg("--values");
+            cache.addFileArg(sourcePath(b, aosp, .{ .source = entry.source, .path = value }));
+        }
         cache.addArg("--cache");
         const cache_file = cache.addOutputFileArg(b.fmt("aconfig-{d}.pb", .{index}));
         cache.setName(b.fmt("create aconfig cache {s}", .{entry.package}));
 
+        if (entry.cpp_header) {
+            const cpp = b.addRunArtifact(runner);
+            cpp.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/aconfig"));
+            cpp.addArgs(&.{ "create-cpp-lib", "--cache" });
+            cpp.addFileArg(cache_file);
+            cpp.addArg("--out");
+            const output = cpp.addOutputDirectoryArg(b.fmt("aconfig-cpp-{d}", .{index}));
+            cpp.addArgs(&.{ "--mode", mode });
+            cpp.setName(b.fmt("generate aconfig C++ header {s}", .{entry.package}));
+            headers.append(b.allocator, output.path(b, "include")) catch @panic("OOM");
+        }
         const java = b.addRunArtifact(runner);
         java.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/aconfig"));
         java.addArgs(&.{ "create-java-lib", "--cache" });
         java.addFileArg(cache_file);
         java.addArg("--out");
         const output = java.addOutputDirectoryArg(b.fmt("aconfig-java-{d}", .{index}));
-        java.addArgs(&.{ "--mode", "production" });
+        java.addArgs(&.{ "--mode", mode });
         java.setName(b.fmt("generate aconfig Java {s}", .{entry.package}));
         const package_path = std.mem.replaceOwned(u8, b.allocator, entry.package, ".", "/") catch @panic("OOM");
         inline for (.{ "CustomFeatureFlags", "FakeFeatureFlagsImpl", "FeatureFlags", "FeatureFlagsImpl", "Flags" }) |class| {
@@ -373,7 +417,8 @@ fn aconfigJava(
     }
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
     _ = exposePaths(b, "gen-aconfig", "Generate aconfig Java sources", result);
-    return result;
+    _ = exposePaths(b, "gen-aconfig-cpp", "Generate fixed read-only aconfig C++ headers", headers.items);
+    return .{ .java = result, .cpp_headers = headers.toOwnedSlice(b.allocator) catch @panic("OOM") };
 }
 
 fn syspropJava(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step.Compile) []const LazyPath {
@@ -391,6 +436,33 @@ fn syspropJava(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
     _ = exposePaths(b, "gen-sysprop", "Generate sysprop Java sources", result);
     return result;
+}
+
+fn incrementalSyspropCpp(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.Build.Step.Compile) struct { headers: LazyPath, source: LazyPath } {
+    const declaration = declarations.incremental_sysprop;
+    const run = b.addRunArtifact(tool);
+    run.addArg("--header-dir");
+    const headers = run.addOutputDirectoryArg("incremental-sysprop-headers");
+    run.addArg("--public-header-dir");
+    _ = run.addOutputDirectoryArg("incremental-sysprop-public-headers");
+    run.addArg("--source-dir");
+    const sources = run.addOutputDirectoryArg("incremental-sysprop-sources");
+    run.addArgs(&.{ "--include-name", declaration.header });
+    run.addFileArg(sourcePath(b, aosp, declaration.input));
+    run.setName("generate IncFs sysprop C++");
+    return .{ .headers = headers, .source = sources.path(b, declaration.source) };
+}
+
+fn aconfigDevicePathsJava(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
+    const declaration = declarations.aconfig_device_paths;
+    // The exact substitution used by libaconfig_java_device_paths_src in AOSP's Android.bp.
+    const run = command.create(b);
+    run.addArgs(&.{ "sed", "-e" });
+    run.addPrefixedFileArg("/TEMPLATE/{r ", sourcePath(b, aosp, declaration.paths));
+    run.addArgs(&.{ "-e", "d}" });
+    run.addFileArg(sourcePath(b, aosp, declaration.template));
+    run.run.setName("generate aconfig device proto paths");
+    return run.run.captureStdOut(.{ .basename = std.fs.path.basename(declaration.output) });
 }
 
 fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) []const LazyPath {
@@ -516,6 +588,44 @@ fn statsJava(
     return result;
 }
 
+fn systemFeaturesJava(b: *std.Build, aosp: *std.Build.Dependency) struct {
+    source: LazyPath,
+    processor: LazyPath,
+    dependencies: LazyPath,
+} {
+    const declaration = declarations.system_features;
+    var sources = SourceFiles.Collector.init(b);
+    sources.addTree(SourceFiles.Root.dependency(b, aosp, "external/javapoet/src/main/java"), .{});
+    const java = sources.select(".java");
+    const javapoet = command.create(b);
+    javapoet.addArgs(&.{ "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-d" });
+    const javapoet_classes = javapoet.addOutputDirectoryArg("systemfeatures-javapoet-classes");
+    javapoet.addPrefixedFileArg("@", java.responseFile(b, "systemfeatures-javapoet.rsp"));
+    javapoet.addFileArg(aosp.path("frameworks/libs/modules-utils/java/android/annotation/SdkConstant.java"));
+    const guava = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
+    const stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
+    const compile = command.create(b);
+    compile.addFileArg(aosp.path("external/kotlinc/bin/kotlinc"));
+    compile.addArgs(&.{ "-no-reflect", "-jvm-target", "21", "-classpath" });
+    compile.addJoinedPathInputs(":", &.{ .{ .file = guava }, .{ .file = stdlib }, .{ .directory = javapoet_classes } });
+    compile.addArg("-d");
+    const generator = compile.addOutputFileArg("systemfeatures-generator.jar");
+    compile.addFileArg(aosp.path(declaration.generator));
+    compile.addFileArg(aosp.path(declaration.processor));
+    compile.run.setName("compile stock system feature generator");
+    const run = command.create(b);
+    run.addArgs(&.{ "java", "-cp" });
+    run.addJoinedPathInputs(":", &.{ .{ .file = generator }, .{ .file = guava }, .{ .file = stdlib }, .{ .directory = javapoet_classes } });
+    run.addArgs(&.{ "com.android.systemfeatures.SystemFeaturesGenerator", declaration.class });
+    run.addArgs(declaration.arguments);
+    run.run.setName("generate RoSystemFeatures.java");
+    return .{
+        .source = run.run.captureStdOut(.{ .basename = std.fs.path.basename(declaration.output) }),
+        .processor = generator,
+        .dependencies = javapoet_classes,
+    };
+}
+
 fn expressMetricIdsJava(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
     const guava = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
     const kotlin_stdlib = aosp.path("external/kotlinc/lib/kotlin-stdlib.jar");
@@ -543,7 +653,7 @@ fn expressMetricIdsJava(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
     return output;
 }
 
-fn apexInfoListJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
+fn xsdJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
     var sources = SourceFiles.Collector.init(b);
     const root = SourceFiles.Root.dependency(b, aosp, "system/tools/xsdc/src/main/java");
     sources.addTree(root, .{});
@@ -560,25 +670,22 @@ fn apexInfoListJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath
     java_sources.addInputs(compile.run);
     compile.run.setName("compile AOSP XSD Java generator");
 
-    const run = command.create(b);
-    run.addArgs(&.{ "java", "-cp" });
-    run.addJoinedPathInputs(":", &.{ .{ .directory = classes }, .{ .file = commons_cli } });
-    run.addArgs(&.{ "com.android.xsdc.Main", "-p", "com.android.apex", "-o" });
-    const output = run.addOutputDirectoryArg("apex-info-list-java");
-    run.addArgs(&.{ "-j", "-w", "-r", "apex-info-list" });
-    run.addFileArg(aosp.path("system/apex/apexd/ApexInfoList.xsd"));
-    run.run.setName("generate apex-info-list Java");
-
-    const paths = [_][]const u8{
-        "com/android/apex/ApexInfo.java",
-        "com/android/apex/ApexInfoList.java",
-        "com/android/apex/XmlParser.java",
-        "com/android/apex/XmlWriter.java",
-    };
-    const result = b.allocator.alloc(LazyPath, paths.len) catch @panic("OOM");
-    for (paths, 0..) |path, index| result[index] = output.path(b, path);
-    _ = exposePaths(b, "gen-apex-info-list", "Generate apex-info-list Java sources", result);
-    return result;
+    var files: std.ArrayList(LazyPath) = .empty;
+    for (declarations.xsd) |entry| {
+        const run = command.create(b);
+        run.addArgs(&.{ "java", "-cp" });
+        run.addJoinedPathInputs(":", &.{ .{ .directory = classes }, .{ .file = commons_cli } });
+        run.addArgs(&.{ "com.android.xsdc.Main", "-j", "-p", entry.package, "-o" });
+        const output = run.addOutputDirectoryArg(b.fmt("{s}-java", .{entry.name}));
+        run.addArgs(entry.arguments);
+        run.addFileArg(sourcePath(b, aosp, entry.input));
+        run.run.setName(b.fmt("generate {s} Java", .{entry.name}));
+        const result = b.allocator.alloc(LazyPath, entry.outputs.len) catch @panic("OOM");
+        for (entry.outputs, 0..) |path, index| result[index] = output.path(b, path);
+        _ = exposePaths(b, b.fmt("gen-{s}", .{entry.name}), b.fmt("Generate {s} Java sources", .{entry.name}), result);
+        files.appendSlice(b.allocator, result) catch @panic("OOM");
+    }
+    return files.toOwnedSlice(b.allocator) catch @panic("OOM");
 }
 
 fn signApk(
@@ -586,6 +693,7 @@ fn signApk(
     aosp: *std.Build.Dependency,
     unsigned: LazyPath,
     output_name: []const u8,
+    v1_signing: bool,
 ) LazyPath {
     const sign = b.addSystemCommand(&.{ "java", "-jar" });
     sign.addFileArg(aosp.path("prebuilts/sdk/tools/linux/lib/apksigner.jar"));
@@ -594,7 +702,7 @@ fn signApk(
     sign.addArg("--cert");
     sign.addFileArg(b.path("tools/signing/azk-platform.x509.pem"));
     sign.addArgs(&.{
-        "--v1-signing-enabled", "false",
+        "--v1-signing-enabled", if (v1_signing) "true" else "false",
         "--v2-signing-enabled", "true",
         "--v4-signing-enabled", "false",
         "--in",
@@ -650,7 +758,7 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
         run.setName(b.fmt("filter generated {s}", .{path}));
         java_sources.append(b.allocator, filtered) catch @panic("OOM");
     }
-    const signed = signApk(b, aosp, unsigned, "framework-res.apk");
+    const signed = signApk(b, aosp, unsigned, "framework-res.apk", false);
     const result = java_sources.toOwnedSlice(b.allocator) catch @panic("OOM");
     var outputs: std.ArrayList(LazyPath) = .empty;
     outputs.appendSlice(b.allocator, result) catch @panic("OOM");
@@ -711,9 +819,22 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
         link.addFileArg(b.path("testdata/fixture-apks/" ++ package ++ "/AndroidManifest.xml"));
         link.addArg("-I");
         link.addFileArg(framework_res);
+        if (comptime std.mem.eql(u8, package, "org.example.permissions")) {
+            const fixture_resources = b.addWriteFiles();
+            _ = fixture_resources.addCopyDirectory(b.path("testdata/fixture-apks/org.example.permissions/res"), "", .{});
+            _ = fixture_resources.addCopyFile(aosp.path("frameworks/base/core/tests/coretests/res/raw/fsverity_sig"), "raw/fsverity_sig");
+            _ = fixture_resources.addCopyFile(aosp.path("frameworks/base/core/tests/coretests/certs/unit_test.der"), "raw/fsverity_certificate.der");
+            const compile = b.addSystemCommand(&.{ "aapt2", "compile", "--dir" });
+            compile.addDirectoryArg(fixture_resources.getDirectory());
+            compile.addArg("-o");
+            link.addFileArg(compile.addOutputFileArg("fixture-resources.zip"));
+            compile.setName("aapt2 compile framework fixture resources");
+        }
         link.addArgs(&.{ "--min-sdk-version", "21", "--target-sdk-version", "35" });
         link.setName(b.fmt("aapt2 link fixture {s}", .{package}));
-        const signed = signApk(b, aosp, unsigned, package ++ ".apk");
+        // Keep a real v1 signature alongside v2 for strict JAR verification
+        // and signature-stripping regression tests.
+        const signed = signApk(b, aosp, unsigned, package ++ ".apk", comptime std.mem.eql(u8, package, "org.example.permissions"));
         outputs[index] = signed;
     }
     _ = exposePaths(b, "gen-fixture-apks", "Build and sign fixture APKs", &outputs);
@@ -723,6 +844,22 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
         .example = outputs[2],
         .permissions = outputs[3],
     };
+}
+
+fn mimeResources(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
+    const minifier = hostTool(b, "minimize-mime-types", "tools/minimize-mime-types.zig");
+    const resources_dir = b.addWriteFiles();
+    for (declarations.mime_types) |input| {
+        const run = b.addRunArtifact(minifier);
+        run.addFileArg(sourcePath(b, aosp, input.input));
+        const output = run.addOutputFileArg(input.output);
+        run.addArg(if (input.vendor) "vendor" else "platform");
+        run.setName(b.fmt("minimize {s}", .{input.output}));
+        _ = resources_dir.addCopyFile(output, b.fmt("res/{s}", .{input.output}));
+    }
+    const result = resources_dir.getDirectory();
+    _ = exposePaths(b, "gen-mime", "Generate stock MIME-map resources", &.{result});
+    return result;
 }
 
 pub fn build(b: *std.Build, o: Options) Result {
@@ -753,28 +890,50 @@ pub fn build(b: *std.Build, o: Options) Result {
     const logtags_java = logtagsJava(b, o.aosp);
     const aconfig_java = aconfigJava(b, o.aosp, runner);
     const sysprop_java = syspropJava(b, o.aosp, o.sysprop_tool);
+    const incremental_sysprop = incrementalSyspropCpp(b, o.aosp, o.sysprop_cpp_tool);
     const nano_java = nanoJava(b, o.aosp, o.protoc, o.javanano_tool);
     const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool, package_rewriter);
     const stats_java = statsJava(b, o.aosp, stats_tool);
     const express_metric_ids_java = expressMetricIdsJava(b, o.aosp);
-    const apex_info_list_java = apexInfoListJava(b, o.aosp);
+    const system_features_java = systemFeaturesJava(b, o.aosp);
+    const aconfig_device_paths_java = aconfigDevicePathsJava(b, o.aosp);
+    const xsd_java = xsdJava(b, o.aosp);
     const res = resources(b, o.aosp, filter);
     const fixtures = fixtureApks(b, o.aosp, res.apk);
+    const mime_resources = mimeResources(b, o.aosp);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ aidl_java, hidl_java, logtags_java, aconfig_java, sysprop_java, nano_java, proto_java, stats_java, apex_info_list_java, res.java_sources }) |generated_set| {
+    inline for (.{ aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
     java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");
+    java_files.append(b.allocator, system_features_java.source) catch @panic("OOM");
+    java_files.append(b.allocator, aconfig_device_paths_java) catch @panic("OOM");
 
     const aggregate = b.step("generators", "Generate all framework sources, resources, and fixture APKs");
     for (java_files.items) |path| path.addStepDependencies(aggregate);
-    for (aidl_cpp) |path| path.addStepDependencies(aggregate);
+    for (aidl_cpp.headers) |path| path.addStepDependencies(aggregate);
+    for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
     res.apk.addStepDependencies(aggregate);
+    mime_resources.addStepDependencies(aggregate);
+    incremental_sysprop.source.addStepDependencies(aggregate);
     for (fixtures.all()) |path| path.addStepDependencies(aggregate);
 
     return .{
-        .jvm = .{ .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM") },
-        .native = .{ .aidl_header_roots = aidl_cpp, .binder_graphics_headers = graphics_headers, .binder_graphics_sources = graphics_sources },
+        .jvm = .{
+            .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM"),
+            .resources = mime_resources,
+            .system_features_processor = system_features_java.processor,
+            .system_features_processor_dependencies = system_features_java.dependencies,
+        },
+        .native = .{
+            .aidl_header_roots = aidl_cpp.headers,
+            .aidl_source_roots = aidl_cpp.sources,
+            .aconfig_header_roots = aconfig_java.cpp_headers,
+            .binder_graphics_headers = graphics_headers,
+            .binder_graphics_sources = graphics_sources,
+            .incremental_sysprop_headers = incremental_sysprop.headers,
+            .incremental_sysprop_source = incremental_sysprop.source,
+        },
         .resources = res,
         .fixtures = fixtures,
         .aggregate_step = aggregate,

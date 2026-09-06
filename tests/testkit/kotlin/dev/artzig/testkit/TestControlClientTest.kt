@@ -1,6 +1,8 @@
 package dev.artzig.testkit
 
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import java.io.ByteArrayOutputStream
 import java.net.StandardProtocolFamily
 import java.net.SocketTimeoutException
 import java.net.UnixDomainSocketAddress
@@ -150,9 +152,39 @@ class TestControlClientTest {
         Files.deleteIfExists(steps)
     }
 
+    @Test
+    fun relativeActionWaitsIncludeTheCursorFromBeforeInput() {
+        val mark = """{"epoch":"e","command_seq":1,"input_seq":2,"tree_revision":3,"log_seq":4,"issue_seq":5,"frame_seq":12,"presented_frame_seq":11}"""
+        for (kind in listOf(WaitKind.FRAME_PRESENTED, WaitKind.TREE_CHANGED)) {
+            for (stepped in listOf(false, true)) {
+                val requests = java.util.concurrent.ConcurrentLinkedQueue<JsonObject>()
+                val responses = mutableListOf(
+                    """{"parameters":{"observation":{"mark":$mark}}}""" + '\u0000',
+                    """{"parameters":{"result":{"applied":true},"observation":{"mark":$mark}}}""" + '\u0000',
+                )
+                if (stepped) responses.add(
+                    """{"parameters":{"diagnostics":{"mark":$mark,"runtime":{"logs":[],"issues":[]}}}}""" + '\u0000')
+                withServer(responses, onRequest = { requests.add(JsonParser.parseString(it).asJsonObject) }) { socket ->
+                    val client = TestControlClient(socket.toString())
+                    val selector = Selector(text = "Play")
+                    val action = Action(ActionKind.CLICK, InputVia.WAYLAND)
+                    if (stepped) assertTrue(client.step(selector, action, kind).ok)
+                    else client.perform(selector, action, kind)
+                }
+                assertEquals(1, requests.count { it["method"].asString.endsWith(".Observe") })
+                val perform = requests.single { it["method"].asString.endsWith(".Perform") }
+                val settle = perform["parameters"].asJsonObject["settle"].asJsonObject
+                assertEquals(kind.wireName, settle["kind"].asString)
+                assertEquals(3, settle["after"].asJsonObject["tree_revision"].asInt)
+                assertEquals(11, settle["after"].asJsonObject["presented_frame_seq"].asInt)
+            }
+        }
+    }
+
     private fun withServer(
         responses: List<String>,
         beforeResponse: (Int) -> Unit = {},
+        onRequest: (String) -> Unit = {},
         block: (java.nio.file.Path) -> Unit,
     ) {
         val directory = Files.createTempDirectory("test-control-server")
@@ -163,18 +195,22 @@ class TestControlClientTest {
                 responses.forEachIndexed { index, response ->
                     listener.accept().use { connection ->
                         val incoming = ByteBuffer.allocate(4096)
+                        val request = ByteArrayOutputStream()
                         var complete = false
                         while (!complete) {
                             if (connection.read(incoming) < 0) break
                             incoming.flip()
                             while (incoming.hasRemaining()) {
-                                if (incoming.get().toInt() == 0) {
+                                val byte = incoming.get()
+                                if (byte.toInt() == 0) {
                                     complete = true
                                     break
                                 }
+                                request.write(byte.toInt())
                             }
                             incoming.clear()
                         }
+                        onRequest(request.toString(StandardCharsets.UTF_8))
                         beforeResponse(index)
                         connection.write(ByteBuffer.wrap(response.toByteArray(StandardCharsets.UTF_8)))
                     }

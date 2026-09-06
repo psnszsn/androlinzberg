@@ -1396,7 +1396,7 @@ const Runtime = struct {
         r.join_cv.broadcast(g_io);
         r.join_mu.unlock(g_io);
         // A windowless service host exits when its session's broker drops.
-        if (g_exit_on_disconnect.load(.monotonic)) std.process.exit(0);
+        if (g_exit_on_disconnect.load(.monotonic)) g_process_exit.load(.acquire).?(0);
     }
 
     // ---------------------------------------------------------- transact
@@ -2929,6 +2929,7 @@ fn javaForwardDestroy(user_data: ?*anyopaque) callconv(.c) void {
     // the Java Binder becomes collectable. The holder itself is freed by the
     // Binder's finalizer (it still holds a weak handle on this object).
     const h: *JavaBBinderHolder = @ptrCast(@alignCast(user_data orelse return));
+    _ = g_debug_locals.fetchSub(1, .monotonic);
     const env = jniEnv();
     g_holder_mu.lockUncancelable(g_io);
     const ref = h.java_ref;
@@ -3597,6 +3598,14 @@ var g_has_identity_override: bool = false;
 /// When set, a lost broker connection exits the process (a windowless service
 /// host has no reason to outlive its session).
 var g_exit_on_disconnect = std.atomic.Value(bool).init(false);
+const ProcessExitFn = *const fn (c_int) callconv(.c) noreturn;
+var g_process_exit = std.atomic.Value(?ProcessExitFn).init(null);
+
+/// The launcher supplies AndroidRuntime's immediate-exit native before JNI
+/// registration. A session disconnect must not run libc cleanup under ART.
+export fn azk_binder_set_process_exit(process_exit: ProcessExitFn) callconv(.c) void {
+    g_process_exit.store(process_exit, .release);
+}
 
 fn throwException(env: JNIEnvPtr, class_name: [*:0]const u8, msg: [*:0]const u8) void {
     const c = env.*.*.FindClass.?(env, class_name) orelse return;
@@ -3639,7 +3648,8 @@ fn holderAIBinder(env: JNIEnvPtr, obj: jni.jobject) ?*AIBinder {
         decWeak(b);
         h.aibinder = null;
     }
-    h.java_ref = env.*.*.NewGlobalRef.?(env, obj);
+    h.java_ref = env.*.*.NewGlobalRef.?(env, obj) orelse return null;
+    _ = g_debug_locals.fetchAdd(1, .monotonic);
     const b = AIBinder.createLocal(&g_java_forward_class, h); // strong=1: the caller's ref
     _ = b.weak.fetchAdd(1, .monotonic); // the holder's weak handle
     h.aibinder = b;
@@ -3853,6 +3863,7 @@ fn javaDeathDied(cookie: ?*anyopaque) callconv(.c) void {
     _ = clearException(env);
 }
 fn javaDeathUnlinked(cookie: ?*anyopaque) callconv(.c) void {
+    _ = g_debug_deaths.fetchSub(1, .monotonic);
     const env = jniEnv() orelse return;
     env.*.*.DeleteGlobalRef.?(env, @ptrCast(cookie));
 }
@@ -3861,7 +3872,14 @@ fn bpLinkToDeathNative(env: JNIEnvPtr, this: jni.jobject, recipient: jni.jobject
     const nd = proxyData(env, this) orelse return;
     if (nd.aibinder.kind != .remote) return;
     const cookie = env.*.*.NewGlobalRef.?(env, recipient) orelse return;
-    _ = AIBinder_linkToDeath(nd.aibinder, &g_java_death_recipient, cookie);
+    _ = g_debug_deaths.fetchAdd(1, .monotonic);
+    const status = AIBinder_linkToDeath(nd.aibinder, &g_java_death_recipient, cookie);
+    if (status == STATUS_NO_MEMORY) {
+        javaDeathUnlinked(cookie); // No DeathLink was allocated to own the cookie.
+        throwException(env, "java/lang/OutOfMemoryError", "linkToDeath");
+    } else if (status == STATUS_DEAD_OBJECT) {
+        throwException(env, "android/os/DeadObjectException", "");
+    }
 }
 fn bpUnlinkToDeathNative(env: JNIEnvPtr, this: jni.jobject, recipient: jni.jobject, flags: jni.jint) callconv(.c) jni.jboolean {
     _ = flags;
@@ -3988,8 +4006,11 @@ fn bsSetIdentity(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, is_system: j
     g_has_identity_override = true;
 }
 fn bsSetExitOnDisconnect(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
-    _ = env;
     _ = cls;
+    if (g_process_exit.load(.acquire) == null) {
+        throwRuntime(env, "AndroidRuntime process-exit hook is not registered");
+        return;
+    }
     g_exit_on_disconnect.store(true, .monotonic);
 }
 fn bsAssignedUid(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jint {
@@ -4279,4 +4300,19 @@ export fn azk_binder_flush() callconv(.c) void {
         r.write_mu.lockUncancelable(g_io);
         r.write_mu.unlock(g_io);
     }
+}
+
+// android_util_Binder.cpp counts live JavaBBinder/global death references and
+// native remote proxies. The hosted broker replaces the kernel Binder driver.
+var g_debug_locals = std.atomic.Value(u32).init(0);
+var g_debug_deaths = std.atomic.Value(u32).init(0);
+pub fn debugBinderCounts() struct { local: i32, proxy: i32, death: i32 } {
+    const runtime = Runtime.get();
+    runtime.mu.lockUncancelable(g_io);
+    defer runtime.mu.unlock(g_io);
+    return .{
+        .local = @bitCast(g_debug_locals.load(.monotonic)),
+        .proxy = @bitCast(runtime.proxies.count()),
+        .death = @bitCast(g_debug_deaths.load(.monotonic)),
+    };
 }

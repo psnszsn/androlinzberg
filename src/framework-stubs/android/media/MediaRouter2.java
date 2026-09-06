@@ -7,7 +7,7 @@ import java.util.concurrent.Executor;
 
 public final class MediaRouter2 {
     private static final MediaRouter2 INSTANCE = new MediaRouter2();
-    private final MediaRoute2Info mBuiltInRoute = new MediaRoute2Info();
+    private final MediaRoute2Info mBuiltInRoute = dev.artzig.system.HostedMediaRoutes.builtInAudio;
     private final RoutingController mSystemController = new RoutingController(this);
 
     private MediaRouter2() {}

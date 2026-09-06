@@ -80,7 +80,8 @@ class NewPipeTest {
         // instead of pinning the test to a channel that may leave the feed.
         click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
-        click(description = "Play video, duration:")
+        // A playing live stream keeps drawing; wait for presentation instead of global idleness.
+        click(description = "Play video, duration:", settle = WaitKind.FRAME_PRESENTED)
         revealPlayerControls()
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
         waitForFullscreen(true)
@@ -106,8 +107,15 @@ class NewPipeTest {
         waitFor(description = "Comments")
         waitFor(text = "Background")
         waitForFullscreen(false)
+        // The first text in the active detail window is its video title. The
+        // live feed changes; preserve that identity across the fullscreen cycle.
+        val title = waitFor(role = "text", index = 0)
+            .getAsJsonObject("observation").getAsJsonArray("matches")[0]
+            .asJsonObject.get("text").asString
+        assertTrue(title.isNotBlank())
 
-        click(description = "Play video, duration:")
+        // A playing live stream keeps drawing; wait for presentation instead of global idleness.
+        click(description = "Play video, duration:", settle = WaitKind.FRAME_PRESENTED)
         revealPlayerControls()
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
 
@@ -125,7 +133,8 @@ class NewPipeTest {
 
         waitForFullscreen(false)
         waitFor(description = "Play video, duration:")
-        waitFor(text = "Comments are disabled")
+        // Live streams may now provide real comments instead of a disabled message.
+        waitFor(text = title)
         waitFor(description = "Comments")
         waitFor(text = "Background")
     }
@@ -159,7 +168,8 @@ class NewPipeDesktopTest {
         waitFor(description = "Comments")
         waitForFullscreen(false)
 
-        click(description = "Play video, duration:")
+        // A playing live stream keeps drawing; wait for presentation instead of global idleness.
+        click(description = "Play video, duration:", settle = WaitKind.FRAME_PRESENTED)
         revealPlayerControls()
         click(description = "Toggle screen orientation", settle = WaitKind.NOW)
         waitForFullscreen(true)

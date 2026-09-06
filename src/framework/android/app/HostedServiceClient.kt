@@ -59,16 +59,35 @@ object HostedServiceClient {
      * zygote knows it), then AOSP attachApplication. */
     @JvmStatic
     @JvmOverloads
-    fun attachApplication(packageName: String, processName: String = packageName) {
-        if (attached) return
-        val am = activityManagerOrNull() ?: return
+    fun attachApplication(packageName: String, processName: String = packageName): Application {
+        check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            "application attachment must run on the main looper"
+        }
+        if (attached) return checkNotNull(ActivityThread.currentApplication())
+        // ActivityThread.attach installs the token before contacting AMS so
+        // RuntimeInit can attribute even a failure during application binding.
+        com.android.internal.os.RuntimeInit.setApplicationObject(thread.asBinder())
+        val am = checkNotNull(activityManagerOrNull()) { "activity manager unavailable" }
         try {
-            installerOrNull()?.bindProcessPackage(packageName, processName)
+            checkNotNull(installerOrNull()).bindProcessPackage(packageName, processName,
+                android.content.res.Configuration(ResourcesManager.getInstance().configuration))
             am.attachApplication(thread, 0)
             attached = true
         } catch (e: RemoteException) {
-            Log.w(TAG, "attachApplication failed", e)
+            throw e.rethrowFromSystemServer()
         }
+        // The host starts its event loop after bootstrap. Dispatch the stock
+        // bindApplication callback before the launcher can submit activity work.
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+        val queue = android.os.Looper.myQueue()
+        while (ActivityThread.currentPackageName() != packageName &&
+            android.os.SystemClock.uptimeMillis() < deadline) {
+            val message = queue.`pollDueMessage$artzig`()
+            if (message == null) android.os.SystemClock.sleep(1)
+            else message.target.dispatchMessage(message)
+        }
+        check(ActivityThread.currentPackageName() == packageName) { "application binding timed out: $packageName" }
+        return checkNotNull(ActivityThread.currentApplication())
     }
 
     /** Cross-uid permission state, answered by the session's package manager

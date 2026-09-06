@@ -2,9 +2,19 @@
 
 package dev.artzig
 
+import com.android.internal.org.bouncycastle.cert.X509CertificateHolder
+import com.android.internal.org.bouncycastle.cms.CMSSignedData
+import com.android.internal.org.bouncycastle.util.CollectionStore
+import android.hardware.usb.IUsbSerialReader
+import android.hardware.usb.UsbConfiguration
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbEndpoint
+import android.hardware.usb.UsbInterface
 import android.app.Activity
 import android.app.ActivityClient
 import android.app.ActivityGroup
+import android.app.ActivityOptions
 import android.app.ActivityManager
 import android.app.ActivityTaskManager
 import android.app.ActivityThread
@@ -52,6 +62,9 @@ import android.content.res.ApkAssets
 import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.HostedConfigurationController
+import android.health.connect.HealthPermissions
+import android.health.connect.HealthPermissionCategory
+import android.health.connect.HealthDataCategory
 import android.graphics.Point
 import android.graphics.Rect
 import android.graphics.drawable.Icon
@@ -76,6 +89,10 @@ import android.os.IBinder
 import android.os.INetworkManagementService
 import android.os.Looper
 import com.android.internal.pm.pkg.parsing.ParsingUtils
+import com.android.internal.pm.pkg.component.AconfigFlags
+import com.android.internal.os.BinderCallsStats
+import com.android.internal.os.BinderLatencyObserver
+import com.android.internal.os.CachedDeviceState
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.Parcelable
@@ -149,6 +166,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.X509TrustManager
+import javax.microedition.khronos.opengles.GL10
 
 /** Behavioral smoke tests whose surface is the hosted framework modules. */
 internal object FrameworkModuleSmoke {
@@ -182,6 +200,27 @@ internal object FrameworkModuleSmoke {
         testTaskInfoParcelableContracts()
         testAccessibilityHtmlFiltering()
         testFrameworkServiceValueContracts()
+        testBinderCallStatistics()
+        testStockDebugMemory()
+        testStockEgl()
+        testStockGraphicBuffers()
+        testStockOverlayProperties()
+        testStockSurfaceSynchronization()
+        testStockPixelCopy()
+        testStockVerity()
+        testStockUsbDevice()
+        testStockMediaContracts()
+        testStockProtoLog()
+        testStockActivityOptions()
+        testStockInstrumentation()
+        StockActivitySupportSmoke.run(::drainMainQueue)
+        StockGraphicsEnvironmentSmoke.run()
+        testSplashScreenLifecycle()
+        testStockWindowContexts()
+        testQueuedRootInput()
+        testWebViewUnhandledInput()
+        testHealthPermissionContracts()
+        testAconfigManifestFlags()
         testContentCaptureContracts()
         testTraceBufferContracts()
         testProviderContracts()
@@ -192,9 +231,38 @@ internal object FrameworkModuleSmoke {
         testMessageQueueSyncBarrier()
         testMessageQueueHostPumpSemantics()
         testChoreographerPhaseOrder()
+        testAccessibilityInspectorContracts()
+        testAccessibilityVirtualNodes()
+        testSimpleRendererContracts()
         testPostedCallbackRunsAfterPendingTraversal()
         testTraversalRescheduleAndSharedQueue()
         testHostedSystemServices()
+        testStockActivityManagerAndBackup()
+        testStockNetworkScoring()
+        StockWifiP2pSmoke.run(::drainMainQueue)
+        com.android.server.stats.StockStatsManagerSmoke.run()
+        com.android.server.uri.StockUriPermissionSmoke.run()
+        StockAudioPolicySmoke.run()
+        StockWifiManagerSmoke.run()
+        com.android.server.pm.StockApexManagerSmoke.run()
+        com.android.server.pm.StockSharedUserSmoke.run()
+        com.android.server.compat.StockCompatChangeSmoke.run()
+        com.android.server.pm.StockPackageSettingsSmoke.run()
+        testStockJankAndWifiModels()
+        testStockApplicationSharedMemory()
+        testStockMemoryIntArray()
+        testStockCompanionModelsAndLocalSockets()
+        testWindowRootRegistry()
+        testWindowConfigurationCallbacks()
+        testStockRuntimeInitialization()
+        testStockMimeMapResources()
+        testStockSystemConfigAndRuntimeInfo()
+        testStockNativeLibraryExtraction()
+        testStockStrictJarVerification()
+        testStockInteractionJankMonitor()
+        testStockMediaValueContracts()
+        testStockInputMethodService()
+        testStockMediaProjectionCallbacks()
         testHostedVirtualDeviceDefaults()
         testPictureInPictureContracts()
         testRemoteActionContract()
@@ -217,17 +285,1638 @@ internal object FrameworkModuleSmoke {
         testHostedInputSiblingDispatch()
         testHostedInputWindowRouting()
         testWindowPresentation()
-        testLocalActivityManagerLifecycleAndRecreation()
+        StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
+            testLocalActivityManagerLifecycleAndRecreation(it)
+        }
         testActivityThreadResultDelivery()
+        testInstrumentationResultTransactions()
         testActivityThreadTransactionCompletion()
         testActivityThreadConfigurationChange()
         testActivityThreadRelaunch()
-        testActivityGroupLifecycleStateAndResults()
+        // Pinned ActivityGroup overrides the caller-aware result signature.
+        withContentUriPermissionApis(true) {
+            StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
+                testActivityGroupLifecycleStateAndResults(it)
+            }
+        }
         testLegacyFragmentTransactionsAndRecreation()
-        testLegacyFragmentHostedResultsAndRetention()
-        testActivityLifecycle()
+        StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
+            testLegacyFragmentHostedResultsAndRetention(it)
+        }
+        StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
+            testActivityLifecycle(it)
+        }
         testHostedPermissionGrants()
         println("hosted framework module smoke: PASS")
+    }
+
+    private fun testStockRuntimeInitialization() {
+        val mime = libcore.content.type.MimeMap.getDefault()
+        check(mime.guessMimeTypeFromExtension("apk") == "application/vnd.android.package-archive")
+        check(mime.guessExtensionFromMimeType("image/jpeg") == "jpg")
+        check(System.getProperty("http.agent").startsWith("Dalvik/"))
+        val before = ArtzigTestDiagnostics.logSequence()
+        val message = "runtime bootstrap logger ${System.nanoTime()}"
+        java.util.logging.Logger.getLogger("RuntimeInitSmoke").info(message)
+        check(ArtzigTestDiagnostics.snapshot(before, ArtzigTestDiagnostics.issueSequence()).contains(message))
+        android.app.ActivityThread.currentActivityThread().stopProfiling()
+    }
+
+    private fun testStockMediaValueContracts() {
+        fun <T : Parcelable> roundTrip(value: T, creator: Parcelable.Creator<T>): T {
+            val parcel = android.os.Parcel.obtain()
+            try {
+                value.writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                return creator.createFromParcel(parcel)
+            } finally { parcel.recycle() }
+        }
+        val timestamp = android.media.AudioTimestamp().apply {
+            framePosition = (1L shl 40) + 7
+            nanoTime = 1234567890123L
+        }
+        val copy = roundTrip(timestamp, android.media.AudioTimestamp.CREATOR)
+        check(copy.framePosition == timestamp.framePosition && copy.nanoTime == timestamp.nanoTime)
+        val params = android.media.PlaybackParams()
+        check(runCatching { params.speed }.exceptionOrNull() is IllegalStateException)
+        check(runCatching { params.pitch }.exceptionOrNull() is IllegalStateException)
+        check(runCatching { params.setPitch(-1f) }.exceptionOrNull() is IllegalArgumentException)
+        params.setSpeed(1.5f)
+        val partial = roundTrip(params, android.media.PlaybackParams.CREATOR)
+        check(partial.speed == 1.5f)
+        check(runCatching { partial.pitch }.exceptionOrNull() is IllegalStateException)
+        check(partial.allowDefaults() === partial && partial.pitch == 1f && partial.speed == 1.5f)
+        val format = android.media.MediaFormat.createAudioFormat("audio/raw", 48000, 2)
+        format.setFeatureEnabled("test-feature", true)
+        val keys = format.keys
+        val features = format.features
+        check("test-feature" in features && "feature-test-feature" !in keys)
+        check(format.getFeatureEnabled("test-feature"))
+        format.setLong("wide", 1L shl 40)
+        check("wide" in keys && checkNotNull(format.getNumber("wide")).toLong() == (1L shl 40))
+        check(runCatching { format.getInteger("wide", 0) }.exceptionOrNull() is ClassCastException)
+        check(format.getInteger("missing", 42) == 42)
+        check(runCatching { format.getInteger("missing") }.exceptionOrNull() is NullPointerException)
+        val formatCopy = android.media.MediaFormat(format)
+        keys.remove("wide")
+        features.remove("test-feature")
+        check(!format.containsKey("wide") && !format.containsFeature("test-feature"))
+        check(formatCopy.getLong("wide") == (1L shl 40) && formatCopy.getFeatureEnabled("test-feature"))
+    }
+
+    private fun testStockInteractionJankMonitor() {
+        val context = android.app.ActivityThread.currentActivityThread().systemContext
+        val surface = android.view.SurfaceControl()
+        check(!surface.isValid && surface.layerId == -1)
+        val registration = surface.addOnJankDataListener { error("No compositor data") }
+        registration.flush()
+        registration.removeAfter(0)
+        registration.release()
+        registration.release()
+        check(runCatching { android.view.SurfaceControl.Transaction.sendSurfaceFlushJankData(surface) }
+            .exceptionOrNull() is NullPointerException)
+
+        val cuj = com.android.internal.jank.Cuj.CUJ_LAUNCHER_APP_LAUNCH_FROM_ICON
+        val invalidSurface = com.android.internal.jank.InteractionJankMonitor.Configuration.Builder
+            .withSurface(cuj, context, surface, android.os.Handler(android.os.Looper.getMainLooper()))
+        check(runCatching { invalidSurface.build() }.exceptionOrNull() is IllegalArgumentException)
+        val view = View(context)
+        val invalidView = com.android.internal.jank.InteractionJankMonitor.Configuration.Builder
+            .withView(cuj, view).setTimeout(-1)
+        val invalid = runCatching { invalidView.build() }.exceptionOrNull()
+        check(invalid is IllegalArgumentException && invalid.message!!.contains("Invalid timeout"))
+        val monitor = com.android.internal.jank.InteractionJankMonitor.getInstance()
+        check(!monitor.begin(invalidSurface) && !monitor.isInstrumenting(cuj))
+        check(!monitor.end(cuj) && !monitor.cancel(cuj))
+        check(com.android.internal.jank.InteractionJankMonitor.Configuration
+            .generateSessionName("SCROLL", "list") == "J<SCROLL::list>")
+        check(com.android.internal.jank.DisplayRefreshRate.getRefreshRate(16_666_667L) ==
+            com.android.internal.jank.DisplayRefreshRate.REFRESH_RATE_60_HZ)
+        val root = ViewRootImpl(context)
+        val events = arrayListOf<String>()
+        val callback = object : ViewRootImpl.SurfaceChangedCallback {
+            override fun surfaceCreated(transaction: android.view.SurfaceControl.Transaction) { error("No compositor surface") }
+            override fun surfaceReplaced(transaction: android.view.SurfaceControl.Transaction) { error("No compositor surface") }
+            override fun surfaceDestroyed() { error("No compositor surface") }
+            override fun vriDrawStarted(isWmSync: Boolean) { check(!isWmSync); events.add("start") }
+        }
+        try {
+            root.setView(view, 32, 32)
+            root.addSurfaceChangedCallback(callback)
+            view.viewTreeObserver.addOnDrawListener { events.add("draw") }
+            root.doTraversal()
+            check(events == listOf("start", "draw"))
+            root.removeSurfaceChangedCallback(callback)
+            events.clear()
+            view.invalidate()
+            root.doTraversal()
+            check(events == listOf("draw"))
+        } finally { root.removeSurfaceChangedCallback(callback); root.destroy() }
+    }
+
+    private fun testStockSystemConfigAndRuntimeInfo() {
+        val wifi = android.content.pm.PackageManager.FEATURE_WIFI
+        val camera = android.content.pm.PackageManager.FEATURE_CAMERA
+        val wifiIndex = android.content.pm.PackageManager.maybeGetSdkFeatureIndex(wifi)
+        val cameraIndex = android.content.pm.PackageManager.maybeGetSdkFeatureIndex(camera)
+        check(wifiIndex in 0 until android.content.pm.PackageManager.SDK_FEATURE_COUNT)
+        check(cameraIndex in 0 until android.content.pm.PackageManager.SDK_FEATURE_COUNT)
+        check(wifiIndex != cameraIndex)
+        val features = android.content.pm.SystemFeaturesCache(listOf(
+            android.content.pm.FeatureInfo().apply { name = wifi; version = 4 },
+            android.content.pm.FeatureInfo().apply { name = "dev.artzig.custom"; version = 7 },
+        ))
+        check(features.maybeHasFeature(wifi, 4) == true)
+        check(features.maybeHasFeature(wifi, 5) == false)
+        check(features.maybeHasFeature(camera, 0) == false)
+        check(features.maybeHasFeature("dev.artzig.custom", 7) == null)
+        val restoredFeatures = android.content.pm.SystemFeaturesCache(features.sdkFeatureVersions.copyOf())
+        check(restoredFeatures.maybeHasFeature(wifi, 4) == true)
+        check(restoredFeatures.maybeHasFeature(camera, 0) == false)
+        check(com.android.internal.pm.RoSystemFeatures.getReadOnlySystemEnabledFeatures().isEmpty())
+        check(com.android.internal.pm.RoSystemFeatures.maybeHasFeature(
+            android.content.pm.PackageManager.FEATURE_PC, 0) == null)
+        val uname = android.system.Os.uname()
+        check(android.os.VintfRuntimeInfo.getOsName() == uname.sysname)
+        check(android.os.VintfRuntimeInfo.getNodeName() == uname.nodename)
+        check(android.os.VintfRuntimeInfo.getOsRelease() == uname.release)
+        check(android.os.VintfRuntimeInfo.getOsVersion() == uname.version)
+        check(android.os.VintfRuntimeInfo.getHardwareId() == uname.machine)
+        val version = checkNotNull(Regex("^(\\d+)\\.(\\d+)\\.(\\d+)").find(uname.release))
+        check(android.os.VintfRuntimeInfo.getKernelVersion() == version.groupValues.drop(1).joinToString(".") { it.toLong().toString() })
+        val cpuInfo = checkNotNull(android.os.VintfRuntimeInfo.getCpuInfo())
+        check(cpuInfo.contains("processor") && cpuInfo == android.os.VintfRuntimeInfo.getCpuInfo())
+        check(android.os.VintfRuntimeInfo.getBootAvbVersion() == "0.0")
+        check(android.os.VintfRuntimeInfo.getBootVbmetaAvbVersion() == "0.0")
+        val policyFile = java.io.File("/sys/fs/selinux/policyvers")
+        check(android.os.VintfRuntimeInfo.getKernelSepolicyVersion() ==
+            if (policyFile.canRead()) policyFile.readText().trim().toLong() else 0L)
+        check(android.os.incremental.IncrementalManager.getVersion() == 0)
+        val directory = java.nio.file.Files.createTempDirectory("artzig-system-config-").toFile()
+        try {
+            val library = java.io.File(directory, "shared.jar").apply { writeBytes(byteArrayOf()) }
+            java.io.File(directory, "host-test.xml").writeText("""
+                <permissions>
+                    <feature name="dev.artzig.kept" version="4" />
+                    <feature name="dev.artzig.kept" version="2" />
+                    <hidden-api-whitelisted-app package="dev.artzig.allowed" />
+                    <library name="dev.artzig.shared" file="${library.absolutePath}" />
+                    <library name="dev.artzig.missing" file="${directory.absolutePath}/missing.jar" />
+                </permissions>
+            """.trimIndent())
+            val config = com.android.server.SystemConfig(false)
+            config.readPermissions(android.util.Xml.newPullParser(), directory, -1)
+            check(config.availableFeatures["dev.artzig.kept"]?.version == 4)
+            check("dev.artzig.allowed" in config.hiddenApiWhitelistedApps)
+            check(config.sharedLibraries["dev.artzig.shared"]?.filename == library.absolutePath)
+            check(!config.sharedLibraries.containsKey("dev.artzig.missing"))
+        } finally { directory.deleteRecursively() }
+    }
+
+    private fun testStockNativeLibraryExtraction() {
+        val directory = java.nio.file.Files.createTempDirectory("artzig-native-libraries-").toFile()
+        try {
+            val bytes = ByteArray(257) { (it * 31).toByte() }
+            val apk = java.io.File(directory, "native.apk")
+            java.util.zip.ZipOutputStream(apk.outputStream()).use { zip ->
+                // Extraction checks archive entries and ABI names; it does not
+                // execute the payload or require a loadable ELF in this mode.
+                for ((name, payload) in listOf(
+                    "lib/x86_64/libfixture.so" to bytes,
+                    "lib/arm64-v8a/libfixture.so" to byteArrayOf(4, 5, 6),
+                    "assets/ignored.so" to byteArrayOf(9),
+                )) {
+                    zip.putNextEntry(java.util.zip.ZipEntry(name))
+                    zip.write(payload)
+                    zip.closeEntry()
+                }
+            }
+            val output = java.io.File(directory, "libraries")
+            com.android.internal.content.NativeLibraryHelper.createNativeLibrarySubdir(output)
+            com.android.internal.content.NativeLibraryHelper.createNativeLibrarySubdir(output)
+            com.android.internal.content.NativeLibraryHelper.Handle.create(
+                listOf(apk.absolutePath), false, true, false, false,
+            ).use { handle ->
+                check(com.android.internal.content.NativeLibraryHelper.findSupportedAbi(
+                    handle, arrayOf("mips", "x86_64", "arm64-v8a")) == 1)
+                check(com.android.internal.content.NativeLibraryHelper.findSupportedAbi(
+                    handle, arrayOf("mips")) == android.content.pm.PackageManager.INSTALL_FAILED_NO_MATCHING_ABIS)
+                check(com.android.internal.content.NativeLibraryHelper.sumNativeBinariesWithOverride(
+                    handle, "x86_64") == bytes.size.toLong())
+                check(com.android.internal.content.NativeLibraryHelper.copyNativeBinaries(
+                    handle, output, "x86_64") == android.content.pm.PackageManager.INSTALL_SUCCEEDED)
+                val library = java.io.File(output, "libfixture.so")
+                check(library.readBytes().contentEquals(bytes) && library.canExecute())
+                check(output.listFiles()!!.size == 1)
+                library.writeBytes(byteArrayOf(0))
+                check(com.android.internal.content.NativeLibraryHelper.copyNativeBinaries(
+                    handle, output, "x86_64") == android.content.pm.PackageManager.INSTALL_SUCCEEDED)
+                check(library.readBytes().contentEquals(bytes))
+            }
+            check(runCatching {
+                com.android.internal.content.NativeLibraryHelper.Handle.create(
+                    listOf(apk.absolutePath, java.io.File(directory, "missing.apk").absolutePath),
+                    false, true, false, false,
+                ).close()
+            }.exceptionOrNull() is java.io.IOException)
+            val javaApk = java.io.File(directory, "java-only.apk")
+            java.util.zip.ZipOutputStream(javaApk.outputStream()).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("assets/data"))
+                zip.write(1)
+                zip.closeEntry()
+            }
+            com.android.internal.content.NativeLibraryHelper.Handle.create(
+                listOf(javaApk.absolutePath), false, true, false, false,
+            ).use { handle ->
+                check(com.android.internal.content.NativeLibraryHelper.copyNativeBinariesForSupportedAbi(
+                    handle, output, arrayOf("x86_64"), false, false,
+                ) == android.content.pm.PackageManager.NO_NATIVE_LIBRARIES)
+            }
+            check(!android.os.incremental.IncrementalManager.isIncrementalPath(apk.absolutePath))
+            check(android.os.incremental.IncrementalManager.unsafeGetFileSignature(apk.absolutePath) == null)
+            android.os.ParcelFileDescriptor.open(apk, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use {
+                check(!android.os.incremental.IncrementalManager.isIncrementalFileFd(it.fileDescriptor))
+            }
+            if (!android.os.SELinux.isSELinuxEnabled()) {
+                check(android.os.SELinux.getContext() == null)
+                check(android.os.SELinux.restorecon(output))
+                check(android.os.SELinux.checkSELinuxAccess(null, null, null, null))
+            }
+            check(runCatching { android.os.SELinux.restorecon(null as String?) }
+                .exceptionOrNull() is NullPointerException)
+            com.android.internal.content.NativeLibraryHelper.removeNativeBinariesFromDirLI(output, true)
+            check(!output.exists())
+        } finally { directory.deleteRecursively() }
+    }
+
+    private fun testStockStrictJarVerification() {
+        val fixture = checkNotNull(permissionsFixtureApk)
+        val jar = android.util.jar.StrictJarFile(fixture, true, false)
+        val originalManifest: ByteArray
+        try {
+            val entry = checkNotNull(jar.findEntry("AndroidManifest.xml"))
+            check(jar.findEntry("missing-entry") == null)
+            check(jar.iterator().asSequence().any { it.name == entry.name })
+            check(jar.getCertificateChains(entry) == null)
+            originalManifest = jar.getInputStream(entry).use { it.readBytes() }
+            check(originalManifest.isNotEmpty())
+            val chains = checkNotNull(jar.getCertificateChains(entry))
+            check(chains.isNotEmpty() && chains[0].isNotEmpty())
+            check(chains[0][0].publicKey.algorithm == "RSA")
+        } finally { jar.close() }
+        jar.close() // AOSP close is idempotent.
+
+        val directory = java.nio.file.Files.createTempDirectory("artzig-strict-jar-").toFile()
+        try {
+            fun rewrite(name: String, tamper: Boolean): File {
+                val result = File(directory, name)
+                java.util.zip.ZipFile(fixture).use { source ->
+                    java.util.zip.ZipOutputStream(result.outputStream()).use { target ->
+                        val entries = source.entries()
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
+                            val bytes = source.getInputStream(entry).use { it.readBytes() }
+                            if (tamper && entry.name == "AndroidManifest.xml") {
+                                bytes[bytes.size / 2] = (bytes[bytes.size / 2].toInt() xor 1).toByte()
+                            }
+                            target.putNextEntry(java.util.zip.ZipEntry(entry.name))
+                            target.write(bytes)
+                            target.closeEntry()
+                        }
+                    }
+                }
+                return result
+            }
+            // Repacking preserves v1-signed entries but removes the APK signing
+            // block. The signed .SF marker must prevent fallback to v1.
+            val stripped = rewrite("stripped.apk", false)
+            val rollback = runCatching {
+                android.util.jar.StrictJarFile(stripped.absolutePath, true, true).close()
+            }.exceptionOrNull()
+            check(rollback is SecurityException && rollback.message!!.contains("Signature stripped"))
+            val legacy = android.util.jar.StrictJarFile(stripped.absolutePath, true, false)
+            try {
+                val entry = checkNotNull(legacy.findEntry("AndroidManifest.xml"))
+                check(legacy.getInputStream(entry).use { it.readBytes() }.contentEquals(originalManifest))
+                check(legacy.getCertificateChains(entry) != null)
+            } finally { legacy.close() }
+
+            val tampered = rewrite("tampered.apk", true)
+            val invalid = android.util.jar.StrictJarFile(tampered.absolutePath, true, false)
+            try {
+                check(runCatching {
+                    invalid.getInputStream(checkNotNull(invalid.findEntry("AndroidManifest.xml")))
+                        .use { it.readBytes() }
+                }.exceptionOrNull() is SecurityException)
+            } finally { invalid.close() }
+
+            val fd = android.system.Os.open(fixture, android.system.OsConstants.O_RDONLY, 0)
+            val fdJar = android.util.jar.StrictJarFile(fd, false, false)
+            try {
+                val entry = checkNotNull(fdJar.findEntry("AndroidManifest.xml"))
+                check(fdJar.getInputStream(entry).use { it.readBytes() }.contentEquals(originalManifest))
+                check(fdJar.getCertificateChains(entry) == null)
+            } finally { fdJar.close() }
+            val closed = runCatching { android.system.Os.fstat(fd) }.exceptionOrNull()
+            check(closed is android.system.ErrnoException && closed.errno == android.system.OsConstants.EBADF)
+        } finally { directory.deleteRecursively() }
+    }
+
+    private fun testStockMimeMapResources() {
+        val map = android.content.type.DefaultMimeMapFactory.create()
+        check(map.guessMimeTypeFromExtension("apk") == "application/vnd.android.package-archive")
+        check(map.guessMimeTypeFromExtension("flac") == "audio/flac")
+        check(map.guessMimeTypeFromExtension("JPG") == "image/jpeg")
+        // Android's overrides follow the Debian table (jpeg and asc there).
+        check(map.guessExtensionFromMimeType("image/jpeg") == "jpg")
+        check(map.guessExtensionFromMimeType("text/plain") == "txt")
+        check(map.guessMimeTypeFromExtension("artzig-unknown-extension") == null)
+        val tables = mapOf(
+            "debian.mime.types" to "text/plain txt text\n",
+            "android.mime.types" to "text/plain log\n",
+            "vendor.mime.types" to "?text/alternative ?txt\n?text/plain ?vendor\n",
+        )
+        val custom = android.content.type.DefaultMimeMapFactory.create { name ->
+            tables.getValue(name).byteInputStream()
+        }
+        check(custom.guessMimeTypeFromExtension("txt") == "text/plain")
+        check(custom.guessExtensionFromMimeType("text/plain") == "log")
+        check(custom.guessMimeTypeFromExtension("vendor") == "text/plain")
+        val malformed = runCatching {
+            android.content.type.DefaultMimeMapFactory.create { "text/plain  txt\n".byteInputStream() }
+        }.exceptionOrNull()
+        check(malformed is RuntimeException && malformed.cause is IllegalArgumentException)
+    }
+
+    private fun testWindowRootRegistry() {
+        val context = android.app.ActivityThread.currentActivityThread().systemContext
+        val global = android.view.WindowManagerGlobal.getInstance()
+        val before = global.windowViews
+        val changes = ArrayList<List<View>>()
+        val listener = java.util.function.Consumer<List<View>> { changes.add(ArrayList(it)) }
+        global.addWindowViewsListener(java.util.concurrent.Executor { it.run() }, listener)
+        global.addWindowViewsListener(java.util.concurrent.Executor { it.run() }, listener)
+        check(changes.size == 1 && changes.single() == before)
+        val token = android.os.Binder()
+        val parent = View(context)
+        parent.layoutParams = android.view.WindowManager.LayoutParams().apply {
+            this.token = token
+            title = "Registry parent"
+        }
+        val parentRoot = HostedWindowRoots.attach(parent, 100, 100)
+        HostedWindowStack.setActivityRoot(parentRoot)
+        val manager = WindowManagerImpl(context)
+        var childRoot: ViewRootImpl? = null
+        try {
+            val child = View(context)
+            child.layoutParams = android.view.WindowManager.LayoutParams().apply {
+                this.token = parent.windowToken
+                type = android.view.WindowManager.LayoutParams.TYPE_APPLICATION_PANEL
+                title = "Registry child"
+            }
+            manager.addView(child, child.layoutParams)
+            childRoot = checkNotNull(child.viewRootImpl).also { it.setSize(100, 100) }
+            val overlay = checkNotNull(HostedWindowStack.topFocusable())
+            check(overlay.view === child && overlay.root === childRoot)
+            check(HostedWindowStack.entries().none { it.view === parent })
+            overlay.frame.set(4, 5, 64, 65)
+            val overlayUpdate = WindowManager.LayoutParams().apply {
+                copyFrom(child.layoutParams as WindowManager.LayoutParams)
+                flags = flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                width = 60
+            }
+            manager.updateViewLayout(child, overlayUpdate)
+            check(HostedWindowStack.topFocusable()?.view !== child)
+            check(HostedWindowStack.topTouchable() === overlay)
+            check(overlay.lp === overlayUpdate && overlay.frame == Rect(4, 5, 64, 65))
+            overlayUpdate.flags = overlayUpdate.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            manager.updateViewLayout(child, overlayUpdate)
+            check(HostedWindowStack.topFocusable() === overlay)
+            check(changes.last() == before + listOf(parent, child))
+            check(global.getWindowView(parent.windowToken) === parent)
+            check(global.getRootViews(token) == listOf(parentRoot, childRoot))
+            check(global.getRootViews(android.os.Binder()).isEmpty())
+            val name = "Registry parent/android.view.ViewRootImpl@${Integer.toHexString(parentRoot.hashCode())}"
+            check(name in global.viewRootNames && global.getRootView(name) === parent)
+            check(global.getRootView("unknown") == null)
+            global.windowViews.clear()
+            check(global.windowViews.contains(parent))
+            val oldAttributes = parentRoot.mWindowAttributes
+            oldAttributes.systemUiVisibility = 0x100
+            oldAttributes.subtreeSystemUiVisibility = 0x200
+            oldAttributes.insetsFlags.appearance = 8
+            oldAttributes.insetsFlags.behavior = 2
+            oldAttributes.surfaceInsets.set(1, 2, 3, 4)
+            oldAttributes.hasManualSurfaceInsets = true
+            oldAttributes.softInputMode = android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            val changed = android.view.WindowManager.LayoutParams().apply {
+                copyFrom(parent.layoutParams as android.view.WindowManager.LayoutParams)
+                width = android.view.WindowManager.LayoutParams.MATCH_PARENT
+                height = android.view.WindowManager.LayoutParams.MATCH_PARENT
+                privateFlags = privateFlags or android.view.WindowManager.LayoutParams.PRIVATE_FLAG_EDGE_TO_EDGE_ENFORCED
+                setFitInsetsTypes(0)
+                setFitInsetsSides(0)
+                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+                preservePreviousSurfaceInsets = true
+            }
+            global.updateViewLayout(parent, changed)
+            check(parent.layoutParams === changed)
+            check(oldAttributes.systemUiVisibility == 0x100 && oldAttributes.subtreeSystemUiVisibility == 0x200)
+            check(oldAttributes.insetsFlags.appearance == 8 && oldAttributes.insetsFlags.behavior == 2)
+            check(oldAttributes.surfaceInsets == Rect(1, 2, 3, 4) && oldAttributes.hasManualSurfaceInsets)
+            check(oldAttributes.softInputMode and android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST ==
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            check(oldAttributes.layoutInDisplayCutoutMode == android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS)
+            check(changed.layoutInDisplayCutoutMode == android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER)
+            val sibling = View(context).apply {
+                layoutParams = android.view.WindowManager.LayoutParams().apply { this.token = Binder() }
+            }
+            val siblingRoot = HostedWindowRoots.attach(sibling, 100, 100)
+            try {
+                parentRoot.doTraversal()
+                childRoot.doTraversal()
+                siblingRoot.doTraversal()
+                check(parentRoot.`getRenderNode$artzig`() != null)
+                check(childRoot.`getRenderNode$artzig`() != null)
+                global.setStoppedState(token, true)
+                check(parentRoot.`getRenderNode$artzig`() == null)
+                check(childRoot.`getRenderNode$artzig`() == null)
+                check(siblingRoot.`getRenderNode$artzig`() != null)
+                check(parent.isAttachedToWindow && child.isAttachedToWindow)
+                global.setStoppedState(token, false)
+                parentRoot.doTraversal()
+                childRoot.doTraversal()
+                check(parentRoot.`getRenderNode$artzig`() != null)
+                check(childRoot.`getRenderNode$artzig`() != null)
+            } finally { siblingRoot.destroy() }
+            val closed = ArrayList<String>()
+            val leakedViews = (1..2).map { index ->
+                object : View(context) {
+                    override fun onDetachedFromWindow() {
+                        closed.add("detach-$index")
+                        super.onDetachedFromWindow()
+                    }
+                }.apply {
+                    layoutParams = android.view.WindowManager.LayoutParams().apply { this.token = token }
+                    HostedWindowRoots.attach(this, 20, 20).doTraversal()
+                }
+            }
+            global.closeAllExceptView(token, parent, null, null)
+            check(closed.isEmpty()) { "closeAll must defer destruction while iterating roots" }
+            check(leakedViews.all { global.windowViews.contains(it) && it.parent == null })
+            runHostedFrame()
+            check(closed == listOf("detach-1", "detach-2")) { "deferred removals: $closed" }
+            check(leakedViews.none { global.windowViews.contains(it) || it.isAttachedToWindow })
+            check(global.windowViews.contains(parent) && global.windowViews.contains(child))
+            manager.removeViewImmediate(child)
+            check(HostedWindowStack.entries().none { it.view === child })
+            check(changes.last() == before + parent)
+            check(!global.windowViews.contains(child))
+            parentRoot.destroy()
+            check(changes.last() == before && global.windowViews == before)
+        } finally {
+            childRoot?.destroy()
+            parentRoot.destroy()
+            global.removeWindowViewsListener(listener)
+        }
+    }
+
+    private fun testWindowConfigurationCallbacks() {
+        val base = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 100, 100, 120, 0)
+        val configurationContext = base.createConfigurationContext(Configuration(base.resources.configuration))
+        val context = object : ContextWrapper(configurationContext) {
+            override fun getApplicationInfo(): ApplicationInfo = ApplicationInfo(super.getApplicationInfo()).apply {
+                flags = flags or ApplicationInfo.FLAG_SUPPORTS_RTL
+                targetSdkVersion = android.os.Build.VERSION_CODES.CUR_DEVELOPMENT
+            }
+        }
+        val resources = context.resources
+        val original = Configuration(resources.configuration)
+        val initial = Configuration(original).apply { seq = 100 }
+        resources.updateConfiguration(initial, resources.displayMetrics)
+        val events = ArrayList<String>()
+        val view = object : View(context) {
+            override fun onConfigurationChanged(config: Configuration) {
+                events.add("view:${config.seq}")
+                super.onConfigurationChanged(config)
+            }
+        }
+        view.layoutDirection = View.LAYOUT_DIRECTION_INHERIT
+        val root = HostedWindowRoots.attach(view, 100, 100)
+        val first = ViewRootImpl.ConfigChangedCallback { events.add("first:${it.seq}") }
+        val second = ViewRootImpl.ConfigChangedCallback { events.add("second:${it.seq}") }
+        ViewRootImpl.addConfigCallback(first)
+        ViewRootImpl.addConfigCallback(second)
+        root.setActivityConfigCallback(object : ViewRootImpl.ActivityConfigCallback {
+            override fun onConfigurationChanged(overrideConfig: Configuration, displayId: Int) {
+                check(displayId == android.view.Display.INVALID_DISPLAY)
+                events.add("activity")
+                root.updateConfiguration(displayId)
+            }
+        })
+        try {
+            root.doTraversal()
+            for ((sequence, locale, direction) in listOf(
+                Triple(200, java.util.Locale.forLanguageTag("ar"), View.LAYOUT_DIRECTION_RTL),
+                Triple(300, java.util.Locale.US, View.LAYOUT_DIRECTION_LTR))) {
+                val updated = Configuration(initial).apply {
+                    seq = sequence
+                    setLocales(android.os.LocaleList(locale))
+                }
+                resources.updateConfiguration(updated, resources.displayMetrics)
+                events.clear()
+                android.view.WindowManagerGlobal.getInstance().reportNewConfiguration(updated)
+                updated.seq = 999 // Stock global registry must queue its own copy.
+                check(events.isEmpty())
+                runHostedFrame()
+                check(events == listOf("second:$sequence", "first:$sequence", "activity", "view:$sequence")) {
+                    "configuration callback order: $events"
+                }
+                check(view.layoutDirection == direction) {
+                    "layout direction: actual=${view.layoutDirection}, expected=$direction, raw=${view.rawLayoutDirection}"
+                }
+            }
+            events.clear()
+            root.requestUpdateConfiguration(initial)
+            runHostedFrame()
+            check(events == listOf("second:300", "first:300", "activity")) { events.toString() }
+        } finally {
+            ViewRootImpl.removeConfigCallback(first)
+            ViewRootImpl.removeConfigCallback(second)
+            root.destroy()
+            resources.updateConfiguration(original, resources.displayMetrics)
+        }
+    }
+
+    private fun testStockCompanionModelsAndLocalSockets() {
+        fun device(address: String, type: Int): android.bluetooth.BluetoothDevice {
+            val parcel = android.os.Parcel.obtain()
+            try {
+                parcel.writeString(address)
+                parcel.writeInt(type)
+                parcel.setDataPosition(0)
+                return android.bluetooth.BluetoothDevice.CREATOR.createFromParcel(parcel)
+            } finally { parcel.recycle() }
+        }
+        val bluetoothDevice = device("00:11:22:33:AA:BB", android.bluetooth.BluetoothDevice.ADDRESS_TYPE_RANDOM)
+        check(bluetoothDevice.addressType == android.bluetooth.BluetoothDevice.ADDRESS_TYPE_RANDOM)
+        check(bluetoothDevice.anonymizedAddress == "XX:XX:XX:XX:AA:BB")
+        check(runCatching { device("00:11:22:33:aa:bb", 0) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { device("00:11:22:33:AA:BB", 9) }.exceptionOrNull() is IllegalArgumentException)
+        val request = android.companion.AssociationRequest.Builder()
+            .setSelfManaged(true).setDisplayName("Hosted companion").build()
+        val parcel = android.os.Parcel.obtain()
+        try {
+            request.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            val copy = android.companion.AssociationRequest.CREATOR.createFromParcel(parcel)
+            check(copy.isSelfManaged && copy.displayName == "Hosted companion" && copy.deviceFilters.isEmpty())
+        } finally { parcel.recycle() }
+        check(runCatching { android.companion.AssociationRequest.Builder().setSelfManaged(true).build() }
+            .exceptionOrNull() is IllegalStateException)
+        val name = "artzig-local-socket-${android.os.Process.myPid()}-${System.nanoTime()}"
+        android.net.LocalServerSocket(name).use { server ->
+            android.net.LocalSocket().use { client ->
+                client.connect(android.net.LocalSocketAddress(name))
+                server.accept().use { peer ->
+                    check(peer.peerCredentials.pid == android.os.Process.myPid())
+                    check(peer.peerCredentials.uid == android.system.Os.getuid())
+                    client.outputStream.write(byteArrayOf(3, 4, 5))
+                    val bytes = ByteArray(3)
+                    java.io.DataInputStream(peer.inputStream).readFully(bytes)
+                    check(bytes.contentEquals(byteArrayOf(3, 4, 5)))
+                    val pipe = android.os.ParcelFileDescriptor.createPipe()
+                    try {
+                        client.setFileDescriptorsForSend(arrayOf(pipe[0].fileDescriptor))
+                        client.outputStream.write(7)
+                        client.setFileDescriptorsForSend(null)
+                        check(peer.inputStream.read() == 7)
+                        val received = peer.ancillaryFileDescriptors
+                        check(received != null && received.size == 1)
+                        try {
+                            android.system.Os.write(pipe[1].fileDescriptor, byteArrayOf(42), 0, 1)
+                            val data = ByteArray(1)
+                            check(android.system.Os.read(received[0], data, 0, 1) == 1 && data[0] == 42.toByte())
+                        } finally { android.system.Os.close(received[0]) }
+                        check(peer.ancillaryFileDescriptors == null)
+                    } finally { pipe.forEach { it.close() } }
+                    client.shutdownOutput()
+                    check(peer.inputStream.read() == -1)
+                }
+            }
+        }
+    }
+
+    private fun testStockMemoryIntArray() {
+        check(android.util.MemoryIntArray.getMaxSize() == 1024)
+        check(runCatching { android.util.MemoryIntArray(1025) }.exceptionOrNull() is IllegalArgumentException)
+        for (size in intArrayOf(0, -1)) {
+            check(runCatching { android.util.MemoryIntArray(size) }.exceptionOrNull() is java.io.IOException)
+        }
+        val writer = android.util.MemoryIntArray(3)
+        var reader: android.util.MemoryIntArray? = null
+        try {
+            check(writer.isWritable && writer.size() == 3)
+            check(writer.describeContents() == Parcelable.CONTENTS_FILE_DESCRIPTOR)
+            check((0..2).all { writer.get(it) == 0 })
+            writer.set(0, Int.MIN_VALUE)
+            writer.set(2, Int.MAX_VALUE)
+            for (index in intArrayOf(-1, 3)) {
+                check(runCatching { writer.get(index) }.exceptionOrNull() is IndexOutOfBoundsException)
+                check(runCatching { writer.set(index, 1) }.exceptionOrNull() is IndexOutOfBoundsException)
+            }
+            val parcel = Parcel.obtain()
+            try {
+                writer.writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                // Inspect the exported capability, without touching private JNI
+                // state: even a recipient bypassing Java cannot acquire writes.
+                parcel.readParcelable(null, ParcelFileDescriptor::class.java)!!.use { exported ->
+                    val fd = exported.fileDescriptor
+                    check(android.system.Os.fstat(fd).st_size == 12L)
+                    check(runCatching { android.system.Os.ftruncate(fd, 4) }.exceptionOrNull()
+                        is android.system.ErrnoException)
+                    check(runCatching { android.system.Os.write(fd, byteArrayOf(1), 0, 1) }.exceptionOrNull()
+                        is android.system.ErrnoException)
+                    val mapping = runCatching {
+                        android.system.Os.mmap(0, 12, android.system.OsConstants.PROT_READ or
+                            android.system.OsConstants.PROT_WRITE, android.system.OsConstants.MAP_SHARED, fd, 0)
+                    }
+                    mapping.getOrNull()?.let { android.system.Os.munmap(it, 12) }
+                    check(mapping.exceptionOrNull() is android.system.ErrnoException)
+                }
+                parcel.setDataPosition(0)
+                reader = android.util.MemoryIntArray.CREATOR.createFromParcel(parcel)
+            } finally {
+                parcel.recycle()
+            }
+            val recipient = checkNotNull(reader)
+            check(!recipient.isWritable && recipient.size() == 3)
+            check(recipient.get(0) == Int.MIN_VALUE && recipient.get(2) == Int.MAX_VALUE)
+            check(runCatching { recipient.set(1, 1) }.exceptionOrNull() is UnsupportedOperationException)
+            writer.set(1, 123456)
+            check(recipient.get(1) == 123456)
+            writer.close()
+            check(writer.isClosed)
+            check(recipient.get(1) == 123456)
+            check(runCatching { writer.get(0) }.exceptionOrNull() is IllegalStateException)
+            check(runCatching { writer.size() }.exceptionOrNull() is IllegalStateException)
+            check(runCatching { writer.isWritable }.exceptionOrNull() is IllegalStateException)
+        } finally {
+            reader?.close()
+            writer.close()
+        }
+        check(reader!!.isClosed)
+        val invalidParcel = Parcel.obtain()
+        try {
+            invalidParcel.writeParcelable(null, 0)
+            invalidParcel.setDataPosition(0)
+            check(runCatching { android.util.MemoryIntArray.CREATOR.createFromParcel(invalidParcel) }
+                .exceptionOrNull() is IllegalArgumentException)
+        } finally {
+            invalidParcel.recycle()
+        }
+    }
+
+    private fun testStockApplicationSharedMemory() {
+        val writer = com.android.internal.os.ApplicationSharedMemory.create()
+        var reader: com.android.internal.os.ApplicationSharedMemory? = null
+        try {
+            check(writer.isMapped && writer.isMutable && writer.systemNonceBlock != 0L)
+            check(writer.readSystemFeaturesCache().isEmpty())
+            check(runCatching { writer.latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis }
+                .exceptionOrNull() is java.time.DateTimeException)
+            check(runCatching { writer.writeSystemFeaturesCache(IntArray(513)) }.exceptionOrNull()
+                is IllegalArgumentException)
+            val descriptor = writer.fileDescriptor
+            val size = android.system.Os.fstat(descriptor).st_size
+            check(runCatching { android.system.Os.ftruncate(descriptor, size + 1) }.exceptionOrNull()
+                is android.system.ErrnoException)
+            reader = com.android.internal.os.ApplicationSharedMemory.fromFileDescriptor(writer.readOnlyFileDescriptor, false)
+            check(reader.isMapped && !reader.isMutable)
+            check(runCatching { android.system.Os.write(reader.fileDescriptor, byteArrayOf(1), 0, 1) }.exceptionOrNull()
+                is android.system.ErrnoException)
+            // Protection applies to all future writes, including the original
+            // descriptor; the already-established mutable mapping remains live.
+            check(runCatching { android.system.Os.write(descriptor, byteArrayOf(1), 0, 1) }.exceptionOrNull()
+                is android.system.ErrnoException)
+            val sealedDuplicate = writer.readOnlyFileDescriptor
+            check(runCatching {
+                com.android.internal.os.ApplicationSharedMemory.fromFileDescriptor(sealedDuplicate, true)
+            }.exceptionOrNull() is RuntimeException)
+            check(runCatching { android.system.Os.fstat(sealedDuplicate) }.exceptionOrNull()
+                is android.system.ErrnoException) // AOSP nativeMap closes the transferred FD on failure.
+            writer.writeSystemFeaturesCache(intArrayOf(3, 8, -1))
+            check(reader.readSystemFeaturesCache().contentEquals(intArrayOf(3, 8, -1)))
+            val features = reader.readSystemFeaturesCache()
+            features[0] = 99
+            check(reader.readSystemFeaturesCache()[0] == 3)
+            check(runCatching { writer.writeSystemFeaturesCache(intArrayOf(4)) }.exceptionOrNull() is IllegalStateException)
+            check(runCatching { reader.writeSystemFeaturesCache(intArrayOf(4)) }.exceptionOrNull() is IllegalStateException)
+            writer.setLatestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis(123456)
+            check(reader.latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis == 123456L)
+            writer.closeFileDescriptor()
+            check(!descriptor.valid())
+            check(runCatching { writer.readOnlyFileDescriptor }.exceptionOrNull() is IllegalStateException)
+            writer.setLatestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis(654321)
+            check(reader.latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis == 654321L)
+            writer.clearLatestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis()
+            check(runCatching { reader.latestNetworkTimeUnixEpochMillisAtZeroElapsedRealtimeMillis }
+                .exceptionOrNull() is java.time.DateTimeException)
+            writer.close()
+            check(!writer.isMapped && !writer.isMutable && writer.systemNonceBlock == 0L)
+            check(reader.readSystemFeaturesCache().contentEquals(intArrayOf(3, 8, -1)))
+        } finally {
+            reader?.close()
+            writer.close()
+        }
+    }
+
+    private fun testStockJankAndWifiModels() {
+        val states = android.app.jank.StateTracker(android.view.Choreographer.getInstance())
+        val category = android.app.jank.AppJankStats.WIDGET_CATEGORY_SCROLL
+        val state = android.app.jank.AppJankStats.WIDGET_STATE_SCROLLING
+        states.putState(category, "list", state)
+        states.putState(category, "list", state)
+        val tracked = arrayListOf<android.app.jank.StateTracker.StateData>()
+        states.retrieveAllStates(tracked)
+        check(tracked.size == 1)
+        val first = tracked.single().mVsyncIdStart
+        val processor = android.app.jank.JankDataProcessor(states)
+        processor.processJankData(listOf(
+            android.view.SurfaceControl.JankData(first, android.view.SurfaceControl.JankData.JANK_APPLICATION,
+                16_666_667, 16_666_667, 20_000_000),
+            android.view.SurfaceControl.JankData(first + 1, android.view.SurfaceControl.JankData.JANK_COMPOSER,
+                16_666_667, 16_666_667, 10_000_000),
+        ), "Activity", 10001)
+        val stat = checkNotNull(processor.pendingJankStats[states.getStateKey(category, "list", state)])
+        check(stat.totalFrames == 2L && stat.jankyFrames == 1L)
+        check(stat.uid == 10001 && stat.activityName == "Activity")
+        check(stat.frameOverrunBuckets.sum() == 2)
+        // The stock AttachedSurfaceControl fallback reports no compositor jank
+        // subscription. App-state aggregation does not fabricate frame samples.
+        val root = android.view.ViewRootImpl(android.app.ActivityThread.currentActivityThread().systemContext)
+        check(root.choreographer === android.view.Choreographer.getInstance())
+        check(root.registerOnJankDataListener(java.util.concurrent.Executor { it.run() }) { error("No compositor subscription") }
+            === android.view.SurfaceControl.OnJankDataListenerRegistration.NONE)
+
+        val configuration = android.net.wifi.SoftApConfiguration.Builder()
+            .setSsid("fixture-ap").setBand(android.net.wifi.SoftApConfiguration.BAND_2GHZ)
+            .setPassphrase("password123", android.net.wifi.SoftApConfiguration.SECURITY_TYPE_WPA2_PSK)
+            .build()
+        val parcel = Parcel.obtain()
+        try {
+            configuration.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            val copy = android.net.wifi.SoftApConfiguration.CREATOR.createFromParcel(parcel)
+            check(copy == configuration && copy.passphrase == "password123")
+            check(parcel.dataAvail() == 0)
+        } finally { parcel.recycle() }
+        check(runCatching { android.net.wifi.SoftApConfiguration.Builder().setSsid("") }.exceptionOrNull()
+            is IllegalArgumentException)
+        check(android.os.PowerExemptionManager.getExemptionReasonForStatsd(android.os.PowerExemptionManager.REASON_SYSTEM_UID)
+            == android.os.AppBackgroundRestrictionsInfo.REASON_SYSTEM_UID)
+    }
+
+    private fun testStockNetworkScoring() {
+        val key = android.net.NetworkKey(android.net.WifiKey("\"network\"", "02:00:00:00:00:01"))
+        val curve = android.net.RssiCurve(-100, 10, byteArrayOf(-10, 0, 10), 10)
+        check(curve.lookupScore(-120).toInt() == -10)
+        check(curve.lookupScore(-95, true).toInt() == 0)
+        check(curve.lookupScore(-50).toInt() == 10)
+        val attributes = Bundle().apply {
+            putInt(android.net.ScoredNetwork.ATTRIBUTES_KEY_RANKING_SCORE_OFFSET, 7)
+        }
+        val scored = android.net.ScoredNetwork(key, curve, true, attributes)
+        check(scored.calculateRankingScore(-80) == 2567)
+        val parcel = Parcel.obtain()
+        try {
+            scored.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            val copy = android.net.ScoredNetwork.CREATOR.createFromParcel(parcel)
+            check(copy == scored && copy.meteredHint)
+            check(parcel.dataAvail() == 0)
+        } finally { parcel.recycle() }
+        check(runCatching { android.net.WifiKey("unquoted", "invalid") }.exceptionOrNull()
+            is IllegalArgumentException)
+
+        // Exercise the real service with a local permission-granted Context. APK
+        // callers' denied Binder requests are covered separately by system-test.
+        val context = object : ContextWrapper(android.app.ActivityThread.currentActivityThread().systemContext) {
+            override fun checkCallingOrSelfPermission(permission: String) = PackageManager.PERMISSION_GRANTED
+            override fun enforceCallingOrSelfPermission(permission: String, message: String?) {}
+        }
+        val legacyClass = com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java
+        val ownsLegacy = com.android.server.LocalServices.getService(legacyClass) == null
+        if (ownsLegacy) com.android.server.LocalServices.addService(legacyClass,
+            dev.artzig.system.HostedLegacyPermissionManagerInternal(HostedPackageManagerService()))
+        try {
+            val service = com.android.server.NetworkScoreService(context)
+            var invalidations = 0
+            val cache = object : android.net.INetworkScoreCache.Stub() {
+                override fun updateScores(scores: MutableList<android.net.ScoredNetwork>?) {
+                    error("No active scorer may update the cache")
+                }
+                override fun clearScores() { invalidations++ }
+            }
+            service.registerNetworkScoreCache(android.net.NetworkKey.TYPE_WIFI, cache, 0)
+            service.registerNetworkScoreCache(android.net.NetworkKey.TYPE_WIFI, cache, 0)
+            check(service.clearScores() && invalidations == 1)
+            service.disableScoring()
+            check(invalidations == 1) // AOSP disableScoring currently only enforces permission.
+            service.unregisterNetworkScoreCache(android.net.NetworkKey.TYPE_WIFI, cache)
+            check(service.clearScores() && invalidations == 1)
+            check(!service.isCallerActiveScorer(android.os.Process.myUid()))
+            check(!service.requestScores(arrayOf(key)))
+            check(runCatching { service.updateScores(arrayOf(scored)) }.exceptionOrNull() is SecurityException)
+            check(!service.setActiveScorer("dev.artzig.nonexistent.scorer"))
+            check(service.allValidScorers.isEmpty())
+        } finally {
+            if (ownsLegacy) com.android.server.LocalServices.removeServiceForTest(legacyClass)
+        }
+    }
+
+    private fun testStockActivityManagerAndBackup() {
+        val context: Context = android.app.ActivityThread.currentActivityThread().systemContext
+        val manager = context.getSystemService(android.app.ActivityManager::class.java)
+        check(android.app.ActivityManager.getCurrentUser() == 0)
+        check(!android.app.ActivityManager.isUserAMonkey())
+        // LocalServices belongs to system_server; exercise the generated stock adapter
+        // with a separate in-memory service so these contracts do not depend on IPC identity.
+        val packages = HostedPackageManagerService()
+        val local = dev.artzig.system.HostedActivityManagerInternalService(
+            HostedActivityManagerService(), dev.artzig.system.HostedPermissions(packages),
+        )
+        val internal = Class.forName("dev.artzig.system.HostedActivityManagerInternal")
+            .getConstructor(dev.artzig.system.HostedActivityManagerInternalService::class.java)
+            .newInstance(local) as android.app.ActivityManagerInternal
+        check(!internal.isSystemReady)
+        local.markSystemReady()
+        check(internal.isSystemReady)
+        check(internal.getUidProcessState(12345) == ActivityManager.PROCESS_STATE_NONEXISTENT)
+        check(internal.handleIncomingUser(1, 10001, 0, false, 2, "test", null) == 0)
+        check(internal.handleIncomingUser(1, 0, UserHandle.USER_ALL, true, 2, "test", null) == UserHandle.USER_ALL)
+        check(runCatching { internal.handleIncomingUser(1, 0, UserHandle.USER_ALL, false, 2, "test", null) }
+            .exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { internal.handleIncomingUser(1, 10001, 1, false, 2, "test", null) }
+            .exceptionOrNull() is SecurityException)
+        check(internal.handleIncomingUser(1, UserHandle.getUid(1, 10001),
+            UserHandle.USER_CURRENT_OR_SELF, false, 2, "test", null) == 1)
+
+        val memory = android.app.ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(memory)
+        check(memory.totalMem > 0 && memory.availMem > 0 && memory.advertisedMem == memory.totalMem)
+        check(memory.threshold == 0L && !memory.lowMemory)
+        val process = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(process)
+        check(process.pid == android.os.Process.myPid())
+        check(process.uid == android.os.Process.myUid())
+        check(process.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND)
+        check(manager.getHistoricalProcessExitReasons(null, Int.MAX_VALUE, 1).isEmpty())
+        val task = android.app.ActivityManager.TaskDescription.Builder()
+            .setLabel("Stock task").setPrimaryColor(android.graphics.Color.BLUE)
+            .setBackgroundColor(android.graphics.Color.RED).build()
+        val parcel = android.os.Parcel.obtain()
+        try {
+            task.writeToParcel(parcel, 0)
+            memory.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            val taskCopy = android.app.ActivityManager.TaskDescription.CREATOR.createFromParcel(parcel)
+            check(taskCopy.label == "Stock task" && taskCopy.primaryColor == android.graphics.Color.BLUE)
+            check(taskCopy.backgroundColor == android.graphics.Color.RED)
+            val memoryCopy = android.app.ActivityManager.MemoryInfo.CREATOR.createFromParcel(parcel)
+            check(memoryCopy.totalMem == memory.totalMem && memoryCopy.advertisedMem == memory.advertisedMem)
+            check(parcel.dataAvail() == 0)
+        } finally { parcel.recycle() }
+
+        val root = java.nio.file.Files.createTempDirectory("azk-stock-backup").toFile()
+        try {
+            val file = java.io.File(root, "entities")
+            java.io.FileOutputStream(file).use { stream ->
+                val output = android.app.backup.BackupDataOutput(stream.fd, 4096, 3)
+                check(output.quota == 4096L && output.transportFlags == 3)
+                output.setKeyPrefix("scope")
+                output.writeEntityHeader("key", 3)
+                output.writeEntityData(byteArrayOf(1, 2, 3), 3)
+                output.writeEntityHeader("delete", -1)
+                output.setKeyPrefix("")
+                output.writeEntityHeader("skip", 5)
+                output.writeEntityData(byteArrayOf(4, 5, 6, 7, 8), 5)
+                check(stream.fd.valid())
+            }
+            // Independently inspect the pinned BackupData wire header, not just a round-trip.
+            val raw = java.nio.ByteBuffer.wrap(file.readBytes()).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            check(raw.int == 0x61746144 && raw.int == 9 && raw.int == 3)
+            val key = ByteArray(10); raw.get(key)
+            check(key.contentEquals("scope:key\u0000".toByteArray()))
+            check(raw.get() == 0xbc.toByte() && raw.get() == 0xbc.toByte())
+            check(raw.get() == 1.toByte() && raw.get() == 2.toByte() && raw.get() == 3.toByte())
+            java.io.FileInputStream(file).use { stream ->
+                val input = android.app.backup.BackupDataInput(stream.fd)
+                check(runCatching { input.key }.exceptionOrNull() is IllegalStateException)
+                check(input.readNextHeader() && input.key == "scope:key" && input.dataSize == 3)
+                val bytes = ByteArray(7) { 99 }
+                check(input.readEntityData(bytes, 2, 2) == 2)
+                check(input.readEntityData(bytes, 4, 3) == 1)
+                check(input.readEntityData(bytes, 0, 1) == 0)
+                check(bytes.contentEquals(byteArrayOf(99, 99, 1, 2, 3, 99, 99)))
+                check(input.readNextHeader() && input.key == "scope:delete" && input.dataSize == -1)
+                check(input.readNextHeader() && input.key == "skip" && input.dataSize == 5)
+                input.skipEntityData()
+                check(!input.readNextHeader() && stream.fd.valid())
+            }
+            val payload = java.io.File(root, "payload.txt").apply { writeText("stock backup payload") }
+            val measured = android.app.backup.FullBackupDataOutput(4096L)
+            check(android.app.backup.FullBackup.backupToTar("example", "f", null,
+                root.path, payload.path, measured) == 0)
+            check(measured.size == 1024L)
+            val archive = java.io.File(root, "archive")
+            android.os.ParcelFileDescriptor.open(archive, android.os.ParcelFileDescriptor.MODE_CREATE or
+                android.os.ParcelFileDescriptor.MODE_TRUNCATE or android.os.ParcelFileDescriptor.MODE_READ_WRITE).use { fd ->
+                val output = android.app.backup.FullBackupDataOutput(fd, 4096L)
+                check(android.app.backup.FullBackup.backupToTar("example", "f", null,
+                    root.path, payload.path, output) == 0)
+                check(output.size == measured.size && fd.fileDescriptor.valid())
+            }
+            // FullBackup emits big-endian transport chunk lengths around real tar blocks.
+            val chunks = java.nio.ByteBuffer.wrap(archive.readBytes())
+            val tar = java.io.ByteArrayOutputStream()
+            while (chunks.hasRemaining()) {
+                val chunk = ByteArray(chunks.int)
+                chunks.get(chunk); tar.write(chunk)
+            }
+            val bytes = tar.toByteArray()
+            check(bytes.size == 1024)
+            check(String(bytes, 0, 100).trimEnd('\u0000') == "apps/example/f/payload.txt")
+            check(String(bytes, 257, 5) == "ustar")
+            check(String(bytes, 512, payload.length().toInt()) == payload.readText())
+        } finally { root.deleteRecursively() }
+    }
+
+    private fun testStockUsbDevice() {
+        // Exercise the public descriptor/parcel contract, including the serial
+        // reader's permission boundary. No physical USB device is opened.
+        val endpoint = UsbEndpoint(0x83, UsbConstants.USB_ENDPOINT_XFER_BULK, 512, 4)
+        val first = UsbInterface(1, 0, "bulk", 0xff, 2, 3).apply {
+            setEndpoints(arrayOf(endpoint))
+        }
+        val alternate = UsbInterface(1, 1, "alternate", 0xff, 2, 3).apply {
+            setEndpoints(emptyArray())
+        }
+        val configurations = arrayOf(
+            UsbConfiguration(1, "self powered", 0x60, 50).apply { setInterfaces(arrayOf(first)) },
+            UsbConfiguration(2, "alternate config", 0, 25).apply { setInterfaces(arrayOf(alternate)) })
+        var allowSerial = true
+        val callingPackages = ArrayList<String?>()
+        val reader = object : IUsbSerialReader.Stub() {
+            override fun getSerial(packageName: String?): String {
+                callingPackages.add(packageName)
+                if (!allowSerial) throw SecurityException("USB serial permission denied")
+                return "fixture-serial"
+            }
+        }
+        fun build(version: String = "1.0"): UsbDevice = UsbDevice.Builder(
+            "/dev/bus/usb/002/017", 0x1234, 0x5678, 0xef, 2, 1,
+            "fixture vendor", "fixture device", version, configurations,
+            "builder-only serial", true, false, true, false, true).build(reader)
+        val device = build()
+        check(device.deviceId == 2017)
+        check(UsbDevice.getDeviceName(2017) == device.deviceName)
+        check(UsbDevice.getDeviceId("not a usbfs path") == 0)
+        check(device.configurationCount == 2 && device.interfaceCount == 2)
+        check(device.getInterface(0) === first && device.getInterface(1) === alternate)
+        check(device.serialNumber == "fixture-serial")
+        val parcel = Parcel.obtain()
+        val restored = try {
+            device.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            UsbDevice.CREATOR.createFromParcel(parcel).also { check(parcel.dataAvail() == 0) }
+        } finally { parcel.recycle() }
+        check(restored == device && restored.hashCode() == device.hashCode())
+        check(restored.vendorId == 0x1234 && restored.productId == 0x5678)
+        check(restored.deviceClass == 0xef && restored.deviceSubclass == 2 && restored.deviceProtocol == 1)
+        check(restored.manufacturerName == "fixture vendor" && restored.productName == "fixture device")
+        check(restored.version == "1.0")
+        check(restored.hasAudioPlayback && !restored.hasAudioCapture && restored.hasMidi)
+        check(!restored.hasVideoPlayback && restored.hasVideoCapture)
+        val config = restored.getConfiguration(0)
+        check(config.isSelfPowered && config.isRemoteWakeup && config.maxPower == 100)
+        val restoredEndpoint = restored.getInterface(0).getEndpoint(0)
+        check(restoredEndpoint.direction == UsbConstants.USB_DIR_IN && restoredEndpoint.endpointNumber == 3)
+        check(restoredEndpoint.type == UsbConstants.USB_ENDPOINT_XFER_BULK)
+        check(restoredEndpoint.maxPacketSize == 512 && restoredEndpoint.interval == 4)
+        check(restored.getInterface(1).alternateSetting == 1)
+        check(restored.serialNumber == "fixture-serial")
+        allowSerial = false
+        check(runCatching { restored.serialNumber }.exceptionOrNull() is SecurityException)
+        check(callingPackages.size == 3 && callingPackages.all { it == ActivityThread.currentPackageName() })
+        check(runCatching { build("") }.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    private fun testStockVerity() {
+        // Verbatim external fsverity-tool vector from AOSP VerityUtilsTest,
+        // packaged into the fixture from coretests/res/raw and coretests/certs.
+        val cert: ByteArray
+        val signature: ByteArray
+        java.util.zip.ZipFile(checkNotNull(permissionsFixtureApk)).use { apk ->
+            cert = apk.getInputStream(checkNotNull(apk.getEntry("res/raw/fsverity_certificate.der"))).use { it.readBytes() }
+            signature = apk.getInputStream(checkNotNull(apk.getEntry("res/raw/fsverity_sig"))).use { it.readBytes() }
+        }
+        val digest = java.util.HexFormat.of().parseHex(
+            "3d248ca542a24fc62d1c43b916eae5016878e2533c88238480b26128a1f1af95")
+        fun verify(sig: ByteArray, hash: ByteArray): Boolean =
+            com.android.internal.security.VerityUtils.verifyPkcs7DetachedSignature(sig, hash,
+                ByteArrayInputStream(cert))
+        check(verify(signature, digest))
+        check(!verify(signature, digest.copyOf().apply { this[0] = (this[0].toInt() xor 1).toByte() }))
+        check(!verify(signature.copyOf().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }, digest))
+        check(!verify(signature, digest.copyOf(31)))
+        check(!verify(signature, digest.copyOf(33)))
+        val cms = CMSSignedData(signature)
+        val certificateStore = CollectionStore(listOf(X509CertificateHolder(cert)))
+        val embedded = CMSSignedData.replaceCertificatesAndCRLs(
+            cms, certificateStore, null, null).encoded
+        check(!verify(embedded, digest)) { "fs-verity signatures must use the caller's certificate" }
+
+        val directory = java.nio.file.Files.createTempDirectory("artzig-verity-").toFile()
+        try {
+            val file = File(directory, "data").apply { writeText("fs-verity") }
+            check(!com.android.internal.security.VerityUtils.hasFsverity(file.path))
+            check(com.android.internal.security.VerityUtils.getFsverityDigest(file.path) == null)
+            val enabled = runCatching { com.android.internal.security.VerityUtils.setUpFsverity(file.path) }
+            if (enabled.isSuccess) {
+                check(com.android.internal.security.VerityUtils.hasFsverity(file.path))
+                check(com.android.internal.security.VerityUtils.getFsverityDigest(file.path)?.size == 32)
+            } else {
+                check(enabled.exceptionOrNull() is java.io.IOException)
+                check(!com.android.internal.security.VerityUtils.hasFsverity(file.path))
+            }
+            check(file.readText() == "fs-verity")
+            check(runCatching {
+                com.android.internal.security.VerityUtils.setUpFsverity(File(directory, "absent").path)
+            }.exceptionOrNull() is java.io.IOException)
+            check(!com.android.internal.security.VerityUtils.hasFsverity(File(directory, "absent").path))
+        } finally { directory.deleteRecursively() }
+    }
+
+    private fun testStockSurfaceSynchronization() {
+        val events = ArrayList<String>()
+        val immediate = java.util.concurrent.Executor { it.run() }
+        val parent = android.window.SurfaceSyncGroup("module-parent") {
+            check(it != null); events.add("parent-transaction")
+        }.apply { toggleTimeout(false) }
+        val child = android.window.SurfaceSyncGroup("module-child") {
+            check(it == null); events.add("child-transaction")
+        }.apply { toggleTimeout(false) }
+        parent.addSyncCompleteCallback(immediate) { events.add("parent-complete") }
+        child.addSyncCompleteCallback(immediate) { events.add("child-complete") }
+        child.setAddedToSyncListener { events.add("child-added") }
+        check(parent.add(child) { events.add("before-add") })
+        check(events == listOf("before-add", "child-added"))
+        parent.markSyncReady()
+        check(events == listOf("before-add", "child-added"))
+        var lateAddRan = false
+        check(!parent.add(child) { lateAddRan = true } && !lateAddRan)
+        check(parent.createTransactionReadyCallback(false) == null)
+        child.markSyncReady()
+        check(events == listOf("before-add", "child-added", "child-transaction", "child-complete",
+            "parent-transaction", "parent-complete")) { events.toString() }
+        parent.addSyncCompleteCallback(immediate) { events.add("late-complete") }
+        parent.markSyncReady()
+        check(events.last() == "late-complete" && events.size == 7)
+
+        val service: android.view.IWindowManager = dev.artzig.system.HostedWindowManagerService(
+            com.android.server.wm.HostedSurfaceSyncGroups())
+        val token = Binder()
+        val first = android.window.AddToSurfaceSyncGroupResult()
+        val second = android.window.AddToSurfaceSyncGroupResult()
+        var complete = 0
+        val listener = object : android.window.ISurfaceSyncGroupCompletedListener.Stub() {
+            override fun onSurfaceSyncGroupComplete() { complete++ }
+        }
+        check(service.addToSurfaceSyncGroup(token, false, listener, first))
+        check(service.addToSurfaceSyncGroup(token, false, null, second))
+        check(first.mParentSyncGroup.asBinder() == second.mParentSyncGroup.asBinder())
+        service.markSurfaceSyncGroupReady(token)
+        check(complete == 0)
+        first.mTransactionReadyCallback.onTransactionReady(null)
+        check(complete == 0)
+        second.mTransactionReadyCallback.onTransactionReady(null)
+        check(complete == 1)
+        check(runCatching { service.markSurfaceSyncGroupReady(token) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { service.markSurfaceSyncGroupReady(Binder()) }.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    private fun testStockPixelCopy() {
+        val dest = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
+        val invalid = android.view.Surface()
+        // The existing hosted placeholder is Java-valid, with no Android native window.
+        val texture = android.graphics.SurfaceTexture(false)
+        val source = android.view.Surface(texture)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        try {
+            var delivered = false
+            check(runCatching {
+                android.view.PixelCopy.request(invalid, dest, { delivered = true }, handler)
+            }.exceptionOrNull() is IllegalArgumentException)
+            check(!delivered)
+            check(runCatching {
+                android.view.PixelCopy.request(source, Rect(), dest, { delivered = true }, handler)
+            }.exceptionOrNull() is IllegalArgumentException)
+            val immutable = checkNotNull(dest.copy(android.graphics.Bitmap.Config.ARGB_8888, false))
+            try {
+                check(runCatching {
+                    android.view.PixelCopy.request(source, immutable, {}, handler)
+                }.exceptionOrNull() is IllegalArgumentException)
+            } finally { immutable.recycle() }
+            val work = ArrayList<Runnable>()
+            val executor = java.util.concurrent.Executor { work.add(it) }
+            val builder = android.view.PixelCopy.Request.Builder.ofSurface(source).setDestinationBitmap(dest)
+            val request = builder.build()
+            check(request.destinationBitmap === dest)
+            check(runCatching { builder.build() }.exceptionOrNull() is IllegalStateException)
+            android.view.PixelCopy.request(request, executor) { result ->
+                check(result.status == android.view.PixelCopy.ERROR_SOURCE_INVALID)
+                check(runCatching { result.bitmap }.exceptionOrNull() is IllegalStateException)
+                delivered = true
+            }
+            check(!delivered && work.size == 1)
+            work.removeAt(0).run()
+            check(delivered)
+        } finally {
+            source.release(); texture.release(); invalid.release(); dest.recycle()
+        }
+    }
+
+    private fun testStockOverlayProperties() {
+        val defaults = android.hardware.OverlayProperties.getDefault()
+        fun checkDefault(value: android.hardware.OverlayProperties) {
+            check(value.isMixedColorSpacesSupported)
+            check(value.isCombinationSupported(android.hardware.DataSpace.DATASPACE_SRGB,
+                android.hardware.HardwareBuffer.RGBA_8888))
+            check(!value.isCombinationSupported(android.hardware.DataSpace.DATASPACE_DISPLAY_P3,
+                android.hardware.HardwareBuffer.RGBA_8888))
+            check(!value.isCombinationSupported(android.hardware.DataSpace.DATASPACE_SRGB,
+                android.hardware.HardwareBuffer.RGB_565))
+            check(value.lutProperties == null && value.describeContents() == 0)
+        }
+        check(defaults === android.hardware.OverlayProperties.getDefault())
+        checkDefault(defaults)
+        val parcel = Parcel.obtain()
+        try {
+            defaults.writeToParcel(parcel, 0)
+            check(parcel.dataSize() > 4 && !parcel.hasFileDescriptors())
+            parcel.setDataPosition(0)
+            checkDefault(android.hardware.OverlayProperties.CREATOR.createFromParcel(parcel))
+            check(parcel.dataAvail() == 0)
+            parcel.setDataSize(0)
+            parcel.setDataPosition(0)
+            parcel.writeInt(0)
+            parcel.setDataPosition(0)
+            check(android.hardware.OverlayProperties.CREATOR.createFromParcel(parcel) == null)
+            // A truncated native parcel creates an inert object, following the stock reader.
+            parcel.setDataPosition(0)
+            parcel.writeInt(1)
+            parcel.setDataPosition(0)
+            val malformed = android.hardware.OverlayProperties.CREATOR.createFromParcel(parcel)
+            check(!malformed.isMixedColorSpacesSupported && malformed.lutProperties == null)
+            check(!malformed.isCombinationSupported(android.hardware.DataSpace.DATASPACE_SRGB, 1))
+            parcel.setDataSize(0)
+            parcel.setDataPosition(0)
+            // Pinned gui AIDL wire format: one 1D LUT with two sampling keys.
+            // LutProperties' pinned Java constructor rejects every dimension;
+            // JNI must propagate that exception safely instead of passing a native pointer as int[].
+            for (word in intArrayOf(1, 44, 0, 1, 1, 1, 24, 1, 17, 2, 0, 2)) parcel.writeInt(word)
+            parcel.setDataPosition(0)
+            val withLut = android.hardware.OverlayProperties.CREATOR.createFromParcel(parcel)
+            check(withLut.isMixedColorSpacesSupported && parcel.dataAvail() == 0)
+            check(runCatching { withLut.lutProperties }.exceptionOrNull()?.let {
+                it is IllegalArgumentException && it.message == "The dimension is either 1 or 3!"
+            } == true)
+        } finally { parcel.recycle() }
+    }
+
+    private fun testStockGraphicBuffers() {
+        fun roundTrip(value: TaskSnapshot, creator: Parcelable.Creator<TaskSnapshot>): TaskSnapshot {
+            val parcel = Parcel.obtain()
+            return try {
+                value.writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                creator.createFromParcel(parcel)
+            } finally { parcel.recycle() }
+        }
+        val usage = android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or
+            android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT or
+            android.hardware.HardwareBuffer.USAGE_CPU_READ_OFTEN or
+            android.hardware.HardwareBuffer.USAGE_CPU_WRITE_OFTEN
+        check(runCatching { android.hardware.HardwareBuffer.isSupported(0, 8, 1, 1, usage) }
+            .exceptionOrNull() is IllegalArgumentException)
+        check(!android.hardware.HardwareBuffer.isSupported(8, 8, 1, 2, usage))
+        if (!android.hardware.HardwareBuffer.isSupported(8, 8, 1, 1, usage)) {
+            check(System.getenv("AZK_TEST_REQUIRE_EGL") != "1") { "GBM RGBA buffer is unavailable" }
+            return
+        }
+        val graphic = checkNotNull(android.graphics.GraphicBuffer.create(8, 8, 1, usage.toInt()))
+        var reader: android.hardware.HardwareBuffer? = null
+        try {
+            check(graphic.width == 8 && graphic.height == 8 && graphic.format == 1 && graphic.usage == usage.toInt())
+            val dirty = Rect(2, 2, 6, 6)
+            val canvas = checkNotNull(graphic.lockCanvas(dirty))
+            check(canvas.width == 8 && canvas.height == 8 && canvas.clipBounds == dirty)
+            canvas.drawColor(android.graphics.Color.RED)
+            graphic.unlockCanvasAndPost(canvas)
+            android.hardware.HardwareBuffer.createFromGraphicBuffer(graphic).use { owner ->
+                check(owner.id != 0L && owner.width == 8 && owner.height == 8 && owner.usage == usage)
+                check(owner.describeContents() == Parcelable.CONTENTS_FILE_DESCRIPTOR)
+                val snapshot = stockTaskSnapshot(owner)
+                check(snapshot.hardwareBuffer === owner)
+                val snapshotCopy = roundTrip(snapshot, TaskSnapshot.CREATOR)
+                check(snapshotCopy.id == 42L && snapshotCopy.captureTime > 1L)
+                check(snapshotCopy.topActivityComponent == ComponentName("org.example", "org.example.Main"))
+                check(snapshotCopy.taskSize == Point(800, 480) && snapshotCopy.contentInsets == Rect(1, 2, 3, 4))
+                check(snapshotCopy.letterboxInsets == Rect(0, 5, 0, 5))
+                check(snapshotCopy.rotation == android.view.Surface.ROTATION_90 && snapshotCopy.isRealSnapshot)
+                check(snapshotCopy.hardwareBuffer.id == owner.id)
+                val localListener = object : TaskStackListener() {}.apply { setIsLocal() }
+                localListener.onTaskSnapshotChanged(601, snapshot)
+                check(!owner.isClosed)
+                object : TaskStackListener() {}.onTaskSnapshotChanged(601, snapshotCopy)
+                check(snapshotCopy.hardwareBuffer.isClosed) { "stock remote task listener must release its snapshot buffer" }
+                check(roundTrip(snapshotCopy, TaskSnapshot.CREATOR).hardwareBuffer == null)
+                val legacySnapshot = snapshot.snapshot
+                try { check(legacySnapshot.width == 8 && legacySnapshot.height == 8) }
+                finally { legacySnapshot.destroy() }
+                val parcel = Parcel.obtain()
+                try {
+                    owner.writeToParcel(parcel, 0)
+                    check(parcel.hasFileDescriptors())
+                    parcel.setDataPosition(0)
+                    reader = android.hardware.HardwareBuffer.CREATOR.createFromParcel(parcel)
+                    check(reader!!.id == owner.id && reader!!.width == owner.width && reader!!.usage == owner.usage)
+                } finally { parcel.recycle() }
+                val converted = android.graphics.GraphicBuffer.createFromHardwareBuffer(owner)
+                try {
+                    check(converted.width == graphic.width && converted.usage == graphic.usage)
+                    val copyParcel = Parcel.obtain()
+                    try {
+                        converted.writeToParcel(copyParcel, 0)
+                        copyParcel.setDataPosition(0)
+                        val copy = checkNotNull(android.graphics.GraphicBuffer.CREATOR.createFromParcel(copyParcel))
+                        try {
+                            check(copy.width == 8 && copy.height == 8 && copy.format == 1)
+                        } finally { copy.destroy() }
+                    } finally { copyParcel.recycle() }
+                } finally { converted.destroy() }
+            }
+            graphic.destroy()
+            check(graphic.isDestroyed && graphic.lockCanvas() == null)
+            check(reader!!.width == 8) { "parcel recipient must retain its imported allocation" }
+        } finally {
+            reader?.close()
+            graphic.destroy()
+        }
+        check(reader!!.isClosed)
+        check(runCatching { reader!!.width }.exceptionOrNull() is IllegalStateException)
+        val malformed = Parcel.obtain()
+        try {
+            malformed.writeInt(0)
+            malformed.writeInt(0)
+            malformed.setDataPosition(0)
+            check(runCatching { android.hardware.HardwareBuffer.CREATOR.createFromParcel(malformed) }
+                .exceptionOrNull() is android.os.BadParcelableException)
+        } finally { malformed.recycle() }
+    }
+
+    private fun stockTaskSnapshot(buffer: android.hardware.HardwareBuffer?): TaskSnapshot =
+        TaskSnapshot(42, 1, ComponentName("org.example", "org.example.Main"), buffer,
+            android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB),
+            Configuration.ORIENTATION_LANDSCAPE, android.view.Surface.ROTATION_90, Point(800, 480),
+            Rect(1, 2, 3, 4), Rect(0, 5, 0, 5), false, true,
+            android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM, 0, true, false,
+            Configuration.UI_MODE_TYPE_NORMAL)
+
+    private fun testStockEgl() {
+        val egl = android.opengl.EGL14::class.java
+        check(egl.getDeclaredMethod("eglGetDisplay", Long::class.javaPrimitiveType) != null)
+        check(android.opengl.EGL14.EGL_NO_DISPLAY.nativeHandle == 0L)
+        check(android.opengl.EGL14.EGL_NO_CONTEXT.nativeHandle == 0L)
+        check(android.opengl.EGL14.eglGetCurrentContext() === android.opengl.EGL14.EGL_NO_CONTEXT)
+        check(runCatching { android.opengl.EGL14.eglGetDisplay(1) }.exceptionOrNull()
+            is UnsupportedOperationException)
+        check(!android.opengl.EGL14.eglInitialize(android.opengl.EGL14.EGL_NO_DISPLAY, null, 0, null, 0))
+        check(android.opengl.EGL14.eglGetError() == android.opengl.EGL14.EGL_BAD_DISPLAY)
+        check(android.opengl.EGL14.eglGetError() == android.opengl.EGL14.EGL_SUCCESS)
+        val display = android.opengl.EGL14.eglGetDisplay(android.opengl.EGL14.EGL_DEFAULT_DISPLAY)
+        check(display == android.opengl.EGL14.eglGetDisplay(0L))
+        check(runCatching {
+            android.opengl.EGL14.eglChooseConfig(display, intArrayOf(), 0, null, 0, 0, IntArray(1), 0)
+        }.exceptionOrNull()?.message == "attrib_list must contain EGL_NONE!")
+        check(runCatching {
+            android.opengl.EGL14.eglInitialize(display, IntArray(1), -1, null, 0)
+        }.exceptionOrNull()?.message == "majorOffset < 0")
+        val major = intArrayOf(-1, -1, -1)
+        val minor = intArrayOf(-2, -2, -2)
+        val initialized = android.opengl.EGL14.eglInitialize(display, major, 1, minor, 1)
+        if (!initialized) {
+            check(System.getenv("AZK_TEST_REQUIRE_EGL") != "1") { "configured EGL driver did not initialize" }
+            println("stock EGL: no configured driver; argument and failure contracts checked")
+            return
+        }
+        check(major[0] == -1 && major[1] >= 1 && major[2] == -1)
+        check(minor[0] == -2 && minor[2] == -2)
+        var context = android.opengl.EGL14.EGL_NO_CONTEXT
+        var surface = android.opengl.EGL14.EGL_NO_SURFACE
+        try {
+            check(!android.opengl.EGL14.eglQueryString(display, android.opengl.EGL14.EGL_VERSION).isNullOrBlank())
+            val number = intArrayOf(-4, -4, -4)
+            val first = arrayOfNulls<android.opengl.EGLConfig>(1)
+            check(android.opengl.EGL14.eglGetConfigs(display, first, 0, 1, number, 1))
+            val original = checkNotNull(first[0])
+            check(number[0] == -4 && number[1] == 1 && number[2] == -4)
+            val configs = arrayOf(original, original, original)
+            val attributes = intArrayOf(android.opengl.EGL14.EGL_RENDERABLE_TYPE,
+                android.opengl.EGL14.EGL_OPENGL_ES2_BIT, android.opengl.EGL14.EGL_SURFACE_TYPE,
+                android.opengl.EGL14.EGL_PBUFFER_BIT, android.opengl.EGL14.EGL_NONE)
+            check(android.opengl.EGL14.eglChooseConfig(display, attributes, 0, configs, 1, 1, number, 1))
+            check(configs[0] === original && configs[2] === original && number[1] == 1)
+            val types = IntArray(1)
+            check(android.opengl.EGL14.eglGetConfigAttrib(display, configs[1], android.opengl.EGL14.EGL_SURFACE_TYPE, types, 0))
+            if (types[0] and android.opengl.EGL14.EGL_WINDOW_BIT != 0) {
+                check(types[0] and android.opengl.EGL14.EGL_PBUFFER_BIT != 0)
+                // Android clients commonly leave surface type at its window
+                // default and then create an offscreen pbuffer with that config.
+                check(android.opengl.EGL14.eglChooseConfig(display,
+                    intArrayOf(android.opengl.EGL14.EGL_RENDERABLE_TYPE, android.opengl.EGL14.EGL_OPENGL_ES2_BIT,
+                        android.opengl.EGL14.EGL_NONE), 0, configs, 1, 1, number, 1))
+                check(number[1] == 1)
+            }
+            check(android.opengl.EGL14.eglBindAPI(android.opengl.EGL14.EGL_OPENGL_ES_API))
+            check(runCatching {
+                android.opengl.EGL14.eglCreateContext(display, configs[1], android.opengl.EGL14.EGL_NO_CONTEXT, null, 0)
+            }.exceptionOrNull()?.message == "attrib_list == null")
+            context = android.opengl.EGL14.eglCreateContext(display, configs[1], android.opengl.EGL14.EGL_NO_CONTEXT,
+                intArrayOf(android.opengl.EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, android.opengl.EGL14.EGL_NONE), 0)
+            check(context != android.opengl.EGL14.EGL_NO_CONTEXT && context.nativeHandle != 0L)
+            surface = android.opengl.EGL14.eglCreatePbufferSurface(display, configs[1],
+                intArrayOf(-8, android.opengl.EGL14.EGL_WIDTH, 16, android.opengl.EGL14.EGL_HEIGHT, 8,
+                    android.opengl.EGL14.EGL_NONE), 1)
+            check(surface != android.opengl.EGL14.EGL_NO_SURFACE)
+            check(android.opengl.EGL14.eglMakeCurrent(display, surface, surface, context))
+            check(android.opengl.EGL14.eglGetCurrentContext() == context)
+            check(android.opengl.EGL14.eglGetCurrentContext().hashCode() == context.hashCode())
+            check(android.opengl.EGL14.eglGetCurrentDisplay() == display)
+            check(android.opengl.EGL14.eglGetCurrentSurface(android.opengl.EGL14.EGL_DRAW) == surface)
+            testStockGlesContext()
+            val value = intArrayOf(-5, -5, -5)
+            check(android.opengl.EGL14.eglQuerySurface(display, surface, android.opengl.EGL14.EGL_WIDTH, value, 1))
+            check(value.contentEquals(intArrayOf(-5, 16, -5)))
+            check(android.opengl.EGL14.eglQueryContext(display, context, android.opengl.EGL14.EGL_CONTEXT_CLIENT_VERSION, value, 1))
+            check(value[1] >= 2)
+            check(!android.opengl.EGL14.eglQuerySurface(display, surface, -99, value, 1))
+            check(android.opengl.EGL14.eglGetError() == android.opengl.EGL14.EGL_BAD_ATTRIBUTE)
+            check(android.opengl.EGL14.eglGetError() == android.opengl.EGL14.EGL_SUCCESS)
+            if (context.nativeHandle ushr 32 != 0L) {
+                check(runCatching { context.handle }.exceptionOrNull() is UnsupportedOperationException)
+            }
+            check(android.opengl.EGL14.eglReleaseThread())
+            check(android.opengl.EGL14.eglGetCurrentContext() === android.opengl.EGL14.EGL_NO_CONTEXT)
+            println("stock EGL: real context and 16x8 pbuffer contracts passed")
+        } finally {
+            android.opengl.EGL14.eglMakeCurrent(display, android.opengl.EGL14.EGL_NO_SURFACE,
+                android.opengl.EGL14.EGL_NO_SURFACE, android.opengl.EGL14.EGL_NO_CONTEXT)
+            if (surface != android.opengl.EGL14.EGL_NO_SURFACE) android.opengl.EGL14.eglDestroySurface(display, surface)
+            if (context != android.opengl.EGL14.EGL_NO_CONTEXT) android.opengl.EGL14.eglDestroyContext(display, context)
+            android.opengl.EGL14.eglTerminate(display)
+            android.opengl.EGL14.eglReleaseThread()
+        }
+    }
+
+    private fun testStockGlesContext() {
+        val gl = android.opengl.GLES20::class.java
+        check(gl.getDeclaredMethod("glGetError").let { java.lang.reflect.Modifier.isNative(it.modifiers) })
+        for (name in listOf("android.opengl.GLES30", "android.opengl.GLES31", "android.opengl.GLES32")) {
+            Class.forName(name)
+        }
+        check(!android.opengl.GLES20.glGetString(android.opengl.GLES20.GL_VERSION).isNullOrEmpty())
+        check(android.opengl.GLES20.glGetError() == android.opengl.GLES20.GL_NO_ERROR)
+        android.opengl.GLES20.glViewport(0, 0, 16, 8)
+        val viewport = java.nio.IntBuffer.wrap(intArrayOf(-1, -1, -1, -1, -1, -1))
+        viewport.position(1).limit(5)
+        android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_VIEWPORT, viewport)
+        check(viewport.array().contentEquals(intArrayOf(-1, 0, 0, 16, 8, -1)))
+        check(viewport.position() == 1 && viewport.limit() == 5)
+        check(runCatching {
+            android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_VIEWPORT, java.nio.IntBuffer.allocate(3))
+        }.exceptionOrNull() is IllegalArgumentException)
+        android.opengl.GLES20.glClearColor(1f, 0f, 0f, 1f)
+        android.opengl.GLES20.glClear(android.opengl.GLES20.GL_COLOR_BUFFER_BIT)
+        val pixel = java.nio.ByteBuffer.allocateDirect(8)
+        pixel.put(0, 17).position(4)
+        android.opengl.GLES20.glReadPixels(0, 0, 1, 1, android.opengl.GLES20.GL_RGBA,
+            android.opengl.GLES20.GL_UNSIGNED_BYTE, pixel)
+        check(pixel.position() == 4 && pixel.get(0).toInt() == 17)
+        check((pixel.get(4).toInt() and 255) == 255 && pixel.get(5).toInt() == 0 && pixel.get(6).toInt() == 0)
+        check(android.opengl.GLES20.glGetError() == android.opengl.GLES20.GL_NO_ERROR)
+
+        val textures = intArrayOf(-7, -7, -7)
+        android.opengl.GLES20.glGenTextures(1, textures, 1)
+        check(textures[0] == -7 && textures[1] > 0 && textures[2] == -7)
+        try {
+            check(!android.opengl.GLES20.glIsTexture(textures[1]))
+            android.opengl.GLES20.glBindTexture(android.opengl.GLES20.GL_TEXTURE_2D, textures[1])
+            check(android.opengl.GLES20.glIsTexture(textures[1]))
+            android.opengl.GLES20.glBindTexture(-1, textures[1])
+            check(android.opengl.GLES20.glGetError() == android.opengl.GLES20.GL_INVALID_ENUM)
+            check(android.opengl.GLES20.glGetError() == android.opengl.GLES20.GL_NO_ERROR)
+        } finally {
+            android.opengl.GLES20.glDeleteTextures(1, textures, 1)
+        }
+        check(!android.opengl.GLES20.glIsTexture(textures[1]))
+        check(runCatching { android.opengl.GLES20.glGenTextures(1, IntArray(0), 0) }
+            .exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { android.opengl.GLES20.glGenTextures(2, java.nio.IntBuffer.allocate(1)) }
+            .exceptionOrNull() is IllegalArgumentException)
+
+        val shader = android.opengl.GLES20.glCreateShader(android.opengl.GLES20.GL_VERTEX_SHADER)
+        check(shader != 0)
+        try {
+            android.opengl.GLES20.glShaderSource(shader, "attribute vec4 position; void main() { gl_Position = position; }")
+            android.opengl.GLES20.glCompileShader(shader)
+            val status = java.nio.IntBuffer.wrap(intArrayOf(-3, -3, -3))
+            status.position(1)
+            android.opengl.GLES20.glGetShaderiv(shader, android.opengl.GLES20.GL_COMPILE_STATUS, status)
+            check(status.get(0) == -3 && status.get(1) == android.opengl.GLES20.GL_TRUE && status.get(2) == -3) {
+                android.opengl.GLES20.glGetShaderInfoLog(shader)
+            }
+            check(status.position() == 1)
+            check(runCatching {
+                android.opengl.GLES20.glGetShaderiv(shader, android.opengl.GLES20.GL_COMPILE_STATUS,
+                    java.nio.IntBuffer.allocate(0))
+            }.exceptionOrNull() is IllegalArgumentException)
+        } finally { android.opengl.GLES20.glDeleteShader(shader) }
+        check(android.opengl.GLES20.glGetError() == android.opengl.GLES20.GL_NO_ERROR)
+        println("stock GLES: pixel readback, texture lifetime, shader compilation, buffer offsets, and GL errors passed")
+    }
+
+    private fun testStockDebugMemory() {
+        val pid = android.os.Process.myPid()
+        val info = android.os.Debug.MemoryInfo()
+        check(android.os.Debug.getMemoryInfo(pid, info))
+        check(info.totalPss > 0 && info.totalRss > 0)
+        val parcel = Parcel.obtain()
+        try {
+            info.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            val restored = android.os.Debug.MemoryInfo.CREATOR.createFromParcel(parcel)
+            check(restored.totalPss == info.totalPss && restored.totalRss == info.totalRss)
+            check(restored.memoryStats == info.memoryStats)
+        } finally {
+            parcel.recycle()
+        }
+        val outputs = LongArray(5) { -7 }
+        val memtrack = LongArray(5) { -9 }
+        check(android.os.Debug.getPss(pid, outputs, memtrack) > 0)
+        check(outputs[0] > 0 && outputs[2] >= outputs[0])
+        check(outputs[3] == -7L && outputs[4] == -7L)
+        check(memtrack.take(4).all { it == 0L } && memtrack[4] == -9L)
+        check(android.os.Debug.getRss(pid, memtrack) > 0 && memtrack[4] == -9L)
+        outputs.fill(-7)
+        memtrack.fill(-9)
+        check(android.os.Debug.getPss(-1, outputs, memtrack) == 0L)
+        check(android.os.Debug.getRss(-1, memtrack) == 0L)
+        check(outputs.all { it == -7L } && memtrack.all { it == -9L })
+        val oldPss = info.totalPss
+        check(!android.os.Debug.getMemoryInfo(-1, info) && info.totalPss == oldPss)
+        val system = LongArray(android.os.Debug.MEMINFO_COUNT + 1) { -1 }
+        android.os.Debug.getMemInfo(system)
+        check(system[android.os.Debug.MEMINFO_TOTAL] > system[android.os.Debug.MEMINFO_FREE])
+        check(system.last() == -1L)
+        check(runCatching { android.os.Debug.getMemInfo(LongArray(1)) }.exceptionOrNull()
+            ?.message == "outLen < MEMINFO_COUNT")
+        check(android.os.Debug.getNativeHeapSize() > 0)
+        check(android.os.Debug.getNativeHeapAllocatedSize() > 0)
+        check(android.os.Debug.getNativeHeapFreeSize() >= 0)
+        check(android.os.Debug.threadCpuTimeNanos() > 0)
+        val report = java.io.File.createTempFile("allocator-report", ".xml")
+        try {
+            java.io.FileOutputStream(report).use { stream ->
+                android.os.Debug.dumpNativeMallocInfo(stream.fd)
+                check(stream.fd.valid())
+                stream.write("\n<!-- caller still owns descriptor -->".toByteArray())
+            }
+            val contents = report.readText()
+            check(contents.contains("<malloc version="))
+            check(contents.endsWith("<!-- caller still owns descriptor -->"))
+        } finally {
+            report.delete()
+        }
+        val binder = Binder()
+        val binderParcel = Parcel.obtain()
+        val localCount = android.os.Debug.getBinderLocalObjectCount()
+        try {
+            binderParcel.writeStrongBinder(binder)
+            check(android.os.Debug.getBinderLocalObjectCount() == localCount + 1)
+            binderParcel.writeStrongBinder(binder)
+            check(android.os.Debug.getBinderLocalObjectCount() == localCount + 1)
+        } finally {
+            binderParcel.recycle()
+        }
+        check(android.os.Debug.getBinderLocalObjectCount() == localCount)
+        check(android.os.Debug.getBinderProxyObjectCount() >= 0)
+        check(android.os.Debug.getBinderDeathObjectCount() >= 0)
+    }
+
+    private fun testStockInstrumentation() {
+        val context = HostContexts.systemContext(
+            checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0,
+        )
+        val instrumentation = Instrumentation()
+        instrumentation.basicInit(context, context, null)
+        val token = Binder()
+        val application = android.app.Application()
+        val intent = Intent().setComponent(ComponentName("android", InstrumentedActivity::class.java.name))
+        val info = ActivityInfo().apply {
+            packageName = "android"
+            name = InstrumentedActivity::class.java.name
+            applicationInfo = context.applicationInfo
+        }
+        val activity = instrumentation.newActivity(
+            InstrumentedActivity::class.java, context, token, application, intent, info,
+            "instrumented", null, null, null,
+        ) as InstrumentedActivity
+        check(activity.application === application && activity.activityToken === token)
+        check(activity.intent === intent && activity.title == "instrumented")
+        val monitor = instrumentation.addMonitor(InstrumentedActivity::class.java.name, null, false)
+        val state = Bundle().apply { putString("restored", "bundle") }
+        val persistent = PersistableBundle().apply { putString("restored", "persistent") }
+        instrumentation.callActivityOnCreate(activity, state, persistent)
+        check(monitor.lastActivity === activity)
+        instrumentation.callActivityOnStart(activity)
+        instrumentation.callActivityOnRestoreInstanceState(activity, state, persistent)
+        instrumentation.callActivityOnPostCreate(activity, state, persistent)
+        instrumentation.callActivityOnResume(activity)
+        check(activity.isResumed)
+        instrumentation.callActivityOnUserLeaving(activity)
+        val saved = Bundle()
+        val savedPersistent = PersistableBundle()
+        instrumentation.callActivityOnSaveInstanceState(activity, saved, savedPersistent)
+        check(saved.getString("saved") == "bundle")
+        check(savedPersistent.getString("saved") == "persistent")
+        instrumentation.callActivityOnPause(activity)
+        check(!activity.isResumed)
+        instrumentation.callActivityOnStop(activity)
+        instrumentation.callActivityOnDestroy(activity)
+        check(activity.events == listOf("create:persistent", "create", "start", "restore:persistent",
+            "restore", "post-create", "resume", "interaction", "leave", "save:persistent", "save",
+            "pause", "stop", "destroy")) { activity.events.toString() }
+        instrumentation.removeMonitor(monitor)
+        val result = Instrumentation.ActivityResult(Activity.RESULT_OK, Intent("result"))
+        val blocked = instrumentation.addMonitor(InstrumentedActivity::class.java.name, result, true)
+        val thread = ActivityThread.currentActivityThread().applicationThread
+        check(instrumentation.execStartActivity(context, thread, token, activity, intent, 7, null) === result)
+        check(instrumentation.execStartActivity(context, thread, token, activity, intent, -1, null) == null)
+        check(blocked.hits == 2)
+        check(intent.getParcelableExtra(Intent.EXTRA_REFERRER, Uri::class.java) == Uri.parse("android-app://fixture"))
+        instrumentation.removeMonitor(blocked)
+    }
+
+    class InstrumentedActivity : Activity() {
+        override fun onProvideReferrer(): Uri = Uri.parse("android-app://fixture")
+        val events = mutableListOf<String>()
+        override fun onCreate(state: Bundle?, persistentState: PersistableBundle?) {
+            check(persistentState?.getString("restored") == "persistent")
+            events += "create:persistent"
+            super.onCreate(state, persistentState)
+        }
+        override fun onCreate(state: Bundle?) { events += "create"; super.onCreate(state) }
+        override fun onStart() { events += "start"; super.onStart() }
+        override fun onRestoreInstanceState(state: Bundle?, persistentState: PersistableBundle?) {
+            check(persistentState?.getString("restored") == "persistent")
+            events += "restore:persistent"
+            super.onRestoreInstanceState(state, persistentState)
+        }
+        override fun onRestoreInstanceState(state: Bundle) {
+            check(state.getString("restored") == "bundle")
+            events += "restore"
+            super.onRestoreInstanceState(state)
+        }
+        override fun onPostCreate(state: Bundle?) { events += "post-create"; super.onPostCreate(state) }
+        override fun onResume() { events += "resume"; super.onResume() }
+        override fun onUserInteraction() { events += "interaction" }
+        override fun onUserLeaveHint() { events += "leave" }
+        override fun onSaveInstanceState(state: Bundle, persistentState: PersistableBundle) {
+            events += "save:persistent"
+            persistentState.putString("saved", "persistent")
+            super.onSaveInstanceState(state, persistentState)
+        }
+        override fun onSaveInstanceState(state: Bundle) {
+            events += "save"
+            state.putString("saved", "bundle")
+            super.onSaveInstanceState(state)
+        }
+        override fun onPause() { events += "pause"; super.onPause() }
+        override fun onStop() { events += "stop"; super.onStop() }
+        override fun onDestroy() { events += "destroy"; super.onDestroy() }
     }
 
     private fun testPackageNames() {
@@ -352,8 +2041,7 @@ internal object FrameworkModuleSmoke {
         check(rootCopy.visible && rootCopy.position == 65)
         assertTaskInfoCopy(rootCopy, 6)
 
-        // The hosted TaskSnapshot deliberately has no SurfaceFlinger HardwareBuffer API.
-        object : TaskStackListener() {}.onTaskSnapshotChanged(601, TaskSnapshot())
+        object : TaskStackListener() {}.onTaskSnapshotChanged(601, stockTaskSnapshot(null))
     }
 
     private fun populateTaskInfo(task: TaskInfo, marker: Int) {
@@ -370,7 +2058,9 @@ internal object FrameworkModuleSmoke {
         task.realActivity = ComponentName("org.example", "Real$marker")
         task.numActivities = marker * 10 + 4
         task.lastActiveTime = marker * 1_000L + 5
-        task.taskDescription = ActivityManager.TaskDescription("task-$marker", marker + 6)
+        task.taskDescription = ActivityManager.TaskDescription("task-$marker").apply {
+            setIcon(android.graphics.drawable.Icon.createWithResource("org.example", marker + 6))
+        }
         task.supportsMultiWindow = true
         task.resizeMode = ActivityInfo.RESIZE_MODE_RESIZEABLE
         task.configuration.orientation = Configuration.ORIENTATION_LANDSCAPE
@@ -716,7 +2406,7 @@ internal object FrameworkModuleSmoke {
         val camera = "android.permission.CAMERA"
         // AOSP checks the calling uid's grants: this process is bound to the
         // fixture package, so its package context answers for it.
-        ActivityThread.attachApplicationHosted("org.example.permissions")
+        android.app.HostedServiceClient.attachApplication("org.example.permissions")
         val base = packageIdentityContext(
             HostContexts.systemContext(frameworkResources, 200, 200, 120, 0),
             "org.example.permissions",
@@ -743,6 +2433,41 @@ internal object FrameworkModuleSmoke {
             .toMap()
         check(grants.getValue(wakeLock) and PackageInfo.REQUESTED_PERMISSION_GRANTED != 0)
         check(grants.getValue(camera) and PackageInfo.REQUESTED_PERMISSION_GRANTED == 0)
+        // AppGlobals exposes the application installed by the bindApplication callback.
+        check(android.app.AppGlobals.getInitialPackage() == ActivityThread.currentPackageName())
+        check(android.app.AppGlobals.getInitialApplication() === ActivityThread.currentApplication())
+        check(android.app.AppGlobals.getPackageManager() === ActivityThread.getPackageManager())
+        check(android.app.AppGlobals.getIntCoreSetting("dev.artzig.missing.setting", 41) == 41)
+        check(android.app.AppGlobals.getFloatCoreSetting("dev.artzig.missing.setting", 1.25f) == 1.25f)
+        val permissions = checkNotNull(android.app.AppGlobals.getPermissionManager())
+        check(permissions === ActivityThread.getPermissionManager())
+        val uid = android.os.Process.myUid()
+        val defaultDevice = android.companion.virtual.VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT
+        check(permissions.checkUidPermission(uid, wakeLock, Context.DEVICE_ID_DEFAULT) == PackageManager.PERMISSION_GRANTED)
+        check(permissions.checkUidPermission(uid, camera, Context.DEVICE_ID_DEFAULT) == PackageManager.PERMISSION_DENIED)
+        check(permissions.checkUidPermission(android.os.Process.ROOT_UID, null, Context.DEVICE_ID_DEFAULT) == PackageManager.PERMISSION_DENIED)
+        check(permissions.checkUidPermission(UserHandle.getUid(1, UserHandle.getAppId(uid)), wakeLock, 0) == PackageManager.PERMISSION_DENIED)
+        check(permissions.checkPermission("org.example.permissions", wakeLock, defaultDevice, 0) == PackageManager.PERMISSION_GRANTED)
+        check(permissions.checkPermission("org.example.permissions", camera, defaultDevice, 0) == PackageManager.PERMISSION_DENIED)
+        check(permissions.checkPermission("org.example.permissions", wakeLock, defaultDevice, 1) == PackageManager.PERMISSION_DENIED)
+        check(permissions.checkPermission(null, wakeLock, defaultDevice, 0) == PackageManager.PERMISSION_DENIED)
+        check(permissions.checkPermission("org.example.missing", wakeLock, defaultDevice, 0) == PackageManager.PERMISSION_DENIED)
+        // WAKE_LOCK is not device-aware; AOSP reads its default-device grant.
+        check(permissions.checkUidPermission(uid, wakeLock, 777) == PackageManager.PERMISSION_GRANTED)
+        val permissionState = android.permission.PermissionManager.PermissionState(true, 0x1234)
+        val stateParcel = Parcel.obtain()
+        try {
+            permissionState.writeToParcel(stateParcel, 0)
+            stateParcel.setDataPosition(0)
+            check(stateParcel.readBoolean() && stateParcel.readInt() == 0x1234 && stateParcel.dataAvail() == 0)
+            stateParcel.setDataPosition(0)
+            val copy = android.permission.PermissionManager.PermissionState.CREATOR.createFromParcel(stateParcel)
+            check(copy == permissionState && copy.hashCode() == permissionState.hashCode())
+            check(copy.isGranted() && copy.getFlags() == 0x1234)
+            check(copy.toString() == "PermissionState{mGranted=true, mFlags=4660}")
+        } finally {
+            stateParcel.recycle()
+        }
     }
 
     private fun testIntentTypedExtras() {
@@ -934,7 +2659,9 @@ internal object FrameworkModuleSmoke {
             check(dm === context.getSystemService(Context.DISPLAY_SERVICE)) { "display manager not cached" }
             check(dm.displays.size == 1) { "expected one display" }
             val display = checkNotNull(dm.getDisplay(android.view.Display.DEFAULT_DISPLAY))
-            android.view.ArtzigDisplay.configure(800, 600, 120)
+            // Stock Display uses the context's configured maximum bounds. Resize both
+            // the display service and resources through the production host entry point.
+            HostContexts.configureDisplay(800, 600, 120)
             val size = android.graphics.Point()
             checkNotNull(dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)).getRealSize(size)
             check(size.x == 800 && size.y == 600) { "display size $size after configure" }
@@ -949,6 +2676,12 @@ internal object FrameworkModuleSmoke {
             )
             check(inputMethods.inputMethodList.isEmpty()) { "host must expose no software IMEs" }
             check(inputMethods.enabledInputMethodList.isEmpty()) { "host must enable no software IMEs" }
+            check(!inputMethods.isStylusHandwritingAvailable) {
+                "a device with no selected IME cannot provide stylus handwriting"
+            }
+            check(!inputMethods.isConnectionlessStylusHandwritingAvailable) {
+                "a device with no selected IME cannot provide connectionless handwriting"
+            }
             val permissionEnforcer = checkNotNull(
                 context.getSystemService(android.os.PermissionEnforcer::class.java),
             )
@@ -1049,7 +2782,7 @@ internal object FrameworkModuleSmoke {
         val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
         val fixtureInstaller = checkNotNull(android.app.HostedServiceClient.installerOrNull())
         check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
-        ActivityThread.attachApplicationHosted("org.example.permissions")
+        android.app.HostedServiceClient.attachApplication("org.example.permissions")
         val appContext = packageIdentityContext(context, "org.example.permissions")
 
         checkNotNull(appContext.getSystemService(android.content.ClipboardManager::class.java))
@@ -1335,7 +3068,7 @@ internal object FrameworkModuleSmoke {
         }
         val callerPackage = "org.example.permissions"
         check(packages.installPackage(checkNotNull(permissionsFixtureApk)) == callerPackage)
-        val activityManager = HostedActivityManagerService().apply { packageService = packages }
+        val activityManager = HostedActivityManagerService(context).apply { packageService = packages }
         val processOne = "android:hosted-task-one"
         val processTwo = "android:hosted-task-two"
         val resolver: (Intent, String?) -> ActivityInfo? = { intent, _ ->
@@ -1378,10 +3111,13 @@ internal object FrameworkModuleSmoke {
         val threadOne = CapturingApplicationThread()
         val threadTwo = CapturingApplicationThread()
         val callingUid = Binder.getCallingUid()
+        packages.bindPackageUid(callerPackage, callingUid)
         activityManager.noteProcessPackage(callingUid, callerPackage, processOne)
         activityManager.attachApplication(threadOne, 0)
         activityManager.noteProcessPackage(callingUid, callerPackage, processTwo)
         activityManager.attachApplication(threadTwo, 0)
+        check(threadOne.boundProcessName == processOne && threadTwo.boundProcessName == processTwo)
+        check(threadOne.boundPackageName == callerPackage && threadTwo.boundPackageName == callerPackage)
         val controller = service.activityClientController
 
         fun component(name: String) = ComponentName(callerPackage, "dev.artzig.$name")
@@ -1433,6 +3169,14 @@ internal object FrameworkModuleSmoke {
         check(task.topActivity == component("Two"))
         check(task.numActivities == 2 && task.baseActivity == component("HandledOne"))
         check(service.getRecentTasks(1, 0, UserHandle.USER_SYSTEM).list.single().taskId == task.taskId)
+        val appTask = android.app.IAppTask.Stub.asInterface(service.getAppTasks(callerPackage).single())
+        check(appTask.taskInfo.taskId == task.taskId)
+        appTask.setExcludeFromRecents(true)
+        check(appTask.taskInfo.baseIntent.flags and Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS != 0)
+        check(service.getAppTasks(callerPackage).size == 1) // Exclusion does not hide owned handles.
+        appTask.setExcludeFromRecents(false)
+        check(appTask.taskInfo.baseIntent.flags and Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS == 0)
+
 
         threadOne.transactions.clear()
         threadTwo.transactions.clear()
@@ -1510,6 +3254,13 @@ internal object FrameworkModuleSmoke {
         controller.activityResumed(thirdToken, false)
         check(threadOne.transactions.last().transactionItems.single() is StopActivityItem)
         controller.activityStopped(firstToken, null, null, null)
+        appTask.setExcludeFromRecents(true)
+        check(service.getRecentTasks(10, 0, 0).list.none { it.taskId == task.taskId })
+        check(service.getRecentTasks(10, ActivityManager.RECENT_WITH_EXCLUDED, 0).list.any { it.taskId == task.taskId })
+        check(service.getAppTasks(callerPackage).any {
+            android.app.IAppTask.Stub.asInterface(it).taskInfo.taskId == task.taskId
+        })
+        appTask.setExcludeFromRecents(false)
         threadOne.transactions.clear()
         threadTwo.transactions.clear()
         val secondOrientation = if (firstOrientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -1635,7 +3386,7 @@ internal object FrameworkModuleSmoke {
 
         // A newer cross-process start supersedes an undispatched launch that is waiting for the
         // same resumed predecessor to acknowledge pause. Only the newest target may be enqueued.
-        val raceActivityManager = HostedActivityManagerService().apply { packageService = packages }
+        val raceActivityManager = HostedActivityManagerService(context).apply { packageService = packages }
         val raceService = HostedActivityTaskManagerService(
             context,
             raceActivityManager,
@@ -1685,6 +3436,42 @@ internal object FrameworkModuleSmoke {
         check(launchedIntent.component == component("RaceCTwo"))
         check(raceService.getTasks(10, false, true, Display.DEFAULT_DISPLAY)
             .none { it.topActivity == component("RaceBTwo") })
+        val raceController = raceService.activityClientController
+        val raceTopToken = survivingItem.activityToken
+        raceController.activityResumed(raceTopToken, false)
+        raceController.activityStopped(raceFirstToken, null, null, null)
+        val ownedTask = android.app.IAppTask.Stub.asInterface(raceService.getAppTasks(callerPackage).first())
+        val ownedTaskId = ownedTask.taskInfo.taskId
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        ownedTask.moveToFront(raceThreadTwo, callerPackage)
+        check(raceThreadOne.transactions.isEmpty() && raceThreadTwo.transactions.isEmpty()) {
+            "moving the resumed task to front must not deliver onResume twice"
+        }
+        check(ownedTask.startActivity(raceThreadTwo.asBinder(), callerPackage, null,
+            Intent().setComponent(component("AppTaskChildOne")), null, null) == ActivityManager.START_SUCCESS)
+        check(raceThreadOne.transactions.isEmpty())
+        check(raceThreadTwo.transactions.single().transactionItems.single() is PauseActivityItem)
+        raceController.activityPaused(raceTopToken)
+        val appTaskChild = launchToken(raceThreadOne.removeFirstTransaction())
+        check(ownedTask.taskInfo.taskId == ownedTaskId && ownedTask.taskInfo.numActivities == 2)
+        raceController.activityResumed(appTaskChild, false)
+        raceController.activityStopped(raceTopToken, null, null, null)
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        ownedTask.finishAndRemoveTask()
+        check(raceThreadOne.transactions.single().transactionItems.single() is PauseActivityItem)
+        check(raceService.getAppTasks(callerPackage).none {
+            android.app.IAppTask.Stub.asInterface(it).taskInfo.taskId == ownedTaskId
+        })
+        raceController.activityPaused(appTaskChild)
+        raceController.activityResumed(raceFirstToken, false)
+        check((raceThreadOne.transactions + raceThreadTwo.transactions).flatMap { it.transactionItems }
+            .filterIsInstance<DestroyActivityItem>().size == 2)
+        raceController.activityDestroyed(appTaskChild)
+        raceController.activityDestroyed(raceTopToken)
+        check(runCatching { ownedTask.taskInfo }.exceptionOrNull() is IllegalArgumentException)
+
     }
 
     private fun testHostedAudioCapabilities() {
@@ -2075,7 +3862,7 @@ internal object FrameworkModuleSmoke {
                 runHostedFrame()
                 activityRootField.set(
                     null,
-                    checkNotNull(android.view.ArtzigWindowStack.topFocusable()).root,
+                    checkNotNull(dev.artzig.HostedWindowStack.topFocusable()).root,
                 )
                 ApkHost.physicalKey(0, 158, 0, 0)
                 ApkHost.physicalKey(1, 158, 0, 0)
@@ -2100,7 +3887,7 @@ internal object FrameworkModuleSmoke {
                     predictiveDialog.show()
                     runHostedFrame()
                     val predictiveWindow = checkNotNull(
-                        android.view.ArtzigWindowStack.topFocusable(),
+                        dev.artzig.HostedWindowStack.topFocusable(),
                     )
                     checkNotNull(predictiveWindow.root.onBackInvokedDispatcher.topCallback) {
                         "predictive Dialog callback did not reach the hosted ViewRoot"
@@ -2142,18 +3929,18 @@ internal object FrameworkModuleSmoke {
                     android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                     sharedBackCallback,
                 )
-                val lowerRoot = checkNotNull(android.view.ArtzigWindowStack.topFocusable()).root
+                val lowerRoot = checkNotNull(dev.artzig.HostedWindowStack.topFocusable()).root
                 val upperDialog = showPredictiveDialog()
                 upperDialog.onBackInvokedDispatcher.registerOnBackInvokedCallback(
                     android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                     sharedBackCallback,
                 )
-                val upperRoot = checkNotNull(android.view.ArtzigWindowStack.topFocusable()).root
+                val upperRoot = checkNotNull(dev.artzig.HostedWindowStack.topFocusable()).root
                 check(upperRoot !== lowerRoot)
                 ApkHost.physicalKey(0, 158, 0, 0)
                 upperDialog.dismiss()
                 runHostedFrame()
-                check(checkNotNull(android.view.ArtzigWindowStack.topFocusable()).root === lowerRoot)
+                check(checkNotNull(dev.artzig.HostedWindowStack.topFocusable()).root === lowerRoot)
                 ApkHost.physicalKey(1, 158, 0, 0)
                 check(sharedBackInvocations == 0) {
                     "predictive Back crossed from its captured window to a replacement"
@@ -2198,7 +3985,7 @@ internal object FrameworkModuleSmoke {
         } finally {
             if (dialog.isShowing) dialog.dismiss()
             drainMainQueue()
-            android.view.ArtzigWindowStack.clear()
+            dev.artzig.HostedWindowStack.clear()
         }
     }
 
@@ -2630,6 +4417,677 @@ internal object FrameworkModuleSmoke {
             } finally {
                 android.os.MessageQueue.`recycleDispatched$artzig`(message)
             }
+        }
+    }
+
+    private fun testSimpleRendererContracts() {
+        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 200, 200, 120, 0)
+        val renderer = android.view.ThreadedRenderer.SimpleRenderer(context, "stock-simple-renderer", null)
+        try {
+            val root = renderer.rootNode
+            root.setPosition(0, 0, 16, 16)
+            root.beginRecording(16, 16).drawColor(android.graphics.Color.RED)
+            root.endRecording()
+            check(root.hasDisplayList())
+            check(renderer.createRenderRequest() != null)
+            renderer.setLightCenter(context.getSystemService(android.hardware.display.DisplayManager::class.java)
+                .getDisplay(android.view.Display.DEFAULT_DISPLAY), 0, 0)
+        } finally {
+            renderer.destroy()
+        }
+    }
+
+    private fun testAccessibilityVirtualNodes() {
+        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 200, 200, 120, 0)
+        val root = ViewRootImpl(context)
+        var actionNode = 0
+        lateinit var host: View
+        val provider = object : android.view.accessibility.AccessibilityNodeProvider() {
+            override fun createAccessibilityNodeInfo(id: Int): android.view.accessibility.AccessibilityNodeInfo {
+                return android.view.accessibility.AccessibilityNodeInfo.obtain().apply {
+                    setSource(host, id)
+                    className = "android.widget.EditText"
+                    isVisibleToUser = true
+                    isEnabled = true
+                    if (id == HOST_VIEW_ID) {
+                        addChild(host, 7)
+                    } else {
+                        isPassword = true
+                        text = "private password"
+                        contentDescription = "private description"
+                        hintText = "private hint"
+                        addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+                        addChild(host, 7) // A broken provider must not make inspection loop forever.
+                    }
+                }
+            }
+            override fun performAction(id: Int, action: Int, arguments: Bundle?): Boolean {
+                actionNode = id
+                return action == android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK
+            }
+        }
+        host = object : View(context) {
+            override fun getAccessibilityNodeProvider() = provider
+        }
+        try {
+            root.setView(host, 200, 200)
+            ArtzigAccessibilityBridge.setActivityRoot(root)
+            val snapshot = org.json.JSONObject(ArtzigAccessibilityBridge.snapshot())
+            val nodes = snapshot.getJSONArray("nodes")
+            check(nodes.length() == 2 && !snapshot.getBoolean("truncated"))
+            val child = nodes.getJSONObject(1)
+            check(child.getBoolean("virtual") && child.getInt("virtual_id") == 7)
+            check(child.isNull("text") && child.isNull("content_description") && child.isNull("hint"))
+            check(ArtzigAccessibilityBridge.perform(snapshot.getLong("revision"), child.getLong("window_id"),
+                child.getInt("view_id"), 7, android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
+            check(actionNode == 7)
+        } finally {
+            root.destroy()
+            ArtzigAccessibilityBridge.setActivityRoot(null)
+            drainMainQueue()
+        }
+    }
+
+    private fun testAccessibilityInspectorContracts() {
+        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 200, 200, 120, 0)
+        val root = ViewRootImpl(context)
+        val button = android.widget.Button(context).apply {
+            layoutParams = WindowManager.LayoutParams(200, 200)
+            setAllCaps(false)
+            text = "first"
+        }
+        var clicks = 0
+        button.setOnClickListener { clicks++ }
+        try {
+            root.setView(button, 200, 200)
+            ArtzigAccessibilityBridge.setActivityRoot(root)
+            check(!ArtzigAccessibilityBridge.isIdle())
+            Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+            drainMainQueue()
+            root.doTraversal()
+            drainMainQueue()
+            root.doTraversal()
+            check(ArtzigAccessibilityBridge.isIdle())
+            val snapshot = org.json.JSONObject(ArtzigAccessibilityBridge.snapshot())
+            val revision = snapshot.getLong("revision")
+            val window = snapshot.getJSONArray("windows").getJSONObject(0).getLong("id")
+            check(snapshot.getJSONArray("nodes").getJSONObject(0).getString("text") == "first") { snapshot.toString() }
+            button.text = "second"
+            check(!ArtzigAccessibilityBridge.perform(revision, window, button.accessibilityViewId,
+                android.view.accessibility.AccessibilityNodeProvider.HOST_VIEW_ID,
+                android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
+            check(clicks == 0) { "an unobserved view mutation must invalidate a saved action" }
+            val fresh = ArtzigAccessibilityBridge.revision()
+            check(ArtzigAccessibilityBridge.perform(fresh, window, button.accessibilityViewId,
+                android.view.accessibility.AccessibilityNodeProvider.HOST_VIEW_ID,
+                android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
+            check(clicks == 1)
+            val eventMark = ArtzigAccessibilityBridge.revision()
+            root.notifySubtreeAccessibilityStateChanged(button, button,
+                android.view.accessibility.AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT)
+            button.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED)
+            val journal = org.json.JSONObject(ArtzigAccessibilityBridge.diagnostics(eventMark)).getJSONArray("events")
+            val reasons = (0 until journal.length()).map { journal.getJSONObject(it).getString("reason") }
+            check(reasons.indexOf("event:2048") in 0 until reasons.indexOf("event:1")) {
+                "pending content changes must be sent before the click event: $reasons"
+            }
+            val drawMark = ArtzigAccessibilityBridge.revision()
+            val beforeDraw = org.json.JSONObject(ArtzigAccessibilityBridge.snapshot()).getJSONArray("nodes").toString()
+            root.invalidate()
+            root.doTraversal()
+            check(ArtzigAccessibilityBridge.revision() > drawMark) { "draw-only activity must reset the idle cursor" }
+            check(org.json.JSONObject(ArtzigAccessibilityBridge.snapshot()).getJSONArray("nodes").toString() == beforeDraw)
+            repeat(140) { ArtzigAccessibilityBridge.markChanged("bounded:$it") }
+            val bounded = org.json.JSONObject(ArtzigAccessibilityBridge.diagnostics(0))
+            check(bounded.getJSONArray("events").length() == 128)
+            check(bounded.getLong("events_dropped_through") > 0)
+            val environment = com.android.internal.ravenwood.RavenwoodEnvironment.getInstance()
+            check(!environment.isRunningOnRavenwood())
+            check(runCatching { environment.fromAddress<Any>(1) }.exceptionOrNull() is UnsupportedOperationException)
+        } finally {
+            root.destroy()
+            ArtzigAccessibilityBridge.setActivityRoot(null)
+            drainMainQueue()
+        }
+        check(!ArtzigAccessibilityBridge.isIdle())
+    }
+
+    private fun testStockMediaProjectionCallbacks() {
+        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 200, 200, 120, 0)
+        val calls = mutableListOf<String>()
+        lateinit var remoteCallback: android.media.projection.IMediaProjectionCallback
+        val service = object : android.media.projection.IMediaProjection.Stub(),
+            android.media.projection.IMediaProjection by dev.artzig.system.unsupported<android.media.projection.IMediaProjection>() {
+            override fun asBinder(): IBinder = this
+            override fun start(callback: android.media.projection.IMediaProjectionCallback) {
+                calls += "start"
+                remoteCallback = callback
+            }
+            override fun getDisplayId(): Int = android.view.Display.DEFAULT_DISPLAY
+            override fun stop(reason: Int) {
+                check(reason == android.media.projection.StopReason.STOP_HOST_APP)
+                calls += "stop-request"
+                remoteCallback.onStop()
+            }
+        }
+        val projection = android.media.projection.MediaProjection(context, service)
+        check(calls == listOf("start"))
+        val callback = object : android.media.projection.MediaProjection.Callback() {
+            override fun onStop() { calls += "stopped" }
+            override fun onCapturedContentResize(width: Int, height: Int) { calls += "resize:$width:$height" }
+            override fun onCapturedContentVisibilityChanged(visible: Boolean) { calls += "visible:$visible" }
+        }
+        projection.registerCallback(callback, Handler(Looper.getMainLooper()))
+        remoteCallback.onCapturedContentResize(640, 480)
+        remoteCallback.onCapturedContentVisibilityChanged(true)
+        projection.stop()
+        check(calls == listOf("start", "stop-request")) { "callbacks must be posted to the handler" }
+        drainMainQueue()
+        check(calls == listOf("start", "stop-request", "resize:640:480", "visible:true", "stopped"))
+        projection.unregisterCallback(callback)
+        remoteCallback.onStop()
+        drainMainQueue()
+        check(calls.count { it == "stopped" } == 1)
+    }
+
+    private fun testStockMediaContracts() {
+        fun <T : Parcelable> roundTrip(value: T, creator: Parcelable.Creator<T>): T {
+            val parcel = Parcel.obtain()
+            try {
+                value.writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                return creator.createFromParcel(parcel)
+            } finally {
+                parcel.recycle()
+            }
+        }
+        check(runCatching { android.media.AudioFocusRequest.Builder(0) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching {
+            android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+                .setAcceptsDelayedFocusGain(true).build()
+        }.exceptionOrNull() is IllegalStateException)
+        check(runCatching {
+            android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+                .setWillPauseWhenDucked(true).build()
+        }.exceptionOrNull() is IllegalStateException)
+        val metadata = Bundle().apply { putString("source", "original") }
+        val attributeBuilder = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).addBundle(metadata)
+        val attributes = attributeBuilder.build()
+        metadata.putString("source", "changed")
+        attributeBuilder.addBundle(Bundle().apply { putString("source", "builder") })
+        check(attributes.bundle.getString("source") == "original")
+        check(AudioAttributes.Builder(attributes).build().bundle == null)
+        var focusChanges = 0
+        val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { focusChanges++ }
+        val focusHandler = Handler(Looper.getMainLooper())
+        val focus = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(attributes).setOnAudioFocusChangeListener(focusListener, focusHandler)
+            .setAcceptsDelayedFocusGain(true).setWillPauseWhenDucked(true).setLocksFocus(true)
+            .setForceDucking(true).build()
+        check(focus.focusGain == android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        check(focus.acceptsDelayedFocusGain() && focus.willPauseWhenDucked() && focus.locksFocus())
+        check(focus.onAudioFocusChangeListener === focusListener && focus.onAudioFocusChangeListenerHandler === focusHandler)
+        check(focusChanges == 0)
+        val forced = focus.audioAttributes.bundle
+        check(forced.getString("source") == "original")
+        check(forced.getBoolean("a11y_force_ducking"))
+        forced.clear()
+        check(focus.audioAttributes.bundle.getBoolean("a11y_force_ducking"))
+        check(!attributes.bundle.getBoolean("a11y_force_ducking"))
+        val copiedFocus = android.media.AudioFocusRequest.Builder(focus).build()
+        check(copiedFocus.audioAttributes === focus.audioAttributes)
+        check(copiedFocus.acceptsDelayedFocusGain() && copiedFocus.willPauseWhenDucked())
+        check(!copiedFocus.locksFocus()) // The pinned copy builder deliberately omits the lock flag.
+        check(roundTrip(focus.audioAttributes, AudioAttributes.CREATOR).bundle.getBoolean("a11y_force_ducking"))
+        val encodedAttributes = Parcel.obtain()
+        try {
+            focus.audioAttributes.writeToParcel(encodedAttributes, AudioAttributes.FLATTEN_TAGS)
+            encodedAttributes.setDataPosition(0)
+            check(encodedAttributes.readInt() == AudioAttributes.USAGE_MEDIA)
+            check(encodedAttributes.readInt() == AudioAttributes.CONTENT_TYPE_UNKNOWN)
+            check(encodedAttributes.readInt() == -1) // AOSP's unset capture preset.
+            check(encodedAttributes.readInt() == 0)
+            check(encodedAttributes.readInt() == AudioAttributes.FLATTEN_TAGS)
+            check(encodedAttributes.readString() == "")
+            check(encodedAttributes.readInt() == 1980) // AOSP's non-null bundle marker.
+            check(encodedAttributes.readBundle()!!.getBoolean("a11y_force_ducking"))
+            check(encodedAttributes.dataAvail() == 0)
+        } finally {
+            encodedAttributes.recycle()
+        }
+        check(runCatching { android.media.MediaRoute2Info.Builder("", "route") }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { android.media.MediaRoute2Info.Builder("route", "").build() }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { android.media.MediaRoute2Info.Builder("route", "Route").build() }.exceptionOrNull() is IllegalArgumentException)
+        val routeMetadata = Bundle().apply { putString("origin", "test") }
+        val route = android.media.MediaRoute2Info.Builder("route", "Test route")
+            .addFeature(android.media.MediaRoute2Info.FEATURE_LIVE_AUDIO)
+            .setType(android.media.MediaRoute2Info.TYPE_HDMI_EARC)
+            .setProviderId("provider").setProviderPackageName("example.provider")
+            .setVisibilityRestricted(setOf("example.allowed"))
+            .setDeduplicationIds(setOf("same-device"))
+            .setVolumeHandling(android.media.MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE)
+            .setVolumeMax(20).setVolume(7).setExtras(routeMetadata).build()
+        routeMetadata.clear()
+        val routeCopy = roundTrip(route, android.media.MediaRoute2Info.CREATOR)
+        check(routeCopy == route && routeCopy.hashCode() == route.hashCode())
+        check(routeCopy.id == "provider:route" && routeCopy.originalId == "route")
+        check(routeCopy.volume == 7 && routeCopy.volumeMax == 20)
+        check(routeCopy.type == android.media.MediaRoute2Info.TYPE_HDMI_EARC)
+        check(routeCopy.extras!!.getString("origin") == "test")
+        check(routeCopy.deduplicationIds == setOf("same-device"))
+        check(routeCopy.isVisibleTo("example.allowed") && routeCopy.isVisibleTo("example.provider"))
+        check(!routeCopy.isVisibleTo("example.other"))
+        check(routeCopy.hasAllFeatures(listOf(android.media.MediaRoute2Info.FEATURE_LIVE_AUDIO)))
+        check(dev.artzig.system.HostedMediaRoutes.builtInAudio.isSystemRoute)
+        val packages = mutableListOf("example.route")
+        val preference = android.media.RouteDiscoveryPreference.Builder(listOf("video", "", "video"), true)
+            .setAllowedPackages(packages)
+            .setDeduplicationPackageOrder(listOf("example.route"))
+            .setExtras(Bundle().apply { putString("source", "smoke") })
+            .build()
+        packages.clear()
+        val restored = roundTrip(preference, android.media.RouteDiscoveryPreference.CREATOR)
+        check(restored.preferredFeatures == listOf("video", "video"))
+        check(restored.allowedPackages == listOf("example.route"))
+        check(restored.deduplicationPackageOrder == listOf("example.route"))
+        check(restored.shouldPerformActiveScan() && restored.shouldRemoveDuplicates())
+        check(restored.extras.getString("source") == "smoke")
+        val picture = android.media.quality.PictureProfileHandle(0x100000001L)
+        check(roundTrip(picture, android.media.quality.PictureProfileHandle.CREATOR).id == picture.id)
+        check(android.media.quality.PictureProfileHandle.NONE.id == 0L)
+        val error = android.media.MediaCryptoException("crypto", 3, 5, 7)
+        check(error.message == "crypto" && error.vendorError == 3 && error.oemError == 5 && error.errorContext == 7)
+        val ordinary = android.media.MediaCryptoException("ordinary")
+        check(ordinary.vendorError == 0 && ordinary.oemError == 0 && ordinary.errorContext == 0)
+        check(GL10.GL_TRIANGLES == 4)
+        check(GL10::class.java.getMethod(
+            "glDrawArrays", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+        ).returnType == Void.TYPE)
+    }
+
+    private fun testStockProtoLog() {
+        val group = com.android.internal.protolog.ProtoLogGroup("STOCK_CLIENT_SMOKE", "StockProtoLog")
+        group.setLogToProto(false)
+        group.setLogToLogcat(true)
+        com.android.internal.protolog.ProtoLog.init(group)
+        val before = ArtzigTestDiagnostics.logSequence()
+        com.android.internal.protolog.ProtoLog.i(group, "stock count=%d value=%s", 7, "ready")
+        check(ArtzigTestDiagnostics.snapshot(before, ArtzigTestDiagnostics.issueSequence())
+            .contains("stock count=7 value=ready"))
+        group.setLogToLogcat(false)
+        val disabled = ArtzigTestDiagnostics.logSequence()
+        com.android.internal.protolog.ProtoLog.i(group, "stock disabled message")
+        check(!ArtzigTestDiagnostics.snapshot(disabled, ArtzigTestDiagnostics.issueSequence())
+            .contains("stock disabled message"))
+    }
+
+    private fun testStockActivityOptions() {
+        val bounds = Rect(10, 20, 310, 220)
+        val cookie = ActivityOptions.LaunchCookie()
+        // Scene metadata is serialized only for the scene-transition animation type.
+        val options = ActivityOptions(Bundle().apply {
+            putInt(ActivityOptions.KEY_ANIM_TYPE, ActivityOptions.ANIM_SCENE_TRANSITION)
+        }).setLaunchBounds(bounds).setLaunchDisplayId(7).setCallerDisplayId(3)
+        options.setPendingIntentLaunchFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        options.setLaunchTaskId(31)
+        options.setLaunchCookie(cookie)
+        bounds.setEmpty()
+        val scene = ActivityOptions.SceneTransitionInfo().apply {
+            setResultCode(Activity.RESULT_OK)
+            setResultData(Intent("dev.artzig.SCENE_RESULT"))
+            setSharedElementNames(arrayListOf("poster"))
+            setExitCoordinatorKey(19)
+        }
+        options.setSceneTransitionInfo(scene)
+        val parcel = Parcel.obtain()
+        val restored = try {
+            parcel.writeBundle(options.toBundle())
+            parcel.setDataPosition(0)
+            checkNotNull(ActivityOptions.fromBundle(parcel.readBundle(ActivityOptions::class.java.classLoader)))
+        } finally {
+            parcel.recycle()
+        }
+        check(restored.launchBounds == Rect(10, 20, 310, 220))
+        check(restored.launchDisplayId == 7 && restored.callerDisplayId == 3 && restored.launchTaskId == 31)
+        check(restored.pendingIntentLaunchFlags == Intent.FLAG_ACTIVITY_NEW_TASK)
+        check(restored.launchCookie == cookie.binder)
+        val restoredScene = checkNotNull(restored.sceneTransitionInfo)
+        check(restoredScene.resultCode == Activity.RESULT_OK && restoredScene.resultData?.action == "dev.artzig.SCENE_RESULT")
+        check(restoredScene.sharedElementNames == arrayListOf("poster") && restoredScene.exitCoordinatorKey == 19)
+        check(ActivityOptions.fromBundle(null) == null)
+    }
+
+    private fun testSplashScreenLifecycle() {
+        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 200, 200, 120, 0)
+        val activity = Activity()
+        activity.attach(context)
+        val state = Bundle().apply {
+            putStringArrayList("android:pendingExitSharedElements", arrayListOf("poster"))
+            putStringArrayList("android:exitingMappedFrom", arrayListOf("from"))
+            putStringArrayList("android:exitingMappedTo", arrayListOf("to"))
+        }
+        activity.performCreate(state)
+        val saved = Bundle()
+        activity.performSaveInstanceState(saved)
+        for (key in state.keySet()) check(saved.getStringArrayList(key) == state.getStringArrayList(key))
+        val thread = ActivityThread.currentActivityThread()
+        val token = checkNotNull(activity.activityToken)
+        val splash = activity.splashScreen
+        check(splash === activity.splashScreen)
+        splash.setOnExitAnimationListener { }
+        check(thread.isHandleSplashScreenExit(token))
+        splash.clearOnExitAnimationListener()
+        check(!thread.isHandleSplashScreenExit(token))
+        splash.setOnExitAnimationListener { }
+        val record = ActivityThread.ActivityClientRecord().apply {
+            this.activity = activity
+            this.token = token
+            setState(android.app.servertransaction.ActivityLifecycleItem.ON_CREATE)
+        }
+        thread.handleDestroyActivity(record, false, false, "splash listener cleanup")
+        check(!thread.isHandleSplashScreenExit(token))
+
+        android.app.PropertyInvalidatedCache.disableForTestMode()
+        val packages = HostedPackageManagerService().apply {
+            installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
+        }
+        val packageName = checkNotNull(packages.installPackage(checkNotNull(permissionsFixtureApk)))
+        check(packages.getSplashScreenTheme(packageName, 0) == null)
+        packages.setSplashScreenTheme(packageName, "android:style/Theme.Material", 0)
+        check(packages.getSplashScreenTheme(packageName, 0) == "android:style/Theme.Material")
+        packages.setSplashScreenTheme(packageName, null, 0)
+        check(packages.getSplashScreenTheme(packageName, 0) == null)
+        check(runCatching { packages.getSplashScreenTheme(packageName, -1) }.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    private fun testStockInputMethodService() {
+        val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
+        val thread = ActivityThread.currentActivityThread()
+        val service = android.inputmethodservice.InputMethodService()
+        val packageContext = context.createPackageContext("org.example.permissions", 0)
+        val loaded = thread.getPackageInfoNoCheck(packageContext.applicationInfo)
+        val application = loaded.makeApplicationInner(false, thread.instrumentation)
+        val base = service.createServiceBaseContext(thread, loaded)
+        service.attach(base, thread, service.javaClass.name, Binder(), application, ActivityManager.getService())
+        service.onCreate()
+        try {
+            check(service.windowType == WindowManager.LayoutParams.TYPE_INPUT_METHOD)
+            check(service.window.window?.attributes?.type == WindowManager.LayoutParams.TYPE_INPUT_METHOD)
+            check(service.onBind(Intent()) is com.android.internal.inputmethod.IInputMethod.Stub)
+            check(service.onCreateInputMethodInterface() != null)
+            check(service.onCreateInputMethodSessionInterface() != null)
+            check(!service.isInputViewShown)
+        } finally {
+            service.onDestroy()
+            service.detachAndCleanUp()
+        }
+    }
+
+    private fun testQueuedRootInput() {
+        val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0)
+        val root = android.view.ViewRootImpl(context)
+        val delivered = ArrayList<Int>()
+        val now = android.os.SystemClock.uptimeMillis()
+        fun event(code: Int, time: Long) = KeyEvent(now, time, KeyEvent.ACTION_DOWN, code, 0)
+        val view = object : View(context) {
+            override fun onKeyDown(code: Int, keyEvent: KeyEvent): Boolean {
+                delivered.add(code)
+                if (code == KeyEvent.KEYCODE_A) root.enqueueInputEvent(event(KeyEvent.KEYCODE_C, now + 20))
+                return true
+            }
+        }.apply { isFocusableInTouchMode = true }
+        root.setView(view, 200, 200)
+        view.requestFocus()
+        try {
+            check(root.inputToken == null)
+            root.enqueueInputEvent(event(KeyEvent.KEYCODE_A, now + 30))
+            root.enqueueInputEvent(event(KeyEvent.KEYCODE_B, now + 10))
+            check(delivered.isEmpty()) { "queued input was dispatched synchronously" }
+            drainMainQueue()
+            check(delivered == listOf(KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_B, KeyEvent.KEYCODE_C))
+            root.enqueueInputEvent(event(KeyEvent.KEYCODE_D, now))
+        } finally { root.destroy() }
+        drainMainQueue()
+        check(delivered.size == 3) { "detached root received pending input" }
+    }
+
+    private fun testWebViewUnhandledInput() {
+        val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0)
+        val root = android.view.ViewRootImpl(context)
+        val keys = ArrayList<Pair<Int, Int>>()
+        val container = object : android.widget.FrameLayout(context) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                check(event.flags and KeyEvent.FLAG_FALLBACK != 0)
+                keys.add(event.keyCode to event.action)
+                return true
+            }
+        }
+        android.webkit.HostedWebViewProviders.installForTests {
+            android.webkit.InMemoryHostedWebViewProvider(it)
+        }
+        try {
+            val webView = android.webkit.WebView(context, null)
+            container.addView(webView)
+            root.setView(container, 200, 200)
+            val client = WebViewClient()
+            fun motion(action: Int, source: Int) {
+                val now = android.os.SystemClock.uptimeMillis()
+                val event = MotionEvent.obtain(now, now, action, 1f, 0f, 0).apply { this.source = source }
+                try { client.onUnhandledInputEvent(webView, event) } finally { event.recycle() }
+            }
+            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_JOYSTICK)
+            check(keys.isEmpty()) { "WebView fallback must be asynchronous" }
+            drainMainQueue()
+            check(keys == listOf(KeyEvent.KEYCODE_DPAD_RIGHT to KeyEvent.ACTION_DOWN))
+            motion(MotionEvent.ACTION_CANCEL, InputDevice.SOURCE_JOYSTICK)
+            drainMainQueue()
+            check(keys == listOf(KeyEvent.KEYCODE_DPAD_RIGHT to KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_DPAD_RIGHT to KeyEvent.ACTION_UP))
+            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE_RELATIVE)
+            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN)
+            val now = android.os.SystemClock.uptimeMillis()
+            client.onUnhandledKeyEvent(webView, KeyEvent(now, now, KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_A, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FALLBACK))
+            drainMainQueue()
+            check(keys.size == 2) { "relative mouse, pointer input, and fallback keys must not be reinjected" }
+            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_JOYSTICK)
+            drainMainQueue()
+            check(keys.size == 3)
+            root.destroy()
+            drainMainQueue()
+            check(keys.size == 3) { "detached root must cancel synthesized repeats and pending keys" }
+            var clientCertCanceled = false
+            client.onReceivedClientCertRequest(webView, object : android.webkit.ClientCertRequest() {
+                override fun getKeyTypes(): Array<String> = emptyArray()
+                override fun getPrincipals(): Array<java.security.Principal> = emptyArray()
+                override fun getHost(): String = "example.invalid"
+                override fun getPort(): Int = 443
+                override fun proceed(key: java.security.PrivateKey?, chain: Array<java.security.cert.X509Certificate>?) {
+                    error("default client certificate handling must not proceed")
+                }
+                override fun ignore() { error("default client certificate handling must cancel") }
+                override fun cancel() { clientCertCanceled = true }
+            })
+            check(clientCertCanceled)
+            webView.destroy()
+        } finally {
+            root.destroy()
+            android.webkit.HostedWebViewProviders.installForTests(null)
+        }
+    }
+
+    private fun testStockWindowContexts() {
+        val base = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
+        val context = base.createWindowContext(
+            android.view.ArtzigDisplay.get(), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null,
+        ) as android.window.WindowContext
+        val token = context.windowContextToken as android.window.WindowTokenClient
+        val controller = android.window.WindowTokenClientController.getInstance()
+        val callbacks = ArrayList<Configuration>()
+        context.registerComponentCallbacks(object : android.content.ComponentCallbacks {
+            override fun onConfigurationChanged(config: Configuration) {
+                check(context.resources.configuration.fontScale == config.fontScale)
+                check(context.resources.configuration.screenWidthDp == config.screenWidthDp)
+                callbacks.add(Configuration(config))
+            }
+            override fun onLowMemory() {}
+        })
+        try {
+            check(controller.getWindowContext(token) === context)
+            check(runCatching { token.attachContext(context) }.exceptionOrNull() is IllegalStateException)
+            check(runCatching { context.attachToDisplayArea() }.exceptionOrNull() is IllegalStateException)
+            val wm = context.getSystemService(WindowManager::class.java)
+            check(wm === context.getSystemService(WindowManager::class.java))
+            val originalMetrics = wm.currentWindowMetrics
+            check(originalMetrics.bounds == android.graphics.Rect(0, 0, 320, 240))
+            check(originalMetrics.density == 1f)
+            check(runCatching {
+                wm.addView(View(context), WindowManager.LayoutParams().apply { type = WindowManager.LayoutParams.TYPE_APPLICATION })
+            }.exceptionOrNull() is IllegalArgumentException)
+
+            val config = Configuration(context.resources.configuration).apply { fontScale = 1.3f }
+            val item = android.app.servertransaction.WindowContextInfoChangeItem(token, config, Display.DEFAULT_DISPLAY)
+            config.fontScale = 2f
+            val parcel = Parcel.obtain()
+            val restored = try {
+                item.writeToParcel(parcel, 0)
+                parcel.setDataPosition(0)
+                android.app.servertransaction.WindowContextInfoChangeItem.CREATOR.createFromParcel(parcel)
+            } finally { parcel.recycle() }
+            check(item == restored && item.hashCode() == restored.hashCode())
+            restored.execute(ActivityThread.currentActivityThread(), android.app.servertransaction.PendingTransactionActions())
+            check(callbacks.single().fontScale == 1.3f)
+
+            HostContexts.configureDisplay(480, 240, 120)
+            drainMainQueue()
+            check(callbacks.size == 2 && callbacks.last().screenWidthDp == 480)
+            check(wm.currentWindowMetrics.bounds == android.graphics.Rect(0, 0, 480, 240))
+            check(wm.maximumWindowMetrics.bounds == wm.currentWindowMetrics.bounds)
+            check(wm.currentWindowMetrics.windowInsets.getInsets(android.view.WindowInsets.Type.systemBars()) == android.graphics.Insets.NONE)
+            check(originalMetrics.bounds == android.graphics.Rect(0, 0, 320, 240)) {
+                "a window metrics snapshot changed after a resource configuration update"
+            }
+            HostContexts.configureDisplay(480, 240, 120)
+            drainMainQueue()
+            check(callbacks.size == 2) { "unchanged window configuration was delivered twice" }
+
+            HostContexts.configureDisplay(411, 731, 180)
+            drainMainQueue()
+            check(wm.currentWindowMetrics.bounds == Rect(0, 0, 411, 731))
+            check(wm.currentWindowMetrics.density == 1.5f)
+            check(wm.maximumWindowMetrics.bounds == Rect(0, 0, 411, 731))
+            check(callbacks.size == 3)
+
+            val removal = android.app.servertransaction.WindowContextWindowRemovalItem(token)
+            val removalParcel = Parcel.obtain()
+            val restoredRemoval = try {
+                removal.writeToParcel(removalParcel, 0)
+                removalParcel.setDataPosition(0)
+                android.app.servertransaction.WindowContextWindowRemovalItem.CREATOR.createFromParcel(removalParcel)
+            } finally { removalParcel.recycle() }
+            check(removal == restoredRemoval)
+            restoredRemoval.execute(ActivityThread.currentActivityThread(), android.app.servertransaction.PendingTransactionActions())
+            check(token.context == null && controller.getWindowContext(token) == null)
+            context.dispatchConfigurationChanged(Configuration())
+            check(callbacks.size == 3) { "destroyed window context retained its callbacks" }
+        } finally {
+            context.release()
+            HostContexts.configureDisplay(320, 240, 120)
+            drainMainQueue()
+        }
+    }
+
+    private fun testHealthPermissionContracts() {
+        check(HealthPermissions.isWritePermission(HealthPermissions.WRITE_HEART_RATE))
+        check(!HealthPermissions.isWritePermission(HealthPermissions.READ_HEART_RATE))
+        check(HealthPermissions.getHealthDataCategoryForWritePermission(HealthPermissions.WRITE_HEART_RATE) == HealthDataCategory.VITALS)
+        check(HealthPermissions.getHealthDataCategoryForWritePermission(HealthPermissions.READ_HEART_RATE) == -1)
+        check(HealthPermissions.getHealthReadPermission(HealthPermissionCategory.HEART_RATE) == HealthPermissions.READ_HEART_RATE)
+        check(HealthPermissions.getHealthWritePermission(HealthPermissionCategory.HEART_RATE) == HealthPermissions.WRITE_HEART_RATE)
+        check(HealthPermissions.getHealthReadPermission(-1) == null)
+        check(runCatching { HealthPermissions.getHealthWritePermission(-1) }.exceptionOrNull() is NullPointerException)
+        check(HealthPermissions.getWriteHealthPermissionsFor(-1).isEmpty())
+        val permission = android.content.pm.PermissionInfo().apply {
+            name = HealthPermissions.READ_HEART_RATE
+            group = HealthPermissions.HEALTH_PERMISSION_GROUP
+        }
+        check(HealthPermissions.isValidHealthPermission(permission))
+        permission.group = "android.permission-group.LOCATION"
+        check(!HealthPermissions.isValidHealthPermission(permission))
+    }
+
+    private fun testAconfigManifestFlags() {
+        check(android.content.res.Flags.manifestFlagging()) {
+            "the pinned BP2A manifest requires its released manifest_flagging value"
+        }
+        check(android.aconfig.DeviceProtos.PATHS.contentEquals(arrayOf(
+            "/system/etc/aconfig_flags.pb", "/system_ext/etc/aconfig_flags.pb",
+            "/product/etc/aconfig_flags.pb", "/vendor/etc/aconfig_flags.pb",
+        ))) { "device flag paths must come from the pinned AOSP template inputs" }
+        val flags = AconfigFlags()
+        flags.addFlagValuesForTesting(mapOf("example.enabled" to true, "example.disabled" to false))
+        check(flags.getFlagValue("example.enabled") == true)
+        check(flags.getFlagValue("example.disabled") == false)
+        flags.addFlagValuesForTesting(mapOf("example.enabled" to false))
+        check(flags.getFlagValue("example.enabled") == false) { "later flag values replace earlier values" }
+
+        fun shouldSkip(flag: String): Boolean {
+            val parser = android.util.Xml.newPullParser()
+            parser.setInput(java.io.StringReader(
+                "<component xmlns:android=\"http://schemas.android.com/apk/res/android\" " +
+                    "android:featureFlag=\"$flag\"/>",
+            ))
+            parser.nextTag()
+            return flags.skipCurrentElement(null, parser)
+        }
+        check(shouldSkip("example.disabled"))
+        check(!shouldSkip("!example.disabled"))
+    }
+
+    private fun testBinderCallStatistics() {
+        val handler = Handler(checkNotNull(Looper.getMainLooper()))
+        val latency = BinderLatencyObserver(object : BinderLatencyObserver.Injector() {
+            override fun getHandler(): Handler = handler
+        }, com.android.internal.os.BinderLatencyProto.Dims.SYSTEM_SERVER)
+        val stats = BinderCallsStats(object : BinderCallsStats.Injector() {
+            override fun getHandler(): Handler = handler
+            override fun getLatencyObserver(processSource: Int): BinderLatencyObserver = latency
+        })
+        val device = CachedDeviceState(true, false)
+        stats.setDeviceState(device.readonlyClient)
+        stats.setCollectLatencyData(false)
+        stats.setSamplingInterval(1)
+        stats.setAddDebugEntries(false)
+        val binder = Binder()
+        val workSourceUid = 10000
+        try {
+            check(stats.callStarted(binder, 42, workSourceUid) == null) {
+                "CPU telemetry must be disabled while charging"
+            }
+            device.setCharging(false)
+            val first = checkNotNull(stats.callStarted(binder, 42, workSourceUid))
+            stats.callEnded(first, 10, 20, workSourceUid)
+            val second = checkNotNull(stats.callStarted(binder, 42, workSourceUid))
+            stats.callThrewException(second, IllegalStateException("telemetry probe"))
+            stats.callEnded(second, 30, 15, workSourceUid)
+            val exported = stats.exportedCallStats.single()
+            check(exported.workSourceUid == workSourceUid && exported.methodName == "42")
+            check(exported.callCount == 2L && exported.recordedCallCount == 2L)
+            check(exported.maxRequestSizeBytes == 30L && exported.maxReplySizeBytes == 20L)
+            check(exported.exceptionCount == 1L)
+            check(stats.exportedExceptionStats[IllegalStateException::class.java.name] == 1)
+
+            val interrupted = checkNotNull(stats.callStarted(binder, 42, workSourceUid))
+            device.setCharging(true)
+            stats.callEnded(interrupted, 100, 100, workSourceUid)
+            check(stats.exportedCallStats.single().callCount == 2L) {
+                "calls ending after charging begins must not enter CPU telemetry"
+            }
+            stats.reset()
+            check(stats.exportedCallStats.isEmpty() && stats.exportedExceptionStats.isEmpty())
+        } finally {
+            handler.removeCallbacks(latency.statsdPushRunnable)
         }
     }
 
@@ -3121,7 +5579,7 @@ internal object FrameworkModuleSmoke {
                 "hover target changes must exit the old root before entering the new root: $observed"
             }
 
-            android.view.ArtzigWindowStack.clear()
+            dev.artzig.HostedWindowStack.clear()
             observed.clear()
             addInputWindow(
                 manager, context, "modal", observed,
@@ -3141,7 +5599,7 @@ internal object FrameworkModuleSmoke {
             check(lower.root.view == null) { "cleared overlay root remained attached" }
         } finally {
             HostedInputDispatcher.reset()
-            android.view.ArtzigWindowStack.clear()
+            dev.artzig.HostedWindowStack.clear()
             activityRoot.destroy()
         }
     }
@@ -3198,7 +5656,7 @@ internal object FrameworkModuleSmoke {
         top: Int,
         right: Int,
         bottom: Int,
-    ): android.view.ArtzigWindowStack.Entry {
+    ): dev.artzig.HostedWindowStack.Entry {
         val view = RecordingInputView(context, name, observed).apply { isClickable = true }
         val params = WindowManager.LayoutParams().apply {
             width = right - left
@@ -3207,7 +5665,7 @@ internal object FrameworkModuleSmoke {
             gravity = Gravity.TOP or Gravity.LEFT
         }
         manager.addView(view, params)
-        val entry = android.view.ArtzigWindowStack.entries().last()
+        val entry = dev.artzig.HostedWindowStack.entries().last()
         entry.root.setSize(right - left, bottom - top)
         view.measure(
             View.MeasureSpec.makeMeasureSpec(right - left, View.MeasureSpec.EXACTLY),
@@ -3408,7 +5866,7 @@ internal object FrameworkModuleSmoke {
         check(HostedWindowPresentation.requestsFullscreen(0, 0, modernImmersive, false))
     }
 
-    private fun testLocalActivityManagerLifecycleAndRecreation() {
+    private fun testLocalActivityManagerLifecycleAndRecreation(fixture: StockActivityFixture) {
         val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             320,
@@ -3428,17 +5886,17 @@ internal object FrameworkModuleSmoke {
         val secondInfo = activityInfo(secondName).apply {
             applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
         }
-        val adapter = LocalActivityHostAdapter(context)
+        val adapter = LocalActivityHostAdapter()
         val firstIntent = Intent().setComponent(ComponentName("org.example", firstName))
         val secondIntent = Intent().setComponent(ComponentName("org.example", secondName))
         var activeManager: LocalActivityManager? = null
 
-        ActivityThread.configureActivityHost(
+        fixture.configure(
             adapter,
             mapOf(parentName to parentInfo, firstName to firstInfo, secondName to secondInfo),
         )
         try {
-            val parent = ActivityThread.launchMainActivity(parentName) as LocalParentActivity
+            val parent = fixture.launch(parentName) as LocalParentActivity
             expectedLocalActivityParent = parent
             checkNotNull(parent.activityToken)
             check(adapter.presentedActivities == listOf(parent))
@@ -3574,7 +6032,7 @@ internal object FrameworkModuleSmoke {
             parent.finish()
 
             val restoredParent =
-                ActivityThread.launchMainActivity(parentName) as LocalParentActivity
+                fixture.launch(parentName) as LocalParentActivity
             expectedLocalActivityParent = restoredParent
             checkNotNull(restoredParent.activityToken)
             check(restoredParent.activityToken !== parent.activityToken)
@@ -3616,6 +6074,55 @@ internal object FrameworkModuleSmoke {
             activeManager?.dispatchDestroy(true)
             expectedLocalActivityParent = null
             ActivityThread.shutdownActivitiesInProcess()
+        }
+    }
+
+    private fun testInstrumentationResultTransactions() {
+        HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
+            320, 240, 120, 0)
+        val thread = ActivityThread.currentActivityThread()
+        val name = ResultDeliveryActivity::class.java.name
+        val info = activityInfo(name).apply {
+            exported = false
+            applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
+        }
+        val token = Binder()
+        val activity = checkNotNull(thread.startActivityNow(null, null,
+            Intent().setComponent(ComponentName("org.example", name)), info,
+            token, null, null, null, null))
+        val record = checkNotNull(thread.getActivityClient(token))
+        val instrumentation = thread.instrumentation
+        val target = "dev.artzig.fixture.MonitoredActivity"
+        val result = RecordingProcessIntent("monitor").apply { putExtra("result-payload", "queued") }
+        val monitor = instrumentation.addMonitor(target,
+            Instrumentation.ActivityResult(Activity.RESULT_OK, result), true)
+        withRecordingActivityClientController {
+            try {
+                thread.handleStartActivity(record, null, null)
+                thread.handleResumeActivity(record, true, false, false, "monitor-fixture")
+                check(runCatching { thread.handleStartActivity(record, null, null) }.exceptionOrNull()
+                    is IllegalStateException) { "a resumed Activity accepted another start" }
+                activityResultEvents.clear()
+                check(activity.canStartActivityForResult())
+                activity.startActivityForResult(Intent().setComponent(ComponentName("org.example", target)), 31)
+                check(activityResultEvents.isEmpty()) { "monitor result was delivered inside startActivityForResult" }
+                drainMainQueue()
+                check(activityResultEvents == listOf("pause",
+                    "result:monitor:31:${Activity.RESULT_OK}:queued", "resume")) {
+                    "monitor result transaction ordering: $activityResultEvents"
+                }
+                check(record.lifecycleState == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
+                check(result.preparedForProcess && result.fromProtectedComponent)
+                check(result.extras?.classLoader === activity.classLoader)
+                activityResultEvents.clear()
+                activity.startActivityForResult(Intent().setComponent(ComponentName("org.example", target)), -1)
+                drainMainQueue()
+                check(activityResultEvents.isEmpty()) { "negative request code received a monitor result" }
+                check(monitor.hits == 2)
+            } finally {
+                instrumentation.removeMonitor(monitor)
+                thread.handleDestroyActivity(record, true, false, "monitor-fixture-cleanup")
+            }
         }
     }
 
@@ -3739,20 +6246,22 @@ internal object FrameworkModuleSmoke {
             android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE)
 
         callerAware.callbackKinds.clear()
-        val hostedDispatch = Activity::class.java.getDeclaredMethod(
+        val compatDispatch = Activity::class.java.getDeclaredMethod(
             "dispatchActivityResult",
             String::class.java,
             Int::class.javaPrimitiveType,
             Int::class.javaPrimitiveType,
             Intent::class.java,
+            String::class.java,
         ).apply { isAccessible = true }
         withContentUriPermissionApis(true) {
-            hostedDispatch.invoke(
+            compatDispatch.invoke(
                 callerAware,
                 null,
                 24,
                 Activity.RESULT_OK,
                 Intent(),
+                "FrameworkModuleSmoke-compat-result",
             )
         }
         check(callerAware.callbackKinds == listOf("caller"))
@@ -3830,8 +6339,6 @@ internal object FrameworkModuleSmoke {
         }
         val presented = mutableListOf<Activity>()
         val adapter = object : ActivityThread.HostAdapter {
-            override fun getActivityContext(): Context = context
-            override fun getActivityClassLoader(): ClassLoader = checkNotNull(javaClass.classLoader)
             override fun showActivity(activity: Activity) {
                 transactionCompletionEvents += "present"
                 presented += activity
@@ -3840,9 +6347,8 @@ internal object FrameworkModuleSmoke {
                 transactionCompletionEvents += "clear"
             }
             override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) = Unit
-            override fun resolveActivity(intent: Intent): ComponentName? = intent.component
         }
-        ActivityThread.configureActivityHost(adapter, mapOf(activityName to info))
+        ActivityThread.configureActivityHost(adapter)
 
         val thread = ActivityThread.currentActivityThread()
         val token = Binder()
@@ -3982,10 +6488,7 @@ internal object FrameworkModuleSmoke {
             configChanges = 0
         }
         val missingSuperInfo = activityInfo(missingSuperName)
-        ActivityThread.configureActivityHost(
-            LocalActivityHostAdapter(context),
-            mapOf(activityName to info, missingSuperName to missingSuperInfo),
-        )
+        ActivityThread.configureActivityHost(LocalActivityHostAdapter())
 
         val thread = ActivityThread.currentActivityThread()
         val windowInfoEvents = mutableListOf<Pair<android.os.IBinder, ActivityWindowInfo>>()
@@ -4238,10 +6741,7 @@ internal object FrameworkModuleSmoke {
             exported = false
             applicationInfo.targetSdkVersion = android.os.Build.VERSION_CODES.VANILLA_ICE_CREAM
         }
-        ActivityThread.configureActivityHost(
-            LocalActivityHostAdapter(context),
-            mapOf(activityName to info),
-        )
+        ActivityThread.configureActivityHost(LocalActivityHostAdapter())
 
         val thread = ActivityThread.currentActivityThread()
         val token = Binder()
@@ -4850,7 +7350,7 @@ internal object FrameworkModuleSmoke {
             }
         }
 
-    private fun testActivityGroupLifecycleStateAndResults() {
+    private fun testActivityGroupLifecycleStateAndResults(fixture: StockActivityFixture) {
         val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             320,
@@ -4870,18 +7370,18 @@ internal object FrameworkModuleSmoke {
         val resultInfo = activityInfo(resultName).apply {
             applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
         }
-        val adapter = LocalActivityHostAdapter(context)
+        val adapter = LocalActivityHostAdapter()
         val childIntent = Intent().setComponent(ComponentName("org.example", childName))
         val resultIntent = Intent().setComponent(ComponentName("org.example", resultName))
 
-        ActivityThread.configureActivityHost(
+        fixture.configure(
             adapter,
             mapOf(groupName to groupInfo, childName to childInfo, resultName to resultInfo),
         )
         localActivityEvents.clear()
         activityGroupEvents.clear()
         try {
-            val group = ActivityThread.launchMainActivity(groupName) as RecordingActivityGroup
+            val group = fixture.launch(groupName) as RecordingActivityGroup
             expectedLocalActivityParent = group
             check(activityGroupEvents == listOf(
                 "group:create",
@@ -4905,9 +7405,12 @@ internal object FrameworkModuleSmoke {
 
             localActivityEvents.clear()
             child.startActivityForResult(resultIntent, 73)
+            drainMainQueue()
             check(ActivityThread.currentActivity() is ActivityGroupResultActivity)
-            check(activityGroupEvents == listOf("group:pause", "group:stop"))
-            check(localActivityEvents == listOf("group-child:pause", "group-child:stop"))
+            check(activityGroupEvents == listOf("group:pause", "group:stop", "group:save"))
+            check(localActivityEvents == listOf("group-child:pause", "group-child:stop")) {
+                "modern ActivityGroup background order: $localActivityEvents"
+            }
 
             val result = ActivityThread.currentActivity() as ActivityGroupResultActivity
             result.setResult(
@@ -4915,6 +7418,7 @@ internal object FrameworkModuleSmoke {
                 Intent().putExtra("group-result", "delivered"),
             )
             result.finish()
+            drainMainQueue()
             check(ActivityThread.currentActivity() === group)
             check(child.resultRequestCode == 73)
             check(child.resultCode == Activity.RESULT_OK)
@@ -4922,6 +7426,7 @@ internal object FrameworkModuleSmoke {
             check(activityGroupEvents == listOf(
                 "group:pause",
                 "group:stop",
+                "group:save",
                 "group:start",
                 "group:resume",
             )) { "ActivityGroup forwarded lifecycle ordering: $activityGroupEvents" }
@@ -4934,17 +7439,39 @@ internal object FrameworkModuleSmoke {
                 "group-child:resume",
             )) { "ActivityGroup child result/lifecycle ordering: $localActivityEvents" }
 
+            val sender = fixture.activitySender(resultIntent)
+            child.startIntentSenderForResult(sender, 74, null, 0, 0, 0)
+            drainMainQueue()
+            val senderResult = ActivityThread.currentActivity() as ActivityGroupResultActivity
+            senderResult.setResult(Activity.RESULT_OK, Intent().putExtra("group-result", "sender"))
+            senderResult.finish()
+            drainMainQueue()
+            check(ActivityThread.currentActivity() === group)
+            check(child.resultRequestCode == 74 && child.resultMarker == "sender")
+
+            // LocalActivityManager.saveInstanceState only saves a stopped child
+            // if it already has a snapshot. Modern parent save ordering is after
+            // stop, so explicitly snapshot the resumed child before this restore test.
+            val childSnapshot = checkNotNull(manager.saveInstanceState())
+            check(childSnapshot.getBundle("group-child")?.getString("local-state") == "group-child")
             localActivityEvents.clear()
             activityGroupEvents.clear()
             group.recreate()
+            drainMainQueue()
+            check(ActivityThread.currentActivity() === group) {
+                "public recreate must ignore an in-process Binder activity token"
+            }
+            check(activityGroupEvents.isEmpty())
+            check(runCatching { child.recreate() }.exceptionOrNull() is IllegalStateException)
+            fixture.relaunch(group)
             val restoredGroup = ActivityThread.currentActivity() as RecordingActivityGroup
             expectedLocalActivityParent = restoredGroup
             check(restoredGroup !== group)
             check(restoredGroup.currentActivity == null)
             check(activityGroupEvents == listOf(
-                "group:save",
                 "group:pause",
                 "group:stop",
+                "group:save",
                 "group:destroy",
                 "group:create:saved",
                 "group:start",
@@ -4953,9 +7480,9 @@ internal object FrameworkModuleSmoke {
                 "group:resume",
             )) { "ActivityGroup recreation ordering: $activityGroupEvents" }
             check(localActivityEvents == listOf(
-                "group-child:save",
                 "group-child:pause",
                 "group-child:stop",
+                "group-child:save",
                 "group-child:destroy",
             )) { "ActivityGroup child save/teardown ordering: $localActivityEvents" }
 
@@ -5015,7 +7542,7 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    private fun testActivityLifecycle() {
+    private fun testActivityLifecycle(fixture: StockActivityFixture) {
         events.clear()
         createdThemeResIds.clear()
         val firstName = FirstActivity::class.java.name
@@ -5034,13 +7561,14 @@ internal object FrameworkModuleSmoke {
         }
         val adapter = RecordingHostAdapter()
 
-        ActivityThread.configureActivityHost(
+        fixture.configure(
             adapter,
             mapOf(
                 firstName to firstInfo,
                 secondName to secondInfo,
                 missingConfigurationSuperName to missingConfigurationSuperInfo,
             ),
+            resolver = adapter::resolveActivity,
         )
         val application = checkNotNull(ActivityThread.currentApplication())
         val applicationConfigurationCallback = object : android.content.ComponentCallbacks {
@@ -5052,7 +7580,7 @@ internal object FrameworkModuleSmoke {
         }
         application.registerComponentCallbacks(applicationConfigurationCallback)
         try {
-            val first = ActivityThread.launchMainActivity(firstName)
+            val first = fixture.launch(firstName)
             check(events == listOf("first:create", "first:start", "first:resume", "show:first")) {
                 "main launch ordering: $events"
             }
@@ -5060,31 +7588,38 @@ internal object FrameworkModuleSmoke {
                 "activity theme must be applied before onCreate"
             }
 
-            ActivityThread.startActivityInProcess(
-                Intent().setComponent(ComponentName("org.example", secondName)),
-            )
-            check(events.takeLast(6) == listOf(
+            val senderIntent = Intent().setComponent(ComponentName("org.example", secondName))
+            val canceledSender = fixture.activitySender(senderIntent, canceled = true)
+            val canceled = runCatching {
+                first.startIntentSenderForResult(canceledSender, 51, null, 0, 0, 0)
+            }.exceptionOrNull()
+            check(canceled is android.content.IntentSender.SendIntentException)
+            check(ActivityThread.currentActivity() === first && events.size == 4)
+            first.startIntentSenderForResult(fixture.activitySender(senderIntent), -1, null, 0, 0, 0)
+            drainMainQueue()
+            check(events.takeLast(7) == listOf(
                 "first:pause",
                 "second:create",
                 "second:start",
                 "second:resume",
-                "first:stop",
                 "show:second",
+                "first:save",
+                "first:stop",
             )) { "second launch ordering: $events" }
             check(createdThemeResIds["second"] == secondInfo.getThemeResource()) {
                 "application theme fallback must be applied before onCreate"
             }
 
             checkNotNull(ActivityThread.currentActivity()).finish()
+            drainMainQueue()
             check(ActivityThread.currentActivity() === first)
-            check(events.takeLast(7) == listOf(
+            check(events.takeLast(6) == listOf(
                 "second:pause",
-                "second:stop",
-                "second:destroy",
-                "clear",
                 "first:start",
                 "first:resume",
                 "show:first",
+                "second:stop",
+                "second:destroy",
             )) { "finish ordering: $events" }
 
             val shareTarget = Intent(Intent.ACTION_SEND)
@@ -5092,7 +7627,8 @@ internal object FrameworkModuleSmoke {
                 .putExtra(Intent.EXTRA_TEXT, "https://example.com/shared")
             val chooser = Intent.createChooser(shareTarget, "Share")
             adapter.implicitActivity = ComponentName("org.example", secondName)
-            ActivityThread.startActivityInProcess(chooser)
+            first.startActivity(chooser)
+            drainMainQueue()
             val resolvedShare = checkNotNull(ActivityThread.currentActivity())
             check(resolvedShare is SecondActivity)
             check(resolvedShare.intent.action == Intent.ACTION_CHOOSER)
@@ -5105,6 +7641,7 @@ internal object FrameworkModuleSmoke {
                 "resolver must observe the original implicit intent"
             }
             resolvedShare.finish()
+            drainMainQueue()
             check(ActivityThread.currentActivity() === first)
             adapter.implicitActivity = null
 
@@ -5164,7 +7701,7 @@ internal object FrameworkModuleSmoke {
             )) { "configuration relaunch did not expose its change mask during teardown" }
 
             changingConfigurationEvents.clear()
-            checkNotNull(ActivityThread.currentActivity()).recreate()
+            fixture.relaunch(checkNotNull(ActivityThread.currentActivity()))
             check(changingConfigurationEvents == listOf(
                 "first:stop:0",
                 "first:destroy:0",
@@ -5172,12 +7709,13 @@ internal object FrameworkModuleSmoke {
 
             events.clear()
             checkNotNull(ActivityThread.currentActivity()).finish()
+            drainMainQueue()
             check(ActivityThread.currentActivity() == null)
             check(events == listOf(
                 "first:pause",
                 "first:stop",
-                "first:destroy",
                 "clear",
+                "first:destroy",
             )) { "last Activity finish ordering: $events" }
 
             events.clear()
@@ -5191,7 +7729,7 @@ internal object FrameworkModuleSmoke {
                 "process configuration was not dispatched without a current Activity: $events"
             }
 
-            ActivityThread.launchMainActivity(missingConfigurationSuperName)
+            fixture.launch(missingConfigurationSuperName)
             val hostedMissingSuperFailure = runCatching {
                 ActivityThread.applyConfigurationInProcess(
                     handledConfiguration,
@@ -5299,15 +7837,15 @@ internal object FrameworkModuleSmoke {
         restoredActivity.performDestroy()
     }
 
-    private fun testLegacyFragmentHostedResultsAndRetention() {
+    private fun testLegacyFragmentHostedResultsAndRetention(fixture: StockActivityFixture) {
         val hostName = HostedLegacyFragmentActivity::class.java.name
         val resultName = LegacyResultActivity::class.java.name
-        ActivityThread.configureActivityHost(
+        fixture.configure(
             LegacyFragmentHostAdapter(),
             mapOf(hostName to activityInfo(hostName), resultName to activityInfo(resultName)),
         )
         try {
-            val first = ActivityThread.launchMainActivity(hostName) as HostedLegacyFragmentActivity
+            val first = fixture.launch(hostName) as HostedLegacyFragmentActivity
             val retained = checkNotNull(first.fragment)
             check(retained.createCount == 1)
 
@@ -5339,6 +7877,7 @@ internal object FrameworkModuleSmoke {
                 Intent().setComponent(ComponentName("org.example", resultName)),
                 91,
             )
+            drainMainQueue()
             val resultActivity = ActivityThread.currentActivity() as LegacyResultActivity
             resultActivity.setResult(
                 Activity.RESULT_OK,
@@ -5352,7 +7891,12 @@ internal object FrameworkModuleSmoke {
             )
             val recreatedResultActivity = ActivityThread.currentActivity() as LegacyResultActivity
             check(recreatedResultActivity !== resultActivity)
+            // Result values belong to the Activity instance; the application
+            // supplies them again after recreation. ATMS retains the recipient.
+            recreatedResultActivity.setResult(Activity.RESULT_OK,
+                Intent().putExtra("legacy-result", "delivered"))
             recreatedResultActivity.finish()
+            drainMainQueue()
             check(ActivityThread.currentActivity() === replacement)
             check(retained.activityResultRequestCode == 91)
             check(retained.activityResultCode == Activity.RESULT_OK)
@@ -5375,10 +7919,7 @@ internal object FrameworkModuleSmoke {
         var implicitActivity: ComponentName? = null
         var lastImplicitIntent: Intent? = null
 
-        override fun getActivityContext(): Context? = null
 
-        override fun getActivityClassLoader(): ClassLoader =
-            checkNotNull(javaClass.classLoader)
 
         override fun showActivity(activity: Activity) {
             events += "show:${(activity as RecordingActivity).label}"
@@ -5392,21 +7933,16 @@ internal object FrameworkModuleSmoke {
             events += "resize:${(activity as RecordingActivity).label}:${width}x$height"
         }
 
-        override fun resolveActivity(intent: Intent): ComponentName? {
+        fun resolveActivity(intent: Intent): ComponentName? {
             lastImplicitIntent = Intent(intent)
             return implicitActivity
         }
     }
 
-    private class LocalActivityHostAdapter(
-        private val context: Context,
-    ) : ActivityThread.HostAdapter {
+    private class LocalActivityHostAdapter : ActivityThread.HostAdapter {
         val presentedActivities = mutableListOf<Activity>()
 
-        override fun getActivityContext(): Context = context
 
-        override fun getActivityClassLoader(): ClassLoader =
-            checkNotNull(javaClass.classLoader)
 
         override fun showActivity(activity: Activity) {
             presentedActivities += activity
@@ -5416,16 +7952,12 @@ internal object FrameworkModuleSmoke {
 
         override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) = Unit
 
-        override fun resolveActivity(intent: Intent): ComponentName? = intent.component
     }
 
     private class LegacyFragmentHostAdapter : ActivityThread.HostAdapter {
-        override fun getActivityContext(): Context? = null
-        override fun getActivityClassLoader(): ClassLoader = checkNotNull(javaClass.classLoader)
         override fun showActivity(activity: Activity) {}
         override fun clearActivityWindows() {}
         override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) {}
-        override fun resolveActivity(intent: Intent): ComponentName? = null
     }
 
     class HostedLegacyFragmentActivity : Activity() {
@@ -5981,8 +8513,37 @@ internal object FrameworkModuleSmoke {
 
     private class CapturingApplicationThread : UnsupportedApplicationThread() {
         val transactions = mutableListOf<ClientTransaction>()
+        var boundProcessName: String? = null
+        var boundPackageName: String? = null
+
+        override fun bindApplication(
+            packageName: String?, info: android.content.pm.ApplicationInfo?,
+            sdkSandboxClientAppVolumeUuid: String?, sdkSandboxClientAppPackage: String?,
+            isSdkInSandbox: Boolean, providerList: android.content.pm.ProviderInfoList?,
+            testName: android.content.ComponentName?, profilerInfo: android.app.ProfilerInfo?,
+            testArguments: android.os.Bundle?, testWatcher: android.app.IInstrumentationWatcher?,
+            uiAutomationConnection: android.app.IUiAutomationConnection?, debugMode: Int,
+            enableBinderTracking: Boolean, trackAllocation: Boolean,
+            restrictedBackupMode: Boolean, persistent: Boolean,
+            config: android.content.res.Configuration?, compatInfo: android.content.res.CompatibilityInfo?,
+            services: MutableMap<*, *>?, coreSettings: android.os.Bundle?, buildSerial: String?,
+            autofillOptions: android.content.AutofillOptions?, contentCaptureOptions: android.content.ContentCaptureOptions?,
+            disabledCompatChanges: LongArray?, loggableCompatChanges: LongArray?,
+            serializedSystemFontMap: android.os.SharedMemory?, applicationSharedMemoryFd: java.io.FileDescriptor?,
+            startRequestedElapsedTime: Long, startRequestedUptime: Long,
+        ) {
+            check(transactions.isEmpty())
+            checkNotNull(info)
+            checkNotNull(providerList)
+            checkNotNull(config)
+            checkNotNull(compatInfo)
+            check(!isSdkInSandbox && testName == null && profilerInfo == null)
+            boundProcessName = packageName
+            boundPackageName = info.packageName
+        }
 
         override fun scheduleTransaction(transaction: ClientTransaction?) {
+            check(boundProcessName != null) { "activity transaction arrived before application binding" }
             transactions += checkNotNull(transaction)
         }
 

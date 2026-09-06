@@ -7,6 +7,10 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.os.PersistableBundle;
+import android.annotation.NonNull;
+import android.window.SplashScreen;
+import android.app.ActivityOptions.SceneTransitionInfo;
 import android.view.ActionMode;
 import android.view.KeyEvent;
 import android.view.Menu;
@@ -30,16 +34,30 @@ public class Activity extends ContextWrapper implements Window.Callback,
     private android.os.IBinder mAssistToken = new android.os.Binder();
     private android.os.IBinder mShareableActivityToken;
     private Activity mParent;
-    private String mEmbeddedID;
+    String mEmbeddedID;
     private int mRequestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-    private boolean mChangingConfigurations;
+    boolean mChangingConfigurations;
     // AOSP Activity.mFinished is package-private: ActivityThread and the legacy
     // LocalActivityManager lifecycle both own transitions of this flag.
     boolean mFinished;
-    private int mResultCode = RESULT_CANCELED;
-    private Intent mResultData;
-    private String mResultWho;
-    private int mResultRequestCode = -1;
+    boolean mDestroyed;
+    boolean mStartedActivity;
+    // AOSP Activity's scene and splash state; the containing Activity is still
+    // hosted because its startup/window-service dependency closure is unfinished.
+    final ActivityTransitionState mActivityTransitionState = new ActivityTransitionState();
+    SharedElementCallback mEnterTransitionListener = SharedElementCallback.NULL_CALLBACK;
+    SharedElementCallback mExitTransitionListener = SharedElementCallback.NULL_CALLBACK;
+    SceneTransitionInfo mSceneTransitionInfo;
+    boolean mStopped;
+    boolean mResumed;
+    private ActivityThread mMainThread;
+    private int mIdent;
+    private Instrumentation mInstrumentation;
+    private Application mApplication;
+    private ComponentCaller mInitialCaller, mCaller;
+    private SplashScreen mSplashScreen;
+    int mResultCode = RESULT_CANCELED;
+    Intent mResultData;
     /** AOSP Activity.mCalled: lifecycle dispatchers verify required super calls through this bit. */
     boolean mCalled;
     /** Caller identity is visible only while a caller-aware result/new-intent callback runs. */
@@ -75,34 +93,76 @@ public class Activity extends ContextWrapper implements Window.Callback,
     final void attach(Context base, ActivityInfo activityInfo, Intent intent, Activity parent,
             String id, android.os.IBinder token, android.os.IBinder assistToken,
             android.os.IBinder shareableActivityToken) {
-        // Pinned AOSP sets mIntent before attachBaseContext because Activity overrides may inspect
-        // their launch identity while attaching.
-        mIntent = intent != null ? intent : new Intent();
+        ActivityThread thread = ActivityThread.currentActivityThread();
+        attach(base, thread, thread != null ? thread.getInstrumentation() : new Instrumentation(),
+                token, 0, ActivityThread.currentApplication(), intent != null ? intent : new Intent(),
+                activityInfo != null ? activityInfo : new ActivityInfo(), "", parent, id,
+                null, new Configuration(base.getResources().getConfiguration()), null, null, null,
+                null, assistToken, shareableActivityToken, null);
+    }
+    /** AOSP Activity.attach's Instrumentation entry point. Activity/window lifecycle still uses
+     * the hosted core; retain the supplied identity, retained state and PhoneWindow configuration
+     * while its WindowManager, autofill and window-controller closure is completed. */
+    final void attach(Context base, ActivityThread thread, Instrumentation instrumentation,
+            android.os.IBinder token, int ident, Application application, Intent intent,
+            ActivityInfo info, CharSequence title, Activity parent, String id,
+            NonConfigurationInstances retained, Configuration config, String referrer,
+            com.android.internal.app.IVoiceInteractor voiceInteractor, Window window,
+            android.view.ViewRootImpl.ActivityConfigCallback activityConfigCallback,
+            android.os.IBinder assistToken, android.os.IBinder shareableActivityToken,
+            android.os.IBinder initialCallerInfoAccessToken) {
+        mIntent = intent;
         attachBaseContext(base);
         if (base instanceof ContextImpl) ((ContextImpl) base).setOuterContext(this);
         mFragments.attachHost(null);
-        mActivityInfo = activityInfo != null ? new ActivityInfo(activityInfo) : new ActivityInfo();
-        mCurrentConfig = new Configuration(base.getResources().getConfiguration());
-        mRequestedOrientation = mActivityInfo.screenOrientation;
+        mActivityInfo = info;
+        mWindow = new PhoneWindow(this, window, activityConfigCallback);
+        mWindow.setCallback(this);
+        mWindow.getLayoutInflater().setPrivateFactory(this);
+        if (info.softInputMode != WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED) {
+            mWindow.setSoftInputMode(info.softInputMode);
+        }
+        if (info.uiOptions != 0) mWindow.setUiOptions(info.uiOptions);
+        mMainThread = thread;
+        mIdent = ident;
+        mInstrumentation = instrumentation;
+        mApplication = application;
+        mToken = token;
+        mAssistToken = assistToken;
+        mShareableActivityToken = shareableActivityToken;
+        mReferrer = referrer;
+        mTitle = title;
         mParent = parent;
         mEmbeddedID = id;
-        mToken = token;
-        if (assistToken != null) mAssistToken = assistToken;
-        mShareableActivityToken = shareableActivityToken;
-        mWindow = new PhoneWindow(this);
-        mWindow.setCallback(this);
-        // Real Activity.attach makes the Activity the inflater's private
-        // factory. FragmentActivity overrides onCreateView to inflate
-        // AndroidX <fragment> tags through its FragmentController.
-        mWindow.getLayoutInflater().setPrivateFactory(this);
+        mLastNonConfigurationInstances = retained;
+        mVoiceInteractor = voiceInteractor;
+        mRequestedOrientation = info.screenOrientation;
+        android.content.ComponentName component = intent.getComponent();
         mWindow.setWindowManager((WindowManager) base.getSystemService(Context.WINDOW_SERVICE),
-                mToken, getClass().getName(), false);
-        if (mParent != null) mWindow.setContainer(mParent.getWindow());
+                token, component != null ? component.flattenToString() : getClass().getName(),
+                (info.flags & ActivityInfo.FLAG_HARDWARE_ACCELERATED) != 0);
+        if (parent != null) mWindow.setContainer(parent.getWindow());
+        mCurrentConfig = config;
+        mWindow.setColorMode(info.colorMode);
+        mWindow.setPreferMinimalPostProcessing(
+                (info.flags & ActivityInfo.FLAG_PREFER_MINIMAL_POST_PROCESSING) != 0);
+        if (android.security.Flags.contentUriPermissionApis()) {
+            mInitialCaller = new ComponentCaller(getActivityToken(), initialCallerInfoAccessToken);
+            mCaller = mInitialCaller;
+        }
     }
-    public Application getApplication() {
-        return ActivityThread.currentApplication();
+    public Application getApplication() { return mApplication; }
+    public ActivityThread getActivityThread() { return mMainThread; }
+    public ComponentCaller getInitialCaller() { return mInitialCaller; }
+    public ComponentCaller getCaller() { return mCaller; }
+    public void setIntent(Intent newIntent) { internalSetIntent(newIntent, null); }
+    public void setIntent(Intent newIntent, ComponentCaller newCaller) {
+        internalSetIntent(newIntent, newCaller);
     }
-    public void setIntent(Intent newIntent) { mIntent = newIntent; }
+    private void internalSetIntent(Intent newIntent, ComponentCaller newCaller) {
+        mIntent = newIntent;
+        mCaller = newCaller;
+    }
     public android.view.LayoutInflater getLayoutInflater() { return mWindow.getLayoutInflater(); }
     public Object getLastNonConfigurationInstance() {
         return mLastNonConfigurationInstances != null
@@ -129,13 +189,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         result.loaders = loaders;
         return result;
     }
-    void setLastNonConfigurationInstances$artzig(NonConfigurationInstances instances) {
-        mLastNonConfigurationInstances = instances;
-    }
     public boolean isChangingConfigurations() { return mChangingConfigurations; }
-    public void setChangingConfigurations$artzig(boolean changing) {
-        mChangingConfigurations = changing;
-    }
     public boolean isInMultiWindowMode() { return false; }
     public boolean isInPictureInPictureMode() { return false; }
     public boolean enterPictureInPictureMode(PictureInPictureParams params) {
@@ -166,17 +220,33 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void invalidateOptionsMenu() {}
     public void closeOptionsMenu() {}
     public void openOptionsMenu() {}
-    public void recreate() { ActivityThread.recreateActivityInProcess(this); }
+    // Pinned AOSP Activity.recreate: never destroy the caller inside this callback.
+    public void recreate() {
+        if (mParent != null) {
+            throw new IllegalStateException("Can only be called on top-level activity");
+        }
+        if (android.os.Looper.myLooper() != mMainThread.getLooper()) {
+            throw new IllegalStateException("Must be called from main thread");
+        }
+        mMainThread.scheduleRelaunchActivity(mToken);
+    }
 
     /** AOSP Activity.onTopResumedActivityChanged. */
     public void onTopResumedActivityChanged(boolean isTopResumedActivity) {}
 
-    /** AOSP Activity.performTopResumedActivityChanged. EventLogTags is not part of the hosted
-     * client closure, so the observable application callback is retained at this boundary. */
-    final void performTopResumedActivityChanged$artzig(boolean isTopResumedActivity,
-            String reason) {
+    /** Pinned Activity.performTopResumedActivityChanged, including stock event logging. */
+    final void performTopResumedActivityChanged(boolean isTopResumedActivity, String reason) {
         onTopResumedActivityChanged(isTopResumedActivity);
+
+        if (isTopResumedActivity) {
+            EventLogTags.writeWmOnTopResumedGainedCalled(mIdent, getComponentName().getClassName(),
+                    reason);
+        } else {
+            EventLogTags.writeWmOnTopResumedLostCalled(mIdent, getComponentName().getClassName(),
+                    reason);
+        }
     }
+
     public void finishAffinity() {}
     public boolean shouldShowRequestPermissionRationale(String permission) { return false; }
     public void requestPermissions(String[] permissions, int requestCode) {
@@ -217,7 +287,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void startActivityForResult(Intent intent, int requestCode) { startActivityForResult(intent, requestCode, null); }
     public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
         if (mParent != null) {
-            mParent.startActivityFromChild(this, intent, requestCode, options);
+            if (options != null) mParent.startActivityFromChild(this, intent, requestCode, options);
+            else mParent.startActivityFromChild(this, intent, requestCode);
             return;
         }
         startActivityForResult((String) null, intent, requestCode, options);
@@ -228,22 +299,49 @@ public class Activity extends ContextWrapper implements Window.Callback,
     }
     @Deprecated public void startActivityFromChild(Activity child, Intent intent, int requestCode,
             Bundle options) {
-        startActivityForResult(child != null ? child.mEmbeddedID : null, intent, requestCode,
-                options);
-    }
-    public void startActivityForResult(String who, Intent intent, int requestCode, Bundle options) {
-        Instrumentation instrumentation = ActivityThread.currentActivityThread().getInstrumentation();
-        if (who == null) {
-            instrumentation.execStartActivity(this,
-                    ActivityThread.currentActivityThread().getApplicationThread().asBinder(),
-                    getActivityToken(), this, intent, requestCode, options);
-        } else {
-            instrumentation.execStartActivity(this,
-                    ActivityThread.currentActivityThread().getApplicationThread().asBinder(),
-                    getActivityToken(), who, intent, requestCode, options);
+        options = transferSpringboardActivityOptions(options);
+        Instrumentation.ActivityResult result = mInstrumentation.execStartActivity(
+                this, mMainThread.getApplicationThread(), mToken, child,
+                intent, requestCode, options);
+        if (result != null) {
+            mMainThread.sendActivityResult(mToken, child.mEmbeddedID, requestCode,
+                    result.getResultCode(), result.getResultData());
         }
+        cancelInputsAndStartExitTransition(options);
     }
-    /** Activity IntentSender dispatch requires the still-unhosted activity task manager seam. */
+    /** Pinned Activity.startActivityForResult: monitor results are asynchronous activity
+     * transactions. The surrounding Activity/window core remains hosted. */
+    public void startActivityForResult(String who, Intent intent, int requestCode, Bundle options) {
+        options = transferSpringboardActivityOptions(options);
+        final Instrumentation.ActivityResult result;
+        if (who == null) {
+            result = mInstrumentation.execStartActivity(this,
+                    mMainThread.getApplicationThread(), mToken, this,
+                    intent, requestCode, options);
+        } else {
+            android.net.Uri referrer = onProvideReferrer();
+            if (referrer != null) intent.putExtra(Intent.EXTRA_REFERRER, referrer);
+            result = mInstrumentation.execStartActivity(this,
+                    mMainThread.getApplicationThread(), mToken, who,
+                    intent, requestCode, options);
+        }
+        if (result != null) {
+            mMainThread.sendActivityResult(mToken, who, requestCode,
+                    result.getResultCode(), result.getResultData());
+        }
+        cancelInputsAndStartExitTransition(options);
+    }
+    @Override public boolean canStartActivityForResult() { return true; }
+    private Bundle transferSpringboardActivityOptions(Bundle options) {
+        if (options == null && (mWindow != null && !mWindow.isActive())) {
+            final SceneTransitionInfo info = getSceneTransitionInfo();
+            if (info != null) {
+                return ActivityOptions.makeBasic().setSceneTransitionInfo(info).toBundle();
+            }
+        }
+        return options;
+    }
+    /** Pinned AOSP Activity IntentSender entry points; task dispatch is hosted behind Binder. */
     public void startIntentSenderForResult(android.content.IntentSender intent, int requestCode,
             Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
             throws android.content.IntentSender.SendIntentException {
@@ -252,8 +350,16 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public void startIntentSenderForResult(android.content.IntentSender intent, int requestCode,
             Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options)
             throws android.content.IntentSender.SendIntentException {
-        startIntentSenderForResult(null, intent, requestCode, fillInIntent,
-                flagsMask, flagsValues, extraFlags, options);
+        if (mParent == null) {
+            startIntentSenderForResultInner(intent, mEmbeddedID, requestCode, fillInIntent,
+                    flagsMask, flagsValues, options);
+        } else if (options != null) {
+            mParent.startIntentSenderFromChild(this, intent, requestCode, fillInIntent,
+                    flagsMask, flagsValues, extraFlags, options);
+        } else {
+            mParent.startIntentSenderFromChild(this, intent, requestCode, fillInIntent,
+                    flagsMask, flagsValues, extraFlags);
+        }
     }
     /** AOSP convertToTranslucent: no translucent conversion without the activity task manager. */
     public interface TranslucentConversionListener { void onTranslucentConversionComplete(boolean drawComplete); }
@@ -262,30 +368,61 @@ public class Activity extends ContextWrapper implements Window.Callback,
         return false;
     }
     public void convertFromTranslucent() {}
-    private void startIntentSenderForResult(String who, android.content.IntentSender intent,
+    public void startIntentSenderForResult(android.content.IntentSender intent, String who,
+            int requestCode, Intent fillInIntent, int flagsMask, int flagsValues, Bundle options)
+            throws android.content.IntentSender.SendIntentException {
+        startIntentSenderForResultInner(intent, who, requestCode, fillInIntent,
+                flagsMask, flagsValues, options);
+    }
+    public void startIntentSenderFromChild(Activity child, android.content.IntentSender intent,
+            int requestCode, Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags)
+            throws android.content.IntentSender.SendIntentException {
+        startIntentSenderFromChild(child, intent, requestCode, fillInIntent,
+                flagsMask, flagsValues, extraFlags, null);
+    }
+    public void startIntentSenderFromChild(Activity child, android.content.IntentSender intent,
             int requestCode, Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags,
             Bundle options) throws android.content.IntentSender.SendIntentException {
-        throw new android.content.IntentSender.SendIntentException(
-                "Activity IntentSender launches are not hosted without ActivityTaskManager");
+        startIntentSenderForResultInner(intent, child.mEmbeddedID, requestCode, fillInIntent,
+                flagsMask, flagsValues, options);
+    }
+    private void startIntentSenderFromFragment(Fragment fragment, android.content.IntentSender intent,
+            int requestCode, Intent fillInIntent, int flagsMask, int flagsValues, Bundle options)
+            throws android.content.IntentSender.SendIntentException {
+        startIntentSenderForResultInner(intent, fragment.mWho, requestCode, fillInIntent,
+                flagsMask, flagsValues, options);
+    }
+    /** AOSP startIntentSenderForResultInner, including fill-in preparation, cancellation mapping,
+     * and result recipient identity. Window visibility still belongs to the presentation adapter. */
+    public void startIntentSenderForResultInner(android.content.IntentSender intent, String who,
+            int requestCode, Intent fillInIntent, int flagsMask, int flagsValues, Bundle options)
+            throws android.content.IntentSender.SendIntentException {
+        try {
+            options = transferSpringboardActivityOptions(options);
+            String resolvedType = null;
+            if (fillInIntent != null) {
+                fillInIntent.migrateExtraStreamToClipData(this);
+                fillInIntent.prepareToLeaveProcess(this);
+                resolvedType = fillInIntent.resolveTypeIfNeeded(getContentResolver());
+            }
+            int result = ActivityTaskManager.getService().startActivityIntentSender(
+                    mMainThread.getApplicationThread(), intent != null ? intent.getTarget() : null,
+                    intent != null ? intent.getWhitelistToken() : null, fillInIntent, resolvedType,
+                    mToken, who, requestCode, flagsMask, flagsValues, options);
+            if (result == ActivityManager.START_CANCELED) {
+                throw new android.content.IntentSender.SendIntentException();
+            }
+            Instrumentation.checkStartActivityResult(result, null);
+            if (options != null) cancelInputsAndStartExitTransition(options);
+        } catch (android.os.RemoteException e) {
+            // Pinned Activity retains this compatibility behavior for a dead system service.
+        }
+        if (requestCode >= 0) mStartedActivity = true;
     }
     public void setResult(int resultCode) { setResult(resultCode, null); }
     public void setResult(int resultCode, Intent data) {
         mResultCode = resultCode;
         mResultData = data;
-    }
-    void setResultTarget$artzig(String who, int requestCode) {
-        mResultWho = who;
-        mResultRequestCode = requestCode;
-    }
-    String getResultWho$artzig() { return mResultWho; }
-    int getResultRequestCode$artzig() { return mResultRequestCode; }
-    int getResultCode$artzig() { return mResultCode; }
-    Intent getResultData$artzig() { return mResultData; }
-    void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data) {
-        ComponentCaller caller = android.security.Flags.contentUriPermissionApis()
-                ? new ComponentCaller(getActivityToken(), null) : null;
-        dispatchActivityResult(who, requestCode, resultCode, data, caller,
-                "HostedActivityRuntime");
     }
     /** Pinned AOSP compatibility overload used when caller identity is unavailable. */
     void dispatchActivityResult(String who, int requestCode, int resultCode, Intent data,
@@ -339,10 +476,18 @@ public class Activity extends ContextWrapper implements Window.Callback,
             }
         });
     }
-    public boolean isActivityTransitionRunning() { return false; }
+    public boolean isActivityTransitionRunning() {
+        return mActivityTransitionState.isTransitionRunning();
+    }
     public void reportFullyDrawn() {}
-    public void postponeEnterTransition() {}
-    public void startPostponedEnterTransition() {}
+    public void postponeEnterTransition() {
+        mActivityTransitionState.postponeEnterTransition();
+    }
+    public void startPostponedEnterTransition() {
+        mActivityTransitionState.startPostponedEnterTransition();
+    }
+    /** Pinned AOSP default: use the launching package as referrer. */
+    public android.net.Uri onProvideReferrer() { return null; }
     public android.net.Uri getReferrer() {
         final Intent intent = getIntent();
         if (intent != null) {
@@ -457,15 +602,37 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public final boolean isChild() { return mParent != null; }
     public Window getWindow() { return mWindow; }
     public WindowManager getWindowManager() { return mWindow != null ? mWindow.getWindowManager() : null; }
-    public boolean isResumed() { return true; }
+    public boolean isResumed() { return mResumed; }
     public boolean isFinishing() { return mFinished; }
-    public boolean isDestroyed() { return false; }
+    public boolean isDestroyed() { return mDestroyed; }
+    /** Pinned AOSP Activity visibility contract used by AutofillClientController. */
+    public final boolean isVisibleForAutofill() { return !mStopped; }
+
+    // Pinned Activity nested API types, shared with its stock support classes. The containing
+    // Activity still awaits the voice-interaction and window dependency closure.
+    @android.annotation.IntDef(prefix = { "FULLSCREEN_REQUEST_" }, value = {
+            FULLSCREEN_MODE_REQUEST_EXIT, FULLSCREEN_MODE_REQUEST_ENTER })
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface FullscreenModeRequest {}
+    public static final int FULLSCREEN_MODE_REQUEST_EXIT = 0;
+    public static final int FULLSCREEN_MODE_REQUEST_ENTER = 1;
+    public interface ScreenCaptureCallback { void onScreenCaptured(); }
+
+    /** Pinned Activity.finish: the task manager accepts the finish and owns result routing. */
     public void finish() {
         if (mParent != null) {
             mParent.finishFromChild(this);
         } else {
-            mFinished = true;
-            ActivityThread.finishActivityInProcess(this);
+            final int resultCode;
+            final Intent resultData;
+            synchronized (this) {
+                resultCode = mResultCode;
+                resultData = mResultData;
+            }
+            if (resultData != null) resultData.prepareToLeaveProcess(this);
+            if (ActivityClient.getInstance().finishActivity(mToken, resultCode, resultData, 0)) {
+                mFinished = true;
+            }
         }
     }
     /** AOSP's default finishes the parent; ActivityGroup subclasses may route to their manager. */
@@ -515,12 +682,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
         return className.startsWith(packageName + ".")
                 ? className.substring(packageName.length() + 1) : className;
     }
-    public android.window.SplashScreen getSplashScreen() {
-        return new android.window.SplashScreen() {
-            @Override public void setSplashScreenTheme(int themeId) {}
-            @Override public void setOnExitAnimationListener(
-                    android.window.SplashScreen.OnExitAnimationListener listener) {}
-        };
+    public final @NonNull SplashScreen getSplashScreen() {
+        return getOrCreateSplashScreen();
     }
     public int getTitleColor() { return 0; }
     public void setTitleColor(int textColor) {}
@@ -542,11 +705,11 @@ public class Activity extends ContextWrapper implements Window.Callback,
     /** AOSP Activity.onRestart; dispatched before a stopped activity starts again. */
     protected void onRestart() {}
     protected void onStart() { mFragments.doLoaderStart(); }
-    protected void onResume() {}
+    protected void onResume() { mActivityTransitionState.onResume(this); mCalled = true; }
     @Deprecated public void onStateNotSaved() {}
     protected void onPostResume() {}
     protected void onPause() { mCalled = true; }
-    protected void onStop() {}
+    protected void onStop() { mActivityTransitionState.onStop(this); mCalled = true; }
     protected void onDestroy() {}
     /** Pinned AOSP Activity.onCreateDescription; captured by the stop transaction report. */
     public CharSequence onCreateDescription() { return null; }
@@ -557,14 +720,34 @@ public class Activity extends ContextWrapper implements Window.Callback,
         if (fragmentState != null) outState.putParcelable(FRAGMENTS_TAG, fragmentState);
     }
     protected void onRestoreInstanceState(Bundle savedInstanceState) {}
-    public final void performCreate(Bundle state) {
+    // Pinned AOSP persistable callback defaults delegate to the Bundle overloads.
+    public void onCreate(Bundle state, PersistableBundle persistentState) { onCreate(state); }
+    public void onPostCreate(Bundle state, PersistableBundle persistentState) { onPostCreate(state); }
+    public void onSaveInstanceState(Bundle state, PersistableBundle persistentState) {
+        onSaveInstanceState(state);
+    }
+    public void onRestoreInstanceState(Bundle state, PersistableBundle persistentState) {
+        if (state != null) onRestoreInstanceState(state);
+    }
+    public void onUserInteraction() {}
+    protected void onUserLeaveHint() {}
+    /** AOSP performUserLeaving ordering. The host advertises neither PiP nor Leanback,
+     * so the TV implicit-PiP permission gate cannot affect an available operation. */
+    final void performUserLeaving() {
+        onUserInteraction();
+        onUserLeaveHint();
+    }
+    public final void performCreate(Bundle state) { performCreate(state, null); }
+    public final void performCreate(Bundle state, PersistableBundle persistentState) {
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreCreated(this, state);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreCreated(this, state);
-        onCreate(state);
+        if (persistentState != null) onCreate(state, persistentState); else onCreate(state);
+        mActivityTransitionState.readState(state);
         if (app != null) app.dispatchActivityCreated(this, state);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityCreated(this, state);
         mFragments.dispatchActivityCreated();
+        mActivityTransitionState.setEnterSceneTransitionInfo(this, getSceneTransitionInfo());
         if (app != null) app.dispatchActivityPostCreated(this, state);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostCreated(this, state);
     }
@@ -574,6 +757,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreStarted(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreStarted(this);
+        mActivityTransitionState.setEnterSceneTransitionInfo(this, getSceneTransitionInfo());
         mFragments.noteStateNotSaved();
         mFragments.execPendingActions();
         onStart();
@@ -581,11 +765,13 @@ public class Activity extends ContextWrapper implements Window.Callback,
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityStarted(this);
         mFragments.dispatchStart();
         mFragments.reportLoaderStart();
+        mActivityTransitionState.enterReady(this);
         if (app != null) app.dispatchActivityPostStarted(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostStarted(this);
     }
     /** AOSP Activity.performRestart, limited to the lifecycle state owned by ActivityThread. */
     final void performRestart(boolean start) {
+        mStopped = false;
         mFragments.noteStateNotSaved();
         onRestart();
         if (start) performStart();
@@ -596,6 +782,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreResumed(this);
         mFragments.execPendingActions();
         mLastNonConfigurationInstances = null;
+        mResumed = true;
         onResume();
         if (app != null) app.dispatchActivityResumed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityResumed(this);
@@ -612,6 +799,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         mFragments.dispatchPause();
         mCalled = false;
         onPause();
+        mResumed = false;
         if (!mCalled && getApplicationInfo().targetSdkVersion
                 >= android.os.Build.VERSION_CODES.GINGERBREAD) {
             throw new android.util.SuperNotCalledException(
@@ -632,6 +820,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         onStop();
         if (app != null) app.dispatchActivityStopped(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityStopped(this);
+        mStopped = true;
         if (app != null) app.dispatchActivityPostStopped(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPostStopped(this);
     }
@@ -639,6 +828,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreDestroyed(this);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreDestroyed(this);
+        // AOSP performDestroy marks both the Activity and Window before fragment/onDestroy calls.
+        mDestroyed = true;
+        mWindow.destroy();
         mFragments.dispatchDestroy();
         onDestroy();
         mFragments.doLoaderDestroy();
@@ -658,10 +850,20 @@ public class Activity extends ContextWrapper implements Window.Callback,
         }
     }
     public final void performSaveInstanceState(Bundle outState) {
+        performSaveInstanceState(outState, null, false);
+    }
+    public final void performSaveInstanceState(Bundle outState, PersistableBundle persistentState) {
+        performSaveInstanceState(outState, persistentState, true);
+    }
+    private void performSaveInstanceState(Bundle outState, PersistableBundle persistentState,
+            boolean persistable) {
         Application app = appOrNull();
         if (app != null) app.dispatchActivityPreSaveInstanceState(this, outState);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivityPreSaveInstanceState(this, outState);
-        onSaveInstanceState(outState);
+        if (persistable) onSaveInstanceState(outState, persistentState);
+        else onSaveInstanceState(outState);
+        // AOSP saves transition state only through the non-persistable overload.
+        if (!persistable) mActivityTransitionState.saveState(outState);
         if (app != null) app.dispatchActivitySaveInstanceState(this, outState);
         for (Application.ActivityLifecycleCallbacks cb : collectLifecycleCallbacks()) cb.onActivitySaveInstanceState(this, outState);
         if (app != null) app.dispatchActivityPostSaveInstanceState(this, outState);
@@ -669,6 +871,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
     }
     public final void performRestoreInstanceState(Bundle savedInstanceState) {
         onRestoreInstanceState(savedInstanceState);
+    }
+    public final void performRestoreInstanceState(Bundle state, PersistableBundle persistentState) {
+        onRestoreInstanceState(state, persistentState);
     }
     // ---- Window.Callback ----
     @Override public boolean dispatchKeyEvent(KeyEvent event) { return mWindow.superDispatchKeyEvent(event); }
@@ -795,8 +1000,13 @@ public class Activity extends ContextWrapper implements Window.Callback,
                 android.content.IntentSender intent, int requestCode, Intent fillInIntent,
                 int flagsMask, int flagsValues, int extraFlags, Bundle options)
                 throws android.content.IntentSender.SendIntentException {
-            Activity.this.startIntentSenderForResult(fragment.mWho, intent, requestCode,
-                    fillInIntent, flagsMask, flagsValues, extraFlags, options);
+            if (mParent == null) {
+                startIntentSenderForResultInner(intent, fragment.mWho, requestCode, fillInIntent,
+                        flagsMask, flagsValues, options);
+            } else if (options != null) {
+                mParent.startIntentSenderFromFragment(fragment, intent, requestCode, fillInIntent,
+                        flagsMask, flagsValues, options);
+            }
         }
 
         @Override public void onRequestPermissionsFromFragment(Fragment fragment,
@@ -822,4 +1032,69 @@ public class Activity extends ContextWrapper implements Window.Callback,
         }
     }
     public Object getSystemService$override(String name) { return null; }
+    // Reused AOSP Activity scene/splash APIs.
+    private SplashScreen getOrCreateSplashScreen() {
+        synchronized (this) {
+            if (mSplashScreen == null) {
+                mSplashScreen = new SplashScreen.SplashScreenImpl(this);
+            }
+            return mSplashScreen;
+        }
+    }
+
+    final boolean isTopOfTask() {
+        if (mToken == null || mWindow == null) {
+            return false;
+        }
+        return ActivityClient.getInstance().isTopOfTask(getActivityToken());
+    }
+
+    public void finishAfterTransition() {
+        if (!mActivityTransitionState.startExitBackTransition(this)) {
+            finish();
+        }
+    }
+
+    public void onActivityReenter(int resultCode, Intent data) {
+    }
+
+    public void setEnterSharedElementCallback(SharedElementCallback callback) {
+        if (callback == null) {
+            callback = SharedElementCallback.NULL_CALLBACK;
+        }
+        mEnterTransitionListener = callback;
+    }
+
+    public void setExitSharedElementCallback(SharedElementCallback callback) {
+        if (callback == null) {
+            callback = SharedElementCallback.NULL_CALLBACK;
+        }
+        mExitTransitionListener = callback;
+    }
+
+    public void onNewSceneTransitionInfo(ActivityOptions.SceneTransitionInfo info) {
+        mActivityTransitionState.setEnterSceneTransitionInfo(this, info);
+        if (!mStopped) {
+            mActivityTransitionState.enterReady(this);
+        }
+    }
+
+    SceneTransitionInfo getSceneTransitionInfo() {
+        final SceneTransitionInfo sceneTransitionInfo = mSceneTransitionInfo;
+        // The info only applies once.
+        mSceneTransitionInfo = null;
+        return sceneTransitionInfo;
+    }
+
+    private void cancelInputsAndStartExitTransition(Bundle options) {
+        final View decor = mWindow != null ? mWindow.peekDecorView() : null;
+        if (decor != null) {
+            decor.cancelPendingInputEvents();
+        }
+        if (options != null) {
+            mActivityTransitionState.startExitOutTransition(this, options);
+        }
+    }
+
+
 }

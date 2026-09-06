@@ -8,7 +8,7 @@
     android:versionCode="7"
     android:versionName="7.0">
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
-    <application android:hasCode="false" android:label="azk test b">
+    <application android:name="dev.artzig.systemtest.ProviderBindingApplication" android:hasCode="false" android:label="azk test b">
         <activity android:name="dev.artzig.systemtest.BMainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -31,9 +31,18 @@
             android:exported="false" />
         <provider android:name="dev.artzig.systemtest.TestProvider"
             android:authorities="dev.artzig.test.b.provider"
+            android:initOrder="10"
             android:exported="true" />
         <provider android:name="dev.artzig.systemtest.SecretProvider"
             android:authorities="dev.artzig.test.b.secret"
+            android:initOrder="20"
+            android:grantUriPermissions="true"
             android:exported="false" />
+        <provider android:name="dev.artzig.systemtest.DisabledBindingProvider"
+            android:authorities="dev.artzig.test.b.disabled"
+            android:initOrder="100" android:enabled="false" android:exported="false" />
+        <provider android:name="dev.artzig.systemtest.SecondaryBindingProvider"
+            android:authorities="dev.artzig.test.b.secondary"
+            android:initOrder="90" android:process=":secondary" android:exported="false" />
     </application>
 </manifest>

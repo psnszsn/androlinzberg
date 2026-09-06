@@ -17,6 +17,7 @@ pub const Options = struct {
 pub const Result = struct {
     /// Classpath jar containing classes.dex and any secondary dex files.
     classpath_jar: LazyPath,
+    compat_config: LazyPath,
     app_context_jar: LazyPath,
     framework_odex: LazyPath,
     framework_vdex: LazyPath,
@@ -130,9 +131,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Materialize the base JAR as a directory and overlay those classes so
     // duplicate core-all entries are replaced rather than duplicated.
     const merge_i18n = b.addSystemCommand(&.{
-        "bash", "-c",
-        "unzip -q \"$1\" -d \"$2\" && cp -R \"$3/.\" \"$2\"",
-        "merge-core-i18n",
+        "bash",                                               "-c",
+        "unzip -q \"$1\" -d \"$2\" && cp -R \"$3/.\" \"$2\"", "merge-core-i18n",
     });
     merge_i18n.addFileArg(core_plus_base);
     const core_plus_classes = merge_i18n.addOutputDirectoryArg("core-all-plus-classes");
@@ -177,6 +177,21 @@ pub fn build(b: *std.Build, o: Options) Result {
         "error-prone-annotation-classes",
     );
     const guava_host_jar = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
+
+    const compat_declaration = @import("generator_sources.zig").compat_config;
+    var compat_sources = SourceFiles.Collector.init(b);
+    const aosp_root = SourceFiles.Root.dependency(b, aosp, "");
+    for (compat_declaration.processor_sources) |path| compat_sources.addFile(aosp_root, path);
+    compat_sources.addTree(SourceFiles.Root.dependency(b, aosp, compat_declaration.annotations_tree), .{});
+    const compat_java = compat_sources.select(".java");
+    const compat_javac = command.create(b);
+    compat_javac.addArgs(&.{ "javac", "-source", "21", "-target", "21", "-encoding", "UTF-8", "-nowarn", "-classpath" });
+    compat_javac.addFileArg(guava_host_jar);
+    compat_javac.addArg("-d");
+    const compat_processor = compat_javac.addOutputDirectoryArg("compat-processor-classes");
+    compat_javac.addPrefixedFileArg("@", compat_java.responseFile(b, "compat-processor-sources.rsp"));
+    compat_java.addInputs(compat_javac.run);
+    compat_javac.run.setName("compile AOSP compatibility change processor");
 
     var property_cache_sources = SourceFiles.Collector.init(b);
     const property_cache_root = SourceFiles.Root.dependency(
@@ -225,7 +240,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     package_manager_internal_processor.addFileArg(
         b.path("src/java/dev/artzig/tools/PackageManagerInternalProcessor.kt"),
     );
-    package_manager_internal_processor.run.setName("compile PackageManagerInternal adapter processor");
+    package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/LocalServiceAdapterProcessor.kt"));
+    package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/ActivityManagerInternalProcessor.kt"));
+    package_manager_internal_processor.run.setName("compile local-service adapter processors");
 
     var safeparcel_sources = SourceFiles.Collector.init(b);
     const jsilver_root = SourceFiles.Root.dependency(b, aosp, "external/jsilver/src");
@@ -307,16 +324,19 @@ pub fn build(b: *std.Build, o: Options) Result {
     });
     javac.addArg("-processorpath");
     javac.addJoinedPathInputs(":", &.{
+        .{ .directory = compat_processor },
         .{ .file = safeparcel_jar },
         .{ .file = property_cache_jar },
         .{ .file = package_manager_internal_processor_jar },
+        .{ .file = o.generated.jvm.system_features_processor },
+        .{ .directory = o.generated.jvm.system_features_processor_dependencies },
         .{ .file = kotlin_stdlib },
         .{ .file = guava_host_jar },
         .{ .directory = androidx_annotation_classes },
     });
     javac.addArgs(&.{
         "-processor",
-        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor",
+        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor,dev.artzig.tools.ActivityManagerInternalProcessor," ++ @import("generator_sources.zig").system_features.processor_class ++ "," ++ compat_declaration.processor_class,
     });
     javac.addArg("-d");
     const java_classes = javac.addOutputDirectoryArg("java-classes");
@@ -351,14 +371,38 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addArg("-C");
     jar.addDirectoryArg(error_prone_annotation_classes);
     jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(o.generated.jvm.resources);
+    jar.addArg(".");
+
+    const merge_compat = command.create(b);
+    merge_compat.addArg("python3");
+    merge_compat.addFileArg(aosp.path(compat_declaration.merge_tool));
+    merge_compat.addArg("--jar");
+    merge_compat.addFileArg(classes_jar);
+    merge_compat.addArg("--device-config");
+    const compat_config = merge_compat.addOutputFileArg("framework-compat-config.xml");
+    merge_compat.run.setName("merge AOSP framework compatibility changes");
+    b.step("gen-framework-compat-config", "Generate framework compatibility change configuration")
+        .dependOn(&merge_compat.run.step);
 
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-cp" });
     d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });
     d8.addFileArg(core_plus);
     d8.addArg("--output");
-    const classpath_jar = d8.addOutputFileArg("framework.jar");
+    const framework_dex = d8.addOutputDirectoryArg("framework-dex");
     d8.addFileArg(classes_jar);
+
+    // D8 discards Java resources. Package its dex output together with the
+    // stock MIME data so Class.getResourceAsStream works on the runtime jar.
+    const runtime_jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
+    const classpath_jar = runtime_jar.addOutputFileArg("framework.jar");
+    runtime_jar.addArgs(&.{ "--no-compress", "-C" });
+    runtime_jar.addDirectoryArg(framework_dex);
+    runtime_jar.addArgs(&.{ ".", "-C" });
+    runtime_jar.addDirectoryArg(o.generated.jvm.resources);
+    runtime_jar.addArg(".");
 
     // HostedApkClassLoader keeps framework classes parent-first but lets an
     // APK's kotlin.* definitions shadow the compiler-pinned host stdlib. Give
@@ -437,11 +481,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     fixture_d8.addFileArg(fixture_classes_jar);
 
     const java_step = b.step("java", "Build the framework jar (kotlinc + javac + d8), framework-res.apk and generated Java");
-    inline for (.{ classpath_jar, app_context_jar, framework_odex, framework_vdex, res_apk }) |path| {
+    inline for (.{ classpath_jar, app_context_jar, framework_odex, framework_vdex, res_apk, compat_config }) |path| {
         path.addStepDependencies(java_step);
     }
     return .{
         .classpath_jar = classpath_jar,
+        .compat_config = compat_config,
         .app_context_jar = app_context_jar,
         .framework_odex = framework_odex,
         .framework_vdex = framework_vdex,

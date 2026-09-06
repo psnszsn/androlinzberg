@@ -50,6 +50,9 @@ object HostedConfigurationController {
             compatScreenWidthDp = widthDp
             compatScreenHeightDp = heightDp
             compatSmallestScreenWidthDp = smallestWidthDp
+            windowConfiguration.setBounds(android.graphics.Rect(0, 0, displayWidth, displayHeight))
+            windowConfiguration.setAppBounds(0, 0, displayWidth, displayHeight)
+            windowConfiguration.setMaxBounds(0, 0, displayWidth, displayHeight)
             orientation = if (landscape) {
                 Configuration.ORIENTATION_LANDSCAPE
             } else {

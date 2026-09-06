@@ -39,6 +39,7 @@ pub const include_dirs = [_][]const u8{
     "$V/system/core/libprocessgroup/include",
     "$V/external/fmtlib/include",
     "$FB/libs/androidfw/include",
+    "$AZ/system/core/libusbhost/include",
     "$AZ/frameworks/native/include",
     "$AZ/frameworks/native/libs/ui/include",
     "$AZ/frameworks/native/libs/ui/include_types",
@@ -171,6 +172,8 @@ pub const fn_ui_srcs = [_][]const u8{
 };
 
 pub const androidfw_srcs = [_][]const u8{
+    "BackupData.cpp",
+    "BackupHelpers.cpp",
     "ApkAssets.cpp",
     "ApkParsing.cpp",
     "Asset.cpp",
@@ -219,6 +222,22 @@ pub const ziparchive_srcs = [_][]const u8{
 };
 
 pub const core_jni_srcs = [_][]const u8{
+    "android_util_jar_StrictJarFile.cpp",
+    "android_util_MemoryIntArray.cpp",
+    "android_hardware_UsbDevice.cpp",
+    "android_hardware_OverlayProperties.cpp",
+    "com_android_internal_security_VerityUtils.cpp",
+    "android_os_SELinux.cpp",
+    "android_os_incremental_IncrementalManager.cpp",
+    "android_opengl_GLES20.cpp",
+    "android_opengl_GLES30.cpp",
+    "android_opengl_GLES31.cpp",
+    "android_opengl_GLES32.cpp",
+    "android_backup_BackupDataInput.cpp",
+    "android_backup_BackupDataOutput.cpp",
+    "android_app_backup_FullBackup.cpp",
+    "com_android_internal_os_ApplicationSharedMemory.cpp",
+    "android_net_LocalSocketImpl.cpp",
     "android_util_AssetManager.cpp",
     "android_content_res_ApkAssets.cpp",
     "android_util_XmlBlock.cpp",

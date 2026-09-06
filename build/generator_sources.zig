@@ -4,8 +4,13 @@ const std = @import("std");
 
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
+pub const incremental_sysprop = .{
+    .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
+    .header = "IncrementalProperties.sysprop.h",
+    .source = "IncrementalProperties.sysprop.cpp",
+};
 pub const Logtags = struct { input: SourcePath, output: []const u8 };
-pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8 };
+pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8, values: []const []const u8 = &.{}, cpp_header: bool = false, mode: enum { production, force_read_only } = .production };
 pub const Sysprop = struct { scope: []const u8, input: SourcePath };
 pub const HidlLanguage = enum { java, java_constants };
 pub const Hidl = struct {
@@ -14,6 +19,132 @@ pub const Hidl = struct {
     outputs: []const []const u8,
 };
 pub const Nano = struct { input: SourcePath, output: []const u8 };
+
+/// Pinned ChangeIdProcessor and Soong's compat-config merger.
+pub const compat_config = .{
+    .processor_class = "android.processor.compat.changeid.ChangeIdProcessor",
+    .processor_sources = &[_][]const u8{
+        "tools/platform-compat/java/android/processor/compat/SingleAnnotationProcessor.java",
+        "tools/platform-compat/java/android/processor/compat/SourcePosition.java",
+        "tools/platform-compat/java/android/processor/compat/changeid/Change.java",
+        "tools/platform-compat/java/android/processor/compat/changeid/ChangeIdProcessor.java",
+        "tools/platform-compat/java/android/processor/compat/changeid/XmlWriter.java",
+    },
+    .annotations_tree = "external/jsr305/ri/src/main/java",
+    .merge_tool = "tools/platform-compat/build/process_compat_config.py",
+};
+
+pub const Xsd = struct {
+    name: []const u8,
+    package: []const u8,
+    input: SourcePath,
+    arguments: []const []const u8 = &.{},
+    outputs: []const []const u8,
+};
+
+/// Match the pinned xsd_config Java backends; all sources come from AOSP xsdc.
+pub const xsd = [_]Xsd{
+    .{
+        .name = "platform-compat-config",
+        .package = "com.android.server.compat.config",
+        .input = .{ .source = .aosp, .path = "frameworks/base/services/core/xsd/platform-compat/config/platform-compat-config.xsd" },
+        .outputs = &.{
+            "com/android/server/compat/config/Change.java",
+            "com/android/server/compat/config/Config.java",
+            "com/android/server/compat/config/XmlParser.java",
+        },
+    },
+    .{
+        .name = "platform-compat-overrides",
+        .package = "com.android.server.compat.overrides",
+        .input = .{ .source = .aosp, .path = "frameworks/base/services/core/xsd/platform-compat/overrides/platform-compat-overrides.xsd" },
+        .arguments = &.{"-w"},
+        .outputs = &.{
+            "com/android/server/compat/overrides/ChangeOverrides.java",
+            "com/android/server/compat/overrides/OverrideValue.java",
+            "com/android/server/compat/overrides/Overrides.java",
+            "com/android/server/compat/overrides/RawOverrideValue.java",
+            "com/android/server/compat/overrides/XmlParser.java",
+            "com/android/server/compat/overrides/XmlWriter.java",
+        },
+    },
+
+    .{
+        .name = "apex-info-list",
+        .package = "com.android.apex",
+        .input = .{ .source = .aosp, .path = "system/apex/apexd/ApexInfoList.xsd" },
+        .arguments = &.{ "-w", "-r", "apex-info-list" },
+        .outputs = &.{
+            "com/android/apex/ApexInfo.java",
+            "com/android/apex/ApexInfoList.java",
+            "com/android/apex/XmlParser.java",
+            "com/android/apex/XmlWriter.java",
+        },
+    },
+    .{
+        .name = "audio-policy-configuration",
+        .package = "android.audio.policy.configuration.V7_0",
+        .input = .{ .source = .aosp, .path = "hardware/interfaces/audio/7.0/config/audio_policy_configuration.xsd" },
+        .arguments = &.{"-n"},
+        .outputs = &.{
+            "android/audio/policy/configuration/V7_0/AttachedDevices.java",
+            "android/audio/policy/configuration/V7_0/AudioChannelMask.java",
+            "android/audio/policy/configuration/V7_0/AudioContentType.java",
+            "android/audio/policy/configuration/V7_0/AudioDevice.java",
+            "android/audio/policy/configuration/V7_0/AudioEncapsulationType.java",
+            "android/audio/policy/configuration/V7_0/AudioFormat.java",
+            "android/audio/policy/configuration/V7_0/AudioGainMode.java",
+            "android/audio/policy/configuration/V7_0/AudioInOutFlag.java",
+            "android/audio/policy/configuration/V7_0/AudioPolicyConfiguration.java",
+            "android/audio/policy/configuration/V7_0/AudioSource.java",
+            "android/audio/policy/configuration/V7_0/AudioStreamType.java",
+            "android/audio/policy/configuration/V7_0/AudioUsage.java",
+            "android/audio/policy/configuration/V7_0/DeviceCategory.java",
+            "android/audio/policy/configuration/V7_0/DevicePorts.java",
+            "android/audio/policy/configuration/V7_0/EngineSuffix.java",
+            "android/audio/policy/configuration/V7_0/Gains.java",
+            "android/audio/policy/configuration/V7_0/GlobalConfiguration.java",
+            "android/audio/policy/configuration/V7_0/HalVersion.java",
+            "android/audio/policy/configuration/V7_0/MixPorts.java",
+            "android/audio/policy/configuration/V7_0/MixType.java",
+            "android/audio/policy/configuration/V7_0/Modules.java",
+            "android/audio/policy/configuration/V7_0/Profile.java",
+            "android/audio/policy/configuration/V7_0/Reference.java",
+            "android/audio/policy/configuration/V7_0/Role.java",
+            "android/audio/policy/configuration/V7_0/Routes.java",
+            "android/audio/policy/configuration/V7_0/SurroundFormats.java",
+            "android/audio/policy/configuration/V7_0/SurroundSound.java",
+            "android/audio/policy/configuration/V7_0/Version.java",
+            "android/audio/policy/configuration/V7_0/Volume.java",
+            "android/audio/policy/configuration/V7_0/Volumes.java",
+            "android/audio/policy/configuration/V7_0/XmlParser.java",
+        },
+    },
+};
+
+pub const CppAidl = struct {
+    root: []const u8,
+    input: []const u8,
+    output: ?[]const u8 = null,
+};
+
+pub const cpp_aidl = [_]CppAidl{
+    .{ .root = "frameworks/native/libs/input", .input = "android/os/IInputConstants.aidl" },
+    .{ .root = "frameworks/native/libs/input", .input = "android/os/InputConfig.aidl" },
+    .{ .root = "frameworks/native/libs/input", .input = "android/os/MotionEventFlag.aidl" },
+    .{ .root = "frameworks/native/libs/input", .input = "android/os/PointerIconType.aidl" },
+    .{ .root = "frameworks/native/libs/input", .input = "android/os/InputEventInjectionSync.aidl" },
+    .{ .root = "frameworks/native/libs/input", .input = "android/os/InputEventInjectionResult.aidl" },
+    .{ .root = "frameworks/native/libs/gui/aidl", .input = "android/gui/OverlayProperties.aidl", .output = "android/gui/OverlayProperties.cpp" },
+    .{ .root = "frameworks/native/libs/gui/aidl", .input = "android/gui/LutProperties.aidl", .output = "android/gui/LutProperties.cpp" },
+};
+
+/// Soong libaconfig_java_device_paths_src: insert the pinned partition paths into its template.
+pub const aconfig_device_paths = .{
+    .template = SourcePath{ .source = .aosp, .path = "build/make/tools/aconfig/aconfig_device_paths/src/DeviceProtosTemplate.java" },
+    .paths = SourcePath{ .source = .aosp, .path = "build/make/tools/aconfig/aconfig_device_paths/partition_aconfig_flags_paths.txt" },
+    .output = "android/aconfig/DeviceProtos.java",
+};
 
 /// HIDL Java is generated from the pinned .hal declarations, matching Soong's
 /// hidl_interface backend. Only outputs required by framework clients are compiled.
@@ -29,7 +160,278 @@ pub const hidl = [_]Hidl{
     } },
 };
 
+pub const MimeTypes = struct {
+    input: SourcePath,
+    output: []const u8,
+    vendor: bool = false,
+};
+
+pub const system_features = .{
+    .generator = "frameworks/base/tools/systemfeatures/src/com/android/systemfeatures/SystemFeaturesGenerator.kt",
+    .processor = "frameworks/base/tools/systemfeatures/src/com/android/systemfeatures/SystemFeaturesMetadataProcessor.kt",
+    .processor_class = "com.android.systemfeatures.SystemFeaturesMetadataProcessor",
+    .metadata_output = "com/android/internal/pm/SystemFeaturesMetadata.java",
+    .class = "com.android.internal.pm.RoSystemFeatures",
+    .output = "com/android/internal/pm/RoSystemFeatures.java",
+    // BP2A enables read-only feature generation; the six declared feature
+    // versions default to empty, leaving device availability to runtime XML.
+    .arguments = &[_][]const u8{
+        "--readonly=true",     "--feature=AUTOMOTIVE:", "--feature=EMBEDDED:",
+        "--feature=LEANBACK:", "--feature=PC:",         "--feature=TELEVISION:",
+        "--feature=WATCH:",
+    },
+};
+
+pub const mime_types = [_]MimeTypes{
+    .{ .input = .{ .source = .aosp, .path = "external/mime-support/mime.types" }, .output = "debian.mime.types" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/mime/java-res/android.mime.types" }, .output = "android.mime.types" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/mime/java-res/vendor.mime.types" }, .output = "vendor.mime.types", .vendor = true },
+};
+
+/// These Connectivity parcelables share a package with legacy include roots.
+/// Stage only their pinned declarations to avoid duplicate AIDL definitions.
+pub const aidl_exports = [_]struct { input: SourcePath, output: []const u8 }{
+    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/ProxyInfo.aidl" }, .output = "android/net/ProxyInfo.aidl" },
+    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/TetheringManager.aidl" }, .output = "android/net/TetheringManager.aidl" },
+    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/DhcpInfo.aidl" }, .output = "android/net/DhcpInfo.aidl" },
+    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/DhcpOption.aidl" }, .output = "android/net/DhcpOption.aidl" },
+    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/MacAddress.aidl" }, .output = "android/net/MacAddress.aidl" },
+};
+
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexInfo.aidl" },
+    .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexInfoList.aidl" },
+    .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexSessionInfo.aidl" },
+    .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexSessionParams.aidl" },
+    .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/CompressedApexInfo.aidl" },
+    .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/CompressedApexInfoList.aidl" },
+    .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/IApexService.aidl" },
+
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/security/advancedprotection/IAdvancedProtectionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/security/advancedprotection/IAdvancedProtectionService.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IActionListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IBooleanListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IByteArrayListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ICoexCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IDppCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IIntegerListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IInterfaceCreationInfoCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ILastCallerListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IListListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ILocalOnlyConnectionStatusListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ILocalOnlyHotspotCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IMacAddressListListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IMapListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/INetworkRequestMatchCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/INetworkRequestUserSelectionCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IOnWifiActivityEnergyInfoListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IOnWifiDriverCountryCodeChangedListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IOnWifiUsabilityStatsListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IPnoScanResultsCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IScanResultsCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IScoreUpdateObserver.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ISoftApCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IStringListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ISubsystemRestartCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ISuggestionConnectionStatusListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ISuggestionUserApprovalStatusListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ITrafficStateCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ITwtCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ITwtCapabilitiesListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/ITwtStatsListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiBandsListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiConnectedNetworkScorer.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiLowLatencyLockListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiManager.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiNetworkSelectionConfigListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiNetworkStateChangedListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiStateChangedListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiVerboseLoggingStatusChangedListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/WifiBands.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/hotspot2/IProvisioningCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/cmds/installd/binder/android/os/CreateAppDataArgs.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/cmds/installd/binder/android/os/CreateAppDataResult.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/cmds/installd/binder/android/os/IInstalld.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/cmds/installd/binder/android/os/ReconcileSdkDataArgs.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/cmds/installd/binder/android/os/storage/CrateMetadata.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/StatsD/aidl/android/os/IStatsCompanionService.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/StatsD/aidl/android/os/IStatsManagerService.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/p2p/IWifiP2pListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/p2p/IWifiP2pManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/usb/IUsbSerialReader.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/aidl/android/hardware/display/IDeviceProductInfoConstants.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/IRemoteTransition.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/IRemoteTransitionFinishedCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/ISurfaceControlViewHost.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/ISurfaceControlViewHostParent.aidl" },
+
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/pm/IDataLoaderStatusListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/IIncrementalService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/IStorageHealthListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/IStorageLoadingProgressListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/IncrementalNewFileParams.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/PerUidReadTimeouts.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/StorageHealthCheckParams.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetooth.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/ICompanionDeviceService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/IAssociationRequestCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/ICompanionDeviceManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/IOnAssociationsChangedListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/IOnMessageReceivedListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/IOnTransportsChangedListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/ISystemDataTransferCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IAudioInputCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothA2dp.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothA2dpSink.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothActivityEnergyInfoListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothAdvertise.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothAvrcpController.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothConnectionCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothCsipSetCoordinator.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothCsipSetCoordinatorLockCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothGatt.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothGattCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothGattServerCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHapClient.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHapClientCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHciVendorSpecificCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHeadset.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHeadsetClient.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHearingAid.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHidDevice.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHidDeviceCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothHidHost.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothLeAudio.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothLeAudioCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothLeBroadcastAssistant.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothLeBroadcastAssistantCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothLeBroadcastCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothLeCallControl.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothLeCallControlCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothMap.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothMapClient.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothMetadataListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothOobDataCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothPan.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothPanCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothPbap.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothPbapClient.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothPreferredAudioProfilesCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothQualityReportReadyCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothSap.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothScan.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothSocketManager.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothVolumeControl.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IBluetoothVolumeControlCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IDistanceMeasurement.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/IncomingRfcommSocketInfo.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/le/IAdvertisingSetCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/le/IDistanceMeasurementCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/le/IPeriodicAdvertisingCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/android/app/aidl/android/bluetooth/le/IScannerCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/common/bluetooth/constants/AudioInputType.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/common/bluetooth/constants/aics/AudioInputStatus.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/common/bluetooth/constants/aics/GainMode.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/common/bluetooth/constants/aics/Mute.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/service/aidl/android/bluetooth/IBluetoothManager.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Bluetooth/service/aidl/android/bluetooth/IBluetoothManagerCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/IIntResultListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/ITetheringConnector.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/ITetheringEventCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/TetherStatesParcel.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/TetheringCallbackStartedParcel.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/TetheringConfigurationParcel.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/TetheringRequestParcel.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/fingerprint/IFingerprintAuthenticatorsRegisteredCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/fingerprint/IFingerprintClientActiveCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/fingerprint/IFingerprintService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/fingerprint/IFingerprintServiceReceiver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/fingerprint/IUdfpsOverlayController.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/fingerprint/IUdfpsOverlayControllerCallback.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/AcquiredInfo.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/Error.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/FingerprintSensorType.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/IFingerprint.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/ISession.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/ISessionCallback.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/PointerContext.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/SensorLocation.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/SensorProps.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/SensorShape.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/TouchDetectionParameters.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/virtualhal/AcquiredInfoAndVendorCode.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/virtualhal/EnrollmentProgressStep.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/virtualhal/IVirtualHal.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/biometrics/fingerprint/aidl/android/hardware/biometrics/fingerprint/virtualhal/NextEnrollment.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkRecommendationProvider.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkScoreCache.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkScoreService.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IScanDataListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiScanner.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/IWifiScannerListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/IBackupAgent.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/ProcessStateEnum.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/IBackupCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/IBackupManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/IBackupManagerMonitor.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/IBackupObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/IFullBackupRestoreObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/IRestoreObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/IRestoreSession.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/backup/ISelectBackupTransportCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/app/procstats/IProcessStats.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/backup/IBackupTransport.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/backup/ITransportStatusCallback.aidl" },
+
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IDecorViewGestureListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IDisplayChangeWindowCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IDisplayChangeWindowController.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IDisplayFoldListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IDisplayWindowInsetsController.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IDisplayWindowListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IPinnedTaskListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/ISystemGestureExclusionListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IWallpaperVisibilityListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IWindowManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IWindowSessionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/AddToSurfaceSyncGroupResult.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/IGlobalDragListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/ISurfaceSyncGroup.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/ISurfaceSyncGroupCompletedListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/ITransactionReadyCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/ITrustedPresentationListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/IUnhandledDragCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/policy/IShortcutService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/IAppTransitionAnimationSpecsFuture.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IAccessLogsResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IActivityDatesResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IAggregateRecordsResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IApplicationInfoResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/ICanRestoreResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IChangeLogsResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IDataStagingFinishedCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IEmptyResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IGetChangeLogTokenCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IGetChangesForBackupResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IGetHealthConnectDataStateCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IGetHealthConnectMigrationUiStateCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IGetLatestMetadataForBackupResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IGetPriorityResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IHealthConnectService.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IInsertRecordsResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IMedicalDataSourceResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IMedicalDataSourcesResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IMedicalResourceListParcelResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IMedicalResourceTypeInfosCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IMedicalResourcesResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IMigrationCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IReadMedicalResourcesResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IReadRecordsResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/aidl/IRecordTypeInfoResponseCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/exportimport/IImportStatusCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/exportimport/IQueryDocumentProvidersCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/exportimport/IScheduledExportStatusCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/IAuditLogEventsCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/IDevicePolicyManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/StartInstallingUpdateCallback.aidl" },
@@ -170,6 +572,9 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IUserManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IUserRestrictionsListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/native/libs/input/android/os/IInputConstants.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/input/android/os/InputEventInjectionSync.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/gui/android/gui/TouchOcclusionMode.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/input/android/os/PointerIconType.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IMessenger.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IRemoteCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IVibratorStateListener.aidl" },
@@ -447,6 +852,7 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/ISystemConfig.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/permission/ILegacyPermissionManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/permission/IOnPermissionsChangeListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/permission/IPermissionManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/telephony/IPhoneStateListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/ICountryDetector.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/location/java/android/location/ICountryListener.aidl" },
@@ -729,6 +1135,9 @@ pub const aidl = [_]SourcePath{
 };
 
 pub const logtags = [_]Logtags{
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/EventLogTags.logtags" }, .output = "android/app/EventLogTags.java" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/services/core/java/com/android/server/EventLogTags.logtags" }, .output = "com/android/server/EventLogTags.java" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/jank/EventLogTags.logtags" }, .output = "com/android/internal/jank/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/SecurityLogTags.logtags" }, .output = "android/app/admin/SecurityLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/EventLogTags.logtags" }, .output = "android/view/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/services/core/java/com/android/server/am/EventLogTags.logtags" }, .output = "com/android/server/am/EventLogTags.java" },
@@ -738,6 +1147,13 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "com.android.internal.compat.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/compat/compat_logging_flags.aconfig"} },
+    .{ .package = "com.android.server.compat", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/compat/platform_compat_flags.aconfig"} },
+    .{ .package = "com.android.media.codec.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/aconfig/mediacodec_flags.aconfig"} },
+    .{ .package = "com.android.internal.jank", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/jank/flags.aconfig"} },
+    .{ .package = "com.android.wifi.flags", .container = "com.android.wifi", .source = .aosp, .declarations = &.{"packages/modules/Wifi/flags/wifi_flags.aconfig"} },
+    .{ .package = "com.android.healthfitness.flags", .container = "com.android.healthfitness", .source = .aosp, .declarations = &.{"packages/modules/HealthFitness/flags/healthfitness-flags.aconfig"} },
+    .{ .package = "com.android.media.projection.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/projection.aconfig"} },
     .{ .package = "android.view.contentprotection.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/contentprotection/flags/content_protection_flags.aconfig"} },
     .{ .package = "android.app.ondeviceintelligence.flags", .container = "system", .source = .aosp, .declarations = &.{"packages/modules/NeuralNetworks/flags/ondevice_intelligence.aconfig"} },
     .{ .package = "android.provider.flags", .container = "com.android.configinfrastructure", .source = .aosp, .declarations = &.{"packages/modules/ConfigInfrastructure/framework/flags.aconfig"} },
@@ -751,7 +1167,8 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.app.assist.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/assist/flags.aconfig"} },
     .{ .package = "android.app.jank", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/jank/flags.aconfig"} },
     .{ .package = "android.content.pm", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/flags.aconfig"} },
-    .{ .package = "android.content.res", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/res/flags.aconfig"} },
+    // The pinned BP2A manifest requires runtime feature-flag filtering (AAPT retains its gates).
+    .{ .package = "android.content.res", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/res/flags.aconfig"}, .values = &.{"build/release/aconfig/bp2a/android.content.res/manifest_flagging_flag_values.textproto"} },
     .{ .package = "android.content.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/flags/flags.aconfig"} },
     .{ .package = "android.crashrecovery.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/packages/CrashRecovery/aconfig/flags.aconfig"} },
     .{ .package = "android.database.sqlite", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/database/sqlite/flags.aconfig"} },
@@ -767,6 +1184,8 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.widget.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/widget/flags/differential_motion_fling_flags.aconfig", "frameworks/base/core/java/android/widget/flags/flags.aconfig", "frameworks/base/core/java/android/widget/flags/notification_widget_flags.aconfig" } },
     .{ .package = "android.xr", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/xr.aconfig"} },
     .{ .package = "com.android.graphics.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/graphics/java/android/framework_graphics.aconfig"} },
+    // Host graphics uses a fixed build-time ANGLE feature set in both Java and C++.
+    .{ .package = "com.android.graphics.graphicsenv.flags", .cpp_header = true, .mode = .force_read_only, .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/libs/graphicsenv/graphicsenv_flags.aconfig"} },
     .{ .package = "com.android.graphics.hwui.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/libs/hwui/aconfig/hwui_flags.aconfig"} },
     .{ .package = "com.android.hardware.input", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/hardware/input/input_framework.aconfig"} },
     .{ .package = "com.android.internal.os", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/os/flags.aconfig"} },
@@ -778,6 +1197,8 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "com.android.text.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/text/flags/24Q3.aconfig", "frameworks/base/core/java/android/text/flags/flags.aconfig" } },
     .{ .package = "com.android.window.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/window/flags/accessibility.aconfig", "frameworks/base/core/java/android/window/flags/device_state_auto_rotate_setting.aconfig", "frameworks/base/core/java/android/window/flags/large_screen_experiences_app_compat.aconfig", "frameworks/base/core/java/android/window/flags/lse_desktop_experience.aconfig", "frameworks/base/core/java/android/window/flags/responsible_apis.aconfig", "frameworks/base/core/java/android/window/flags/wallpaper_manager.aconfig", "frameworks/base/core/java/android/window/flags/window_surfaces.aconfig", "frameworks/base/core/java/android/window/flags/windowing_frontend.aconfig", "frameworks/base/core/java/android/window/flags/windowing_sdk.aconfig" } },
     .{ .package = "com.android.input.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/libs/input/input_flags.aconfig"} },
+    .{ .package = "android.companion", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/companion/flags.aconfig"} },
+    .{ .package = "com.android.bluetooth.flags", .container = "com.android.bt", .source = .aosp, .declarations = &.{ "packages/modules/Bluetooth/flags/hci.aconfig", "packages/modules/Bluetooth/flags/sco.aconfig", "packages/modules/Bluetooth/flags/dis.aconfig", "packages/modules/Bluetooth/flags/pbapclient.aconfig", "packages/modules/Bluetooth/flags/security.aconfig", "packages/modules/Bluetooth/flags/mapclient.aconfig", "packages/modules/Bluetooth/flags/adapter.aconfig", "packages/modules/Bluetooth/flags/btm_ble.aconfig", "packages/modules/Bluetooth/flags/a2dp.aconfig", "packages/modules/Bluetooth/flags/leaudio.aconfig", "packages/modules/Bluetooth/flags/vsc.aconfig", "packages/modules/Bluetooth/flags/pairing.aconfig", "packages/modules/Bluetooth/flags/sdp.aconfig", "packages/modules/Bluetooth/flags/vcp.aconfig", "packages/modules/Bluetooth/flags/gatt.aconfig", "packages/modules/Bluetooth/flags/bta_dm.aconfig", "packages/modules/Bluetooth/flags/btif_dm.aconfig", "packages/modules/Bluetooth/flags/connectivity.aconfig", "packages/modules/Bluetooth/flags/avrcp_controller.aconfig", "packages/modules/Bluetooth/flags/rfcomm.aconfig", "packages/modules/Bluetooth/flags/gap.aconfig", "packages/modules/Bluetooth/flags/service_discovery.aconfig", "packages/modules/Bluetooth/flags/hfpclient.aconfig", "packages/modules/Bluetooth/flags/hal.aconfig", "packages/modules/Bluetooth/flags/rnr.aconfig", "packages/modules/Bluetooth/flags/ranging.aconfig", "packages/modules/Bluetooth/flags/hap.aconfig", "packages/modules/Bluetooth/flags/sockets.aconfig", "packages/modules/Bluetooth/flags/active_device_manager.aconfig", "packages/modules/Bluetooth/flags/l2cap.aconfig", "packages/modules/Bluetooth/flags/hfp.aconfig", "packages/modules/Bluetooth/flags/le_advertising.aconfig", "packages/modules/Bluetooth/flags/metric.aconfig", "packages/modules/Bluetooth/flags/hid.aconfig", "packages/modules/Bluetooth/flags/system_service.aconfig", "packages/modules/Bluetooth/flags/framework.aconfig", "packages/modules/Bluetooth/flags/opp.aconfig", "packages/modules/Bluetooth/flags/avrcp.aconfig", "packages/modules/Bluetooth/flags/le_scanning.aconfig" } },
     .{ .package = "android.companion.virtual.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/companion/virtual/flags/deprecated_flags_do_not_edit.aconfig"} },
     .{ .package = "android.companion.virtualdevice.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/companion/virtual/flags/flags.aconfig", "frameworks/base/core/java/android/companion/virtual/flags/launched_flags.aconfig" } },
     .{ .package = "android.credentials.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/credentials/flags.aconfig"} },
@@ -788,7 +1209,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.service.autofill", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/services/autofill/bugfixes.aconfig", "frameworks/base/services/autofill/features.aconfig" } },
     .{ .package = "android.tracing", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/tracing/flags.aconfig"} },
     .{ .package = "com.android.graphics.surfaceflinger.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/native/services/surfaceflinger/surfaceflinger_flags.aconfig", "frameworks/native/services/surfaceflinger/surfaceflinger_flags_new.aconfig" } },
-    .{ .package = "com.android.server.backup", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/backup/flags.aconfig"} },
+    .{ .package = "com.android.server.backup", .cpp_header = true, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/backup/flags.aconfig"} },
     .{ .package = "android.view.contentcapture.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/contentcapture/flags/content_capture_flags.aconfig"} },
     .{ .package = "com.android.server.clipboard", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/clipboard/flags.aconfig"} },
     .{ .package = "android.media.audio", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/audio_framework.aconfig"} },
@@ -815,6 +1236,9 @@ pub const aconfig = [_]Aconfig{
 };
 
 pub const sysprop = [_]Sysprop{
+    .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/BluetoothProperties.sysprop" } },
+    .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/VndkProperties.sysprop" } },
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/LocalizationProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/CryptoProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/HdmiProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/InputProperties.sysprop" } },
@@ -827,11 +1251,22 @@ pub const sysprop = [_]Sysprop{
 };
 
 pub const nano = [_]Nano{
+    .{ .input = .{ .source = .aosp, .path = "build/make/tools/aconfig/aconfig_protos/protos/aconfig.proto" }, .output = "android/aconfig/nano/Aconfig.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/proto/src/metrics_constants/metrics_constants.proto" }, .output = "com/android/internal/logging/nano/MetricsProto.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/stats/devicepolicy/device_policy.proto" }, .output = "android/stats/devicepolicy/nano/StringList.java" },
 };
 
 pub const proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/package.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/server/activitymanagerservice.proto" },
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/service/enums.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/appbackgroundrestrictioninfo.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/procstats.proto" },
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/service/procstats_enum.proto" },
+
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/inputmethodservice/inputmethodservice.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/inputmethodservice/softinputwindow.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/internal/binder_latency.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/util/common.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/app/window_configuration.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/content/clipdata.proto" },
@@ -869,6 +1304,7 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/remote_animation_target.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/windowlayoutparams.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/view/inputmethod/enums.proto" },
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/view/enums.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/hardware/biometrics/enums.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/server/statlogger.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/bundle.proto" },
@@ -899,6 +1335,30 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/service/pm/PackageProto.java",
+    "android/service/pm/PackageServiceDumpProto.java",
+    "com/android/server/am/GrantUriProto.java",
+    "com/android/server/am/NeededUriGrantsProto.java",
+    "com/android/server/am/UriPermissionOwnerProto.java",
+    "android/service/ServiceProtoEnums.java",
+    "android/os/AppBackgroundRestrictionsInfo.java",
+    "android/service/procstats/ProcessStatsServiceDumpProto.java",
+    "android/service/procstats/ProcessStatsSectionProto.java",
+    "android/service/procstats/ProcessStatsAvailablePagesProto.java",
+    "android/service/procstats/ProcessStatsStateProto.java",
+    "android/service/procstats/ProcessStatsProto.java",
+    "android/service/procstats/ProcessStatsAssociationProto.java",
+    "android/service/procstats/PackageServiceOperationStatsProto.java",
+    "android/service/procstats/PackageServiceStatsProto.java",
+    "android/service/procstats/PackageAssociationSourceProcessStatsProto.java",
+    "android/service/procstats/PackageAssociationProcessStatsProto.java",
+    "android/service/procstats/ProcessStatsPackageProto.java",
+
+    "android/service/procstats/ProcessStatsEnums.java",
+
+    "android/inputmethodservice/InputMethodServiceProto.java",
+    "android/inputmethodservice/SoftInputWindowProto.java",
+    "com/android/internal/os/BinderLatencyProto.java",
     "android/util/AggStats.java",
     "android/util/Duration.java",
     "android/app/AppProtoEnums.java",
@@ -948,6 +1408,7 @@ pub const proto_outputs = [_][]const u8{
     "android/view/DisplayCutoutProto.java",
     "android/view/DisplayInfoProto.java",
     "android/view/DisplayProto.java",
+    "android/view/ViewProtoEnums.java",
     "android/view/ImeFocusControllerProto.java",
     "android/view/ImeInsetsSourceConsumerProto.java",
     "android/view/InsetsAnimationControlImplProto.java",
@@ -1311,6 +1772,7 @@ test "generator declarations map typed inputs to unique Java outputs" {
         try std.testing.expect(entry.container.len != 0);
         try std.testing.expect(entry.declarations.len != 0);
         for (entry.declarations) |path| try std.testing.expect(std.mem.endsWith(u8, path, ".aconfig"));
+        for (entry.values) |path| try std.testing.expect(std.mem.endsWith(u8, path, ".textproto"));
     }
     for (sysprop) |entry| try std.testing.expect(std.mem.endsWith(u8, entry.input.path, ".sysprop"));
     for (nano) |entry| {
@@ -1318,6 +1780,7 @@ test "generator declarations map typed inputs to unique Java outputs" {
         try std.testing.expect(std.mem.endsWith(u8, entry.output, ".java"));
         try expectUniqueOutput(&outputs, entry.output);
     }
+    try expectUniqueOutput(&outputs, aconfig_device_paths.output);
     for (proto_inputs) |input| try std.testing.expect(std.mem.endsWith(u8, input.path, ".proto"));
     for (proto_outputs) |output| {
         try std.testing.expect(std.mem.endsWith(u8, output, ".java"));

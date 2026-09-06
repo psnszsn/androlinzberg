@@ -1,5 +1,39 @@
 #include <binder/Parcel.h>
+#include <binder/Status.h>
+#include <utils/Unicode.h>
 namespace android {
+// Pinned Parcel::writeNoException delegates to the stock exception header writer.
+status_t Parcel::writeNoException() {
+  binder::Status status;
+  return status.writeToParcel(this);
+}
+// Pinned Parcel UTF conversion and readString16Inplace failure semantics over
+// the shared storage. String8/String16 convenience constructors hide failures.
+status_t Parcel::writeUtf8AsUtf16(const std::string &s) {
+  const auto *data = reinterpret_cast<const uint8_t *>(s.data());
+  const ssize_t length = utf8_to_utf16_length(data, s.size());
+  if (length < 0 || length > INT32_MAX) return BAD_VALUE;
+  auto status = writeInt32(static_cast<int32_t>(length));
+  if (status != OK) return status;
+  auto *out = static_cast<char16_t *>(writeInplace((size_t(length) + 1) * sizeof(char16_t)));
+  if (!out) return NO_MEMORY;
+  utf8_to_utf16(data, s.size(), out, size_t(length) + 1);
+  return OK;
+}
+status_t Parcel::readUtf8FromUtf16(std::string *s) const {
+  const int32_t length = readInt32();
+  if (length < 0 || length == INT32_MAX) return UNEXPECTED_NULL;
+  const auto *data = static_cast<const char16_t *>(
+      readInplace((size_t(length) + 1) * sizeof(char16_t)));
+  if (!data || data[length] != u'\0') return UNEXPECTED_NULL;
+  if (length == 0) { s->clear(); return OK; }
+  const ssize_t bytes = utf16_to_utf8_length(data, size_t(length)) + 1;
+  if (bytes < 1) return BAD_VALUE;
+  s->resize(size_t(bytes));
+  utf16_to_utf8(data, size_t(length), s->data(), size_t(bytes));
+  s->resize(size_t(bytes) - 1);
+  return OK;
+}
 Parcel::Parcel() : mParcel(AParcel_create()), mOwned(true) {}
 Parcel::Parcel(AParcel *p) : mParcel(p), mOwned(false) {}
 Parcel::~Parcel() {

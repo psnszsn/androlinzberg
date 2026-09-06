@@ -2,6 +2,12 @@
 package android.media;
 
 public final class MediaCodecInfo {
+    // Pinned MediaCodecInfo security model API. The class still describes the
+    // hosted FFmpeg codecs, whose native capability discovery is not yet stock.
+    public static final int SECURITY_MODEL_SANDBOXED = 0;
+    public static final int SECURITY_MODEL_MEMORY_SAFE = 1;
+    public static final int SECURITY_MODEL_TRUSTED_CONTENT_ONLY = 2;
+
     private final String mName;
     private final String[] mTypes;
 

@@ -85,6 +85,7 @@ public final class SystemServiceRegistry {
     }
 
     static {
+        android.os.StatsFrameworkInitializer.registerServiceWrappers();
         registerService(Context.LAYOUT_INFLATER_SERVICE, android.view.LayoutInflater.class,
                 new CachedServiceFetcher<android.view.LayoutInflater>() {
             @Override public android.view.LayoutInflater createService(ContextImpl ctx) throws ServiceNotFoundException {
@@ -110,7 +111,7 @@ public final class SystemServiceRegistry {
                 return new android.view.textclassifier.TextClassificationManager(ctx.getOuterContext());
             }});
         registerService(Context.ACTIVITY_SERVICE, ActivityManager.class, new NewServiceFetcher<ActivityManager>() {
-            @Override public ActivityManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new ActivityManager(); }});
+            @Override public ActivityManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new ActivityManager(ctx.getOuterContext(), ctx.mMainThread.getHandler()); }});
         registerService(Context.ACTIVITY_TASK_SERVICE, ActivityTaskManager.class,
                 new CachedServiceFetcher<ActivityTaskManager>() {
             @Override public ActivityTaskManager createService(ContextImpl ctx) {
@@ -150,6 +151,25 @@ public final class SystemServiceRegistry {
         // the registry, telecom and MMS managers). The managers resolve "phone", "isub",
         // "iphonesubinfo", "carrier_config", "telephony.registry", "telecom" and "imms" through
         // ServiceManager; the hosted services answer as a device without a radio.
+        // AOSP ActivityThread.initializeMainlineModules and service wrappers.
+        android.bluetooth.BluetoothFrameworkInitializer.setBluetoothServiceManager(
+                new android.os.BluetoothServiceManager());
+        android.bluetooth.BluetoothFrameworkInitializer.setBinderCallsStatsInitializer(
+                context -> com.android.internal.os.BinderCallsStats.startForBluetooth(context));
+        android.bluetooth.BluetoothFrameworkInitializer.registerServiceWrappers();
+        registerService(Context.COMPANION_DEVICE_SERVICE,
+                android.companion.CompanionDeviceManager.class,
+                new CachedServiceFetcher<android.companion.CompanionDeviceManager>() {
+            @Override public android.companion.CompanionDeviceManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                android.companion.ICompanionDeviceManager service = null;
+                if (ctx.getPackageManager().hasSystemFeature(
+                        android.content.pm.PackageManager.FEATURE_COMPANION_DEVICE_SETUP)) {
+                    service = android.companion.ICompanionDeviceManager.Stub.asInterface(
+                            android.os.ServiceManager.getServiceOrThrow(Context.COMPANION_DEVICE_SERVICE));
+                }
+                return new android.companion.CompanionDeviceManager(service, ctx.getOuterContext());
+            }});
         android.telephony.TelephonyFrameworkInitializer.setTelephonyServiceManager(new android.os.TelephonyServiceManager());
         android.telephony.TelephonyFrameworkInitializer.registerServiceWrappers();
         registerService(Context.TELEPHONY_REGISTRY_SERVICE, android.telephony.TelephonyRegistryManager.class,
@@ -344,8 +364,15 @@ public final class SystemServiceRegistry {
                 android.app.usage.IUsageStatsManager service = android.app.usage.IUsageStatsManager.Stub.asInterface(iBinder);
                 return new android.app.usage.UsageStatsManager(ctx.getOuterContext(), service);
             }});
-        registerService(Context.WIFI_SERVICE, android.net.wifi.WifiManager.class, new NewServiceFetcher<android.net.wifi.WifiManager>() {
-            @Override public android.net.wifi.WifiManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.wifi.WifiManager(); }});
+        // WifiFrameworkInitializer: the stock client over the hosted Wi-Fi service.
+        registerService(Context.WIFI_SERVICE, android.net.wifi.WifiManager.class,
+                new CachedServiceFetcher<android.net.wifi.WifiManager>() {
+            @Override public android.net.wifi.WifiManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                android.os.IBinder binder = android.os.ServiceManager.getServiceOrThrow(Context.WIFI_SERVICE);
+                return new android.net.wifi.WifiManager(ctx.getOuterContext(),
+                        android.net.wifi.IWifiManager.Stub.asInterface(binder));
+            }});
         // JobSchedulerFrameworkInitializer.registerServiceWrappers: the real JobSchedulerImpl
         // over the hosted IJobScheduler.
         registerService(Context.JOB_SCHEDULER_SERVICE, android.app.job.JobScheduler.class, new CachedServiceFetcher<android.app.job.JobScheduler>() {
@@ -393,6 +420,22 @@ public final class SystemServiceRegistry {
             }});
         registerService(Context.PERMISSION_SERVICE, android.permission.PermissionManager.class, new NewServiceFetcher<android.permission.PermissionManager>() {
             @Override public android.permission.PermissionManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.permission.PermissionManager(); }});
+        registerService(Context.NETWORK_SCORE_SERVICE, android.net.NetworkScoreManager.class,
+                new CachedServiceFetcher<android.net.NetworkScoreManager>() {
+            @Override public android.net.NetworkScoreManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                return new android.net.NetworkScoreManager(ctx.getOuterContext());
+            }});
+        registerService(Context.FINGERPRINT_SERVICE, android.hardware.fingerprint.FingerprintManager.class,
+                new CachedServiceFetcher<android.hardware.fingerprint.FingerprintManager>() {
+            @Override public android.hardware.fingerprint.FingerprintManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                android.os.IBinder binder = ctx.getApplicationInfo().targetSdkVersion >= android.os.Build.VERSION_CODES.O
+                        ? android.os.ServiceManager.getServiceOrThrow(Context.FINGERPRINT_SERVICE)
+                        : android.os.ServiceManager.getService(Context.FINGERPRINT_SERVICE);
+                return new android.hardware.fingerprint.FingerprintManager(ctx.getOuterContext(),
+                        android.hardware.fingerprint.IFingerprintService.Stub.asInterface(binder));
+            }});
         registerService(Context.PERMISSION_CONTROLLER_SERVICE, android.permission.PermissionControllerManager.class,
                 new CachedServiceFetcher<android.permission.PermissionControllerManager>() {
             @Override public android.permission.PermissionControllerManager createService(ContextImpl ctx) {

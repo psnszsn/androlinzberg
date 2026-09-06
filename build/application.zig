@@ -14,6 +14,7 @@ pub const Options = struct {
     libjavacrypto: LazyPath,
     bionic: [4]NamedLibrary,
     framework_jar: LazyPath,
+    framework_compat_config: LazyPath,
     framework_app_context: LazyPath,
     framework_odex: LazyPath,
     framework_vdex: LazyPath,
@@ -37,12 +38,15 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     // Stock NetworkUtils loads this module name. Its hosted native is registered by the
     // framework registrar already carried in libbinder_ndk, so expose that same Zig library.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libframework-connectivity-jni.so");
+    // VintfRuntimeInfo uses the same registered framework JNI library.
+    _ = tree.addCopyFile(options.binder_ndk, "lib/art/libvintf_jni.so");
     _ = tree.addCopyFile(options.libart, "lib/art/libart.so");
     _ = tree.addCopyFile(options.libjavacrypto, "lib/art/libjavacrypto.so");
     for (options.bionic) |library| {
         _ = tree.addCopyFile(library.file, b.pathJoin(&.{ "lib/art", library.name }));
     }
     _ = tree.addCopyFile(options.framework_jar, "framework/framework.jar");
+    _ = tree.addCopyFile(options.framework_compat_config, "bin/art/etc/compatconfig/framework.xml");
     _ = tree.addCopyFile(options.framework_app_context, "framework/framework-app-context.jar");
     _ = tree.addCopyFile(options.framework_odex, "framework/oat/x86_64/framework.odex");
     _ = tree.addCopyFile(options.framework_vdex, "framework/oat/x86_64/framework.vdex");

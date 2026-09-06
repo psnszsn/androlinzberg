@@ -9,7 +9,10 @@ import android.os.Bundle
 
 /** system-test provider hosted by package `dev.artzig.test.b`. */
 internal open class TestProvider : ContentProvider() {
-    override fun onCreate(): Boolean = true
+    override fun onCreate(): Boolean {
+        ApplicationBindingEvents.events += "provider:" + javaClass.simpleName
+        return true
+    }
 
     override fun query(
         uri: Uri,
@@ -56,10 +59,27 @@ internal open class TestProvider : ContentProvider() {
         selectionArgs: Array<String>?,
     ): Int = 2
 
-    override fun call(method: String, arg: String?, extras: Bundle?): Bundle =
-        Bundle().apply { putString("echo", method + ":" + arg) }
+    override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
+        if (method == "grant-uri" || method == "revoke-uri") {
+            val target = requireNotNull(arg)
+            val params = requireNotNull(extras)
+            val uri = Uri.parse(requireNotNull(params.getString("uri")))
+            val mode = params.getInt("mode")
+            // The provider process grants access as the owner, just as a document picker does.
+            val identity = android.os.Binder.clearCallingIdentity()
+            try {
+                if (method == "grant-uri") requireNotNull(context).grantUriPermission(target, uri, mode)
+                else requireNotNull(context).revokeUriPermission(target, uri, mode)
+            } finally { android.os.Binder.restoreCallingIdentity(identity) }
+        }
+        return Bundle().apply { putString("echo", method + ":" + arg) }
+    }
 }
 
 /** The non-exported fixture provider: same behavior as [TestProvider]; a
  * manifest declares each component under a distinct class name. */
 internal class SecretProvider : TestProvider()
+
+/** Binding must omit disabled components and providers assigned to another process. */
+internal class DisabledBindingProvider : TestProvider()
+internal class SecondaryBindingProvider : TestProvider()

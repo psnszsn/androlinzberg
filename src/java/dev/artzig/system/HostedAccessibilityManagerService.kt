@@ -32,7 +32,8 @@ class HostedAccessibilityManagerService :
     override fun removeClient(client: IAccessibilityManagerClient?, userId: Int): Boolean = true
 
     override fun sendAccessibilityEvent(event: AccessibilityEvent?, userId: Int) {
-        android.view.ArtzigAccessibilityBridge.markAccessibilityEvent(event)
+        // The client test observer uses AccessibilityManager.AccessibilityPolicy.
+        // No enabled remote accessibility services currently consume this event.
     }
 
     override fun getInstalledAccessibilityServiceList(userId: Int) =

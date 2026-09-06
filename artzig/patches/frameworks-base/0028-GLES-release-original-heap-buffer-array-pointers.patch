@@ -1,0 +1,3496 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] GLES: release the original JNI heap-buffer array pointer
+
+The pinned generated bindings offset heap-backed NIO pointers for GL, but
+release that interior pointer as if JNI had returned it. Preserve the
+original pointer on release and do not release an array that was never
+acquired. Stop on a failed array acquisition before applying its offset.
+Java API sources remain unchanged.
+
+diff --git a/core/jni/android_opengl_GLES20.cpp b/core/jni/android_opengl_GLES20.cpp
+--- a/core/jni/android_opengl_GLES20.cpp
++++ b/core/jni/android_opengl_GLES20.cpp
+@@ -403,6 +403,7 @@
+     if (params == NULL) {
+         char * _paramsBase = (char *) getArrayPointer<JTYPEARRAY, ARRAYGETTER>(
+             _env, _array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (CTYPE *) (_paramsBase + _bufferOffset);
+     }
+     GET(
+@@ -411,9 +412,9 @@
+     );
+ 
+ exit:
+-    if (_array) {
++    if (_array && params) {
+         releaseArrayPointer<JTYPEARRAY, NTYPEARRAY, ARRAYRELEASER>(
+-            _env, _array, (NTYPEARRAY)params, _exception ? JNI_FALSE : JNI_TRUE);
++            _env, _array, (NTYPEARRAY)((char *)params - _bufferOffset), _exception ? JNI_FALSE : JNI_TRUE);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -939,6 +940,7 @@
+         goto exit;
+     }
+     buffers = (GLuint *)getPointer(_env, buffers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*buffers); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -947,6 +949,7 @@
+     }
+     if (buffers == NULL) {
+         char * _buffersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_buffersBase == nullptr) goto exit;
+         buffers = (GLuint *) (_buffersBase + _bufferOffset);
+     }
+     glDeleteBuffers(
+@@ -955,8 +958,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)buffers, JNI_ABORT);
++    if (_array && buffers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)buffers - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1031,6 +1034,7 @@
+         goto exit;
+     }
+     framebuffers = (GLuint *)getPointer(_env, framebuffers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*framebuffers); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1039,6 +1043,7 @@
+     }
+     if (framebuffers == NULL) {
+         char * _framebuffersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_framebuffersBase == nullptr) goto exit;
+         framebuffers = (GLuint *) (_framebuffersBase + _bufferOffset);
+     }
+     glDeleteFramebuffers(
+@@ -1047,8 +1052,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)framebuffers, JNI_ABORT);
++    if (_array && framebuffers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)framebuffers - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1132,6 +1137,7 @@
+         goto exit;
+     }
+     renderbuffers = (GLuint *)getPointer(_env, renderbuffers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*renderbuffers); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1140,6 +1146,7 @@
+     }
+     if (renderbuffers == NULL) {
+         char * _renderbuffersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_renderbuffersBase == nullptr) goto exit;
+         renderbuffers = (GLuint *) (_renderbuffersBase + _bufferOffset);
+     }
+     glDeleteRenderbuffers(
+@@ -1148,8 +1155,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)renderbuffers, JNI_ABORT);
++    if (_array && renderbuffers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)renderbuffers - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1233,6 +1240,7 @@
+         goto exit;
+     }
+     textures = (GLuint *)getPointer(_env, textures_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*textures); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1241,6 +1249,7 @@
+     }
+     if (textures == NULL) {
+         char * _texturesBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_texturesBase == nullptr) goto exit;
+         textures = (GLuint *) (_texturesBase + _bufferOffset);
+     }
+     glDeleteTextures(
+@@ -1249,8 +1258,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)textures, JNI_ABORT);
++    if (_array && textures) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)textures - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1521,6 +1530,7 @@
+         goto exit;
+     }
+     buffers = (GLuint *)getPointer(_env, buffers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*buffers); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1529,6 +1539,7 @@
+     }
+     if (buffers == NULL) {
+         char * _buffersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_buffersBase == nullptr) goto exit;
+         buffers = (GLuint *) (_buffersBase + _bufferOffset);
+     }
+     glGenBuffers(
+@@ -1537,8 +1548,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)buffers, _exception ? JNI_ABORT : 0);
++    if (_array && buffers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)buffers - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1622,6 +1633,7 @@
+         goto exit;
+     }
+     framebuffers = (GLuint *)getPointer(_env, framebuffers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*framebuffers); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1630,6 +1642,7 @@
+     }
+     if (framebuffers == NULL) {
+         char * _framebuffersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_framebuffersBase == nullptr) goto exit;
+         framebuffers = (GLuint *) (_framebuffersBase + _bufferOffset);
+     }
+     glGenFramebuffers(
+@@ -1638,8 +1651,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)framebuffers, _exception ? JNI_ABORT : 0);
++    if (_array && framebuffers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)framebuffers - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1714,6 +1727,7 @@
+         goto exit;
+     }
+     renderbuffers = (GLuint *)getPointer(_env, renderbuffers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*renderbuffers); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1722,6 +1736,7 @@
+     }
+     if (renderbuffers == NULL) {
+         char * _renderbuffersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_renderbuffersBase == nullptr) goto exit;
+         renderbuffers = (GLuint *) (_renderbuffersBase + _bufferOffset);
+     }
+     glGenRenderbuffers(
+@@ -1730,8 +1745,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)renderbuffers, _exception ? JNI_ABORT : 0);
++    if (_array && renderbuffers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)renderbuffers - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1806,6 +1821,7 @@
+         goto exit;
+     }
+     textures = (GLuint *)getPointer(_env, textures_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*textures); // bytes to typed-buffer elements
+     if (_remaining < n) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1814,6 +1830,7 @@
+     }
+     if (textures == NULL) {
+         char * _texturesBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_texturesBase == nullptr) goto exit;
+         textures = (GLuint *) (_texturesBase + _bufferOffset);
+     }
+     glGenTextures(
+@@ -1822,8 +1839,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)textures, _exception ? JNI_ABORT : 0);
++    if (_array && textures) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)textures - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1964,18 +1981,24 @@
+     GLenum *type = (GLenum *) 0;
+ 
+     length = (GLsizei *)getPointer(_env, length_buf, (jarray*)&_lengthArray, &_lengthRemaining, &_lengthBufferOffset);
++    _lengthRemaining /= sizeof(*length); // bytes to typed-buffer elements
+     size = (GLint *)getPointer(_env, size_buf, (jarray*)&_sizeArray, &_sizeRemaining, &_sizeBufferOffset);
++    _sizeRemaining /= sizeof(*size); // bytes to typed-buffer elements
+     type = (GLenum *)getPointer(_env, type_buf, (jarray*)&_typeArray, &_typeRemaining, &_typeBufferOffset);
++    _typeRemaining /= sizeof(*type); // bytes to typed-buffer elements
+     if (length == NULL) {
+         char * _lengthBase = (char *)_env->GetIntArrayElements(_lengthArray, (jboolean *) 0);
++        if (_lengthBase == nullptr) goto exit;
+         length = (GLsizei *) (_lengthBase + _lengthBufferOffset);
+     }
+     if (size == NULL) {
+         char * _sizeBase = (char *)_env->GetIntArrayElements(_sizeArray, (jboolean *) 0);
++        if (_sizeBase == nullptr) goto exit;
+         size = (GLint *) (_sizeBase + _sizeBufferOffset);
+     }
+     if (type == NULL) {
+         char * _typeBase = (char *)_env->GetIntArrayElements(_typeArray, (jboolean *) 0);
++        if (_typeBase == nullptr) goto exit;
+         type = (GLenum *) (_typeBase + _typeBufferOffset);
+     }
+     glGetActiveAttrib(
+@@ -1987,14 +2010,15 @@
+         (GLenum *)type,
+         reinterpret_cast<char *>(name)
+     );
+-    if (_typeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)type, JNI_TRUE);
+-    }
+-    if (_sizeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)size, JNI_TRUE);
+-    }
+-    if (_lengthArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _lengthArray, (jint*)length, JNI_TRUE);
++exit:
++    if (_typeArray && type) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)((char *)type - _typeBufferOffset), JNI_TRUE);
++    }
++    if (_sizeArray && size) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)((char *)size - _sizeBufferOffset), JNI_TRUE);
++    }
++    if (_lengthArray && length) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _lengthArray, (jint*)((char *)length - _lengthBufferOffset), JNI_TRUE);
+     }
+ }
+ 
+@@ -2123,13 +2147,17 @@
+     }
+ 
+     size = (GLint *)getPointer(_env, size_buf, (jarray*)&_sizeArray, &_sizeRemaining, &_sizeBufferOffset);
++    _sizeRemaining /= sizeof(*size); // bytes to typed-buffer elements
+     type = (GLenum *)getPointer(_env, type_buf, (jarray*)&_typeArray, &_typeRemaining, &_typeBufferOffset);
++    _typeRemaining /= sizeof(*type); // bytes to typed-buffer elements
+     if (size == NULL) {
+         char * _sizeBase = (char *)_env->GetIntArrayElements(_sizeArray, (jboolean *) 0);
++        if (_sizeBase == nullptr) goto exit;
+         size = (GLint *) (_sizeBase + _sizeBufferOffset);
+     }
+     if (type == NULL) {
+         char * _typeBase = (char *)_env->GetIntArrayElements(_typeArray, (jboolean *) 0);
++        if (_typeBase == nullptr) goto exit;
+         type = (GLenum *) (_typeBase + _typeBufferOffset);
+     }
+     glGetActiveAttrib(
+@@ -2142,11 +2170,12 @@
+         (char *)buf
+     );
+ 
+-    if (_typeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)type, JNI_TRUE);
+-    }
+-    if (_sizeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)size, JNI_TRUE);
++exit:
++    if (_typeArray && type) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)((char *)type - _typeBufferOffset), JNI_TRUE);
++    }
++    if (_sizeArray && size) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)((char *)size - _sizeBufferOffset), JNI_TRUE);
+     }
+     result = _env->NewStringUTF(buf);
+     if (buf) {
+@@ -2288,18 +2317,24 @@
+     GLenum *type = (GLenum *) 0;
+ 
+     length = (GLsizei *)getPointer(_env, length_buf, (jarray*)&_lengthArray, &_lengthRemaining, &_lengthBufferOffset);
++    _lengthRemaining /= sizeof(*length); // bytes to typed-buffer elements
+     size = (GLint *)getPointer(_env, size_buf, (jarray*)&_sizeArray, &_sizeRemaining, &_sizeBufferOffset);
++    _sizeRemaining /= sizeof(*size); // bytes to typed-buffer elements
+     type = (GLenum *)getPointer(_env, type_buf, (jarray*)&_typeArray, &_typeRemaining, &_typeBufferOffset);
++    _typeRemaining /= sizeof(*type); // bytes to typed-buffer elements
+     if (length == NULL) {
+         char * _lengthBase = (char *)_env->GetIntArrayElements(_lengthArray, (jboolean *) 0);
++        if (_lengthBase == nullptr) goto exit;
+         length = (GLsizei *) (_lengthBase + _lengthBufferOffset);
+     }
+     if (size == NULL) {
+         char * _sizeBase = (char *)_env->GetIntArrayElements(_sizeArray, (jboolean *) 0);
++        if (_sizeBase == nullptr) goto exit;
+         size = (GLint *) (_sizeBase + _sizeBufferOffset);
+     }
+     if (type == NULL) {
+         char * _typeBase = (char *)_env->GetIntArrayElements(_typeArray, (jboolean *) 0);
++        if (_typeBase == nullptr) goto exit;
+         type = (GLenum *) (_typeBase + _typeBufferOffset);
+     }
+     glGetActiveUniform(
+@@ -2311,14 +2346,15 @@
+         (GLenum *)type,
+         reinterpret_cast<char *>(name)
+     );
+-    if (_typeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)type, JNI_TRUE);
+-    }
+-    if (_sizeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)size, JNI_TRUE);
+-    }
+-    if (_lengthArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _lengthArray, (jint*)length, JNI_TRUE);
++exit:
++    if (_typeArray && type) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)((char *)type - _typeBufferOffset), JNI_TRUE);
++    }
++    if (_sizeArray && size) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)((char *)size - _sizeBufferOffset), JNI_TRUE);
++    }
++    if (_lengthArray && length) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _lengthArray, (jint*)((char *)length - _lengthBufferOffset), JNI_TRUE);
+     }
+ }
+ 
+@@ -2447,14 +2483,18 @@
+     }
+ 
+     size = (GLint *)getPointer(_env, size_buf, (jarray*)&_sizeArray, &_sizeRemaining, &_sizeBufferOffset);
++    _sizeRemaining /= sizeof(*size); // bytes to typed-buffer elements
+     type = (GLenum *)getPointer(_env, type_buf, (jarray*)&_typeArray, &_typeRemaining, &_typeBufferOffset);
++    _typeRemaining /= sizeof(*type); // bytes to typed-buffer elements
+ 
+     if (size == NULL) {
+         char * _sizeBase = (char *)_env->GetIntArrayElements(_sizeArray, (jboolean *) 0);
++        if (_sizeBase == nullptr) goto exit;
+         size = (GLint *) (_sizeBase + _sizeBufferOffset);
+     }
+     if (type == NULL) {
+         char * _typeBase = (char *)_env->GetIntArrayElements(_typeArray, (jboolean *) 0);
++        if (_typeBase == nullptr) goto exit;
+         type = (GLenum *) (_typeBase + _typeBufferOffset);
+     }
+     glGetActiveUniform(
+@@ -2467,11 +2507,12 @@
+         (char *)buf
+     );
+ 
+-    if (_typeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)type, JNI_TRUE);
+-    }
+-    if (_sizeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)size, JNI_TRUE);
++exit:
++    if (_typeArray && type) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)((char *)type - _typeBufferOffset), JNI_TRUE);
++    }
++    if (_sizeArray && size) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)((char *)size - _sizeBufferOffset), JNI_TRUE);
+     }
+     result = _env->NewStringUTF(buf);
+     if (buf) {
+@@ -2574,6 +2615,7 @@
+ 
+     if (count_buf) {
+         count = (GLsizei *)getPointer(_env, count_buf, (jarray*)&_countArray, &_countRemaining, &_countBufferOffset);
++    _countRemaining /= sizeof(*count); // bytes to typed-buffer elements
+         if (_countRemaining < 1) {
+             _exception = 1;
+             _exceptionType = "java/lang/IllegalArgumentException";
+@@ -2588,6 +2630,7 @@
+         goto exit;
+     }
+     shaders = (GLuint *)getPointer(_env, shaders_buf, (jarray*)&_shadersArray, &_shadersRemaining, &_shadersBufferOffset);
++    _shadersRemaining /= sizeof(*shaders); // bytes to typed-buffer elements
+     if (_shadersRemaining < maxcount) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -2596,10 +2639,12 @@
+     }
+     if (count_buf && count == NULL) {
+         char * _countBase = (char *)_env->GetIntArrayElements(_countArray, (jboolean *) 0);
++        if (_countBase == nullptr) goto exit;
+         count = (GLsizei *) (_countBase + _countBufferOffset);
+     }
+     if (shaders == NULL) {
+         char * _shadersBase = (char *)_env->GetIntArrayElements(_shadersArray, (jboolean *) 0);
++        if (_shadersBase == nullptr) goto exit;
+         shaders = (GLuint *) (_shadersBase + _shadersBufferOffset);
+     }
+     glGetAttachedShaders(
+@@ -2610,11 +2655,11 @@
+     );
+ 
+ exit:
+-    if (_shadersArray) {
+-        _env->ReleaseIntArrayElements(_shadersArray, (jint*)shaders, _exception ? JNI_ABORT : 0);
+-    }
+-    if (_countArray) {
+-        _env->ReleaseIntArrayElements(_countArray, (jint*)count, _exception ? JNI_ABORT : 0);
++    if (_shadersArray && shaders) {
++        _env->ReleaseIntArrayElements(_shadersArray, (jint*)((char *)shaders - _shadersBufferOffset), _exception ? JNI_ABORT : 0);
++    }
++    if (_countArray && count) {
++        _env->ReleaseIntArrayElements(_countArray, (jint*)((char *)count - _countBufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2740,6 +2785,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -2748,6 +2794,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetBufferParameteriv(
+@@ -2757,8 +2804,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2853,8 +2900,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetFramebufferAttachmentParameteriv(
+@@ -2865,8 +2914,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2957,6 +3006,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -2965,6 +3015,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetProgramiv(
+@@ -2974,8 +3025,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3070,6 +3121,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3078,6 +3130,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetRenderbufferParameteriv(
+@@ -3087,8 +3140,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3164,6 +3217,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3172,6 +3226,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetShaderiv(
+@@ -3181,8 +3236,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3313,6 +3368,7 @@
+         goto exit;
+     }
+     range = (GLint *)getPointer(_env, range_buf, (jarray*)&_rangeArray, &_rangeRemaining, &_rangeBufferOffset);
++    _rangeRemaining /= sizeof(*range); // bytes to typed-buffer elements
+     if (_rangeRemaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3326,6 +3382,7 @@
+         goto exit;
+     }
+     precision = (GLint *)getPointer(_env, precision_buf, (jarray*)&_precisionArray, &_precisionRemaining, &_precisionBufferOffset);
++    _precisionRemaining /= sizeof(*precision); // bytes to typed-buffer elements
+     if (_precisionRemaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3334,10 +3391,12 @@
+     }
+     if (range == NULL) {
+         char * _rangeBase = (char *)_env->GetIntArrayElements(_rangeArray, (jboolean *) 0);
++        if (_rangeBase == nullptr) goto exit;
+         range = (GLint *) (_rangeBase + _rangeBufferOffset);
+     }
+     if (precision == NULL) {
+         char * _precisionBase = (char *)_env->GetIntArrayElements(_precisionArray, (jboolean *) 0);
++        if (_precisionBase == nullptr) goto exit;
+         precision = (GLint *) (_precisionBase + _precisionBufferOffset);
+     }
+     glGetShaderPrecisionFormat(
+@@ -3348,11 +3407,11 @@
+     );
+ 
+ exit:
+-    if (_precisionArray) {
+-        _env->ReleaseIntArrayElements(_precisionArray, (jint*)precision, _exception ? JNI_ABORT : 0);
+-    }
+-    if (_rangeArray) {
+-        _env->ReleaseIntArrayElements(_rangeArray, (jint*)range, _exception ? JNI_ABORT : 0);
++    if (_precisionArray && precision) {
++        _env->ReleaseIntArrayElements(_precisionArray, (jint*)((char *)precision - _precisionBufferOffset), _exception ? JNI_ABORT : 0);
++    }
++    if (_rangeArray && range) {
++        _env->ReleaseIntArrayElements(_rangeArray, (jint*)((char *)range - _rangeBufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3434,8 +3493,10 @@
+     GLsizei *length = (GLsizei *) 0;
+ 
+     length = (GLsizei *)getPointer(_env, length_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*length); // bytes to typed-buffer elements
+     if (length == NULL) {
+         char * _lengthBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_lengthBase == nullptr) goto exit;
+         length = (GLsizei *) (_lengthBase + _bufferOffset);
+     }
+     glGetShaderSource(
+@@ -3444,8 +3505,9 @@
+         (GLsizei *)length,
+         reinterpret_cast<char *>(source)
+     );
+-    if (_array) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _array, (jint*)length, JNI_TRUE);
++exit:
++    if (_array && length) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _array, (jint*)((char *)length - _bufferOffset), JNI_TRUE);
+     }
+ }
+ 
+@@ -3540,6 +3602,7 @@
+         goto exit;
+     }
+     params = (GLfloat *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3548,6 +3611,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLfloat *) (_paramsBase + _bufferOffset);
+     }
+     glGetTexParameterfv(
+@@ -3557,8 +3621,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3634,6 +3698,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3642,6 +3707,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetTexParameteriv(
+@@ -3651,8 +3717,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3728,6 +3794,7 @@
+         goto exit;
+     }
+     params = (GLfloat *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3736,6 +3803,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLfloat *) (_paramsBase + _bufferOffset);
+     }
+     glGetUniformfv(
+@@ -3745,8 +3813,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3822,6 +3890,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3830,6 +3899,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetUniformiv(
+@@ -3839,8 +3909,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3962,6 +4032,7 @@
+         goto exit;
+     }
+     params = (GLfloat *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     int _needed;
+     switch (pname) {
+ #if defined(GL_CURRENT_VERTEX_ATTRIB)
+@@ -3981,6 +4052,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLfloat *) (_paramsBase + _bufferOffset);
+     }
+     glGetVertexAttribfv(
+@@ -3990,8 +4062,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4078,6 +4150,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     int _needed;
+     switch (pname) {
+ #if defined(GL_CURRENT_VERTEX_ATTRIB)
+@@ -4097,6 +4170,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetVertexAttribiv(
+@@ -4106,8 +4180,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4416,6 +4490,7 @@
+         goto exit;
+     }
+     shaders = (GLuint *)getPointer(_env, shaders_buf, (jarray*)&_shadersArray, &_shadersRemaining, &_shadersBufferOffset);
++    _shadersRemaining /= sizeof(*shaders); // bytes to typed-buffer elements
+     if (!binary_buf) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -4431,6 +4506,7 @@
+     }
+     if (shaders == NULL) {
+         char * _shadersBase = (char *)_env->GetIntArrayElements(_shadersArray, (jboolean *) 0);
++        if (_shadersBase == nullptr) goto exit;
+         shaders = (GLuint *) (_shadersBase + _shadersBufferOffset);
+     }
+     if (binary == NULL) {
+@@ -4450,8 +4526,8 @@
+         releasePointer(_env, _binaryArray, (void *)((char *)binary - _binaryBufferOffset),
+                        JNI_FALSE);
+     }
+-    if (_shadersArray) {
+-        _env->ReleaseIntArrayElements(_shadersArray, (jint*)shaders, JNI_ABORT);
++    if (_shadersArray && shaders) {
++        _env->ReleaseIntArrayElements(_shadersArray, (jint*)((char *)shaders - _shadersBufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4658,6 +4734,7 @@
+         goto exit;
+     }
+     params = (GLfloat *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -4666,6 +4743,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLfloat *) (_paramsBase + _bufferOffset);
+     }
+     glTexParameterfv(
+@@ -4675,8 +4753,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)params, JNI_ABORT);
++    if (_array && params) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)params - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4763,6 +4841,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -4771,6 +4850,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glTexParameteriv(
+@@ -4780,8 +4860,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, JNI_ABORT);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4905,6 +4985,7 @@
+         goto exit;
+     }
+     v = (GLfloat *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -4913,6 +4994,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLfloat *) (_vBase + _bufferOffset);
+     }
+     glUniform1fv(
+@@ -4922,8 +5004,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5009,6 +5091,7 @@
+         goto exit;
+     }
+     v = (GLint *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5017,6 +5100,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLint *) (_vBase + _bufferOffset);
+     }
+     glUniform1iv(
+@@ -5026,8 +5110,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5114,6 +5198,7 @@
+         goto exit;
+     }
+     v = (GLfloat *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count*2) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5122,6 +5207,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLfloat *) (_vBase + _bufferOffset);
+     }
+     glUniform2fv(
+@@ -5131,8 +5217,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5219,6 +5305,7 @@
+         goto exit;
+     }
+     v = (GLint *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count*2) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5227,6 +5314,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLint *) (_vBase + _bufferOffset);
+     }
+     glUniform2iv(
+@@ -5236,8 +5324,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5325,6 +5413,7 @@
+         goto exit;
+     }
+     v = (GLfloat *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count*3) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5333,6 +5422,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLfloat *) (_vBase + _bufferOffset);
+     }
+     glUniform3fv(
+@@ -5342,8 +5432,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5431,6 +5521,7 @@
+         goto exit;
+     }
+     v = (GLint *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count*3) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5439,6 +5530,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLint *) (_vBase + _bufferOffset);
+     }
+     glUniform3iv(
+@@ -5448,8 +5540,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5538,6 +5630,7 @@
+         goto exit;
+     }
+     v = (GLfloat *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count*4) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5546,6 +5639,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLfloat *) (_vBase + _bufferOffset);
+     }
+     glUniform4fv(
+@@ -5555,8 +5649,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5645,6 +5739,7 @@
+         goto exit;
+     }
+     v = (GLint *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (_remaining < count*4) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5653,6 +5748,7 @@
+     }
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLint *) (_vBase + _bufferOffset);
+     }
+     glUniform4iv(
+@@ -5662,8 +5758,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5740,6 +5836,7 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (_remaining < count*4) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5748,6 +5845,7 @@
+     }
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix2fv(
+@@ -5758,8 +5856,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5836,6 +5934,7 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (_remaining < count*9) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5844,6 +5943,7 @@
+     }
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix3fv(
+@@ -5854,8 +5954,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5932,6 +6032,7 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (_remaining < count*16) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5940,6 +6041,7 @@
+     }
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix4fv(
+@@ -5950,8 +6052,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -6054,6 +6156,7 @@
+         goto exit;
+     }
+     values = (GLfloat *)getPointer(_env, values_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*values); // bytes to typed-buffer elements
+     if (_remaining < 1) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -6062,6 +6165,7 @@
+     }
+     if (values == NULL) {
+         char * _valuesBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valuesBase == nullptr) goto exit;
+         values = (GLfloat *) (_valuesBase + _bufferOffset);
+     }
+     glVertexAttrib1fv(
+@@ -6070,8 +6174,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)values, JNI_ABORT);
++    if (_array && values) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)values - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -6157,6 +6261,7 @@
+         goto exit;
+     }
+     values = (GLfloat *)getPointer(_env, values_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*values); // bytes to typed-buffer elements
+     if (_remaining < 2) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -6165,6 +6270,7 @@
+     }
+     if (values == NULL) {
+         char * _valuesBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valuesBase == nullptr) goto exit;
+         values = (GLfloat *) (_valuesBase + _bufferOffset);
+     }
+     glVertexAttrib2fv(
+@@ -6173,8 +6279,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)values, JNI_ABORT);
++    if (_array && values) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)values - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -6261,6 +6367,7 @@
+         goto exit;
+     }
+     values = (GLfloat *)getPointer(_env, values_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*values); // bytes to typed-buffer elements
+     if (_remaining < 3) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -6269,6 +6376,7 @@
+     }
+     if (values == NULL) {
+         char * _valuesBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valuesBase == nullptr) goto exit;
+         values = (GLfloat *) (_valuesBase + _bufferOffset);
+     }
+     glVertexAttrib3fv(
+@@ -6277,8 +6385,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)values, JNI_ABORT);
++    if (_array && values) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)values - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -6366,6 +6474,7 @@
+         goto exit;
+     }
+     values = (GLfloat *)getPointer(_env, values_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*values); // bytes to typed-buffer elements
+     if (_remaining < 4) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -6374,6 +6483,7 @@
+     }
+     if (values == NULL) {
+         char * _valuesBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valuesBase == nullptr) goto exit;
+         values = (GLfloat *) (_valuesBase + _bufferOffset);
+     }
+     glVertexAttrib4fv(
+@@ -6382,8 +6492,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)values, JNI_ABORT);
++    if (_array && values) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)values - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+diff --git a/core/jni/android_opengl_GLES30.cpp b/core/jni/android_opengl_GLES30.cpp
+--- a/core/jni/android_opengl_GLES30.cpp
++++ b/core/jni/android_opengl_GLES30.cpp
+@@ -403,6 +403,7 @@
+     if (params == NULL) {
+         char * _paramsBase = (char *) getArrayPointer<JTYPEARRAY, ARRAYGETTER>(
+             _env, _array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (CTYPE *) (_paramsBase + _bufferOffset);
+     }
+     GET(
+@@ -411,9 +412,9 @@
+     );
+ 
+ exit:
+-    if (_array) {
++    if (_array && params) {
+         releaseArrayPointer<JTYPEARRAY, NTYPEARRAY, ARRAYRELEASER>(
+-            _env, _array, (NTYPEARRAY)params, _exception ? JNI_FALSE : JNI_TRUE);
++            _env, _array, (NTYPEARRAY)((char *)params - _bufferOffset), _exception ? JNI_FALSE : JNI_TRUE);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -812,8 +813,10 @@
+         goto exit;
+     }
+     ids = (GLuint *)getPointer(_env, ids_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*ids); // bytes to typed-buffer elements
+     if (ids == NULL) {
+         char * _idsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_idsBase == nullptr) goto exit;
+         ids = (GLuint *) (_idsBase + _bufferOffset);
+     }
+     glGenQueries(
+@@ -822,8 +825,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)ids, _exception ? JNI_ABORT : 0);
++    if (_array && ids) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)ids - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -892,8 +895,10 @@
+         goto exit;
+     }
+     ids = (GLuint *)getPointer(_env, ids_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*ids); // bytes to typed-buffer elements
+     if (ids == NULL) {
+         char * _idsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_idsBase == nullptr) goto exit;
+         ids = (GLuint *) (_idsBase + _bufferOffset);
+     }
+     glDeleteQueries(
+@@ -902,8 +907,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)ids, JNI_ABORT);
++    if (_array && ids) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)ids - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1003,8 +1008,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetQueryiv(
+@@ -1014,8 +1021,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1085,8 +1092,10 @@
+         goto exit;
+     }
+     params = (GLuint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLuint *) (_paramsBase + _bufferOffset);
+     }
+     glGetQueryObjectuiv(
+@@ -1096,8 +1105,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1188,8 +1197,10 @@
+         goto exit;
+     }
+     bufs = (GLenum *)getPointer(_env, bufs_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*bufs); // bytes to typed-buffer elements
+     if (bufs == NULL) {
+         char * _bufsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_bufsBase == nullptr) goto exit;
+         bufs = (GLenum *) (_bufsBase + _bufferOffset);
+     }
+     glDrawBuffers(
+@@ -1198,8 +1209,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)bufs, JNI_ABORT);
++    if (_array && bufs) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)bufs - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1270,8 +1281,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix2x3fv(
+@@ -1282,8 +1295,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1354,8 +1367,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix3x2fv(
+@@ -1366,8 +1381,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1438,8 +1453,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix2x4fv(
+@@ -1450,8 +1467,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1522,8 +1539,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix4x2fv(
+@@ -1534,8 +1553,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1606,8 +1625,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix3x4fv(
+@@ -1618,8 +1639,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1690,8 +1711,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glUniformMatrix4x3fv(
+@@ -1702,8 +1725,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1849,8 +1872,10 @@
+         goto exit;
+     }
+     arrays = (GLuint *)getPointer(_env, arrays_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*arrays); // bytes to typed-buffer elements
+     if (arrays == NULL) {
+         char * _arraysBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_arraysBase == nullptr) goto exit;
+         arrays = (GLuint *) (_arraysBase + _bufferOffset);
+     }
+     glDeleteVertexArrays(
+@@ -1859,8 +1884,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)arrays, JNI_ABORT);
++    if (_array && arrays) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)arrays - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1929,8 +1954,10 @@
+         goto exit;
+     }
+     arrays = (GLuint *)getPointer(_env, arrays_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*arrays); // bytes to typed-buffer elements
+     if (arrays == NULL) {
+         char * _arraysBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_arraysBase == nullptr) goto exit;
+         arrays = (GLuint *) (_arraysBase + _bufferOffset);
+     }
+     glGenVertexArrays(
+@@ -1939,8 +1966,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)arrays, _exception ? JNI_ABORT : 0);
++    if (_array && arrays) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)arrays - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2021,8 +2048,10 @@
+         goto exit;
+     }
+     data = (GLint *)getPointer(_env, data_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*data); // bytes to typed-buffer elements
+     if (data == NULL) {
+         char * _dataBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_dataBase == nullptr) goto exit;
+         data = (GLint *) (_dataBase + _bufferOffset);
+     }
+     glGetIntegeri_v(
+@@ -2032,8 +2061,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)data, _exception ? JNI_ABORT : 0);
++    if (_array && data) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)data - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2275,19 +2304,25 @@
+ 
+ 
+     length = (GLsizei *)getPointer(_env, length_buf, (jarray*)&_lengthArray, &_lengthRemaining, &_lengthBufferOffset);
++    _lengthRemaining /= sizeof(*length); // bytes to typed-buffer elements
+     size = (GLint *)getPointer(_env, size_buf, (jarray*)&_sizeArray, &_sizeRemaining, &_sizeBufferOffset);
++    _sizeRemaining /= sizeof(*size); // bytes to typed-buffer elements
+     type = (GLenum *)getPointer(_env, type_buf, (jarray*)&_typeArray, &_typeRemaining, &_typeBufferOffset);
++    _typeRemaining /= sizeof(*type); // bytes to typed-buffer elements
+     name = (GLchar*)getPointer(_env, name_buf, (jarray*)&_nameArray, &_nameRemaining, &_nameBufferOffset);
+     if (length == NULL) {
+         char * _lengthBase = (char *)_env->GetIntArrayElements(_lengthArray, (jboolean *) 0);
++        if (_lengthBase == nullptr) goto exit;
+         length = (GLsizei *) (_lengthBase + _lengthBufferOffset);
+     }
+     if (size == NULL) {
+         char * _sizeBase = (char *)_env->GetIntArrayElements(_sizeArray, (jboolean *) 0);
++        if (_sizeBase == nullptr) goto exit;
+         size = (GLint *) (_sizeBase + _sizeBufferOffset);
+     }
+     if (type == NULL) {
+         char * _typeBase = (char *)_env->GetIntArrayElements(_typeArray, (jboolean *) 0);
++        if (_typeBase == nullptr) goto exit;
+         type = (GLenum *) (_typeBase + _typeBufferOffset);
+     }
+     if (name == NULL) {
+@@ -2303,14 +2338,15 @@
+         (GLenum *)type,
+         (GLchar*)name
+     );
+-    if (_typeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)type, JNI_TRUE);
+-    }
+-    if (_sizeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)size, JNI_TRUE);
+-    }
+-    if (_lengthArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _lengthArray, (jint*)length, JNI_TRUE);
++exit:
++    if (_typeArray && type) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)((char *)type - _typeBufferOffset), JNI_TRUE);
++    }
++    if (_sizeArray && size) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)((char *)size - _sizeBufferOffset), JNI_TRUE);
++    }
++    if (_lengthArray && length) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _lengthArray, (jint*)((char *)length - _lengthBufferOffset), JNI_TRUE);
+     }
+     if (_nameArray) {
+         releaseArrayPointer<jbyteArray, jbyte*, ByteArrayReleaser>(_env, _nameArray, (jbyte*)name, JNI_TRUE);
+@@ -2442,13 +2478,17 @@
+     }
+ 
+     size = (GLint *)getPointer(_env, size_buf, (jarray*)&_sizeArray, &_sizeRemaining, &_sizeBufferOffset);
++    _sizeRemaining /= sizeof(*size); // bytes to typed-buffer elements
+     type = (GLenum *)getPointer(_env, type_buf, (jarray*)&_typeArray, &_typeRemaining, &_typeBufferOffset);
++    _typeRemaining /= sizeof(*type); // bytes to typed-buffer elements
+     if (size == NULL) {
+         char * _sizeBase = (char *)_env->GetIntArrayElements(_sizeArray, (jboolean *) 0);
++        if (_sizeBase == nullptr) goto exit;
+         size = (GLint *) (_sizeBase + _sizeBufferOffset);
+     }
+     if (type == NULL) {
+         char * _typeBase = (char *)_env->GetIntArrayElements(_typeArray, (jboolean *) 0);
++        if (_typeBase == nullptr) goto exit;
+         type = (GLenum *) (_typeBase + _typeBufferOffset);
+     }
+     glGetTransformFeedbackVarying(
+@@ -2461,11 +2501,12 @@
+         (char *)buf
+     );
+ 
+-    if (_typeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)type, JNI_TRUE);
+-    }
+-    if (_sizeArray) {
+-        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)size, JNI_TRUE);
++exit:
++    if (_typeArray && type) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _typeArray, (jint*)((char *)type - _typeBufferOffset), JNI_TRUE);
++    }
++    if (_sizeArray && size) {
++        releaseArrayPointer<jintArray, jint*, IntArrayReleaser>(_env, _sizeArray, (jint*)((char *)size - _sizeBufferOffset), JNI_TRUE);
+     }
+     result = _env->NewStringUTF(buf);
+     if (buf) {
+@@ -2580,8 +2621,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetVertexAttribIiv(
+@@ -2591,8 +2634,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2662,8 +2705,10 @@
+         goto exit;
+     }
+     params = (GLuint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLuint *) (_paramsBase + _bufferOffset);
+     }
+     glGetVertexAttribIuiv(
+@@ -2673,8 +2718,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2769,8 +2814,10 @@
+         goto exit;
+     }
+     v = (GLint *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLint *) (_vBase + _bufferOffset);
+     }
+     glVertexAttribI4iv(
+@@ -2779,8 +2826,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2849,8 +2896,10 @@
+         goto exit;
+     }
+     v = (GLuint *)getPointer(_env, v_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*v); // bytes to typed-buffer elements
+     if (v == NULL) {
+         char * _vBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_vBase == nullptr) goto exit;
+         v = (GLuint *) (_vBase + _bufferOffset);
+     }
+     glVertexAttribI4uiv(
+@@ -2859,8 +2908,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)v, JNI_ABORT);
++    if (_array && v) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)v - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2930,8 +2979,10 @@
+         goto exit;
+     }
+     params = (GLuint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLuint *) (_paramsBase + _bufferOffset);
+     }
+     glGetUniformuiv(
+@@ -2941,8 +2992,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3093,8 +3144,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glUniform1uiv(
+@@ -3104,8 +3157,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3175,8 +3228,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glUniform2uiv(
+@@ -3186,8 +3241,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3257,8 +3312,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glUniform3uiv(
+@@ -3268,8 +3325,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3339,8 +3396,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glUniform4uiv(
+@@ -3350,8 +3409,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3421,8 +3480,10 @@
+         goto exit;
+     }
+     value = (GLint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLint *) (_valueBase + _bufferOffset);
+     }
+     glClearBufferiv(
+@@ -3432,8 +3493,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3503,8 +3564,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glClearBufferuiv(
+@@ -3514,8 +3577,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3585,8 +3648,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glClearBufferfv(
+@@ -3596,8 +3661,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3884,6 +3949,7 @@
+         goto exit;
+     }
+     uniformIndices = (GLuint *)getPointer(_env, uniformIndices_buf, (jarray*)&_uniformIndicesArray, &_uniformIndicesRemaining, &_uniformIndicesBufferOffset);
++    _uniformIndicesRemaining /= sizeof(*uniformIndices); // bytes to typed-buffer elements
+     if (!params_buf) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -3891,12 +3957,15 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_paramsArray, &_paramsRemaining, &_paramsBufferOffset);
++    _paramsRemaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (uniformIndices == NULL) {
+         char * _uniformIndicesBase = (char *)_env->GetIntArrayElements(_uniformIndicesArray, (jboolean *) 0);
++        if (_uniformIndicesBase == nullptr) goto exit;
+         uniformIndices = (GLuint *) (_uniformIndicesBase + _uniformIndicesBufferOffset);
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_paramsArray, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _paramsBufferOffset);
+     }
+     glGetActiveUniformsiv(
+@@ -3908,11 +3977,11 @@
+     );
+ 
+ exit:
+-    if (_paramsArray) {
+-        _env->ReleaseIntArrayElements(_paramsArray, (jint*)params, _exception ? JNI_ABORT : 0);
+-    }
+-    if (_uniformIndicesArray) {
+-        _env->ReleaseIntArrayElements(_uniformIndicesArray, (jint*)uniformIndices, JNI_ABORT);
++    if (_paramsArray && params) {
++        _env->ReleaseIntArrayElements(_paramsArray, (jint*)((char *)params - _paramsBufferOffset), _exception ? JNI_ABORT : 0);
++    }
++    if (_uniformIndicesArray && uniformIndices) {
++        _env->ReleaseIntArrayElements(_uniformIndicesArray, (jint*)((char *)uniformIndices - _uniformIndicesBufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4018,8 +4087,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetActiveUniformBlockiv(
+@@ -4030,8 +4101,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4339,8 +4410,10 @@
+         goto exit;
+     }
+     params = (GLint64 *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetLongArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint64 *) (_paramsBase + _bufferOffset);
+     }
+     glGetInteger64v(
+@@ -4349,8 +4422,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseLongArrayElements(_array, (jlong*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseLongArrayElements(_array, (jlong*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4441,6 +4514,7 @@
+ 
+     if (length_buf) {
+         length = (GLsizei *)getPointer(_env, length_buf, (jarray*)&_lengthArray, &_lengthRemaining, &_lengthBufferOffset);
++    _lengthRemaining /= sizeof(*length); // bytes to typed-buffer elements
+     }
+     if (!values_buf) {
+         _exception = 1;
+@@ -4449,12 +4523,15 @@
+         goto exit;
+     }
+     values = (GLint *)getPointer(_env, values_buf, (jarray*)&_valuesArray, &_valuesRemaining, &_valuesBufferOffset);
++    _valuesRemaining /= sizeof(*values); // bytes to typed-buffer elements
+     if (length_buf && length == NULL) {
+         char * _lengthBase = (char *)_env->GetIntArrayElements(_lengthArray, (jboolean *) 0);
++        if (_lengthBase == nullptr) goto exit;
+         length = (GLsizei *) (_lengthBase + _lengthBufferOffset);
+     }
+     if (values == NULL) {
+         char * _valuesBase = (char *)_env->GetIntArrayElements(_valuesArray, (jboolean *) 0);
++        if (_valuesBase == nullptr) goto exit;
+         values = (GLint *) (_valuesBase + _valuesBufferOffset);
+     }
+     glGetSynciv(
+@@ -4466,11 +4543,11 @@
+     );
+ 
+ exit:
+-    if (_valuesArray) {
+-        _env->ReleaseIntArrayElements(_valuesArray, (jint*)values, _exception ? JNI_ABORT : 0);
+-    }
+-    if (_lengthArray) {
+-        _env->ReleaseIntArrayElements(_lengthArray, (jint*)length, _exception ? JNI_ABORT : 0);
++    if (_valuesArray && values) {
++        _env->ReleaseIntArrayElements(_valuesArray, (jint*)((char *)values - _valuesBufferOffset), _exception ? JNI_ABORT : 0);
++    }
++    if (_lengthArray && length) {
++        _env->ReleaseIntArrayElements(_lengthArray, (jint*)((char *)length - _lengthBufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4540,8 +4617,10 @@
+         goto exit;
+     }
+     data = (GLint64 *)getPointer(_env, data_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*data); // bytes to typed-buffer elements
+     if (data == NULL) {
+         char * _dataBase = (char *)_env->GetLongArrayElements(_array, (jboolean *) 0);
++        if (_dataBase == nullptr) goto exit;
+         data = (GLint64 *) (_dataBase + _bufferOffset);
+     }
+     glGetInteger64i_v(
+@@ -4551,8 +4630,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseLongArrayElements(_array, (jlong*)data, _exception ? JNI_ABORT : 0);
++    if (_array && data) {
++        _env->ReleaseLongArrayElements(_array, (jlong*)((char *)data - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4622,8 +4701,10 @@
+         goto exit;
+     }
+     params = (GLint64 *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetLongArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint64 *) (_paramsBase + _bufferOffset);
+     }
+     glGetBufferParameteri64v(
+@@ -4633,8 +4714,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseLongArrayElements(_array, (jlong*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseLongArrayElements(_array, (jlong*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4703,8 +4784,10 @@
+         goto exit;
+     }
+     samplers = (GLuint *)getPointer(_env, samplers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*samplers); // bytes to typed-buffer elements
+     if (samplers == NULL) {
+         char * _samplersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_samplersBase == nullptr) goto exit;
+         samplers = (GLuint *) (_samplersBase + _bufferOffset);
+     }
+     glGenSamplers(
+@@ -4713,8 +4796,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)samplers, _exception ? JNI_ABORT : 0);
++    if (_array && samplers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)samplers - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4783,8 +4866,10 @@
+         goto exit;
+     }
+     samplers = (GLuint *)getPointer(_env, samplers_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*samplers); // bytes to typed-buffer elements
+     if (samplers == NULL) {
+         char * _samplersBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_samplersBase == nullptr) goto exit;
+         samplers = (GLuint *) (_samplersBase + _bufferOffset);
+     }
+     glDeleteSamplers(
+@@ -4793,8 +4878,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)samplers, JNI_ABORT);
++    if (_array && samplers) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)samplers - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4896,8 +4981,10 @@
+         goto exit;
+     }
+     param = (GLint *)getPointer(_env, param_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*param); // bytes to typed-buffer elements
+     if (param == NULL) {
+         char * _paramBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramBase == nullptr) goto exit;
+         param = (GLint *) (_paramBase + _bufferOffset);
+     }
+     glSamplerParameteriv(
+@@ -4907,8 +4994,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)param, JNI_ABORT);
++    if (_array && param) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)param - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -4989,8 +5076,10 @@
+         goto exit;
+     }
+     param = (GLfloat *)getPointer(_env, param_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*param); // bytes to typed-buffer elements
+     if (param == NULL) {
+         char * _paramBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramBase == nullptr) goto exit;
+         param = (GLfloat *) (_paramBase + _bufferOffset);
+     }
+     glSamplerParameterfv(
+@@ -5000,8 +5089,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)param, JNI_ABORT);
++    if (_array && param) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)param - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5071,8 +5160,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetSamplerParameteriv(
+@@ -5082,8 +5173,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5153,8 +5244,10 @@
+         goto exit;
+     }
+     params = (GLfloat *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLfloat *) (_paramsBase + _bufferOffset);
+     }
+     glGetSamplerParameterfv(
+@@ -5164,8 +5257,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5254,8 +5347,10 @@
+         goto exit;
+     }
+     ids = (GLuint *)getPointer(_env, ids_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*ids); // bytes to typed-buffer elements
+     if (ids == NULL) {
+         char * _idsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_idsBase == nullptr) goto exit;
+         ids = (GLuint *) (_idsBase + _bufferOffset);
+     }
+     glDeleteTransformFeedbacks(
+@@ -5264,8 +5359,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)ids, JNI_ABORT);
++    if (_array && ids) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)ids - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5334,8 +5429,10 @@
+         goto exit;
+     }
+     ids = (GLuint *)getPointer(_env, ids_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*ids); // bytes to typed-buffer elements
+     if (ids == NULL) {
+         char * _idsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_idsBase == nullptr) goto exit;
+         ids = (GLuint *) (_idsBase + _bufferOffset);
+     }
+     glGenTransformFeedbacks(
+@@ -5344,8 +5441,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)ids, _exception ? JNI_ABORT : 0);
++    if (_array && ids) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)ids - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5484,6 +5581,7 @@
+ 
+     if (length_buf) {
+         length = (GLsizei *)getPointer(_env, length_buf, (jarray*)&_lengthArray, &_lengthRemaining, &_lengthBufferOffset);
++    _lengthRemaining /= sizeof(*length); // bytes to typed-buffer elements
+     }
+     if (!binaryFormat_buf) {
+         _exception = 1;
+@@ -5492,6 +5590,7 @@
+         goto exit;
+     }
+     binaryFormat = (GLenum *)getPointer(_env, binaryFormat_buf, (jarray*)&_binaryFormatArray, &_binaryFormatRemaining, &_binaryFormatBufferOffset);
++    _binaryFormatRemaining /= sizeof(*binaryFormat); // bytes to typed-buffer elements
+     if (!binary_buf) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -5501,10 +5600,12 @@
+     binary = (GLvoid *)getPointer(_env, binary_buf, (jarray*)&_binaryArray, &_binaryRemaining, &_binaryBufferOffset);
+     if (length_buf && length == NULL) {
+         char * _lengthBase = (char *)_env->GetIntArrayElements(_lengthArray, (jboolean *) 0);
++        if (_lengthBase == nullptr) goto exit;
+         length = (GLsizei *) (_lengthBase + _lengthBufferOffset);
+     }
+     if (binaryFormat == NULL) {
+         char * _binaryFormatBase = (char *)_env->GetIntArrayElements(_binaryFormatArray, (jboolean *) 0);
++        if (_binaryFormatBase == nullptr) goto exit;
+         binaryFormat = (GLenum *) (_binaryFormatBase + _binaryFormatBufferOffset);
+     }
+     if (binary == NULL) {
+@@ -5524,11 +5625,11 @@
+         releasePointer(_env, _binaryArray, (void *)((char *)binary - _binaryBufferOffset),
+                        _exception ? JNI_FALSE : JNI_TRUE);
+     }
+-    if (_binaryFormatArray) {
+-        _env->ReleaseIntArrayElements(_binaryFormatArray, (jint*)binaryFormat, _exception ? JNI_ABORT : 0);
+-    }
+-    if (_lengthArray) {
+-        _env->ReleaseIntArrayElements(_lengthArray, (jint*)length, _exception ? JNI_ABORT : 0);
++    if (_binaryFormatArray && binaryFormat) {
++        _env->ReleaseIntArrayElements(_binaryFormatArray, (jint*)((char *)binaryFormat - _binaryFormatBufferOffset), _exception ? JNI_ABORT : 0);
++    }
++    if (_lengthArray && length) {
++        _env->ReleaseIntArrayElements(_lengthArray, (jint*)((char *)length - _lengthBufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5648,8 +5749,10 @@
+         goto exit;
+     }
+     attachments = (GLenum *)getPointer(_env, attachments_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*attachments); // bytes to typed-buffer elements
+     if (attachments == NULL) {
+         char * _attachmentsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_attachmentsBase == nullptr) goto exit;
+         attachments = (GLenum *) (_attachmentsBase + _bufferOffset);
+     }
+     glInvalidateFramebuffer(
+@@ -5659,8 +5762,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)attachments, JNI_ABORT);
++    if (_array && attachments) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)attachments - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5734,8 +5837,10 @@
+         goto exit;
+     }
+     attachments = (GLenum *)getPointer(_env, attachments_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*attachments); // bytes to typed-buffer elements
+     if (attachments == NULL) {
+         char * _attachmentsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_attachmentsBase == nullptr) goto exit;
+         attachments = (GLenum *) (_attachmentsBase + _bufferOffset);
+     }
+     glInvalidateSubFramebuffer(
+@@ -5749,8 +5854,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)attachments, JNI_ABORT);
++    if (_array && attachments) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)attachments - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -5849,8 +5954,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetInternalformativ(
+@@ -5862,8 +5969,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+diff --git a/core/jni/android_opengl_GLES31.cpp b/core/jni/android_opengl_GLES31.cpp
+--- a/core/jni/android_opengl_GLES31.cpp
++++ b/core/jni/android_opengl_GLES31.cpp
+@@ -401,6 +401,7 @@
+     if (params == NULL) {
+         char * _paramsBase = (char *) getArrayPointer<JTYPEARRAY, ARRAYGETTER>(
+             _env, _array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (CTYPE *) (_paramsBase + _bufferOffset);
+     }
+     GET(
+@@ -409,9 +410,9 @@
+     );
+ 
+ exit:
+-    if (_array) {
++    if (_array && params) {
+         releaseArrayPointer<JTYPEARRAY, NTYPEARRAY, ARRAYRELEASER>(
+-            _env, _array, (NTYPEARRAY)params, _exception ? JNI_FALSE : JNI_TRUE);
++            _env, _array, (NTYPEARRAY)((char *)params - _bufferOffset), _exception ? JNI_FALSE : JNI_TRUE);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -541,8 +542,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetFramebufferParameteriv(
+@@ -552,8 +555,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -624,8 +627,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetProgramInterfaceiv(
+@@ -636,8 +641,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -808,8 +813,10 @@
+         goto exit;
+     }
+     props = (GLenum *)getPointer(_env, props_buf, (jarray*)&_propsArray, &_propsRemaining, &_propsBufferOffset);
++    _propsRemaining /= sizeof(*props); // bytes to typed-buffer elements
+     if (length_buf) {
+         length = (GLsizei *)getPointer(_env, length_buf, (jarray*)&_lengthArray, &_lengthRemaining, &_lengthBufferOffset);
++    _lengthRemaining /= sizeof(*length); // bytes to typed-buffer elements
+     }
+     if (!params_buf) {
+         _exception = 1;
+@@ -818,16 +825,20 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_paramsArray, &_paramsRemaining, &_paramsBufferOffset);
++    _paramsRemaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (props == NULL) {
+         char * _propsBase = (char *)_env->GetIntArrayElements(_propsArray, (jboolean *) 0);
++        if (_propsBase == nullptr) goto exit;
+         props = (GLenum *) (_propsBase + _propsBufferOffset);
+     }
+     if (length_buf && length == NULL) {
+         char * _lengthBase = (char *)_env->GetIntArrayElements(_lengthArray, (jboolean *) 0);
++        if (_lengthBase == nullptr) goto exit;
+         length = (GLsizei *) (_lengthBase + _lengthBufferOffset);
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_paramsArray, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _paramsBufferOffset);
+     }
+     glGetProgramResourceiv(
+@@ -842,14 +853,14 @@
+     );
+ 
+ exit:
+-    if (_paramsArray) {
+-        _env->ReleaseIntArrayElements(_paramsArray, (jint*)params, _exception ? JNI_ABORT : 0);
+-    }
+-    if (_lengthArray) {
+-        _env->ReleaseIntArrayElements(_lengthArray, (jint*)length, _exception ? JNI_ABORT : 0);
+-    }
+-    if (_propsArray) {
+-        _env->ReleaseIntArrayElements(_propsArray, (jint*)props, JNI_ABORT);
++    if (_paramsArray && params) {
++        _env->ReleaseIntArrayElements(_paramsArray, (jint*)((char *)params - _paramsBufferOffset), _exception ? JNI_ABORT : 0);
++    }
++    if (_lengthArray && length) {
++        _env->ReleaseIntArrayElements(_lengthArray, (jint*)((char *)length - _lengthBufferOffset), _exception ? JNI_ABORT : 0);
++    }
++    if (_propsArray && props) {
++        _env->ReleaseIntArrayElements(_propsArray, (jint*)((char *)props - _propsBufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1052,8 +1063,10 @@
+         goto exit;
+     }
+     pipelines = (GLuint *)getPointer(_env, pipelines_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*pipelines); // bytes to typed-buffer elements
+     if (pipelines == NULL) {
+         char * _pipelinesBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_pipelinesBase == nullptr) goto exit;
+         pipelines = (GLuint *) (_pipelinesBase + _bufferOffset);
+     }
+     glDeleteProgramPipelines(
+@@ -1062,8 +1075,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)pipelines, JNI_ABORT);
++    if (_array && pipelines) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)pipelines - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1132,8 +1145,10 @@
+         goto exit;
+     }
+     pipelines = (GLuint *)getPointer(_env, pipelines_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*pipelines); // bytes to typed-buffer elements
+     if (pipelines == NULL) {
+         char * _pipelinesBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_pipelinesBase == nullptr) goto exit;
+         pipelines = (GLuint *) (_pipelinesBase + _bufferOffset);
+     }
+     glGenProgramPipelines(
+@@ -1142,8 +1157,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)pipelines, _exception ? JNI_ABORT : 0);
++    if (_array && pipelines) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)pipelines - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1224,8 +1239,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetProgramPipelineiv(
+@@ -1235,8 +1252,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1457,8 +1474,10 @@
+         goto exit;
+     }
+     value = (GLint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform1iv(
+@@ -1469,8 +1488,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1541,8 +1560,10 @@
+         goto exit;
+     }
+     value = (GLint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform2iv(
+@@ -1553,8 +1574,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1625,8 +1646,10 @@
+         goto exit;
+     }
+     value = (GLint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform3iv(
+@@ -1637,8 +1660,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1709,8 +1732,10 @@
+         goto exit;
+     }
+     value = (GLint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform4iv(
+@@ -1721,8 +1746,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1793,8 +1818,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform1uiv(
+@@ -1805,8 +1832,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1877,8 +1904,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform2uiv(
+@@ -1889,8 +1918,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1961,8 +1990,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform3uiv(
+@@ -1973,8 +2004,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2045,8 +2076,10 @@
+         goto exit;
+     }
+     value = (GLuint *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLuint *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform4uiv(
+@@ -2057,8 +2090,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2129,8 +2162,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform1fv(
+@@ -2141,8 +2176,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2213,8 +2248,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform2fv(
+@@ -2225,8 +2262,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2297,8 +2334,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform3fv(
+@@ -2309,8 +2348,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2381,8 +2420,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniform4fv(
+@@ -2393,8 +2434,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2466,8 +2507,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix2fv(
+@@ -2479,8 +2522,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2552,8 +2595,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix3fv(
+@@ -2565,8 +2610,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2638,8 +2683,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix4fv(
+@@ -2651,8 +2698,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2724,8 +2771,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix2x3fv(
+@@ -2737,8 +2786,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2810,8 +2859,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix3x2fv(
+@@ -2823,8 +2874,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2896,8 +2947,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix2x4fv(
+@@ -2909,8 +2962,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2982,8 +3035,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix4x2fv(
+@@ -2995,8 +3050,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3068,8 +3123,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix3x4fv(
+@@ -3081,8 +3138,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3154,8 +3211,10 @@
+         goto exit;
+     }
+     value = (GLfloat *)getPointer(_env, value_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*value); // bytes to typed-buffer elements
+     if (value == NULL) {
+         char * _valueBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valueBase == nullptr) goto exit;
+         value = (GLfloat *) (_valueBase + _bufferOffset);
+     }
+     glProgramUniformMatrix4x3fv(
+@@ -3167,8 +3226,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)value, JNI_ABORT);
++    if (_array && value) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)value - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3281,8 +3340,10 @@
+         goto exit;
+     }
+     data = (GLboolean *)getPointer(_env, data_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*data); // bytes to typed-buffer elements
+     if (data == NULL) {
+         char * _dataBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_dataBase == nullptr) goto exit;
+         data = (GLboolean *) (_dataBase + _bufferOffset);
+     }
+     glGetBooleani_v(
+@@ -3292,8 +3353,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)data, _exception ? JNI_ABORT : 0);
++    if (_array && data) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)data - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3395,8 +3456,10 @@
+         goto exit;
+     }
+     val = (GLfloat *)getPointer(_env, val_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*val); // bytes to typed-buffer elements
+     if (val == NULL) {
+         char * _valBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_valBase == nullptr) goto exit;
+         val = (GLfloat *) (_valBase + _bufferOffset);
+     }
+     glGetMultisamplefv(
+@@ -3406,8 +3469,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)val, _exception ? JNI_ABORT : 0);
++    if (_array && val) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)val - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3488,8 +3551,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetTexLevelParameteriv(
+@@ -3500,8 +3565,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -3572,8 +3637,10 @@
+         goto exit;
+     }
+     params = (GLfloat *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLfloat *) (_paramsBase + _bufferOffset);
+     }
+     glGetTexLevelParameterfv(
+@@ -3584,8 +3651,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+diff --git a/core/jni/android_opengl_GLES32.cpp b/core/jni/android_opengl_GLES32.cpp
+--- a/core/jni/android_opengl_GLES32.cpp
++++ b/core/jni/android_opengl_GLES32.cpp
+@@ -401,6 +401,7 @@
+     if (params == NULL) {
+         char * _paramsBase = (char *) getArrayPointer<JTYPEARRAY, ARRAYGETTER>(
+             _env, _array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (CTYPE *) (_paramsBase + _bufferOffset);
+     }
+     GET(
+@@ -409,9 +410,9 @@
+     );
+ 
+ exit:
+-    if (_array) {
++    if (_array && params) {
+         releaseArrayPointer<JTYPEARRAY, NTYPEARRAY, ARRAYRELEASER>(
+-            _env, _array, (NTYPEARRAY)params, _exception ? JNI_FALSE : JNI_TRUE);
++            _env, _array, (NTYPEARRAY)((char *)params - _bufferOffset), _exception ? JNI_FALSE : JNI_TRUE);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -521,6 +522,7 @@
+         goto exit;
+     }
+     ids = (GLuint *)getPointer(_env, ids_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*ids); // bytes to typed-buffer elements
+     if (_remaining < count) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -529,6 +531,7 @@
+     }
+     if (ids == NULL) {
+         char * _idsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_idsBase == nullptr) goto exit;
+         ids = (GLuint *) (_idsBase + _bufferOffset);
+     }
+     glDebugMessageControl(
+@@ -541,8 +544,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)ids, JNI_ABORT);
++    if (_array && ids) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)ids - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1127,6 +1130,7 @@
+         goto exit;
+     }
+     params = (GLfloat *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < bufSize) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1135,6 +1139,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetFloatArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLfloat *) (_paramsBase + _bufferOffset);
+     }
+     glGetnUniformfv(
+@@ -1145,8 +1150,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseFloatArrayElements(_array, (jfloat*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseFloatArrayElements(_array, (jfloat*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1223,6 +1228,7 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < bufSize) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1231,6 +1237,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetnUniformiv(
+@@ -1241,8 +1248,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1319,6 +1326,7 @@
+         goto exit;
+     }
+     params = (GLuint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (_remaining < bufSize) {
+         _exception = 1;
+         _exceptionType = "java/lang/IllegalArgumentException";
+@@ -1327,6 +1335,7 @@
+     }
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLuint *) (_paramsBase + _bufferOffset);
+     }
+     glGetnUniformuiv(
+@@ -1337,8 +1346,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1427,8 +1436,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glTexParameterIiv(
+@@ -1438,8 +1449,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, JNI_ABORT);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1509,8 +1520,10 @@
+         goto exit;
+     }
+     params = (GLuint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLuint *) (_paramsBase + _bufferOffset);
+     }
+     glTexParameterIuiv(
+@@ -1520,8 +1533,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, JNI_ABORT);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1591,8 +1604,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetTexParameterIiv(
+@@ -1602,8 +1617,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1673,8 +1688,10 @@
+         goto exit;
+     }
+     params = (GLuint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLuint *) (_paramsBase + _bufferOffset);
+     }
+     glGetTexParameterIuiv(
+@@ -1684,8 +1701,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1755,8 +1772,10 @@
+         goto exit;
+     }
+     param = (GLint *)getPointer(_env, param_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*param); // bytes to typed-buffer elements
+     if (param == NULL) {
+         char * _paramBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramBase == nullptr) goto exit;
+         param = (GLint *) (_paramBase + _bufferOffset);
+     }
+     glSamplerParameterIiv(
+@@ -1766,8 +1785,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)param, JNI_ABORT);
++    if (_array && param) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)param - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1837,8 +1856,10 @@
+         goto exit;
+     }
+     param = (GLuint *)getPointer(_env, param_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*param); // bytes to typed-buffer elements
+     if (param == NULL) {
+         char * _paramBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramBase == nullptr) goto exit;
+         param = (GLuint *) (_paramBase + _bufferOffset);
+     }
+     glSamplerParameterIuiv(
+@@ -1848,8 +1869,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)param, JNI_ABORT);
++    if (_array && param) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)param - _bufferOffset), JNI_ABORT);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -1919,8 +1940,10 @@
+         goto exit;
+     }
+     params = (GLint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLint *) (_paramsBase + _bufferOffset);
+     }
+     glGetSamplerParameterIiv(
+@@ -1930,8 +1953,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);
+@@ -2001,8 +2024,10 @@
+         goto exit;
+     }
+     params = (GLuint *)getPointer(_env, params_buf, (jarray*)&_array, &_remaining, &_bufferOffset);
++    _remaining /= sizeof(*params); // bytes to typed-buffer elements
+     if (params == NULL) {
+         char * _paramsBase = (char *)_env->GetIntArrayElements(_array, (jboolean *) 0);
++        if (_paramsBase == nullptr) goto exit;
+         params = (GLuint *) (_paramsBase + _bufferOffset);
+     }
+     glGetSamplerParameterIuiv(
+@@ -2012,8 +2037,8 @@
+     );
+ 
+ exit:
+-    if (_array) {
+-        _env->ReleaseIntArrayElements(_array, (jint*)params, _exception ? JNI_ABORT : 0);
++    if (_array && params) {
++        _env->ReleaseIntArrayElements(_array, (jint*)((char *)params - _bufferOffset), _exception ? JNI_ABORT : 0);
+     }
+     if (_exception) {
+         jniThrowException(_env, _exceptionType, _exceptionMessage);

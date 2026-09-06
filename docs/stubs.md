@@ -10,24 +10,16 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 66 (budget 66). Survivors: 68. Total: 134.
+Pending: 28 (budget 28). Survivors: 29. Total: 57.
 
 ## Survivors
 
 | Stub | Reason | Audit |
 |---|---|---|
-| `android/app/servertransaction/WindowContextInfoChangeItem.java` | window seam (WindowManagerService token protocol) | replaceable |
-| `android/app/servertransaction/WindowContextWindowRemovalItem.java` | window seam (WindowManagerService token protocol) | replaceable |
-| `android/bluetooth/BluetoothDevice.java` | no hosted Bluetooth Binder/socket stack; stock client reaches LocalSocket and native networking | blocked |
-| `android/graphics/GraphicBuffer.java` | window seam (JNI natives over AHardwareBuffer) | blocked |
-| `android/gui/TouchOcclusionMode.java` | frameworks/native libgui AIDL enum outside the include roots | blocked |
 | `android/hardware/Camera.java` | legacy camera client is JNI/cameraserver-backed and no camera service is hosted | blocked |
-| `android/hardware/OverlayProperties.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/hardware/SyncFence.java` | window seam (JNI natives) | blocked |
 | `android/hardware/camera2/CameraManager.java` | camera stack (cameraserver, CameraMetadataNative JNI, frameworks/av camera AIDL) not hosted; android.telecom.Connection javadoc import | blocked |
-| `android/hardware/display/IDeviceProductInfoConstants.java` | host-only (no AOSP class) | blocked |
 | `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | generated callback requires the legacy libhwbinder runtime | no-aosp-source |
-| `android/hardware/usb/UsbDevice.java` | stock USB device uses libandroid_runtime JNI and no USB service is hosted | blocked |
 | `android/hardware/usb/UsbManager.java` | no hosted IUsbManager; device connection/request use JNI and legacy HIDL plus gadget AIDL generation is unwired | blocked |
 | `android/media/MediaCommunicationManager.java` | no media_communication service; stock closure crosses fenced media/audio/camera JNI | blocked |
 | `android/media/MediaCrypto.java` | JNI natives (libmedia_jni; DRM is not supported) | blocked |
@@ -36,50 +28,19 @@ Pending: 66 (budget 66). Survivors: 68. Total: 134.
 | `android/net/ConnectivityManager.java` | hosted synthetic network has no IConnectivityManager/ConnectivityService; stock closure reaches NetworkUtils/BPF JNI | blocked |
 | `android/net/NetworkAgent.java` | no hosted ConnectivityService/IConnectivityManager network-agent path; stock closure reaches BPF JNI and unwired stats generation | blocked |
 | `android/net/NetworkPolicyManager.java` | network policy service (INetworkPolicyManager over NetworkTemplate/NetworkStats from the Connectivity module) not hosted | blocked |
-| `android/net/TetheringManager.java` | no hosted ITetheringConnector/tethering service; stock client requires the connectivity and Wi-Fi runtime | blocked |
 | `android/net/TrafficStats.java` | native socket tagging and INetworkStatsService are unavailable; host uses Linux networking directly | blocked |
 | `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | blocked |
-| `android/net/wifi/SoftApConfiguration.java` | stock model requires the wider Wi-Fi model and stock WifiManager/IWifiManager seam; no Wi-Fi service is hosted | blocked |
-| `android/net/wifi/WifiManager.java` | no hosted IWifiManager or supplicant-backed Wi-Fi service | blocked |
-| `android/net/wifi/p2p/WifiP2pManager.java` | no hosted IWifiP2pManager or Wi-Fi P2P service | blocked |
-| `android/opengl/EGL14.java` | JNI natives (libandroid_runtime EGL) | blocked |
-| `android/opengl/GLES20.java` | JNI natives (libandroid_runtime GLES) | blocked |
-| `android/os/AppBackgroundRestrictionsInfo.java` | statsd atom enum constants (proto enum generator output is not wired) | no-aosp-source |
-| `android/os/Debug.java` | JNI natives (libandroid_runtime Debug) | blocked |
-| `android/os/GraphicsEnvironment.java` | JNI natives (libandroid_runtime GraphicsEnvironment) | blocked |
-| `android/os/InputEventInjectionSync.java` | libinput AIDL enum generated for C++ only (gen-aidl-cpp) | replaceable |
 | `android/os/PerfettoTrace.java` | JNI natives (perfetto is unavailable) | blocked |
 | `android/os/PerformanceHintManager.java` | JNI natives (libandroid_runtime PerformanceHintManager) | blocked |
-| `android/os/PointerIconType.java` | libinput AIDL enum generated for C++ only (gen-aidl-cpp) | replaceable |
 | `android/os/VintfObject.java` | JNI natives (libvintf) | blocked |
-| `android/os/incremental/IncrementalManager.java` | JNI natives (incfs) | blocked |
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | blocked |
-| `android/util/MemoryIntArray.java` | JNI natives (ashmem) | blocked |
-| `android/util/jar/StrictJarFile.java` | JNI natives (libandroid_runtime StrictJarFile) | blocked |
-| `android/view/IWindowManager.java` | window seam (no WindowManagerService; ViewRootImpl/WindowManagerGlobal are host adaptations) | replaceable |
-| `android/view/PixelCopy.java` | window seam (SurfaceFlinger screenshot natives) | replaceable |
 | `android/view/SurfaceControl.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
-| `android/view/SurfaceControlInputReceiver.java` | window seam (SurfaceFlinger input channels) | replaceable |
 | `android/view/SurfaceControlViewHost.java` | window seam (SurfaceFlinger) | blocked |
 | `android/view/SurfaceSession.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/view/TextureView.java` | window seam (HWUI layer natives; players use SurfaceView) | blocked |
-| `android/view/ViewProtoEnums.java` | proto enum generator output is not wired (harvested constants) | no-aosp-source |
 | `android/webkit/HostedWebViewProvider.kt` | host-only WebView provider (Chromium WebView is not available) | no-aosp-source |
 | `android/webkit/WebView.java` | WebView host seam (Chromium WebView provider is not available) | blocked |
-| `android/window/IRemoteTransition.java` | window seam (shell transitions) | replaceable |
-| `android/window/SplashScreen.java` | window seam (no system splash window on the desktop host) | blocked |
 | `android/window/SplashScreenView.java` | window seam (no system splash window on the desktop host) | blocked |
-| `android/window/SurfaceSyncGroup.java` | window seam (SurfaceFlinger transactions) | blocked |
-| `android/window/TaskSnapshot.java` | window seam (SurfaceFlinger hardware buffers) | blocked |
-| `android/window/WindowContext.java` | window seam (WindowManagerService token protocol) | blocked |
-| `android/window/WindowTokenClient.java` | window seam (WindowManagerService token protocol) | replaceable |
-| `android/window/WindowTokenClientController.java` | window seam (WindowManagerService token protocol) | blocked |
-| `com/android/internal/content/NativeLibraryHelper.java` | JNI natives (libandroid_runtime NativeLibraryHelper) | blocked |
-| `com/android/internal/os/ApplicationSharedMemory.java` | JNI natives (shared memory nonce area) | blocked |
-| `com/android/internal/os/RuntimeInit.java` | JNI natives (libandroid_runtime RuntimeInit / zygote) | blocked |
-| `com/android/internal/pm/RoSystemFeatures.java` | Soong-generated build-time feature table (no generator on this host) | no-aosp-source |
-| `com/android/internal/pm/SystemFeaturesMetadata.java` | Soong-generated build-time feature table (no generator on this host) | no-aosp-source |
-| `com/android/internal/security/VerityUtils.java` | JNI natives (fs-verity) | blocked |
 | `com/android/server/clipboard/EmulatorClipboardMonitor.java` | qemu goldfish/vsock clipboard endpoint is unavailable on the host | replaceable |
 | `com/android/tools/r8/keepanno/annotations/KeepTarget.java` | r8 keepanno annotations are not vendored | no-aosp-source |
 | `com/android/tools/r8/keepanno/annotations/TypePattern.java` | r8 keepanno annotations are not vendored | no-aosp-source |
@@ -91,40 +52,26 @@ Pending: 66 (budget 66). Survivors: 68. Total: 134.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (615 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < Bluetooth |
-
-### activity
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/app/ActivityManager.java` | blocked | frameworks/base/core/java/android/app/ActivityManager.java (69 to add), not vendored; android.app.ActivityManager: existing host class android.app.AppGlobals lacks method getPermissionManager (via ActivityManager); android.app.ActivityManager: existing stub android.app.Instrumentation lacks member D |
-| `android/app/ActivityManagerInternal.java` | blocked | frameworks/base/core/java/android/app/ActivityManagerInternal.java (79 to add), not vendored; android.app.ActivityManager.ProcessCapability: existing host class android.app.AppGlobals lacks method getPermissionManager (via ProcessCapability < ActivityManagerInternal); android.app.ActivityManager.Pro |
-| `android/app/ActivityOptions.java` | blocked | frameworks/base/core/java/android/app/ActivityOptions.java (7 to add), not vendored; android.app.ActivityOptions.SourceInfo: existing stub android.window.SplashScreen lacks member SPLASH_SCREEN_STYLE_ICON (via SourceInfo < ActivityOptions); android.app.ActivityOptions.SourceInfo: existing stub andro |
-| `android/app/AppGlobals.java` | blocked | frameworks/base/core/java/android/app/AppGlobals.java (562 to add), not vendored; android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getIntCoreSetting (via AppGlobals); android.app.AppGlobals: existing host class android.app.ActivityThread lacks method getPermissionM |
+| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (372 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < MediaPlayer < Ringtone < AccessibilityShortcutControlle |
 
 ### appops
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (631 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < PermissionUsa |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (683 to add); android.app.AppOpEnums: generated: proto generator (build/generator_sources.zig) (via AppOpEnums < AppOpsManager); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method |
 
 ### audio
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (558 to add), not vendored; android.audio.policy.configuration.V7_0.AudioUsage: no source in the checkout (via AudioUsage < AudioAttributes); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks  |
-| `android/media/AudioDeviceCallback.java` | replaceable | frameworks/base/media/java/android/media/AudioDeviceCallback.java (1 to add), not vendored |
-| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (560 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioDev |
-| `android/media/AudioFocusRequest.java` | blocked | frameworks/base/media/java/android/media/AudioFocusRequest.java (1 to add), not vendored; android.media.AudioFocusRequest: existing host class android.media.AudioAttributes lacks method getBundle (via AudioFocusRequest); android.media.AudioFocusRequest: existing stub android.media.AudioManager lacks |
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (782 to add), not vendored; android.audio.policy.configuration.V7_0.AudioUsage: no source in the checkout (via AudioUsage < AttributeSystemUsage < AudioManager); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.Bluet |
-| `android/media/AudioRouting.kt` | replaceable | frameworks/base/media/java/android/media/AudioRouting.java (1 to add), not vendored |
-| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (562 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothProfile < BluetoothProfileConnectionInfo < IA |
-| `android/media/MediaRoute2Info.java` | blocked | frameworks/base/media/java/android/media/MediaRoute2Info.java (2 to add), not vendored; android.media.MediaRoute2Info: existing stub android.media.AudioDeviceInfo lacks member TYPE_AUX_LINE (via MediaRoute2Info); android.media.MediaRoute2Info: existing stub android.media.AudioDeviceInfo lacks member |
-| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (573 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioRecord |
-| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (557 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothProfile < BluetoothProfileConnectionInfo < IAudioService < |
-| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (600 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < Utils <  |
-| `android/media/RouteDiscoveryPreference.java` | replaceable | frameworks/base/media/java/android/media/RouteDiscoveryPreference.java (1 to add), not vendored |
-| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (561 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AudioDeviceA |
+| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (315 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioAttributes); android.hardware.Camera.CameraInfo: existing host class android.hardware.camera2.CameraManager lacks meth |
+| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (318 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < AudioDeviceInfo); android.hardware.Camera.CameraInfo: existing host class android.hardware. |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (538 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioManager); android.hardware.Camera.CameraInfo: existing host class android.hardware.camera2.CameraManager lacks method get |
+| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (320 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecordingConfiguration < IAudioService < LoudnessCodecController); android.hardware.Camera.Camer |
+| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (330 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecord < MediaRoute2ProviderService < MediaRouter2); android.hardware.Camera.CameraInfo: existing host clas |
+| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (315 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecordingConfiguration < IAudioService < PlayerBase); android.hardware.Camera.CameraInfo: existing host class |
+| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (357 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < Utils < RingtoneManager); android.hardware.Camera.CameraInfo: existing host c |
+| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (319 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < AudioDeviceAttributes < Spatializer); android.hardware.Camera.CameraInfo: existin |
 
 ### autofill
 
@@ -132,126 +79,57 @@ Pending: 66 (budget 66). Survivors: 68. Total: 134.
 |---|---|---|
 | `android/widget/inline/InlineContentView.java` | blocked | frameworks/base/core/java/android/widget/inline/InlineContentView.java (1 to add); android.widget.inline.InlineContentView: existing host class android.view.SurfaceControl lacks method addOnReparentListener (via InlineContentView); android.widget.inline.InlineContentView: existing host class android |
 
-### biometrics
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/hardware/fingerprint/FingerprintManager.java` | blocked | frameworks/base/core/java/android/hardware/fingerprint/FingerprintManager.java (38 to add), not vendored; android.hardware.biometrics.fingerprint.AcquiredInfo: AIDL outside the configured include roots (via AcquiredInfo < ISessionCallback < IFingerprint < FingerprintSensorConfigurations < IFingerpri |
-
-### companion
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/companion/CompanionDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/CompanionDeviceManager.java (256 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < CompanionDeviceManager); android.bluetooth.Bluetooth |
-
-### connectivity
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/net/NetworkScoreManager.java` | blocked | frameworks/base/core/java/android/net/NetworkScoreManager.java (49 to add), not vendored; android.net.NetworkKey: existing stub android.net.wifi.WifiManager lacks member UNKNOWN_SSID (via NetworkKey < NetworkScoreManager); android.net.wifi.ScanResult: existing stub android.net.wifi.WifiManager lacks |
-
-### inputmethod
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/inputmethodservice/AbstractInputMethodService.java` | blocked | frameworks/base/core/java/android/inputmethodservice/AbstractInputMethodService.java (8 to add), not vendored; android.inputmethodservice.AbstractInputMethodService: existing host class android.inputmethodservice.InputMethodService does not implement abstract method onCreateInputMethodInterface (via |
-| `android/inputmethodservice/InputMethodService.java` | blocked | frameworks/base/core/java/android/inputmethodservice/InputMethodService.java (25 to add), not vendored; android.inputmethodservice.InkWindow: existing host class android.view.ViewRootImpl lacks method enqueueInputEvent (via InkWindow < InputMethodService); android.inputmethodservice.InputMethodServi |
-
-### logging
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/app/jank/JankTracker.java` | blocked | frameworks/base/core/java/android/app/jank/JankTracker.java (16 to add), not vendored; android.app.jank.JankTracker: existing host class android.view.ViewRootImpl lacks method getChoreographer (via JankTracker); android.app.jank.JankTracker: existing stub android.view.SurfaceControl lacks nested typ |
-| `com/android/internal/jank/InteractionJankMonitor.java` | blocked | frameworks/base/core/java/com/android/internal/jank/InteractionJankMonitor.java (27 to add), not vendored; android.gui.BorderSettings: AIDL outside the configured include roots (via BorderSettings < JankData < FrameTracker < InteractionJankMonitor); android.gui.DropInputMode: AIDL outside the config |
-| `com/android/internal/protolog/ProtoLog.java` | replaceable | frameworks/base/core/java/com/android/internal/protolog/ProtoLog.java (9 to add), not vendored |
-
-### media
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/media/MediaCryptoException.java` | replaceable | frameworks/base/media/java/android/media/MediaCryptoException.java (2 to add), not vendored |
-| `android/media/projection/MediaProjection.java` | replaceable | frameworks/base/media/java/android/media/projection/MediaProjection.java (2 to add), not vendored |
-| `android/media/quality/PictureProfileHandle.java` | replaceable | frameworks/base/media/java/android/media/quality/PictureProfileHandle.java (1 to add), not vendored |
-
 ### opengl
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/opengl/EGLConfig.java` | replaceable | frameworks/base/opengl/java/android/opengl/EGLConfig.java (2 to add), not vendored |
-| `android/opengl/EGLContext.java` | replaceable | frameworks/base/opengl/java/android/opengl/EGLContext.java (2 to add), not vendored |
-| `android/opengl/EGLDisplay.java` | replaceable | frameworks/base/opengl/java/android/opengl/EGLDisplay.java (2 to add), not vendored |
-| `android/opengl/EGLSurface.java` | replaceable | frameworks/base/opengl/java/android/opengl/EGLSurface.java (2 to add), not vendored |
-| `android/opengl/GLSurfaceView.kt` | blocked | frameworks/base/opengl/java/android/opengl/GLSurfaceView.java (12 to add), not vendored; android.opengl.EGLExt: JNI natives (via EGLExt < GLSurfaceView); android.opengl.EGLExt: existing host class android.hardware.SyncFence lacks method createEmpty (via EGLExt < GLSurfaceView); android.opengl.GLSurf |
-| `javax/microedition/khronos/egl/EGLConfig.kt` | replaceable | frameworks/base/opengl/java/javax/microedition/khronos/egl/EGLConfig.java (1 to add), not vendored |
-| `javax/microedition/khronos/opengles/GL.kt` | replaceable | frameworks/base/opengl/java/javax/microedition/khronos/opengles/GL.java (1 to add), not vendored |
-| `javax/microedition/khronos/opengles/GL10.kt` | replaceable | frameworks/base/opengl/java/javax/microedition/khronos/opengles/GL10.java (1 to add), not vendored |
+| `android/opengl/GLSurfaceView.kt` | blocked | frameworks/base/opengl/java/android/opengl/GLSurfaceView.java (11 to add); android.opengl.EGLExt: JNI natives (via EGLExt < GLSurfaceView); android.opengl.EGLExt: existing host class android.hardware.SyncFence lacks method createEmpty (via EGLExt < GLSurfaceView) |
 
 ### packagemanager
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/pm/pkg/component/AconfigFlags.java` | blocked | frameworks/base/core/java/com/android/internal/pm/pkg/component/AconfigFlags.java (15 to add), excluded by c.add("$CJ/com/android/internal/pm") .not_names "AconfigFlags.java"; android.aconfig.DeviceProtos: no source in the checkout (via DeviceProtos < AconfigFlags); android.aconfig.nano.Aconfig: no  |
-| `com/android/server/SystemConfig.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemConfig.java (3 to add), not vendored; android.os.VintfRuntimeInfo: JNI natives (via VintfRuntimeInfo < SystemConfig); com.android.server.SystemConfig: existing host class android.os.incremental.IncrementalManager lacks method getVersion (vi |
-| `com/android/server/pm/ApexManager.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/ApexManager.java (11 to add), not vendored; android.apex.ApexInfo: AIDL outside the configured include roots (via ApexInfo < ApexManager); android.apex.ApexInfoList: AIDL outside the configured include roots (via ApexInfoList < ApexManager); a |
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3468 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
-| `com/android/server/pm/Installer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Installer.java (7 to add), not vendored; android.os.CreateAppDataArgs: AIDL outside the configured include roots (via CreateAppDataArgs < Installer); android.os.CreateAppDataResult: AIDL outside the configured include roots (via CreateAppDataR |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3466 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3581 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
-| `com/android/server/pm/PackageSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageSetting.java (5 to add), not vendored; android.service.pm.PackageProto.UserInfoProto.ArchiveState.ArchiveActivityInfo: no source in the checkout (via ArchiveActivityInfo < PackageSetting); android.service.pm.PackageProto: generated: pro |
-| `com/android/server/pm/SharedUserSetting.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/SharedUserSetting.java (21 to add), not vendored; android.service.pm.PackageServiceDumpProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via PackageServiceDumpProto < SharedUserSetting); com.android.server.compat.C |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3480 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
-
-### permission
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/health/connect/HealthPermissions.java` | no-aosp-source | no class with this name in the checkout |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3166 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3164 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3276 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3178 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
 
 ### runtime
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/os/BinderCallsStats.java` | blocked | frameworks/base/core/java/com/android/internal/os/BinderCallsStats.java (10 to add), not vendored; com.android.internal.os.BinderLatencyProto.ApiStats: no source in the checkout (via ApiStats < BinderLatencyObserver < BinderCallsStats); com.android.internal.os.BinderLatencyProto.Dims: no source in t |
-| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (72 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < ZygoteInit < SystemServerClassLoaderFactory); android.net.http.Flags: no source in the checko |
+| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (362 to add), not vendored; android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < SystemServerClassLoaderFactory); android.service.print.PrintAttri |
 
 ### systemserver
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3466 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
-| `com/android/server/uri/UriGrantsManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/uri/UriGrantsManagerInternal.java (8 to add), not vendored; com.android.server.am.GrantUriProto: generated: proto/logtags/stats generator (build/generator_sources.zig) (via GrantUriProto < GrantUri < UriGrantsManagerInternal); com.android.server. |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3466 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3164 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3164 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
 
 ### textclassifier
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (616 to add); android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfig < AudioSystem < AidlConvers |
-| `android/speech/tts/TextToSpeech.java` | blocked | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (11 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < TextToSpeech); android.companion.virtual.VirtualDevice: ex |
+| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (373 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecord < HotwordDetectedResult < IMicrophoneHotwordDetectionVoiceInteractionCallback < IVoiceInteractionMan |
+| `android/speech/tts/TextToSpeech.java` | blocked | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (11 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < TextToSpeech); android.companion.virtual.VirtualDevice: existing host cl |
 
 ### virtualdevice
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (589 to add, AIDL interface), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothUtils < BluetoothCodecConfi |
-| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (610 to add), not vendored; android.bluetooth.BluetoothAdapter: existing host class android.bluetooth.BluetoothDevice lacks method setAttributionSource (via BluetoothAdapter < BluetoothLeUtils < ScanRecord < ScanResult < A |
-| `android/companion/virtual/VirtualDeviceParams.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add), not vendored; android.companion.virtual.VirtualDeviceParams: existing stub android.media.AudioManager lacks member AUDIO_SESSION_ID_GENERATE (via VirtualDeviceParams); android.companion.virtual.sensor.VirtualSen |
+| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (347 to add, AIDL interface); android.companion.virtual.VirtualDevice: existing stub android.companion.virtual.VirtualDeviceParams lacks member POLICY_TYPE_CAMERA (via VirtualDevice < VirtualCameraConfig < IVirtualDevice); andro |
+| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (366 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceManager); android.companion.virtual.Virtual |
+| `android/companion/virtual/VirtualDeviceParams.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add); android.companion.virtual.VirtualDeviceParams: existing stub android.media.AudioManager lacks member AUDIO_SESSION_ID_GENERATE (via VirtualDeviceParams); android.companion.virtual.sensor.VirtualSensor: existing  |
 | `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceMan |
 
 ### webkit
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (72 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < CookieManager); android.net.http.Flags: no source in the checkout (via Flags < ZygoteI |
-| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (74 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebChromeClient); android.net.http.Flags: no source in the checkout (via Flags < Zyg |
-| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (72 to add), not vendored; android.net.LocalSocketImpl: JNI natives (via LocalSocketImpl < LocalSocket < ZygoteProcess < WebViewZygote < WebViewFactory < WebSettings); android.net.http.Flags: no source in the checkout (via Flags < ZygoteInit  |
-| `android/webkit/WebViewClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebViewClient.java (1 to add), not vendored; android.webkit.WebViewClient: existing host class android.view.ViewRootImpl lacks method dispatchUnhandledInputEvent (via WebViewClient) |
-
-### window
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/view/HandwritingInitiator.java` | replaceable | frameworks/base/core/java/android/view/HandwritingInitiator.java (1 to add), not vendored, excluded by c.add("$CJ/android/view") .not_names "HandwritingInitiator.java" |
+| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (362 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < CookieManager); android.service.print.PrintAttributesProto: gen |
+| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (364 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebChromeClient); android.service.print.PrintAttributesProto: |
+| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (362 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebSettings); android.service.print.PrintAttributesProto: generat |
 
 ## Hubs
 
@@ -262,43 +140,43 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `android.net.wifi.WifiScanner` | 36 | 2 |
-| `android.net.wifi.IScanDataListener` | 36 | 3 |
-| `android.net.wifi.WifiAnnotations` | 35 | 2 |
-| `android.net.wifi.ScanResult` | 30 | 1 |
-| `android.net.LocalSocket` | 29 | 2 |
-| `android.bluetooth.BluetoothAdapter` | 28 | 1 |
-| `android.bluetooth.BluetoothLeBroadcast` | 27 | 2 |
-| `android.bluetooth.BluetoothLeBroadcastAssistant` | 27 | 2 |
-| `android.bluetooth.IBluetoothAdvertise` | 27 | 2 |
-| `android.bluetooth.le.AdvertiseSettings` | 27 | 3 |
-| `android.hardware.camera2.CameraCharacteristics` | 26 | 1 |
-| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 26 | 1 |
-| `android.media.AudioHalVersionInfo` | 26 | 1 |
-| `android.media.AudioMix` | 26 | 1 |
-| `android.media.AudioPlaybackConfiguration` | 26 | 1 |
-| `android.media.AudioRecord` | 26 | 1 |
-| `android.media.AudioSystem` | 26 | 1 |
-| `android.media.IAudioService` | 26 | 1 |
-| `android.media.MediaRecorder` | 26 | 1 |
-| `android.media.VolumeShaper` | 26 | 1 |
-| `android.hardware.camera2.params.StreamConfigurationMap` | 26 | 2 |
-| `android.media.AudioMixMatchCriterion` | 26 | 2 |
-| `android.media.AudioPolicyConfig` | 26 | 2 |
-| `android.media.AudioProductStrategy` | 26 | 2 |
-| `android.media.AudioVolumeGroup` | 26 | 2 |
-| `android.media.CamcorderProfile` | 26 | 2 |
-| `android.media.INativeAudioVolumeGroupCallback` | 26 | 2 |
-| `android.media.INativeSpatializerCallback` | 26 | 2 |
-| `android.media.ISoundDose` | 26 | 2 |
-| `android.media.ISpatializer` | 26 | 2 |
-| `android.media.audio.common.AidlConversion` | 26 | 2 |
-| `android.media.audio.common.AudioConfig` | 26 | 2 |
-| `android.media.AudioHwModule` | 26 | 3 |
-| `android.media.audio.common.AudioAttributes` | 26 | 3 |
-| `android.media.audio.common.AudioHalEngineConfig` | 26 | 3 |
-| `android.media.audio.common.AudioOffloadInfo` | 26 | 3 |
-| `android.media.audio.common.AudioPortExt` | 26 | 3 |
-| `android.renderscript.Allocation` | 26 | 3 |
-| `android.media.audio.common.AudioHalCapCriterionV2` | 26 | 4 |
-| `android.media.audio.common.AudioHalCapDomain` | 26 | 4 |
+| `android.hardware.camera2.CameraCharacteristics` | 25 | 1 |
+| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 25 | 1 |
+| `android.media.AudioHalVersionInfo` | 25 | 1 |
+| `android.media.AudioMix` | 25 | 1 |
+| `android.media.AudioPlaybackConfiguration` | 25 | 1 |
+| `android.media.AudioRecord` | 25 | 1 |
+| `android.media.AudioSystem` | 25 | 1 |
+| `android.media.IAudioService` | 25 | 1 |
+| `android.media.VolumeShaper` | 25 | 1 |
+| `android.hardware.camera2.params.StreamConfigurationMap` | 25 | 2 |
+| `android.media.AudioMixMatchCriterion` | 25 | 2 |
+| `android.media.AudioPolicyConfig` | 25 | 2 |
+| `android.media.AudioProductStrategy` | 25 | 2 |
+| `android.media.AudioVolumeGroup` | 25 | 2 |
+| `android.media.CamcorderProfile` | 25 | 2 |
+| `android.media.INativeAudioVolumeGroupCallback` | 25 | 2 |
+| `android.media.INativeSpatializerCallback` | 25 | 2 |
+| `android.media.ISoundDose` | 25 | 2 |
+| `android.media.ISpatializer` | 25 | 2 |
+| `android.media.audio.common.AidlConversion` | 25 | 2 |
+| `android.media.audio.common.AudioConfig` | 25 | 2 |
+| `android.media.AudioHwModule` | 25 | 3 |
+| `android.media.audio.common.AudioAttributes` | 25 | 3 |
+| `android.media.audio.common.AudioHalEngineConfig` | 25 | 3 |
+| `android.media.audio.common.AudioOffloadInfo` | 25 | 3 |
+| `android.media.audio.common.AudioPortExt` | 25 | 3 |
+| `android.renderscript.Allocation` | 25 | 3 |
+| `android.media.audio.common.AudioHalCapCriterionV2` | 25 | 4 |
+| `android.media.audio.common.AudioHalCapDomain` | 25 | 4 |
+| `android.media.audio.common.AudioHalProductStrategy` | 25 | 4 |
+| `android.media.audio.common.AudioHalVolumeGroup` | 25 | 4 |
+| `android.media.audio.common.AudioPortMixExt` | 25 | 4 |
+| `android.media.audio.common.AudioHalCapConfiguration` | 25 | 5 |
+| `android.hardware.camera2.CaptureRequest` | 24 | 1 |
+| `android.hardware.camera2.CameraDevice` | 24 | 2 |
+| `android.media.ImageReader` | 24 | 2 |
+| `android.hardware.Camera.CameraInfo` | 24 | 3 |
+| `android.hardware.camera2.TotalCaptureResult` | 24 | 3 |
+| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 24 | 4 |
+| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 24 | 4 |

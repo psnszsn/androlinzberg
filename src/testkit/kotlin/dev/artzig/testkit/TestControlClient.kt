@@ -58,11 +58,18 @@ class TestControlClient(
         action: Action,
         settle: WaitKind = WaitKind.IDLE,
         stableFrames: Int = 2,
-    ): JsonObject = call("Perform", JsonObject().apply {
-        add("selector", selector.toJson())
-        add("action", action.toJson())
-        add("settle", waitJson(settle, stableFrames))
-    })
+        after: Mark? = null,
+    ): JsonObject {
+        // Relative waits require a starting cursor; without it the server can
+        // never satisfy the frame/tree condition, even while frames arrive.
+        val origin = if (settle == WaitKind.FRAME_PRESENTED || settle == WaitKind.TREE_CHANGED)
+            after ?: mark() else null
+        return call("Perform", JsonObject().apply {
+            add("selector", selector.toJson())
+            add("action", action.toJson())
+            add("settle", waitJson(settle, stableFrames, origin))
+        })
+    }
 
     fun diagnose(since: Mark? = null): JsonObject = call("Diagnose", JsonObject().apply {
         add("since", since?.toJson() ?: JsonNull.INSTANCE)
@@ -89,7 +96,7 @@ class TestControlClient(
         var actionParameters: JsonObject? = null
         var actionError: JsonElement? = null
         try {
-            actionParameters = perform(selector, action, settle, stableFrames)
+            actionParameters = perform(selector, action, settle, stableFrames, before)
         } catch (error: VarlinkException) {
             actionError = error.response
         } catch (error: Exception) {

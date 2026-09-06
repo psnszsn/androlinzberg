@@ -15,6 +15,7 @@ public final class Choreographer {
     private static final long FRAME_INTERVAL_MS = 16;
     private static final Object FRAME_CALLBACK_TOKEN = new Object();
     private static final ThreadLocal<Choreographer> sThreadInstance = new ThreadLocal<>();
+    private static volatile Choreographer sMainInstance;
     private static final boolean TRACE_SLOW_FRAMES =
             System.getenv("ARTZIG_SLOW_FRAME_TRACE") != null;
 
@@ -65,11 +66,15 @@ public final class Choreographer {
             }
             c = new Choreographer(looper);
             sThreadInstance.set(c);
+            if (looper == Looper.getMainLooper()) sMainInstance = c;
         }
         return c;
     }
 
     public static long getFrameDelay() { return FRAME_INTERVAL_MS; }
+    // Pinned Choreographer ownership/accessors; frame delivery remains hosted.
+    public Looper getLooper() { return mLooper; }
+    public static Choreographer getMainThreadInstance() { return sMainInstance; }
     public static void setFrameDelay(long delay) {}
     public static long subtractFrameDelay(long delayMillis) {
         return delayMillis <= FRAME_INTERVAL_MS ? 0 : delayMillis - FRAME_INTERVAL_MS;

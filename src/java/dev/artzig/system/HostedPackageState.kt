@@ -12,13 +12,11 @@ import com.android.internal.pm.parsing.pkg.AndroidPackageInternal
 import com.android.server.pm.InstallSource
 import com.android.server.pm.PackageKeySetData
 import com.android.server.pm.PackageSetting
-import com.android.server.pm.HostedPackageStateDefaults
 import com.android.server.pm.permission.LegacyPermissionState
 import com.android.server.pm.pkg.AndroidPackage
 import com.android.server.pm.pkg.PackageStateInternal
 import com.android.server.pm.pkg.PackageStateUnserialized
 import com.android.server.pm.pkg.PackageUserState
-import com.android.server.pm.pkg.PackageUserStateImpl
 import com.android.server.pm.pkg.PackageUserStateInternal
 import com.android.server.pm.pkg.SharedLibrary
 import java.io.File
@@ -27,7 +25,7 @@ import java.util.UUID
 /**
  * The per-package state record of the hosted package manager: a parsed
  * [AndroidPackage] plus the session facts AOSP keeps in `PackageSetting`
- * (the real class is inseparable from PackageManagerService — spike result).
+ * with mutable per-user and transient state held by stock `PackageSetting`.
  * Read by the vendored `ComponentResolver`/`PackageInfoUtils` through the
  * `PackageStateInternal` surface; everything Android persists across boots
  * (install source, keysets, suspend state, ...) answers its fixed default.
@@ -49,33 +47,30 @@ class HostedPackageState(
      */
     @Volatile @JvmField var appId: Int = if (system) android.os.Process.SYSTEM_UID else -1
 
-    /** Mutable single-user state (component enabled settings live here). */
-    @JvmField val userState = PackageUserStateImpl()
-    private val userStates = SparseArray<PackageUserStateImpl>(1).apply { put(0, userState) }
-
-    private val transientState = PackageStateUnserialized(PackageSetting())
     private val domainSetId = UUID.randomUUID()
-    private val legacyPermissionState = LegacyPermissionState()
-    private val keySetData = HostedPackageStateDefaults.emptyKeySetData()
+    private val setting = PackageSetting(pkg.packageName, null, File(apkPath), 0, 0, domainSetId)
+
+    /** The hosted user uses the stock setting's change-tracked state. */
+    @JvmField val userState = setting.getOrCreateUserState(0)
 
     override fun getPkg(): AndroidPackageInternal = pkg
     override fun getAndroidPackage(): AndroidPackage = pkg
     override fun getPackageName(): String = pkg.packageName
-    override fun getTransientState(): PackageStateUnserialized = transientState
+    override fun getTransientState(): PackageStateUnserialized = setting.transientState
     override fun getDomainSetId(): UUID = domainSetId
     override fun getSigningDetails(): SigningDetails = pkg.signingDetails
     override fun getSigningInfo(): SigningInfo = SigningInfo(pkg.signingDetails)
-    override fun getInstallSource(): InstallSource = HostedPackageStateDefaults.emptyInstallSource()
+    override fun getInstallSource(): InstallSource = setting.installSource
     override fun getFlags(): Int = 0
     override fun getPrivateFlags(): Int = 0
-    override fun getUserStates(): SparseArray<out PackageUserStateInternal> = userStates
-    override fun getLegacyPermissionState(): LegacyPermissionState = legacyPermissionState
+    override fun getUserStates(): SparseArray<out PackageUserStateInternal> = setting.userStates
+    override fun getLegacyPermissionState(): LegacyPermissionState = setting.legacyPermissionState
     override fun getRealName(): String? = null
     override fun isLoading(): Boolean = false
     override fun getPathString(): String = apkPath
     override fun getLoadingProgress(): Float = 1f
     override fun getLoadingCompletedTime(): Long = 0
-    override fun getKeySetData(): PackageKeySetData = keySetData
+    override fun getKeySetData(): PackageKeySetData = setting.keySetData
     override fun getPrimaryCpuAbiLegacy(): String? = null
     override fun getSecondaryCpuAbiLegacy(): String? = null
     override fun getAppMetadataFilePath(): String? = null
@@ -89,7 +84,7 @@ class HostedPackageState(
     override fun getSecondaryCpuAbi(): String? = null
     override fun getSeInfo(): String = "default"
     override fun getStateForUser(user: UserHandle): PackageUserState =
-        userStates.get(user.identifier) ?: PackageUserStateInternal.DEFAULT
+        setting.getStateForUser(user)
     override fun getSharedLibraryDependencies(): List<SharedLibrary> = emptyList()
     override fun isApex(): Boolean = false
     override fun isPrivileged(): Boolean = system

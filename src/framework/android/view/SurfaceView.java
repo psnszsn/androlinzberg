@@ -10,7 +10,7 @@ import android.util.AttributeSet;
 
 import java.util.concurrent.CopyOnWriteArrayList;
 
-public class SurfaceView extends View {
+public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCallback {
     public static final int SURFACE_LIFECYCLE_DEFAULT = 0;
     public static final int SURFACE_LIFECYCLE_FOLLOWS_VISIBILITY = 1;
     public static final int SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT = 2;
@@ -20,6 +20,7 @@ public class SurfaceView extends View {
     private Surface mSurface;
     private boolean mCreated;
     private boolean mAttachedToWindow;
+    private boolean mWindowStopped;
     private int mRequestedSurfaceLifecycleStrategy = SURFACE_LIFECYCLE_DEFAULT;
     private final int[] mLocation = new int[2];
     private final Rect mVisibleRect = new Rect();
@@ -61,6 +62,20 @@ public class SurfaceView extends View {
 
     public SurfaceHolder getHolder() { return mHolder; }
 
+    /** AOSP SurfaceView.getName(), used by SurfaceSyncGroup diagnostics. */
+    public String getName() {
+        ViewRootImpl viewRoot = getViewRootImpl();
+        String viewRootName = viewRoot == null ? "detached" : viewRoot.getTitle().toString();
+        return "SurfaceView[" + viewRootName + "]";
+    }
+
+    /** AOSP delegates this operation to BLASTBufferQueue.syncNextTransaction.
+     * The hosted video layer has no BLAST transaction producer. */
+    public void syncNextFrame(java.util.function.Consumer<SurfaceControl.Transaction> consumer) {
+        dev.artzig.system.HostedWindowManagerService.syncNextSurfaceFrame(consumer);
+    }
+
+
     /**
      * Follows AOSP SurfaceView.setSurfaceLifecycle/updateSurface. SurfaceControl is unavailable
      * on the host, so creation and destruction are applied to the Wayland video-layer seam.
@@ -73,6 +88,8 @@ public class SurfaceView extends View {
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         mAttachedToWindow = true;
+        mWindowStopped = false;
+        getViewRootImpl().addSurfaceChangedCallback(this);
         updateSurfaceLifecycle();
         updateRect();
     }
@@ -93,6 +110,8 @@ public class SurfaceView extends View {
         // releaseSurfaces(). The host has no SurfaceControl, so its Wayland
         // video layer is the resource released at that seam.
         mAttachedToWindow = false;
+        ViewRootImpl root = getViewRootImpl();
+        if (root != null) root.removeSurfaceChangedCallback(this);
         updateSurfaceLifecycle();
         super.onDetachedFromWindow();
     }
@@ -142,7 +161,7 @@ public class SurfaceView extends View {
     private void updateSurfaceLifecycle() {
         boolean followsAttachment = mRequestedSurfaceLifecycleStrategy
                 == SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT;
-        boolean shouldExist = mAttachedToWindow && (followsAttachment
+        boolean shouldExist = mAttachedToWindow && !mWindowStopped && (followsAttachment
                 || (getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE));
         if (shouldExist) {
             if (mSurface == null) {
@@ -173,6 +192,22 @@ public class SurfaceView extends View {
                 mSurface = null;
             }
         }
+    }
+
+    // AOSP SurfaceView's ViewRootImpl callbacks stop and resume the surface
+    // independently of the requested visibility/attachment lifecycle strategy.
+    @Override public void surfaceCreated(SurfaceControl.Transaction transaction) {
+        mWindowStopped = false;
+        updateSurfaceLifecycle();
+    }
+
+    @Override public void surfaceDestroyed() {
+        mWindowStopped = true;
+        updateSurfaceLifecycle();
+    }
+
+    @Override public void surfaceReplaced(SurfaceControl.Transaction transaction) {
+        updateRect();
     }
 
     /**

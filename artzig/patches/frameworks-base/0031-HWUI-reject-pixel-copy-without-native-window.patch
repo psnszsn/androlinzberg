@@ -1,0 +1,23 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] HWUI: reject pixel copy when Surface has no native window
+
+The hosted renderer obtains its render target directly and cannot translate a
+Java Surface to ANativeWindow. Complete PixelCopy with the stock SourceInvalid
+result instead of dereferencing a null window in RenderProxy. Java retains its
+validation and callback executor/Handler behavior; this adds no presentation or
+buffer-copy backend.
+
+diff --git a/libs/hwui/jni/android_graphics_HardwareRenderer.cpp b/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
+--- a/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
++++ b/libs/hwui/jni/android_graphics_HardwareRenderer.cpp
+@@ -717,6 +717,10 @@
+             vm, env->NewGlobalRef(jCopyRequest),
+             ::android::uirenderer::Rect(left, top, right, bottom));
+     ANativeWindow* window = fromSurface(env, jsurface);
++    if (window == nullptr) {
++        copyRequest->onCopyFinished(CopyResult::SourceInvalid);
++        return;
++    }
+     RenderProxy::copySurfaceInto(window, std::move(copyRequest));
+     ANativeWindow_release(window);
+ }

@@ -52,6 +52,28 @@ import java.io.File
  */
 class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     private val lock = Any()
+    private val packageMonitors = com.android.server.pm.PackageMonitorCallbackHelper()
+
+    // PMS.registerPackageMonitorCallback and BroadcastHelper's post-mutation
+    // notifications. The stock helper owns Binder death, user filtering, and
+    // the PackageMonitor callback Bundle protocol.
+    override fun registerPackageMonitorCallback(callback: android.os.IRemoteCallback?, userId: Int) {
+        val uid = Binder.getCallingUid()
+        val target = android.app.ActivityManager.handleIncomingUser(Binder.getCallingPid(), uid,
+            userId, true, true, "registerPackageMonitorCallback", "android")
+        packageMonitors.registerPackageMonitorCallback(callback, target, uid)
+    }
+
+    override fun unregisterPackageMonitorCallback(callback: android.os.IRemoteCallback?) {
+        packageMonitors.unregisterPackageMonitorCallback(callback)
+    }
+
+    private fun notifyPackageChanged(packageName: String, components: ArrayList<String>, flags: Int, userId: Int) {
+        val uid = synchronized(lock) { packages[packageName]?.appId } ?: return
+        packageMonitors.notifyPackageChanged(packageName,
+            flags and PackageManager.DONT_KILL_APP != 0, components, uid, null,
+            intArrayOf(userId), intArrayOf(), null, com.android.internal.os.BackgroundThread.getHandler())
+    }
     private val packages = LinkedHashMap<String, HostedPackageState>()
     /** Broker uid -> package state, bound at process attach. */
     private val packagesByUid = HashMap<Int, HostedPackageState>()
@@ -152,6 +174,9 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         }
         invalidateClientCaches()
         Log.i(TAG, "installed " + pkg.packageName + " from " + apkPath)
+        val uid = synchronized(lock) { packages.getValue(pkg.packageName).appId }
+        packageMonitors.notifyPackageAddedForNewUsers(pkg.packageName, uid, intArrayOf(0),
+            intArrayOf(), false, 0, null, com.android.internal.os.BackgroundThread.getHandler())
         return pkg.packageName
     }
 
@@ -677,11 +702,17 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         uid: Int,
         flags: Long,
         metaDataKey: String?,
-    ): ParceledListSlice<*> = synchronized(lock) {
-        ParceledListSlice(
-            componentResolver.queryProviders(this, processName, metaDataKey, uid, withDirectBoot(flags), 0)
-                ?: emptyList<ProviderInfo>(),
-        )
+    ): ParceledListSlice<ProviderInfo> = synchronized(lock) {
+        // ComputerEngine.queryContentProviders: resolve the process/UID, filter
+        // enabled components, then initialize larger initOrder values first.
+        val userId = if (processName != null) UserHandle.getUserId(uid) else UserHandle.getCallingUserId()
+        val effectiveFlags = withDirectBoot(flags)
+        val matches = componentResolver.queryProviders(this, processName, metaDataKey,
+            uid, effectiveFlags, userId) ?: emptyList<ProviderInfo>()
+        ParceledListSlice(matches.filter { provider ->
+            com.android.server.pm.pkg.PackageStateUtils.isEnabledAndMatches(
+                packages[provider.packageName], provider, effectiveFlags, userId)
+        }.sortedByDescending { it.initOrder })
     }
 
     // ------------------------------------------------------- permissions
@@ -858,6 +889,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
             state.userState.setDisabledComponents(disabled)
         }
         invalidateClientCaches()
+        notifyPackageChanged(component.packageName, arrayListOf(component.className), flags, userId)
     }
 
     override fun getComponentEnabledSetting(componentName: ComponentName?, userId: Int): Int {
@@ -887,6 +919,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
             packages[packageName]?.userState?.setEnabledState(newState)
         }
         invalidateClientCaches()
+        if (packageName != null) notifyPackageChanged(packageName, arrayListOf(packageName), flags, userId)
     }
 
     /** AOSP allows a package to change its own components; anything else
@@ -937,11 +970,43 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     override fun getPrivateFlagsForUid(uid: Int): Int = 0
     override fun getFlagsForUid(uid: Int): Int = 0
     override fun getUidForSharedUser(sharedUserName: String?): Int = -1
-    override fun getSplashScreenTheme(packageName: String?, userId: Int): String? = null
+    // AOSP PackageManagerService.get/setSplashScreenTheme: cross-user access,
+    // owner-only writes, then the installed package's user-state value. This
+    // service currently installs packages only for the hosted user (0).
+    override fun getSplashScreenTheme(packageName: String?, userId: Int): String? {
+        enforceSplashThemeUser(userId, "getSplashScreenTheme")
+        if (userId != UserHandle.USER_SYSTEM) return null
+        return synchronized(lock) { packages[packageName]?.userState?.splashScreenTheme }
+    }
+
+    // The pinned setter is annotated @NonNull although PMS and its nullable
+    // Binder API pass null to clear the theme. Preserve that upstream operation.
+    @Suppress("ARGUMENT_TYPE_MISMATCH", "NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
+    override fun setSplashScreenTheme(packageName: String?, themeName: String?, userId: Int) {
+        enforceSplashThemeUser(userId, "setSplashScreenTheme")
+        val callingUid = Binder.getCallingUid()
+        if (UserHandle.getAppId(callingUid) != Process.SYSTEM_UID &&
+            getPackagesForUid(callingUid)?.contains(packageName) != true
+        ) {
+            throw SecurityException("Calling uid $callingUid does not own package $packageName")
+        }
+        if (userId != UserHandle.USER_SYSTEM) return
+        synchronized(lock) { packages[packageName]?.userState?.setSplashScreenTheme(themeName) }
+    }
+
+    private fun enforceSplashThemeUser(userId: Int, operation: String) {
+        require(userId >= 0) { "Invalid userId $userId" }
+        val uid = Binder.getCallingUid()
+        if (UserHandle.getUserId(uid) == userId || uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) return
+        if (checkUidPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, uid) == PackageManager.PERMISSION_GRANTED ||
+            checkUidPermission(android.Manifest.permission.INTERACT_ACROSS_USERS, uid) == PackageManager.PERMISSION_GRANTED
+        ) return
+        throw SecurityException("$operation requires cross-user permission for user $userId")
+    }
     override fun getHarmfulAppWarning(packageName: String?, userId: Int): CharSequence? = null
 
     private companion object {
-        val HOST_FEATURES: Set<String> = setOf(PackageManager.FEATURE_APP_WIDGETS)
+        val HOST_FEATURES: Set<String> = setOf(PackageManager.FEATURE_APP_WIDGETS, PackageManager.FEATURE_COMPANION_DEVICE_SETUP)
 
         const val TAG = "HostedPackageManager"
     }

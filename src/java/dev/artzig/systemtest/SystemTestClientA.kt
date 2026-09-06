@@ -9,9 +9,12 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.verify.domain.DomainVerificationManager
 import android.os.IBinder
+import android.os.Binder
+import android.os.Bundle
 import android.os.Looper
 import android.os.Process
 import android.os.ServiceManager
+import android.provider.Settings
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -51,10 +54,9 @@ internal object SystemTestClientA {
         val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_A")) { "AZK_FIXTURE_APK_A is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
         check(installer.installPackage(fixture, null) == "dev.artzig.test.a")
-        ActivityThread.attachApplicationHosted("dev.artzig.test.a")
-        val appInfo = checkNotNull(ActivityThread.getPackageManager().getApplicationInfo("dev.artzig.test.a", 0L, 0))
         val context: android.content.Context =
-            ActivityThread.currentActivityThread().`handleBindApplication$artzig`(appInfo, emptyList())
+            android.app.HostedServiceClient.attachApplication("dev.artzig.test.a")
+        check(ApplicationBindingEvents.events == listOf("application:attach", "application:create"))
         thread(name = "system-test", isDaemon = true) {
             try {
                 run(context)
@@ -67,6 +69,118 @@ internal object SystemTestClientA {
             Runtime.getRuntime().exit(if (failures == 0) 0 else 1)
         }
         Looper.loop()
+    }
+
+    private fun testCompanionAssociations(context: Context) {
+        val bluetooth = checkNotNull(context.getSystemService(android.bluetooth.BluetoothManager::class.java))
+        check(bluetooth.adapter == null, "stock Bluetooth manager reports the absent adapter")
+        val manager = checkNotNull(context.getSystemService(android.companion.CompanionDeviceManager::class.java))
+        check(manager === context.getSystemService(Context.COMPANION_DEVICE_SERVICE), "stock companion manager is cached")
+        val service = android.companion.ICompanionDeviceManager.Stub.asInterface(
+            ServiceManager.getService(Context.COMPANION_DEVICE_SERVICE))
+        val name = "Hosted test companion"
+        manager.myAssociations.filter { it.displayName == name }.forEach { manager.disassociate(it.id) }
+        val changes = java.util.concurrent.LinkedBlockingQueue<List<android.companion.AssociationInfo>>()
+        val listener = object : android.companion.IOnAssociationsChangedListener.Stub() {
+            override fun onAssociationsChanged(associations: MutableList<android.companion.AssociationInfo>) {
+                changes.add(associations)
+            }
+        }
+        service.addOnAssociationsChangedListener(listener, 0)
+        var associationId: Int? = null
+        try {
+            val created = java.util.concurrent.LinkedBlockingQueue<android.companion.AssociationInfo>()
+            val failure = java.util.concurrent.atomic.AtomicReference<CharSequence>()
+            manager.associate(android.companion.AssociationRequest.Builder()
+                .setSelfManaged(true).setDisplayName(name).build(), java.util.concurrent.Executor { it.run() },
+                object : android.companion.CompanionDeviceManager.Callback() {
+                    override fun onAssociationCreated(associationInfo: android.companion.AssociationInfo) {
+                        created.add(associationInfo)
+                    }
+                    override fun onFailure(error: CharSequence?) { failure.set(error) }
+                })
+            val association = checkNotNull(created.poll(10, TimeUnit.SECONDS)) { "association callback failed: ${failure.get()}" }
+            associationId = association.id
+            check(association.isSelfManaged && association.packageName == context.packageName &&
+                association.deviceMacAddress == null && association.timeApprovedMs > 0,
+                "self-managed association keeps stock value semantics")
+            check(manager.myAssociations.any { it.id == association.id }, "association is visible before its creation callback")
+            check(changes.poll(10, TimeUnit.SECONDS)?.any { it.id == association.id } == true,
+                "stock association store broadcasts the new association")
+            service.enableSystemDataSync(association.id, 3)
+            service.disableSystemDataSync(association.id, 1)
+            check(manager.myAssociations.first { it.id == association.id }.systemDataSyncFlags == 2,
+                "companion sync flags merge and clear independently")
+            check(runCatching { service.getAllAssociationsForUser(1) }.exceptionOrNull() is SecurityException,
+                "managing companion associations does not bypass cross-user permission")
+            manager.disassociate(association.id)
+            associationId = null
+            check(manager.myAssociations.none { it.id == association.id }, "disassociation removes the active association")
+            check(runCatching { manager.disassociate(association.id) }.exceptionOrNull() is IllegalArgumentException,
+                "a stale association ID keeps the stock exception")
+        } finally {
+            associationId?.let { manager.disassociate(it) }
+            service.removeOnAssociationsChangedListener(listener, 0)
+        }
+    }
+
+    private fun testNetworkRecommendations(context: Context, manager: android.net.NetworkScoreManager) {
+        val resolver = context.contentResolver
+        val packageName = context.packageName
+        val component = android.content.ComponentName(context, TestNetworkRecommendationService::class.java)
+        val oldLocation = Settings.Secure.getString(resolver, Settings.Secure.LOCATION_MODE)
+        val oldOpenWifi = Settings.Global.getString(resolver, Settings.Global.USE_OPEN_WIFI_PACKAGE)
+        val key = android.net.NetworkKey(android.net.WifiKey("\"fixture\"", "02:00:00:00:00:01"))
+        val scores = CountDownLatch(1)
+        val clears = java.util.concurrent.atomic.AtomicInteger()
+        val cache = object : android.net.INetworkScoreCache.Stub() {
+            override fun updateScores(networks: MutableList<android.net.ScoredNetwork>?) {
+                check(networks?.singleOrNull()?.let { it.networkKey == key && it.rssiCurve.lookupScore(-80).toInt() == 3 } == true,
+                    "bound network recommendation service delivers scores through stock cache dispatch")
+                scores.countDown()
+            }
+            override fun clearScores() { clears.incrementAndGet() }
+        }
+        fun awaitState(message: String, predicate: () -> Boolean) {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            do {
+                if (predicate()) { check(true, message); return }
+                Thread.sleep(20)
+            } while (System.nanoTime() < deadline)
+            check(false, message)
+        }
+        manager.registerNetworkScoreCache(android.net.NetworkKey.TYPE_WIFI, cache, android.net.NetworkScoreManager.SCORE_FILTER_NONE)
+        try {
+            Settings.Secure.putInt(resolver, Settings.Secure.LOCATION_MODE, Settings.Secure.LOCATION_MODE_HIGH_ACCURACY)
+            // The stock service's open-Wifi observer exercises its default
+            // permission grant adapter before the scorer can pass preflight.
+            Settings.Global.putString(resolver, Settings.Global.USE_OPEN_WIFI_PACKAGE, packageName)
+            awaitState("default open-Wifi app receives its requested location permission") {
+                context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+            check(manager.allValidScorers.any { it.recommendationServiceComponent == component },
+                "stock scorer discovery resolves the declared recommendation service")
+            check(manager.setActiveScorer(packageName), "stock scorer selection accepts the qualified provider")
+            awaitState("network recommendation service is bound") { manager.requestScores(arrayOf(key)) }
+            check(scores.await(5, TimeUnit.SECONDS), "network score callback reaches the registered cache")
+            val beforeDisable = clears.get()
+            context.packageManager.setComponentEnabledSetting(component,
+                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP)
+            awaitState("disabling scorer component unbinds provider and invalidates scores") {
+                !manager.isCallerActiveScorer(Process.myUid()) && clears.get() > beforeDisable
+            }
+            check(!manager.requestScores(arrayOf(key)), "disabled provider receives no score requests")
+        } finally {
+            manager.setActiveScorer(null)
+            manager.unregisterNetworkScoreCache(android.net.NetworkKey.TYPE_WIFI, cache)
+            context.packageManager.setComponentEnabledSetting(component,
+                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+                android.content.pm.PackageManager.DONT_KILL_APP)
+            Settings.Global.putString(resolver, Settings.Global.USE_OPEN_WIFI_PACKAGE, oldOpenWifi)
+            Settings.Secure.putString(resolver, Settings.Secure.LOCATION_MODE, oldLocation)
+        }
     }
 
     private fun run(context: Context) {
@@ -83,6 +197,57 @@ internal object SystemTestClientA {
             denied = true
         }
         check(denied, "an app may not register the activity manager's name")
+
+        val activityManager = context.getSystemService(android.app.ActivityManager::class.java)
+        MemoryIntArraySystemSmoke.verify()
+        HardwareBufferSystemSmoke.verify()
+        SurfaceSyncSystemSmoke.verify()
+        ActivityRecreationSystemSmoke.verify(context)
+        testCompanionAssociations(context)
+        val networkScores = context.getSystemService(android.net.NetworkScoreManager::class.java)
+        check(networkScores != null && networkScores === context.getSystemService(android.content.Context.NETWORK_SCORE_SERVICE),
+            "stock network score manager is registered and cached")
+        check(!networkScores.isCallerActiveScorer(Process.myUid()), "caller is not an active scorer")
+        check(try { networkScores.updateScores(emptyArray()); false } catch (_: SecurityException) { true },
+            "only the active scorer may submit scores")
+        testNetworkRecommendations(context, networkScores)
+        val fingerprints = context.getSystemService(android.hardware.fingerprint.FingerprintManager::class.java)
+        check(fingerprints != null && fingerprints === context.getSystemService(android.content.Context.FINGERPRINT_SERVICE),
+            "stock fingerprint manager is registered and cached")
+        check(!fingerprints.isHardwareDetected && !fingerprints.hasEnrolledFingerprints(),
+            "fingerprint capability state has no invented hardware or enrollments")
+        check(fingerprints.sensorPropertiesInternal.isEmpty(), "fingerprint sensor metadata is empty")
+        check(try { fingerprints.hasEnrolledFingerprints(1); false } catch (_: SecurityException) { true },
+            "fingerprint enrollment queries for another user require INTERACT_ACROSS_USERS")
+        val fingerprintService = android.hardware.fingerprint.IFingerprintService.Stub.asInterface(
+            ServiceManager.getService(android.content.Context.FINGERPRINT_SERVICE))
+        val registration = CountDownLatch(1)
+        val registered = object : android.hardware.fingerprint.IFingerprintAuthenticatorsRegisteredCallback.Stub() {
+            override fun onAllAuthenticatorsRegistered(sensors: MutableList<android.hardware.fingerprint.FingerprintSensorPropertiesInternal>?) {
+                check(sensors != null && sensors.isEmpty(), "sensor registration reports an empty completed list")
+                registration.countDown()
+            }
+        }
+        fingerprintService.addAuthenticatorsRegisteredCallback(registered)
+        check(registration.await(5, TimeUnit.SECONDS), "empty sensor registration callback is delivered")
+        val authOptions = android.hardware.fingerprint.FingerprintAuthenticateOptions.Builder()
+            .setOpPackageName(context.opPackageName).build()
+        check(fingerprintService.authenticate(android.os.Binder(), 0, null, authOptions) == -1L,
+            "fingerprint authentication returns AOSP's absent-provider request id")
+        check(fingerprintService.getAuthenticatorId(0, 0) == 0L,
+            "absent fingerprint sensor has no authenticator id")
+        val memoryState = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(memoryState)
+        check(memoryState.pid == Process.myPid() && memoryState.uid == Process.myUid(),
+            "stock ActivityManager reports caller process identity")
+        check(activityManager.getHistoricalProcessExitReasons(null, 0, 1).isEmpty(),
+            "live caller has no process exit record")
+        check(try {
+            activityManager.getHistoricalProcessExitReasons("android", 0, 1); false
+        } catch (_: SecurityException) { true }, "other package exit history requires DUMP")
+        check(try {
+            android.app.ActivityTaskManager.getService().getAppTasks("android"); false
+        } catch (_: SecurityException) { true }, "AppTask package spoofing is rejected")
 
         // Cross-process package manager: host B installs its fixture APK with
         // the session's PMS; poll for it (both peers start concurrently).
@@ -262,12 +427,35 @@ internal object SystemTestClientA {
                 pinged.countDown()
             }
         }
+        val receiveLogMark = dev.artzig.ArtzigTestDiagnostics.logSequence()
         context.registerReceiver(pingReceiver, android.content.IntentFilter("dev.artzig.test.PING"))
         service.noteSeq(42)
         check(pinged.await(30, TimeUnit.SECONDS), "cross-process broadcast delivered")
         check(pingSeq == 42, "broadcast extras intact, sending user 0, not ordered or sticky")
         check(pingThread === Looper.getMainLooper().thread, "broadcast delivered on the main looper")
         context.unregisterReceiver(pingReceiver)
+        check(!dev.artzig.ArtzigTestDiagnostics.snapshot(receiveLogMark,
+            dev.artzig.ArtzigTestDiagnostics.issueSequence()).contains("targeting raw IIntentReceiver"),
+            "registered delivery uses the stock application-thread dispatcher")
+
+        val shared = CountDownLatch(1)
+        var sharedUid = android.os.Process.INVALID_UID
+        var sharedPackage: String? = null
+        val sharedReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, received: Intent?) {
+                sharedUid = sentFromUid
+                sharedPackage = sentFromPackage
+                shared.countDown()
+            }
+        }
+        context.registerReceiver(sharedReceiver, android.content.IntentFilter("dev.artzig.test.SHARED_SENDER"))
+        try {
+            context.sendBroadcast(Intent("dev.artzig.test.SHARED_SENDER").setPackage(context.packageName),
+                null, android.app.BroadcastOptions.makeBasic().setShareIdentityEnabled(true).toBundle())
+            check(shared.await(30, TimeUnit.SECONDS), "broadcast with shared sender identity delivered")
+            check(sharedUid == android.os.Process.myUid() && sharedPackage == context.packageName,
+                "shared broadcast preserves the sender UID and package")
+        } finally { context.unregisterReceiver(sharedReceiver) }
         // noteSeq is oneway and also writes clip-42 in B; wait for that write
         // so it cannot land in the middle of the clipboard section below.
         var clipWaitMs = 0
@@ -281,13 +469,15 @@ internal object SystemTestClientA {
         check(clipWaitMs < 30_000, "clipboard write paired with the broadcast observed")
 
         // Ordered: high priority first, result state chains to the lower one.
-        val orderedDone = CountDownLatch(2)
+        val orderedDone = CountDownLatch(3)
         val order = java.util.Collections.synchronizedList(ArrayList<String>())
         var chained: String? = null
         val high = object : android.content.BroadcastReceiver() {
             override fun onReceive(ctx: Context?, received: Intent?) {
                 order.add("high")
                 check(isOrderedBroadcast, "high-priority receiver sees an ordered broadcast")
+                check(resultCode == 7 && resultData == "initial" && getResultExtras(false)?.getString("seed") == "value",
+                    "ordered broadcast preserves the initial result state")
                 setResultData("from-high")
                 orderedDone.countDown()
             }
@@ -305,9 +495,20 @@ internal object SystemTestClientA {
         val lowFilter = android.content.IntentFilter("dev.artzig.test.ORDERED")
         lowFilter.setPriority(1)
         context.registerReceiver(low, lowFilter)
-        context.sendOrderedBroadcast(Intent("dev.artzig.test.ORDERED"), null)
+        val completed = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, received: Intent?) {
+                order.add("result")
+                check(resultCode == 7 && resultData == "from-high" && getResultExtras(false)?.getString("seed") == "value",
+                    "ordered completion receives the final result state")
+                check(Thread.currentThread() === Looper.getMainLooper().thread,
+                    "ordered completion runs on the main looper")
+                orderedDone.countDown()
+            }
+        }
+        context.sendOrderedBroadcast(Intent("dev.artzig.test.ORDERED"), null, completed,
+            android.os.Handler(Looper.getMainLooper()), 7, "initial", Bundle().apply { putString("seed", "value") })
         check(orderedDone.await(30, TimeUnit.SECONDS), "ordered broadcast reached both receivers")
-        check(order == listOf("high", "low"), "ordered broadcast honors filter priority")
+        check(order == listOf("high", "low", "result"), "ordered broadcast honors filter priority before completion")
         check(chained == "from-high", "ordered result state chains between receivers")
         context.unregisterReceiver(high)
         context.unregisterReceiver(low)
@@ -901,6 +1102,29 @@ internal object SystemTestClientA {
         val dropped = dropBox.getNextEntry("azk-test", dropBoxSince)
         check(dropped != null && dropped.tag == "azk-test" && dropped.getText(64) == "hello dropbox", "dropbox entry round trip")
         dropped?.close()
+        val errorManager = android.app.ActivityManager.getService()
+        val applicationToken = android.app.ActivityThread.currentActivityThread().applicationThread.asBinder()
+        check(com.android.internal.os.RuntimeInit.getApplicationObject() == applicationToken,
+            "RuntimeInit owns the attached application token")
+        val reportMark = System.currentTimeMillis() - 1
+        val reportMessage = "hosted-runtime-report-${android.os.SystemClock.uptimeMillis()}"
+        val crashInfo = android.app.ApplicationErrorReport.ParcelableCrashInfo(IllegalStateException(reportMessage))
+        check(!errorManager.handleApplicationWtf(applicationToken, "runtime-test", false, crashInfo, Process.myPid()),
+            "user-build WTF is nonfatal by default")
+        val reported = dropBox.getNextEntry("data_app_wtf", reportMark)
+        val reportText = reported?.getText(32768)
+        check(reportText?.contains("Process: ${context.packageName}") == true &&
+            reportText.contains("UID: ${Process.myUid()}") && reportText.contains(reportMessage),
+            "runtime WTF report retains process identity and exception in DropBox")
+        reported?.close()
+        val oldFatal = Settings.Global.getString(context.contentResolver, Settings.Global.WTF_IS_FATAL)
+        try {
+            Settings.Global.putInt(context.contentResolver, Settings.Global.WTF_IS_FATAL, 1)
+            check(!errorManager.handleApplicationWtf(applicationToken, "system-runtime-test", true, crashInfo, Process.myPid()),
+                "system WTF stays nonfatal when the fatal setting is enabled")
+        } finally {
+            Settings.Global.putString(context.contentResolver, Settings.Global.WTF_IS_FATAL, oldFatal)
+        }
         val domainVerification = checkNotNull(context.getSystemService(DomainVerificationManager::class.java))
         check(domainVerification.getDomainVerificationUserState(context.packageName) == null, "no verified domains")
         check(
@@ -1054,14 +1278,119 @@ internal object SystemTestClientA {
         check(unstable.call("ping", "u", null)?.getString("echo") == "ping:u", "unstable client call")
         unstable.release()
         check(resolver.persistedUriPermissions.isEmpty(), "no persisted grants initially")
-        resolver.takePersistableUriPermission(providerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        check(runCatching {
+            resolver.takePersistableUriPermission(providerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }.exceptionOrNull() is SecurityException, "persisting an unoffered URI grant is denied")
+        val grantedUri = android.net.Uri.parse("content://dev.artzig.test.b.secret/granted")
+        val childUri = android.net.Uri.withAppendedPath(grantedUri, "child")
+        val grantMode = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+        val grantRequest = Bundle().apply {
+            putString("uri", grantedUri.toString())
+            putInt("mode", grantMode)
+        }
+        resolver.call(providerUri, "grant-uri", context.packageName, grantRequest)
+        check(context.checkUriPermission(childUri, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED, "prefix read grant reaches AMS permission checks")
+        check(context.checkUriPermission(childUri, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_WRITE_URI_PERMISSION) ==
+            android.content.pm.PackageManager.PERMISSION_DENIED, "read grant does not imply write permission")
+        check(checkNotNull(resolver.query(childUri, null, null, null, null)).use { it.count >= 2 },
+            "a URI grant permits querying the non-exported provider")
+        check(runCatching {
+            resolver.query(android.net.Uri.parse("content://dev.artzig.test.b.secret/other"), null, null, null, null)?.close()
+        }.exceptionOrNull() is SecurityException, "authority acquisition does not grant other URI paths")
+        check(runCatching {
+            resolver.insert(childUri, android.content.ContentValues())
+        }.exceptionOrNull() is SecurityException, "the provider transport denies writes through a read grant")
+        check(runCatching {
+            resolver.takePersistableUriPermission(grantedUri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }.exceptionOrNull() is SecurityException, "unoffered persistable write permission is denied")
+        resolver.takePersistableUriPermission(grantedUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val persisted = resolver.persistedUriPermissions
-        check(
-            persisted.size == 1 && persisted[0].uri == providerUri && persisted[0].isReadPermission && !persisted[0].isWritePermission,
-            "takePersistableUriPermission recorded through IUriGrantsManager: " + persisted,
-        )
-        resolver.releasePersistableUriPermission(providerUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        check(resolver.persistedUriPermissions.isEmpty(), "releasePersistableUriPermission clears the grant")
+        check(persisted.size == 1 && persisted[0].uri == grantedUri && persisted[0].isReadPermission && !persisted[0].isWritePermission,
+            "stock URI service persists the offered read grant: $persisted")
+        val uriService = android.app.IUriGrantsManager.Stub.asInterface(ServiceManager.getService("uri_grants"))
+        check(runCatching { uriService.getUriPermissions("dev.artzig.test.b", true, true) }.exceptionOrNull() is SecurityException,
+            "a package cannot inspect another UID's URI grants")
+        resolver.releasePersistableUriPermission(grantedUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        check(resolver.persistedUriPermissions.isEmpty(), "releasePersistableUriPermission clears the persisted grant")
+        check(context.checkUriPermission(childUri, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED, "releasing persistence retains the original transient grant")
+        resolver.call(providerUri, "revoke-uri", context.packageName, grantRequest)
+        check(context.checkUriPermission(childUri, Process.myPid(), Process.myUid(), Intent.FLAG_GRANT_READ_URI_PERMISSION) ==
+            android.content.pm.PackageManager.PERMISSION_DENIED, "owner revocation removes the remaining grant")
+        check(runCatching { resolver.query(childUri, null, null, null, null)?.close() }.exceptionOrNull() is SecurityException,
+            "the provider transport enforces revocation")
+        val compat = com.android.internal.compat.IPlatformCompat.Stub.asInterface(
+            android.os.ServiceManager.getService(Context.PLATFORM_COMPAT_SERVICE))
+        check(runCatching { compat.isChangeEnabledByUid(17L, android.os.Process.myUid()) }
+            .exceptionOrNull() is SecurityException, "compatibility queries enforce signature permissions")
+        check(runCatching { compat.reportChangeByUid(17L, android.os.Process.myUid()) }
+            .exceptionOrNull() is SecurityException, "compatibility reporting enforces LOG_COMPAT_CHANGE")
+        check(runCatching { compat.listAllChanges() }.exceptionOrNull() is SecurityException,
+            "compatibility inventory enforces READ_COMPAT_CHANGE_CONFIG")
+        val nativeCompat = com.android.internal.compat.IPlatformCompatNative.Stub.asInterface(
+            android.os.ServiceManager.getService(Context.PLATFORM_COMPAT_NATIVE_SERVICE))
+        check(runCatching { nativeCompat.isChangeEnabledByUid(17L, android.os.Process.myUid()) }
+            .exceptionOrNull() is SecurityException, "native compatibility interface retains permission checks")
+        val apex = android.apex.IApexService.Stub.asInterface(
+            android.os.ServiceManager.getService("apexservice"))
+        check(apex != null, "APEX inventory service is published")
+        check(runCatching { apex.activePackages }.exceptionOrNull() is SecurityException,
+            "APEX active inventory rejects application UIDs")
+        check(runCatching { apex.allPackages }.exceptionOrNull() is SecurityException,
+            "APEX package inventory rejects application UIDs")
+        check(runCatching { apex.sessions }.exceptionOrNull() is SecurityException,
+            "APEX session inventory rejects application UIDs")
+        check(runCatching { apex.getStagedSessionInfo(17) }.exceptionOrNull() is SecurityException,
+            "APEX session lookup rejects application UIDs")
+        val wifi = checkNotNull(context.getSystemService(android.net.wifi.WifiManager::class.java))
+        check(wifi === context.getSystemService(android.net.wifi.WifiManager::class.java),
+            "stock Wi-Fi manager is cached per context")
+        check(!wifi.isWifiEnabled && wifi.wifiState == android.net.wifi.WifiManager.WIFI_STATE_DISABLED,
+            "no Android Wi-Fi interface is enabled")
+        check(wifi.connectionInfo.networkId == -1 && wifi.connectionInfo.bssid == null,
+            "disabled Wi-Fi has no connected network")
+        check(!wifi.is5GHzBandSupported && !wifi.isScanAlwaysAvailable,
+            "absent radio exposes no Wi-Fi features or always-on scanning")
+        check(wifi.dhcpInfo.ipAddress == 0, "no Wi-Fi DHCP lease")
+        val wifiLock = wifi.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "system-smoke")
+        wifiLock.acquire()
+        wifiLock.acquire()
+        wifiLock.release()
+        check(wifiLock.isHeld, "stock Wi-Fi lock retains nested acquisition")
+        wifiLock.release()
+        check(!wifiLock.isHeld, "stock Wi-Fi lock releases last reference")
+        val wifiService = android.net.wifi.IWifiManager.Stub.asInterface(
+            ServiceManager.getService(Context.WIFI_SERVICE))
+        val wifiToken = Binder()
+        check(wifiService.acquireWifiLock(wifiToken, android.net.wifi.WifiManager.WIFI_MODE_FULL,
+            "token", null, context.packageName, null), "Wi-Fi service accepts a live lock token")
+        check(!wifiService.acquireWifiLock(wifiToken, android.net.wifi.WifiManager.WIFI_MODE_FULL,
+            "token", null, context.packageName, null), "duplicate Wi-Fi token is rejected")
+        check(runCatching { wifiService.updateWifiLockWorkSource(wifiToken, android.os.WorkSource(42),
+            context.packageName, null) }.exceptionOrNull() is SecurityException,
+            "Wi-Fi work-source update requires UPDATE_DEVICE_STATS")
+        check(wifiService.releaseWifiLock(wifiToken) && !wifiService.releaseWifiLock(wifiToken),
+            "Wi-Fi service releases each token once")
+        check(runCatching { wifiService.getConnectionInfo("dev.artzig.test.b", null) }.exceptionOrNull()
+            is SecurityException, "Wi-Fi connection query authenticates the calling package")
+        check(!wifi.isMulticastEnabled, "no initial multicast locks")
+        val multicast = wifi.createMulticastLock("system-multicast")
+        multicast.acquire()
+        multicast.acquire()
+        multicast.release()
+        check(multicast.isHeld && wifi.isMulticastEnabled, "nested multicast acquisition stays held")
+        multicast.release()
+        check(!multicast.isHeld && !wifi.isMulticastEnabled, "last multicast release clears the lease")
+        val stats = checkNotNull(context.getSystemService(android.app.StatsManager::class.java))
+        check(context.checkSelfPermission(android.Manifest.permission.REGISTER_STATS_PULL_ATOM) ==
+            android.content.pm.PackageManager.PERMISSION_DENIED, "client has no stats pull registration permission")
+        // Registration is oneway in the pinned AIDL: a server-side SecurityException
+        // cannot propagate to this caller. The module test checks rejected registration state.
+        stats.setPullAtomCallback(10000, null, java.util.concurrent.Executor { it.run() }) { _, _ ->
+            error("a denied stats callback cannot be invoked")
+        }
 
         // --- settings through the verbatim AOSP client + hosted SettingsProvider.
         // The fixture requests WRITE_SECURE_SETTINGS (granted at install via
@@ -1161,10 +1490,17 @@ internal object SystemTestClientA {
         check(context.bindService(intent, connection2, Context.BIND_AUTO_CREATE), "rebind accepted")
         check(reconnected.await(30, TimeUnit.SECONDS), "rebind connected")
 
+        // A lease may carry a remote owner's Binder. Its death must clear the service record.
+        val dyingWifiOwner = checkNotNull(connection2.again).asBinder()
+        wifiService.acquireMulticastLock(dyingWifiOwner, "remote-owner", null, context.packageName)
+        check(wifi.isMulticastEnabled, "remote Binder owns a multicast lease")
         // Ask the service host to exit: the live connection observes the death.
         connection2.again?.exit()
         check(disconnected2.await(30, TimeUnit.SECONDS), "onServiceDisconnected on host death")
         check(died2.await(30, TimeUnit.SECONDS), "onBindingDied on host death")
+        val wifiDeathDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (wifi.isMulticastEnabled && System.nanoTime() < wifiDeathDeadline) Thread.sleep(10)
+        check(!wifi.isMulticastEnabled, "remote Binder death clears its multicast lease")
         var dead = false
         try {
             connection2.again?.add(1, 1)

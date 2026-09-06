@@ -73,7 +73,9 @@ AIDL_ROOTS = (
     "frameworks/base/keystore/java",
     "frameworks/libs/modules-utils/java",
     "frameworks/native/libs/input",
+    "frameworks/native/libs/gui",
     "frameworks/native/aidl/binder",
+    "frameworks/native/aidl",
     "frameworks/native/libs/binder/aidl",
     "frameworks/native/libs/incidentcompanion/binder",
     "frameworks/native/libs/permission/aidl",
@@ -84,9 +86,13 @@ AIDL_ROOTS = (
     "frameworks/base/telephony/java",
     "frameworks/base/telecomm/java",
     "frameworks/base/mms/java",
+    "packages/modules/StatsD/aidl",
+    "frameworks/native/cmds/installd/binder",
+    "system/apex/apexd/aidl",
     "hardware/interfaces/gnss/aidl",
     "hardware/interfaces/biometrics/common/aidl",
     "hardware/interfaces/biometrics/face/aidl",
+    "hardware/interfaces/biometrics/fingerprint/aidl",
     "hardware/interfaces/common/aidl",
     "hardware/interfaces/keymaster/aidl",
     "hardware/interfaces/security/keymint/aidl",
@@ -101,22 +107,34 @@ AIDL_ROOTS = (
     "hardware/interfaces/vibrator/aidl",
     "packages/modules/AppSearch/framework/java",
     "packages/modules/Bluetooth/android/app/aidl",
-    "packages/modules/Bluetooth/common/bluetooth/constants",
+    "packages/modules/Bluetooth/common",
     "packages/modules/Bluetooth/framework/aidl-export",
     "packages/modules/Bluetooth/service/aidl",
     "packages/modules/ConfigInfrastructure/framework/java",
+    "packages/modules/HealthFitness/framework/java",
     "packages/modules/Connectivity/Tethering/common/TetheringLib/src",
     "packages/modules/Connectivity/framework-t/src",
     "packages/modules/Connectivity/framework/src",
-    "packages/modules/Connectivity/framework/aidl-export",
     "packages/modules/Media/apex/aidl/private",
     "packages/modules/Permission/framework-s/java",
     "packages/modules/Wifi/framework/java",
+    "packages/modules/Wifi/framework/aidl-export",
 )
+
+# Connectivity's exported parcelables are staged individually into the compat root.
+# Keep this set aligned with generator_sources.aidl_exports, not the whole module root.
+STAGED_AIDL = {
+    f"packages/modules/Connectivity/framework/aidl-export/android/net/{name}.aidl"
+    for name in ("ProxyInfo", "TetheringManager", "DhcpInfo", "DhcpOption", "MacAddress")
+}
 
 ACONFIG_CLASSES = {"Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl"}
 
 KNOWN_GENERATED = {
+    "com.android.internal.pm.SystemFeaturesMetadata": "system feature annotation processor (build/generator_sources.zig)",
+    "com.android.internal.pm.RoSystemFeatures": "system feature generator (build/generator_sources.zig)",
+    "android.aconfig.DeviceProtos": "aconfig device paths template (build/generator_sources.zig)",
+    "android.aconfig.nano.Aconfig": "aconfig nano proto (build/generator_sources.zig)",
     "android.os.UserManagerCache": "property_cache annotation processor (build/java.zig)",
     "android.util.AggStats": "framework common.proto generator (build/generator_sources.zig)",
     "android.util.Duration": "framework common.proto generator (build/generator_sources.zig)",
@@ -124,7 +142,7 @@ KNOWN_GENERATED = {
     "com.android.modules.expresslog.StatsExpressLog": "stats-log expresslog module (build/generators.zig)",
 }
 
-INDEX_VERSION = 8
+INDEX_VERSION = 11
 
 
 def strip_code(text: str) -> str:
@@ -211,10 +229,28 @@ class SourceIndex:
     def build(self) -> None:
         by_fqn: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         for dirpath, dirnames, filenames in os.walk(self.aosp):
-            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
             rel_dir = os.path.relpath(dirpath, self.aosp)
+            # The production environment class shares a name with the test tree.
+            production_ravenwood = rel_dir == "frameworks/base/core/java/com/android/internal"
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and
+                                 (d not in SKIP_DIRS or (d == "ravenwood" and production_ravenwood)))
             sources = [f for f in filenames if f.endswith((".java", ".kt", ".aidl"))]
             for f in filenames:
+                if f.endswith(".proto"):
+                    declaration = read(Path(dirpath, f))
+                    package = re.search(r'^\s*option\s+java_package\s*=\s*"([\w.]+)"', declaration, re.M)
+                    if package is None:
+                        package = PACKAGE_RE.search(declaration)
+                    outer = re.search(r'^\s*option\s+java_outer_classname\s*=\s*"(\w+)"', declaration, re.M)
+                    if package and outer:
+                        by_fqn[f"{package.group(1)}.{outer.group(1)}"]["proto"].append(
+                            os.path.normpath(os.path.join(rel_dir, f)))
+                if f.endswith(".logtags"):
+                    package = re.search(r"^\s*option\s+java_package\s+([\w.]+)",
+                                        read(Path(dirpath, f)), re.M)
+                    if package:
+                        by_fqn[f"{package.group(1)}.{Path(f).stem}"]["logtags"].append(
+                            os.path.join(rel_dir, f))
                 if f.endswith(".aconfig"):
                     m = ACONFIG_PACKAGE_RE.search(read(Path(dirpath, f)))
                     if m:
@@ -236,7 +272,14 @@ class SourceIndex:
         self.by_fqn = {k: dict(v) for k, v in by_fqn.items()}
 
     def lookup(self, fqn: str) -> dict[str, list[str]]:
-        return self.by_fqn.get(fqn, {})
+        sources = self.by_fqn.get(fqn, {})
+        # Frozen AIDL API dumps describe historical ABIs, not the source to
+        # compile. Retain them only for modules without a live declaration.
+        aidl = sources.get("aidl", [])
+        live_aidl = [path for path in aidl if "/aidl_api/" not in path]
+        if live_aidl and len(live_aidl) != len(aidl):
+            return {**sources, "aidl": live_aidl}
+        return sources
 
 
 class Manifest:
@@ -266,9 +309,9 @@ class SourceRules:
     """build/java_sources.zig: c.file / c.add selections, expanded to checkout paths."""
 
     ROOT_RE = re.compile(r'addRoot\("(\w+)",\s*(.*?)\);')
-    DEP_RE = re.compile(r'Root\.dependency\(b,\s*aosp,\s*"([^"]+)"\)')
+    DEP_RE = re.compile(r'Root\.dependency\(b,\s*aosp,\s*"([^"]*)"\)')
     CHILD_RE = re.compile(r'(\w+)\.child\(b,\s*"([^"]+)"\)')
-    VAR_RE = re.compile(r'const\s+(\w+)\s*=\s*SourceFiles\.Root\.dependency\(b,\s*aosp,\s*"([^"]+)"\)')
+    VAR_RE = re.compile(r'const\s+(\w+)\s*=\s*SourceFiles\.Root\.dependency\(b,\s*aosp,\s*"([^"]*)"\)')
     FILE_RE = re.compile(r'c\.file\("(\$\w+/[^"]+)"\)')
     ADD_RE = re.compile(r'c\.add\("(\$\w+(?:/[^"]*)?)",\s*\.\{(.*?)\}\s*\);', re.S)
     LIST_RE = re.compile(r'\.(not_names|not_paths)\s*=\s*&\.\{(.*?)\}', re.S)
@@ -463,12 +506,14 @@ class Resolver:
         explicit: dict[str, str] = {}
         wildcards: list[str] = []
         abi_blockers: set[str] = set()
+        static_owners: set[str] = set()
         for m in IMPORT_RE.finditer(text):
             static, name, star = m.group(1), m.group(2), m.group(3)
             if star:
                 wildcards.append(name)
             elif static:
                 owner, member = name.rsplit(".", 1)
+                static_owners.add(owner)
                 explicit.setdefault(owner.rsplit(".", 1)[-1], owner)
                 if (owner != current_fqn and owner in self.stubs.by_fqn
                         and not self.stub_declares(owner, member)):
@@ -506,6 +551,7 @@ class Resolver:
                     found.add(cand)
                     break
         found.update(explicit.values())
+        found.update(static_owners)
         refs = sorted(self.canonical(f) for f in found)
         refs = sorted({r for r in refs if r and r != self.fqn_of(rel_path)})
         self.parsed[rel_path] = refs
@@ -819,7 +865,12 @@ class Resolver:
             path, n.kind = self.pick(srcs["kt"]), "kt"
         elif srcs.get("aidl"):
             path = self.pick(srcs["aidl"])
-            decl = AIDL_DECL_RE.search(strip_code(read(self.aosp / path)))
+            # Legacy interfaces may declare imported parcelables before their
+            # own interface (IBluetooth does). Classify the file's declaration,
+            # not the first forward declaration it happens to contain.
+            decl = next((declaration for declaration in
+                         AIDL_DECL_RE.finditer(strip_code(read(self.aosp / path)))
+                         if declaration.group(2) == Path(path).stem), None)
             if decl and decl.group(1) == "interface":
                 n.kind = "aidl-interface"
             elif decl and decl.group(3) == "{":
@@ -827,7 +878,11 @@ class Resolver:
             else:
                 n.kind = "aidl-parcelable"
             n.aidl_decl = decl.group(1) if decl else None
-            n.aidl_root = any(path.startswith(r + "/") for r in AIDL_ROOTS)
+            n.aidl_root = path in STAGED_AIDL or any(path.startswith(r + "/") for r in AIDL_ROOTS)
+        elif srcs.get("logtags"):
+            n.kind, n.generated = "generated", "logtags generator (build/generator_sources.zig)"
+        elif srcs.get("proto"):
+            n.kind, n.generated = "generated", "proto generator (build/generator_sources.zig)"
         else:
             pkg, _, name = fqn.rpartition(".")
             if name in ACONFIG_CLASSES and pkg in self.index.aconfig:
@@ -999,13 +1054,37 @@ def render_closure(res: Resolver, seeds: list[str], nodes: dict[str, Node]) -> s
             aidl_lines.add(f'    .{{ .source = .aosp, .path = "{n.path}" }},')
     for a in res.extra_manifest:
         manifest_lines.add(f"F aosp {a}")
+    logtags_lines: set[str] = set()
+    proto_inputs: set[str] = set()
+    proto_outputs: set[str] = set()
+    for n in nodes.values():
+        if not present(n):
+            for path in res.index.lookup(n.fqn).get("proto", []):
+                if not res.manifest.vendored(path):
+                    manifest_lines.add(f"F aosp {path}")
+                proto_inputs.add(f'    .{{ .source = .aosp, .path = "{path}" }},')
+                proto_outputs.add(f'    "{n.fqn.replace(".", "/")}.java",')
+        if present(n):
+            continue
+        for path in res.index.lookup(n.fqn).get("logtags", []):
+            if not res.manifest.vendored(path):
+                manifest_lines.add(f"F aosp {path}")
+            output = n.fqn.replace(".", "/") + ".java"
+            logtags_lines.add(
+                f'    .{{ .input = .{{ .source = .aosp, .path = "{path}" }},'
+                f' .output = "{output}" }},')
     aconfig_lines: set[str] = set()
     for n in nodes.values():
         if n.kind == "aconfig" and not present(n):
             decls = res.index.aconfig[n.generated]
             declarations = ", ".join(f'"{d}"' for d in decls)
+            containers = {m.group(1) for d in decls
+                          if (m := re.search(r'^\s*container:\s*"([\w.]+)"', read(res.aosp / d), re.M))}
+            if len(containers) > 1:
+                raise ValueError(f"conflicting aconfig containers for {n.generated}: {containers}")
+            container = next(iter(containers), "system")
             aconfig_lines.add(
-                f'    .{{ .package = "{n.generated}", .container = "system", .source = .aosp,'
+                f'    .{{ .package = "{n.generated}", .container = "{container}", .source = .aosp,'
                 f" .declarations = &.{{{declarations}}} }},"
             )
             for d in decls:
@@ -1020,6 +1099,14 @@ def render_closure(res: Resolver, seeds: list[str], nodes: dict[str, Node]) -> s
     if aidl_lines:
         out.append("== build/generator_sources.zig (aidl)")
         out.extend(sorted(aidl_lines))
+    if logtags_lines:
+        out.append("== build/generator_sources.zig (logtags)")
+        out.extend(sorted(logtags_lines))
+    if proto_inputs:
+        out.append("== build/generator_sources.zig (proto_inputs; select the module's proto backend)")
+        out.extend(sorted(proto_inputs))
+        out.append("== build/generator_sources.zig (proto_outputs)")
+        out.extend(sorted(proto_outputs))
     if aconfig_lines:
         out.append("== build/generator_sources.zig (aconfig)")
         out.extend(sorted(aconfig_lines))
@@ -1030,6 +1117,9 @@ def classify_stub(res: Resolver, fqn: str) -> tuple[str, str, dict[str, Node] | 
     """(status, detail, closure) for one stub evaluated as if it were removed."""
     srcs = res.index.lookup(fqn)
     if not srcs.get("java") and not srcs.get("kt") and not srcs.get("aidl"):
+        for kind in ("proto", "logtags"):
+            if srcs.get(kind):
+                return "generated", f"{kind} declaration ({', '.join(srcs[kind])})", None
         pkg, _, name = fqn.rpartition(".")
         if name in ACONFIG_CLASSES and pkg in res.index.aconfig:
             return "generated", f"aconfig package {pkg} ({', '.join(res.index.aconfig[pkg])})", None

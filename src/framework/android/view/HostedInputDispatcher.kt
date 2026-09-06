@@ -1,6 +1,7 @@
 package android.view
 
 import android.os.SystemClock
+import dev.artzig.HostedWindowStack
 
 /**
  * Translates host pointer devices into Android MotionEvents and dispatches them at the hosted
@@ -9,9 +10,79 @@ import android.os.SystemClock
  * This follows AOSP ViewRootImpl.ViewPostImeInputStage.processPointerEvent(): pressed mouse
  * pointers and touchscreen contacts both enter View.dispatchPointerEvent(), while their source,
  * tool type, and button state remain distinct. The stock input stages cannot be compiled because
- * the host has no InputChannel, InputEventReceiver, or IWindowSession.
+ * the host has no InputChannel, InputEventReceiver, or window-session input registration.
  */
 object HostedInputDispatcher {
+    /**
+     * AOSP ViewRootImpl.enqueueInputEvent/doProcessInputEvents ordering and ownership.
+     * The host has no InputChannel receiver; delivery uses the existing post-IME root seam.
+     * A single asynchronous drain preserves arrival order even for non-monotonic timestamps
+     * and events enqueued from an input callback. Pending events are recycled on root detach.
+     */
+    class EventQueue(private val root: ViewRootImpl) {
+        private val handler = android.os.Handler.createAsync(root.handler.looper)
+        private class Pending(val event: InputEvent, val unhandled: Boolean)
+        private val events = java.util.ArrayDeque<Pending>()
+        private var scheduled = false
+        private val drain = Runnable {
+            while (true) {
+                val pending = synchronized(events) {
+                    events.pollFirst() ?: run {
+                        scheduled = false
+                        return@Runnable
+                    }
+                }
+                val event = pending.event
+                try {
+                    if (root.view != null) {
+                        if (pending.unhandled) {
+                            root.processUnhandledInputEvent(event)
+                        } else when (event) {
+                            is KeyEvent -> root.dispatchKeyEvent(event)
+                            is MotionEvent -> {
+                                if (event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) {
+                                    root.dispatchPointerEvent(event)
+                                } else if (root.hasPointerCapture()) {
+                                    root.dispatchCapturedPointerEvent(event)
+                                } else {
+                                    root.view?.dispatchGenericMotionEvent(event)
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    event.recycleIfNeededAfterDispatch()
+                }
+            }
+        }
+
+        fun enqueue(event: InputEvent) {
+            enqueue(event, false)
+        }
+
+        fun enqueueUnhandled(event: InputEvent) {
+            enqueue(event, true)
+        }
+
+        private fun enqueue(event: InputEvent, unhandled: Boolean) {
+            synchronized(events) {
+                events.addLast(Pending(event, unhandled))
+                if (!scheduled) {
+                    scheduled = true
+                    handler.post(drain)
+                }
+            }
+        }
+
+        fun clear() {
+            synchronized(events) {
+                handler.removeCallbacks(drain)
+                while (events.isNotEmpty()) events.removeFirst().event.recycleIfNeededAfterDispatch()
+                scheduled = false
+            }
+        }
+    }
+
     /**
      * Creates the character map installed on the hosted physical keyboard.
      *
@@ -36,7 +107,7 @@ object HostedInputDispatcher {
         var lastX: Float = 0f
         var lastY: Float = 0f
         var buttonState: Int = 0
-        val outsideWatchers = mutableListOf<ArtzigWindowStack.Entry>()
+        val outsideWatchers = mutableListOf<HostedWindowStack.Entry>()
 
         fun reset() {
             downTime = 0
@@ -600,7 +671,7 @@ object HostedInputDispatcher {
 
     private data class RootTarget(
         val root: ViewRootImpl?,
-        val window: ArtzigWindowStack.Entry?,
+        val window: HostedWindowStack.Entry?,
     ) {
         fun dispatch(event: MotionEvent): Boolean {
             window?.let {
@@ -615,7 +686,7 @@ object HostedInputDispatcher {
 
     private data class GestureRoute(
         val target: RootTarget,
-        val outsideWatchers: List<ArtzigWindowStack.Entry>,
+        val outsideWatchers: List<HostedWindowStack.Entry>,
     )
 
     /**
@@ -628,8 +699,8 @@ object HostedInputDispatcher {
         screenX: Float,
         screenY: Float,
     ): GestureRoute {
-        val outsideWatchers = mutableListOf<ArtzigWindowStack.Entry>()
-        val entries = ArtzigWindowStack.entries()
+        val outsideWatchers = mutableListOf<HostedWindowStack.Entry>()
+        val entries = HostedWindowStack.entries()
         for (index in entries.indices.reversed()) {
             val entry = entries[index]
             if ((entry.lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0) continue
@@ -657,7 +728,7 @@ object HostedInputDispatcher {
     }
 
     private fun selectKeyRoot(activityRoot: ViewRootImpl?): ViewRootImpl? {
-        for (entry in ArtzigWindowStack.entries().asReversed()) {
+        for (entry in HostedWindowStack.entries().asReversed()) {
             if ((entry.lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0) {
                 return entry.root
             }

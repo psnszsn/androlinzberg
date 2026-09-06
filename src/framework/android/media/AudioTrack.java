@@ -156,7 +156,12 @@ public class AudioTrack implements AudioRouting {
     public int setVolume(float gain) { nativeSetVolume(mHandle, gain); return SUCCESS; }
     public int setStereoVolume(float leftGain, float rightGain) { return setVolume(leftGain); }
     public void setPlaybackParams(PlaybackParams params) {}
-    public PlaybackParams getPlaybackParams() { return new PlaybackParams(); }
+    // AOSP android_media_AudioTrack_get_playback_params marks every returned field set.
+    // The current hosted stream supports the default rate only.
+    public PlaybackParams getPlaybackParams() {
+        if (mHandle == 0) throw new IllegalStateException("AudioTrack not initialized");
+        return new PlaybackParams().allowDefaults();
+    }
     public int setPlaybackRate(int sampleRateInHz) { return SUCCESS; }
     public int attachAuxEffect(int effectId) { return SUCCESS; }
     public int setAuxEffectSendLevel(float level) { return SUCCESS; }

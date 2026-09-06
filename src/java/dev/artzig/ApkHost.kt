@@ -17,11 +17,6 @@ import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStream
-import java.util.Enumeration
-import java.util.zip.ZipEntry
-import java.util.zip.ZipFile
 import dalvik.system.DexFile
 
 public final class ApkHost {
@@ -86,7 +81,7 @@ public final class ApkHost {
         }
 
         @JvmStatic public fun reportDexoptFailure() {
-            android.util.ArtzigTestDiagnostics.reportIssue(
+            dev.artzig.ArtzigTestDiagnostics.reportIssue(
                 "dexopt_failure",
                 "dev.artzig.ApkHost",
                 "backgroundDexopt",
@@ -107,33 +102,21 @@ public final class ApkHost {
             if (!dir.isDirectory() && !dir.mkdirs()) {
                 throw IllegalStateException("cannot create native library directory: " + dir)
             }
-            var extracted: Int = 0
-            ZipFile(apkPath).use { zip: ZipFile ->
-                val entries: Enumeration<out ZipEntry> = zip.entries()
-                while (entries.hasMoreElements()) {
-                    val entry: ZipEntry = entries.nextElement()
-                    val name: String = entry.getName()
-                    if (entry.isDirectory() || !name.startsWith("lib/x86_64/")) continue
-                    val base: String = name.substring("lib/x86_64/".length)
-                    if (base.isEmpty() || base.indexOf('/') >= 0 || !base.endsWith(".so")) continue
-                    val target: File = File(dir, base)
-                    val temp: File = File(dir, base + ".tmp")
-                    zip.getInputStream(entry).use { `in`: InputStream ->
-                        FileOutputStream(temp).use { out: FileOutputStream ->
-                            `in`.transferTo(out)
-                        }
-                    }
-                    if (target.exists() && !target.delete()) {
-                        throw IllegalStateException("cannot replace " + target)
-                    }
-                    if (!temp.renameTo(target)) {
-                        throw IllegalStateException("cannot install " + target)
-                    }
-                    extracted++
+            // The host linker requires extracted x86_64 files even when an
+            // Android device could load an uncompressed library from the APK.
+            // NativeLibraryHelper owns ABI filtering, CRC/timestamp reuse,
+            // permissions, temporary-file cleanup and atomic replacement.
+            com.android.internal.content.NativeLibraryHelper.Handle.create(
+                listOf(apkPath), false, true, false, false,
+            ).use { handle ->
+                val result = com.android.internal.content.NativeLibraryHelper.copyNativeBinariesForSupportedAbi(
+                    handle, dir, arrayOf("x86_64"), false, false,
+                )
+                if (result < 0 && result != android.content.pm.PackageManager.NO_NATIVE_LIBRARIES) {
+                    throw java.io.IOException("native library installation failed: " + result)
                 }
             }
-            if (extracted == 0) throw IllegalStateException("APK has no x86_64 native libraries")
-            Log.i(TAG, "extracted " + extracted + " x86_64 native libraries to " + dir)
+            Log.i(TAG, "native libraries prepared in " + dir)
             return dir.getAbsolutePath()
         }
 
@@ -290,11 +273,12 @@ public final class ApkHost {
             if (!sActivityActive) return
             try {
                 if (invokeTopBackCallback()) return
-                val win: android.view.ArtzigWindowStack.Entry? =
-                    android.view.ArtzigWindowStack.topFocusable()
+                val win: dev.artzig.HostedWindowStack.Entry? =
+                    dev.artzig.HostedWindowStack.topFocusable()
                 if (win != null) {
-                    if (win.onBack != null) {
-                        win.onBack.run()
+                    val onBack = win.onBack
+                    if (onBack != null) {
+                        onBack.run()
                     } else {
                         // popups and other overlays: synthesize a BACK key
                         val down: android.view.KeyEvent =
@@ -320,7 +304,7 @@ public final class ApkHost {
         /** Hosted WMS has no window session to invoke the callback registered by
          * WindowOnBackInvokedDispatcher, so complete that final dispatch locally. */
         private fun topBackRoute(): BackRoute? {
-            val root = android.view.ArtzigWindowStack.topFocusable()?.root ?: return null
+            val root = dev.artzig.HostedWindowStack.topFocusable()?.root ?: return null
             val callback = root.onBackInvokedDispatcher.topCallback ?: return null
             return BackRoute(root, callback)
         }
@@ -373,6 +357,7 @@ public final class ApkHost {
                 windowConfig.densityDpi,
             )
             android.app.ResourcesManager.getInstance().applyConfigurationToResources(windowConfig.configuration, null)
+            HostContexts.dispatchWindowConfiguration(windowConfig.configuration)
         }
 
 /** Boot the APK: returns after Application.onCreate + MainActivity.onCreate. */
@@ -386,7 +371,6 @@ public final class ApkHost {
             sWidth = width
             sHeight = height
             sScale120 = scale120
-            android.view.WindowManagerImpl.configureWindowMetrics(width, height, scale120 / 120f)
             if (Looper.myLooper() == null) Looper.prepareMainLooper()
             val tFonts: Long = SystemClock.uptimeMillis()
             android.graphics.Typeface.loadPreinstalledSystemFontMap()
@@ -410,7 +394,6 @@ public final class ApkHost {
             val appClass: String? = appInfo.className
             val mainActivity: String? = resolveLauncherActivity(pm, pkg)
             val appThemeRes: Int = appInfo.theme
-            val providers: List<android.content.pm.ProviderInfo> = providersForProcess(pm, pkg)
             Log.i(
                 TAG,
                 "pkg=" + pkg + " app=" + appClass + " main=" + mainActivity + " theme=0x" +
@@ -459,17 +442,15 @@ public final class ApkHost {
 
             // AOSP ordering: attachApplication, then bindApplication (LoadedApk,
             // Application.attach, providers installed + published, onCreate).
-            android.app.ActivityThread.attachApplicationHosted(pkg)
-            val app: android.app.Application = android.app.ActivityThread.currentActivityThread()
-                .`handleBindApplication$artzig`(appInfo, providers)
+            val app = android.app.HostedServiceClient.attachApplication(pkg)
             sContext = app
-            installActivityHost(pm, pkg)
+            installActivityHost()
             sProcessInitialized = true
 
             // --- MainActivity
             Log.i(TAG, "starting " + mainActivity)
             if (mainActivity == null) throw IllegalStateException("manifest has no launcher activity")
-            android.app.ActivityThread.launchMainActivityThroughManager(mainActivity)
+            launchMainActivity(mainActivity)
             Log.i(TAG, "activity up")
         }
 
@@ -528,20 +509,6 @@ public final class ApkHost {
             return (matches.firstOrNull() as? android.content.pm.ResolveInfo)?.activityInfo?.name
         }
 
-        /** Providers this process must instantiate: those of its own process
-         * name (AOSP installContentProviders filters by processName). */
-        @JvmStatic
-        private fun providersForProcess(
-            pm: android.content.pm.IPackageManager,
-            pkg: String,
-        ): List<android.content.pm.ProviderInfo> {
-            val info = pm.getPackageInfo(
-                pkg, android.content.pm.PackageManager.GET_PROVIDERS.toLong(), 0,
-            ) ?: return emptyList()
-            return info.providers?.filter { it.processName == null || it.processName == pkg }
-                ?: emptyList()
-        }
-
         /**
          * Headless bootstrap for `androlinzberg --app-process <apk>`: the same
          * process setup as init() minus window metrics, fonts, activity host,
@@ -576,30 +543,32 @@ public final class ApkHost {
             }
             // AOSP ordering: attach first, then bindApplication (providers
             // installed + published before Application.onCreate).
-            android.app.ActivityThread.attachApplicationHosted(pkg)
-            sContext = android.app.ActivityThread.currentActivityThread()
-                .`handleBindApplication$artzig`(appInfo, providersForProcess(pm, pkg))
+            sContext = android.app.HostedServiceClient.attachApplication(pkg)
             Log.i(TAG, "headless app process up: " + pkg)
         }
 
-        @JvmStatic private fun installActivityHost(
-            pm: android.content.pm.IPackageManager,
-            pkg: String,
-        ) {
-            val activities = HashMap<String, android.content.pm.ActivityInfo>()
-            for (
-                activity in pm.getPackageInfo(
-                    pkg, android.content.pm.PackageManager.GET_ACTIVITIES.toLong(), 0,
-                )?.activities ?: emptyArray()
-            ) {
-                activities[activity.name] = activity
+        private fun launchMainActivity(className: String) {
+            val intent = android.content.Intent(android.content.Intent.ACTION_MAIN)
+                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                .setComponent(android.content.ComponentName(sContext.packageName, className))
+            sContext.startActivity(intent)
+            // Bootstrap precedes the host event loop. Let the stock launch transaction
+            // run before returning the initialized application to the compositor.
+            val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+            val queue = Looper.myQueue()
+            while (!sActivityActive && android.os.SystemClock.uptimeMillis() < deadline) {
+                val message = queue.`pollDueMessage$artzig`()
+                if (message == null) android.os.SystemClock.sleep(1)
+                else try { message.target.dispatchMessage(message) }
+                finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
             }
+            check(sActivityActive) { "activity launch transaction timed out: $intent" }
+        }
+
+        @JvmStatic private fun installActivityHost() {
             android.app.ActivityThread.configureActivityHost(
                 object : android.app.ActivityThread.HostAdapter {
-                    public override fun getActivityContext(): android.content.Context = sContext
-
-                    public override fun getActivityClassLoader(): ClassLoader = sClassLoader
-
                     public override fun showActivity(activity: Activity) {
                         sActivity = activity
                         sActivityActive = true
@@ -610,10 +579,10 @@ public final class ApkHost {
                         sActivityActive = false
                         sSyntheticBackRoute = null
                         sPhysicalBackRoute = null
-                        android.view.ArtzigWindowStack.clear()
+                        dev.artzig.HostedWindowStack.clear()
                         if (sRootActive) sRoot.destroy()
                         sRootActive = false
-                        android.view.ArtzigAccessibilityBridge.setActivityRoot(null)
+                        ArtzigAccessibilityBridge.setActivityRoot(null)
                     }
 
                     public override fun resizeActivityRoot(
@@ -624,46 +593,40 @@ public final class ApkHost {
                         if (activity === sActivity && sRootActive) sRoot.setSize(width, height)
                     }
 
-                    public override fun resolveActivity(
-                        intent: android.content.Intent,
-                    ): android.content.ComponentName? =
-                        HostedDesktopIntents.resolve(sContext, intent)
                 },
-                activities,
             )
         }
 
         @JvmStatic private fun show(a: Activity) {
             if (sRootActive) sRoot.destroy()
-            sRoot = android.view.ViewRootImpl(sContext)
+            sRoot = HostedWindowRoots.attachActivity(a, sWidth, sHeight)
             sRootActive = true
-            sRoot.setView(a.getWindow().getDecorView(), sWidth, sHeight)
-            android.view.ArtzigAccessibilityBridge.setActivityRoot(sRoot)
+            ArtzigAccessibilityBridge.setActivityRoot(sRoot)
             android.view.HostedInputDispatcher.reset()
         }
 
-/** Test-control JNI surface. Android semantics stay in the framework bridge. */
-        @JvmStatic public fun accessibilitySnapshot(): String = android.view.ArtzigAccessibilityBridge.snapshot()
+/** Test-control JNI surface. The host inspector observes Android accessibility nodes. */
+        @JvmStatic public fun accessibilitySnapshot(): String = ArtzigAccessibilityBridge.snapshot()
 
         @JvmStatic public fun notificationsSnapshot(): String = NotificationObservation.snapshot()
 
         @JvmStatic public fun accessibilityDiagnostics(afterRevision: Long): String =
-            android.view.ArtzigAccessibilityBridge.diagnostics(
+            ArtzigAccessibilityBridge.diagnostics(
                 afterRevision,
             )
 
         @JvmStatic public fun testDiagnostics(
             afterLogSequence: Long,
             afterIssueSequence: Long,
-        ): String = android.util.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence)
+        ): String = dev.artzig.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence)
 
-        @JvmStatic public fun diagnosticLogSequence(): Long = android.util.ArtzigTestDiagnostics.logSequence()
+        @JvmStatic public fun diagnosticLogSequence(): Long = dev.artzig.ArtzigTestDiagnostics.logSequence()
 
-        @JvmStatic public fun diagnosticIssueSequence(): Long = android.util.ArtzigTestDiagnostics.issueSequence()
+        @JvmStatic public fun diagnosticIssueSequence(): Long = dev.artzig.ArtzigTestDiagnostics.issueSequence()
 
-        @JvmStatic public fun accessibilityRevision(): Long = android.view.ArtzigAccessibilityBridge.revision()
+        @JvmStatic public fun accessibilityRevision(): Long = ArtzigAccessibilityBridge.revision()
 
-        @JvmStatic public fun accessibilityIdle(): Boolean = android.view.ArtzigAccessibilityBridge.isIdle()
+        @JvmStatic public fun accessibilityIdle(): Boolean = ArtzigAccessibilityBridge.isIdle()
 
         @JvmStatic public fun accessibilityPerform(
             expectedRevision: Long,
@@ -673,7 +636,7 @@ public final class ApkHost {
             action: Int,
             text: String?,
         ): Boolean =
-            android.view.ArtzigAccessibilityBridge.perform(
+            ArtzigAccessibilityBridge.perform(
                 expectedRevision,
                 windowId,
                 viewId,
@@ -699,10 +662,10 @@ public final class ApkHost {
             Log.i(TAG, "activities destroyed")
 
             drainLooper()
-            android.view.ArtzigWindowStack.clear()
+            dev.artzig.HostedWindowStack.clear()
             if (sRootActive) sRoot.destroy()
             sRootActive = false
-            android.view.ArtzigAccessibilityBridge.setActivityRoot(null)
+            ArtzigAccessibilityBridge.setActivityRoot(null)
             Log.i(TAG, "views detached")
             try {
                 android.view.ThreadedRenderer.destroyInstance()
@@ -800,9 +763,9 @@ public final class ApkHost {
             val traceStart: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
             drainLooper()
             val traceBeforeDrain: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            val wins: MutableList<android.view.ArtzigWindowStack.Entry> =
-                android.view.ArtzigWindowStack.entries()
-            for (e: android.view.ArtzigWindowStack.Entry in wins) {
+            val wins: MutableList<dev.artzig.HostedWindowStack.Entry> =
+                dev.artzig.HostedWindowStack.entries()
+            for (e: dev.artzig.HostedWindowStack.Entry in wins) {
                 e.root.`prepareWindowTraversal$artzig`(e.lp, width, height)
             }
             val tracePrepared: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
@@ -851,7 +814,7 @@ public final class ApkHost {
             try {
                 c.drawColor(0xff000000.toInt())
                 if (base != null) c.drawRenderNode(base)
-                for (e: android.view.ArtzigWindowStack.Entry in wins) {
+                for (e: dev.artzig.HostedWindowStack.Entry in wins) {
                     try {
                         val wb: RenderNode? = e.root.`getRenderNode$artzig`()
                         if (wb == null) continue
@@ -921,7 +884,6 @@ public final class ApkHost {
                 val windowConfig: android.content.res.HostedWindowConfiguration =
                     android.content.res.HostedConfigurationController
                         .calculate(oldConfig, requestedOrientation, width, height, scale120)
-                android.view.WindowManagerImpl.configureWindowMetrics(width, height, windowConfig.density)
                 android.view.ArtzigDisplay.configure(
                     windowConfig.displayWidth,
                     windowConfig.displayHeight,
@@ -931,6 +893,7 @@ public final class ApkHost {
                 // AOSP ActivityThread.handleConfigurationChanged: ResourcesManager applies the
                 // configuration to every Resources; the metrics come from the display service.
                 android.app.ResourcesManager.getInstance().applyConfigurationToResources(config, null)
+                HostContexts.dispatchWindowConfiguration(config)
                 android.app.ActivityThread.applyConfigurationInProcess(config, windowConfig.changes, width, height)
             } catch (t: Throwable) {
                 Log.w(TAG, "resize failed", t)

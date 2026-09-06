@@ -16,7 +16,8 @@ public:
   static constexpr uint32_t FIRST_CALL_TRANSACTION = 1,
                             LAST_CALL_TRANSACTION = 0x00ffffff, FLAG_ONEWAY = 1;
   static constexpr uint32_t INTERFACE_TRANSACTION = 0x5f4e5446,
-                            PING_TRANSACTION = 0x5f504e47;
+                            PING_TRANSACTION = 0x5f504e47,
+                            SHELL_COMMAND_TRANSACTION = 0x5f434d44;
   static constexpr uint32_t FLAG_CLEAR_BUF = 0x20,
                             FLAG_PRIVATE_LOCAL = 0x10000000;
   virtual bool isBinderAlive() const;

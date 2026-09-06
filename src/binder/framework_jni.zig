@@ -354,7 +354,7 @@ fn networkUtilsBindSocketToNetworkHandle(
 ) callconv(.c) jni.jint {
     const handle: u64 = @bitCast(network_handle);
     if (handle != 0 and @as(u32, @truncate(handle)) != NETWORK_HANDLE_MAGIC) {
-        return -@as(jni.jint, @intFromEnum(linux.E.INVAL));
+        return -@as(jni.jint, @backingInt(linux.E.INVAL));
     }
 
     // SO_TYPE is a side-effect-free validation that distinguishes a live socket
@@ -371,7 +371,7 @@ fn networkUtilsBindSocketToNetworkHandle(
     );
     const socket_errno = linux.errno(rc);
     if (socket_errno != .SUCCESS) {
-        return -@as(jni.jint, @intCast(@intFromEnum(socket_errno)));
+        return -@as(jni.jint, @intCast(@backingInt(socket_errno)));
     }
     return 0;
 }
@@ -491,7 +491,7 @@ fn procSetArgV0Native(env: JNIEnvPtr, _: jni.jclass, text: jni.jstring) callconv
     const span = std.mem.span(chars);
     const n = @min(span.len, 15);
     @memcpy(name[0..n], span[0..n]);
-    _ = linux.prctl(@intFromEnum(linux.PR.SET_NAME), @intFromPtr(&name), 0, 0, 0);
+    _ = linux.prctl(@backingInt(linux.PR.SET_NAME), @intFromPtr(&name), 0, 0, 0);
 }
 fn procSetUid(_: JNIEnvPtr, _: jni.jclass, uid: jni.jint) callconv(.c) jni.jint {
     return if (linux.errno(linux.setuid(@intCast(uid))) == .SUCCESS) 0 else -1;
@@ -507,7 +507,7 @@ fn procGetGidForName(_: JNIEnvPtr, _: jni.jclass, _: jni.jstring) callconv(.c) j
 }
 fn sigOf(sig: jni.jint) ?linux.SIG {
     if (sig < 1 or sig > 64) return null;
-    return @enumFromInt(@as(u6, @intCast(sig)));
+    return @fromBackingInt(@intCast(@as(u6, @intCast(sig))));
 }
 fn procSendSignal(_: JNIEnvPtr, _: jni.jclass, pid: jni.jint, sig: jni.jint) callconv(.c) void {
     const s = sigOf(sig) orelse return;
@@ -1188,7 +1188,7 @@ fn registerLog(env: JNIEnvPtr) !void {
     g_log_buf_write = g_platform_library.lookup(LogBufWriteFn, "__android_log_buf_write") orelse
         return error.NoMethod;
 
-    const diagnostics = env.*.*.FindClass.?(env, "android/util/ArtzigTestDiagnostics") orelse return error.NoClass;
+    const diagnostics = env.*.*.FindClass.?(env, "dev/artzig/ArtzigTestDiagnostics") orelse return error.NoClass;
     defer env.*.*.DeleteLocalRef.?(env, diagnostics);
     g_log_diagnostics = @ptrCast(env.*.*.NewGlobalRef.?(env, diagnostics) orelse return error.NoClass);
     g_record_log = env.*.*.GetStaticMethodID.?(
@@ -1257,5 +1257,11 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     // Parcel/Binder/BinderProxy/BinderInternal — the real AOSP classes over the
     // ndk Runtime/AParcel (co-located there for AParcel/Runtime access).
     if (ndk.registerBinderFrameworkNatives(env_opaque) != 0) return -1;
+    @import("debug_jni.zig").register(env) catch return -1;
+    @import("application_shared_memory_jni.zig").register(env) catch return -1;
+    @import("memory_int_array_jni.zig").register(env) catch return -1;
+    @import("vintf_jni.zig").register(env) catch return -1;
+    @import("runtime_init_jni.zig").register(env) catch return -1;
+    @import("egl_jni.zig").register(env, &g_platform_library) catch return -1;
     return 0;
 }

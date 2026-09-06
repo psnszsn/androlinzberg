@@ -18,6 +18,11 @@ fn setApplicationEnvironment(command: @import("build/command.zig").Command, tree
 }
 
 pub fn build(b: *std.Build) void {
+    // The pinned Zig configuration cache does not invalidate dependency roots
+    // when only a package hash changes. Track both manifests so source-package
+    // updates cannot silently reuse a graph pointing at the previous archive.
+    b.dependOnFileContents(b.path("build.zig.zon"));
+    b.dependOnFileContents(b.path("artzig/build.zig.zon"));
     const target = b.standardTargetOptions(.{ .default_target = .{ .cpu_model = .baseline } });
     const optimize = b.standardOptimizeOption(.{});
     const host_toolchain = @import("build/host_toolchain.zig").discover(b);
@@ -69,6 +74,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
     build_tools_test.dependOn(&b.addRunArtifact(rewrite_java_package_tests).step);
+    const mime_types_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/minimize-mime-types.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    build_tools_test.dependOn(&b.addRunArtifact(mime_types_tests).step);
 
     // --- zig-wayland: generate protocol bindings
     const scanner = Scanner.create(b, .{});
@@ -208,6 +221,13 @@ pub fn build(b: *std.Build) void {
     });
     b.step("sysprop-tool", "Build the sysprop_java host generator")
         .dependOn(&b.addInstallArtifact(sysprop_tool, .{}).step);
+    const sysprop_cpp_tool = @import("build/sysprop.zig").build(b, .{
+        .language = .cpp,
+        .vendor = aosp,
+        .target = target,
+        .protobuf = protobuf.library,
+        .protoc = protobuf.protoc,
+    });
 
     // --- protoc-gen-javastream: the AOSP protoc plugin that emits the framework
     // *Proto stream classes, built from packaged source against libprotoc.
@@ -235,6 +255,7 @@ pub fn build(b: *std.Build) void {
         .protobuf = protobuf.library,
         .protoc = protobuf.protoc,
         .sysprop_tool = sysprop_tool,
+        .sysprop_cpp_tool = sysprop_cpp_tool,
         .javastream_tool = javastream_tool,
         .javanano_tool = javanano_tool,
     });
@@ -261,6 +282,10 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "art", .module = art_mod }},
         }),
     });
+    // The framework registrar also provides EGL14 JNI when ART loads this
+    // library independently (including its connectivity JNI alias).
+    binder_ndk.root_module.linkSystemLibrary("egl", .{ .needed = true });
+    binder_ndk.root_module.linkSystemLibrary("gbm", .{ .needed = true });
     b.step("binder-ndk", "Build libbinder_ndk.so (native NDK binder ABI)")
         .dependOn(&binder_ndk.step);
 
@@ -319,6 +344,10 @@ pub fn build(b: *std.Build) void {
         .binder_cpp = binder_cpp,
         .art = art_mod,
         .aidl_header_roots = generated.native.aidl_header_roots,
+        .aidl_source_roots = generated.native.aidl_source_roots,
+        .aconfig_header_roots = generated.native.aconfig_header_roots,
+        .incremental_sysprop_headers = generated.native.incremental_sysprop_headers,
+        .incremental_sysprop_source = generated.native.incremental_sysprop_source,
         .host_include_roots = host_toolchain.island.include_roots,
         .host_library_roots = host_toolchain.island.library_roots,
         .host_libraries = host_toolchain.island.libraries,
@@ -586,6 +615,7 @@ pub fn build(b: *std.Build) void {
             .{ .file = bionic_overlays[3][0], .name = bionic_overlays[3][1] },
         },
         .framework_jar = java.classpath_jar,
+        .framework_compat_config = java.compat_config,
         .framework_app_context = java.app_context_jar,
         .framework_odex = java.framework_odex,
         .framework_vdex = java.framework_vdex,
@@ -632,7 +662,25 @@ pub fn build(b: *std.Build) void {
     system_test_run.run.setName("run hosted system-service tests");
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.run.step);
 
+    const process_memory_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/binder/process_memory.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    const run_process_memory_tests = b.addRunArtifact(process_memory_tests);
+    b.step("process-memory-test", "Test Android process-memory accounting").dependOn(&run_process_memory_tests.step);
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
+    const egl_backend_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/binder/egl_backend.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    for ([_][]const u8{ "egl", "gbm", "glesv2" }) |lib| egl_backend_tests.root_module.linkSystemLibrary(lib, .{ .needed = true });
+    const run_egl_backend_tests = b.addRunArtifact(egl_backend_tests);
+    b.step("egl-test", "Test EGL offscreen rendering and surface lifetime").dependOn(&run_egl_backend_tests.step);
+    native_test_step.dependOn(&run_egl_backend_tests.step);
+    native_test_step.dependOn(&run_process_memory_tests.step);
     native_test_step.dependOn(&run_audio_tests.step);
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
@@ -652,11 +700,11 @@ pub fn build(b: *std.Build) void {
     jvm_test_run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     jvm_test_run.addArg("--javatest");
     jvm_test_run.addFileArg(java.kotlin_shadow_fixture);
-    jvm_test_run.run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.KotlinClassLoaderSmoke");
+    jvm_test_run.setEnvironment("AZK_TEST_CLASS", "dev.artzig.KotlinClassLoaderSmoke");
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    jvm_test_run.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    jvm_test_run.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     jvm_test_run.run.setName("run JVM integration tests");
     const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
     jvm_test_step.dependOn(&jvm_test_run.run.step);
@@ -664,23 +712,24 @@ pub fn build(b: *std.Build) void {
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     framework_module_smoke.addArg("--javatest");
-    framework_module_smoke.run.setEnvironmentVariable(
+    framework_module_smoke.setEnvironment(
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkModuleSmoke",
     );
     // Fixture APKs (installed server-side by the permission-grant test).
     framework_module_smoke.addFileArg(java.fixtures.permissions);
+    framework_module_smoke.addFileArg(java.fixtures.example);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    framework_module_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    framework_module_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_module_smoke.run.setName("run hosted framework module tests");
     jvm_test_step.dependOn(&framework_module_smoke.run.step);
     const framework_compat_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_compat_smoke, application_tree);
     framework_compat_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     framework_compat_smoke.addArg("--javatest");
-    framework_compat_smoke.run.setEnvironmentVariable(
+    framework_compat_smoke.setEnvironment(
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkCompatSmoke",
     );
@@ -693,18 +742,18 @@ pub fn build(b: *std.Build) void {
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    framework_compat_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    framework_compat_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_compat_smoke.run.setName("run framework compatibility smoke");
     jvm_test_step.dependOn(&framework_compat_smoke.run.step);
     const connectivity_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(connectivity_smoke, application_tree);
     connectivity_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     connectivity_smoke.addArg("--javatest");
-    connectivity_smoke.run.setEnvironmentVariable(
+    connectivity_smoke.setEnvironment(
         "AZK_TEST_CLASS",
         "dev.artzig.ConnectivitySmoke",
     );
-    connectivity_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    connectivity_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     connectivity_smoke.run.setName("run connectivity handle and socket-binding smoke");
     jvm_test_step.dependOn(&connectivity_smoke.run.step);
     // JNI true-sharing bridge: loads libbinder_ndk into the ART process and
@@ -714,22 +763,24 @@ pub fn build(b: *std.Build) void {
     ndk_bridge_test.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     ndk_bridge_test.addArg("--javatest");
     ndk_bridge_test.addFileArg(application_tree.path(b, "lib/art/libbinder_ndk.so"));
-    ndk_bridge_test.run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.NdkBridgeTest");
-    ndk_bridge_test.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    ndk_bridge_test.setEnvironment("AZK_TEST_CLASS", "dev.artzig.NdkBridgeTest");
+    ndk_bridge_test.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     ndk_bridge_test.run.setName("run libbinder_ndk JNI bridge test");
     jvm_test_step.dependOn(&ndk_bridge_test.run.step);
     const jvm_exit_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(jvm_exit_smoke, application_tree);
     jvm_exit_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     jvm_exit_smoke.addArg("--javatest");
-    jvm_exit_smoke.run.setEnvironmentVariable("AZK_TEST_CLASS", "dev.artzig.JvmExitSmoke");
+    jvm_exit_smoke.setEnvironment("AZK_TEST_CLASS", "dev.artzig.JvmExitSmoke");
     jvm_exit_smoke.run.expectExitCode(23);
     // Hermetic: a nonexistent WAYLAND_DISPLAY keeps the session's clipboard
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
-    jvm_exit_smoke.run.setEnvironmentVariable("WAYLAND_DISPLAY", "azk-hermetic-none");
+    jvm_exit_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     jvm_exit_smoke.run.setName("run hosted JVM exit smoke");
     jvm_test_step.dependOn(&jvm_exit_smoke.run.step);
+    b.step("jvm-exit-test", "Verify ART exits without libc cleanup")
+        .dependOn(&jvm_exit_smoke.run.step);
 
     const testkit_step = b.step("testkit", "Build the host Kotlin testkit jars");
     for (testkit_jars) |path| path.addStepDependencies(testkit_step);

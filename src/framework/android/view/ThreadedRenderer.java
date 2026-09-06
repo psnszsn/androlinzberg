@@ -2,11 +2,17 @@
 package android.view;
 
 import android.content.Context;
+import android.content.res.TypedArray;
+import android.util.DisplayMetrics;
+import android.view.animation.AnimationUtils;
+import com.android.internal.R;
 import android.graphics.Bitmap;
 import android.graphics.HardwareRenderer;
 import android.graphics.RecordingCanvas;
 import android.graphics.RenderNode;
 import java.util.concurrent.Executor;
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 
 /** Host HWUI renderer backed by Ganesh/OpenGL and a direct Wayland EGL surface. */
 public final class ThreadedRenderer extends HardwareRenderer {
@@ -101,32 +107,101 @@ public final class ThreadedRenderer extends HardwareRenderer {
         super.destroy();
     }
 
+    private static int dumpArgsToFlags(String[] args) {
+        // If there's no arguments, eg 'dumpsys gfxinfo', then dump everything.
+        // If there's a targetted package, eg 'dumpsys gfxinfo com.android.systemui', then only
+        // dump the summary information
+        if (args == null || args.length == 0) {
+            return FLAG_DUMP_ALL;
+        }
+        int flags = 0;
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "framestats":
+                    flags |= FLAG_DUMP_FRAMESTATS;
+                    break;
+                case "reset":
+                    flags |= FLAG_DUMP_RESET;
+                    break;
+                case "-a": // magic option passed when dumping a bugreport.
+                    flags = FLAG_DUMP_ALL;
+                    break;
+            }
+        }
+        return flags;
+    }
+
+    /** @hide */
+    public static void handleDumpGfxInfo(FileDescriptor fd, String[] args) {
+        dumpGlobalProfileInfo(fd, dumpArgsToFlags(args));
+        WindowManagerGlobal.getInstance().dumpGfxInfo(fd, args);
+    }
+
+    /**
+     * Outputs extra debugging information in the specified file descriptor.
+     */
+    void dumpGfxInfo(PrintWriter pw, FileDescriptor fd, String[] args) {
+        pw.flush();
+        dumpProfileInfo(fd, dumpArgsToFlags(args));
+    }
+
+
     public void buildLayer(RenderNode node) {}
 
-    public static class SimpleRenderer {
-        public SimpleRenderer(Context context, String name, Surface surface) {}
-        public android.graphics.RecordingCanvas beginRecording(int width, int height) {
-            throw android.util.ArtzigTestDiagnostics.unsupported(
-                    "android.view.ThreadedRenderer.SimpleRenderer", "beginRecording",
-                    "SimpleRenderer is not hosted");
+    // Verbatim AOSP ThreadedRenderer.SimpleRenderer over HardwareRenderer.
+    public static class SimpleRenderer extends HardwareRenderer {
+        private final float mLightY, mLightZ, mLightRadius;
+
+        public SimpleRenderer(final Context context, final String name, final Surface surface) {
+            super();
+            setName(name);
+            setOpaque(false);
+            setSurface(surface);
+            final TypedArray a = context.obtainStyledAttributes(null, R.styleable.Lighting, 0, 0);
+            mLightY = a.getDimension(R.styleable.Lighting_lightY, 0);
+            mLightZ = a.getDimension(R.styleable.Lighting_lightZ, 0);
+            mLightRadius = a.getDimension(R.styleable.Lighting_lightRadius, 0);
+            final float ambientShadowAlpha = a.getFloat(R.styleable.Lighting_ambientShadowAlpha, 0);
+            final float spotShadowAlpha = a.getFloat(R.styleable.Lighting_spotShadowAlpha, 0);
+            a.recycle();
+            setLightSourceAlpha(ambientShadowAlpha, spotShadowAlpha);
         }
-        public void endRecording() {}
-        public void renderFrame(Choreographer choreographer) {}
-        public void draw(HardwareRenderer.FrameDrawingCallback callback) {}
-        public void destroy() {}
-        public HardwareRenderer.FrameRenderRequest createRenderRequest() {
-            throw android.util.ArtzigTestDiagnostics.unsupported(
-                    "android.view.ThreadedRenderer.SimpleRenderer", "createRenderRequest",
-                    "SimpleRenderer is not hosted");
+
+        /**
+         * Set the light center.
+         */
+        public void setLightCenter(final Display display,
+                final int windowLeft, final int windowTop) {
+            // Adjust light position for window offsets.
+            DisplayMetrics displayMetrics = new DisplayMetrics();
+            display.getRealMetrics(displayMetrics);
+            final float lightX = displayMetrics.widthPixels / 2f - windowLeft;
+            final float lightY = mLightY - windowTop;
+            // To prevent shadow distortion on larger screens, scale the z position of the light
+            // source relative to the smallest screen dimension.
+            final float zRatio = Math.min(displayMetrics.widthPixels, displayMetrics.heightPixels)
+                    / (450f * displayMetrics.density);
+            final float zWeightedAdjustment = (zRatio + 2) / 3f;
+            final float lightZ = mLightZ * zWeightedAdjustment;
+
+            setLightSourceGeometry(lightX, lightY, lightZ, mLightRadius);
         }
-        public void setLightSourceAlpha(float a, float b) {}
-        public void setLightSourceGeometry(float x, float y, float z, float radius) {}
-        public void setSurface(Surface surface) {}
-        public void setLightCenter(Display display, int windowLeft, int windowTop) {}
+
         public RenderNode getRootNode() {
-            throw android.util.ArtzigTestDiagnostics.unsupported(
-                    "android.view.ThreadedRenderer.SimpleRenderer", "getRootNode",
-                    "SimpleRenderer is not hosted");
+            return mRootNode;
+        }
+
+        /**
+         * Draw the surface.
+         */
+        public void draw(final FrameDrawingCallback callback) {
+            final long vsync = AnimationUtils.currentAnimationTimeMillis() * 1000000L;
+            if (callback != null) {
+                setFrameCallback(callback);
+            }
+            createRenderRequest()
+                    .setVsyncTime(vsync)
+                    .syncAndDraw();
         }
     }
 

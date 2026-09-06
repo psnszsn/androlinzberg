@@ -24,7 +24,7 @@ const island_packages = [_][]const u8{
     "harfbuzz",     "harfbuzz-icu", "freetype2", "fontconfig", "icu-uc",  "icu-i18n",
     "libpng",       "zlib",         "openssl",   "sqlite3",    "egl",     "gl",
     "wayland-egl",  "gbm",          "libdrm",    "expat",      "libjpeg", "libwebp",
-    "libwebpdemux", "libwebpmux",   "glesv2",
+    "libwebpdemux", "libwebpmux",   "glesv2",    "libselinux",
 };
 
 pub fn discover(b: *std.Build) Result {

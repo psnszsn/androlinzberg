@@ -16,9 +16,11 @@ platform/external/auto
 platform/external/avb
 platform/external/boringssl
 platform/external/bouncycastle
+platform/external/chromium-webview
 platform/external/compiler-rt
 platform/external/conscrypt
 platform/external/cpu_features
+platform/external/cronet
 platform/external/dagger2
 platform/external/dexmaker
 platform/external/dlmalloc
@@ -47,10 +49,10 @@ platform/external/jacoco
 platform/external/jakarta.inject
 platform/external/jarjar
 platform/external/javapoet
-platform/external/jsilver
 platform/external/javasqlite
 platform/external/jcommander
 platform/external/jline
+platform/external/jsilver
 platform/external/jsoncpp
 platform/external/jspecify
 platform/external/jsr305
@@ -69,6 +71,7 @@ platform/external/libpng
 platform/external/libxml2
 platform/external/lz4
 platform/external/lzma
+platform/external/mime-support
 platform/external/mockito
 platform/external/musl
 platform/external/objenesis
@@ -112,6 +115,7 @@ platform/packages/modules/AppSearch
 platform/packages/modules/Bluetooth
 platform/packages/modules/ConfigInfrastructure
 platform/packages/modules/Connectivity
+platform/packages/modules/HealthFitness
 platform/packages/modules/IPsec
 platform/packages/modules/Media
 platform/packages/modules/NeuralNetworks
@@ -147,11 +151,12 @@ platform/system/libbase
 platform/system/libhidl
 platform/system/libprocinfo
 platform/system/libsysprop
+platform/system/libvintf
 platform/system/libziparchive
 platform/system/logging
 platform/system/memory/libmeminfo
-platform/system/sepolicy
 platform/system/security
+platform/system/sepolicy
 platform/system/server_configurable_flags
 platform/system/testing/gtest_extras
 platform/system/tools/aidl

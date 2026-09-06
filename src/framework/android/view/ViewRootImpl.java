@@ -4,25 +4,59 @@
  * each Choreographer frame. Grows as the real View demands more of its API. */
 package android.view;
 
+import android.view.SurfaceControl.Transaction;
+
 import android.content.Context;
+import android.content.res.Configuration;
+import android.window.ActivityWindowInfo;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import android.os.Message;
+import android.util.SparseArray;
+import android.compat.annotation.UnsupportedAppUsage;
 import android.graphics.Rect;
 import android.graphics.PointF;
 import android.graphics.RecordingCanvas;
 import android.graphics.RenderNode;
 import android.os.Handler;
+import android.os.IBinder;
+import android.os.RemoteException;
+import android.view.inputmethod.ImeTracker;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+import android.util.AndroidRuntimeException;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.OptionalInt;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityManager;
+import android.view.accessibility.AccessibilityNodeIdManager;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
+import android.view.accessibility.AccessibilityNodeProvider;
+import static android.view.accessibility.Flags.reduceWindowContentChangedEventThrottle;
 
 public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     private static final boolean TRACE_SLOW_FRAMES =
             System.getenv("ARTZIG_SLOW_FRAME_TRACE") != null;
-    private static long sNextArtzigAccessibilityWindowId = 1;
-    final long mArtzigAccessibilityWindowId = sNextArtzigAccessibilityWindowId++;
+    private static boolean sProtoLogInitialized;
+    private static final String TAG = "ViewRootImpl";
+    private final AccessibilityManager mAccessibilityManager;
+    private SendWindowContentChangedAccessibilityEvent mSendWindowContentChangedAccessibilityEvent;
+    private HashSet<View> mTempHashSet;
+    private final Rect mTempRect = new Rect();
+    private View mAccessibilityFocusedHost;
+    private AccessibilityNodeInfo mAccessibilityFocusedVirtualView;
+    private boolean mStopped;
+    private boolean mPausedForTransition;
     public final Context mContext;
     final Handler mHandler;
     final Choreographer mChoreographer;
+    // AOSP ViewRootImpl.getChoreographer: the root's own traversal clock.
+    public Choreographer getChoreographer() { return mChoreographer; }
+
     View mView;
     int mWidth, mHeight;
     final RenderNode mRenderNode = new RenderNode("artzig-view-root");
@@ -75,20 +109,105 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
 
     public ViewRootImpl(Context context) {
         mContext = context;
+        mAccessibilityManager = AccessibilityManager.getInstance(context);
         mHandler = new Handler(Looper.getMainLooper());
         mChoreographer = Choreographer.getInstance();
+        initializeProtoLogInProcess();
+    }
+
+    // Stock WindowManagerGlobal owns registration. The desktop backend still
+    // supplies a composited RenderNode instead of a native window per root.
+    public ViewRootImpl(Context context, Display display) {
+        this(context);
+        mDisplay = display;
+    }
+
+    public ViewRootImpl(Context context, Display display, IWindowSession session,
+            WindowLayout layout) {
+        this(context, display);
+        throw dev.artzig.HostedWindowRoots.unsupportedWindowless();
+    }
+
+    private final WindowLeaked mLocation = new WindowLeaked(null);
+    private boolean mRegisteredWithWindowManager;
+    private boolean mRemoved;
+    private boolean mIsInTraversal;
+    private View mPanelParentView;
+    private int mClientWindowLayoutFlags;
+
+    static final class GfxInfo {
+        public int viewCount;
+        public long renderNodeMemoryUsage;
+        public long renderNodeMemoryAllocated;
+
+        void add(GfxInfo other) {
+            viewCount += other.viewCount;
+            renderNodeMemoryUsage += other.renderNodeMemoryUsage;
+            renderNodeMemoryAllocated += other.renderNodeMemoryAllocated;
+        }
+    }
+
+    GfxInfo getGfxInfo() {
+        GfxInfo info = new GfxInfo();
+        if (mView != null) {
+            appendGfxInfo(mView, info);
+        }
+        return info;
+    }
+
+    private static void computeRenderNodeUsage(RenderNode node, GfxInfo info) {
+        if (node == null) return;
+        info.renderNodeMemoryUsage += node.computeApproximateMemoryUsage();
+        info.renderNodeMemoryAllocated += node.computeApproximateMemoryAllocated();
+    }
+
+    private static void appendGfxInfo(View view, GfxInfo info) {
+        info.viewCount++;
+        computeRenderNodeUsage(view.mRenderNode, info);
+        computeRenderNodeUsage(view.mBackgroundRenderNode, info);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+
+            int count = group.getChildCount();
+            for (int i = 0; i < count; i++) {
+                appendGfxInfo(group.getChildAt(i), info);
+            }
+        }
+    }
+
+
+    final WindowLeaked getLocation() { return mLocation; }
+    public IWindowSession getWindowSession() { return mWindowSession; }
+
+    public void setView(View view, WindowManager.LayoutParams attrs, View panelParentView,
+            int userId) {
+        mRegisteredWithWindowManager = true;
+        mPanelParentView = panelParentView;
+        setView(view, 0, 0);
+    }
+
+    // AOSP ViewRootImpl.initializeProtoLogInProcess; the hosted root still owns
+    // construction while its window backend does not provide a stock IWindowSession.
+    private void initializeProtoLogInProcess() {
+        if (!sProtoLogInitialized) {
+            com.android.internal.protolog.ProtoLog.init(ViewProtoLogGroups.ALL_GROUPS);
+            sProtoLogInitialized = true;
+        }
     }
 
     public void setView(View view, int width, int height) {
+        mRemoved = false;
         // re-showing a decor that was rooted before (in-process activity stack):
         // detach it from its old root first.
         if (view.getParent() instanceof ViewRootImpl && view.getParent() != this) {
             ViewRootImpl old = (ViewRootImpl) view.getParent();
-            view.dispatchDetachedFromWindow();
-            view.assignParent(null);
-            old.mView = null;
+            old.destroy();
         }
         mView = view;
+        mLastConfigurationFromResources.setTo(view.getResources().getConfiguration());
+        mLastReportedMergedConfiguration.setConfiguration(
+                mLastConfigurationFromResources, new Configuration());
+        mViewLayoutDirectionInitial = view.getRawLayoutDirection();
         mWidth = width;
         mHeight = height;
         if (mAttachInfo == null) {
@@ -96,7 +215,9 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
                 private final android.os.Binder mBinder = new android.os.Binder("artzig-window");
                 @Override public android.os.IBinder asBinder() { return mBinder; }
             };
-            mAttachInfo = new View.AttachInfo(null /* session */, window, mDisplay, this,
+            mWindow = window;
+            if (mWindowSession == null) mWindowSession = WindowManagerGlobal.getWindowSession();
+            mAttachInfo = new View.AttachInfo(mWindowSession, window, mDisplay, this,
                     mHandler, new View.AttachInfo.Callbacks() {
                         @Override public void playSoundEffect(int effectId) {}
                         @Override public boolean performHapticFeedback(int effectId, int flags, int privFlags) { return false; }
@@ -104,8 +225,8 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
                                 int inputDeviceId, int inputSource, int flags, int privFlags) {}
                     }, mContext);
             // Transitions key their animators by WindowId.  The platform normally
-            // obtains this token from IWindowSession, which artzig deliberately
-            // does not use, so provide an equivalent process-local identity.
+            // obtains this token from IWindowSession. Hosted windows do not yet
+            // have server WindowStates, so provide a process-local identity.
             IWindowId windowId = new IWindowId.Stub() {
                 @Override public void registerFocusObserver(IWindowFocusObserver observer) {}
                 @Override public void unregisterFocusObserver(IWindowFocusObserver observer) {}
@@ -118,7 +239,14 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             mAttachInfo.mInTouchMode = true; // pointer taps act as touches; no focus rings
             mAttachInfo.mWindowVisibility = View.VISIBLE;
             mAttachInfo.mHasWindowFocus = true;
+            if (mPanelParentView != null) {
+                mAttachInfo.mPanelParentWindowToken = mPanelParentView.getWindowToken();
+            }
         }
+        if (view.getLayoutParams() instanceof WindowManager.LayoutParams) {
+            mWindowAttributes.copyFrom((WindowManager.LayoutParams) view.getLayoutParams());
+        }
+        mClientWindowLayoutFlags = mWindowAttributes.flags;
         view.assignParent(this);
         // ThreadedRenderer.updateRootDisplayList() records a stable reference to
         // the view-owned RenderNode. A different decor therefore needs a new
@@ -130,9 +258,705 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         mAttachInfo.mRecomputeGlobalAttributes = true;
         requestLayout();
         requestFitSystemWindows();
-        ArtzigAccessibilityBridge.markChanged("root-attached");
     }
     public View getView() { return mView; }
+    private HostedInputDispatcher.EventQueue mInputEventQueue;
+    // AOSP returns null when no InputEventReceiver/input channel is attached.
+    public IBinder getInputToken() { return null; }
+    // The hosted dispatcher owns queue ordering and event recycling until stock input stages
+    // can use a real InputChannel. InkWindow transfers ownership through this stock API.
+    // AOSP IME visibility tracking and session notification.
+    public void notifyImeVisibilityChanged(boolean visible, @NonNull ImeTracker.Token statsToken) {
+        ImeTracker.forLogging().onProgress(statsToken,
+                ImeTracker.PHASE_CLIENT_NOTIFY_IME_VISIBILITY_CHANGED);
+        try {
+            mWindowSession.notifyImeWindowVisibilityChangedFromClient(mWindow, visible, statsToken);
+        } catch (RemoteException e) {
+            ImeTracker.forLogging().onFailed(statsToken,
+                    ImeTracker.PHASE_CLIENT_NOTIFY_IME_VISIBILITY_CHANGED);
+            e.rethrowFromSystemServer();
+        }
+    }
+
+    public void enqueueInputEvent(InputEvent event) {
+        if (mInputEventQueue == null) mInputEventQueue = new HostedInputDispatcher.EventQueue(this);
+        mInputEventQueue.enqueue(event);
+    }
+
+    // Pinned ViewRootImpl SyntheticInputStage and dispatchUnhandledInputEvent.
+    // InputChannel stages are not hosted yet. The existing asynchronous queue
+    // owns delivery; the four synthesis handlers below are reused verbatim.
+    private static final boolean DEBUG_TRACKBALL = false;
+    private static final boolean DEBUG_TOUCH_NAVIGATION = false;
+    private static final int MAX_TRACKBALL_DELAY = 250;
+    private final String mTag = TAG;
+    private SyntheticTrackballHandler mSyntheticTrackball;
+    private SyntheticJoystickHandler mSyntheticJoystick;
+    private SyntheticTouchNavigationHandler mSyntheticTouchNavigation;
+    private SyntheticKeyboardHandler mSyntheticKeyboard;
+
+    public void dispatchUnhandledInputEvent(InputEvent event) {
+        if (event instanceof MotionEvent) {
+            event = MotionEvent.obtain((MotionEvent) event);
+        }
+        if (mInputEventQueue == null) mInputEventQueue = new HostedInputDispatcher.EventQueue(this);
+        mInputEventQueue.enqueueUnhandled(event);
+    }
+
+    void processUnhandledInputEvent(InputEvent input) {
+        if (input instanceof MotionEvent) {
+            MotionEvent event = (MotionEvent) input;
+            final int source = event.getSource();
+            if ((source & InputDevice.SOURCE_CLASS_TRACKBALL) != 0) {
+                if (!event.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
+                    if (mSyntheticTrackball == null) mSyntheticTrackball = new SyntheticTrackballHandler();
+                    mSyntheticTrackball.process(event);
+                }
+            } else if ((source & InputDevice.SOURCE_CLASS_JOYSTICK) != 0) {
+                if (mSyntheticJoystick == null) mSyntheticJoystick = new SyntheticJoystickHandler();
+                mSyntheticJoystick.process(event);
+            } else if ((source & InputDevice.SOURCE_TOUCH_NAVIGATION) == InputDevice.SOURCE_TOUCH_NAVIGATION) {
+                if (mSyntheticTouchNavigation == null) mSyntheticTouchNavigation = new SyntheticTouchNavigationHandler();
+                mSyntheticTouchNavigation.process(event);
+            }
+        } else if (input instanceof KeyEvent) {
+            if (mSyntheticKeyboard == null) mSyntheticKeyboard = new SyntheticKeyboardHandler();
+            mSyntheticKeyboard.process((KeyEvent) input);
+        }
+    }
+
+    /**
+     * Creates dpad events from unhandled trackball movements.
+     */
+    final class SyntheticTrackballHandler {
+        private final TrackballAxis mX = new TrackballAxis();
+        private final TrackballAxis mY = new TrackballAxis();
+        private long mLastTime;
+
+        public void process(MotionEvent event) {
+            // Translate the trackball event into DPAD keys and try to deliver those.
+            long curTime = SystemClock.uptimeMillis();
+            if ((mLastTime + MAX_TRACKBALL_DELAY) < curTime) {
+                // It has been too long since the last movement,
+                // so restart at the beginning.
+                mX.reset(0);
+                mY.reset(0);
+                mLastTime = curTime;
+            }
+
+            final int action = event.getAction();
+            final int metaState = event.getMetaState();
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    mX.reset(2);
+                    mY.reset(2);
+                    enqueueInputEvent(new KeyEvent(curTime, curTime,
+                            KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, 0, metaState,
+                            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FALLBACK,
+                            InputDevice.SOURCE_KEYBOARD));
+                    break;
+                case MotionEvent.ACTION_UP:
+                    mX.reset(2);
+                    mY.reset(2);
+                    enqueueInputEvent(new KeyEvent(curTime, curTime,
+                            KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, 0, metaState,
+                            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FALLBACK,
+                            InputDevice.SOURCE_KEYBOARD));
+                    break;
+            }
+
+            if (DEBUG_TRACKBALL) Log.v(mTag, "TB X=" + mX.position + " step="
+                    + mX.step + " dir=" + mX.dir + " acc=" + mX.acceleration
+                    + " move=" + event.getX()
+                    + " / Y=" + mY.position + " step="
+                    + mY.step + " dir=" + mY.dir + " acc=" + mY.acceleration
+                    + " move=" + event.getY());
+            final float xOff = mX.collect(event.getX(), event.getEventTime(), "X");
+            final float yOff = mY.collect(event.getY(), event.getEventTime(), "Y");
+
+            // Generate DPAD events based on the trackball movement.
+            // We pick the axis that has moved the most as the direction of
+            // the DPAD.  When we generate DPAD events for one axis, then the
+            // other axis is reset -- we don't want to perform DPAD jumps due
+            // to slight movements in the trackball when making major movements
+            // along the other axis.
+            int keycode = 0;
+            int movement = 0;
+            float accel = 1;
+            if (xOff > yOff) {
+                movement = mX.generate();
+                if (movement != 0) {
+                    keycode = movement > 0 ? KeyEvent.KEYCODE_DPAD_RIGHT
+                            : KeyEvent.KEYCODE_DPAD_LEFT;
+                    accel = mX.acceleration;
+                    mY.reset(2);
+                }
+            } else if (yOff > 0) {
+                movement = mY.generate();
+                if (movement != 0) {
+                    keycode = movement > 0 ? KeyEvent.KEYCODE_DPAD_DOWN
+                            : KeyEvent.KEYCODE_DPAD_UP;
+                    accel = mY.acceleration;
+                    mX.reset(2);
+                }
+            }
+
+            if (keycode != 0) {
+                if (movement < 0) movement = -movement;
+                int accelMovement = (int)(movement * accel);
+                if (DEBUG_TRACKBALL) Log.v(mTag, "Move: movement=" + movement
+                        + " accelMovement=" + accelMovement
+                        + " accel=" + accel);
+                if (accelMovement > movement) {
+                    if (DEBUG_TRACKBALL) Log.v(mTag, "Delivering fake DPAD: "
+                            + keycode);
+                    movement--;
+                    int repeatCount = accelMovement - movement;
+                    enqueueInputEvent(new KeyEvent(curTime, curTime,
+                            KeyEvent.ACTION_MULTIPLE, keycode, repeatCount, metaState,
+                            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FALLBACK,
+                            InputDevice.SOURCE_KEYBOARD));
+                }
+                while (movement > 0) {
+                    if (DEBUG_TRACKBALL) Log.v(mTag, "Delivering fake DPAD: "
+                            + keycode);
+                    movement--;
+                    curTime = SystemClock.uptimeMillis();
+                    enqueueInputEvent(new KeyEvent(curTime, curTime,
+                            KeyEvent.ACTION_DOWN, keycode, 0, metaState,
+                            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FALLBACK,
+                            InputDevice.SOURCE_KEYBOARD));
+                    enqueueInputEvent(new KeyEvent(curTime, curTime,
+                            KeyEvent.ACTION_UP, keycode, 0, metaState,
+                            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FALLBACK,
+                            InputDevice.SOURCE_KEYBOARD));
+                }
+                mLastTime = curTime;
+            }
+        }
+
+        public void cancel() {
+            mLastTime = Integer.MIN_VALUE;
+
+            // If we reach this, we consumed a trackball event.
+            // Because we will not translate the trackball event into a key event,
+            // touch mode will not exit, so we exit touch mode here.
+            if (mView != null && mAdded) {
+                ensureTouchMode(false);
+            }
+        }
+    }
+
+    /**
+     * Maintains state information for a single trackball axis, generating
+     * discrete (DPAD) movements based on raw trackball motion.
+     */
+    static final class TrackballAxis {
+        /**
+         * The maximum amount of acceleration we will apply.
+         */
+        static final float MAX_ACCELERATION = 20;
+
+        /**
+         * The maximum amount of time (in milliseconds) between events in order
+         * for us to consider the user to be doing fast trackball movements,
+         * and thus apply an acceleration.
+         */
+        static final long FAST_MOVE_TIME = 150;
+
+        /**
+         * Scaling factor to the time (in milliseconds) between events to how
+         * much to multiple/divide the current acceleration.  When movement
+         * is < FAST_MOVE_TIME this multiplies the acceleration; when >
+         * FAST_MOVE_TIME it divides it.
+         */
+        static final float ACCEL_MOVE_SCALING_FACTOR = (1.0f/40);
+
+        static final float FIRST_MOVEMENT_THRESHOLD = 0.5f;
+        static final float SECOND_CUMULATIVE_MOVEMENT_THRESHOLD = 2.0f;
+        static final float SUBSEQUENT_INCREMENTAL_MOVEMENT_THRESHOLD = 1.0f;
+
+        float position;
+        float acceleration = 1;
+        long lastMoveTime = 0;
+        int step;
+        int dir;
+        int nonAccelMovement;
+
+        void reset(int _step) {
+            position = 0;
+            acceleration = 1;
+            lastMoveTime = 0;
+            step = _step;
+            dir = 0;
+        }
+
+        /**
+         * Add trackball movement into the state.  If the direction of movement
+         * has been reversed, the state is reset before adding the
+         * movement (so that you don't have to compensate for any previously
+         * collected movement before see the result of the movement in the
+         * new direction).
+         *
+         * @return Returns the absolute value of the amount of movement
+         * collected so far.
+         */
+        float collect(float off, long time, String axis) {
+            long normTime;
+            if (off > 0) {
+                normTime = (long)(off * FAST_MOVE_TIME);
+                if (dir < 0) {
+                    if (DEBUG_TRACKBALL) Log.v(TAG, axis + " reversed to positive!");
+                    position = 0;
+                    step = 0;
+                    acceleration = 1;
+                    lastMoveTime = 0;
+                }
+                dir = 1;
+            } else if (off < 0) {
+                normTime = (long)((-off) * FAST_MOVE_TIME);
+                if (dir > 0) {
+                    if (DEBUG_TRACKBALL) Log.v(TAG, axis + " reversed to negative!");
+                    position = 0;
+                    step = 0;
+                    acceleration = 1;
+                    lastMoveTime = 0;
+                }
+                dir = -1;
+            } else {
+                normTime = 0;
+            }
+
+            // The number of milliseconds between each movement that is
+            // considered "normal" and will not result in any acceleration
+            // or deceleration, scaled by the offset we have here.
+            if (normTime > 0) {
+                long delta = time - lastMoveTime;
+                lastMoveTime = time;
+                float acc = acceleration;
+                if (delta < normTime) {
+                    // The user is scrolling rapidly, so increase acceleration.
+                    float scale = (normTime-delta) * ACCEL_MOVE_SCALING_FACTOR;
+                    if (scale > 1) acc *= scale;
+                    if (DEBUG_TRACKBALL) Log.v(TAG, axis + " accelerate: off="
+                            + off + " normTime=" + normTime + " delta=" + delta
+                            + " scale=" + scale + " acc=" + acc);
+                    acceleration = acc < MAX_ACCELERATION ? acc : MAX_ACCELERATION;
+                } else {
+                    // The user is scrolling slowly, so decrease acceleration.
+                    float scale = (delta-normTime) * ACCEL_MOVE_SCALING_FACTOR;
+                    if (scale > 1) acc /= scale;
+                    if (DEBUG_TRACKBALL) Log.v(TAG, axis + " deccelerate: off="
+                            + off + " normTime=" + normTime + " delta=" + delta
+                            + " scale=" + scale + " acc=" + acc);
+                    acceleration = acc > 1 ? acc : 1;
+                }
+            }
+            position += off;
+            return Math.abs(position);
+        }
+
+        /**
+         * Generate the number of discrete movement events appropriate for
+         * the currently collected trackball movement.
+         *
+         * @return Returns the number of discrete movements, either positive
+         * or negative, or 0 if there is not enough trackball movement yet
+         * for a discrete movement.
+         */
+        int generate() {
+            int movement = 0;
+            nonAccelMovement = 0;
+            do {
+                final int dir = position >= 0 ? 1 : -1;
+                switch (step) {
+                    // If we are going to execute the first step, then we want
+                    // to do this as soon as possible instead of waiting for
+                    // a full movement, in order to make things look responsive.
+                    case 0:
+                        if (Math.abs(position) < FIRST_MOVEMENT_THRESHOLD) {
+                            return movement;
+                        }
+                        movement += dir;
+                        nonAccelMovement += dir;
+                        step = 1;
+                        break;
+                    // If we have generated the first movement, then we need
+                    // to wait for the second complete trackball motion before
+                    // generating the second discrete movement.
+                    case 1:
+                        if (Math.abs(position) < SECOND_CUMULATIVE_MOVEMENT_THRESHOLD) {
+                            return movement;
+                        }
+                        movement += dir;
+                        nonAccelMovement += dir;
+                        position -= SECOND_CUMULATIVE_MOVEMENT_THRESHOLD * dir;
+                        step = 2;
+                        break;
+                    // After the first two, we generate discrete movements
+                    // consistently with the trackball, applying an acceleration
+                    // if the trackball is moving quickly.  This is a simple
+                    // acceleration on top of what we already compute based
+                    // on how quickly the wheel is being turned, to apply
+                    // a longer increasing acceleration to continuous movement
+                    // in one direction.
+                    default:
+                        if (Math.abs(position) < SUBSEQUENT_INCREMENTAL_MOVEMENT_THRESHOLD) {
+                            return movement;
+                        }
+                        movement += dir;
+                        position -= dir * SUBSEQUENT_INCREMENTAL_MOVEMENT_THRESHOLD;
+                        float acc = acceleration;
+                        acc *= 1.1f;
+                        acceleration = acc < MAX_ACCELERATION ? acc : acceleration;
+                        break;
+                }
+            } while (true);
+        }
+    }
+
+    /**
+     * Creates dpad events from unhandled joystick movements.
+     */
+    final class SyntheticJoystickHandler extends Handler {
+        private final static int MSG_ENQUEUE_X_AXIS_KEY_REPEAT = 1;
+        private final static int MSG_ENQUEUE_Y_AXIS_KEY_REPEAT = 2;
+
+        private final JoystickAxesState mJoystickAxesState = new JoystickAxesState();
+        private final SparseArray<KeyEvent> mDeviceKeyEvents = new SparseArray<>();
+
+        public SyntheticJoystickHandler() {
+            super(true);
+        }
+
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MSG_ENQUEUE_X_AXIS_KEY_REPEAT:
+                case MSG_ENQUEUE_Y_AXIS_KEY_REPEAT: {
+                    if (mAttachInfo.mHasWindowFocus) {
+                        KeyEvent oldEvent = (KeyEvent) msg.obj;
+                        KeyEvent e = KeyEvent.changeTimeRepeat(oldEvent,
+                                SystemClock.uptimeMillis(), oldEvent.getRepeatCount() + 1);
+                        enqueueInputEvent(e);
+                        Message m = obtainMessage(msg.what, e);
+                        m.setAsynchronous(true);
+                        sendMessageDelayed(m, ViewConfiguration.getKeyRepeatDelay());
+                    }
+                } break;
+            }
+        }
+
+        public void process(MotionEvent event) {
+            switch(event.getActionMasked()) {
+                case MotionEvent.ACTION_CANCEL:
+                    cancel();
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    update(event);
+                    break;
+                default:
+                    Log.w(mTag, "Unexpected action: " + event.getActionMasked());
+            }
+        }
+
+        private void cancel() {
+            removeMessages(MSG_ENQUEUE_X_AXIS_KEY_REPEAT);
+            removeMessages(MSG_ENQUEUE_Y_AXIS_KEY_REPEAT);
+            for (int i = 0; i < mDeviceKeyEvents.size(); i++) {
+                final KeyEvent keyEvent = mDeviceKeyEvents.valueAt(i);
+                if (keyEvent != null) {
+                    enqueueInputEvent(KeyEvent.changeTimeRepeat(keyEvent,
+                            SystemClock.uptimeMillis(), 0));
+                }
+            }
+            mDeviceKeyEvents.clear();
+            mJoystickAxesState.resetState();
+        }
+
+        private void update(MotionEvent event) {
+            final int historySize = event.getHistorySize();
+            for (int h = 0; h < historySize; h++) {
+                final long time = event.getHistoricalEventTime(h);
+                mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_X,
+                        event.getHistoricalAxisValue(MotionEvent.AXIS_X, 0, h));
+                mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_Y,
+                        event.getHistoricalAxisValue(MotionEvent.AXIS_Y, 0, h));
+                mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_HAT_X,
+                        event.getHistoricalAxisValue(MotionEvent.AXIS_HAT_X, 0, h));
+                mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_HAT_Y,
+                        event.getHistoricalAxisValue(MotionEvent.AXIS_HAT_Y, 0, h));
+            }
+            final long time = event.getEventTime();
+            mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_X,
+                    event.getAxisValue(MotionEvent.AXIS_X));
+            mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_Y,
+                    event.getAxisValue(MotionEvent.AXIS_Y));
+            mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_HAT_X,
+                    event.getAxisValue(MotionEvent.AXIS_HAT_X));
+            mJoystickAxesState.updateStateForAxis(event, time, MotionEvent.AXIS_HAT_Y,
+                    event.getAxisValue(MotionEvent.AXIS_HAT_Y));
+        }
+
+        final class JoystickAxesState {
+            // State machine: from neutral state (no button press) can go into
+            // button STATE_UP_OR_LEFT or STATE_DOWN_OR_RIGHT state, emitting an ACTION_DOWN event.
+            // From STATE_UP_OR_LEFT or STATE_DOWN_OR_RIGHT state can go into neutral state,
+            // emitting an ACTION_UP event.
+            private static final int STATE_UP_OR_LEFT = -1;
+            private static final int STATE_NEUTRAL = 0;
+            private static final int STATE_DOWN_OR_RIGHT = 1;
+
+            final int[] mAxisStatesHat = {STATE_NEUTRAL, STATE_NEUTRAL}; // {AXIS_HAT_X, AXIS_HAT_Y}
+            final int[] mAxisStatesStick = {STATE_NEUTRAL, STATE_NEUTRAL}; // {AXIS_X, AXIS_Y}
+
+            void resetState() {
+                mAxisStatesHat[0] = STATE_NEUTRAL;
+                mAxisStatesHat[1] = STATE_NEUTRAL;
+                mAxisStatesStick[0] = STATE_NEUTRAL;
+                mAxisStatesStick[1] = STATE_NEUTRAL;
+            }
+
+            void updateStateForAxis(MotionEvent event, long time, int axis, float value) {
+                // Emit KeyEvent if necessary
+                // axis can be AXIS_X, AXIS_Y, AXIS_HAT_X, AXIS_HAT_Y
+                final int axisStateIndex;
+                final int repeatMessage;
+                if (isXAxis(axis)) {
+                    axisStateIndex = 0;
+                    repeatMessage = MSG_ENQUEUE_X_AXIS_KEY_REPEAT;
+                } else if (isYAxis(axis)) {
+                    axisStateIndex = 1;
+                    repeatMessage = MSG_ENQUEUE_Y_AXIS_KEY_REPEAT;
+                } else {
+                    Log.e(mTag, "Unexpected axis " + axis + " in updateStateForAxis!");
+                    return;
+                }
+                final int newState = joystickAxisValueToState(value);
+
+                final int currentState;
+                if (axis == MotionEvent.AXIS_X || axis == MotionEvent.AXIS_Y) {
+                    currentState = mAxisStatesStick[axisStateIndex];
+                } else {
+                    currentState = mAxisStatesHat[axisStateIndex];
+                }
+
+                if (currentState == newState) {
+                    return;
+                }
+
+                final int metaState = event.getMetaState();
+                final int deviceId = event.getDeviceId();
+                final int source = event.getSource();
+
+                if (currentState == STATE_DOWN_OR_RIGHT || currentState == STATE_UP_OR_LEFT) {
+                    // send a button release event
+                    final int keyCode = joystickAxisAndStateToKeycode(axis, currentState);
+                    if (keyCode != KeyEvent.KEYCODE_UNKNOWN) {
+                        enqueueInputEvent(new KeyEvent(time, time, KeyEvent.ACTION_UP, keyCode,
+                                0, metaState, deviceId, 0, KeyEvent.FLAG_FALLBACK, source));
+                        // remove the corresponding pending UP event if focus lost/view detached
+                        mDeviceKeyEvents.put(deviceId, null);
+                    }
+                    removeMessages(repeatMessage);
+                }
+
+                if (newState == STATE_DOWN_OR_RIGHT || newState == STATE_UP_OR_LEFT) {
+                    // send a button down event
+                    final int keyCode = joystickAxisAndStateToKeycode(axis, newState);
+                    if (keyCode != KeyEvent.KEYCODE_UNKNOWN) {
+                        KeyEvent keyEvent = new KeyEvent(time, time, KeyEvent.ACTION_DOWN, keyCode,
+                                0, metaState, deviceId, 0, KeyEvent.FLAG_FALLBACK, source);
+                        enqueueInputEvent(keyEvent);
+                        Message m = obtainMessage(repeatMessage, keyEvent);
+                        m.setAsynchronous(true);
+                        sendMessageDelayed(m, ViewConfiguration.getKeyRepeatTimeout());
+                        // store the corresponding ACTION_UP event so that it can be sent
+                        // if focus is lost or root view is removed
+                        mDeviceKeyEvents.put(deviceId,
+                                new KeyEvent(time, time, KeyEvent.ACTION_UP, keyCode,
+                                        0, metaState, deviceId, 0,
+                                        KeyEvent.FLAG_FALLBACK | KeyEvent.FLAG_CANCELED,
+                                        source));
+                    }
+                }
+                if (axis == MotionEvent.AXIS_X || axis == MotionEvent.AXIS_Y) {
+                    mAxisStatesStick[axisStateIndex] = newState;
+                } else {
+                    mAxisStatesHat[axisStateIndex] = newState;
+                }
+            }
+
+            private boolean isXAxis(int axis) {
+                return axis == MotionEvent.AXIS_X || axis == MotionEvent.AXIS_HAT_X;
+            }
+            private boolean isYAxis(int axis) {
+                return axis == MotionEvent.AXIS_Y || axis == MotionEvent.AXIS_HAT_Y;
+            }
+
+            private int joystickAxisAndStateToKeycode(int axis, int state) {
+                if (isXAxis(axis) && state == STATE_UP_OR_LEFT) {
+                    return KeyEvent.KEYCODE_DPAD_LEFT;
+                }
+                if (isXAxis(axis) && state == STATE_DOWN_OR_RIGHT) {
+                    return KeyEvent.KEYCODE_DPAD_RIGHT;
+                }
+                if (isYAxis(axis) && state == STATE_UP_OR_LEFT) {
+                    return KeyEvent.KEYCODE_DPAD_UP;
+                }
+                if (isYAxis(axis) && state == STATE_DOWN_OR_RIGHT) {
+                    return KeyEvent.KEYCODE_DPAD_DOWN;
+                }
+                Log.e(mTag, "Unknown axis " + axis + " or direction " + state);
+                return KeyEvent.KEYCODE_UNKNOWN; // should never happen
+            }
+
+            private int joystickAxisValueToState(float value) {
+                if (value >= 0.5f) {
+                    return STATE_DOWN_OR_RIGHT;
+                } else if (value <= -0.5f) {
+                    return STATE_UP_OR_LEFT;
+                } else {
+                    return STATE_NEUTRAL;
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates DPAD events from unhandled touch navigation movements.
+     */
+    final class SyntheticTouchNavigationHandler extends Handler {
+        private static final String LOCAL_TAG = "SyntheticTouchNavigationHandler";
+
+        // The id of the input device that is being tracked.
+        private int mCurrentDeviceId = -1;
+        private int mCurrentSource;
+
+        private int mPendingKeyMetaState;
+
+        private final GestureDetector mGestureDetector;
+
+        SyntheticTouchNavigationHandler() {
+            super(true);
+            mGestureDetector = new GestureDetector(mContext,
+                    new GestureDetector.OnGestureListener() {
+                        @Override
+                        public boolean onDown(@NonNull MotionEvent e) {
+                            // This can be ignored since it's not clear what KeyEvent this will
+                            // belong to.
+                            return true;
+                        }
+
+                        @Override
+                        public void onShowPress(@NonNull MotionEvent e) {
+                        }
+
+                        @Override
+                        public boolean onSingleTapUp(@NonNull MotionEvent e) {
+                            dispatchTap(e.getEventTime());
+                            return true;
+                        }
+
+                        @Override
+                        public boolean onScroll(@Nullable MotionEvent e1, @NonNull MotionEvent e2,
+                                float distanceX, float distanceY) {
+                            // Scroll doesn't translate to DPAD events so should be ignored.
+                            return true;
+                        }
+
+                        @Override
+                        public void onLongPress(@NonNull MotionEvent e) {
+                            // Long presses don't translate to DPAD events so should be ignored.
+                        }
+
+                        @Override
+                        public boolean onFling(@Nullable MotionEvent e1, @NonNull MotionEvent e2,
+                                float velocityX, float velocityY) {
+                            dispatchFling(velocityX, velocityY, e2.getEventTime());
+                            return true;
+                        }
+                    },
+                    /* handler= */ null,
+                    VelocityTracker.VELOCITY_TRACKER_STRATEGY_IMPULSE);
+        }
+
+        public void process(MotionEvent event) {
+            if (event.getDevice() == null) {
+                // The current device is not supported.
+                if (DEBUG_TOUCH_NAVIGATION) {
+                    Log.d(LOCAL_TAG,
+                            "Current device not supported so motion event is not processed");
+                }
+                return;
+            }
+            mPendingKeyMetaState = event.getMetaState();
+            // Update the current device information.
+            final int deviceId = event.getDeviceId();
+            final int source = event.getSource();
+            if (mCurrentDeviceId != deviceId || mCurrentSource != source) {
+                mCurrentDeviceId = deviceId;
+                mCurrentSource = source;
+            }
+
+            // Interpret the event.
+            mGestureDetector.onTouchEvent(event);
+        }
+
+        private void dispatchTap(long time) {
+            dispatchEvent(time, KeyEvent.KEYCODE_DPAD_CENTER);
+        }
+
+        private void dispatchFling(float x, float y, long time) {
+            if (Math.abs(x) > Math.abs(y)) {
+                dispatchEvent(time,
+                        x > 0 ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT);
+            } else {
+                dispatchEvent(time, y > 0 ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_UP);
+            }
+        }
+
+        private void dispatchEvent(long time, int keyCode) {
+            if (DEBUG_TOUCH_NAVIGATION) {
+                Log.d(LOCAL_TAG, "Dispatching DPAD events DOWN and UP with keycode " + keyCode);
+            }
+            enqueueInputEvent(new KeyEvent(time, time,
+                    KeyEvent.ACTION_DOWN, keyCode, /* repeat= */ 0, mPendingKeyMetaState,
+                    mCurrentDeviceId, /* scancode= */ 0, KeyEvent.FLAG_FALLBACK,
+                    mCurrentSource));
+            enqueueInputEvent(new KeyEvent(time, time,
+                    KeyEvent.ACTION_UP, keyCode, /* repeat= */ 0, mPendingKeyMetaState,
+                    mCurrentDeviceId, /* scancode= */ 0, KeyEvent.FLAG_FALLBACK,
+                    mCurrentSource));
+        }
+    }
+
+    final class SyntheticKeyboardHandler {
+        public void process(KeyEvent event) {
+            if ((event.getFlags() & KeyEvent.FLAG_FALLBACK) != 0) {
+                return;
+            }
+
+            final KeyCharacterMap kcm = event.getKeyCharacterMap();
+            final int keyCode = event.getKeyCode();
+            final int metaState = event.getMetaState();
+
+            // Check for fallback actions specified by the key character map.
+            KeyCharacterMap.FallbackAction fallbackAction =
+                    kcm.getFallbackAction(keyCode, metaState);
+            if (fallbackAction != null) {
+                final int flags = event.getFlags() | KeyEvent.FLAG_FALLBACK;
+                KeyEvent fallbackEvent = KeyEvent.obtain(
+                        event.getDownTime(), event.getEventTime(),
+                        event.getAction(), fallbackAction.keyCode,
+                        event.getRepeatCount(), fallbackAction.metaState,
+                        event.getDeviceId(), event.getScanCode(),
+                        flags, event.getSource(), null);
+                fallbackAction.recycle();
+                enqueueInputEvent(fallbackEvent);
+            }
+        }
+    }
 
     /**
      * AOSP EarlyPostImeInputStage.processPointerEvent() followed by
@@ -169,9 +993,13 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             }
         }
 
-        // ViewPostImeInputStage ordering. Handwriting is observationally inert in the host, but
-        // remains ahead of view dispatch as it is in AOSP.
-        boolean handled = getHandwritingInitiator().onTouchEvent(event);
+        // AOSP ViewPostImeInputStage.processPointerEvent: handwriting precedes view
+        // dispatch, except in IME windows when the corresponding flag is enabled.
+        boolean handled = false;
+        if (!com.android.text.flags.Flags.disableHandwritingInitiatorForIme()
+                || mWindowAttributes.type != WindowManager.LayoutParams.TYPE_INPUT_METHOD) {
+            handled = getHandwritingInitiator().onTouchEvent(event);
+        }
         if (handled) {
             mLastClickToolType = event.getToolType(event.getActionIndex());
         }
@@ -286,10 +1114,20 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
 
     /** Detach the hosted hierarchy and release references held by this root. */
     public void destroy() {
+        checkThread();
+        if (mRemoved) return;
+        mRemoved = true;
+        if (mSyntheticJoystick != null) mSyntheticJoystick.cancel();
+        if (mInputEventQueue != null) mInputEventQueue.clear();
         unscheduleTraversals();
         if (mFrameListener != null) mHandler.removeCallbacks(mFrameListener);
         mHandler.removeCallbacks(mInvalidateOnAnimation);
         HostedInputDispatcher.onRootDestroyed(this);
+        if (!mStopped) {
+            for (SurfaceChangedCallback callback : new ArrayList<>(mSurfaceChangedCallbacks)) {
+                callback.surfaceDestroyed();
+            }
+        }
         if (mView != null) {
             mView.dispatchWindowFocusChanged(false);
             mView.dispatchWindowVisibilityChanged(View.GONE);
@@ -297,13 +1135,249 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             mView.assignParent(null);
             mView = null;
         }
+        dev.artzig.HostedWindowStack.onRootDestroyed(this);
+        if (mRegisteredWithWindowManager) {
+            mRegisteredWithWindowManager = false;
+            WindowManagerGlobal.getInstance().doRemoveView(this);
+        }
         mInvalidateViews.clear();
         for (View.AttachInfo.InvalidateInfo info : mInvalidateRects) info.recycle();
         mInvalidateRects.clear();
+        removeSendWindowContentChangedCallback();
         mAttachInfo = null;
         mHasRenderNode = false;
         mRenderNode.discardDisplayList();
-        ArtzigAccessibilityBridge.markChanged("root-destroyed");
+    }
+
+    // AOSP die/doDie ordering: deferred removal leaves the registry intact
+    // while closeAll iterates, and never tears down a hierarchy during traversal.
+    boolean die(boolean immediate) {
+        if (immediate && !mIsInTraversal) {
+            doDie();
+            return false;
+        }
+        mHandler.post(this::doDie);
+        return true;
+    }
+
+    void doDie() { destroy(); }
+
+    void checkThread() {
+        if (mThread != Thread.currentThread()) {
+            throw new CalledFromWrongThreadException(
+                    "Only the original thread that created a view hierarchy can touch its views."
+                    + " Expected: " + mThread.getName()
+                    + " Calling: " + Thread.currentThread().getName());
+        }
+    }
+
+    // AOSP setWindowStopped, applied to this root's display lists. The host
+    // shares one renderer across windows, so stopping its renderer would also
+    // stop unrelated windows. SurfaceView observes the same surface callbacks.
+    void setWindowStopped(boolean stopped) {
+        checkThread();
+        if (mStopped == stopped || mView == null) return;
+        mStopped = stopped;
+        if (stopped) {
+            unscheduleTraversals();
+            mView.destroyHardwareResources();
+            mRenderNode.discardDisplayList();
+            mHasRenderNode = false;
+            for (SurfaceChangedCallback callback : new ArrayList<>(mSurfaceChangedCallbacks)) {
+                callback.surfaceDestroyed();
+            }
+        } else {
+            try (SurfaceControl.Transaction transaction = new SurfaceControl.Transaction()) {
+                for (SurfaceChangedCallback callback : new ArrayList<>(mSurfaceChangedCallbacks)) {
+                    callback.surfaceCreated(transaction);
+                }
+            }
+            requestLayout();
+        }
+    }
+
+    public boolean isWindowStopped$artzig() { return mStopped; }
+
+    // Preserve AOSP's caller flags, surface-inset preservation and soft-input
+    // adjustment rules. Relayout is supplied by the existing desktop geometry seam.
+    public void setLayoutParams(WindowManager.LayoutParams attrs, boolean newView) {
+        synchronized (this) {
+            Rect oldInsets = new Rect(mWindowAttributes.surfaceInsets);
+            boolean oldManual = mWindowAttributes.hasManualSurfaceInsets;
+            int oldSoftInputMode = mWindowAttributes.softInputMode;
+            int visibility = mWindowAttributes.systemUiVisibility;
+            int subtreeVisibility = mWindowAttributes.subtreeSystemUiVisibility;
+            int appearance = mWindowAttributes.insetsFlags.appearance;
+            int behavior = mWindowAttributes.insetsFlags.behavior;
+            mClientWindowLayoutFlags = attrs.flags;
+            int callerCutoutMode = adjustLayoutInDisplayCutoutMode(attrs);
+            int changes = mWindowAttributes.copyFrom(attrs);
+            attrs.layoutInDisplayCutoutMode = callerCutoutMode;
+            mWindowAttributes.systemUiVisibility = visibility;
+            mWindowAttributes.subtreeSystemUiVisibility = subtreeVisibility;
+            mWindowAttributes.insetsFlags.appearance = appearance;
+            mWindowAttributes.insetsFlags.behavior = behavior;
+            if (mWindowAttributes.packageName == null) {
+                mWindowAttributes.packageName = mContext.getBasePackageName();
+            }
+            if (mWindowAttributes.preservePreviousSurfaceInsets) {
+                mWindowAttributes.surfaceInsets.set(oldInsets);
+                mWindowAttributes.hasManualSurfaceInsets = oldManual;
+            } else if (!oldInsets.equals(mWindowAttributes.surfaceInsets)) {
+                mHasRenderNode = false;
+            }
+            if ((attrs.softInputMode & WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST)
+                    == WindowManager.LayoutParams.SOFT_INPUT_ADJUST_UNSPECIFIED) {
+                mWindowAttributes.softInputMode = (mWindowAttributes.softInputMode
+                        & ~WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST)
+                        | (oldSoftInputMode & WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST);
+            }
+            if (mAttachInfo != null) {
+                applyKeepScreenOnFlag(mWindowAttributes);
+                if ((changes & WindowManager.LayoutParams.TRANSLUCENT_FLAGS_CHANGED) != 0) {
+                    mAttachInfo.mRecomputeGlobalAttributes = true;
+                }
+                if ((changes & WindowManager.LayoutParams.LAYOUT_CHANGED) != 0) {
+                    mAttachInfo.mNeedsUpdateLightCenter = true;
+                }
+            }
+            if ((changes & WindowManager.LayoutParams.COLOR_MODE_CHANGED) != 0) invalidate();
+            if (newView || (changes & WindowManager.LayoutParams.LAYOUT_CHANGED) != 0) requestLayout();
+            if (mWindowAttributes.softInputMode != oldSoftInputMode) requestFitSystemWindows();
+            scheduleTraversals();
+        }
+    }
+
+    private int adjustLayoutInDisplayCutoutMode(WindowManager.LayoutParams attrs) {
+        final int originalMode = attrs.layoutInDisplayCutoutMode;
+        if ((attrs.privateFlags & (WindowManager.LayoutParams.PRIVATE_FLAG_EDGE_TO_EDGE_ENFORCED
+                | WindowManager.LayoutParams.PRIVATE_FLAG_OVERRIDE_LAYOUT_IN_DISPLAY_CUTOUT_MODE)) != 0
+                && attrs.isFullscreen()
+                && attrs.getFitInsetsTypes() == 0
+                && attrs.getFitInsetsSides() == 0) {
+            attrs.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        }
+        return originalMode;
+    }
+
+    void invalidateWorld(View view) {
+        view.invalidate();
+        if (view instanceof ViewGroup) {
+            ViewGroup parent = (ViewGroup) view;
+            for (int i = 0; i < parent.getChildCount(); i++) {
+                invalidateWorld(parent.getChildAt(i));
+            }
+        }
+    }
+
+    private void applyKeepScreenOnFlag(WindowManager.LayoutParams params) {
+        // Update window's global keep screen on flag: if a view has requested
+        // that the screen be kept on, then it is always set; otherwise, it is
+        // set to whatever the client last requested for the global state.
+        if (mAttachInfo.mKeepScreenOn) {
+            params.flags |= WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+        } else {
+            params.flags = (params.flags&~WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    | (mClientWindowLayoutFlags&WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
+    public void loadSystemProperties() {
+        mHandler.post(() -> {
+            if (mAttachInfo == null) return;
+            if (mAttachInfo.mThreadedRenderer != null
+                    && mAttachInfo.mThreadedRenderer.loadSystemProperties()) invalidate();
+            boolean layout = android.sysprop.DisplayProperties.debug_layout().orElse(false);
+            if (layout != mAttachInfo.mDebugLayout) {
+                mAttachInfo.mDebugLayout = layout;
+                mHandler.postDelayed(() -> {
+                    if (mView != null) invalidateWorld(mView);
+                }, 200);
+            }
+        });
+    }
+
+    private final android.content.res.Configuration mLastConfigurationFromResources =
+            new android.content.res.Configuration();
+    private final android.util.MergedConfiguration mLastReportedMergedConfiguration =
+            new android.util.MergedConfiguration();
+    private int mViewLayoutDirectionInitial;
+
+    public void requestUpdateConfiguration(android.content.res.Configuration config) {
+        // MSG_UPDATE_CONFIGURATION / performConfigurationChange ordering. The
+        // desktop dispatcher owns global resource updates; window-context and
+        // activity callbacks retain their stock responsibility for overrides.
+        mHandler.post(() -> {
+            if (mView == null) return;
+            Configuration global = config.isOtherSeqNewer(
+                    mLastReportedMergedConfiguration.getMergedConfiguration())
+                    ? mLastReportedMergedConfiguration.getGlobalConfiguration() : config;
+            Configuration override = mLastReportedMergedConfiguration.getOverrideConfiguration();
+            synchronized (sConfigCallbacks) {
+                for (int i = sConfigCallbacks.size() - 1; i >= 0; --i) {
+                    sConfigCallbacks.get(i).onConfigurationChanged(global);
+                }
+            }
+            mLastReportedMergedConfiguration.setConfiguration(global, override);
+            if (mActivityConfigCallback != null) {
+                mActivityConfigCallback.onConfigurationChanged(override, Display.INVALID_DISPLAY, null);
+            } else {
+                if (com.android.window.flags.Flags.enableWindowContextResourcesUpdateOnConfigChange()
+                        && mContext.getWindowContextToken() instanceof android.window.WindowTokenClient) {
+                    android.window.WindowTokenClientController.getInstance()
+                            .onWindowConfigurationChanged(mContext.getWindowContextToken(),
+                                    mLastReportedMergedConfiguration.getMergedConfiguration(),
+                                    getDisplayId());
+                }
+                updateConfiguration(Display.INVALID_DISPLAY);
+            }
+        });
+    }
+
+    // AOSP updateConfiguration reads the already-updated Resources, then sends
+    // display/configuration callbacks and requests a fresh layout in that order.
+    public void updateConfiguration(int newDisplayId) {
+        if (mView == null) return;
+        android.content.res.Configuration config = mView.getResources().getConfiguration();
+        if (newDisplayId != Display.INVALID_DISPLAY) onMovedToDisplay(newDisplayId, config);
+        if (mLastConfigurationFromResources.diff(config) != 0) {
+            int oldDirection = mLastConfigurationFromResources.getLayoutDirection();
+            mLastConfigurationFromResources.setTo(config);
+            if (oldDirection != config.getLayoutDirection()
+                    && mViewLayoutDirectionInitial == View.LAYOUT_DIRECTION_INHERIT) {
+                mView.setLayoutDirection(config.getLayoutDirection());
+            }
+            mView.dispatchConfigurationChanged(config);
+            requestLayout();
+        }
+    }
+
+    public void onMovedToDisplay(int displayId, android.content.res.Configuration config) {
+        if (mView == null || (mDisplay != null && mDisplay.getDisplayId() == displayId)) return;
+        Display display = android.app.ResourcesManager.getInstance()
+                .getAdjustedDisplay(displayId, mView.getResources());
+        if (display == null) display = android.app.ResourcesManager.getInstance()
+                .getAdjustedDisplay(Display.DEFAULT_DISPLAY, mView.getResources());
+        mDisplay = display;
+        mContext.updateDisplay(display.getDisplayId());
+        getImeFocusController().onMovedToDisplay();
+        mAttachInfo.mDisplayState = display.getState();
+        mView.dispatchMovedToDisplay(display, config);
+    }
+
+    private Boolean mCanvasOpaque;
+
+    // AOSP changeCanvasOpacity applies the transparent-region override before
+    // changing renderer opacity. The shared renderer always clears; apply this
+    // root's background policy to its composited display list instead.
+    void changeCanvasOpacity(boolean opaque) {
+        if (mView == null) return;
+        opaque &= (mView.mPrivateFlags & View.PFLAG_REQUEST_TRANSPARENT_REGIONS) == 0;
+        if (mCanvasOpaque == null || mCanvasOpaque != opaque) {
+            mCanvasOpaque = opaque;
+            mHasRenderNode = false;
+            invalidate();
+        }
     }
 
     /**
@@ -311,6 +1385,11 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
      * AOSP obtains these constraints from WMS relayout; the hosted runtime has no WMS.
      */
     public void prepareWindowTraversal$artzig(WindowManager.LayoutParams lp, int maxW, int maxH) {
+        mWindowAttributes.width = lp.width;
+        mWindowAttributes.height = lp.height;
+        mWindowAttributes.x = lp.x;
+        mWindowAttributes.y = lp.y;
+        mWindowAttributes.gravity = lp.gravity;
         if (maxW <= 0 || maxH <= 0) return;
         boolean changed = !mHostedWindowLayout
                 || mHostedWindowMaxWidth != maxW || mHostedWindowMaxHeight != maxH
@@ -354,16 +1433,17 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             mHandler.getLooper().getQueue().removeSyncBarrier(mTraversalBarrier);
             mTraversalBarrier = -1;
         }
-        performTraversal();
+        mIsInTraversal = true;
+        try { performTraversal(); } finally { mIsInTraversal = false; }
         return getRenderNode$artzig();
     }
 
     public RenderNode getRenderNode$artzig() {
-        return mView != null && mHasRenderNode ? mRenderNode : null;
+        return mView != null && !mStopped && mHasRenderNode ? mRenderNode : null;
     }
 
     private void performTraversal() {
-        if (mView == null) return;
+        if (mView == null || mStopped) return;
         int previousWidth = mWidth;
         int previousHeight = mHeight;
         long traceStart = TRACE_SLOW_FRAMES ? SystemClock.uptimeMillis() : 0;
@@ -433,13 +1513,20 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         // view display lists, then keep a stable root node which references the
         // decor's RenderNode. Replaying mView.draw() here forced dispatchDraw()
         // across the complete hierarchy on every animation frame.
+        // AOSP ViewRootImpl.draw(): observers run before recording display lists.
+        for (int i = 0; i < mSurfaceChangedCallbacks.size(); i++) {
+            mSurfaceChangedCallbacks.get(i).vriDrawStarted(false);
+        }
+        mAttachInfo.mTreeObserver.dispatchOnDraw();
         RenderNode viewNode = mView.updateDisplayListIfDirty();
         if (!mHasRenderNode) {
             RecordingCanvas canvas = mRenderNode.beginRecording(width, height);
             try {
                 // Overlay roots are replayed into the activity composite, so a clear would punch
                 // through transparent popup corners. The activity root remains opaque black.
-                if (!mHostedWindowLayout) canvas.drawColor(0xff000000);
+                if (mCanvasOpaque != null ? mCanvasOpaque : !mHostedWindowLayout) {
+                    canvas.drawColor(0xff000000);
+                }
                 canvas.enableZ();
                 canvas.drawRenderNode(viewNode);
                 canvas.disableZ();
@@ -563,6 +1650,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     }
 
     void scheduleTraversals() {
+        if (mStopped || mRemoved) return;
         if (!mTraversalScheduled) {
             mTraversalScheduled = true;
             // AOSP ViewRootImpl.scheduleTraversals(). WMS and DisplayEventReceiver are absent,
@@ -570,7 +1658,6 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             mTraversalBarrier = mHandler.getLooper().getQueue().postSyncBarrier();
             mChoreographer.postCallback(Choreographer.CALLBACK_TRAVERSAL,
                     mTraversalRunnable, null);
-            ArtzigAccessibilityBridge.markChanged("traversal");
             if (mFrameListener != null) mHandler.post(mFrameListener);
         }
     }
@@ -631,12 +1718,53 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     }
     @Override public void clearChildFocus(View child) {}
     @Override public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) { return false; }
-    @Override public boolean requestSendAccessibilityEvent(View child, android.view.accessibility.AccessibilityEvent event) {
-        ArtzigAccessibilityBridge.markAccessibilityEvent(event);
+    @Override
+    public boolean requestSendAccessibilityEvent(View child, AccessibilityEvent event) {
+        if (mView == null || mStopped || mPausedForTransition) {
+            return false;
+        }
+
+        // Immediately flush pending content changed event (if any) to preserve event order
+        if (event.getEventType() != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                && mSendWindowContentChangedAccessibilityEvent != null
+                && mSendWindowContentChangedAccessibilityEvent.mSource != null) {
+            mSendWindowContentChangedAccessibilityEvent.removeCallbacksAndRun();
+        }
+
+        // Intercept accessibility focus events fired by virtual nodes to keep
+        // track of accessibility focus position in such nodes.
+        final int eventType = event.getEventType();
+        final View source = getSourceForAccessibilityEvent(event);
+        switch (eventType) {
+            case AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED: {
+                if (source != null) {
+                    AccessibilityNodeProvider provider = source.getAccessibilityNodeProvider();
+                    if (provider != null) {
+                        final int virtualNodeId = AccessibilityNodeInfo.getVirtualDescendantId(
+                                event.getSourceNodeId());
+                        final AccessibilityNodeInfo node;
+                        node = provider.createAccessibilityNodeInfo(virtualNodeId);
+                        setAccessibilityFocus(source, node);
+                    }
+                }
+            } break;
+            case AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED: {
+                if (source != null && source.getAccessibilityNodeProvider() != null) {
+                    setAccessibilityFocus(null, null);
+                }
+            } break;
+
+
+            case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED: {
+                handleWindowContentChangedEvent(event);
+            } break;
+        }
+        mAccessibilityManager.sendAccessibilityEvent(event);
         return true;
     }
-    @Override public void notifySubtreeAccessibilityStateChanged(View child, View source, int changeType) {
-        ArtzigAccessibilityBridge.markChanged("subtree:" + changeType);
+    @Override
+    public void notifySubtreeAccessibilityStateChanged(View child, View source, int changeType) {
+        postSendWindowContentChangedCallback(Objects.requireNonNull(source), changeType);
     }
     @Override public boolean canResolveLayoutDirection() { return true; }
     @Override public boolean isLayoutDirectionResolved() { return true; }
@@ -665,7 +1793,11 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     private HandwritingInitiator mHandwritingInitiator;
     private InsetsController mInsetsController;
     public HandwritingInitiator getHandwritingInitiator() {
-        if (mHandwritingInitiator == null) mHandwritingInitiator = new HandwritingInitiator();
+        // AOSP ViewRootImpl constructor collaborators, retained lazily by this host root.
+        if (mHandwritingInitiator == null) {
+            mHandwritingInitiator = new HandwritingInitiator(ViewConfiguration.get(mContext),
+                    mContext.getSystemService(android.view.inputmethod.InputMethodManager.class));
+        }
         return mHandwritingInitiator;
     }
     public InsetsController getInsetsController() {
@@ -693,6 +1825,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         mAttachInfo.mSystemUiVisibility = 0;
         mAttachInfo.mHasSystemUiListeners = false;
         mView.dispatchCollectViewAttributes(mAttachInfo, 0);
+        applyKeepScreenOnFlag(mWindowAttributes);
 
         int visibility = mAttachInfo.mSystemUiVisibility;
         mWindowAttributes.subtreeSystemUiVisibility = visibility;
@@ -759,7 +1892,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         }
         return mImeFocusController;
     }
-    public View getAccessibilityFocusedHost() { return null; }
+    public View getAccessibilityFocusedHost() { return mAccessibilityFocusedHost; }
     public Surface mSurface = new Surface();
     public android.os.IBinder mLeashToken;
     public void dispatchKeyFromIme(KeyEvent event) {}
@@ -849,14 +1982,60 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void transformMatrixToLocal(android.graphics.Matrix matrix) {}
     public void transformMatrixToGlobal(android.graphics.Matrix matrix) {}
     public boolean isSameResourcesOverrideConfig(android.os.IBinder token, android.content.res.Configuration config) { return true; }
-    public void setAccessibilityFocus(View view, android.view.accessibility.AccessibilityNodeInfo node) {}
+    public void setAccessibilityFocus(View view, AccessibilityNodeInfo node) {
+        // If we have a virtual view with accessibility focus we need
+        // to clear the focus and invalidate the virtual view bounds.
+        if (mAccessibilityFocusedVirtualView != null) {
+
+            AccessibilityNodeInfo focusNode = mAccessibilityFocusedVirtualView;
+            View focusHost = mAccessibilityFocusedHost;
+
+            // Wipe the state of the current accessibility focus since
+            // the call into the provider to clear accessibility focus
+            // will fire an accessibility event which will end up calling
+            // this method and we want to have clean state when this
+            // invocation happens.
+            mAccessibilityFocusedHost = null;
+            mAccessibilityFocusedVirtualView = null;
+
+            // Clear accessibility focus on the host after clearing state since
+            // this method may be reentrant.
+            focusHost.clearAccessibilityFocusNoCallbacks(
+                    AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+
+            AccessibilityNodeProvider provider = focusHost.getAccessibilityNodeProvider();
+            if (provider != null) {
+                // Invalidate the area of the cleared accessibility focus.
+                focusNode.getBoundsInParent(mTempRect);
+                focusHost.invalidate(mTempRect);
+                // Clear accessibility focus in the virtual node.
+                final int virtualNodeId = AccessibilityNodeInfo.getVirtualDescendantId(
+                        focusNode.getSourceNodeId());
+                provider.performAction(virtualNodeId,
+                        AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS, null);
+            }
+            focusNode.recycle();
+        }
+        if ((mAccessibilityFocusedHost != null) && (mAccessibilityFocusedHost != view))  {
+            // Clear accessibility focus in the view.
+            mAccessibilityFocusedHost.clearAccessibilityFocusNoCallbacks(
+                    AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+        }
+
+        // Set the new focus host and node.
+        mAccessibilityFocusedHost = view;
+        mAccessibilityFocusedVirtualView = node;
+        // The hosted window backend has no WindowManager keep-clear regions.
+
+        invalidate();
+    }
     public final ViewFrameInfo mViewFrameInfo = new ViewFrameInfo();
     public Thread mThread = Thread.currentThread();
     public void addObserver(android.graphics.HardwareRendererObserver observer) {}
     public void removeObserver(android.graphics.HardwareRendererObserver observer) {}
     public void dumpDebug(android.util.proto.ProtoOutputStream proto, long fieldId) {}
-    public int getDisplayId() { return 0; }
-    public android.os.IBinder getWindowToken() { return null; }
+    public int getDisplayId() { return mDisplay != null ? mDisplay.getDisplayId() : Display.DEFAULT_DISPLAY; }
+    public android.os.IBinder getWindowToken() { return mWindow == null ? null : mWindow.asBinder(); }
     public void onInputConnectionCreated(View view) {}
     public boolean mAdded = true;
     public boolean mIsAnimating;
@@ -868,7 +2047,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
             INTERMITTENT_STATE_IN_TRANSITION = 1, INTERMITTENT_STATE_INTERMITTENT = 2;
     public int getIntermittentState() { return INTERMITTENT_STATE_NOT_INTERMITTENT; }
     public void notifyInsetsChanged() {}
-    public int getHostVisibility() { return View.VISIBLE; }
+    public int getHostVisibility() { return mView == null ? View.GONE : mView.getVisibility(); }
     public void updateCompatSysUiVisibility(int type, int visibility, int mask) {}
     public void registerRtFrameCallback(android.graphics.HardwareRenderer.FrameDrawingCallback callback) {}
     public int dipToPx(int dip) { return dip; }
@@ -878,12 +2057,11 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public boolean shouldCheckFrameRate(boolean b) { return false; }
     public void setLocalDragState(Object obj) {}
     public void dispatchCheckFocus() {}
-    public CharSequence getTitle() { return ""; }
+    public CharSequence getTitle() { return mWindowAttributes.getTitle(); }
     public boolean isHandlingPointerEvent() { return false; }
     public void setDragFocus(View newDragTarget, DragEvent event) {}
     public boolean performHapticFeedback(int effectId, boolean always, boolean fromIme) { return false; }
     public void playSoundEffect(int effectId) {}
-    public View getCommonPredecessor(View first, View second) { return null; }
     public void notifyEnterAnimationComplete() {}
     public ViewParent getParentForAccessibility() { return null; }
     @Override public void requestFitSystemWindows() {
@@ -969,6 +2147,25 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void getLastTouchPoint(android.graphics.Point outPoint) {
         outPoint.set((int) mLastTouchPoint.x, (int) mLastTouchPoint.y);
     }
+    /** Register callbacks to be notified when the ViewRootImpl surface changes. */
+    public interface SurfaceChangedCallback {
+        void surfaceCreated(Transaction t);
+        void surfaceReplaced(Transaction t);
+        void surfaceDestroyed();
+        default void vriDrawStarted(boolean isWmSync) {};
+    }
+
+    private final ArrayList<SurfaceChangedCallback> mSurfaceChangedCallbacks = new ArrayList<>();
+    public void addSurfaceChangedCallback(SurfaceChangedCallback c) {
+        mSurfaceChangedCallbacks.add(c);
+    }
+
+    public void removeSurfaceChangedCallback(SurfaceChangedCallback c) {
+        mSurfaceChangedCallbacks.remove(c);
+    }
+
+    // The hosted root has no SurfaceControl-backed surface yet. Keep the stock
+    // callback registry; creation/replacement/destruction require such a surface.
     public SurfaceControl getSurfaceControl() { return new SurfaceControl(); }
     public void mergeWithNextTransaction(SurfaceControl.Transaction t, long frameNumber) { t.apply(); }
     public void registerAnimatingRenderNode(android.graphics.RenderNode renderNode) {
@@ -988,7 +2185,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void applyViewBoundsSandboxingIfNeeded(android.graphics.Rect outRect) {}
     public int getWidth() { return mWidth; }
     public int getHeight() { return mHeight; }
-    public void dispatchInputEvent(InputEvent event) {}
+    public void dispatchInputEvent(InputEvent event) { enqueueInputEvent(event); }
     public boolean injectBackKeyEvents(boolean preImeOnly) { return false; }
     public void dispatchBlurRegions(float[][] blurRegions, long frameNumber) {}
     public com.android.internal.graphics.drawable.BackgroundBlurDrawable createBackgroundBlurDrawable() { return null; }
@@ -1016,17 +2213,41 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     };
     public int getDirectAccessibilityConnectionId() { return -1; }
     public interface ActivityConfigCallback {
-        void onConfigurationChanged(android.content.res.Configuration overrideConfig, int newDisplayId);
-        default void requestCompatCameraControl(boolean showControl, boolean transformationApplied,
-                Object callback) {}
+        /**
+         * Notifies about override config change and/or move to different display.
+         * @param overrideConfig New override config to apply to activity.
+         * @param newDisplayId New display id, {@link Display#INVALID_DISPLAY} if not changed.
+         */
+        default void onConfigurationChanged(@NonNull Configuration overrideConfig,
+                int newDisplayId) {
+            // Must override one of the #onConfigurationChanged.
+            throw new IllegalStateException("Not implemented");
+        }
+
+        /**
+         * Notifies about override config change and/or move to different display.
+         * @param overrideConfig New override config to apply to activity.
+         * @param newDisplayId New display id, {@link Display#INVALID_DISPLAY} if not changed.
+         * @param activityWindowInfo New ActivityWindowInfo to apply to activity.
+         */
+        default void onConfigurationChanged(@NonNull Configuration overrideConfig,
+                int newDisplayId, @Nullable ActivityWindowInfo activityWindowInfo) {
+            onConfigurationChanged(overrideConfig, newDisplayId);
+        }
     }
-    public void setActivityConfigCallback(ActivityConfigCallback callback) {}
+    private ActivityConfigCallback mActivityConfigCallback;
+    public void setActivityConfigCallback(ActivityConfigCallback callback) { mActivityConfigCallback = callback; }
     public interface ConfigChangedCallback {
         void onConfigurationChanged(android.content.res.Configuration globalConfig);
     }
-    public static void addConfigCallback(ConfigChangedCallback callback) {}
-    public static void removeConfigCallback(ConfigChangedCallback callback) {}
-    public android.view.accessibility.AccessibilityNodeInfo getAccessibilityFocusedVirtualView() { return null; }
+    private static final ArrayList<ConfigChangedCallback> sConfigCallbacks = new ArrayList<>();
+    public static void addConfigCallback(ConfigChangedCallback callback) {
+        synchronized (sConfigCallbacks) { sConfigCallbacks.add(callback); }
+    }
+    public static void removeConfigCallback(ConfigChangedCallback callback) {
+        synchronized (sConfigCallbacks) { sConfigCallbacks.remove(callback); }
+    }
+    public android.view.accessibility.AccessibilityNodeInfo getAccessibilityFocusedVirtualView() { return mAccessibilityFocusedVirtualView; }
     private android.window.WindowOnBackInvokedDispatcher mOnBackInvokedDispatcher;
     public android.window.WindowOnBackInvokedDispatcher getOnBackInvokedDispatcher() {
         if (mOnBackInvokedDispatcher == null) {
@@ -1041,4 +2262,289 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void votePreferredFrameRate(float frameRate, int type) {}
     public Handler getHandler() { return mHandler; }
     public Context getContext() { return mContext; }
+    // Reused AOSP ViewRootImpl accessibility delivery, content-change throttling,
+    // and focus bookkeeping. The hosted root still owns the view hierarchy until
+    // IWindowSession is available; no test consumer is called by these methods.
+    private void postSendWindowContentChangedCallback(View source, int changeType) {
+        if (mSendWindowContentChangedAccessibilityEvent == null) {
+            mSendWindowContentChangedAccessibilityEvent =
+                new SendWindowContentChangedAccessibilityEvent();
+        }
+        mSendWindowContentChangedAccessibilityEvent.runOrPost(source, changeType);
+    }
+
+    private void removeSendWindowContentChangedCallback() {
+        if (mSendWindowContentChangedAccessibilityEvent != null) {
+            mHandler.removeCallbacks(mSendWindowContentChangedAccessibilityEvent);
+        }
+    }
+
+    private View getSourceForAccessibilityEvent(AccessibilityEvent event) {
+        final long sourceNodeId = event.getSourceNodeId();
+        final int accessibilityViewId = AccessibilityNodeInfo.getAccessibilityViewId(
+                sourceNodeId);
+        return AccessibilityNodeIdManager.getInstance().findView(accessibilityViewId);
+    }
+
+    private void handleWindowContentChangedEvent(AccessibilityEvent event) {
+        final View focusedHost = mAccessibilityFocusedHost;
+        if (focusedHost == null || mAccessibilityFocusedVirtualView == null) {
+            // No virtual view focused, nothing to do here.
+            return;
+        }
+
+        final AccessibilityNodeProvider provider = focusedHost.getAccessibilityNodeProvider();
+        if (provider == null) {
+            // Error state: virtual view with no provider. Clear focus.
+            mAccessibilityFocusedHost = null;
+            mAccessibilityFocusedVirtualView = null;
+            focusedHost.clearAccessibilityFocusNoCallbacks(0);
+            return;
+        }
+
+        // We only care about change types that may affect the bounds of the
+        // focused virtual view.
+        final int changes = event.getContentChangeTypes();
+        if ((changes & AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE) == 0
+                && changes != AccessibilityEvent.CONTENT_CHANGE_TYPE_UNDEFINED) {
+            return;
+        }
+
+        final long eventSourceNodeId = event.getSourceNodeId();
+        final int changedViewId = AccessibilityNodeInfo.getAccessibilityViewId(eventSourceNodeId);
+
+        // Search up the tree for subtree containment.
+        boolean hostInSubtree = false;
+        View root = mAccessibilityFocusedHost;
+        while (root != null && !hostInSubtree) {
+            if (changedViewId == root.getAccessibilityViewId()) {
+                hostInSubtree = true;
+            } else {
+                final ViewParent parent = root.getParent();
+                if (parent instanceof View) {
+                    root = (View) parent;
+                } else {
+                    root = null;
+                }
+            }
+        }
+
+        // We care only about changes in subtrees containing the host view.
+        if (!hostInSubtree) {
+            return;
+        }
+
+        final long focusedSourceNodeId = mAccessibilityFocusedVirtualView.getSourceNodeId();
+        int focusedChildId = AccessibilityNodeInfo.getVirtualDescendantId(focusedSourceNodeId);
+
+        // Refresh the node for the focused virtual view.
+        final Rect oldBounds = mTempRect;
+        mAccessibilityFocusedVirtualView.getBoundsInScreen(oldBounds);
+        mAccessibilityFocusedVirtualView = provider.createAccessibilityNodeInfo(focusedChildId);
+        if (mAccessibilityFocusedVirtualView == null) {
+            // Error state: The node no longer exists. Clear focus.
+            mAccessibilityFocusedHost = null;
+            focusedHost.clearAccessibilityFocusNoCallbacks(0);
+
+            // This will probably fail, but try to keep the provider's internal
+            // state consistent by clearing focus.
+            provider.performAction(focusedChildId,
+                    AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS.getId(), null);
+            invalidate();
+        } else {
+            // The node was refreshed, invalidate bounds if necessary.
+            final Rect newBounds = mAccessibilityFocusedVirtualView.getBoundsInScreen();
+            if (!oldBounds.equals(newBounds)) {
+                oldBounds.union(newBounds);
+                invalidate();
+            }
+        }
+    }
+
+    private View getCommonPredecessor(View first, View second) {
+        if (mTempHashSet == null) {
+            mTempHashSet = new HashSet<View>();
+        }
+        HashSet<View> seen = mTempHashSet;
+        seen.clear();
+        View firstCurrent = first;
+        while (firstCurrent != null) {
+            seen.add(firstCurrent);
+            ViewParent firstCurrentParent = firstCurrent.mParent;
+            if (firstCurrentParent instanceof View) {
+                firstCurrent = (View) firstCurrentParent;
+            } else {
+                firstCurrent = null;
+            }
+        }
+        View secondCurrent = second;
+        while (secondCurrent != null) {
+            if (seen.contains(secondCurrent)) {
+                seen.clear();
+                return secondCurrent;
+            }
+            ViewParent secondCurrentParent = secondCurrent.mParent;
+            if (secondCurrentParent instanceof View) {
+                secondCurrent = (View) secondCurrentParent;
+            } else {
+                secondCurrent = null;
+            }
+        }
+        seen.clear();
+        return null;
+    }
+
+    private class SendWindowContentChangedAccessibilityEvent implements Runnable {
+        private int mChangeTypes = 0;
+
+        public View mSource;
+        public long mLastEventTimeMillis;
+        /**
+         * Keep track of action that caused the event.
+         * This is empty if there's no performing actions for pending events.
+         * This is zero if there're multiple events performed for pending events.
+         */
+        @NonNull public OptionalInt mAction = OptionalInt.empty();
+        /**
+         * Override for {@link AccessibilityEvent#originStackTrace} to provide the stack trace
+         * of the original {@link #runOrPost} call instead of one for sending the delayed event
+         * from a looper.
+         */
+        public StackTraceElement[] mOrigin;
+
+        @Override
+        public void run() {
+            // Protect against re-entrant code and attempt to do the right thing in the case that
+            // we're multithreaded.
+            View source = mSource;
+            mSource = null;
+            if (source == null) {
+                Log.e(TAG, "Accessibility content change has no source");
+                return;
+            }
+            // The accessibility may be turned off while we were waiting so check again.
+            if (mAccessibilityManager.isEnabled()) {
+                mLastEventTimeMillis = SystemClock.uptimeMillis();
+                AccessibilityEvent event = AccessibilityEvent.obtain();
+                event.setEventType(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+                event.setContentChangeTypes(mChangeTypes);
+                if (mAction.isPresent()) event.setAction(mAction.getAsInt());
+                if (AccessibilityEvent.DEBUG_ORIGIN) event.originStackTrace = mOrigin;
+                source.sendAccessibilityEventUnchecked(event);
+            } else {
+                mLastEventTimeMillis = 0;
+            }
+            // In any case reset to initial state.
+            source.resetSubtreeAccessibilityStateChanged();
+            mChangeTypes = 0;
+            mAction = OptionalInt.empty();
+            if (AccessibilityEvent.DEBUG_ORIGIN) mOrigin = null;
+        }
+
+        public void runOrPost(View source, int changeType) {
+            if (mHandler.getLooper() != Looper.myLooper()) {
+                CalledFromWrongThreadException e = new CalledFromWrongThreadException("Only the "
+                        + "original thread that created a view hierarchy can touch its views.");
+                // TODO: Throw the exception
+                Log.e(TAG, "Accessibility content change on non-UI thread. Future Android "
+                        + "versions will throw an exception.", e);
+                // Attempt to recover. This code does not eliminate the thread safety issue, but
+                // it should force any issues to happen near the above log.
+                mHandler.removeCallbacks(this);
+                if (mSource != null) {
+                    // Dispatch whatever was pending. It's still possible that the runnable started
+                    // just before we removed the callbacks, and bad things will happen, but at
+                    // least they should happen very close to the logged error.
+                    run();
+                }
+            }
+
+            if (!canContinueThrottle(source, changeType)) {
+                removeCallbacksAndRun();
+            }
+
+            if (mSource != null) {
+                View newSource = getCommonPredecessor(mSource, source);
+                if (newSource != null) {
+                    newSource = newSource.getSelfOrParentImportantForA11y();
+                }
+                if (newSource == null) {
+                    // If there is no common predecessor, then mSource points to
+                    // a removed view, hence in this case always prefer the source.
+                    newSource = source;
+                }
+
+                mChangeTypes |= changeType;
+                if (mSource != newSource) {
+                    mChangeTypes |= AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE;
+                    mSource = newSource;
+                }
+
+                final int performingAction = mAccessibilityManager.getPerformingAction();
+                if (performingAction != 0) {
+                    if (mAction.isEmpty()) {
+                        mAction = OptionalInt.of(performingAction);
+                    } else if (mAction.getAsInt() != performingAction) {
+                        // Multiple actions are performed for pending events. We cannot decide one
+                        // action here.
+                        // We're doing best effort to set action value, and it's fine to set
+                        // no action this case.
+                        mAction = OptionalInt.of(0);
+                    }
+                }
+
+                return;
+            }
+            mSource = source;
+            mChangeTypes = changeType;
+            if (mAccessibilityManager.getPerformingAction() != 0) {
+                mAction = OptionalInt.of(mAccessibilityManager.getPerformingAction());
+            }
+            if (AccessibilityEvent.DEBUG_ORIGIN) {
+                mOrigin = Thread.currentThread().getStackTrace();
+            }
+            final long timeSinceLastMillis = SystemClock.uptimeMillis() - mLastEventTimeMillis;
+            final long minEventIntervalMillis =
+                    ViewConfiguration.getSendRecurringAccessibilityEventsInterval();
+            if (timeSinceLastMillis >= minEventIntervalMillis) {
+                removeCallbacksAndRun();
+            } else {
+                mHandler.postDelayed(this, minEventIntervalMillis - timeSinceLastMillis);
+            }
+        }
+
+        public void removeCallbacksAndRun() {
+            mHandler.removeCallbacks(this);
+            run();
+        }
+
+        private boolean canContinueThrottle(View source, int changeType) {
+            if (!reduceWindowContentChangedEventThrottle()) {
+                // Old behavior. Always throttle.
+                return true;
+            }
+            if (mSource == null) {
+                // We don't have a pending event.
+                return true;
+            }
+            if (mSource == source) {
+                // We can merge a new event with a pending event from the same source.
+                return true;
+            }
+            // We can merge subtree change events.
+            return changeType == AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
+                    && mChangeTypes == AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE;
+        }
+    }
+
+
+    public static final class CalledFromWrongThreadException extends AndroidRuntimeException {
+        @UnsupportedAppUsage
+        public CalledFromWrongThreadException(String msg) {
+            super(msg);
+        }
+    }
+    public void setPausedForTransition(boolean paused) {
+        mPausedForTransition = paused;
+    }
 }

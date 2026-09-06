@@ -1,0 +1,44 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] OverlayProperties: marshal LUT sampling keys as a JNI array
+
+The pinned JNI passes a C++ vector pointer to a Java int[] constructor argument.
+Allocate the JNI array, release local references, and propagate the constructor's
+exception without making further JNI calls with an exception pending. Preserve
+Java validation, including its pinned failure behavior. Include graphics constants
+directly instead of pulling in the unused SurfaceComposerClient dependency.
+
+diff --git a/core/jni/android_hardware_OverlayProperties.cpp b/core/jni/android_hardware_OverlayProperties.cpp
+--- a/core/jni/android_hardware_OverlayProperties.cpp
++++ b/core/jni/android_hardware_OverlayProperties.cpp
+@@ -20,7 +20,8 @@
+ #include <android/gui/LutProperties.h>
+ #include <android/gui/OverlayProperties.h>
+ #include <binder/Parcel.h>
+-#include <gui/SurfaceComposerClient.h>
++#include <algorithm>
++#include <system/graphics.h>
+ #include <nativehelper/JNIHelp.h>
+ 
+ #include "android_os_Parcel.h"
+@@ -122,11 +123,19 @@
+     for (int32_t i = 0; i < size; i++) {
+         if (lutProperties[i].has_value()) {
+             auto& item = lutProperties[i].value();
++            jintArray samplingKeys = env->NewIntArray(item.samplingKeys.size());
++            if (samplingKeys == nullptr) return nullptr;
++            for (size_t j = 0; j < item.samplingKeys.size(); j++) {
++                const jint key = static_cast<jint>(item.samplingKeys[j]);
++                env->SetIntArrayRegion(samplingKeys, j, 1, &key);
++            }
+             jobject properties =
+                     env->NewObject(gLutPropertiesClassInfo.clazz, gLutPropertiesClassInfo.ctor,
+-                                   static_cast<int32_t>(item.dimension), item.size,
+-                                   item.samplingKeys.data());
++                                   static_cast<int32_t>(item.dimension), item.size, samplingKeys);
++            env->DeleteLocalRef(samplingKeys);
++            if (env->ExceptionCheck()) return nullptr;
+             env->SetObjectArrayElement(nativeLutProperties, i, properties);
++            env->DeleteLocalRef(properties);
+         }
+     }
+     return nativeLutProperties;

@@ -26,7 +26,6 @@ import android.provider.MediaStore
 import android.util.Size
 import android.view.ThreadedRenderer
 import android.view.ViewRootImpl
-import android.view.WindowManagerImpl
 import java.security.KeyStore
 import java.util.ArrayList
 import java.util.HashMap
@@ -276,11 +275,6 @@ public final class FrameworkCompatSmoke {
         @JvmStatic
         public fun main(args: Array<String>) {
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
-            // AOSP application processes always have their initial Application
-            // before client framework APIs such as Html consult configuration.
-            if (android.app.ActivityThread.currentApplication() == null) {
-                android.app.ActivityThread.currentActivityThread().`bindSystemApplication$artzig`()
-            }
             // A real application process is installed and attached before framework clients run.
             // The direct --javatest entry has no launcher bindApplication handshake, so establish
             // the broker/PackageManager identity explicitly before static clients such as
@@ -288,7 +282,15 @@ public final class FrameworkCompatSmoke {
             val fixtureApk: String = requireNotNull(args.getOrNull(1)) { "fixture APK argument missing" }
             val installer = requireNotNull(android.app.HostedServiceClient.installerOrNull())
             require(installer.installPackage(fixtureApk, null) == "org.example", "fixture install")
-            android.app.ActivityThread.attachApplicationHosted("org.example")
+            // Exercise LoadedApk construction before binding creates the Application.
+            testLoadedApk()
+            val application = android.app.HostedServiceClient.attachApplication("org.example")
+            require(application is SmokeApplication && application.created,
+                "bindApplication calls onCreate on the existing LoadedApk Application")
+            require(android.app.ActivityThread.currentActivityThread().getPackageInfo(
+                application.applicationInfo, android.content.res.CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO,
+                android.content.Context.CONTEXT_INCLUDE_CODE) != null,
+                "the bound application may load its own code without CONTEXT_IGNORE_SECURITY")
             testStockInternalUtilMetadata()
             testStockCompatChanges()
             testGeneratedAppProtoEnums()
@@ -318,11 +320,7 @@ public final class FrameworkCompatSmoke {
                 "Intent.filterHashCode copy",
             )
 
-            // Server-side install: the org.example fixture APK's manifest
-            // declares the launcher activity and the PLAYBACK service the
-            // assertions below resolve through real IntentFilters.
-            testLoadedApk()
-
+            // The installed fixture declares the launcher activity and PLAYBACK service.
             val hostedSystemContext = HostContexts.systemContext(
                 requireNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0,
             )
@@ -373,8 +371,8 @@ public final class FrameworkCompatSmoke {
                 "Application.getProcessName API",
             )
             require(
-                android.app
-                    .ActivityManager()
+                android.app.ActivityThread.currentApplication()
+                    .getSystemService(android.app.ActivityManager::class.java)
                     .getHistoricalProcessExitReasons(null, 0, 0)
                     .isEmpty(),
                 "host has no historical process exits",
@@ -440,15 +438,6 @@ public final class FrameworkCompatSmoke {
             require(
                 !ViewRootImpl(null).getWindowInsets(false).isConsumed(),
                 "host zero window insets propagate to descendants",
-            )
-            WindowManagerImpl.configureWindowMetrics(411, 731, 1.5f)
-            val resizedMetrics: android.view.WindowMetrics =
-                WindowManagerImpl(null).getCurrentWindowMetrics()
-            require(
-                resizedMetrics.getBounds().width() == 411 &&
-                    resizedMetrics.getBounds().height() == 731 &&
-                    resizedMetrics.getDensity() == 1.5f,
-                "current window metrics follow host resize",
             )
             require(
                 android.content.res.HostedConfigurationController.resolveLandscape(
@@ -951,16 +940,17 @@ public final class FrameworkCompatSmoke {
         private fun testStockCompatChanges() {
             require(android.app.compat.CompatChanges.isChangeEnabled(0x41L), "current-process change enabled")
             require(
-                android.app.compat.CompatChanges.isChangeEnabled(
+                runCatching { android.app.compat.CompatChanges.isChangeEnabled(
                     0x42L,
                     "org.example",
                     android.os.UserHandle.SYSTEM,
-                ),
-                "package change enabled through platform compat Binder",
+                ) }.exceptionOrNull() is SecurityException,
+                "package compatibility queries require privileged permissions",
             )
             require(
-                android.app.compat.CompatChanges.isChangeEnabled(0x43L, android.os.Process.SYSTEM_UID),
-                "uid change enabled through platform compat Binder",
+                runCatching { android.app.compat.CompatChanges.isChangeEnabled(
+                    0x43L, android.os.Process.SYSTEM_UID) }.exceptionOrNull() is SecurityException,
+                "UID compatibility queries require privileged permissions",
             )
 
             val range = android.app.compat.PackageOverride.Builder()
@@ -1048,14 +1038,49 @@ public final class FrameworkCompatSmoke {
                 "generated StatsD stats log",
             )
 
-            val logCursor = android.util.ArtzigTestDiagnostics.logSequence()
-            val issueCursor = android.util.ArtzigTestDiagnostics.issueSequence()
+            val logCursor = dev.artzig.ArtzigTestDiagnostics.logSequence()
+            val issueCursor = dev.artzig.ArtzigTestDiagnostics.issueSequence()
             android.util.Log.i("FrameworkCompatSmoke", "stock logging clients ok")
             require(
-                android.util.ArtzigTestDiagnostics.snapshot(logCursor, issueCursor)
+                dev.artzig.ArtzigTestDiagnostics.snapshot(logCursor, issueCursor)
                     .contains("stock logging clients ok"),
                 "native log diagnostics sink",
             )
+            testDiagnosticJournal()
+        }
+
+        private fun testDiagnosticJournal() {
+            val logsBefore = ArtzigTestDiagnostics.logSequence()
+            val issuesBefore = ArtzigTestDiagnostics.issueSequence()
+            val text = "quote\" slash\\ newline\n tab\t control\u0001"
+            ArtzigTestDiagnostics.recordLog(android.util.Log.INFO, null, text)
+            ArtzigTestDiagnostics.recordLog(android.util.Log.ERROR, "optional", "NoSuchMethodError")
+            require(ArtzigTestDiagnostics.issueSequence() == issuesBefore,
+                "optional method probes must not become runtime issues")
+            val failure = ArtzigTestDiagnostics.unsupported("owner", "member", null)
+            require(failure.message == "owner.member is not implemented", "unsupported message")
+            val snapshot = org.json.JSONObject(ArtzigTestDiagnostics.snapshot(logsBefore, issuesBefore))
+            require(snapshot.getJSONArray("logs").getJSONObject(0).getString("message") == text,
+                "diagnostic JSON escaping")
+            require(snapshot.getJSONArray("logs").getJSONObject(0).getString("tag") == "",
+                "null log tag")
+            require(snapshot.getJSONArray("issues").getJSONObject(0).getString("kind") == "unimplemented",
+                "explicit unsupported issue classification")
+
+            val logMark = ArtzigTestDiagnostics.logSequence()
+            val issueMark = ArtzigTestDiagnostics.issueSequence()
+            repeat(513) { ArtzigTestDiagnostics.recordLog(android.util.Log.INFO, "bounded", "entry") }
+            repeat(257) { ArtzigTestDiagnostics.reportIssue("test", "owner", "member", "entry") }
+            val bounded = org.json.JSONObject(ArtzigTestDiagnostics.snapshot(logMark, issueMark))
+            require(bounded.getJSONArray("logs").length() == 512, "bounded log retention")
+            require(bounded.getJSONArray("issues").length() == 256, "bounded issue retention")
+            require(bounded.getLong("logs_dropped_through") == logMark + 1, "dropped log cursor")
+            require(bounded.getLong("issues_dropped_through") == issueMark + 1, "dropped issue cursor")
+            val empty = org.json.JSONObject(ArtzigTestDiagnostics.snapshot(
+                ArtzigTestDiagnostics.logSequence(), ArtzigTestDiagnostics.issueSequence(),
+            ))
+            require(empty.getJSONArray("logs").length() == 0 && empty.getJSONArray("issues").length() == 0,
+                "snapshot cursors are exclusive")
         }
 
         /** Stock AOSP FontRequest: validation, identity key and certificate rendering. */

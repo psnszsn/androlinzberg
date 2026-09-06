@@ -210,13 +210,13 @@ pub fn main(init: std.process.Init) !void {
             var headless = try bootHeadlessApk(init, apk_abs);
             defer headless.rt.releaseProcessState();
             if (binder) |*session| try session.awaitSystemReady();
-            try headless.rt.runMain("dev.artzig.AppProcess", &.{});
+            try runFrameworkMain(&headless.rt, "dev.artzig.AppProcess", &.{});
             return;
         } else if (std.mem.eql(u8, args[i], "--system-server")) {
             // Spawned by session.zig inside a session; never starts one itself.
             var headless = try bootHeadless(init);
             defer headless.rt.releaseProcessState();
-            try headless.rt.runMain("dev.artzig.system.SystemServer", &.{});
+            try runFrameworkMain(&headless.rt, "dev.artzig.system.SystemServer", &.{});
             return;
         } else if (std.mem.eql(u8, args[i], "--codec-make-m4v")) {
             const r = @import("azk_codec").azk_codec_write_test_m4v("/tmp/azk-test.m4v");
@@ -237,7 +237,7 @@ pub fn main(init: std.process.Init) !void {
             if (binder) |*session| try session.awaitSystemReady();
             const rt = &headless.rt;
             const cls_name = init.minimal.environ.getPosix("AZK_TEST_CLASS") orelse "dev.artzig.TestMain";
-            try rt.runMain(cls_name, args[i + 1 ..]);
+            try runFrameworkMain(rt, cls_name, args[i + 1 ..]);
             const e2 = art.Env{ .env = rt.env };
             const cls2 = try e2.findClass("dev/artzig/GraphicsSmoke");
             const draw2 = try e2.getStaticMethodID(cls2, "draw", "(II)Landroid/graphics/Bitmap;");
@@ -305,11 +305,14 @@ const Headless = struct {
 /// for now; the android.os migration grows this). The library also backs the
 /// NDK binder ABI, so it is opened RTLD-global from the install tree — the
 /// same copy the island links and bionic maps by soname.
-fn registerBinderJni(arena: std.mem.Allocator, tree: []const u8, env: *anyopaque) !void {
+fn registerBinderJni(arena: std.mem.Allocator, tree: []const u8, env: *anyopaque, process_exit: ProcessExitFn) !void {
     const path = try std.fs.path.join(arena, &.{ tree, "lib", "art", "libbinder_ndk.so" });
     var lib = try std.DynLib.open(path);
     const RegisterBinderFn = *const fn (*anyopaque) callconv(.c) c_int;
     const register = lib.lookup(RegisterBinderFn, "azk_register_binder_jni") orelse return error.SymbolNotFound;
+    const SetProcessExitFn = *const fn (ProcessExitFn) callconv(.c) void;
+    const set_process_exit = lib.lookup(SetProcessExitFn, "azk_binder_set_process_exit") orelse return error.SymbolNotFound;
+    set_process_exit(process_exit);
     if (register(env) != 0) return error.JniRegistrationFailed;
 }
 
@@ -335,6 +338,23 @@ fn configureFonts(init: std.process.Init) void {
     }
 }
 
+const ProcessExitFn = *const fn (c_int) callconv(.c) noreturn;
+
+// std.Io has no immediate self-termination operation. Use AndroidRuntime's
+// native boundary: std.process.exit runs libc destructors in a libc-linked Zig
+// executable, which is incompatible with ART's live worker threads.
+fn lookupProcessExit(lib: *std.DynLib) !ProcessExitFn {
+    return lib.lookup(ProcessExitFn, "azk_android_runtime_exit") orelse error.SymbolNotFound;
+}
+
+fn runFrameworkMain(runtime: *art.Runtime, class_name: []const u8, arguments: []const [:0]const u8) !void {
+    const allocator = runtime.arena.allocator();
+    const bootstrap_args = try allocator.alloc([:0]const u8, arguments.len + 1);
+    bootstrap_args[0] = try allocator.dupeSentinel(u8, class_name, 0);
+    @memcpy(bootstrap_args[1..], arguments);
+    try runtime.runMain("dev.artzig.RuntimeBootstrap", bootstrap_args);
+}
+
 fn bootHeadless(init: std.process.Init) !Headless {
     const arena = init.arena.allocator();
     const tree = try installTree(init);
@@ -358,12 +378,13 @@ fn bootHeadless(init: std.process.Init) !Headless {
         .library_path = &.{runtime_overlay_dir},
         .use_bionic_loader = false,
         .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
+        .exit_hook = try lookupProcessExit(&lib),
     });
     errdefer rt.releaseProcessState();
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
         try host_natives.register(init.io, @ptrCast(rt.env), hwui);
-        try registerBinderJni(arena, tree, @ptrCast(rt.env));
+        try registerBinderJni(arena, tree, @ptrCast(rt.env), try lookupProcessExit(&lib));
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -405,12 +426,13 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
         .bionic_lib_dir = runtime_overlay_dir,
         .use_bionic_loader = true,
         .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
+        .exit_hook = try lookupProcessExit(&lib),
     });
     errdefer rt.releaseProcessState();
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
         if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
         try host_natives.register(init.io, @ptrCast(rt.env), hwui);
-        try registerBinderJni(arena, tree, @ptrCast(rt.env));
+        try registerBinderJni(arena, tree, @ptrCast(rt.env), try lookupProcessExit(&lib));
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -500,6 +522,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         .bionic_lib_dir = runtime_overlay_dir,
         .use_bionic_loader = apk != null,
         .extra_options = art_extra_options,
+        .exit_hook = try lookupProcessExit(&lib),
     });
     var rt = rt_v;
     _ = &rt;
@@ -510,7 +533,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     if (session) |s| try s.awaitSystemReady();
     if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
     try host_natives.register(init.io, @ptrCast(env), hwui);
-    try registerBinderJni(arena, tree, @ptrCast(env));
+    try registerBinderJni(arena, tree, @ptrCast(env), try lookupProcessExit(&lib));
     defer host_natives.deinitWakeups();
 
     const e = art.Env{ .env = env };

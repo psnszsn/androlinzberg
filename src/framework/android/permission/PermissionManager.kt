@@ -9,8 +9,8 @@ import android.os.UserHandle
 
 /**
  * Hosted adaptation of AOSP android.permission.PermissionManager (reduced —
- * the android.permission package is not vendored, and the hosted session has
- * no PermissionManagerService binder). Permission state lives in the hosted
+ * the full client still needs the AppOps and virtual-device dependency closure).
+ * Permission state lives in the hosted
  * package manager: checks go through `IPackageManager`, and permission
  * definitions are read from the platform package's `PackageInfo.permissions`
  * (real ParsedPermission data via `PackageInfoUtils`). Restricted-permission
@@ -18,6 +18,33 @@ import android.os.UserHandle
  * answer their fixed defaults.
  */
 class PermissionManager {
+    /**
+     * Pinned PermissionManager.PermissionState, retained inside the adapted
+     * outer class for the generated IPermissionManager wire contract. Its parcel
+     * ordering, equality, hash, and text representation match that nested type.
+     */
+    class PermissionState(private val granted: Boolean, private val flags: Int) : android.os.Parcelable {
+        fun isGranted(): Boolean = granted
+        fun getFlags(): Int = flags
+        override fun describeContents(): Int = 0
+        override fun writeToParcel(parcel: android.os.Parcel, parcelFlags: Int) {
+            parcel.writeBoolean(granted)
+            parcel.writeInt(flags)
+        }
+        override fun equals(other: Any?): Boolean =
+            other is PermissionState && granted == other.granted && flags == other.flags
+        override fun hashCode(): Int = java.util.Objects.hash(granted, flags)
+        override fun toString(): String = "PermissionState{mGranted=$granted, mFlags=$flags}"
+        companion object {
+            @JvmField
+            val CREATOR = object : android.os.Parcelable.Creator<PermissionState> {
+                override fun createFromParcel(parcel: android.os.Parcel): PermissionState =
+                    PermissionState(parcel.readBoolean(), parcel.readInt())
+                override fun newArray(size: Int): Array<PermissionState?> = arrayOfNulls(size)
+            }
+        }
+    }
+
     /** AOSP PermissionManager.SplitPermissionInfo. */
     class SplitPermissionInfo(
         private val splitPermission: String,

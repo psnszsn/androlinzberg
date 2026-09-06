@@ -1,0 +1,38 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] HWUI: honor RGBA hardware-buffer byte order on the host
+
+The host builds Skia with BGRA as its native 32-bit bitmap layout. Android
+hardware-buffer R8G8B8A8/R8G8B8X8 formats still specify RGBA bytes. Using N32
+for their Canvas conversion exchanges red and blue when the same DMA-BUF is
+imported into EGL. Select the explicit RGBA color type at that native format
+boundary; ordinary host bitmap layout and Wayland presentation stay intact.
+
+diff --git a/libs/hwui/utils/Color.cpp b/libs/hwui/utils/Color.cpp
+--- a/libs/hwui/utils/Color.cpp
++++ b/libs/hwui/utils/Color.cpp
+@@ -36,11 +36,11 @@
+     SkAlphaType alphaType = kOpaque_SkAlphaType;
+     switch (format) {
+         case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM:
+-            colorType = kN32_SkColorType;
++            colorType = kRGBA_8888_SkColorType;
+             alphaType = kPremul_SkAlphaType;
+             break;
+         case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:
+-            colorType = kN32_SkColorType;
++            colorType = kRGBA_8888_SkColorType;
+             alphaType = kOpaque_SkAlphaType;
+             break;
+         case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:
+@@ -109,9 +109,9 @@
+ SkColorType BufferFormatToColorType(uint32_t format) {
+     switch (format) {
+         case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM:
+-            return kN32_SkColorType;
++            return kRGBA_8888_SkColorType;
+         case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:
+-            return kN32_SkColorType;
++            return kRGBA_8888_SkColorType;
+         case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:
+             return kRGB_565_SkColorType;
+         case AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM:

@@ -5,10 +5,10 @@
  * context), plus the AOSP ClientTransactionHandler contract so the real
  * IApplicationThread's scheduleTransaction drives the AOSP TransactionExecutor.
  * What is host-specific: top-level window presentation stops at HostAdapter,
- * while lifecycle is driven by the stock transaction protocol; a process is
- * bound to its package by the host entry points below instead of a zygote/AMS
- * handshake. HostedActivityRuntime remains only for legacy in-process module
- * smokes that deliberately do not install a system service session. */
+ * while lifecycle is driven by the stock transaction protocol. The host announces
+ * the process identity that zygote would supply, then the hosted activity manager
+ * sends bindApplication. Activity launches and results use the task manager and
+ * stock client transactions; window presentation remains hosted. */
 package android.app;
 
 import android.content.ComponentName;
@@ -25,6 +25,12 @@ import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.os.Bundle;
+import android.os.Debug;
+import android.os.ParcelFileDescriptor;
+import android.os.SystemProperties;
+import android.util.Slog;
+import dalvik.system.VMDebug;
+import java.io.IOException;
 import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.IBinder;
@@ -58,6 +64,15 @@ public final class ActivityThread extends ClientTransactionHandler {
         String processName;
         boolean isSdkInSandbox;
         List<ProviderInfo> providers;
+        Configuration config;
+        CompatibilityInfo compatInfo;
+        Bundle coreSettings;
+        long[] disabledCompatChanges;
+        long[] loggableCompatChanges;
+        long startRequestedElapsedTime;
+        long startRequestedUptime;
+        android.content.AutofillOptions autofillOptions;
+        android.content.ContentCaptureOptions contentCaptureOptions;
     }
     static final class CreateServiceData {
         IBinder token;
@@ -86,6 +101,7 @@ public final class ActivityThread extends ClientTransactionHandler {
     private static volatile ActivityThread sCurrentActivityThread;
     private static boolean sSystem;
     private static volatile android.content.pm.IPackageManager sPackageManager;
+    private static volatile android.permission.IPermissionManager sPermissionManager;
 
     AppBindData mBoundApplication;
     /** Instrumented-package fields LoadedApk reads (no instrumentation on this host). */
@@ -94,13 +110,119 @@ public final class ActivityThread extends ClientTransactionHandler {
     String[] mInstrumentationSplitAppDirs, mInstrumentedSplitAppDirs;
     /** The process's Instrumentation (AOSP: created in handleBindApplication; here at construction). */
     Instrumentation mInstrumentation;
+    // Pinned ActivityThread.Profiler and stopProfiling, retained while the full
+    // process thread still needs the hosted bind/application lifecycle seam.
+    Profiler mProfiler;
+    static final class Profiler {
+        String profileFile;
+        ParcelFileDescriptor profileFd;
+        int samplingInterval;
+        boolean autoStopProfiler;
+        boolean streamingOutput;
+        int mClockType;
+        int mProfilerOutputVersion;
+        boolean profiling;
+        boolean handlingProfiling;
+        public void setProfiler(ProfilerInfo profilerInfo) {
+            ParcelFileDescriptor fd = profilerInfo.profileFd;
+            if (profiling) {
+                if (fd != null) {
+                    try {
+                        fd.close();
+                    } catch (IOException e) {
+                        // Ignore
+                    }
+                }
+                return;
+            }
+            if (profileFd != null) {
+                try {
+                    profileFd.close();
+                } catch (IOException e) {
+                    // Ignore
+                }
+            }
+            profileFile = profilerInfo.profileFile;
+            profileFd = fd;
+            samplingInterval = profilerInfo.samplingInterval;
+            autoStopProfiler = profilerInfo.autoStopProfiler;
+            streamingOutput = profilerInfo.streamingOutput;
+            mClockType = profilerInfo.clockType;
+            mProfilerOutputVersion = profilerInfo.profilerOutputVersion;
+        }
+        public void startProfiling() {
+            if (profileFd == null || profiling) {
+                return;
+            }
+            try {
+                int bufferSize = SystemProperties.getInt("debug.traceview-buffer-size-mb", 8);
+                int flags = 0;
+                flags = mClockType | ProfilerInfo.getFlagsForOutputVersion(mProfilerOutputVersion);
+                VMDebug.startMethodTracing(profileFile, profileFd.getFileDescriptor(),
+                        bufferSize * 1024 * 1024, flags, samplingInterval != 0, samplingInterval,
+                        streamingOutput);
+                profiling = true;
+            } catch (RuntimeException e) {
+                Slog.w(TAG, "Profiling failed on path " + profileFile, e);
+                try {
+                    profileFd.close();
+                    profileFd = null;
+                } catch (IOException e2) {
+                    Slog.w(TAG, "Failure closing profile fd", e2);
+                }
+            }
+        }
+        public void stopProfiling() {
+            if (profiling) {
+                profiling = false;
+                Debug.stopMethodTracing();
+                if (profileFd != null) {
+                    try {
+                        profileFd.close();
+                    } catch (IOException e) {
+                    }
+                }
+                profileFd = null;
+                profileFile = null;
+            }
+        }
+    }
+
+    public void stopProfiling() {
+        if (mProfiler != null) {
+            mProfiler.stopProfiling();
+        }
+    }
+
     Application mInitialApplication;
     final ArrayList<Application> mAllApplications = new ArrayList<>();
     final ResourcesManager mResourcesManager = ResourcesManager.getInstance();
-    final CompatibilityInfo mCompatibilityInfo = CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO;
+    CompatibilityInfo mCompatibilityInfo = CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO;
     private final ArrayMap<String, WeakReference<LoadedApk>> mPackages = new ArrayMap<>();
     private final ArrayMap<String, WeakReference<LoadedApk>> mResourcePackages = new ArrayMap<>();
-    private final Handler mH = new Handler(Looper.getMainLooper());
+    // AOSP ActivityThread.H: transaction and relaunch messages share the main queue.
+    private final Handler mH = new Handler(Looper.getMainLooper()) {
+        @Override public void handleMessage(android.os.Message message) {
+            switch (message.what) {
+                case H.EXECUTE_TRANSACTION:
+                    final android.app.servertransaction.ClientTransactionListenerController controller =
+                            android.app.servertransaction.ClientTransactionListenerController.getInstance();
+                    controller.onClientTransactionStarted();
+                    try {
+                        mTransactionExecutor.execute(
+                                (android.app.servertransaction.ClientTransaction) message.obj);
+                    } finally {
+                        controller.onClientTransactionFinished();
+                    }
+                    break;
+                case H.RELAUNCH_ACTIVITY:
+                    handleRelaunchActivityLocally((IBinder) message.obj);
+                    break;
+                default:
+                    throw notHosted("message " + message.what);
+            }
+        }
+    };
     /** AOSP ActivityThread.sMainThreadHandler (SharedPreferencesImpl posts listeners through it). */
     static volatile Handler sMainThreadHandler;
     private final Executor mExecutor = new HandlerExecutor(mH);
@@ -211,6 +333,20 @@ public final class ActivityThread extends ClientTransactionHandler {
     public String getProfileFilePath() { return null; }
     /*package*/ final void finishInstrumentation(int resultCode, Bundle results) {}
     Bundle getCoreSettings() { synchronized (mCoreSettings) { return mCoreSettings; } }
+    /** Pinned core-setting accessors; this adapted thread owns a non-null bundle. */
+    public int getIntCoreSetting(String key, int defaultValue) {
+        synchronized (mCoreSettings) { return mCoreSettings.getInt(key, defaultValue); }
+    }
+    float getFloatCoreSetting(String key, float defaultValue) {
+        synchronized (mCoreSettings) { return mCoreSettings.getFloat(key, defaultValue); }
+    }
+    /** Pinned ActivityThread.getPermissionManager: lazy lookup through ServiceManager. */
+    public static android.permission.IPermissionManager getPermissionManager() {
+        if (sPermissionManager != null) return sPermissionManager;
+        android.os.IBinder binder = android.os.ServiceManager.getService("permissionmgr");
+        sPermissionManager = android.permission.IPermissionManager.Stub.asInterface(binder);
+        return sPermissionManager;
+    }
     public String getStringCoreSetting(String key, String defaultValue) {
         synchronized (mCoreSettings) { return mCoreSettings.getString(key, defaultValue); }
     }
@@ -378,24 +514,35 @@ public final class ActivityThread extends ClientTransactionHandler {
 
     // ------------------------------------------------------------ bind application (AOSP handleBindApplication)
 
-    /** Host entry replacing the zygote/AMS bindApplication handshake: the process
-     * is bound to an installed package. AOSP ordering is kept: LoadedApk,
+    /** Pinned handleBindApplication ordering for the hosted process: compatibility,
+     * resource configuration, LoadedApk,
      * Instrumentation, Application (attach), content providers (install +
      * publish), then Application.onCreate. */
-    public Application handleBindApplication$artzig(ApplicationInfo appInfo, List<ProviderInfo> providers) {
+    void handleBindApplication(AppBindData data) {
         if (mBoundApplication != null) throw new IllegalStateException("an Application is already bound to this process");
-        final AppBindData data = new AppBindData();
-        data.appInfo = appInfo;
-        data.processName = appInfo.processName != null ? appInfo.processName : appInfo.packageName;
-        data.providers = providers;
+        android.os.Process.setStartTimes(android.os.SystemClock.elapsedRealtime(),
+                android.os.SystemClock.uptimeMillis(), data.startRequestedElapsedTime, data.startRequestedUptime);
+        AppCompatCallbacks.install(data.disabledCompatChanges, data.loggableCompatChanges);
+        dalvik.system.AppSpecializationHooks.handleCompatChangesBeforeBindingApplication();
+        if (android.app.compat.CompatChanges.isChangeEnabled(
+                com.android.internal.os.SafeZipPathValidatorCallback.VALIDATE_ZIP_PATH_FOR_PATH_TRAVERSAL)) {
+            dalvik.system.ZipPathValidator.setCallback(new com.android.internal.os.SafeZipPathValidatorCallback());
+        } else {
+            dalvik.system.ZipPathValidator.clearCallback();
+        }
         mBoundApplication = data;
+        ResourcesManager.getInstance().applyConfigurationToResources(data.config, null);
+        mCompatibilityInfo = data.compatInfo;
+        synchronized (mCoreSettings) { mCoreSettings.putAll(data.coreSettings); }
         android.os.Process.setArgV0(data.processName);
         data.info = getPackageInfoNoCheck(data.appInfo, mCompatibilityInfo);
         mInstrumentation = new Instrumentation();
         mInstrumentation.basicInit(this);
         final Application app = data.info.makeApplicationInner(false, null);
+        app.setAutofillOptions(data.autofillOptions);
+        app.setContentCaptureOptions(data.contentCaptureOptions);
         mInitialApplication = app;
-        if (providers != null && !providers.isEmpty()) installContentProviders(app, providers);
+        if (data.providers != null && !data.providers.isEmpty()) installContentProviders(app, data.providers);
         try {
             mInstrumentation.callApplicationOnCreate(app);
         } catch (Exception e) {
@@ -404,7 +551,6 @@ public final class ActivityThread extends ClientTransactionHandler {
                         + ": " + e.toString(), e);
             }
         }
-        return app;
     }
     /** AOSP ActivityThread.attach(system): the system process's Application over the system context. */
     public Application bindSystemApplication$artzig() {
@@ -578,12 +724,6 @@ public final class ActivityThread extends ClientTransactionHandler {
         final Context context = mInitialApplication != null ? mInitialApplication : getSystemContext();
         ActivityInfo info = intent.resolveActivityInfo(context.getPackageManager(),
                 android.content.pm.PackageManager.GET_SHARED_LIBRARY_FILES);
-        // Host-only components (including framework smokes) deliberately have no installed APK
-        // metadata. Keep PackageManager authoritative, then consult the ActivityTaskManager-side
-        // host registry before reporting START_CLASS_NOT_FOUND.
-        if (info == null && HostedActivityRuntime.isConfigured()) {
-            info = HostedActivityRuntime.resolveActivityInfo(intent);
-        }
         if (info == null) {
             Instrumentation.checkStartActivityResult(ActivityManager.START_CLASS_NOT_FOUND, intent);
         }
@@ -622,9 +762,7 @@ public final class ActivityThread extends ClientTransactionHandler {
                     : getSystemContext().mPackageInfo;
             final ContextImpl activityContext = createActivityContext(
                     info, r.packageInfo, r.token, r.overrideConfig);
-            final ClassLoader hostedClassLoader = HostedActivityRuntime.activityClassLoaderOrNull();
-            final ClassLoader classLoader = hostedClassLoader != null
-                    ? hostedClassLoader : activityContext.getClassLoader();
+            final ClassLoader classLoader = activityContext.getClassLoader();
             ComponentName component = r.intent.getComponent();
             if (component == null) {
                 component = new ComponentName(info.packageName, info.name);
@@ -642,10 +780,14 @@ public final class ActivityThread extends ClientTransactionHandler {
             activity.attach(activityContext, info, launchIntent, r.parent, r.embeddedID, r.token,
                     r.assistToken, r.shareableActivityToken);
             activity.mReferrer = r.referrer;
-            activity.setLastNonConfigurationInstances$artzig(r.lastNonConfigurationInstances);
+            activity.mLastNonConfigurationInstances = r.lastNonConfigurationInstances;
             r.lastNonConfigurationInstances = null;
             final int theme = info.getThemeResource();
             if (theme != 0) activity.setTheme(theme);
+            if (r.mSceneTransitionInfo != null) {
+                activity.mSceneTransitionInfo = r.mSceneTransitionInfo;
+                r.mSceneTransitionInfo = null;
+            }
 
             // Publish before onCreate, matching AOSP callbacks that look their token up here.
             r.activity = activity;
@@ -767,6 +909,9 @@ public final class ActivityThread extends ClientTransactionHandler {
         }
         r.activity.performDestroy();
         r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_DESTROY);
+        synchronized (this) {
+            if (mSplashScreenGlobal != null) mSplashScreenGlobal.tokenDestroyed(r.token);
+        }
         mActivities.remove(r.token);
     }
 
@@ -788,15 +933,10 @@ public final class ActivityThread extends ClientTransactionHandler {
     private final ArrayMap<IBinder, Configuration> mPendingOverrideConfigs = new ArrayMap<>();
     @Override android.app.servertransaction.TransactionExecutor getTransactionExecutor() { return mTransactionExecutor; }
     @Override void sendMessage(int what, Object obj) {
-        if (what == H.EXECUTE_TRANSACTION) {
-            final android.app.servertransaction.ClientTransaction transaction = (android.app.servertransaction.ClientTransaction) obj;
-            mH.post(() -> mTransactionExecutor.execute(transaction));
-            return;
-        }
-        throw new UnsupportedOperationException("ActivityThread message " + what + " is not hosted");
+        mH.sendMessage(mH.obtainMessage(what, obj));
     }
     private static UnsupportedOperationException notHosted(String what) {
-        return new UnsupportedOperationException("ActivityThread." + what + " is not hosted (activity lifecycle runs in HostedActivityRuntime)");
+        return new UnsupportedOperationException("ActivityThread." + what + " is not hosted");
     }
     @Override public Activity getActivity(IBinder token) { ActivityClientRecord r = mActivities.get(token); return r != null ? r.activity : null; }
     @Override public ActivityClientRecord getActivityClient(IBinder token) { return mActivities.get(token); }
@@ -885,7 +1025,7 @@ public final class ActivityThread extends ClientTransactionHandler {
                 == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME
                 && r.lastReportedTopResumedState != isTopResumedActivity) {
             r.lastReportedTopResumedState = isTopResumedActivity;
-            r.activity.performTopResumedActivityChanged$artzig(isTopResumedActivity, reason);
+            r.activity.performTopResumedActivityChanged(isTopResumedActivity, reason);
         }
     }
     @Override public void handleStopActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, boolean finalStateRequest, String reason) {
@@ -1025,8 +1165,13 @@ public final class ActivityThread extends ClientTransactionHandler {
         android.app.servertransaction.ClientTransactionListenerController.getInstance()
                 .onActivityWindowInfoChanged(r.token, r.mActivityWindowInfo);
     }
-    @Override public void handleWindowContextInfoChanged(IBinder clientToken, android.window.WindowContextInfo info) { throw notHosted("handleWindowContextInfoChanged"); }
-    @Override public void handleWindowContextWindowRemoval(IBinder clientToken) { throw notHosted("handleWindowContextWindowRemoval"); }
+    // AOSP window-context transaction dispatch; token/controller implementations are stock.
+    @Override public void handleWindowContextInfoChanged(IBinder clientToken, android.window.WindowContextInfo info) {
+        android.window.WindowTokenClientController.getInstance().onWindowContextInfoChanged(clientToken, info);
+    }
+    @Override public void handleWindowContextWindowRemoval(IBinder clientToken) {
+        android.window.WindowTokenClientController.getInstance().onWindowContextWindowRemoved(clientToken);
+    }
     /** Pinned AOSP ActivityThread.deliverResults, retaining process-entry preparation and the
      * virtual Activity dispatch that ActivityGroup uses for embedded child ids. */
     private void deliverResults(ActivityClientRecord r, List<ResultInfo> results, String reason) {
@@ -1051,6 +1196,24 @@ public final class ActivityThread extends ClientTransactionHandler {
                             + " to activity " + r.intent + ": " + e, e);
                 }
             }
+        }
+    }
+
+    /** Pinned ActivityThread.sendActivityResult. The local IApplicationThread posts the stock
+     * transaction instead of delivering a result inside the caller's launch callback. */
+    public void sendActivityResult(IBinder activityToken, String id, int requestCode,
+            int resultCode, Intent data) {
+        final ArrayList<ResultInfo> list = new ArrayList<>();
+        list.add(new ResultInfo(id, requestCode, resultCode, data, activityToken));
+        final IApplicationThread appThread = getApplicationThread();
+        final android.app.servertransaction.ClientTransaction transaction =
+                new android.app.servertransaction.ClientTransaction(appThread);
+        transaction.addTransactionItem(
+                new android.app.servertransaction.ActivityResultItem(activityToken, list));
+        try {
+            appThread.scheduleTransaction(transaction);
+        } catch (RemoteException e) {
+            // Local scheduling, matching ActivityThread.sendActivityResult.
         }
     }
 
@@ -1099,7 +1262,17 @@ public final class ActivityThread extends ClientTransactionHandler {
     }
     @Override public void handlePictureInPictureRequested(ActivityClientRecord r) { throw notHosted("handlePictureInPictureRequested"); }
     @Override public void handlePictureInPictureStateChanged(ActivityClientRecord r, PictureInPictureUiState pipState) { throw notHosted("handlePictureInPictureStateChanged"); }
-    @Override public boolean isHandleSplashScreenExit(IBinder token) { return false; }
+    private android.window.SplashScreen.SplashScreenManagerGlobal mSplashScreenGlobal;
+    // Reused AOSP ActivityThread registration/lookup; the activity runtime still
+    // owns launches until its larger dependency closure can be replaced.
+    public void registerSplashScreenManager(android.window.SplashScreen.SplashScreenManagerGlobal manager) {
+        synchronized (this) { mSplashScreenGlobal = manager; }
+    }
+    @Override public boolean isHandleSplashScreenExit(IBinder token) {
+        synchronized (this) {
+            return mSplashScreenGlobal != null && mSplashScreenGlobal.containsExitListener(token);
+        }
+    }
     @Override public void handleAttachSplashScreenView(ActivityClientRecord r, android.window.SplashScreenView.SplashScreenViewParcelable parcelable, android.view.SurfaceControl startingWindowLeash) { throw notHosted("handleAttachSplashScreenView"); }
     @Override public Activity handleLaunchActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, int deviceId, Intent customIntent) {
         applyProcessConfiguration(consumePendingConfiguration(null), false);
@@ -1118,11 +1291,17 @@ public final class ActivityThread extends ClientTransactionHandler {
     }
     /** AOSP ActivityThread.handleStartActivity, with presentation owned by the local parent. */
     @Override public void handleStartActivity(ActivityClientRecord r, android.app.servertransaction.PendingTransactionActions pendingActions, ActivityOptions.SceneTransitionInfo sceneTransitionInfo) {
-        if (r == null || r.activity == null || r.activity.mFinished) return;
-        if (r.getLifecycleState() == android.app.servertransaction.ActivityLifecycleItem.ON_CREATE) {
-            r.activity.performStart();
-            r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_START);
+        if (r == null || r.activity == null) return;
+        // ActivityClientRecord.stopped is true after initial creation and stop.
+        // TransactionExecutor's ON_RESTART keeps the record stopped until this start.
+        if (r.getLifecycleState() != android.app.servertransaction.ActivityLifecycleItem.ON_CREATE
+                && r.getLifecycleState() != android.app.servertransaction.ActivityLifecycleItem.ON_STOP) {
+            throw new IllegalStateException("Can't start activity that is not stopped.");
         }
+        if (r.activity.mFinished) return;
+        if (sceneTransitionInfo != null) r.activity.mSceneTransitionInfo = sceneTransitionInfo;
+        r.activity.performStart();
+        r.setState(android.app.servertransaction.ActivityLifecycleItem.ON_START);
         if (pendingActions != null && pendingActions.shouldRestoreInstanceState() && r.state != null) {
             r.activity.performRestoreInstanceState(r.state);
         }
@@ -1217,7 +1396,7 @@ public final class ActivityThread extends ClientTransactionHandler {
             newest = tmp.createdConfig;
         }
         if (newest != null) {
-            // Do not enter HostedActivityRuntime's top-level relaunch policy from this separate
+            // Do not enter the compositor's top-level relaunch policy from this separate
             // transaction-owned Activity stack.
             applyProcessConfiguration(newest, false);
         }
@@ -1226,7 +1405,7 @@ public final class ActivityThread extends ClientTransactionHandler {
         if (r == null || r.activity == null) return;
 
         r.activity.mConfigChangeFlags |= configChanges;
-        r.activity.setChangingConfigurations$artzig(true);
+        r.activity.mChangingConfigurations = true;
         final Intent customIntent = r.activity.getIntent();
         if (r.getLifecycleState()
                 == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
@@ -1261,6 +1440,7 @@ public final class ActivityThread extends ClientTransactionHandler {
         public Activity activity;
         public Intent intent;
         public ActivityInfo activityInfo;
+        public ActivityOptions.SceneTransitionInfo mSceneTransitionInfo;
         public Bundle state;
         public android.os.PersistableBundle persistentState;
         public boolean isForward;
@@ -1290,6 +1470,7 @@ public final class ActivityThread extends ClientTransactionHandler {
         public ActivityClientRecord(IBinder token, Intent intent, int ident, ActivityInfo info, Configuration overrideConfig, String referrer, com.android.internal.app.IVoiceInteractor voiceInteractor, Bundle state, android.os.PersistableBundle persistentState, List<ResultInfo> pendingResults, List<com.android.internal.content.ReferrerIntent> pendingNewIntents, ActivityOptions.SceneTransitionInfo sceneTransitionInfo, boolean isForward, ProfilerInfo profilerInfo, ClientTransactionHandler client, IBinder assistToken, IBinder shareableActivityToken, boolean launchedFromBubble, IBinder taskFragmentToken, IBinder initialCallerInfoAccessToken, android.window.ActivityWindowInfo activityWindowInfo) {
             this.token = token; this.intent = intent; this.activityInfo = info; this.state = state;
             this.persistentState = persistentState; this.isForward = isForward;
+            this.mSceneTransitionInfo = sceneTransitionInfo;
             this.referrer = referrer;
             this.pendingResults = pendingResults;
             this.pendingIntents = pendingNewIntents;
@@ -1304,9 +1485,9 @@ public final class ActivityThread extends ClientTransactionHandler {
         public android.window.ActivityWindowInfo getActivityWindowInfo() { return mActivityWindowInfo; }
     }
 
-    // ------------------------------------------------------------ hosted activity seam (HostedActivityRuntime)
+    // ------------------------------------------------------------ hosted window presentation
 
-    /** Host-only presentation seam; lifecycle policy stays in HostedActivityRuntime. */
+    /** Window presentation adapter; lifecycle is driven by client transactions. */
     private static volatile HostAdapter sActivityHost;
     private static Activity sPresentedTransactionActivity;
     private static void clearPresentedTransactionActivity(Activity activity) {
@@ -1316,72 +1497,25 @@ public final class ActivityThread extends ClientTransactionHandler {
         sPresentedTransactionActivity = null;
     }
     public interface HostAdapter {
-        Context getActivityContext();
-        ClassLoader getActivityClassLoader();
         void showActivity(Activity activity);
         void clearActivityWindows();
         void resizeActivityRoot(Activity activity, int width, int height);
-        ComponentName resolveActivity(Intent intent);
     }
-    public static void configureActivityHost(HostAdapter adapter, java.util.Map<String, ActivityInfo> activities) {
-        HostedActivityRuntime.configure(adapter, activities);
+    public static void configureActivityHost(HostAdapter adapter) {
         sActivityHost = adapter;
         sPresentedTransactionActivity = null;
-    }
-    /** AOSP ContextImpl.createActivityContext for an activity this process launches (fresh token,
-     * default display): the per-activity base context of ActivityThread.performLaunchActivity. */
-    public ContextImpl createActivityContext(ActivityInfo info) {
-        // A component without an APK behind it (host demos, smokes) lives in the system package.
-        LoadedApk packageInfo = info.applicationInfo != null && info.applicationInfo.sourceDir != null
-                ? getPackageInfoNoCheck(info.applicationInfo, mCompatibilityInfo)
-                : getSystemContext().mPackageInfo;
-        return createActivityContext(info, packageInfo, new android.os.Binder(), null);
     }
     private ContextImpl createActivityContext(ActivityInfo info, LoadedApk packageInfo,
             IBinder token, Configuration overrideConfig) {
         return ContextImpl.createActivityContext(this, packageInfo, info, token,
                 android.view.Display.DEFAULT_DISPLAY, overrideConfig);
     }
-    public static Activity launchMainActivity(String activityClassName) { return HostedActivityRuntime.launchMain(activityClassName); }
-    /** Host launcher entry point. The launch crosses the same IActivityTaskManager transport as an
-     * Android launcher, then pumps this main looper until the Launch+Resume transaction presents
-     * the activity. HostedActivityRuntime remains only for isolated legacy framework smokes. */
-    public static Activity launchMainActivityThroughManager(String activityClassName) {
-        final HostAdapter adapter = sActivityHost;
-        if (adapter == null) throw new IllegalStateException("activity host is not configured");
-        final Context context = adapter.getActivityContext();
-        final Intent intent = new Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_LAUNCHER)
-                .setComponent(new ComponentName(context.getPackageName(), activityClassName));
-        final int result = startActivityThroughManager(null, null, intent, -1);
-        Instrumentation.checkStartActivityResult(result, intent);
-
-        final long deadline = android.os.SystemClock.uptimeMillis() + 5_000;
-        final android.os.MessageQueue queue = Looper.myQueue();
-        while (sPresentedTransactionActivity == null
-                && android.os.SystemClock.uptimeMillis() < deadline) {
-            final android.os.Message message = queue.pollDueMessage$artzig();
-            if (message != null) {
-                message.getTarget().dispatchMessage(message);
-            } else {
-                android.os.SystemClock.sleep(1);
-            }
-        }
-        if (sPresentedTransactionActivity == null) {
-            throw new IllegalStateException("activity launch transaction timed out: " + intent);
-        }
-        return sPresentedTransactionActivity;
-    }
-    public static Activity currentActivity() {
-        final Activity transactionActivity = sPresentedTransactionActivity;
-        return transactionActivity != null ? transactionActivity : HostedActivityRuntime.currentActivity();
-    }
+    public static Activity currentActivity() { return sPresentedTransactionActivity; }
     /** AOSP ActivityThread.sCurrentBroadcastIntent: the Intent a receiver on this thread is handling. */
     private static final ThreadLocal<Intent> sCurrentBroadcastIntent = new ThreadLocal<>();
     public static Intent getIntentBeingBroadcast() { return sCurrentBroadcastIntent.get(); }
     /** Set by the receiver dispatcher around onReceive (LoadedApk.ReceiverDispatcher.Args.run). */
     public static void setIntentBeingBroadcast$artzig(Intent intent) { sCurrentBroadcastIntent.set(intent); }
-    public static int getManifestOrientation(String activityClassName) { return HostedActivityRuntime.manifestOrientation(activityClassName); }
     public static boolean applyConfigurationInProcess(Configuration config, int changes, int width, int height) {
         final ActivityThread thread = currentActivityThread();
         final Activity presented = sPresentedTransactionActivity;
@@ -1391,7 +1525,10 @@ public final class ActivityThread extends ClientTransactionHandler {
             return thread.applyConfigurationToTransactionActivity(
                     record, config, changes, width, height);
         }
-        return HostedActivityRuntime.applyConfiguration(config, changes, width, height);
+        if (changes != 0 && thread.mInitialApplication != null) {
+            thread.mInitialApplication.onConfigurationChanged(config);
+        }
+        return false;
     }
 
     /** Host-compositor counterpart of AOSP ActivityTaskManager/ActivityThread configuration
@@ -1428,7 +1565,7 @@ public final class ActivityThread extends ClientTransactionHandler {
         final Activity destroyed = r.activity;
         final int requestedOrientation = destroyed.getRequestedOrientation();
         r.activity.mConfigChangeFlags |= changes;
-        r.activity.setChangingConfigurations$artzig(true);
+        r.activity.mChangingConfigurations = true;
         final Intent customIntent = r.activity.getIntent();
         if (r.getLifecycleState()
                 == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME) {
@@ -1458,125 +1595,51 @@ public final class ActivityThread extends ClientTransactionHandler {
         return true;
     }
     public static void shutdownActivitiesInProcess() {
-        HostedActivityRuntime.shutdown();
-        sPresentedTransactionActivity = null;
+        final ActivityThread thread = currentActivityThread();
+        for (ActivityClientRecord record : new ArrayList<>(thread.mActivities.values())) {
+            if (thread.mActivities.get(record.token) == record) {
+                thread.handleDestroyActivity(record, true, false, "host window closed");
+            }
+        }
+        clearPresentedTransactionActivity(sPresentedTransactionActivity);
         sActivityHost = null;
     }
-    public static void startActivityInProcess(Intent intent) {
-        if (sPresentedTransactionActivity != null) {
-            final int result = startActivityThroughManager(
-                    sPresentedTransactionActivity, null, intent, -1);
-            Instrumentation.checkStartActivityResult(result, intent);
-        } else if (HostedActivityRuntime.isConfigured()) HostedActivityRuntime.startActivity(intent);
-        else Log.w(TAG, "startActivity dropped (no launcher): " + intent);
-    }
-    public static void startActivityInProcess(Activity caller, String resultWho, Intent intent,
-            int requestCode) {
-        final ActivityThread thread = currentActivityThread();
-        final IBinder callerToken = caller != null ? caller.getActivityToken() : null;
-        final ActivityClientRecord callerRecord = callerToken != null
-                ? thread.mActivities.get(callerToken) : null;
-        if (callerRecord != null && callerRecord.activity == caller) {
-            final int result = startActivityThroughManager(caller, resultWho, intent, requestCode);
-            Instrumentation.checkStartActivityResult(result, intent);
-        } else if (HostedActivityRuntime.isConfigured()) {
-            HostedActivityRuntime.startActivity(caller, resultWho, intent, requestCode);
-        } else {
-            Log.w(TAG, "startActivity dropped (no launcher): " + intent);
+    /** AOSP scheduleRelaunchActivity / scheduleRelaunchActivityIfPossible. Window preservation
+     * remains disabled at prepareRelaunchActivity until the host supports window reparenting. */
+    void scheduleRelaunchActivity(IBinder token) {
+        final ActivityClientRecord r = mActivities.get(token);
+        if (r == null || (r.activity != null && r.activity.mFinished)
+                || r.token instanceof android.os.Binder) {
+            return;
         }
+        mH.removeMessages(H.RELAUNCH_ACTIVITY, r.token);
+        sendMessage(H.RELAUNCH_ACTIVITY, r.token);
     }
-    private static int startActivityThroughManager(Activity caller, String resultWho,
-            Intent intent, int requestCode) {
-        final ActivityThread thread = currentActivityThread();
-        final HostAdapter adapter = sActivityHost;
-        final Context context = caller != null ? caller
-                : adapter != null ? adapter.getActivityContext() : thread.getSystemContext();
-        try {
-            intent.migrateExtraStreamToClipData(context);
-            intent.prepareToLeaveProcess(context);
-            return ActivityTaskManager.getService().startActivity(
-                    thread.getApplicationThread(), context.getOpPackageName(),
-                    context.getAttributionTag(), intent,
-                    intent.resolveTypeIfNeeded(context.getContentResolver()),
-                    caller != null ? caller.getActivityToken() : null,
-                    resultWho, requestCode, 0, null, null);
-        } catch (RemoteException e) {
-            throw new RuntimeException("Failure from activity task manager", e);
+
+    /** AOSP handleRelaunchActivityLocally, using the hosted process configuration store. */
+    public void handleRelaunchActivityLocally(IBinder token) {
+        final ActivityClientRecord r = mActivities.get(token);
+        if (r == null) {
+            Log.w(TAG, "Activity to relaunch no longer exists");
+            return;
         }
+        final int prevState = r.getLifecycleState();
+        if (prevState < android.app.servertransaction.ActivityLifecycleItem.ON_START
+                || prevState > android.app.servertransaction.ActivityLifecycleItem.ON_STOP) {
+            Log.w(TAG, "Activity state must be in [ON_START..ON_STOP] in order to be relaunched,"
+                    + "current state is " + prevState);
+            return;
+        }
+        ActivityClient.getInstance().activityLocalRelaunch(r.token);
+        final android.util.MergedConfiguration merged = new android.util.MergedConfiguration(
+                r.createdConfig != null ? r.createdConfig
+                        : ResourcesManager.getInstance().getConfiguration(), r.overrideConfig);
+        final android.app.servertransaction.ClientTransaction transaction =
+                new android.app.servertransaction.ClientTransaction(getApplicationThread());
+        transaction.addTransactionItem(new android.app.servertransaction.ActivityRelaunchItem(
+                r.token, null, null, 0, merged, r.mPreserveWindow, r.getActivityWindowInfo()));
+        transaction.addTransactionItem(android.app.servertransaction.TransactionExecutorHelper
+                .getLifecycleRequestForCurrentState(r));
+        executeTransaction(transaction);
     }
-    public static int startActivitiesInProcess(Activity caller, Intent[] intents,
-            Bundle options, int userId) {
-        if (intents == null || intents.length == 0) {
-            return ActivityManager.START_INTENT_NOT_RESOLVED;
-        }
-        final ActivityThread thread = currentActivityThread();
-        final IBinder callerToken = caller != null ? caller.getActivityToken() : null;
-        final ActivityClientRecord callerRecord = callerToken != null
-                ? thread.mActivities.get(callerToken) : null;
-        if (callerRecord == null || callerRecord.activity != caller) {
-            for (Intent intent : intents) startActivityInProcess(caller, null, intent, -1);
-            return ActivityManager.START_SUCCESS;
-        }
-        final String[] resolvedTypes = new String[intents.length];
-        try {
-            for (int i = 0; i < intents.length; i++) {
-                intents[i].migrateExtraStreamToClipData(caller);
-                intents[i].prepareToLeaveProcess(caller);
-                resolvedTypes[i] = intents[i].resolveTypeIfNeeded(caller.getContentResolver());
-            }
-            return ActivityTaskManager.getService().startActivities(
-                    thread.getApplicationThread(), caller.getOpPackageName(),
-                    caller.getAttributionTag(), intents, resolvedTypes, callerToken, options,
-                    userId);
-        } catch (RemoteException e) {
-            throw new RuntimeException("Failure from activity task manager", e);
-        }
-    }
-    public static ComponentName resolveActivityInProcess(Intent intent) {
-        return HostedActivityRuntime.isConfigured() ? HostedActivityRuntime.resolveActivity(intent) : null;
-    }
-    public static void finishActivityInProcess(Activity activity) {
-        final ActivityThread thread = currentActivityThread();
-        final ActivityClientRecord record = thread.mActivities.get(activity.getActivityToken());
-        if (record != null && record.activity == activity) {
-            ActivityClient.getInstance().finishActivity(activity.getActivityToken(),
-                    activity.getResultCode$artzig(), activity.getResultData$artzig(), 0);
-        } else if (HostedActivityRuntime.isConfigured()) {
-            HostedActivityRuntime.finishActivity(activity);
-        }
-    }
-    public static void recreateActivityInProcess(Activity activity) {
-        final ActivityThread thread = currentActivityThread();
-        final ActivityClientRecord r = activity != null
-                ? thread.mActivities.get(activity.getActivityToken()) : null;
-        if (r != null && r.activity == activity) {
-            // AOSP Activity.recreate -> ActivityThread.scheduleRelaunchActivity. The Android
-            // implementation posts RELAUNCH_ACTIVITY through H; this hosted thread performs the
-            // same pause/save/stop/destroy/create/start/resume sequence synchronously because its
-            // bounded Handler does not carry the private ActivityThread message protocol.
-            final Configuration global = new Configuration(
-                    ResourcesManager.getInstance().getConfiguration());
-            final android.util.MergedConfiguration merged =
-                    new android.util.MergedConfiguration(global,
-                            r.overrideConfig != null ? r.overrideConfig : new Configuration());
-            final android.window.ActivityWindowInfo windowInfo =
-                    new android.window.ActivityWindowInfo(r.getActivityWindowInfo());
-            final ActivityClientRecord relaunch = thread.prepareRelaunchActivity(
-                    r.token, null, null, 0, merged, false, windowInfo);
-            if (relaunch != null) {
-                final android.app.servertransaction.PendingTransactionActions pendingActions =
-                        new android.app.servertransaction.PendingTransactionActions();
-                thread.handleRelaunchActivity(relaunch, pendingActions);
-                final ActivityClientRecord replacement = thread.mActivities.get(r.token);
-                thread.handleStartActivity(replacement, pendingActions, null);
-                thread.handleResumeActivity(replacement, true, false, false,
-                        "Activity.recreate");
-                thread.reportRelaunch(replacement);
-            }
-        } else if (HostedActivityRuntime.isConfigured()) {
-            HostedActivityRuntime.recreateActivity(activity);
-        }
-    }
-    /** Registers this process with the activity manager (AOSP attachApplication). */
-    public static void attachApplicationHosted(String packageName) { HostedServiceClient.attachApplication(packageName); }
 }

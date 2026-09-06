@@ -5,6 +5,7 @@
 #include <android/binder_manager.h>
 #include <android/gui/BnFpsListener.h>
 #include <binder/IPCThreadState.h>
+#include <binder/IResultReceiver.h>
 #include <binder/Parcel.h>
 #include <fcntl.h>
 
@@ -296,6 +297,135 @@ struct Tracked final : BBinder {
   ~Tracked() override { ++destroyed; }
 };
 void parcelTests() {
+  {
+    // GPU AIDL out vectors carry only a count, with the stock allocation cap.
+    Parcel p;
+    assert(p.writeVectorSize(std::vector<int32_t>{8, 9}) == OK);
+    assert(p.dataSize() == sizeof(int32_t));
+    p.setDataPosition(0);
+    std::vector<int32_t> output{7};
+    assert(p.resizeOutVector(&output) == OK);
+    assert((output == std::vector<int32_t>{7, 0}));
+    for (int32_t count : {-1, 250000, INT32_MAX}) {
+      p.freeData();
+      assert(p.writeInt32(count) == OK);
+      p.setDataPosition(0);
+      assert(p.resizeOutVector(&output) == (count < 0 ? UNEXPECTED_NULL : NO_MEMORY));
+      assert((output == std::vector<int32_t>{7, 0}));
+    }
+    p.freeData();
+    std::optional<std::vector<int32_t>> optional;
+    std::unique_ptr<std::vector<int32_t>> pointer;
+    assert(p.writeVectorSize(optional) == OK);
+    assert(p.writeVectorSize(pointer) == OK);
+    assert(p.writeVectorSize(output) == OK);
+    assert(p.writeVectorSize(output) == OK);
+    p.setDataPosition(0);
+    optional.emplace(1, 7);
+    pointer = std::make_unique<std::vector<int32_t>>(1, 7);
+    assert(p.resizeOutVector(&optional) == OK && !optional);
+    assert(p.resizeOutVector(&pointer) == OK && !pointer);
+    assert(p.resizeOutVector(&optional) == OK && *optional == std::vector<int32_t>(2));
+    assert(p.resizeOutVector(&pointer) == OK && *pointer == std::vector<int32_t>(2));
+    pass("AIDL out-vector count, nullability, overflow and allocation limits");
+  }
+  {
+    Parcel p;
+    const std::vector<std::string> strings{"", "layers", "\xc3\xa9\xf0\x9f\x98\x80"};
+    assert(p.writeUtf8VectorAsUtf16Vector(strings) == OK);
+    p.setDataPosition(0);
+    assert(p.readInt32() == 3);
+    assert(p.readString16() == String16(u""));
+    assert(p.readString16() == String16(u"layers"));
+    assert(p.readString16() == String16(u"\u00e9\U0001f600"));
+    p.setDataPosition(0);
+    std::vector<std::string> decoded;
+    assert(p.readUtf8VectorFromUtf16Vector(&decoded) == OK && decoded == strings);
+    p.freeData();
+    using OptionalStrings = std::optional<std::vector<std::optional<std::string>>>;
+    OptionalStrings nullable{std::vector<std::optional<std::string>>{std::nullopt, "", strings[2]}};
+    assert(p.writeUtf8VectorAsUtf16Vector(nullable) == OK);
+    assert(p.writeUtf8VectorAsUtf16Vector(OptionalStrings{}) == OK);
+    p.setDataPosition(0);
+    OptionalStrings optional;
+    assert(p.readUtf8VectorFromUtf16Vector(&optional) == OK && optional == nullable);
+    assert(p.readUtf8VectorFromUtf16Vector(&optional) == OK && !optional);
+    p.setDataPosition(0);
+    std::unique_ptr<std::vector<std::unique_ptr<std::string>>> pointer;
+    assert(p.readUtf8VectorFromUtf16Vector(&pointer) == OK);
+    assert(pointer && pointer->size() == 3 && !(*pointer)[0]);
+    assert((*pointer)[1] && (*pointer)[1]->empty() && *(*pointer)[2] == strings[2]);
+    Parcel copied;
+    assert(copied.writeUtf8VectorAsUtf16Vector(pointer) == OK);
+    copied.setDataPosition(0);
+    assert(copied.readUtf8VectorFromUtf16Vector(&optional) == OK && optional == nullable);
+    assert(p.readUtf8VectorFromUtf16Vector(&pointer) == OK && !pointer);
+    p.freeData();
+    assert(p.writeInt32(2) == OK && p.writeUtf8AsUtf16("first") == OK);
+    p.setDataPosition(0);
+    assert(p.readUtf8VectorFromUtf16Vector(&decoded) == UNEXPECTED_NULL);
+    assert((decoded == std::vector<std::string>{"first", ""}));
+    p.freeData();
+    assert(p.writeUtf8AsUtf16(std::string("\xff", 1)) == BAD_VALUE && p.dataSize() == 0);
+    pass("GPU string vectors preserve UTF-16 wire format, nulls and partial reads");
+  }
+  {
+    struct Receiver final : BnResultReceiver {
+      int32_t code = 0;
+      void send(int32_t value) override { code = value; }
+    };
+    auto receiver = sp<Receiver>::make();
+    Parcel p;
+    assert(p.writeStrongBinder(IInterface::asBinder(receiver)) == OK);
+    assert(p.writeStrongBinder(nullptr) == OK);
+    assert(p.writeStrongBinder(nullptr) == OK);
+    p.setDataPosition(0);
+    sp<IResultReceiver> decoded;
+    assert(p.readNullableStrongBinder(&decoded) == OK && decoded.get() == receiver.get());
+    decoded->send(42);
+    assert(receiver->code == 42);
+    assert(p.readNullableStrongBinder(&decoded) == OK && !decoded);
+    decoded = receiver;
+    assert(p.readStrongBinder(&decoded) == UNEXPECTED_NULL && decoded == receiver);
+    Parcel request, reply;
+    assert(request.writeInterfaceToken(receiver->getInterfaceDescriptor()) == OK);
+    assert(request.writeInt32(81) == OK);
+    assert(receiver->transact(IResultReceiver::OP_SEND, request, &reply) == OK);
+    binder::Status status;
+    assert(status.readFromParcel(reply) == OK && status.isOk() && receiver->code == 81);
+    pass("typed result receiver preserves Binder identity and null contracts");
+  }
+  {
+    enum class ByteKey : int8_t { Zero = 0, Last = 127, Negative = -1 };
+    enum class WordKey : int32_t { Zero = 0, Large = 0x12345678 };
+    const std::vector<ByteKey> bytes{ByteKey::Zero, ByteKey::Last, ByteKey::Negative};
+    const std::vector<WordKey> words{WordKey::Large, static_cast<WordKey>(-9)};
+    Parcel p;
+    assert(p.writeEnumVector(bytes) == OK && p.dataSize() == 8);
+    assert(p.writeEnumVector(words) == OK && p.dataSize() == 20);
+    p.setDataPosition(0);
+    assert(p.readInt32() == 3);
+    uint8_t raw[3];
+    assert(p.read(raw, sizeof(raw)) == OK);
+    assert(raw[0] == 0 && raw[1] == 127 && raw[2] == 255);
+    assert(p.readInt32() == 2 && p.readInt32() == 0x12345678 && p.readInt32() == -9);
+    p.setDataPosition(0);
+    std::vector<ByteKey> decodedBytes;
+    std::vector<WordKey> decodedWords;
+    assert(p.readEnumVector(&decodedBytes) == OK && decodedBytes == bytes);
+    assert(p.readEnumVector(&decodedWords) == OK && decodedWords == words);
+    assert(p.dataAvail() == 0);
+    p.freeData();
+    p.writeInt32(-1);
+    p.setDataPosition(0);
+    assert(p.readEnumVector(&decodedWords) == UNEXPECTED_NULL && decodedWords == words);
+    p.freeData();
+    p.writeInt32(2);
+    p.writeInt32(7); // Length passes the coarse bound, but the second word is absent.
+    p.setDataPosition(0);
+    assert(p.readEnumVector(&decodedWords) == BAD_VALUE && decodedWords.empty());
+    pass("enum vectors preserve packed byte and full-width AIDL encodings");
+  }
   // A native Parcel has its own durable language view, also across reset.
   auto *first = AParcel_create();
   auto *second = AParcel_create();

@@ -8,11 +8,27 @@
 #include <SkGraphics.h>
 #include <jni.h>
 #include <Properties.h>
+#include <android_runtime/AndroidRuntime.h>
+#include <nativehelper/JNIHelp.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <unistd.h>
+
+// The exit smoke must fail deterministically if ART's exit hook runs libc
+// destructors while Java/native worker threads are still active.
+static void installLibcExitTrap(JNIEnv*, jclass) {
+    if (std::atexit([] { ::_exit(99); }) != 0) ::_exit(98);
+}
+
+// Pinned AndroidRuntime::registerNativeMethods. GLES JNI uses this C++ entry;
+// the full AndroidRuntime owns a separate VM and cannot be linked into this host.
+int android::AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* className,
+        const JNINativeMethod* gMethods, int numMethods) {
+    return jniRegisterNativeMethods(env, className, gMethods, numMethods);
+}
 
 extern int register_android_graphics_Bitmap(JNIEnv*);
 extern int register_android_graphics_BitmapFactory(JNIEnv*);
@@ -28,6 +44,10 @@ extern int register_android_graphics_PathEffect(JNIEnv*);
 extern int register_android_graphics_Shader(JNIEnv*);
 extern int register_android_graphics_RenderEffect(JNIEnv*);
 extern int register_android_graphics_Typeface(JNIEnv*);
+extern int register_android_opengl_jni_GLES20(JNIEnv*);
+extern int register_android_opengl_jni_GLES30(JNIEnv*);
+extern int register_android_opengl_jni_GLES31(JNIEnv*);
+extern int register_android_opengl_jni_GLES32(JNIEnv*);
 
 namespace android {
 extern int register_android_graphics_Canvas(JNIEnv*);
@@ -78,6 +98,17 @@ extern int register_android_graphics_animation_NativeInterpolatorFactory(JNIEnv*
 extern int register_android_graphics_animation_RenderNodeAnimator(JNIEnv*);
 extern int register_android_graphics_drawable_VectorDrawable(JNIEnv*);
 extern int register_com_android_internal_util_VirtualRefBasePtr(JNIEnv*);
+extern int register_android_backup_BackupDataInput(JNIEnv*);
+extern int register_android_backup_BackupDataOutput(JNIEnv*);
+extern int register_com_android_internal_os_ApplicationSharedMemory(JNIEnv*);
+extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv*);
+extern int register_android_os_SELinux(JNIEnv*);
+extern int register_android_util_jar_StrictJarFile(JNIEnv*);
+extern int register_android_util_MemoryIntArray(JNIEnv*);
+extern int register_com_android_internal_security_VerityUtils(JNIEnv*);
+extern int register_android_os_incremental_IncrementalManager(JNIEnv*);
+extern int register_android_net_LocalSocketImpl(JNIEnv*);
+extern int register_android_app_backup_FullBackup(JNIEnv*);
 extern int register_android_database_CursorWindow(JNIEnv*);
 extern int register_android_database_SQLiteConnection(JNIEnv*);
 extern int register_android_database_SQLiteGlobal(JNIEnv*);
@@ -91,6 +122,10 @@ extern int register_android_graphics_drawable_AnimatedVectorDrawable(JNIEnv*);
 extern int register_android_graphics_drawable_AnimatedImageDrawable(JNIEnv*);
 extern int register_android_graphics_ImageDecoder(JNIEnv*);
 extern "C" int azk_register_hardware_buffer(JNIEnv*);
+extern "C" int azk_register_graphics_environment_backend(JNIEnv*);
+namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
+extern int register_android_hardware_UsbDevice(JNIEnv*);
+extern int register_android_hardware_OverlayProperties(JNIEnv*);
 
 static jint azk_Bitmap_nativeConfig(JNIEnv*, jclass, jlong bitmap_handle) {
     android::Bitmap& bitmap = android::bitmap::toBitmap(bitmap_handle);
@@ -165,8 +200,20 @@ namespace android {
 
 extern "C" {
 
+// Pinned AndroidRuntime::exit, non-zygote/non-coverage path. The host owns ART;
+// libc cleanup can destroy native globals while its worker threads still run.
+[[noreturn]] void azk_android_runtime_exit(int status) {
+    ::_exit(status);
+}
+
 int azk_register_graphics_jni(JNIEnv* env) {
     env->GetJavaVM(&g_azk_vm);
+    const JNINativeMethod exitSmokeMethods[] = {
+        {"installLibcExitTrap", "()V", reinterpret_cast<void*>(installLibcExitTrap)},
+    };
+    if (jniRegisterNativeMethods(env, "dev/artzig/JvmExitSmoke", exitSmokeMethods, 1) != 0) {
+        return -1;
+    }
     // The platform normally does this from libhwui's JNI_OnLoad. artzig
     // registers the same natives explicitly, so initialize GraphicsJNI's VM
     // slot here as well for font-data finalizers running on GC threads.
@@ -184,7 +231,17 @@ int azk_register_graphics_jni(JNIEnv* env) {
         f, #f \
     }
     static const Entry entries[] = {
+            E(android::register_android_os_SELinux),
+            E(android::register_android_util_jar_StrictJarFile),
+            E(android::register_android_util_MemoryIntArray),
+            E(android::register_com_android_internal_security_VerityUtils),
+            E(android::register_android_os_incremental_IncrementalManager),
+            E(android::register_com_android_internal_content_NativeLibraryHelper),
             E(azk_register_hardware_buffer),
+            E(azk_register_graphics_environment_backend),
+            E(android::register_android_os_GraphicsEnvironment),
+            E(register_android_hardware_UsbDevice),
+            E(register_android_hardware_OverlayProperties),
             E(android::register_android_graphics_Canvas),
             E(android::register_android_graphics_Color),
             E(android::register_android_graphics_ColorSpace),
@@ -242,6 +299,15 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_graphics_animation_NativeInterpolatorFactory),
             E(android::register_android_graphics_animation_RenderNodeAnimator),
             E(android::register_com_android_internal_util_VirtualRefBasePtr),
+            E(android::register_android_backup_BackupDataInput),
+            E(android::register_android_backup_BackupDataOutput),
+            E(android::register_com_android_internal_os_ApplicationSharedMemory),
+            E(android::register_android_net_LocalSocketImpl),
+            E(register_android_opengl_jni_GLES20),
+            E(register_android_opengl_jni_GLES30),
+            E(register_android_opengl_jni_GLES31),
+            E(register_android_opengl_jni_GLES32),
+            E(android::register_android_app_backup_FullBackup),
             E(android::register_android_database_CursorWindow),
             E(android::register_android_database_SQLiteConnection),
             E(android::register_android_database_SQLiteGlobal),

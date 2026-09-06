@@ -16,7 +16,7 @@ import com.android.internal.view.IInputMethodManager
  * window/input stack; physical text is injected by `HostedInputDispatcher`, while
  * stock `InputMethodManager` still performs its normal AIDL registration and queries.
  */
-internal class HostedInputMethodManagerService :
+internal class HostedInputMethodManagerService(private val context: android.content.Context) :
     IInputMethodManager.Stub(),
     IInputMethodManager by unsupported<IInputMethodManager>() {
     override fun asBinder(): android.os.IBinder = this
@@ -44,6 +44,16 @@ internal class HostedInputMethodManagerService :
 
     override fun getEnabledInputMethodList(userId: Int): InputMethodInfoSafeList =
         InputMethodInfoSafeList.empty()
+
+    /** AOSP IMMS.isStylusHandwritingAvailableAsUser: no selected IME supports either mode. */
+    override fun isStylusHandwritingAvailableAsUser(userId: Int, connectionless: Boolean): Boolean {
+        if (android.os.UserHandle.getCallingUserId() != userId) {
+            context.enforceCallingOrSelfPermission(
+                android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, null,
+            )
+        }
+        return false
+    }
 
     override fun getInputMethodListLegacy(userId: Int, directBootAwareness: Int): MutableList<InputMethodInfo> =
         mutableListOf()

@@ -107,6 +107,24 @@ pub fn main(init: std.process.Init) !void {
     failed = !expectExit(io, &client, "client") or failed;
     failed = !expectExit(io, &ndkc, "ndk system client") or failed;
     failed = !expectExit(io, &host, "service host") or failed;
+    if (!failed) {
+        var crashing = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.RuntimeCrashSystemSmoke", "dev.artzig.test.a");
+        peer_pids[0].store(crashing.id.?, .release);
+        const crash_term = try crashing.wait(io);
+        const killed = switch (crash_term) {
+            .signal => |signal| signal == .KILL,
+            else => false,
+        };
+        if (!killed) {
+            std.debug.print("system-test: RuntimeInit did not kill the crashing process: {any}\n", .{crash_term});
+            failed = true;
+        } else {
+            try env.put("AZK_VERIFY_RUNTIME_CRASH", "1");
+            var verifier = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.RuntimeCrashSystemSmoke", "dev.artzig.test.a");
+            peer_pids[0].store(verifier.id.?, .release);
+            failed = !expectExit(io, &verifier, "runtime crash verifier") or failed;
+        }
+    }
     if (expired.load(.acquire)) {
         std.debug.print("system-test: timed out after {d}s\n", .{timeout_seconds});
         failed = true;

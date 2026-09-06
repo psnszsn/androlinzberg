@@ -74,20 +74,22 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
     for (generator_sources.hidl) |entry| {
         for (entry.outputs) |output| try putForbidden(&result, allocator, output);
     }
+    for (generator_sources.xsd) |entry| {
+        for (entry.outputs) |output| try putForbidden(&result, allocator, output);
+    }
     for (generator_sources.logtags) |entry| try putForbidden(&result, allocator, entry.output);
     for (generator_sources.proto_outputs) |output| try putForbidden(&result, allocator, output);
+    for (generator_sources.nano) |entry| try putForbidden(&result, allocator, entry.output);
+    try putForbidden(&result, allocator, generator_sources.aconfig_device_paths.output);
+    try putForbidden(&result, allocator, generator_sources.system_features.output);
+    try putForbidden(&result, allocator, generator_sources.system_features.metadata_output);
     try putForbidden(&result, allocator, "com/android/internal/util/FrameworkStatsLog.java");
     try putForbidden(&result, allocator, "com/android/internal/statsd/StatsdStatsLog.java");
     try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyStatsLog.java");
     try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyCommonStatsLog.java");
-    try putForbidden(&result, allocator, "com/android/internal/logging/nano/MetricsProto.java");
     try putForbidden(&result, allocator, "android/os/UserManagerCache.java");
     try putForbidden(&result, allocator, "com/android/modules/expresslog/MetricIds.java");
     try putForbidden(&result, allocator, "com/android/modules/expresslog/StatsExpressLog.java");
-    try putForbidden(&result, allocator, "com/android/apex/ApexInfo.java");
-    try putForbidden(&result, allocator, "com/android/apex/ApexInfoList.java");
-    try putForbidden(&result, allocator, "com/android/apex/XmlParser.java");
-    try putForbidden(&result, allocator, "com/android/apex/XmlWriter.java");
     for (generator_sources.sysprop) |entry| {
         if (entry.input.source != .aosp) continue;
         const path = try std.fs.path.join(allocator, &.{ aosp_root, entry.input.path });
@@ -245,6 +247,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/AospJniBridge.cpp",
         "src/native/AospParcelAbi.cpp",
         "src/native/ArtzigGpuPipeline.cpp",
+        "src/native/GraphicsEnvironmentBackend.cpp",
         "src/native/HardwareBufferRender.cpp",
         "src/native/HwuiRenderProxyBridge.cpp",
         "src/native/binder/Binder.cpp",

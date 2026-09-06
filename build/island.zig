@@ -15,6 +15,10 @@ pub const Options = struct {
     binder_cpp: *std.Build.Step.Compile,
     art: *std.Build.Module,
     aidl_header_roots: []const std.Build.LazyPath,
+    aidl_source_roots: []const std.Build.LazyPath,
+    aconfig_header_roots: []const std.Build.LazyPath,
+    incremental_sysprop_headers: std.Build.LazyPath,
+    incremental_sysprop_source: std.Build.LazyPath,
     host_include_roots: []const std.Build.LazyPath,
     host_library_roots: []const std.Build.LazyPath,
     host_libraries: []const []const u8,
@@ -117,13 +121,25 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/native/libs/binder/ndk/include_cpp"),
         binder_inc,
     };
+    // Isolate the pinned ashmem UAPI header from the rest of bionic's libc headers.
+    const ashmem_headers = b.addWriteFiles();
+    _ = ashmem_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/ashmem.h"), "linux/ashmem.h");
     var common_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    common_includes.append(b.allocator, ashmem_headers.getDirectory()) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native/binder/include")) catch @panic("oom");
     for (gen.include_dirs) |d| common_includes.append(b.allocator, r.resolve(b, d)) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &binder_ndk_includes) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native")) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native/input-compat")) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aidl_header_roots) catch @panic("oom");
+    common_includes.appendSlice(b.allocator, o.aconfig_header_roots) catch @panic("oom");
+    common_includes.appendSlice(b.allocator, &.{
+        o.incremental_sysprop_headers,
+        o.aosp.path(b, "system/incremental_delivery/incfs/include"),
+        o.aosp.path(b, "system/incremental_delivery/incfs/kernel-headers"),
+        o.aosp.path(b, "external/selinux/libselinux/include"),
+        o.aosp.path(b, "system/sepolicy/compat/libgenfslabelsversion/include"),
+    }) catch @panic("oom");
 
     var objects: std.ArrayList(std.Build.LazyPath) = .empty;
 
@@ -220,6 +236,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const hw_jni_inc = o.aosp.path(b, "frameworks/base/libs/hwui/jni");
     const fn_inc = o.aosp.path(b, "frameworks/native/include");
 
+    g.add(o.aosp.path(b, "system/core/libusbhost"), &.{"usbhost.c"}, &.{}, &.{});
     g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
     for (gen.libcutils_srcs) |file| {
         if (!std.mem.eql(u8, file, "native_handle.cpp")) g.add(o.aosp.path(b, "system/core/libcutils"), &.{file}, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
@@ -235,11 +252,26 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/androidfw"), &gen.androidfw_srcs, &.{ o.aosp.path(b, "frameworks/base/libs/androidfw/include_pathutils"), zip_inc, zip_incfs_inc, binder_inc }, &.{});
     g.add(o.aosp.path(b, "system/libziparchive"), &gen.ziparchive_srcs, &.{ zip_inc, zip_incfs_inc, o.aosp.path(b, "system/libziparchive") }, &.{ "-DINCFS_SUPPORT_DISABLED=1", "-DZIPARCHIVE_DISABLE_CALLBACK_API=1", "-DZLIB_CONST", "-D_FILE_OFFSET_BITS=64" });
     g.add(o.aosp.path(b, "system/incremental_delivery/incfs/util"), &.{"map_ptr.cpp"}, &.{}, &.{});
+    g.add(o.aosp.path(b, "system/incremental_delivery/incfs"), &.{ "incfs_ndk.c", "incfs.cpp", "MountRegistry.cpp", "path.cpp" }, &.{}, &.{"-D_FILE_OFFSET_BITS=64"});
+    g.add(o.incremental_sysprop_source.dirname(), &.{"IncrementalProperties.sysprop.cpp"}, &.{}, &.{});
+    for (o.aidl_source_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
+        if (entry.output) |output| g.add(root, &.{output}, &.{}, &.{});
+    }
     g.add(o.aosp.path(b, "frameworks/native/libs/input"), &gen.input_srcs, &.{ fn_inc, o.aosp.path(b, "frameworks/native/libs/input"), input_compat_inc, binder_inc }, &.{aidl_inc});
     g.add(o.aosp.path(b, "frameworks/native/libs/attestation"), &gen.attestation_srcs, &.{fn_inc}, &.{});
+    // Isolate the pinned Android loader declarations from Bionic's libc headers.
+    const graphics_headers = b.addWriteFiles();
+    _ = graphics_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/android/dlext.h"), "android/dlext.h");
+    const graphics_includes = &.{ o.aosp.path(b, "frameworks/native/libs/graphicsenv/include"), o.aosp.path(b, "art/libnativeloader/include"), graphics_headers.getDirectory(), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") };
+    g.add(o.aosp.path(b, "frameworks/native/libs/graphicsenv"), &.{ "FeatureOverrides.cpp", "GpuStatsInfo.cpp", "GraphicsEnv.cpp", "IGpuService.cpp" }, graphics_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_GraphicsEnvironment.cpp"}, graphics_includes, &.{ "-include", b.pathResolve(&.{"src/native/GraphicsEnvironmentBackend.h"}) });
+    g.add(b.path("src/native"), &.{"GraphicsEnvironmentBackend.cpp"}, graphics_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.core_jni_srcs, &.{ b.path("src/native/sqlite-compat"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), zip_inc, apex_inc, input_compat_inc, binder_inc }, &.{aidl_inc});
+    // These pinned files rely on Bionic/transitive includes for all_of, ioctl
+    // and EXT4_SUPER_MAGIC. Declare those headers explicitly for host libc++.
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     g.add(b.path(""), &our_srcs, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform") }, &.{});

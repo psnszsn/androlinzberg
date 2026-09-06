@@ -14,7 +14,24 @@
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <!-- Dropbox reads (signature|privileged|development). -->
     <uses-permission android:name="android.permission.READ_LOGS" />
-    <application android:hasCode="false" android:label="azk test a">
+    <!-- Sensor-less biometric service contracts, including privileged sensor metadata. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC_INTERNAL" />
+    <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_SELF_MANAGED" />
+    <uses-permission android:name="android.permission.MANAGE_COMPANION_DEVICES" />
+    <uses-permission android:name="android.permission.REQUEST_NETWORK_SCORES" />
+    <uses-permission android:name="android.permission.SCORE_NETWORKS" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <application android:name="dev.artzig.systemtest.BindingApplication" android:hasCode="false" android:label="azk test a">
+        <service android:name="dev.artzig.systemtest.TestNetworkRecommendationService" android:exported="true">
+            <intent-filter>
+                <action android:name="android.net.action.RECOMMEND_NETWORKS" />
+            </intent-filter>
+        </service>
         <!-- Resolvable only while enabled; the client toggles it to check the
              explicit-lookup enabled-state gate (no code needed for a manifest
              lookup). -->

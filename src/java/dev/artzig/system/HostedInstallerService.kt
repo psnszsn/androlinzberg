@@ -10,10 +10,11 @@ class HostedInstallerService(
     override fun installPackage(apkPath: String?, nativeLibraryDir: String?): String =
         packages.installPackage(checkNotNull(apkPath), nativeLibraryDir)
 
-    override fun bindProcessPackage(packageName: String?, processName: String?) {
+    override fun bindProcessPackage(packageName: String?, processName: String?,
+        launchConfiguration: android.content.res.Configuration?) {
         val uid = Binder.getCallingUid()
         val pkg = checkNotNull(packageName)
         if (uid != android.os.Process.SYSTEM_UID) packages.bindPackageUid(pkg, uid)
-        activityManager.noteProcessPackage(uid, pkg, processName ?: pkg)
+        activityManager.noteProcessPackage(uid, pkg, processName ?: pkg, launchConfiguration)
     }
 }

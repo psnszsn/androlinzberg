@@ -7,6 +7,7 @@
 const std = @import("std");
 
 pub const Options = struct {
+    language: enum { java, cpp } = .java,
     /// Root of the packaged AOSP tree.
     vendor: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
@@ -37,7 +38,7 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
         .link_libc = true,
         .link_libcpp = true,
     });
-    const exe = b.addExecutable(.{ .name = "sysprop_java", .root_module = mod });
+    const exe = b.addExecutable(.{ .name = if (o.language == .java) "sysprop_java" else "sysprop_cpp", .root_module = mod });
 
     inline for (.{
         st.path(b, "include"),  st,                    pb_dir,
@@ -50,8 +51,10 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     };
 
     // sysprop tool + generated protobuf message code.
-    mod.addCSourceFiles(.{ .root = st, .files = &.{
+    mod.addCSourceFiles(.{ .root = st, .files = if (o.language == .java) &.{
         "JavaGen.cpp", "JavaMain.cpp", "CodeWriter.cpp", "Common.cpp",
+    } else &.{
+        "CppGen.cpp", "CppMain.cpp", "CodeWriter.cpp", "Common.cpp",
     }, .flags = flags });
     mod.addCSourceFiles(.{ .root = pb_dir, .files = &.{"sysprop.pb.cc"}, .flags = flags });
 

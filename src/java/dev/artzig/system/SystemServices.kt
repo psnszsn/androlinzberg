@@ -129,24 +129,6 @@ internal object SystemServices {
         override fun getTopFocusedDisplayId(): Int = 0
     }
 
-    /** URI grants are not enforced between hosted processes. */
-    private class HostedUriGrantsManagerInternal : com.android.server.uri.UriGrantsManagerInternal {
-        override fun newUriPermissionOwner(name: String?): android.os.IBinder = android.os.Binder()
-        override fun checkGrantUriPermission(
-            callingUid: Int,
-            targetPkg: String?,
-            uri: android.net.Uri?,
-            modeFlags: Int,
-            userId: Int,
-        ): Int = callingUid
-        override fun revokeUriPermissionFromOwner(
-            owner: android.os.IBinder?,
-            uri: android.net.Uri?,
-            mode: Int,
-            userId: Int,
-        ) {}
-    }
-
     /** App-process hosts this session spawned, destroyed when the system process exits. */
     private val spawnedProcesses = java.util.concurrent.CopyOnWriteArrayList<Process>()
 
@@ -162,7 +144,9 @@ internal object SystemServices {
                 }
             },
         )
-        android.os.ServiceManager.addService(Context.INPUT_METHOD_SERVICE, HostedInputMethodManagerService())
+        android.os.ServiceManager.addService(Context.INPUT_METHOD_SERVICE, HostedInputMethodManagerService(context))
+        android.os.ServiceManager.addService(HostedWindowManagerService.SURFACE_SYNC_SERVICE,
+            HostedWindowManagerService(com.android.server.wm.HostedSurfaceSyncGroups()))
         android.os.ServiceManager.addService(
             Context.ACCESSIBILITY_SERVICE,
             HostedAccessibilityManagerService(),
@@ -180,10 +164,6 @@ internal object SystemServices {
             VirtualDeviceManagerInternal::class.java,
             HostedVirtualDeviceManagerInternal(),
         )
-        LocalServices.addService(
-            com.android.server.uri.UriGrantsManagerInternal::class.java,
-            HostedUriGrantsManagerInternal(),
-        )
         // Identity/policy services on the real AIDL surfaces, session-global
         // (any process may ask about users or app-ops).
         android.os.ServiceManager.addService(Context.USER_SERVICE, HostedUserManagerService())
@@ -200,21 +180,34 @@ internal object SystemServices {
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
         )
         android.os.ServiceManager.addService("package", packageManager)
+        android.os.ServiceManager.addService("permissionmgr", HostedPermissionManagerService(packageManager))
+        LocalServices.addService(
+            com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java,
+            HostedLegacyPermissionManagerInternal(packageManager),
+        )
         val packageManagerInternal = Class.forName(
             "android.content.pm.HostedPackageManagerInternal",
         ).getConstructor(HostedPackageManagerService::class.java)
             .newInstance(packageManager) as PackageManagerInternal
         LocalServices.addService(PackageManagerInternal::class.java, packageManagerInternal)
         android.os.ServiceManager.addService("permission_checker", HostedPermissionCheckerService(packageManager))
-        android.os.ServiceManager.addService(
-            Context.PLATFORM_COMPAT_SERVICE,
-            HostedPlatformCompatService(),
-        )
-        val activityManager = HostedActivityManagerService()
+        android.os.ServiceManager.addService("apexservice", HostedApexService())
+        com.android.server.pm.HostedApexPackages.initialize()
+        val platformCompat = com.android.server.compat.PlatformCompat(context)
+        android.os.ServiceManager.addService(Context.PLATFORM_COMPAT_SERVICE, platformCompat)
+        android.os.ServiceManager.addService(Context.PLATFORM_COMPAT_NATIVE_SERVICE,
+            com.android.server.compat.PlatformCompatNative(platformCompat))
+        val activityManager = HostedActivityManagerService(context)
+        activityManager.platformCompat = platformCompat
         activityManager.processLauncher = sessionProcessLauncher()
         activityManager.packageService = packageManager
         appOps.packageService = packageManager
+        android.os.ServiceManager.addService(Context.FINGERPRINT_SERVICE,
+            HostedFingerprintService(HostedPermissions(packageManager), appOps))
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
+        android.os.ServiceManager.addService(Context.WIFI_SERVICE,
+            HostedWifiService(HostedPermissions(packageManager)))
+        android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
         val activityTaskManager = HostedActivityTaskManagerService(
             context,
             activityManager,
@@ -223,29 +216,19 @@ internal object SystemServices {
         activityManager.activityTaskManager = activityTaskManager
         android.os.ServiceManager.addService(Context.ACTIVITY_TASK_SERVICE, activityTaskManager)
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
-        // Reused services resolve users through ActivityManagerInternal.
-        LocalServices.addService(
-            android.app.ActivityManagerInternal::class.java,
-            object : android.app.ActivityManagerInternal() {
-                // android 16: process-state query; hosted apps run foreground.
-                override fun getUidProcessState(uid: Int): Int =
-                    2 // ActivityManager.PROCESS_STATE_TOP (@hide, not in the hosted surface)
-
-                override fun handleIncomingUser(
-                    callingPid: Int,
-                    callingUid: Int,
-                    userId: Int,
-                    allowAll: Boolean,
-                    allowMode: Int,
-                    name: String?,
-                    callerPackage: String?,
-                ): Int = UserHandle.USER_SYSTEM
-            },
+        val activityManagerInternalService = HostedActivityManagerInternalService(
+            activityManager, HostedPermissions(packageManager),
         )
+        val activityManagerInternal = Class.forName("dev.artzig.system.HostedActivityManagerInternal")
+            .getConstructor(HostedActivityManagerInternalService::class.java)
+            .newInstance(activityManagerInternalService) as android.app.ActivityManagerInternal
+        LocalServices.addService(android.app.ActivityManagerInternal::class.java, activityManagerInternal)
         // Observer registry and the settings provider, registered before any
         // service that reads settings during startup.
         android.os.ServiceManager.addService("content", HostedContentService())
-        android.os.ServiceManager.addService("uri_grants", HostedUriGrantsService())
+        // Stock stats-manager caches pull callbacks while the native statsd daemon is absent.
+        android.os.ServiceManager.addService("statsmanager", com.android.server.stats.StatsManagerService(context))
+        manager.startService(com.android.server.uri.UriGrantsManagerService.Lifecycle::class.java)
         val settingsInfo = android.content.pm.ProviderInfo()
         settingsInfo.packageName = "android"
         settingsInfo.name = SettingsProvider::class.java.name
@@ -352,8 +335,15 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
+        manager.startService(com.android.server.NetworkScoreService.Lifecycle::class.java)
+        // SystemServer registers compatibility observers after the activity and
+        // content services can receive package broadcasts and settings changes.
+        platformCompat.registerPackageReceiver(context)
+        platformCompat.registerContentObserver()
         manager.preSystemReady()
+        activityManagerInternalService.markSystemReady()
         manager.startBootPhase(trace, SystemService.PHASE_SYSTEM_SERVICES_READY)
+        LocalServices.getService(com.android.server.uri.UriGrantsManagerInternal::class.java).onSystemReady()
         manager.startBootPhase(trace, SystemService.PHASE_ACTIVITY_MANAGER_READY)
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
         manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)

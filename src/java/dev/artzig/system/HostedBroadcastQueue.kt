@@ -23,8 +23,8 @@ import java.util.concurrent.TimeUnit
  * `ReceiverList` of filters); the AOSP queue is inseparable from
  * AMS/`ProcessList` (spike result). Ordered broadcasts deliver one receiver
  * at a time by descending filter priority and chain the result state;
- * unordered broadcasts fan out immediately (`performReceive` is oneway, and
- * the runtime serializes deliveries per receiver binder). Manifest-declared
+ * unordered broadcasts fan out through IApplicationThread.scheduleRegisteredReceiver,
+ * which preserves the stock dispatcher and per-process oneway ordering. Manifest-declared
  * receivers arrive with a later phase.
  */
 internal class HostedBroadcastQueue(private val ams: HostedActivityManagerService) {
@@ -53,6 +53,10 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         val intent: Intent,
         val receivers: List<Registration>,
         val resultTo: IIntentReceiver?,
+        val resultCaller: IBinder?,
+        val resultCallerUid: Int,
+        val senderUid: Int,
+        val senderPackage: String?,
         var resultCode: Int,
         var resultData: String?,
         var resultExtras: Bundle?,
@@ -88,8 +92,9 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         }
         val binder = receiver.asBinder()
         val matching = ArrayList<Intent>()
+        val registration: Registration
         synchronized(lock) {
-            val registration = registrations[binder] ?: run {
+            registration = registrations[binder] ?: run {
                 val fresh = Registration(receiver, caller, callingPackage, callerUid, broadcastPermission, notExported)
                 fresh.queue = this
                 try {
@@ -108,7 +113,8 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         // AOSP delivers every matching sticky to the new receiver and returns the first.
         for (sticky in matching) {
             try {
-                receiver.performReceive(sticky, 0, null, null, false, true, 0)
+                deliver(receiver, registration.callerBinder, registration.uid,
+                    sticky, 0, null, null, false, true)
             } catch (e: RemoteException) {
             }
         }
@@ -141,8 +147,14 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         sticky: Boolean,
         callingPackage: String?,
         senderUid: Int,
+        caller: IBinder? = null,
+        shareIdentity: Boolean = false,
+        resultData: String? = null,
+        resultExtras: Bundle? = null,
     ): Int {
         val action = intent.action ?: return -1
+        val exposedUid = if (shareIdentity) senderUid else android.os.Process.INVALID_UID
+        val exposedPackage = if (shareIdentity) callingPackage else null
         val targets: List<Registration>
         synchronized(lock) {
             if (sticky) stickies[action] = Intent(intent)
@@ -162,15 +174,19 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         if (!isOrdered) {
             for (registration in targets) {
                 try {
-                    registration.receiver.performReceive(intent, 0, null, null, false, false, 0)
+                    deliver(registration.receiver, registration.callerBinder, registration.uid,
+                        intent, resultCode, resultData, resultExtras, false, false,
+                        exposedUid, exposedPackage)
                 } catch (e: RemoteException) {
                 }
             }
-            resultTo?.let { deliverResult(it, intent, resultCode, null, null) }
+            resultTo?.let { deliverResult(it, caller, senderUid, intent, resultCode,
+                resultData, resultExtras, exposedUid, exposedPackage) }
             return 0
         }
         synchronized(lock) {
-            ordered.addLast(BroadcastRecord(intent, targets, resultTo, resultCode, null, null))
+            ordered.addLast(BroadcastRecord(intent, targets, resultTo, caller, senderUid,
+                exposedUid, exposedPackage, resultCode, resultData, resultExtras))
             if (current == null) scheduleNextLocked()
         }
         return 0
@@ -224,16 +240,18 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
                 current = null
                 val resultTo = record.resultTo
                 if (resultTo != null) {
-                    deliverResult(resultTo, record.intent, record.resultCode, record.resultData, record.resultExtras)
+                    deliverResult(resultTo, record.resultCaller, record.resultCallerUid,
+                        record.intent, record.resultCode, record.resultData, record.resultExtras,
+                        record.senderUid, record.senderPackage)
                 }
                 continue
             }
             val target = record.receivers[record.index]
             if (registrations[target.binder] == null) continue // unregistered meanwhile
             val delivered = try {
-                target.receiver.performReceive(
-                    record.intent, record.resultCode, record.resultData, record.resultExtras, true, false, 0,
-                )
+                deliver(target.receiver, target.callerBinder, target.uid,
+                    record.intent, record.resultCode, record.resultData, record.resultExtras,
+                    true, false, record.senderUid, record.senderPackage)
                 true
             } catch (e: RemoteException) {
                 false
@@ -258,9 +276,32 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         }
     }
 
-    private fun deliverResult(resultTo: IIntentReceiver, intent: Intent, code: Int, data: String?, extras: Bundle?) {
+    /** BroadcastQueueImpl.scheduleReceiverWarmLocked/scheduleResultTo. */
+    private fun deliver(
+        receiver: IIntentReceiver, caller: IBinder?, receiverUid: Int,
+        intent: Intent, code: Int, data: String?, extras: Bundle?,
+        ordered: Boolean, sticky: Boolean,
+        senderUid: Int = android.os.Process.INVALID_UID, senderPackage: String? = null,
+    ) {
+        val appThread = caller?.let { android.app.IApplicationThread.Stub.asInterface(it) }
+        if (appThread != null) {
+            appThread.scheduleRegisteredReceiver(receiver, Intent(intent), code, data, extras,
+                ordered, sticky, !ordered, 0, ams.uidProcessState(receiverUid), senderUid, senderPackage)
+        } else {
+            // Internal raw callbacks (for example PendingIntent completion) have
+            // no application dispatcher and retain IIntentReceiver's own ABI.
+            receiver.performReceive(intent, code, data, extras, ordered, sticky, 0)
+        }
+    }
+
+    private fun deliverResult(
+        resultTo: IIntentReceiver, caller: IBinder?, receiverUid: Int,
+        intent: Intent, code: Int, data: String?, extras: Bundle?,
+        senderUid: Int, senderPackage: String?,
+    ) {
         try {
-            resultTo.performReceive(intent, code, data, extras, false, false, 0)
+            deliver(resultTo, caller, receiverUid, intent, code, data, extras,
+                false, false, senderUid, senderPackage)
         } catch (e: RemoteException) {
         }
     }

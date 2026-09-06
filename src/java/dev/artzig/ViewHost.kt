@@ -148,33 +148,31 @@ public final class ViewHost {
             sActivity.performStart()
             sActivity.performPostCreate(null)
             sActivity.performResume()
-            sRoot = android.view.ViewRootImpl(sContext)
-            val decor: android.view.View = sActivity.getWindow().getDecorView()
-            sRoot.setView(decor, width, height)
-            android.view.ArtzigAccessibilityBridge.setActivityRoot(sRoot)
+            sRoot = HostedWindowRoots.attachActivity(sActivity, width, height)
+            ArtzigAccessibilityBridge.setActivityRoot(sRoot)
         }
 
-        @JvmStatic public fun accessibilitySnapshot(): String = android.view.ArtzigAccessibilityBridge.snapshot()
+        @JvmStatic public fun accessibilitySnapshot(): String = ArtzigAccessibilityBridge.snapshot()
 
         @JvmStatic public fun notificationsSnapshot(): String = NotificationObservation.snapshot()
 
         @JvmStatic public fun accessibilityDiagnostics(afterRevision: Long): String =
-            android.view.ArtzigAccessibilityBridge.diagnostics(
+            ArtzigAccessibilityBridge.diagnostics(
                 afterRevision,
             )
 
         @JvmStatic public fun testDiagnostics(
             afterLogSequence: Long,
             afterIssueSequence: Long,
-        ): String = android.util.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence)
+        ): String = dev.artzig.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence)
 
-        @JvmStatic public fun diagnosticLogSequence(): Long = android.util.ArtzigTestDiagnostics.logSequence()
+        @JvmStatic public fun diagnosticLogSequence(): Long = dev.artzig.ArtzigTestDiagnostics.logSequence()
 
-        @JvmStatic public fun diagnosticIssueSequence(): Long = android.util.ArtzigTestDiagnostics.issueSequence()
+        @JvmStatic public fun diagnosticIssueSequence(): Long = dev.artzig.ArtzigTestDiagnostics.issueSequence()
 
-        @JvmStatic public fun accessibilityRevision(): Long = android.view.ArtzigAccessibilityBridge.revision()
+        @JvmStatic public fun accessibilityRevision(): Long = ArtzigAccessibilityBridge.revision()
 
-        @JvmStatic public fun accessibilityIdle(): Boolean = android.view.ArtzigAccessibilityBridge.isIdle()
+        @JvmStatic public fun accessibilityIdle(): Boolean = ArtzigAccessibilityBridge.isIdle()
 
         @JvmStatic public fun accessibilityPerform(
             expectedRevision: Long,
@@ -184,7 +182,7 @@ public final class ViewHost {
             action: Int,
             text: String?,
         ): Boolean =
-            android.view.ArtzigAccessibilityBridge.perform(
+            ArtzigAccessibilityBridge.perform(
                 expectedRevision,
                 windowId,
                 viewId,
@@ -223,8 +221,6 @@ public final class ViewHost {
             sWidth = width
             sHeight = height
             sScale120 = scale120
-            val density: Float = scale120 / 120f
-            android.view.WindowManagerImpl.configureWindowMetrics(width, height, density)
             HostContexts.configureDisplay(width, height, scale120)
             val config: android.content.res.Configuration =
                 android.content.res.Configuration(sContext.getResources().getConfiguration())

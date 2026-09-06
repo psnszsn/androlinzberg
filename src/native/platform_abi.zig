@@ -23,6 +23,7 @@ pub export fn azk_platform_bind_io(
     vtable: *const std.Io.VTable,
 ) callconv(.c) void {
     g_io = .{ .userdata = userdata, .vtable = vtable };
+    @import("selinux_backend.zig").bindIo(g_io);
 }
 
 const sqlite3 = opaque {};
@@ -79,6 +80,7 @@ const GbmBo = opaque {};
 extern "c" fn gbm_create_device(fd: c_int) ?*GbmDevice;
 extern "c" fn gbm_device_is_format_supported(device: *GbmDevice, format: u32, usage: u32) c_int;
 extern "c" fn gbm_bo_create(device: *GbmDevice, width: u32, height: u32, format: u32, usage: u32) ?*GbmBo;
+extern "c" fn gbm_bo_import(device: *GbmDevice, kind: u32, data: *const anyopaque, usage: u32) ?*GbmBo;
 extern "c" fn gbm_bo_destroy(bo: *GbmBo) void;
 extern "c" fn gbm_bo_get_fd(bo: *GbmBo) c_int;
 extern "c" fn gbm_bo_get_stride(bo: *GbmBo) u32;
@@ -119,7 +121,7 @@ const HardwareBuffer = struct {
     references: std.atomic.Value(u32) = .init(1),
     description: HardwareBufferDesc,
     bo: *GbmBo,
-    dma_buf_fd: c_int,
+    dma_buf_file: std.Io.File,
     drm_format: u32,
     byte_stride: u32,
     modifier: u64,
@@ -127,6 +129,7 @@ const HardwareBuffer = struct {
     map_mutex: NativeMutex = .{},
     map_data: ?*anyopaque = null,
     map_token: ?*anyopaque = null,
+    map_stride: u32 = 0,
 };
 
 const Format = struct { drm: u32, bytes_per_pixel: u32 };
@@ -177,7 +180,15 @@ var gbm_mutex: NativeMutex = .{};
 var gbm_initialized = false;
 var gbm_device: ?*GbmDevice = null;
 var gbm_fd: c_int = -1;
-var next_hardware_buffer_id: std.atomic.Value(u64) = .init(1);
+
+fn newHardwareBufferId() u64 {
+    while (true) {
+        var bytes: [8]u8 = undefined;
+        g_io.random(&bytes);
+        const id = std.mem.readInt(u64, &bytes, .little);
+        if (id != 0) return id;
+    }
+}
 
 fn getGbmDevice() ?*GbmDevice {
     gbm_mutex.lock();
@@ -218,13 +229,15 @@ pub export fn AHardwareBuffer_allocate(desc: ?*const HardwareBufferDesc, out_buf
     const flags = gbmUsage(description.usage);
     if (gbm_device_is_format_supported(device, info.drm, flags) == 0) return -22;
     const bo = gbm_bo_create(device, description.width, description.height, info.drm, flags) orelse return -12;
-    errdefer gbm_bo_destroy(bo);
+    var adopted = false;
+    defer if (!adopted) gbm_bo_destroy(bo);
     const fd = gbm_bo_get_fd(bo);
     if (fd < 0) {
         const error_number: c_int = __errno_location().*;
         return if (error_number > 0) -error_number else -1;
     }
-    errdefer _ = close(fd);
+    const file: std.Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
+    defer if (!adopted) file.close(g_io);
     const buffer = std.heap.c_allocator.create(HardwareBuffer) catch return -12;
     var stored = description;
     const byte_stride = gbm_bo_get_stride(bo);
@@ -234,12 +247,15 @@ pub export fn AHardwareBuffer_allocate(desc: ?*const HardwareBufferDesc, out_buf
     buffer.* = .{
         .description = stored,
         .bo = bo,
-        .dma_buf_fd = fd,
+        .dma_buf_file = file,
         .drm_format = info.drm,
         .byte_stride = byte_stride,
         .modifier = gbm_bo_get_modifier(bo),
-        .id = next_hardware_buffer_id.fetchAdd(1, .monotonic),
+        // IDs are opaque and must survive cross-process import. A process-local
+        // counter alone collided with buffers allocated by another hosted peer.
+        .id = newHardwareBufferId(),
     };
+    adopted = true;
     output.* = buffer;
     return 0;
 }
@@ -252,7 +268,7 @@ pub export fn AHardwareBuffer_release(buffer: ?*HardwareBuffer) callconv(.c) voi
     const value = buffer orelse return;
     if (value.references.fetchSub(1, .acq_rel) != 1) return;
     if (value.map_token != null) gbm_bo_unmap(value.bo, value.map_token);
-    if (value.dma_buf_fd >= 0) _ = close(value.dma_buf_fd);
+    value.dma_buf_file.close(g_io);
     gbm_bo_destroy(value.bo);
     std.heap.c_allocator.destroy(value);
 }
@@ -278,26 +294,23 @@ pub export fn AHardwareBuffer_lock(buffer: ?*HardwareBuffer, usage: u64, fence: 
     value.map_mutex.lock();
     defer value.map_mutex.unlock();
     if (value.map_token != null) return -16;
-    var x: u32 = 0;
-    var y: u32 = 0;
-    var width = value.description.width;
-    var height = value.description.height;
+    const width = value.description.width;
+    const height = value.description.height;
     if (rect) |area| {
         if (area.left < 0 or area.top < 0 or area.right <= area.left or area.bottom <= area.top or area.right > width or area.bottom > height) return -22;
-        x = @intCast(area.left);
-        y = @intCast(area.top);
-        width = @intCast(area.right - area.left);
-        height = @intCast(area.bottom - area.top);
     }
     var transfer: u32 = 0;
     if (usage & usage_cpu_read_mask != 0) transfer |= gbm_transfer_read;
     if (usage & usage_cpu_write_mask != 0) transfer |= gbm_transfer_write;
     var stride: u32 = 0;
-    value.map_data = gbm_bo_map(value.bo, x, y, width, height, transfer, &stride, &value.map_token);
+    // AHardwareBuffer returns the buffer origin even when a dirty subrectangle
+    // is supplied. GBM's subrectangle pointer would shift Canvas's full image.
+    value.map_data = gbm_bo_map(value.bo, 0, 0, width, height, transfer, &stride, &value.map_token);
     if (value.map_data == null) {
         value.map_token = null;
         return -12;
     }
+    value.map_stride = stride;
     output.* = value.map_data;
     return 0;
 }
@@ -310,6 +323,7 @@ pub export fn AHardwareBuffer_unlock(buffer: ?*HardwareBuffer, fence: ?*i32) cal
     gbm_bo_unmap(value.bo, value.map_token);
     value.map_data = null;
     value.map_token = null;
+    value.map_stride = 0;
     if (fence) |output| output.* = -1;
     return 0;
 }
@@ -322,7 +336,7 @@ pub export fn AHardwareBuffer_lockPlanes(buffer: ?*HardwareBuffer, usage: u64, f
     if (result != 0) return result;
     const value = buffer.?;
     planes.plane_count = 1;
-    planes.planes[0] = .{ .data = address, .pixel_stride = formatInfo(value.description.format).?.bytes_per_pixel, .row_stride = value.byte_stride };
+    planes.planes[0] = .{ .data = address, .pixel_stride = formatInfo(value.description.format).?.bytes_per_pixel, .row_stride = value.map_stride };
     return 0;
 }
 
@@ -331,7 +345,7 @@ pub export fn AHardwareBuffer_lockAndGetInfo(buffer: ?*HardwareBuffer, usage: u6
     if (result != 0) return result;
     const value = buffer.?;
     if (out_bytes_per_pixel) |output| output.* = @intCast(formatInfo(value.description.format).?.bytes_per_pixel);
-    if (out_bytes_per_stride) |output| output.* = @intCast(value.byte_stride);
+    if (out_bytes_per_stride) |output| output.* = @intCast(value.map_stride);
     return 0;
 }
 
@@ -353,13 +367,12 @@ pub export fn AHardwareBuffer_recvHandleFromUnixSocket(_: c_int, _: ?*?*Hardware
 pub export fn azk_hardware_buffer_describe_dmabuf(buffer: ?*const HardwareBuffer, output: ?*DmabufDescription) callconv(.c) bool {
     const value = buffer orelse return false;
     const description = output orelse return false;
-    if (value.dma_buf_fd < 0) return false;
     description.* = std.mem.zeroes(DmabufDescription);
     description.width = value.description.width;
     description.height = value.description.height;
     description.drm_format = value.drm_format;
     description.plane_count = 1;
-    description.planes[0] = .{ .fd = value.dma_buf_fd, .offset = gbm_bo_get_offset(value.bo, 0), .stride = value.byte_stride, .modifier = value.modifier };
+    description.planes[0] = .{ .fd = value.dma_buf_file.handle, .offset = gbm_bo_get_offset(value.bo, 0), .stride = value.byte_stride, .modifier = value.modifier };
     return true;
 }
 
@@ -370,6 +383,141 @@ pub export fn azk_hardware_buffer_gbm_device() callconv(.c) ?*GbmDevice {
 var hardware_buffer_class: jni.jclass = null;
 var hardware_buffer_native_object: jni.jfieldID = null;
 var hardware_buffer_constructor: jni.jmethodID = null;
+
+// Pinned GraphicBuffer GB01 flattening plus a mapper-specific native handle.
+// The stock header's dimensions, usage, ID, generation and transport counts
+// remain intact. GBM consumes the handle's DMA-BUF, stride, offset and modifier.
+const HardwareBufferTransport = struct {
+    const magic = 0x47423031; // 'GB01'
+    const mapper_magic = 0x415a4742; // 'AZGB'
+    const word_count = 20;
+    var cls: jni.jclass = null;
+    var write_method: jni.jmethodID = null;
+    var read_method: jni.jmethodID = null;
+
+    const ImportFd = extern struct { fd: c_int, width: u32, height: u32, stride: u32, format: u32 };
+    const ImportModifier = extern struct {
+        width: u32,
+        height: u32,
+        format: u32,
+        num_fds: u32,
+        fds: [4]c_int,
+        strides: [4]c_int,
+        offsets: [4]c_int,
+        modifier: u64,
+    };
+
+    fn low(value: u64) i32 {
+        return @bitCast(@as(u32, @truncate(value)));
+    }
+
+    fn combine(lo: i32, hi: i32) u64 {
+        return @as(u64, @as(u32, @bitCast(lo))) | (@as(u64, @as(u32, @bitCast(hi))) << 32);
+    }
+
+    fn describe(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c) jni.jintArray {
+        const buffer = fromHandle(handle) orelse return null;
+        const d = buffer.description;
+        const words = [_]i32{
+            magic,                       @intCast(d.width),            @intCast(d.height),   @intCast(d.stride),         @intCast(d.format),
+            @intCast(d.layers),          low(d.usage),                 low(buffer.id >> 32), low(buffer.id),             0,
+            1,                           7,                            low(d.usage >> 32),   mapper_magic,               1,
+            @bitCast(buffer.drm_format), @intCast(buffer.byte_stride), low(buffer.modifier), low(buffer.modifier >> 32), @intCast(gbm_bo_get_offset(buffer.bo, 0)),
+            buffer.dma_buf_file.handle,
+        };
+        const array = env.*.*.NewIntArray.?(env, words.len) orelse return null;
+        env.*.*.SetIntArrayRegion.?(env, array, 0, words.len, &words);
+        return array;
+    }
+
+    fn importBuffer(env: [*c]jni.JNIEnv, _: jni.jclass, array: jni.jintArray, fd: jni.jint) callconv(.c) jni.jlong {
+        if (array == null or fd < 0 or env.*.*.GetArrayLength.?(env, array) != word_count) return 0;
+        var words: [word_count]i32 = undefined;
+        env.*.*.GetIntArrayRegion.?(env, array, 0, word_count, &words);
+        if (env.*.*.ExceptionCheck.?(env) != 0) return 0;
+        if (words[0] != magic or words[10] != 1 or words[11] != 7 or
+            words[13] != mapper_magic or words[14] != 1 or words[1] <= 0 or words[2] <= 0 or
+            words[3] <= 0 or words[4] < 0 or words[5] != 1 or words[16] <= 0 or words[19] < 0) return 0;
+        var desc = HardwareBufferDesc{
+            .width = @intCast(words[1]),
+            .height = @intCast(words[2]),
+            .stride = @intCast(words[3]),
+            .format = @intCast(words[4]),
+            .layers = 1,
+            .usage = combine(words[6], words[12]),
+            .rfu0 = 0,
+            .rfu1 = 0,
+        };
+        if (!validDescription(desc)) return 0;
+        const info = formatInfo(desc.format).?;
+        const byte_stride: u32 = @intCast(words[16]);
+        if (info.drm != @as(u32, @bitCast(words[15])) or
+            @as(u64, desc.width) * info.bytes_per_pixel > byte_stride or
+            @as(u64, desc.stride) * info.bytes_per_pixel != byte_stride) return 0;
+        const device = getGbmDevice() orelse return 0;
+        const modifier = combine(words[17], words[18]);
+        const imported = if (modifier == drm_modifier_invalid) implicit: {
+            if (words[19] != 0) return 0;
+            const data = ImportFd{ .fd = fd, .width = desc.width, .height = desc.height, .stride = byte_stride, .format = info.drm };
+            break :implicit gbm_bo_import(device, 0x5503, &data, gbmUsage(desc.usage));
+        } else explicit: {
+            const data = ImportModifier{
+                .width = desc.width,
+                .height = desc.height,
+                .format = info.drm,
+                .num_fds = 1,
+                .fds = .{ fd, -1, -1, -1 },
+                .strides = .{ words[16], 0, 0, 0 },
+                .offsets = .{ words[19], 0, 0, 0 },
+                .modifier = modifier,
+            };
+            break :explicit gbm_bo_import(device, 0x5504, &data, gbmUsage(desc.usage));
+        };
+        const bo = imported orelse return 0;
+        var adopted = false;
+        defer if (!adopted) gbm_bo_destroy(bo);
+        const imported_fd = gbm_bo_get_fd(bo);
+        if (imported_fd < 0) return 0;
+        const file: std.Io.File = .{ .handle = imported_fd, .flags = .{ .nonblocking = false } };
+        defer if (!adopted) file.close(g_io);
+        const stride = gbm_bo_get_stride(bo);
+        if (stride != byte_stride) return 0;
+        desc.stride = stride / info.bytes_per_pixel;
+        const buffer = std.heap.c_allocator.create(HardwareBuffer) catch return 0;
+        buffer.* = .{
+            .description = desc,
+            .bo = bo,
+            .dma_buf_file = file,
+            .drm_format = info.drm,
+            .byte_stride = stride,
+            .modifier = gbm_bo_get_modifier(bo),
+            .id = combine(words[8], words[7]),
+        };
+        adopted = true;
+        return @intCast(@intFromPtr(buffer));
+    }
+
+    fn write(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, parcel: jni.jobject) callconv(.c) void {
+        env.*.*.CallStaticVoidMethod.?(env, cls, write_method, handle, parcel);
+    }
+
+    fn read(env: [*c]jni.JNIEnv, _: jni.jclass, parcel: jni.jobject) callconv(.c) jni.jlong {
+        return env.*.*.CallStaticLongMethod.?(env, cls, read_method, parcel);
+    }
+
+    fn register(env: [*c]jni.JNIEnv) bool {
+        const local = env.*.*.FindClass.?(env, "dev/artzig/HardwareBufferParcel") orelse return false;
+        defer env.*.*.DeleteLocalRef.?(env, local);
+        cls = env.*.*.NewGlobalRef.?(env, local) orelse return false;
+        write_method = env.*.*.GetStaticMethodID.?(env, cls, "write", "(JLandroid/os/Parcel;)V") orelse return false;
+        read_method = env.*.*.GetStaticMethodID.?(env, cls, "read", "(Landroid/os/Parcel;)J") orelse return false;
+        const methods = [_]jni.JNINativeMethod{
+            .{ .name = "nativeDescribe", .signature = "(J)[I", .fnPtr = @ptrCast(@constCast(&describe)) },
+            .{ .name = "nativeImport", .signature = "([II)J", .fnPtr = @ptrCast(@constCast(&importBuffer)) },
+        };
+        return env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) == 0;
+    }
+};
 
 fn fromHandle(handle: jni.jlong) ?*HardwareBuffer {
     if (handle == 0) return null;
@@ -413,16 +561,142 @@ fn nativeHardwareBufferLayers(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlon
 fn nativeHardwareBufferUsage(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c) jni.jlong {
     return if (fromHandle(handle)) |buffer| @bitCast(buffer.description.usage) else 0;
 }
-fn nativeHardwareBufferId(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c) jni.jlong {
+fn nativeHardwareBufferId(handle: jni.jlong) callconv(.c) jni.jlong {
     return if (fromHandle(handle)) |buffer| @bitCast(buffer.id) else 0;
 }
 
+fn nativeHardwareBufferEstimateSize(handle: jni.jlong) callconv(.c) jni.jlong {
+    const buffer = fromHandle(handle) orelse return 0;
+    return @intCast(@as(u64, buffer.description.height) * buffer.byte_stride);
+}
+
+fn nativeHardwareBufferFinalizer(_: [*c]jni.JNIEnv, _: jni.jclass) callconv(.c) jni.jlong {
+    return @intCast(@intFromPtr(&AHardwareBuffer_release));
+}
+
+const GraphicBufferJni = struct {
+    var cls: jni.jclass = null;
+    var constructor: jni.jmethodID = null;
+    var native_object: jni.jfieldID = null;
+    var rect_fields: [4]jni.jfieldID = @splat(null);
+
+    const Canvas = opaque {};
+    const NativeWindowBuffer = extern struct {
+        width: i32,
+        height: i32,
+        stride: i32,
+        format: i32,
+        bits: ?*anyopaque,
+        reserved: [6]u32 = @splat(0),
+    };
+    extern "c" fn ACanvas_getNativeHandleFromJava(env: [*c]jni.JNIEnv, canvas: jni.jobject) ?*Canvas;
+    extern "c" fn ACanvas_setBuffer(canvas: ?*Canvas, buffer: ?*const NativeWindowBuffer, dataspace: i32) bool;
+    extern "c" fn ACanvas_clipRect(canvas: ?*Canvas, rect: *const Rect, anti_alias: bool) void;
+
+    fn create(env: [*c]jni.JNIEnv, clazz: jni.jclass, width: jni.jint, height: jni.jint, format: jni.jint, usage: jni.jint) callconv(.c) jni.jlong {
+        return nativeHardwareBufferCreate(env, clazz, width, height, format, 1, @as(u32, @bitCast(usage)));
+    }
+
+    fn fromHardwareBuffer(env: [*c]jni.JNIEnv, _: jni.jclass, object: jni.jobject) callconv(.c) jni.jobject {
+        const buffer = azk_hardware_buffer_get_native(env, object) orelse return null;
+        const desc = buffer.description;
+        const arguments = [_]jni.jvalue{
+            .{ .i = @intCast(desc.width) },                    .{ .i = @intCast(desc.height) },         .{ .i = @intCast(desc.format) },
+            .{ .i = HardwareBufferTransport.low(desc.usage) }, .{ .j = @intCast(@intFromPtr(buffer)) },
+        };
+        AHardwareBuffer_acquire(buffer);
+        const result = env.*.*.NewObjectA.?(env, cls, constructor, &arguments);
+        if (result == null) AHardwareBuffer_release(buffer);
+        return result;
+    }
+
+    fn toHardwareBuffer(env: [*c]jni.JNIEnv, _: jni.jclass, object: jni.jobject) callconv(.c) jni.jlong {
+        if (object == null) return 0;
+        const handle = env.*.*.GetLongField.?(env, object, native_object);
+        const buffer = fromHandle(handle) orelse return 0;
+        AHardwareBuffer_acquire(buffer);
+        return handle;
+    }
+
+    // Pinned android_graphics_GraphicBuffer_lockCanvas/unlockCanvasAndPost,
+    // with the existing AHardwareBuffer mapper replacing Android gralloc.
+    // Canvas's pixel-format conversion, backing store and clipping are AOSP.
+    fn lock(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, canvas_object: jni.jobject, dirty: jni.jobject) callconv(.c) jni.jboolean {
+        const buffer = fromHandle(handle) orelse return 0;
+        var rect = Rect{ .left = 0, .top = 0, .right = @intCast(buffer.description.width), .bottom = @intCast(buffer.description.height) };
+        if (dirty != null) {
+            rect = .{
+                .left = env.*.*.GetIntField.?(env, dirty, rect_fields[0]),
+                .top = env.*.*.GetIntField.?(env, dirty, rect_fields[1]),
+                .right = env.*.*.GetIntField.?(env, dirty, rect_fields[2]),
+                .bottom = env.*.*.GetIntField.?(env, dirty, rect_fields[3]),
+            };
+        }
+        var bits: ?*anyopaque = null;
+        var pixel_bytes: i32 = 0;
+        var stride_bytes: i32 = 0;
+        if (AHardwareBuffer_lockAndGetInfo(buffer, 3 | (3 << 4), -1, &rect, &bits, &pixel_bytes, &stride_bytes) != 0) return 0;
+        const canvas = ACanvas_getNativeHandleFromJava(env, canvas_object);
+        if (canvas == null or bits == null) {
+            _ = AHardwareBuffer_unlock(buffer, null);
+            return 0;
+        }
+        const target = NativeWindowBuffer{
+            .width = @intCast(buffer.description.width),
+            .height = @intCast(buffer.description.height),
+            .stride = @divTrunc(stride_bytes, pixel_bytes),
+            .format = @intCast(buffer.description.format),
+            .bits = bits,
+        };
+        if (!ACanvas_setBuffer(canvas, &target, 0)) {
+            _ = AHardwareBuffer_unlock(buffer, null);
+            return 0;
+        }
+        ACanvas_clipRect(canvas, &rect, false);
+        return 1;
+    }
+
+    fn unlock(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, canvas_object: jni.jobject) callconv(.c) jni.jboolean {
+        const canvas = ACanvas_getNativeHandleFromJava(env, canvas_object);
+        if (canvas != null) _ = ACanvas_setBuffer(canvas, null, 0);
+        return @intFromBool(AHardwareBuffer_unlock(fromHandle(handle), null) == 0);
+    }
+
+    fn register(env: [*c]jni.JNIEnv) bool {
+        const local = env.*.*.FindClass.?(env, "android/graphics/GraphicBuffer") orelse return false;
+        defer env.*.*.DeleteLocalRef.?(env, local);
+        cls = env.*.*.NewGlobalRef.?(env, local) orelse return false;
+        constructor = env.*.*.GetMethodID.?(env, cls, "<init>", "(IIIIJ)V") orelse return false;
+        native_object = env.*.*.GetFieldID.?(env, cls, "mNativeObject", "J") orelse return false;
+        const rect = env.*.*.FindClass.?(env, "android/graphics/Rect") orelse return false;
+        defer env.*.*.DeleteLocalRef.?(env, rect);
+        inline for (.{ "left", "top", "right", "bottom" }, 0..) |name, i| {
+            rect_fields[i] = env.*.*.GetFieldID.?(env, rect, name, "I") orelse return false;
+        }
+        const methods = [_]jni.JNINativeMethod{
+            .{ .name = "nCreateGraphicBuffer", .signature = "(IIII)J", .fnPtr = @ptrCast(@constCast(&create)) },
+            .{ .name = "nDestroyGraphicBuffer", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferRelease)) },
+            .{ .name = "nWriteGraphicBufferToParcel", .signature = "(JLandroid/os/Parcel;)V", .fnPtr = @ptrCast(@constCast(&HardwareBufferTransport.write)) },
+            .{ .name = "nReadGraphicBufferFromParcel", .signature = "(Landroid/os/Parcel;)J", .fnPtr = @ptrCast(@constCast(&HardwareBufferTransport.read)) },
+            .{ .name = "nLockCanvas", .signature = "(JLandroid/graphics/Canvas;Landroid/graphics/Rect;)Z", .fnPtr = @ptrCast(@constCast(&lock)) },
+            .{ .name = "nUnlockCanvasAndPost", .signature = "(JLandroid/graphics/Canvas;)Z", .fnPtr = @ptrCast(@constCast(&unlock)) },
+            .{ .name = "nCreateFromHardwareBuffer", .signature = "(Landroid/hardware/HardwareBuffer;)Landroid/graphics/GraphicBuffer;", .fnPtr = @ptrCast(@constCast(&fromHardwareBuffer)) },
+        };
+        return env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) == 0;
+    }
+};
+
 pub export fn azk_register_hardware_buffer(env: [*c]jni.JNIEnv) callconv(.c) c_int {
     const cls = env.*.*.FindClass.?(env, "android/hardware/HardwareBuffer") orelse return -1;
+    if (!HardwareBufferTransport.register(env) or !GraphicBufferJni.register(env)) return -1;
     const methods = [_]jni.JNINativeMethod{
         .{ .name = "nCreateHardwareBuffer", .signature = "(IIIIJ)J", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferCreate)) },
         .{ .name = "nIsSupported", .signature = "(IIIIJ)Z", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferIsSupported)) },
-        .{ .name = "nRelease", .signature = "(J)V", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferRelease)) },
+        .{ .name = "nCreateFromGraphicBuffer", .signature = "(Landroid/graphics/GraphicBuffer;)J", .fnPtr = @ptrCast(@constCast(&GraphicBufferJni.toHardwareBuffer)) },
+        .{ .name = "nGetNativeFinalizer", .signature = "()J", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferFinalizer)) },
+        .{ .name = "nEstimateSize", .signature = "(J)J", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferEstimateSize)) },
+        .{ .name = "nWriteHardwareBufferToParcel", .signature = "(JLandroid/os/Parcel;)V", .fnPtr = @ptrCast(@constCast(&HardwareBufferTransport.write)) },
+        .{ .name = "nReadHardwareBufferFromParcel", .signature = "(Landroid/os/Parcel;)J", .fnPtr = @ptrCast(@constCast(&HardwareBufferTransport.read)) },
         .{ .name = "nGetWidth", .signature = "(J)I", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferWidth)) },
         .{ .name = "nGetHeight", .signature = "(J)I", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferHeight)) },
         .{ .name = "nGetFormat", .signature = "(J)I", .fnPtr = @ptrCast(@constCast(&nativeHardwareBufferFormat)) },

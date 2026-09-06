@@ -7,6 +7,7 @@
 #include <array>
 #include <azk/binder.h>
 #include <binder/IBinder.h>
+#include <binder/IInterface.h>
 #include <binder/Parcelable.h>
 #include <bit>
 #include <climits>
@@ -32,6 +33,7 @@ public:
   explicit Parcel(AParcel *borrowed);
   AParcel *native() const { return mParcel; }
   static Parcel *forNative(AParcel *);
+  status_t writeNoException();
   size_t dataPosition() const { return AParcel_getDataPosition(mParcel); }
   size_t dataSize() const { return AParcel_getDataSize(mParcel); }
   size_t dataAvail() const {
@@ -201,18 +203,8 @@ public:
   }
   status_t readString16(String16 *) const;
   status_t readString16(std::optional<String16> *) const;
-  status_t writeUtf8AsUtf16(const std::string &s) {
-    return writeString16(String16(s.data(), s.size()));
-  }
-  status_t readUtf8FromUtf16(std::string *s) const {
-    String16 v;
-    auto rc = readString16(&v);
-    if (!rc) {
-      String8 u(v);
-      s->assign(u.c_str(), u.size());
-    }
-    return rc;
-  }
+  status_t writeUtf8AsUtf16(const std::string &s);
+  status_t readUtf8FromUtf16(std::string *s) const;
   status_t writeCString(const char *s) {
     return s ? write(s, strlen(s) + 1) : BAD_VALUE;
   }
@@ -313,6 +305,80 @@ public:
     *v = std::make_unique<T>();
     return (*v)->readFromParcel(this);
   }
+  // Pinned Parcel size-only helpers are used for AIDL out parameters and GPU metadata.
+  template <class T> status_t writeVectorSize(const std::vector<T> &v) {
+    return v.size() > INT32_MAX ? BAD_VALUE : writeInt32(static_cast<int32_t>(v.size()));
+  }
+  template <class T> status_t writeVectorSize(const std::optional<std::vector<T>> &v) {
+    return v ? writeVectorSize(*v) : writeInt32(-1);
+  }
+  template <class T> status_t writeVectorSize(const std::unique_ptr<std::vector<T>> &v) {
+    return v ? writeVectorSize(*v) : writeInt32(-1);
+  }
+  template <class T> status_t resizeOutVector(std::vector<T> *v) const {
+    int32_t size;
+    auto status = readOutVectorSizeWithCheck(sizeof(T), &size);
+    if (status != OK) return status;
+    if (size < 0) return UNEXPECTED_NULL;
+    v->resize(static_cast<size_t>(size));
+    return OK;
+  }
+  template <class T> status_t resizeOutVector(std::optional<std::vector<T>> *v) const {
+    int32_t size;
+    auto status = readOutVectorSizeWithCheck(sizeof(T), &size);
+    if (status != OK) return status;
+    v->reset();
+    if (size >= 0) v->emplace(static_cast<size_t>(size));
+    return OK;
+  }
+  template <class T> status_t resizeOutVector(std::unique_ptr<std::vector<T>> *v) const {
+    int32_t size;
+    auto status = readOutVectorSizeWithCheck(sizeof(T), &size);
+    if (status != OK) return status;
+    v->reset();
+    if (size >= 0) v->reset(new std::vector<T>(static_cast<size_t>(size)));
+    return OK;
+  }
+  status_t writeUtf8VectorAsUtf16Vector(const std::vector<std::string> &v) {
+    return writeVector(v);
+  }
+  status_t readUtf8VectorFromUtf16Vector(std::vector<std::string> *v) const {
+    return readUtf8Vector(v);
+  }
+  status_t writeUtf8VectorAsUtf16Vector(
+      const std::optional<std::vector<std::optional<std::string>>> &v) {
+    return writeNullableUtf8Vector(v);
+  }
+  status_t writeUtf8VectorAsUtf16Vector(
+      const std::unique_ptr<std::vector<std::unique_ptr<std::string>>> &v) {
+    return writeNullableUtf8Vector(v);
+  }
+  status_t readUtf8VectorFromUtf16Vector(
+      std::optional<std::vector<std::optional<std::string>>> *v) const {
+    return readNullableUtf8Vector(v);
+  }
+  status_t readUtf8VectorFromUtf16Vector(
+      std::unique_ptr<std::vector<std::unique_ptr<std::string>>> *v) const {
+    return readNullableUtf8Vector(v);
+  }
+  template <class T> status_t readStrongBinder(sp<T> *v) const {
+    sp<IBinder> binder;
+    auto status = readStrongBinder(&binder);
+    if (status == OK) {
+      *v = interface_cast<T>(binder);
+      if (*v == nullptr) return UNKNOWN_ERROR;
+    }
+    return status;
+  }
+  template <class T> status_t readNullableStrongBinder(sp<T> *v) const {
+    sp<IBinder> binder;
+    auto status = readNullableStrongBinder(&binder);
+    if (status == OK) {
+      *v = interface_cast<T>(binder);
+      if (*v == nullptr && binder != nullptr) return UNKNOWN_ERROR;
+    }
+    return status;
+  }
   template <class T> status_t writeVector(const std::vector<T> &v) {
     if (v.size() > INT32_MAX)
       return BAD_VALUE;
@@ -398,6 +464,61 @@ public:
   status_t readString16Vector(std::vector<String16> *v) const {
     return readVector(v);
   }
+  // AOSP Parcel::write/readData(vector<enum>): the backing integers are
+  // contiguous, including byte-backed enums (which are not padded per item).
+  template <class T> status_t writeEnumVector(const std::vector<T> &v) {
+    static_assert(std::is_enum_v<T>);
+    if (v.size() > INT32_MAX)
+      return BAD_VALUE;
+    auto s = writeInt32(v.size());
+    return s ? s : write(v.data(), v.size() * sizeof(T));
+  }
+  template <class T> status_t readEnumVector(std::vector<T> *v) const {
+    static_assert(std::is_enum_v<T>);
+    int32_t n;
+    auto s = readInt32(&n);
+    if (s)
+      return s;
+    if (n < 0)
+      return UNEXPECTED_NULL;
+    if (static_cast<size_t>(n) > dataAvail())
+      return BAD_VALUE;
+    v->clear();
+    const size_t bytes = static_cast<size_t>(n) * sizeof(T);
+    const void *data = readInplace(bytes);
+    if (!data)
+      return BAD_VALUE;
+    v->resize(n);
+    memcpy(v->data(), data, bytes);
+    return OK;
+  }
+  template <class T> status_t writeParcelableVector(const std::vector<T> &v) {
+    return writeVector(v);
+  }
+  template <class T> status_t readParcelableVector(std::vector<T> *v) const {
+    return readVector(v);
+  }
+  template <class T>
+  status_t writeParcelableVector(const std::optional<std::vector<std::optional<T>>> &v) {
+    return v ? writeVector(*v) : writeInt32(-1);
+  }
+  template <class T>
+  status_t readParcelableVector(std::optional<std::vector<std::optional<T>>> *v) const {
+    // AOSP nullable-container reader peeks at the -1 sentinel, then rewinds
+    // and reads a newly constructed vector, preserving nullable elements.
+    const size_t start = dataPosition();
+    int32_t n;
+    auto s = readInt32(&n);
+    if (s)
+      return s;
+    if (n == -1) {
+      v->reset();
+      return OK;
+    }
+    v->emplace(std::vector<std::optional<T>>());
+    setDataPosition(start);
+    return readVector(&**v);
+  }
   template <class T> status_t write(const Flattenable<T> &);
   template <class T> status_t read(Flattenable<T> &) const;
   template <class T> status_t write(const LightFlattenable<T> &v) {
@@ -459,6 +580,64 @@ public:
   }
 
 private:
+  // Pinned readOutVectorSizeWithCheck: reject signed overflow and allocations >= 1 MB.
+  status_t readOutVectorSizeWithCheck(size_t elementSize, int32_t *size) const {
+    auto status = readInt32(size);
+    if (status != OK || *size < 0) return status;
+    LOG_ALWAYS_FATAL_IF(elementSize > INT32_MAX, "Oversized Parcel vector element");
+    int32_t bytes;
+    if (__builtin_smul_overflow(static_cast<int32_t>(elementSize), *size, &bytes)
+        || bytes >= 1000000) return NO_MEMORY;
+    return OK;
+  }
+  template <class T> status_t readUtf8Vector(std::vector<T> *v) const {
+    int32_t size;
+    auto status = readInt32(&size);
+    if (status != OK) return status;
+    if (size < 0) return UNEXPECTED_NULL;
+    if (static_cast<size_t>(size) > dataAvail()) return BAD_VALUE;
+    v->clear();
+    v->resize(static_cast<size_t>(size));
+    for (auto &entry : *v) {
+      if constexpr (std::is_same_v<T, std::string>) {
+        status = readUtf8FromUtf16(&entry);
+      } else {
+        const size_t position = dataPosition();
+        int32_t peek;
+        status = readInt32(&peek);
+        if (status != OK) return status;
+        if (peek == -1) { entry.reset(); continue; }
+        setDataPosition(position);
+        if constexpr (std::is_same_v<T, std::optional<std::string>>) entry.emplace();
+        else entry = std::make_unique<std::string>();
+        status = readUtf8FromUtf16(&*entry);
+      }
+      if (status != OK) return status;
+    }
+    return OK;
+  }
+  template <class T> status_t writeNullableUtf8Vector(const T &v) {
+    if (!v) return writeInt32(-1);
+    auto status = writeVectorSize(*v);
+    if (status != OK) return status;
+    for (const auto &entry : *v) {
+      status = entry ? writeUtf8AsUtf16(*entry) : writeInt32(-1);
+      if (status != OK) return status;
+    }
+    return OK;
+  }
+  template <class T> status_t readNullableUtf8Vector(T *v) const {
+    const size_t position = dataPosition();
+    int32_t peek;
+    auto status = readInt32(&peek);
+    if (status != OK) return status;
+    if (peek == -1) { v->reset(); return OK; }
+    setDataPosition(position);
+    if constexpr (std::is_same_v<T, std::optional<std::vector<std::optional<std::string>>>>)
+      v->emplace();
+    else *v = std::make_unique<std::vector<std::unique_ptr<std::string>>>();
+    return readUtf8Vector(&**v);
+  }
   AParcel *mParcel;
   bool mOwned;
 };

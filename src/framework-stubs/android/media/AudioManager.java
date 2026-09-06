@@ -23,6 +23,10 @@ public class AudioManager {
     public static final int AUDIOFOCUS_REQUEST_FAILED = 0;
     public static final int AUDIOFOCUS_REQUEST_GRANTED = 1;
     public static final int AUDIOFOCUS_REQUEST_DELAYED = 2;
+    // Pinned AudioManager focus flags consumed by stock AudioFocusRequest.
+    public static final int AUDIOFOCUS_FLAG_DELAY_OK = 1 << 0;
+    public static final int AUDIOFOCUS_FLAG_PAUSES_ON_DUCKABLE_LOSS = 1 << 1;
+    public static final int AUDIOFOCUS_FLAG_LOCK = 1 << 2;
     public static final int ADJUST_LOWER = -1, ADJUST_SAME = 0, ADJUST_RAISE = 1;
     public static final int FLAG_SHOW_UI = 1;
     public static final String PROPERTY_OUTPUT_SAMPLE_RATE = "android.media.property.OUTPUT_SAMPLE_RATE";

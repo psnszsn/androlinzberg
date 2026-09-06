@@ -40,9 +40,12 @@ framework_patches = tuple(
         (22, "-AlarmManager-time-zone-validation-without-ZoneInfoDb.patch"),
         (23, "-resources-make-early-RRO-constraint-flag-read-only.patch"),
         (24, "-WindowOrganizer-tolerate-host-SurfaceControl-apply-t.patch"),
-        (25, "-TaskStackListener-tolerate-host-TaskSnapshot-buffer-.patch"),
         (26, "-StorageManager-cut-unavailable-vold-OBB-and-AppFuse-.patch"),
         (27, "-DevicePolicyManager-cut-unavailable-host-backends.patch"),
+        (28, "-GLES-release-original-heap-buffer-array-pointers.patch"),
+        (29, "-HWUI-preserve-hardware-buffer-RGBA-byte-order.patch"),
+        (30, "-OverlayProperties-marshal-LUT-sampling-keys.patch"),
+        (31, "-HWUI-reject-pixel-copy-without-native-window.patch"),
     )
 )
 

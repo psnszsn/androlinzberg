@@ -30,24 +30,52 @@ internal object SystemTestHostB {
         val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_B")) { "AZK_FIXTURE_APK_B is not set" }
         val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
         check(installer.installPackage(fixture, null) == "dev.artzig.test.b")
-        ActivityThread.attachApplicationHosted("dev.artzig.test.b")
-        // AOSP handleBindApplication: the test providers are installed from their
-        // parsed ProviderInfos and published before Application.onCreate (client
-        // A queries them cross-process; the non-exported one asserts the gate).
-        val ipm = ActivityThread.getPackageManager()
-        val providerInfo = checkNotNull(ipm.getProviderInfo(
-            android.content.ComponentName("dev.artzig.test.b", TestProvider::class.java.name), 0L, 0,
-        ))
-        val secretInfo = checkNotNull(ipm.getProviderInfo(
-            android.content.ComponentName("dev.artzig.test.b", SecretProvider::class.java.name), 0L, 0,
-        ))
-        val appInfo = checkNotNull(ipm.getApplicationInfo("dev.artzig.test.b", 0L, 0))
-        val context: android.content.Context = ActivityThread.currentActivityThread()
-            .`handleBindApplication$artzig`(appInfo, listOf(providerInfo, secretInfo))
+        // The stock bindApplication message installs and publishes the parsed
+        // providers before Application.onCreate.
+        val context: android.content.Context =
+            android.app.HostedServiceClient.attachApplication("dev.artzig.test.b")
+        check(ApplicationBindingEvents.events == listOf("application:attach",
+            "provider:SecretProvider", "provider:TestProvider", "application:create")) {
+            "application/provider startup order: ${ApplicationBindingEvents.events}"
+        }
+        val wifi = checkNotNull(context.getSystemService(android.net.wifi.WifiManager::class.java))
+        check(runCatching { wifi.wifiState }.exceptionOrNull() is SecurityException)
+        check(runCatching { wifi.createWifiLock("denied").acquire() }.exceptionOrNull() is SecurityException)
+        check(runCatching { wifi.createMulticastLock("denied").acquire() }.exceptionOrNull() is SecurityException)
+        val fingerprints = checkNotNull(context.getSystemService(android.hardware.fingerprint.FingerprintManager::class.java))
+        val companions = android.companion.ICompanionDeviceManager.Stub.asInterface(
+            android.os.ServiceManager.getService(android.content.Context.COMPANION_DEVICE_SERVICE))
+        check(companions.getAssociations(context.packageName, 0).isEmpty())
+        check(runCatching { companions.getAssociations("dev.artzig.test.a", 0) }.exceptionOrNull() is SecurityException)
+        check(runCatching { companions.getAllAssociationsForUser(0) }.exceptionOrNull() is SecurityException)
+        val associationCallback = object : android.companion.IAssociationRequestCallback.Stub() {
+            override fun onAssociationPending(intent: android.app.PendingIntent) { error("unauthorized association") }
+            override fun onAssociationCreated(info: android.companion.AssociationInfo) { error("unauthorized association") }
+            override fun onFailure(code: Int, error: CharSequence?) {}
+        }
+        check(runCatching {
+            companions.associate(android.companion.AssociationRequest.Builder()
+                .setSelfManaged(true).setDisplayName("Unauthorized").build(),
+                associationCallback, context.packageName, 0)
+        }.exceptionOrNull() is SecurityException)
+        val networkScores = checkNotNull(context.getSystemService(android.net.NetworkScoreManager::class.java))
+        check(runCatching { networkScores.clearScores() }.exceptionOrNull() is SecurityException)
+        check(runCatching { networkScores.allValidScorers }.exceptionOrNull() is SecurityException)
+        check(runCatching { networkScores.updateScores(emptyArray()) }.exceptionOrNull() is SecurityException)
+        check(runCatching { fingerprints.isHardwareDetected }.exceptionOrNull() is SecurityException) {
+            "fingerprint capability queries must enforce USE_FINGERPRINT/USE_BIOMETRIC"
+        }
+        check(runCatching { fingerprints.sensorPropertiesInternal }.exceptionOrNull() is SecurityException) {
+            "fingerprint sensor metadata must enforce the internal permission"
+        }
         // A plain Binder service the cross-language native client (libbinder_ndk)
         // looks up and calls remotely; onTransact enforces the same interface
         // descriptor the native side's prepareTransaction writes as a token.
         ServiceManager.addService("dev.artzig.test.b.ndkprobe", NdkProbeService())
+        MemoryIntArraySystemSmoke.publish()
+        HardwareBufferSystemSmoke.publish()
+        SurfaceSyncSystemSmoke.publish()
+        ActivityRecreationSystemSmoke.publish()
         // A real android.os.Messenger over the binder stack: replies what+1 /
         // arg1*2 through msg.replyTo (client A asserts the cross-process round trip).
         val messengerHandler = android.os.Handler(Looper.getMainLooper()) { msg ->

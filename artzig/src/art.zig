@@ -239,6 +239,8 @@ pub const Options = struct {
     library_path: []const []const u8 = &.{},
     /// Extra -X / -D options passed verbatim.
     extra_options: []const []const u8 = &.{},
+    /// JNI invocation exit callback (the JavaVMOption "exit" extraInfo hook).
+    exit_hook: ?*const fn (c_int) callconv(.c) noreturn = null,
     check_jni: bool = false,
     /// Use the precompiled boot image (fast startup). Disable to run imageless
     /// (e.g. after changing the boot jars without regenerating the image).
@@ -302,6 +304,7 @@ pub const Runtime = struct {
             try options.append(a, try std.fmt.allocPrintSentinel(a, "-Djava.library.path={s}", .{lp}, 0));
         }
         for (opts.extra_options) |o| try options.append(a, try a.dupeSentinel(u8, o, 0));
+        if (opts.exit_hook != null) try options.append(a, "exit");
 
         const libart = if (opts.libart_path) |p|
             try a.dupeSentinel(u8, p, 0)
@@ -324,6 +327,7 @@ pub const Runtime = struct {
 
         const vm_opts = try a.alloc(jni.JavaVMOption, options.items.len);
         for (vm_opts, options.items) |*o, s| o.* = .{ .optionString = @constCast(s), .extraInfo = null };
+        if (opts.exit_hook) |hook| vm_opts[vm_opts.len - 1].extraInfo = @ptrCast(@constCast(hook));
         var args: jni.JavaVMInitArgs = .{
             .version = jni.JNI_VERSION_1_6,
             .nOptions = @intCast(vm_opts.len),
