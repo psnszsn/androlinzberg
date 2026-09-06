@@ -90,7 +90,11 @@ internal class HostedActivityTaskManagerService(
 
     private class TaskRecord(
         val taskId: Int,
-        val baseIntent: Intent,
+        var baseIntent: Intent,
+        val rootAffinity: String?,
+        val userId: Int,
+        var realActivity: ComponentName,
+        val requiredDisplayCategory: String?,
         val token: WindowContainerToken = WindowContainerToken(
             object : IWindowContainerToken.Stub() {},
         ),
@@ -128,6 +132,7 @@ internal class HostedActivityTaskManagerService(
         val destroyAfterResume = ArrayList<IBinder>()
         val afterPause = ArrayList<() -> Unit>()
         val pendingResults = ArrayList<ResultInfo>()
+        val pendingNewIntents = ArrayList<ReferrerIntent>()
         var sceneTransitionInfo: android.app.ActivityOptions.SceneTransitionInfo? = null
         var launchScheduled = false
         var cancelIfStale = true
@@ -486,6 +491,82 @@ internal class HostedActivityTaskManagerService(
         }
     }
 
+    private fun realComponent(info: ActivityInfo) = ComponentName(info.packageName, info.targetActivity ?: info.name)
+
+    private fun taskBaseIntent(intent: Intent) = Intent(intent).apply {
+        selector = null
+        sourceBounds = null
+    }
+
+    /** ActivityStarter.adjustLaunchFlagsToDocumentMode; manifest document policy wins. */
+    private fun documentLaunchFlags(original: Int, info: ActivityInfo): Int {
+        val documentFlags = Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+        if (original and Intent.FLAG_ACTIVITY_NEW_DOCUMENT != 0 &&
+            (info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE || info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK)
+        ) return original and documentFlags.inv()
+        return when (info.documentLaunchMode) {
+            ActivityInfo.DOCUMENT_LAUNCH_INTO_EXISTING, ActivityInfo.DOCUMENT_LAUNCH_ALWAYS ->
+                original or Intent.FLAG_ACTIVITY_NEW_DOCUMENT
+            ActivityInfo.DOCUMENT_LAUNCH_NEVER -> if (
+                info.launchMode != ActivityInfo.LAUNCH_SINGLE_INSTANCE_PER_TASK ||
+                original and Intent.FLAG_ACTIVITY_NEW_DOCUMENT != 0
+            ) original and documentFlags.inv() else original
+            else -> original
+        }
+    }
+
+    /**
+     * ActivityStarter.resolveReusableTask and RootWindowContainer.FindTaskResult:
+     * exact component/document matches outrank the most recent affinity candidate.
+     * The host has one task display area rather than the stock WM container graph.
+     */
+    private fun findReusableTaskLocked(intent: Intent, info: ActivityInfo): TaskRecord? {
+        val singleInstance = info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE
+        val singleTask = info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK
+        if (!singleInstance && !singleTask &&
+            (intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK == 0 ||
+                intent.flags and Intent.FLAG_ACTIVITY_MULTIPLE_TASK != 0)
+        ) return null
+        val component = realComponent(info)
+        val userId = UserHandle.getUserId(packages.getPackageUidInternal(info.packageName))
+        val documentData = if (intent.isDocument) intent.data else null
+        var affinity: TaskRecord? = null
+        for (task in tasks.values.toList().asReversed()) {
+            val top = task.activities.lastOrNull { !it.finishing } ?: continue
+            if (task.userId != userId) continue
+            if (singleInstance) {
+                if (task.activities.any { !it.finishing && realComponent(it.info) == component }) return task
+                continue
+            }
+            if (top.info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE) continue
+            if (info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE_PER_TASK && task.realActivity != component) continue
+            val taskData = if (task.baseIntent.isDocument) task.baseIntent.data else null
+            if (task.realActivity == component && taskData == documentData) return task
+            if (affinity == null && !intent.isDocument && !task.baseIntent.isDocument &&
+                task.rootAffinity != null && task.rootAffinity == info.taskAffinity &&
+                task.requiredDisplayCategory == info.requiredDisplayCategory
+            ) affinity = task
+        }
+        return affinity
+    }
+
+    /** Task.isSameIntentFilter normalizes aliases and explicit package restrictions. */
+    private fun sameTaskIntent(task: TaskRecord, intent: Intent): Boolean = Intent(intent).apply {
+        component = task.baseIntent.component
+        if (selector == null) setPackage(task.baseIntent.`package`)
+    }.filterEquals(task.baseIntent)
+
+    /** ActivityRecord.finishActivityResults for a task clear with no result data. */
+    private fun queueCanceledActivityResultLocked(record: ActivityRecord) {
+        if (record.requestCode < 0) return
+        val target = record.resultTo?.let(activities::get)?.takeIf { !it.finishing } ?: return
+        val uid = packages.getPackageUidInternal(record.info.packageName)
+        val callerToken = registerCallerIdentityLocked(target.token, uid, record.info.packageName,
+            ActivityCallerUris.capture(uriGrants(), null, uid))
+        target.pendingResults += ResultInfo(record.resultWho, record.requestCode,
+            Activity.RESULT_CANCELED, null, callerToken)
+    }
+
     private fun startResolvedActivity(
         intent: Intent,
         info: ActivityInfo,
@@ -510,32 +591,106 @@ internal class HostedActivityTaskManagerService(
         var supersededLaunch: ActivityRecord? = null
         var supersededTaskId: Int? = null
         var createdTask = false
+        var reusedTop: ActivityRecord? = null
+        var movedTask = false
+        var resultRequest = requestCode
+        var canceledResult: Pair<ActivityRecord, ResultInfo>? = null
+        val cleared = ArrayList<ActivityRecord>()
         synchronized(lock) {
             val source = resultTo?.let(activities::get)
             // AOSP ActivityStarter keeps an activity that starts a child in its task. The
             // request proves that source has run, even if its oneway resume acknowledgement
             // has not reached this controller yet; it is no longer a cancelable stale launch.
             source?.cancelIfStale = false
-            val task = taskOverride ?: if (source != null &&
+            intent.flags = documentLaunchFlags(intent.flags, info)
+            if (info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE_PER_TASK) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            // ActivityStarter.sendNewTaskResultRequestIfNeeded runs before source-task
+            // selection. Explicit NEW_TASK cancels the request rather than retaining it.
+            if (source != null && resultRequest >= 0 &&
+                intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0
+            ) {
+                canceledResult = source to ResultInfo(resultWho, resultRequest,
+                    Activity.RESULT_CANCELED, null, null)
+                resultRequest = -1
+            }
+            if (intent.isDocument && resultRequest < 0) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0 &&
+                info.documentLaunchMode == ActivityInfo.DOCUMENT_LAUNCH_ALWAYS
+            ) intent.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+            if (taskOverride == null && (source == null ||
+                    source.info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE ||
+                    info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE ||
+                    info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK)) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val reusable = if (taskOverride == null && resultRequest < 0) {
+                findReusableTaskLocked(intent, info)
+            } else null
+            val task = taskOverride ?: reusable ?: if (source != null &&
                 (intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK) == 0
             ) {
                 source.task
             } else {
-                TaskRecord(nextTaskId.getAndIncrement(), Intent(intent)).also {
+                TaskRecord(nextTaskId.getAndIncrement(), taskBaseIntent(intent), info.taskAffinity,
+                    UserHandle.getUserId(packages.getPackageUidInternal(info.packageName)),
+                    realComponent(info), info.requiredDisplayCategory).also {
                     tasks[it.taskId] = it
                     createdTask = true
                 }
             }
-            val top = task.activities.lastOrNull()
+            previous = focusedActivityLocked()
+            movedTask = previous?.task !== task
+            if (reusable != null && movedTask) intent.addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT)
             val singleTop = (intent.flags and Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0 ||
                 info.launchMode == ActivityInfo.LAUNCH_SINGLE_TOP
-            if (top != null && top.intent.component == component && singleTop && !top.finishing &&
+            val documentReuse = intent.isDocument && intent.flags and Intent.FLAG_ACTIVITY_MULTIPLE_TASK == 0
+            val clearTask = intent.flags and (Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK) ==
+                (Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            val clearTop = intent.flags and Intent.FLAG_ACTIVITY_CLEAR_TOP != 0 || documentReuse ||
+                info.launchMode == ActivityInfo.LAUNCH_SINGLE_TASK ||
+                info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE ||
+                info.launchMode == ActivityInfo.LAUNCH_SINGLE_INSTANCE_PER_TASK
+            val match = task.activities.lastOrNull { !it.finishing && realComponent(it.info) == realComponent(info) }
+            // Task.performClearTaskForReuse/clearTopActivities defer destruction until the
+            // replacement can resume, retaining the task and canceling outstanding results.
+            if (clearTask) {
+                cleared += task.activities.filter { !it.finishing }
+                task.baseIntent = taskBaseIntent(intent)
+                task.realActivity = realComponent(info)
+            } else if (clearTop && match != null) {
+                cleared += task.activities.drop(task.activities.indexOf(match) + 1).filter { !it.finishing }
+                if (match.info.launchMode == ActivityInfo.LAUNCH_MULTIPLE && !singleTop && !documentReuse) {
+                    cleared += match
+                } else {
+                    deliveredToTop = match
+                }
+            } else if (!clearTop && intent.flags and Intent.FLAG_ACTIVITY_REORDER_TO_FRONT != 0 && match != null) {
+                task.activities.remove(match)
+                task.activities += match
+                deliveredToTop = match
+            }
+            cleared.forEach { it.finishing = true }
+            for (finished in cleared) queueCanceledActivityResultLocked(finished)
+            val top = task.activities.lastOrNull { !it.finishing }
+            if (deliveredToTop == null && !clearTask && top != null &&
+                realComponent(top.info) == realComponent(info) && singleTop &&
                 (top.state != STATE_INITIALIZING || top.launchScheduled)
             ) {
                 deliveredToTop = top
+            }
+            if (deliveredToTop == null && !clearTask && !clearTop && reusable != null &&
+                top != null && task.realActivity == realComponent(info) && sameTaskIntent(task, intent)
+            ) reusedTop = top
+            if (deliveredToTop != null || reusedTop != null) {
+                val selected = checkNotNull(deliveredToTop ?: reusedTop)
+                selected.cancelIfStale = false
+                if (selected !== previous) selected.previousToStop = previous?.token
+                selected.destroyAfterResume.addAll(cleared.map { it.token })
+                moveTaskToFrontLocked(task)
             } else {
-                val focused = focusedActivityLocked()
-                previous = focused
+                val focused = previous
                 // A newer start can arrive while a cross-process launch is still waiting for its
                 // predecessor's pause acknowledgement. The newer record supersedes that pending
                 // top; continue gating on the real resumed predecessor instead of launching both.
@@ -570,13 +725,14 @@ internal class HostedActivityTaskManagerService(
                     effectivePackage,
                     resultTo,
                     resultWho,
-                    requestCode,
+                    resultRequest,
                 ).also {
                     it.cancelIfStale = cancelIfStale
                     it.sceneTransitionInfo = android.app.ActivityOptions.fromBundle(options)?.sceneTransitionInfo
                 }
                 task.activities += checkNotNull(record)
                 checkNotNull(record).previousToStop = previous?.token
+                checkNotNull(record).destroyAfterResume.addAll(cleared.map { it.token })
                 task.lastActiveTime = android.os.SystemClock.elapsedRealtime()
                 activities[token] = checkNotNull(record)
                 callerIdentities[checkNotNull(record).initialCallerInfoAccessToken] =
@@ -586,29 +742,56 @@ internal class HostedActivityTaskManagerService(
             }
         }
 
+        canceledResult?.let { (target, result) ->
+            val deliver = synchronized(lock) {
+                if (target.state == STATE_RESUMED) true else { target.pendingResults += result; false }
+            }
+            if (deliver) target.process?.let { schedule(it, ActivityResultItem(target.token, listOf(result))) }
+        }
+
         supersededTaskId?.takeIf { taskId -> synchronized(lock) { !tasks.containsKey(taskId) } }
             ?.let(::notifyTaskRemoved)
         supersededLaunch?.let(::scheduleDestroy)
+        synchronized(lock) {
+            cleared.filter { it.process == null }.forEach { removeActivityRecordLocked(it) }
+        }
 
-        deliveredToTop?.let { top ->
+        (deliveredToTop ?: reusedTop)?.let { top ->
             val process = top.process ?: return ActivityManager.START_CANCELED
-            val callerToken = synchronized(lock) {
+            synchronized(lock) {
                 if (activities[top.token] !== top || top.finishing) {
                     return ActivityManager.START_CANCELED
                 }
-                grantActivityUrisLocked(top, neededGrants)
-                registerCallerIdentityLocked(top.token, effectiveUid, effectivePackage, callerUris, shareIdentity)
+                if (deliveredToTop != null) {
+                    grantActivityUrisLocked(top, neededGrants)
+                    val callerToken = registerCallerIdentityLocked(top.token, effectiveUid, effectivePackage, callerUris, shareIdentity)
+                    top.pendingNewIntents += ReferrerIntent(intent, effectivePackage, callerToken)
+                }
             }
-            schedule(
-                process,
-                NewIntentItem(
-                    top.token,
-                    listOf(ReferrerIntent(intent, effectivePackage, callerToken)),
-                    true,
-                ),
-            )
+            val resume: () -> Unit = {
+                if (top === previous && top.state == STATE_RESUMED) {
+                    val transaction = ClientTransaction(process.thread)
+                    synchronized(lock) {
+                        if (top.pendingResults.isNotEmpty()) {
+                            transaction.addTransactionItem(ActivityResultItem(top.token, top.pendingResults.toList()))
+                            top.pendingResults.clear()
+                        }
+                        if (top.pendingNewIntents.isNotEmpty()) {
+                            transaction.addTransactionItem(NewIntentItem(top.token, top.pendingNewIntents.toList(), true))
+                            top.pendingNewIntents.clear()
+                        }
+                        top.destroyAfterResume.removeAll(cleared.map { it.token }.toSet())
+                    }
+                    if (transaction.transactionItems.isNotEmpty()) schedule(process, transaction)
+                    cleared.forEach(::scheduleDestroy)
+                } else scheduleResume(top)
+                Unit
+            }
+            previous?.takeIf { it !== top }?.let { gateAfterPause(it, it.finishing, resume) } ?: resume()
             onRecordSelected?.invoke(top)
-            return ActivityManager.START_DELIVERED_TO_TOP
+            notifyTaskMovedToFront(top.task)
+            notifyTaskStackChanged()
+            return if (movedTask) ActivityManager.START_TASK_TO_FRONT else ActivityManager.START_DELIVERED_TO_TOP
         }
 
         val launch = checkNotNull(record)
@@ -631,8 +814,8 @@ internal class HostedActivityTaskManagerService(
                 launch.process = process
             }
             val launchTarget = { scheduleLaunch(launch, process); Unit }
-            if (previous?.process?.binder != process.binder) {
-                previous?.let { gateAfterPause(it, false, launchTarget) } ?: launchTarget()
+            if (previous?.process?.binder != process.binder || previous?.finishing == true) {
+                previous?.let { gateAfterPause(it, it.finishing, launchTarget) } ?: launchTarget()
             } else {
                 previous?.let(::schedulePauseForLaunch)
                 launchTarget()
@@ -659,6 +842,8 @@ internal class HostedActivityTaskManagerService(
             ) return
             val results = record.pendingResults.takeIf { it.isNotEmpty() }?.toList()
             record.pendingResults.clear()
+            val newIntents = record.pendingNewIntents.takeIf { it.isNotEmpty() }?.toList()
+            record.pendingNewIntents.clear()
             // AOSP ActivityRecord.takeSceneTransitionInfo consumes launch options once.
             val sceneTransitionInfo = record.sceneTransitionInfo
             record.sceneTransitionInfo = null
@@ -678,7 +863,7 @@ internal class HostedActivityTaskManagerService(
                     record.savedState,
                     record.persistentState,
                     results,
-                    null,
+                    newIntents,
                     sceneTransitionInfo,
                     true,
                     null,
@@ -754,6 +939,7 @@ internal class HostedActivityTaskManagerService(
     private fun scheduleResume(record: ActivityRecord): Boolean {
         val process: ProcessRecord
         val results: List<ResultInfo>
+        val newIntents: List<ReferrerIntent>
         synchronized(lock) {
             if (activities[record.token] !== record || record.finishing ||
                 focusedActivityLocked() !== record
@@ -761,10 +947,15 @@ internal class HostedActivityTaskManagerService(
             process = record.process ?: return false
             results = record.pendingResults.toList()
             record.pendingResults.clear()
+            newIntents = record.pendingNewIntents.toList()
+            record.pendingNewIntents.clear()
         }
         val transaction = ClientTransaction(process.thread)
         if (results.isNotEmpty()) {
             transaction.addTransactionItem(ActivityResultItem(record.token, results))
+        }
+        if (newIntents.isNotEmpty()) {
+            transaction.addTransactionItem(NewIntentItem(record.token, newIntents, false))
         }
         transaction.addTransactionItem(ResumeActivityItem(record.token, false, false))
         schedule(process, transaction)
@@ -987,7 +1178,7 @@ internal class HostedActivityTaskManagerService(
         return synchronized(lock) {
             tasks.values.toList().asReversed().filter { task ->
                 task.inRecents && task.baseIntent.component?.packageName == callingPackage &&
-                    task.activities.firstOrNull()?.let {
+                    task.activities.firstOrNull { !it.finishing }?.let {
                         packages.getPackageUidInternal(it.info.packageName) == uid
                     } == true
             }.mapTo(ArrayList()) { HostedAppTask(it.taskId, uid).asBinder() }
@@ -1276,16 +1467,16 @@ internal class HostedActivityTaskManagerService(
 
     private fun fillTaskInfoLocked(task: TaskRecord, info: android.app.TaskInfo, keepExtras: Boolean) {
         val top = task.activities.lastOrNull { !it.finishing }
-        info.userId = UserHandle.USER_SYSTEM
+        info.userId = task.userId
         info.taskId = task.taskId
-        info.effectiveUid = task.activities.firstOrNull()?.let { packages.getPackageUidInternal(it.info.packageName) } ?: -1
+        info.effectiveUid = task.activities.firstOrNull { !it.finishing }?.let { packages.getPackageUidInternal(it.info.packageName) } ?: -1
         info.displayId = Display.DEFAULT_DISPLAY
         info.isRunning = top != null
         info.baseIntent = Intent(task.baseIntent).also { if (!keepExtras) it.replaceExtras(null as Bundle?) }
-        info.baseActivity = task.activities.firstOrNull()?.intent?.component
+        info.baseActivity = task.activities.firstOrNull { !it.finishing }?.intent?.component
         info.topActivity = top?.intent?.component
         info.origActivity = info.baseActivity
-        info.realActivity = info.baseActivity
+        info.realActivity = task.realActivity
         info.numActivities = task.activities.count { !it.finishing }
         info.lastActiveTime = task.lastActiveTime
         info.taskDescription = task.description
@@ -1550,7 +1741,7 @@ internal class HostedActivityTaskManagerService(
         override fun getTaskForActivity(token: IBinder?, onlyRoot: Boolean): Int = synchronized(lock) {
             val record = activityForTokenLocked(token)
                 ?: return@synchronized ActivityTaskManager.INVALID_TASK_ID
-            if (onlyRoot && record.task.activities.firstOrNull() !== record) {
+            if (onlyRoot && record.task.activities.firstOrNull { !it.finishing } !== record) {
                 ActivityTaskManager.INVALID_TASK_ID
             } else {
                 record.task.taskId
@@ -1651,7 +1842,7 @@ internal class HostedActivityTaskManagerService(
             val reveal: ActivityRecord?
             synchronized(lock) {
                 val record = activityForTokenLocked(token) ?: return false
-                if (!nonRoot && record.task.activities.firstOrNull() !== record) return false
+                if (!nonRoot && record.task.activities.firstOrNull { !it.finishing } !== record) return false
                 task = record.task
                 moving = task.activities.lastOrNull { !it.finishing }
                 tasks.remove(task.taskId)
@@ -1708,7 +1899,7 @@ internal class HostedActivityTaskManagerService(
             if (record !== source || record.finishing) return false
             val finishWholeTask = finishTask == FINISH_TASK_WITH_ACTIVITY ||
                 (finishTask == FINISH_TASK_WITH_ROOT_ACTIVITY &&
-                    record.task.activities.firstOrNull() === record)
+                    record.task.activities.firstOrNull { !it.finishing } === record)
             finishing = if (finishWholeTask) record.task.activities.toList() else listOf(record)
             finishing.forEach { it.finishing = true }
             if (record.requestCode >= 0) {

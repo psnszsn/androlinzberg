@@ -275,6 +275,7 @@ internal object FrameworkModuleSmoke {
         testHostedVirtualDeviceDefaults()
         testPictureInPictureContracts()
         testRemoteActionContract()
+        testHostedTaskReuse()
         com.android.server.uri.StockUriPermissionSmoke.withService {
             testHostedActivityTaskServiceTransactions()
             testHostedAudioCapabilities()
@@ -3519,6 +3520,180 @@ internal object FrameworkModuleSmoke {
         check(raceThreadTwo.transactions.last().transactionItems.single() is DestroyActivityItem)
         raceController.activityDestroyed(reentrantChild)
 
+    }
+
+    private fun testHostedTaskReuse() {
+        val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
+        val packages = HostedPackageManagerService().apply {
+            installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
+        }
+        val pkg = checkNotNull(packages.installPackage(checkNotNull(permissionsFixtureApk)))
+        val uid = Binder.getCallingUid()
+        packages.bindPackageUid(pkg, uid)
+        com.android.server.uri.StockUriPermissionSmoke.withService(packages) {
+            val am = HostedActivityManagerService(context).apply { packageService = packages }
+            val infos = HashMap<String, ActivityInfo>()
+            fun component(name: String) = ComponentName(pkg, "dev.artzig.$name")
+            fun define(name: String, affinity: String? = "shared", mode: Int = ActivityInfo.LAUNCH_MULTIPLE,
+                       document: Int = ActivityInfo.DOCUMENT_LAUNCH_NONE, target: String? = null) {
+                infos[component(name).className] = ActivityInfo().apply {
+                    packageName = pkg
+                    this.name = component(name).className
+                    processName = if (name.endsWith("Two")) "task-reuse:two" else "task-reuse:one"
+                    exported = true
+                    taskAffinity = affinity
+                    launchMode = mode
+                    documentLaunchMode = document
+                    targetActivity = target?.let { component(it).className }
+                    applicationInfo = ApplicationInfo().apply { packageName = pkg; this.uid = uid }
+                }
+            }
+            define("RootOne")
+            define("ChildOne")
+            define("OtherTwo", "other")
+            define("CandidateTwo")
+            define("AliasOne", target = "RootOne")
+            define("NoneOne", null)
+            define("NoneTwo", null)
+            define("SingleOne", mode = ActivityInfo.LAUNCH_SINGLE_TASK)
+            define("DocumentOne", document = ActivityInfo.DOCUMENT_LAUNCH_INTO_EXISTING)
+            define("AlwaysOne", document = ActivityInfo.DOCUMENT_LAUNCH_ALWAYS)
+            val service = HostedActivityTaskManagerService(context, am, packages) { intent, _ ->
+                intent.component?.className?.let(infos::get)
+            }
+            am.activityTaskManager = service
+            val threads = listOf(CapturingApplicationThread(), CapturingApplicationThread())
+            for ((thread, process) in threads.zip(listOf("task-reuse:one", "task-reuse:two"))) {
+                am.noteProcessPackage(uid, pkg, process)
+                am.attachApplication(thread, 0)
+            }
+            val controller = service.activityClientController
+            val observed = ArrayList<android.app.servertransaction.ClientTransactionItem>()
+            fun queued() = threads.flatMap { it.transactions }.flatMap { it.transactionItems }
+            fun drain() {
+                var count = 0
+                while (threads.any { it.transactions.isNotEmpty() }) {
+                    check(++count < 100) { "task lifecycle failed to settle" }
+                    for (thread in threads) {
+                        if (thread.transactions.isEmpty()) continue
+                        for (item in thread.removeFirstTransaction().transactionItems) {
+                            observed += item
+                            when (item) {
+                                is LaunchActivityItem -> controller.activityResumed(item.activityToken, false)
+                                is ResumeActivityItem -> controller.activityResumed(item.activityToken, false)
+                                is PauseActivityItem -> controller.activityPaused(item.activityToken)
+                                is StopActivityItem -> controller.activityStopped(item.activityToken, null, null, null)
+                                is DestroyActivityItem -> controller.activityDestroyed(item.activityToken)
+                            }
+                        }
+                    }
+                }
+            }
+            fun intent(name: String, flags: Int = 0, action: String = Intent.ACTION_VIEW, data: String? = null) =
+                Intent(action).setComponent(component(name)).setFlags(flags).apply { if (data != null) this.data = Uri.parse(data) }
+            fun start(value: Intent, parent: android.os.IBinder? = null, request: Int = -1): Int =
+                service.startActivity(null, pkg, null, value, null, parent, null, request, 0, null, null)
+            fun launch(value: Intent, parent: android.os.IBinder? = null): android.os.IBinder {
+                observed.clear()
+                check(start(value, parent) == ActivityManager.START_SUCCESS)
+                drain()
+                return observed.filterIsInstance<LaunchActivityItem>().single().activityToken
+            }
+            fun top() = service.getTasks(1, false, true, Display.DEFAULT_DISPLAY).single()
+            fun taskId(token: android.os.IBinder) = controller.getTaskForActivity(token, false)
+            val newTask = Intent.FLAG_ACTIVITY_NEW_TASK
+            val multiple = newTask or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+            val root = launch(intent("RootOne", newTask))
+            val rootTask = taskId(root)
+            val child = launch(intent("ChildOne"), root)
+            check(taskId(child) == rootTask && top().numActivities == 2)
+            val other = launch(intent("OtherTwo", newTask))
+            observed.clear()
+            check(start(intent("RootOne", newTask).putExtra("ignored-for-task-identity", 42)) == ActivityManager.START_TASK_TO_FRONT)
+            check(queued().single() is PauseActivityItem) { "task resume escaped the predecessor pause gate" }
+            check((queued().single() as PauseActivityItem).activityToken == other)
+            drain()
+            check(top().taskId == rootTask && top().topActivity == component("ChildOne") && top().numActivities == 2)
+            check(observed.none { it is LaunchActivityItem || it is android.app.servertransaction.NewIntentItem })
+            check(observed.filterIsInstance<ResumeActivityItem>().single().activityToken == child)
+            observed.clear()
+            check(start(intent("RootOne", newTask)) == ActivityManager.START_DELIVERED_TO_TOP)
+            drain()
+            check(observed.isEmpty()) { "repeated front-door launch disturbed an already foreground task" }
+            val changed = launch(intent("RootOne", newTask, "dev.artzig.DIFFERENT"))
+            check(taskId(changed) == rootTask && top().numActivities == 3)
+            val candidate = launch(intent("CandidateTwo", multiple))
+            observed.clear()
+            check(start(intent("RootOne", newTask)) == ActivityManager.START_TASK_TO_FRONT)
+            drain()
+            check(top().taskId == rootTask && observed.none { it is LaunchActivityItem }) { "affinity outranked an exact root match" }
+            val distinct = launch(intent("RootOne", multiple))
+            check(taskId(distinct) != rootTask && taskId(distinct) != taskId(candidate))
+            observed.clear()
+            check(start(intent("AliasOne", newTask).setPackage(pkg)) == ActivityManager.START_DELIVERED_TO_TOP)
+            drain()
+            check(top().taskId == taskId(distinct) && observed.isEmpty()) { "alias/package normalization failed" }
+            val noneOne = launch(intent("NoneOne", newTask))
+            val noneTwo = launch(intent("NoneTwo", newTask))
+            check(taskId(noneOne) != taskId(noneTwo)) { "null task affinities matched" }
+
+            // SINGLE_TOP in a background task must pause the foreground process, deliver, then resume.
+            observed.clear()
+            check(start(intent("RootOne", newTask or Intent.FLAG_ACTIVITY_SINGLE_TOP)) == ActivityManager.START_TASK_TO_FRONT)
+            check(queued().single() is PauseActivityItem)
+            drain()
+            val delivery = observed.indexOfFirst { it is android.app.servertransaction.NewIntentItem }
+            val resume = observed.indexOfFirst { it is ResumeActivityItem }
+            check(delivery >= 0 && resume > delivery && observed.none { it is LaunchActivityItem })
+            check(top().taskId == taskId(distinct))
+
+            // Standard CLEAR_TOP recreates its matching activity; SINGLE_TOP retains it.
+            val cover = launch(intent("ChildOne"), distinct)
+            val retainedTask = taskId(cover)
+            observed.clear()
+            check(start(intent("RootOne", Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP), cover) == ActivityManager.START_DELIVERED_TO_TOP)
+            drain()
+            check(observed.none { it is LaunchActivityItem } && top().numActivities == 1 && top().taskId == retainedTask)
+            check(observed.filterIsInstance<DestroyActivityItem>().single().activityToken == cover)
+            val recreated = launch(intent("RootOne", Intent.FLAG_ACTIVITY_CLEAR_TOP), distinct)
+            check(recreated !== distinct && top().taskId == retainedTask && top().numActivities == 1)
+            check(observed.filterIsInstance<DestroyActivityItem>().single().activityToken == distinct)
+            val replacement = launch(intent("RootOne", newTask or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+            check(taskId(replacement) == retainedTask && top().numActivities == 1)
+            check(observed.filterIsInstance<DestroyActivityItem>().single().activityToken == recreated)
+
+            val single = launch(intent("SingleOne", newTask))
+            val singleChild = launch(intent("ChildOne"), single)
+            observed.clear()
+            check(start(intent("SingleOne", newTask)) == ActivityManager.START_DELIVERED_TO_TOP)
+            drain()
+            check(top().taskId == taskId(single) && observed.none { it is LaunchActivityItem })
+            check(observed.filterIsInstance<DestroyActivityItem>().single().activityToken == singleChild)
+
+            val reorderRoot = launch(intent("RootOne", multiple))
+            val reorderChild = launch(intent("ChildOne"), reorderRoot)
+            val reorderCover = launch(intent("OtherTwo"), reorderChild)
+            observed.clear()
+            check(start(intent("ChildOne", Intent.FLAG_ACTIVITY_REORDER_TO_FRONT), reorderCover) == ActivityManager.START_DELIVERED_TO_TOP)
+            drain()
+            check(top().taskId == taskId(reorderRoot) && top().numActivities == 3 && top().topActivity == component("ChildOne"))
+            check(observed.none { it is LaunchActivityItem || it is DestroyActivityItem })
+            check(observed.filterIsInstance<android.app.servertransaction.NewIntentItem>().single().activityToken == reorderChild)
+
+            val doc = launch(intent("DocumentOne", data = "content://documents/one"))
+            val docChild = launch(intent("ChildOne"), doc)
+            val otherDoc = launch(intent("DocumentOne", data = "content://documents/two"))
+            check(taskId(doc) != taskId(otherDoc))
+            observed.clear()
+            check(start(intent("DocumentOne", data = "content://documents/one")) == ActivityManager.START_TASK_TO_FRONT)
+            drain()
+            check(top().taskId == taskId(doc) && top().numActivities == 1 && observed.none { it is LaunchActivityItem })
+            check(observed.filterIsInstance<DestroyActivityItem>().single().activityToken == docChild)
+            val always = launch(intent("AlwaysOne", data = "content://documents/always"))
+            val alwaysAgain = launch(intent("AlwaysOne", data = "content://documents/always"))
+            check(taskId(always) != taskId(alwaysAgain))
+            System.err.println("stock-task-reuse: identity/affinity, front-door preservation, single-top, task clearing, single-task and documents passed")
+        }
     }
 
     private fun testHostedAudioCapabilities() {

@@ -8,15 +8,24 @@ import dev.artzig.system.unsupported
 /** Stock owner lifetimes, persistable modes, and URI user normalization. */
 object StockUriPermissionSmoke {
     /** Supply the actual local service to isolated activity-transaction fixtures. */
-    fun withService(block: () -> Unit) {
+    fun withService(packages: dev.artzig.system.HostedPackageManagerService? = null, block: () -> Unit) {
         check(com.android.server.LocalServices.getService(UriGrantsManagerInternal::class.java) == null)
         val directory = java.nio.file.Files.createTempDirectory("activity-uri-grants").toFile()
+        val pmClass = android.content.pm.PackageManagerInternal::class.java
+        if (packages != null) {
+            check(com.android.server.LocalServices.getService(pmClass) == null)
+            val pm = Class.forName("android.content.pm.HostedPackageManagerInternal")
+                .getConstructor(dev.artzig.system.HostedPackageManagerService::class.java)
+                .newInstance(packages) as android.content.pm.PackageManagerInternal
+            com.android.server.LocalServices.addService(pmClass, pm)
+        }
         try {
             val service = UriGrantsManagerService.createForTest(directory).localService
             com.android.server.LocalServices.addService(UriGrantsManagerInternal::class.java, service)
             block()
         } finally {
             com.android.server.LocalServices.removeServiceForTest(UriGrantsManagerInternal::class.java)
+            if (packages != null) com.android.server.LocalServices.removeServiceForTest(pmClass)
             check(directory.deleteRecursively())
         }
     }

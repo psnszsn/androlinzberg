@@ -47,6 +47,7 @@ open class UriGrantActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        recordCallback("new-intent")
         verifyUris(intent)
         observation.putInt("newIntents", observation.getInt("newIntents") + 1)
         if (android.security.Flags.contentUriPermissionApis()) {
@@ -116,6 +117,7 @@ internal object ActivityUriGrantSystemSmoke {
     private const val CALLER_PERMISSION = 11
     private const val IDENTITY = 12
     private const val STOP = 13
+    private const val MOVE_BACK = 14
     private const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
     private const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
     val activities = HashMap<Int, UriGrantActivity>()
@@ -128,7 +130,7 @@ internal object ActivityUriGrantSystemSmoke {
         val handler = Handler(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-                if (code !in START..STOP) return false
+                if (code !in START..MOVE_BACK) return false
                 data.enforceInterface(name)
                 val args = checkNotNull(data.readBundle())
                 val action = FutureTask {
@@ -136,6 +138,7 @@ internal object ActivityUriGrantSystemSmoke {
                     when (code) {
                         CALLER_APIS -> setCallerApis(args.getBoolean("enabled"))
                         STOP -> handler.postDelayed({ Runtime.getRuntime().exit(0) }, 100)
+                        MOVE_BACK -> check(checkNotNull(activities[id]).moveTaskToBack(args.getBoolean("nonRoot")) == args.getBoolean("expected"))
                         GRANT, REVOKE -> {
                             val uri = Uri.parse(checkNotNull(args.getString("uri")))
                             val target = args.getString("target")
@@ -198,6 +201,8 @@ internal object ActivityUriGrantSystemSmoke {
                         }
                     } else Bundle(observations[id] ?: Bundle()).apply {
                         putBoolean("live", activities.containsKey(id))
+                        putInt("taskId", activities[id]?.taskId ?: -1)
+                        putBoolean("taskRoot", activities[id]?.isTaskRoot == true)
                         putInt("uid", Process.myUid())
                     }
                 }
@@ -353,8 +358,63 @@ internal object ActivityUriGrantSystemSmoke {
         awaitState(B, 4) { !it.getBoolean("live") }
         requireAccess(B, false, data)
         verifyCallerSnapshots()
+        verifyTaskReuse()
         System.err.println("system-test: activity URI grants cover launch, ClipData, rejection, " +
             "recreation, new intents, shared owners, results, persistence and task removal")
+    }
+
+    private fun verifyTaskReuse() {
+        val separateTask = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+        start(-1, activityIntent(A, 80).addFlags(separateTask))
+        val root = awaitState(A, 80) { it.getBoolean("resumed") }
+        start(80, activityIntent(A, 81))
+        val child = awaitState(A, 81) { it.getBoolean("resumed") }
+        check(root.getInt("taskId") == child.getInt("taskId"))
+        check(root.getBoolean("taskRoot") && !child.getBoolean("taskRoot"))
+        start(-1, activityIntent(B, 82).addFlags(separateTask))
+        awaitState(B, 82) { it.getBoolean("resumed") }
+        start(-1, activityIntent(A, 80).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val restored = awaitState(A, 81) { it.getBoolean("resumed") }
+        check(restored.getInt("creates") == 1 && restored.getInt("newIntents") == 0)
+        check(restored.getInt("taskId") == root.getInt("taskId"))
+        check(call(A, STATUS, args(80)).getInt("creates") == 1)
+        call(A, MOVE_BACK, args(81).apply { putBoolean("nonRoot", false); putBoolean("expected", false) })
+        check(call(A, STATUS, args(81)).getBoolean("resumed"))
+        call(A, MOVE_BACK, args(81).apply { putBoolean("nonRoot", true); putBoolean("expected", true) })
+        awaitState(B, 82) { it.getBoolean("resumed") }
+        start(-1, activityIntent(A, 83).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        val delivered = awaitState(A, 81) { it.getBoolean("resumed") && it.getInt("newIntents") == 1 }
+        check(delivered.getInt("creates") == 1 && !call(A, STATUS, args(83)).getBoolean("live"))
+        check(checkNotNull(delivered.getStringArrayList("callbacks")).takeLast(2) == listOf("new-intent", "resume"))
+        call(A, FINISH, args(80).apply { putBoolean("removeTask", true) })
+        awaitState(A, 80) { !it.getBoolean("live") }
+        awaitState(A, 81) { !it.getBoolean("live") }
+        awaitState(B, 82) { it.getBoolean("resumed") }
+        call(B, FINISH, args(82).apply { putBoolean("removeTask", true) })
+        awaitState(B, 82) { !it.getBoolean("live") }
+
+        start(-1, activityIntent(A, 90).addFlags(separateTask))
+        awaitState(A, 90) { it.getBoolean("resumed") }
+        start(90, activityIntent(B, 91), 41)
+        awaitState(B, 91) { it.getBoolean("resumed") }
+        start(-1, activityIntent(A, 90).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        val cleared = awaitState(A, 90) { it.getBoolean("resumed") && it.getInt("resultRequest") == 41 }
+        check(cleared.getInt("resultCode") == Activity.RESULT_CANCELED && cleared.getInt("creates") == 1)
+        check(checkNotNull(cleared.getStringArrayList("callbacks")).takeLast(3) == listOf("result:41", "new-intent", "resume"))
+        awaitState(B, 91) { !it.getBoolean("live") }
+        start(90, activityIntent(B, 92).addFlags(separateTask), 42)
+        awaitState(B, 92) { it.getBoolean("resumed") }
+        val canceled = awaitState(A, 90) { it.getInt("resultRequest") == 42 }
+        check(canceled.getInt("resultCode") == Activity.RESULT_CANCELED)
+        check(call(B, IDENTITY, args(92)).getString("callingPackage") == null)
+        call(B, FINISH, args(92).apply { putBoolean("removeTask", true) })
+        awaitState(B, 92) { !it.getBoolean("live") }
+        val returned = awaitState(A, 90) { it.getBoolean("resumed") }
+        check(checkNotNull(returned.getStringArrayList("callbacks")).count { it == "result:42" } == 1)
+        call(A, FINISH, args(90).apply { putBoolean("removeTask", true) })
+        awaitState(A, 90) { !it.getBoolean("live") }
+        System.err.println("system-test: task reuse preserves the top screen, task identity/root/back APIs, new-intent ordering and canceled results across processes")
     }
 
     /** Run from a separately signed process; both peers share a test key but not a UID. */

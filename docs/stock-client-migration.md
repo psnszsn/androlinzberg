@@ -27,6 +27,25 @@ in force.
 
 Follow-up changes in the current tree:
 
+- The hosted activity controller now follows ActivityStarter/Task task reuse:
+  component and document matches precede affinity candidates; repeated launcher
+  intents preserve the existing top screen; changed intent filters add an
+  activity; MULTIPLE_TASK creates a distinct task. SINGLE_TOP, CLEAR_TOP,
+  CLEAR_TASK, REORDER_TO_FRONT and document policies select creation versus
+  new-intent delivery while preserving task identity. Pending canceled results
+  precede new intents and resume, and removed activities are destroyed after
+  the replacement resumes. Explicit NEW_TASK result requests are canceled
+  immediately. Activity.getTaskId, isTaskRoot and moveTaskToBack now use the
+  stock ActivityClient transport instead of placeholder values. The task URI
+  fixture supplies the real hosted package-manager dependency for document
+  intents. Module and separate-process regressions pass, covering identity,
+  alias normalization, affinity precedence, task/root/back queries, new-intent
+  ordering, clearing and canceled results. The NewPipe launch regression and
+  all 11 APK tests pass (37 steps without runtime issues), along with native,
+  Binder and build checks. Both tarballs remain unchanged and current, and the
+  inventory stays at 49 stubs. This closes common task reuse; it does not replace
+  Activity/ActivityThread wholesale or implement the full WM task policy.
+
 - Image and PublicFormatUtils now use verbatim AOSP Java, with the original
   format JNI and libui PublicFormat.cpp. Image's former compile-only SDK header
   is removed; ImageWriter remains Javadoc-only and barred from runtime use.
@@ -88,7 +107,7 @@ Follow-up changes in the current tree:
   exactly-once, ordered callbacks before onResume. JVM and system tests pass,
   as do the launch regression, native/Binder/build checks and all 11 APK tests
   (37 steps without runtime issues). Both tarballs remain current and unchanged;
-  the inventory stays at 50 stubs. Task-affinity reuse remains open.
+  the inventory stays at 50 stubs. Task reuse is covered by the later batch above.
 
 - Activity launch/calling identity queries now use the pinned ActivityClient
   transport. The controller records each delivery's share-identity choice and
@@ -104,8 +123,8 @@ Follow-up changes in the current tree:
   result callers and removed activity records. Java, JVM and system tests pass,
   along with native, Binder, build checks and all 11 APK tests (37 steps
   without runtime issues). The inventory stays at 50 stubs; both tarballs are
-  unchanged and current. Task-affinity reuse remains activity-controller work; the later batch
-  above covers deferred results for covered recipients.
+  unchanged and current. The later batches above
+  cover task reuse and deferred results for covered recipients.
 
 - GLSurfaceView now uses verbatim AOSP Java, including GLThread, EGL helpers,
   debug wrappers, GLU and Matrix. Legacy EGLImpl and its Java handles/interfaces
@@ -182,8 +201,8 @@ Follow-up changes in the current tree:
   now preserves the parent and its result delivery. JVM and separate-process
   regressions pass, along with all 11 APK integration tests (38 steps without
   runtime issues). The inventory remains 52 stubs; package inputs are unchanged
-  and both tarballs remain current. Task-affinity/NEW_TASK reuse remains incomplete in the hosted controller;
-  identity-sharing gates are covered by the later batch above.
+  and both tarballs remain current. Task reuse and
+  identity-sharing gates are covered by the later batches above.
 
 - PerfettoTrace and PerfettoTrackEventExtra now use their verbatim pinned AOSP
   sources, backed by the original JNI, libtracing_perfetto, and Linux Perfetto C

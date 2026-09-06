@@ -208,7 +208,10 @@ public class Activity extends ContextWrapper implements Window.Callback,
     }
     public int getMaxNumPictureInPictureActions() { return 3; }
     public boolean onPictureInPictureRequested() { return false; }
-    public boolean isTaskRoot() { return true; }
+    /** Pinned Activity.WindowControllerCallback.isTaskRoot; the hosted window has no callback object. */
+    public boolean isTaskRoot() {
+        return ActivityClient.getInstance().getTaskForActivity(mToken, true /* onlyRoot */) >= 0;
+    }
     public void applyOverrideConfiguration(Configuration overrideConfiguration) {}
     public void overridePendingTransition(int enterAnim, int exitAnim) {}
     public void setRequestedOrientation(int requestedOrientation) {
@@ -653,10 +656,14 @@ public class Activity extends ContextWrapper implements Window.Callback,
         }
         return mAutofillClientController;
     }
-    public boolean moveTaskToBack(boolean nonRoot) { return false; }
+    public boolean moveTaskToBack(boolean nonRoot) {
+        return ActivityClient.getInstance().moveActivityTaskToBack(mToken, nonRoot);
+    }
     public ActivityInfo getActivityInfo() { return mActivityInfo; }
     public void runOnUiThread(Runnable action) { action.run(); }
-    public int getTaskId() { return 0; }
+    public int getTaskId() {
+        return ActivityClient.getInstance().getTaskForActivity(mToken, false /* onlyRoot */);
+    }
     /** AOSP: the assist token the activity manager issued; a process-local binder here. */
     public final android.os.IBinder getAssistToken() {
         return mParent != null ? mParent.getAssistToken() : mAssistToken;
