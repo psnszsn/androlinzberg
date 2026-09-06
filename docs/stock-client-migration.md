@@ -27,6 +27,18 @@ in force.
 
 Follow-up changes in the current tree:
 
+- SyncFence and its JNI now use verbatim pinned AOSP sources, backed by the
+  stock native Fence/libsync implementation. The stock EGLSync handle is also
+  selected. Two Javadoc-only camera imports use exact headers from the pinned
+  SDK; a mandatory bytecode audit rejects packaging those headers or any runtime
+  reference to them. No camera implementation enters the runtime. Tests exercise
+  invalid/empty fences, descriptor transfer and duplication, shared copies,
+  close idempotence, poll readiness, and Parcel descriptor lifetime through JNI.
+  Java, JVM, separate-process system, native, Binder and build checks pass, along
+  with all 11 APK integration tests (38 steps without runtime issues) and the
+  hardware-buffer Canvas/pixel-readback probe. The rebuilt AOSP tarball includes
+  the SDK header source archive and notice; the ART tarball is unchanged.
+
 - ComponentCaller now checks immutable delivery-time URI access snapshots for
   launches, new intents, and activity results. The hosted controller follows
   stock ActivityCallerState, including nested ClipData/EXTRA_STREAM, separate
@@ -95,12 +107,12 @@ Follow-up changes in the current tree:
   explicit Holo PhoneWindow inflation and title-update coverage. JVM, system,
   native, Binder and build checks pass, as do all 11 integration tests (38 steps
   without runtime issues) and the hardware-buffer Canvas/pixel-readback probe.
-  Java SyncFence remains blocked by Image/ImageWriter's compilation closure;
-  this native prerequisite does not reduce the 57-stub inventory.
+  That native prerequisite left the inventory at 57 stubs. Java SyncFence is
+  now stock as described above; its camera imports require only Javadoc headers.
 
-- The latest validated inventory is 52 stubs: 28 pending and 24 documented
-  survivors, down from 134 at the start of this follow-up. Of these, 45 are
-  outside `com.android.server` (21 pending, 24 survivors). The inventory does
+- The latest validated inventory is 51 stubs: 28 pending and 23 documented
+  survivors, down from 134 at the start of this follow-up. Of these, 44 are
+  outside `com.android.server` (21 pending, 23 survivors). The inventory does
   not count the adapted Activity and ActivityThread implementations and is not
   an overall completion percentage. Those classes and the remaining service
   and native dependencies still prevent completion of the stock-client goal.

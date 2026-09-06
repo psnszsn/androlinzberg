@@ -5718,3 +5718,7 @@ F aosp art/libnativeloader/include/nativeloader/native_loader.h
 F aosp art/libnativeloader/include/nativeloader/dlext_namespaces.h
 F aosp bionic/libc/include/android/dlext.h
 F aosp frameworks/native/libs/binder/IResultReceiver.cpp
+
+# Pinned SDK headers for Javadoc-only imports (never packaged at runtime).
+F aosp prebuilts/sdk/current/public/android.jar
+F aosp prebuilts/sdk/NOTICE

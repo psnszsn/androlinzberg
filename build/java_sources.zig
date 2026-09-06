@@ -215,6 +215,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/hardware/usb/UsbEndpoint.java");
     try c.file("$CJ/android/hardware/usb/UsbInterface.java");
     try c.file("$CJ/android/hardware/HardwareBuffer.java");
+    try c.file("$CJ/android/hardware/SyncFence.java");
     try c.file("$CJ/android/hardware/OverlayProperties.java");
     try c.file("$CJ/android/hardware/LutProperties.java");
     try c.file("$FB/graphics/java/android/view/PixelCopy.java");
@@ -1761,6 +1762,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/opengl/java/android/opengl/EGLDisplay.java");
     try c.file("$FB/opengl/java/android/opengl/EGLObjectHandle.java");
     try c.file("$FB/opengl/java/android/opengl/EGLSurface.java");
+    try c.file("$FB/opengl/java/android/opengl/EGLSync.java");
     try c.file("$CJ/android/os/Debug.java");
     try c.file("$CJ/android/os/GraphicsEnvironment.java");
     try c.file("$CJ/com/android/internal/util/TypedProperties.java");

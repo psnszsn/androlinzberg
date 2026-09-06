@@ -181,6 +181,14 @@ pub fn build(b: *std.Build, o: Options) Result {
     const r8_keepanno_jar = aosp.path("prebuilts/r8/keepanno-annotations.jar");
     const r8_keepanno_classes = extractJarPackage(b, r8_keepanno_jar, "com/android/tools/r8/keepanno/annotations/*", "r8-keepanno-classes");
 
+    const doc_headers = @import("generator_sources.zig").javadoc_headers;
+    const extract_doc_headers = b.addSystemCommand(&.{ "unzip", "-q" });
+    extract_doc_headers.addFileArg(aosp.path(doc_headers.archive));
+    for (doc_headers.classes) |name| extract_doc_headers.addArg(b.fmt("{s}.class", .{name}));
+    extract_doc_headers.addArg("-d");
+    const javadoc_classes = extract_doc_headers.addOutputDirectoryArg("javadoc-headers");
+    extract_doc_headers.setName("extract pinned SDK Javadoc headers");
+
     const compat_declaration = @import("generator_sources.zig").compat_config;
     var compat_sources = SourceFiles.Collector.init(b);
     const aosp_root = SourceFiles.Root.dependency(b, aosp, "");
@@ -301,6 +309,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = androidx_annotation_classes },
         .{ .directory = error_prone_annotation_classes },
         .{ .directory = r8_keepanno_classes },
+        .{ .directory = javadoc_classes },
     });
     kotlinc.addArg("-d");
     const kotlin_classes = kotlinc.addOutputDirectoryArg("kotlin-classes");
@@ -325,6 +334,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = androidx_annotation_classes },
         .{ .directory = error_prone_annotation_classes },
         .{ .directory = r8_keepanno_classes },
+        .{ .directory = javadoc_classes },
         .{ .file = kotlin_stdlib },
     });
     javac.addArg("-processorpath");
@@ -383,6 +393,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addDirectoryArg(o.generated.jvm.resources);
     jar.addArg(".");
 
+    const doc_header_audit = b.addSystemCommand(&.{ "python3", "-B" });
+    doc_header_audit.addFileArg(b.path("tools/audit-javadoc-headers.py"));
+    doc_header_audit.addFileArg(classes_jar);
+    for (doc_headers.classes) |name| doc_header_audit.addArg(name);
+    doc_header_audit.setName("reject runtime dependencies on Javadoc headers");
+
     const merge_compat = command.create(b);
     merge_compat.addArg("python3");
     merge_compat.addFileArg(aosp.path(compat_declaration.merge_tool));
@@ -401,6 +417,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     d8.addArg("--output");
     const framework_dex = d8.addOutputDirectoryArg("framework-dex");
     d8.addFileArg(classes_jar);
+    d8.step.dependOn(&doc_header_audit.step);
 
     // D8 discards Java resources. Package its dex output together with the
     // stock MIME data so Class.getResourceAsStream works on the runtime jar.
@@ -425,6 +442,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     app_context_d8.addArg("--output");
     const app_context_jar = app_context_d8.addOutputFileArg("framework-app-context.jar");
     app_context_d8.addFileArg(classes_jar);
+    app_context_d8.step.dependOn(&doc_header_audit.step);
 
     // Android's framework jars are dexpreopted into the system image. Build an adjacent hosted
     // odex/vdex pair against the exact ART boot image and final framework.jar location.

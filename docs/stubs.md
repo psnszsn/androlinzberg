@@ -10,14 +10,13 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 28 (budget 28). Survivors: 24. Total: 52.
+Pending: 28 (budget 28). Survivors: 23. Total: 51.
 
 ## Survivors
 
 | Stub | Reason | Audit |
 |---|---|---|
 | `android/hardware/Camera.java` | legacy camera client is JNI/cameraserver-backed and no camera service is hosted | blocked |
-| `android/hardware/SyncFence.java` | stock Image/ImageWriter camera compilation closure is unavailable; native libui Fence is now compiled | blocked |
 | `android/hardware/camera2/CameraManager.java` | camera stack (cameraserver, CameraMetadataNative JNI, frameworks/av camera AIDL) not hosted; android.telecom.Connection javadoc import | blocked |
 | `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | generated callback requires the legacy libhwbinder runtime | no-aosp-source |
 | `android/hardware/usb/UsbManager.java` | no hosted IUsbManager; device connection/request use JNI and legacy HIDL plus gadget AIDL generation is unwired | blocked |
@@ -78,16 +77,16 @@ Pending: 28 (budget 28). Survivors: 24. Total: 52.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/opengl/GLSurfaceView.kt` | blocked | frameworks/base/opengl/java/android/opengl/GLSurfaceView.java (11 to add); android.opengl.EGLExt: JNI natives (via EGLExt < GLSurfaceView); android.opengl.EGLExt: existing host class android.hardware.SyncFence lacks method createEmpty (via EGLExt < GLSurfaceView) |
+| `android/opengl/GLSurfaceView.kt` | blocked | frameworks/base/opengl/java/android/opengl/GLSurfaceView.java (10 to add); android.opengl.EGLExt: JNI natives (via EGLExt < GLSurfaceView) |
 
 ### packagemanager
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3163 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3161 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3273 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3175 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3162 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3160 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3272 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3174 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
 
 ### runtime
 
@@ -99,8 +98,8 @@ Pending: 28 (budget 28). Survivors: 24. Total: 52.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3161 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3161 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3160 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3160 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
 
 ### textclassifier
 
@@ -135,43 +134,43 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `android.hardware.camera2.CameraCharacteristics` | 25 | 1 |
-| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 25 | 1 |
-| `android.media.AudioHalVersionInfo` | 25 | 1 |
-| `android.media.AudioMix` | 25 | 1 |
-| `android.media.AudioPlaybackConfiguration` | 25 | 1 |
-| `android.media.AudioRecord` | 25 | 1 |
-| `android.media.AudioSystem` | 25 | 1 |
-| `android.media.IAudioService` | 25 | 1 |
-| `android.media.VolumeShaper` | 25 | 1 |
-| `android.hardware.camera2.params.StreamConfigurationMap` | 25 | 2 |
-| `android.media.AudioMixMatchCriterion` | 25 | 2 |
-| `android.media.AudioPolicyConfig` | 25 | 2 |
-| `android.media.AudioProductStrategy` | 25 | 2 |
-| `android.media.AudioVolumeGroup` | 25 | 2 |
-| `android.media.CamcorderProfile` | 25 | 2 |
-| `android.media.INativeAudioVolumeGroupCallback` | 25 | 2 |
-| `android.media.INativeSpatializerCallback` | 25 | 2 |
-| `android.media.ISoundDose` | 25 | 2 |
-| `android.media.ISpatializer` | 25 | 2 |
-| `android.media.audio.common.AidlConversion` | 25 | 2 |
-| `android.media.audio.common.AudioConfig` | 25 | 2 |
-| `android.media.AudioHwModule` | 25 | 3 |
-| `android.media.audio.common.AudioAttributes` | 25 | 3 |
-| `android.media.audio.common.AudioHalEngineConfig` | 25 | 3 |
-| `android.media.audio.common.AudioOffloadInfo` | 25 | 3 |
-| `android.media.audio.common.AudioPortExt` | 25 | 3 |
-| `android.renderscript.Allocation` | 25 | 3 |
-| `android.media.audio.common.AudioHalCapCriterionV2` | 25 | 4 |
-| `android.media.audio.common.AudioHalCapDomain` | 25 | 4 |
-| `android.media.audio.common.AudioHalProductStrategy` | 25 | 4 |
-| `android.media.audio.common.AudioHalVolumeGroup` | 25 | 4 |
-| `android.media.audio.common.AudioPortMixExt` | 25 | 4 |
-| `android.media.audio.common.AudioHalCapConfiguration` | 25 | 5 |
+| `android.hardware.camera2.CameraCharacteristics` | 24 | 1 |
 | `android.hardware.camera2.CaptureRequest` | 24 | 1 |
-| `android.hardware.camera2.CameraDevice` | 24 | 2 |
+| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 24 | 1 |
+| `android.media.AudioHalVersionInfo` | 24 | 1 |
+| `android.media.AudioMix` | 24 | 1 |
+| `android.media.AudioPlaybackConfiguration` | 24 | 1 |
+| `android.media.AudioRecord` | 24 | 1 |
+| `android.media.AudioSystem` | 24 | 1 |
+| `android.media.IAudioService` | 24 | 1 |
+| `android.media.VolumeShaper` | 24 | 1 |
+| `android.hardware.camera2.params.StreamConfigurationMap` | 24 | 2 |
+| `android.media.AudioMixMatchCriterion` | 24 | 2 |
+| `android.media.AudioPolicyConfig` | 24 | 2 |
+| `android.media.AudioProductStrategy` | 24 | 2 |
+| `android.media.AudioVolumeGroup` | 24 | 2 |
+| `android.media.CamcorderProfile` | 24 | 2 |
+| `android.media.INativeAudioVolumeGroupCallback` | 24 | 2 |
+| `android.media.INativeSpatializerCallback` | 24 | 2 |
+| `android.media.ISoundDose` | 24 | 2 |
+| `android.media.ISpatializer` | 24 | 2 |
 | `android.media.ImageReader` | 24 | 2 |
-| `android.hardware.Camera.CameraInfo` | 24 | 3 |
-| `android.hardware.camera2.TotalCaptureResult` | 24 | 3 |
-| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 24 | 4 |
-| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 24 | 4 |
+| `android.media.audio.common.AidlConversion` | 24 | 2 |
+| `android.media.audio.common.AudioConfig` | 24 | 2 |
+| `android.media.AudioHwModule` | 24 | 3 |
+| `android.media.audio.common.AudioAttributes` | 24 | 3 |
+| `android.media.audio.common.AudioHalEngineConfig` | 24 | 3 |
+| `android.media.audio.common.AudioOffloadInfo` | 24 | 3 |
+| `android.media.audio.common.AudioPortExt` | 24 | 3 |
+| `android.renderscript.Allocation` | 24 | 3 |
+| `android.media.audio.common.AudioHalCapCriterionV2` | 24 | 4 |
+| `android.media.audio.common.AudioHalCapDomain` | 24 | 4 |
+| `android.media.audio.common.AudioHalProductStrategy` | 24 | 4 |
+| `android.media.audio.common.AudioHalVolumeGroup` | 24 | 4 |
+| `android.media.audio.common.AudioPortMixExt` | 24 | 4 |
+| `android.media.audio.common.AudioHalCapConfiguration` | 24 | 5 |
+| `android.hardware.camera2.CameraDevice` | 23 | 2 |
+| `android.hardware.Camera.CameraInfo` | 23 | 3 |
+| `android.hardware.camera2.TotalCaptureResult` | 23 | 3 |
+| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 23 | 4 |
+| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 23 | 4 |

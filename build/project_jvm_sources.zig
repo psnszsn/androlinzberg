@@ -9,7 +9,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/companion/virtual/IVirtualDevice.java",
     "src/framework-stubs/android/companion/virtual/VirtualDeviceManager.java",
     "src/framework-stubs/android/hardware/Camera.java",
-    "src/framework-stubs/android/hardware/SyncFence.java",
     "src/framework-stubs/android/hardware/camera2/CameraManager.java",
     "src/framework-stubs/android/hardware/gnss/V2_1/IGnssMeasurementCallback.java",
     "src/framework-stubs/android/hardware/usb/UsbManager.java",

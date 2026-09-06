@@ -4,6 +4,13 @@ const std = @import("std");
 
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
+
+// SyncFence imports these types only for Javadoc. Exact pinned SDK headers satisfy
+// javac without importing the camera stack. The bytecode audit forbids runtime use.
+pub const javadoc_headers = .{
+    .archive = "prebuilts/sdk/current/public/android.jar",
+    .classes = [_][]const u8{ "android/media/Image", "android/media/ImageWriter" },
+};
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
     .header = "IncrementalProperties.sysprop.h",
