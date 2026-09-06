@@ -376,10 +376,26 @@ fn networkUtilsBindSocketToNetworkHandle(
     return 0;
 }
 
+// Pinned NetworkUtils/NetdClient process binding ABI. The host has only its
+// default routing namespace. Clearing a binding succeeds; selecting an Android
+// netd routing domain fails, and getBoundNetworkForProcess reports NETID_UNSET.
+fn networkUtilsBindProcess(_: JNIEnvPtr, _: jni.jclass, handle: jni.jlong) callconv(.c) jni.jboolean {
+    return if (handle == 0) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+fn networkUtilsBoundProcess(_: JNIEnvPtr, _: jni.jclass) callconv(.c) jni.jlong {
+    return 0;
+}
+fn networkUtilsBindDns(_: JNIEnvPtr, _: jni.jclass, net_id: jni.jint) callconv(.c) jni.jboolean {
+    return if (net_id == 0) jni.JNI_TRUE else jni.JNI_FALSE;
+}
+
 fn registerNetworkUtils(env: JNIEnvPtr) !void {
     const cls = env.*.*.FindClass.?(env, "android/net/NetworkUtils") orelse return error.NoClass;
     defer env.*.*.DeleteLocalRef.?(env, cls);
     const methods = [_]jni.JNINativeMethod{
+        method("bindProcessToNetworkHandle", "(J)Z", &networkUtilsBindProcess),
+        method("getBoundNetworkHandleForProcess", "()J", &networkUtilsBoundProcess),
+        method("bindProcessToNetworkForHostResolution", "(I)Z", &networkUtilsBindDns),
         method(
             "bindSocketToNetworkHandle",
             "(Ljava/io/FileDescriptor;J)I",

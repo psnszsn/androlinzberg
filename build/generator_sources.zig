@@ -200,19 +200,6 @@ pub const mime_types = [_]MimeTypes{
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/mime/java-res/vendor.mime.types" }, .output = "vendor.mime.types", .vendor = true },
 };
 
-/// These Connectivity parcelables share a package with legacy include roots.
-/// Stage only their pinned declarations to avoid duplicate AIDL definitions.
-pub const aidl_exports = [_]struct { input: SourcePath, output: []const u8 }{
-    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/NetworkTemplate.aidl" }, .output = "android/net/NetworkTemplate.aidl" },
-    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/NetworkStateSnapshot.aidl" }, .output = "android/net/NetworkStateSnapshot.aidl" },
-
-    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/ProxyInfo.aidl" }, .output = "android/net/ProxyInfo.aidl" },
-    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/TetheringManager.aidl" }, .output = "android/net/TetheringManager.aidl" },
-    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/DhcpInfo.aidl" }, .output = "android/net/DhcpInfo.aidl" },
-    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/DhcpOption.aidl" }, .output = "android/net/DhcpOption.aidl" },
-    .{ .input = .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/aidl-export/android/net/MacAddress.aidl" }, .output = "android/net/MacAddress.aidl" },
-};
-
 pub const VersionedAidl = struct { prefix: []const u8, version: []const u8, hash: []const u8 };
 pub const versioned_aidl = [_]VersionedAidl{
     // frameworks/base/Android.bp: android.se.omapi-V1-java; hash from V1/.hash.
@@ -220,6 +207,19 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/IIpSecService.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/IConnectivityDiagnosticsCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/IConnectivityManager.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/INetworkActivityListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/INetworkAgent.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/INetworkAgentRegistry.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/INetworkOfferCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/IOnCompleteListener.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/IQosCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/ISocketKeepaliveCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/ITestNetworkManager.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/NetworkAndAgentRegistryParcelable.aidl" },
+
     .{ .source = .aosp, .path = "frameworks/av/media/module/libmediatranscoding/aidl/android/media/IMediaTranscodingService.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/media/module/libmediatranscoding/aidl/android/media/ITranscodingClient.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/media/module/libmediatranscoding/aidl/android/media/ITranscodingClientCallback.aidl" },
@@ -2503,3 +2503,12 @@ test "generator declarations map typed inputs to unique Java outputs" {
 
 // The permanent native Binder regression compiles this pinned graphics Bp/Bn.
 pub const binder_graphics_aidl = "frameworks/native/libs/gui/aidl/android/gui/IFpsListener.aidl";
+
+pub const stats_log = .{
+    .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },
+    .{ .module = "statsd", .package = "com.android.internal.statsd", .class = "StatsdStatsLog" },
+    .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },
+    .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
+    .{ .module = "expresslog", .package = "com.android.modules.expresslog", .class = "StatsExpressLog" },
+    .{ .module = "connectivity", .package = "com.android.net.module.util", .class = "FrameworkConnectivityStatsLog" },
+};

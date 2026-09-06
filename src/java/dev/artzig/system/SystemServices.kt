@@ -271,6 +271,7 @@ internal object SystemServices {
         val battery = HostedBatteryService(activityManager)
         android.os.ServiceManager.addService("batteryproperties", battery.registrar)
         android.os.ServiceManager.addService(android.os.BatteryStats.SERVICE_NAME, battery.batteryStats)
+        android.os.ServiceManager.addService(Context.CONNECTIVITY_SERVICE, HostedConnectivityService(context, packageManager))
         android.os.ServiceManager.addService(Context.NETWORK_STATS_SERVICE, HostedNetworkStatsService())
         android.os.ServiceManager.addService(Context.NETWORK_POLICY_SERVICE, HostedNetworkPolicyService(context))
         val usageStats = HostedUsageStatsService()

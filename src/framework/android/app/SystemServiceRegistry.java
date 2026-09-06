@@ -168,8 +168,14 @@ public final class SystemServiceRegistry {
                 return new android.app.usage.NetworkStatsManager(ctx.getOuterContext(),
                         android.net.INetworkStatsService.Stub.asInterface(binder));
             }});
-        registerService(Context.CONNECTIVITY_SERVICE, android.net.ConnectivityManager.class, new NewServiceFetcher<android.net.ConnectivityManager>() {
-            @Override public android.net.ConnectivityManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.ConnectivityManager(); }});
+        // Pinned ConnectivityFrameworkInitializer: stock client over the hosted Binder service.
+        registerService(Context.CONNECTIVITY_SERVICE, android.net.ConnectivityManager.class,
+                new CachedServiceFetcher<android.net.ConnectivityManager>() {
+            @Override public android.net.ConnectivityManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder binder = android.os.ServiceManager.getServiceOrThrow(Context.CONNECTIVITY_SERVICE);
+                return new android.net.ConnectivityManager(ctx.getOuterContext(),
+                        android.net.IConnectivityManager.Stub.asInterface(binder));
+            }});
         // Telephony and telecom (AOSP: ActivityThread installs the TelephonyServiceManager,
         // SystemServiceRegistry's static block runs TelephonyFrameworkInitializer and registers
         // the registry, telecom and MMS managers). The managers resolve "phone", "isub",

@@ -45,6 +45,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libmedia_jni.so");
     // Stock AudioEffect uses the same hosted JNI registrar.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libaudioeffect_jni.so");
+    _ = tree.addCopyFile(options.binder_ndk, "lib/art/libcom_android_net_module_util_jni.so");
     _ = tree.addCopyFile(options.libart, "lib/art/libart.so");
     _ = tree.addCopyFile(options.libjavacrypto, "lib/art/libjavacrypto.so");
     for (options.bionic) |library| {

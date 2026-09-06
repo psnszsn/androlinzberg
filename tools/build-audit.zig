@@ -83,13 +83,15 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
     try putForbidden(&result, allocator, generator_sources.aconfig_device_paths.output);
     try putForbidden(&result, allocator, generator_sources.system_features.output);
     try putForbidden(&result, allocator, generator_sources.system_features.metadata_output);
-    try putForbidden(&result, allocator, "com/android/internal/util/FrameworkStatsLog.java");
-    try putForbidden(&result, allocator, "com/android/internal/statsd/StatsdStatsLog.java");
-    try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyStatsLog.java");
-    try putForbidden(&result, allocator, "com/android/internal/telephony/TelephonyCommonStatsLog.java");
+    inline for (generator_sources.stats_log) |entry| {
+        const package_path = try std.mem.replaceOwned(u8, allocator, entry.package, ".", "/");
+        defer allocator.free(package_path);
+        const output = try std.fmt.allocPrint(allocator, "{s}/{s}.java", .{ package_path, entry.class });
+        defer allocator.free(output);
+        try putForbidden(&result, allocator, output);
+    }
     try putForbidden(&result, allocator, "android/os/UserManagerCache.java");
     try putForbidden(&result, allocator, "com/android/modules/expresslog/MetricIds.java");
-    try putForbidden(&result, allocator, "com/android/modules/expresslog/StatsExpressLog.java");
     for (generator_sources.sysprop) |entry| {
         if (entry.input.source != .aosp) continue;
         const path = try std.fs.path.join(allocator, &.{ aosp_root, entry.input.path });

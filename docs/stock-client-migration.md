@@ -27,6 +27,18 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Stock ConnectivityManager and NetworkAgent replace their survivor stubs, with
+  55 original Java sources, generated request protocols and FrameworkConnectivityStatsLog.
+  A hosted Binder service observes Linux routes, addresses and DNS configuration,
+  and owns request matching, callbacks, caller identity, release and timeouts.
+  Untracked radio activity follows AOSP's always-active behavior independently of
+  route availability. Original BPF JNI reports Linux errno; Android per-process
+  routing domains, reservations and radio agents remain unavailable.
+  All 126 selected inputs match the rebuilt, repinned AOSP archive; ART is unchanged.
+  JVM/system tests and native/Binder/build checks pass. All 11 APK tests pass
+  (41 captured steps, zero structured runtime issues).
+  The inventory is 37 stubs: 22 pending and 15 survivors; the pending budget stays 22.
+
 - ActivityThread's mainline closure now selects 120 original Java files
   for NFC/secure elements, SDK sandbox, profiling, media communication/transcoding
   and process support, with 45 additional AIDL inputs. Versioned AIDL uses the

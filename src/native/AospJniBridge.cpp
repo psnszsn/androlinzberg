@@ -45,6 +45,14 @@ int android::AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* clas
     return jniRegisterNativeMethods(env, className, gMethods, numMethods);
 }
 
+namespace android {
+int register_com_android_net_module_util_BpfMap(JNIEnv*, const char*);
+}
+static int registerBpfMap(JNIEnv* env) {
+    return android::register_com_android_net_module_util_BpfMap(env,
+            "com/android/net/module/util/BpfMap");
+}
+
 extern int register_android_graphics_Bitmap(JNIEnv*);
 extern int register_android_graphics_BitmapFactory(JNIEnv*);
 extern int register_android_graphics_BitmapRegionDecoder(JNIEnv*);
@@ -299,6 +307,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_graphics_ColorSpace),
             E(register_android_graphics_Graphics),
             E(azk_register_android_graphics_Bitmap),
+            E(registerBpfMap),
             E(register_android_graphics_BitmapFactory),
             E(register_android_graphics_BitmapRegionDecoder),
             E(register_android_graphics_RuntimeXfermode),

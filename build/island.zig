@@ -240,6 +240,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     const hw_jni_inc = o.aosp.path(b, "frameworks/base/libs/hwui/jni");
     const fn_inc = o.aosp.path(b, "frameworks/native/include");
 
+    g.add(o.aosp.path(b, "packages/modules/Connectivity/staticlibs/native/bpfmapjni"), &.{"com_android_net_module_util_BpfMap.cpp"}, &.{
+        o.aosp.path(b, "packages/modules/Connectivity/bpf/syscall_wrappers/include"),
+        o.aosp.path(b, "packages/modules/Connectivity/bpf/headers/include"),
+        // KernelUtils uses bionic's unused annotation; the host libc has no spelling for it.
+    }, &.{"-D__unused=__attribute__((__unused__))"});
     g.add(o.aosp.path(b, "system/core/libusbhost"), &.{ "usbhost.c", "usbhost_jni.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
     for (gen.libcutils_srcs) |file| {

@@ -5926,3 +5926,16 @@ F aosp packages/modules/Profiling/framework/java/android/os/ProfilingResult.java
 F aosp packages/modules/Profiling/framework/java/android/os/ProfilingServiceHelper.java
 F aosp packages/modules/Profiling/framework/java/android/os/ProfilingTrigger.java
 F aosp packages/modules/Profiling/framework/java/android/os/flags.aconfig
+
+# Stock connectivity client and Linux BPF JNI closure.
+F aosp frameworks/base/core/java/android/net/NattKeepalivePacketData.aidl
+F aosp frameworks/base/core/java/android/net/NetworkState.aidl
+F aosp frameworks/base/core/java/android/net/TcpKeepalivePacketData.aidl
+F aosp packages/modules/Connectivity/Tethering/common/TetheringLib/src/android/net/TetheringConstants.java
+F aosp packages/modules/Connectivity/bpf/headers/include/bpf/KernelUtils.h
+F aosp packages/modules/Connectivity/bpf/syscall_wrappers/include/BpfSyscallWrappers.h
+F aosp packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/BpfMap.java
+F aosp packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/IBpfMap.java
+F aosp packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/JniUtil.java
+F aosp packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/Struct.java
+F aosp packages/modules/Connectivity/staticlibs/native/bpfmapjni/com_android_net_module_util_BpfMap.cpp

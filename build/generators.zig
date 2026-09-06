@@ -182,6 +182,7 @@ fn hostTool(b: *std.Build, name: []const u8, source: []const u8) *std.Build.Step
 }
 
 fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat: LazyPath) void {
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Connectivity/framework/aidl-export"));
     inline for (.{
         "frameworks/base/core/java",
         "frameworks/base/graphics/java",
@@ -266,9 +267,6 @@ fn aidlJava(
     const compat = b.addWriteFiles();
     _ = compat.addCopyDirectory(b.path("aidl-compat"), "", .{});
     _ = compat.addCopyDirectory(aosp.path(permission_aidl), "", .{ .include_extensions = &.{".aidl"} });
-    for (declarations.aidl_exports) |entry| {
-        _ = compat.addCopyFile(sourcePath(b, aosp, entry.input), entry.output);
-    }
     const compat_dir = compat.getDirectory();
 
     // Mainline Bluetooth's socket AIDL refers to the SDK parcelable by its
@@ -605,13 +603,7 @@ fn statsJava(
     // the framework's FrameworkStatsLog, StatsD's StatsdStatsLog, telephony's
     // TelephonyStatsLog (AnomalyReporter), and telephony-common's
     // TelephonyCommonStatsLog (TelephonyPermissions).
-    const specs = .{
-        .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },
-        .{ .module = "statsd", .package = "com.android.internal.statsd", .class = "StatsdStatsLog" },
-        .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },
-        .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
-        .{ .module = "expresslog", .package = "com.android.modules.expresslog", .class = "StatsExpressLog" },
-    };
+    const specs = declarations.stats_log;
     const result = b.allocator.alloc(LazyPath, specs.len) catch @panic("OOM");
     inline for (specs, 0..) |spec, index| {
         const run = b.addRunArtifact(stats_tool);
