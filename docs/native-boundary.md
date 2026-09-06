@@ -337,6 +337,12 @@ macros and callback code that Zig cannot import directly.
 - `HardwareBufferRender.cpp` imports DMA-BUF buffers into EGL and Skia.
 - `HwuiRenderProxyBridge.cpp` supplies two C calls for HWUI `RenderProxy`.
 - `AospJniBridge.cpp` registers AOSP JNI code and manages Skia bitmap access.
+  Stock GLUtils/Visibility/ETC1 use pinned OpenGL utility JNI and ETC1 encoding.
+  `HostBitmapUpload.h` exposes the bitmap upload boundary: host BGRA software
+  pixels are copied to RGBA for GLUtils, retaining alpha/color-space metadata
+  and leaving the original Java bitmap unchanged. Other layouts retain their
+  stock pixel representation. This conversion is confined to bitmap uploads;
+  SurfaceFlinger task presentation continues through GPU buffer queues.
   BackupDataInput, BackupDataOutput, and FullBackup reuse their pinned JNI
   implementations and androidfw's BackupData/BackupHelpers directly. The one
   fixed read-only backup flag they consume comes from an aconfig-generated C++

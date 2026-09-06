@@ -1,0 +1,76 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] GLUtils: normalize host bitmap upload byte order
+
+Pinned GLUtils uploads RGBA bytes directly. Host Skia uses BGRA for N32;
+convert at the C++ bitmap boundary without changing the source bitmap.
+
+--- a/core/jni/android/opengl/util.cpp
++++ b/core/jni/android/opengl/util.cpp
+@@ -31,6 +31,9 @@
+ #include <ETC1/etc1.h>
+ 
+ #include "core_jni_helpers.h"
++#ifdef ARTZIG_HOST_GRAPHICS
++#include "HostBitmapUpload.h"
++#endif
+ 
+ #undef LOG_TAG
+ #define LOG_TAG "OpenGLUtil"
+@@ -641,6 +644,13 @@
+     graphics::Bitmap bitmap(env, bitmapObj);
+     if (bitmap.isValid() && bitmap.getPixels() != nullptr) {
+         AndroidBitmapInfo bitmapInfo = bitmap.getInfo();
++#ifdef ARTZIG_HOST_GRAPHICS
++        SkBitmap upload;
++        if (!artzig::getGlBitmapPixels(env, bitmapObj, &upload)) return -1;
++        const void* pixels = upload.getPixels();
++#else
++        const void* pixels = bitmap.getPixels();
++#endif
+ 
+         if (internalformat < 0) {
+             internalformat = getInternalFormat(bitmapInfo.format);
+@@ -652,7 +662,7 @@
+         if (checkInternalFormat(bitmapInfo.format, internalformat, type)) {
+             glTexImage2D(target, level, internalformat, bitmapInfo.width, bitmapInfo.height, border,
+                          getPixelFormatFromInternalFormat(internalformat), type,
+-                         bitmap.getPixels());
++                         pixels);
+             return 0;
+         }
+     }
+@@ -665,6 +675,13 @@
+     graphics::Bitmap bitmap(env, bitmapObj);
+     if (bitmap.isValid() && bitmap.getPixels() != nullptr) {
+         AndroidBitmapInfo bitmapInfo = bitmap.getInfo();
++#ifdef ARTZIG_HOST_GRAPHICS
++        SkBitmap upload;
++        if (!artzig::getGlBitmapPixels(env, bitmapObj, &upload)) return -1;
++        const void* pixels = upload.getPixels();
++#else
++        const void* pixels = bitmap.getPixels();
++#endif
+ 
+         int internalFormat = getInternalFormat(bitmapInfo.format);
+         if (format < 0) {
+@@ -675,7 +692,7 @@
+ 
+         if (checkInternalFormat(bitmapInfo.format, internalFormat, type)) {
+             glTexSubImage2D(target, level, xoffset, yoffset, bitmapInfo.width, bitmapInfo.height,
+-                            format, type, bitmap.getPixels());
++                            format, type, pixels);
+             return 0;
+         }
+     }
+--- a/libs/hwui/apex/android_bitmap.cpp
++++ b/libs/hwui/apex/android_bitmap.cpp
+@@ -50,7 +50,8 @@
+ 
+ static AndroidBitmapFormat getFormat(const SkImageInfo& info) {
+     switch (info.colorType()) {
+-        case kN32_SkColorType:
++        case kRGBA_8888_SkColorType:
++        case kBGRA_8888_SkColorType:
+             return ANDROID_BITMAP_FORMAT_RGBA_8888;
+         case kRGB_565_SkColorType:
+             return ANDROID_BITMAP_FORMAT_RGB_565;

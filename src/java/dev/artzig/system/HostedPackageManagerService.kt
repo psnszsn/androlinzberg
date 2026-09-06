@@ -404,6 +404,8 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
 
     // ------------------------------------------------- Computer (resolver)
 
+    override fun getComponentResolver(): com.android.server.pm.resolution.ComponentResolverApi = componentResolver
+
     override fun getPackage(packageName: String): AndroidPackage? =
         synchronized(lock) { packages[packageName]?.pkg }
 

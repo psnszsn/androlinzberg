@@ -116,13 +116,29 @@ compile probe now reports 33 errors (`/tmp/wm-compile-probe-17.log`). Remaining
 families include shutdown, intent/receiver policy, wallpaper data, assist,
 launcher shortcuts, camera callbacks, archiving and splash-screen transfer.
 
-The stock window-client probe now has one compile error: the hosted AudioManager
-lacks `areNavigationRepeatSoundEffectsEnabled`
-(`/tmp/window-clients-compile-2.log`). This follows adding the declared view-root
+The stock window-client probe now compiles with no errors
+(`/tmp/window-clients-compile-3.log`), after adding AudioManager's disabled
+navigation-repeat-sound query. This follows adding the declared view-root
 proto, view sysprops, HWUI Java stats, sensitive-content AIDL and view/secure-surface
 flags. ViewRootImpl, ThreadedRenderer, SurfaceView, TextureView,
 SurfaceControlViewHost, WindowlessWindowManager, accessibility interaction and
 SplashScreenView remain a separate probe; their runtime cutover is still pending.
+
+Stock receiver filtering now compiles against the hosted router's copied
+IntentFilter/exported metadata. Stock wallpaper crop geometry and file processing
+compile against a host image record, with their OpenGL utility JNI included.
+The next WM probe reports 24 errors (`/tmp/wm-compile-probe-18.log`): shutdown,
+assist, launcher shortcuts, archiving and splash-screen transfer remain.
+The framework-module gate passes (`/tmp/wayland-glutils-wallpaper-integration-6.log`),
+including an exact 8x8 wallpaper crop from a differently colored surrounding
+region, failed-image cleanup, and GL texture/subimage readback. Its GLUtils pixel
+test exposed the host Skia BGRA versus Android RGBA upload mismatch; the upload
+boundary now converts a retained snapshot without mutating the Java bitmap,
+preserving row stride and alpha/color-space metadata. Full JVM, system-service,
+all 14 APK tests and the C++/graph audits pass
+(`/tmp/wayland-receiver-wallpaper-regressions-1.log`). The APK artifacts contain
+42 steps with no runtime issues or failure records; the NewPipe drawer screenshot
+was inspected. Build-tool checks also pass at this checkpoint.
 
 Prior checkpoint validation against committed main `8d17396`:
 - The combined framework builds, including stock AppOps, window-context

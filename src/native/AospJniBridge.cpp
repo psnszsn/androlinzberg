@@ -76,6 +76,7 @@ namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
 #include <binder/Status.h>
 #include <camera/VendorTagDescriptor.h>
 #include <nativehelper/ScopedLocalRef.h>
+#include "HostBitmapUpload.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -243,6 +244,7 @@ extern int register_android_media_ImageWriter(JNIEnv*);
 extern int register_android_hardware_camera2_utils_SurfaceUtils(JNIEnv*);
 
 namespace android {
+extern int register_android_opengl_classes(JNIEnv*);
 extern int register_android_view_SurfaceSession(JNIEnv*);
 extern int register_android_view_SurfaceControl(JNIEnv*);
 extern int register_android_graphics_SurfaceTexture(JNIEnv*);
@@ -372,6 +374,22 @@ static int registerPerfettoTrace(JNIEnv* env) {
 }
 extern int register_android_hardware_HardwareBuffer(JNIEnv*);
 extern int register_android_graphics_GraphicBuffer(JNIEnv*);
+
+bool artzig::getGlBitmapPixels(JNIEnv* env, jobject bitmap, SkBitmap* upload) {
+    android::Bitmap* native = GraphicsJNI::getNativeBitmap(env, bitmap);
+    if (!native || native->isHardware()) return false;
+    SkBitmap source;
+    native->getSkBitmap(&source);
+    if (source.colorType() != kBGRA_8888_SkColorType) {
+        *upload = source;
+        return upload->getPixels() != nullptr;
+    }
+    // Preserve alpha type and color space. Conversion must not mutate the Java
+    // bitmap, whose pixels may also be in use by Canvas or another upload.
+    return upload->tryAllocPixels(source.info().makeColorType(kRGBA_8888_SkColorType),
+                                  source.rowBytes()) &&
+            source.readPixels(upload->info(), upload->getPixels(), upload->rowBytes(), 0, 0);
+}
 
 static jint azk_Bitmap_nativeConfig(JNIEnv*, jclass, jlong bitmap_handle) {
     android::Bitmap& bitmap = android::bitmap::toBitmap(bitmap_handle);
@@ -704,6 +722,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_com_android_internal_content_om_OverlayManagerImpl),
             E(android::register_android_net_LocalSocketImpl),
             E(register_android_opengl_jni_GLES20),
+            E(android::register_android_opengl_classes),
             E(register_android_opengl_jni_GLES30),
             E(register_android_opengl_jni_GLES31),
             E(register_android_opengl_jni_GLES32),

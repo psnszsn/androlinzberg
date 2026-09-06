@@ -1,0 +1,23 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] SaferIntentUtils: use the hosted router receiver metadata
+
+--- a/services/core/java/com/android/server/pm/SaferIntentUtils.java
++++ b/services/core/java/com/android/server/pm/SaferIntentUtils.java
+@@ -49,7 +49,7 @@
+ import com.android.internal.util.FrameworkStatsLog;
+ import com.android.server.IntentResolver;
+ import com.android.server.LocalServices;
+-import com.android.server.am.BroadcastFilter;
++import dev.artzig.system.HostedBroadcastFilter;
+ import com.android.server.compat.PlatformCompat;
+ import com.android.server.pm.resolution.ComponentResolverApi;
+ import com.android.server.pm.snapshot.PackageDataSnapshot;
+@@ -483,7 +483,7 @@
+                 if (resolveInfo.getComponentInfo().exported) {
+                     continue;
+                 }
+-            } else if (c instanceof BroadcastFilter broadcastFilter) {
++            } else if (c instanceof HostedBroadcastFilter broadcastFilter) {
+                 if (broadcastFilter.exported) {
+                     continue;
+                 }

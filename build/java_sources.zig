@@ -1474,6 +1474,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/util/TimedRemoteCaller.java");
     try c.file("$FB/services/core/java/com/android/server/pm/InstantAppResolver.java");
     try c.file("$FB/services/core/java/com/android/server/pm/InstantAppResolverConnection.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/SaferIntentUtils.java");
     try c.file("$FB/services/core/java/com/android/server/Watchdog.java");
     try c.file("$FB/services/core/java/com/android/server/WatchdogDiagnostics.java");
     try c.file("$FB/services/core/java/com/android/server/ResourcePressureUtil.java");
@@ -1497,6 +1498,10 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/LockGuard.java");
     try c.file("$FB/services/core/java/com/android/server/am/BaseErrorDialog.java");
     try c.file("$FB/services/core/java/com/android/server/wallpaper/WallpaperDefaultDisplayInfo.java");
+    try c.file("$FB/services/core/java/com/android/server/wallpaper/WallpaperCropper.java");
+    try c.file("$FB/services/core/java/com/android/server/wallpaper/WallpaperDisplayHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/wallpaper/WallpaperUtils.java");
+    try c.file("$FB/services/core/java/com/android/server/wallpaper/GLHelper.java");
     try c.file("$CJ/android/content/pm/dex/ArtManagerInternal.java");
     try c.file("$CJ/com/android/internal/os/ProcfsMemoryUtil.java");
     try c.file("$CJ/com/android/internal/os/logging/MetricsLoggerWrapper.java");
@@ -2926,6 +2931,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/opengl/java/android/opengl/GLLogWrapper.java");
     try c.file("$FB/opengl/java/android/opengl/GLSurfaceView.java");
     try c.file("$FB/opengl/java/android/opengl/GLU.java");
+    try c.file("$FB/opengl/java/android/opengl/GLUtils.java");
+    try c.file("$FB/opengl/java/android/opengl/Visibility.java");
+    try c.file("$FB/opengl/java/android/opengl/ETC1.java");
     try c.file("$FB/opengl/java/android/opengl/GLWrapperBase.java");
     try c.file("$FB/opengl/java/android/opengl/Matrix.java");
     try c.file("$FB/opengl/java/javax/microedition/khronos/egl/EGL11.java");

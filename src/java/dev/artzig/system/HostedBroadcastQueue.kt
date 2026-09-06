@@ -41,7 +41,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         val notExported: Boolean,
     ) : IBinder.DeathRecipient {
         val binder: IBinder = receiver.asBinder()
-        val filters = ArrayList<IntentFilter>()
+        val filters = ArrayList<HostedBroadcastFilter>()
         var queue: HostedBroadcastQueue? = null
         override fun binderDied() {
             queue?.unregisterReceiver(receiver)
@@ -105,7 +105,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
                 registrations[binder] = fresh
                 fresh
             }
-            registration.filters.add(filter)
+            registration.filters.add(HostedBroadcastFilter(filter, !notExported))
             for (sticky in stickies.values) {
                 if (stickyMatches(filter, sticky)) matching.add(sticky)
             }

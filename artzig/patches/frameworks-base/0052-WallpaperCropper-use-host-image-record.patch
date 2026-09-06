@@ -1,0 +1,90 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] WallpaperCropper: retain stock image processing over host-owned files
+
+--- a/services/core/java/com/android/server/wallpaper/WallpaperCropper.java
++++ b/services/core/java/com/android/server/wallpaper/WallpaperCropper.java
+@@ -26,7 +26,6 @@
+ import static com.android.server.wallpaper.WallpaperUtils.RECORD_FILE;
+ import static com.android.server.wallpaper.WallpaperUtils.RECORD_LOCK_FILE;
+ import static com.android.server.wallpaper.WallpaperUtils.WALLPAPER;
+-import static com.android.server.wallpaper.WallpaperUtils.getWallpaperDir;
+ import static com.android.window.flags.Flags.multiCrop;
+ 
+ import android.app.WallpaperManager;
+@@ -36,6 +35,8 @@
+ import android.graphics.Point;
+ import android.graphics.Rect;
+ import android.os.FileUtils;
++
++import dev.artzig.system.HostedWallpaperImage;
+ import android.os.SELinux;
+ import android.text.TextUtils;
+ import android.util.Slog;
+@@ -350,8 +351,8 @@
+ 
+     /**
+      * To find the smallest sub-image that contains all the given crops.
+-     * This is used in {@link #generateCrop(WallpaperData)}
+-     * to determine how the file from {@link WallpaperData#getCropFile()} needs to be cropped.
++     * This is used in {@link #generateCrop(HostedWallpaperImage)}
++     * to determine how the file from {@link HostedWallpaperImage#getCropFile()} needs to be cropped.
+      *
+      * @param crops a list of rectangles
+      * @return the smallest rectangle that contains them all.
+@@ -370,10 +371,10 @@
+     }
+ 
+     /**
+-     * The crops stored in {@link WallpaperData#mCropHints} are relative to the original image.
++     * The crops stored in {@link HostedWallpaperImage#mCropHints} are relative to the original image.
+      * This computes the crops relative to the sub-image that will actually be rendered on a window.
+      */
+-    SparseArray<Rect> getRelativeCropHints(WallpaperData wallpaper) {
++    SparseArray<Rect> getRelativeCropHints(HostedWallpaperImage wallpaper) {
+         SparseArray<Rect> result = new SparseArray<>();
+         for (int i = 0; i < wallpaper.mCropHints.size(); i++) {
+             Rect adjustedRect = new Rect(wallpaper.mCropHints.valueAt(i));
+@@ -395,7 +396,7 @@
+      * Inverse operation of {@link #getRelativeCropHints}
+      */
+     static List<Rect> getOriginalCropHints(
+-            WallpaperData wallpaper, List<Rect> relativeCropHints) {
++            HostedWallpaperImage wallpaper, List<Rect> relativeCropHints) {
+         List<Rect> result = new ArrayList<>();
+         for (Rect crop : relativeCropHints) {
+             Rect originalRect = new Rect(crop);
+@@ -462,14 +463,14 @@
+      * Once a new wallpaper has been written via setWallpaper(...), it needs to be cropped
+      * for display. This will generate the crop and write it in the file.
+      */
+-    void generateCrop(WallpaperData wallpaper) {
++    void generateCrop(HostedWallpaperImage wallpaper) {
+         TimingsTraceAndSlog t = new TimingsTraceAndSlog(TAG);
+         t.traceBegin("WPMS.generateCrop");
+         generateCropInternal(wallpaper);
+         t.traceEnd();
+     }
+ 
+-    private void generateCropInternal(WallpaperData wallpaper) {
++    private void generateCropInternal(HostedWallpaperImage wallpaper) {
+         boolean success = false;
+ 
+         // Only generate crop for default display.
+@@ -751,7 +752,7 @@
+                     final String recordName =
+                             (wallpaper.getWallpaperFile().getName().equals(WALLPAPER)
+                                     ? RECORD_FILE : RECORD_LOCK_FILE);
+-                    final File record = new File(getWallpaperDir(wallpaper.userId), recordName);
++                    final File record = new File(wallpaper.getWallpaperDirectory(), recordName);
+                     record.createNewFile();
+                     Slog.v(TAG, "record path =" + record.getPath()
+                             + ", record name =" + record.getName());
+@@ -832,7 +833,7 @@
+      * the wallpaper has an aspect ratio of at least 11:13.</ol>
+      */
+     @VisibleForTesting
+-    boolean isWallpaperCompatibleForDisplay(int displayId, WallpaperData wallpaperData) {
++    boolean isWallpaperCompatibleForDisplay(int displayId, HostedWallpaperImage wallpaperData) {
+         if (displayId == DEFAULT_DISPLAY) {
+             return true;
+         }

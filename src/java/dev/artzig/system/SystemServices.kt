@@ -132,6 +132,8 @@ internal object SystemServices {
     private class HostedWindowManagerInternal : com.android.server.wm.WindowManagerInternal() {
         override fun isUidFocused(uid: Int): Boolean = true
         override fun getTopFocusedDisplayId(): Int = 0
+        // The hosted display service publishes one Android logical display.
+        override fun isHomeSupportedOnDisplay(displayId: Int): Boolean = displayId == android.view.Display.DEFAULT_DISPLAY
     }
 
     /** App-process hosts this session spawned, destroyed when the system process exits. */

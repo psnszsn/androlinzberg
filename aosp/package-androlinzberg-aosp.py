@@ -73,6 +73,9 @@ framework_patches = tuple(
         (48, "-WM-use-policy-interface-and-optional-local-services.patch"),
         (49, "-ATMS-use-host-SDK-sandbox-capability.patch"),
         (50, "-ColorDisplayService-use-hosted-user-client.patch"),
+        (51, "-SaferIntentUtils-use-host-receiver-metadata.patch"),
+        (52, "-WallpaperCropper-use-host-image-record.patch"),
+        (53, "-GLUtils-normalize-host-bitmap-upload-byte-order.patch"),
     )
 )
 

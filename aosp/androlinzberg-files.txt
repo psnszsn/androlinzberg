@@ -9044,3 +9044,7 @@ F aosp frameworks/base/services/core/java/com/android/server/power/hint/adpf_fla
 F aosp frameworks/base/core/java/android/app/contextualsearch/flags.aconfig
 
 F aosp frameworks/base/core/java/com/android/internal/policy/PhoneFallbackEventHandler.java
+
+F aosp frameworks/native/opengl/include/ETC1/etc1.h
+
+F aosp frameworks/native/opengl/libs/ETC1/etc1.cpp

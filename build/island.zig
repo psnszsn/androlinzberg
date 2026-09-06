@@ -456,6 +456,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/native/libs/tonemap"), &.{"tonemap.cpp"}, &.{}, &.{});
 
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGL15.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni/android/opengl"), &.{ "util.cpp", "poly_clip.cpp" }, &.{ apex_inc, b.path("src/native"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "frameworks/native/opengl/include") }, &.{"-DARTZIG_HOST_GRAPHICS"});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_bitmap.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/native/opengl/libs/ETC1"), &.{"etc1.cpp"}, &.{o.aosp.path(b, "frameworks/native/opengl/include")}, &.{});
     const tracing_includes = &.{
         o.aosp.path(b, "frameworks/native/libs/tracing_perfetto/include"),
         o.aosp.path(b, "external/perfetto/include"),

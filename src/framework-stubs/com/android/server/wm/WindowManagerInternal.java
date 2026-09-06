@@ -7,4 +7,5 @@ package com.android.server.wm;
 public abstract class WindowManagerInternal {
     public abstract boolean isUidFocused(int uid);
     public abstract int getTopFocusedDisplayId();
+    public abstract boolean isHomeSupportedOnDisplay(int displayId);
 }
