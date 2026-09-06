@@ -1,5 +1,16 @@
-/* artzig stub (auto-generated placeholder; members added on demand). */
+/* Hosted AudioManager adaptation. The port cache, device conversion, recording callback,
+ * stream classification and policy registration below follow pinned AOSP AudioManager.
+ * The full class still reaches MediaExtractor/CAS and the unavailable legacy media services;
+ * audio formats and device values now use stock sources with the host boundary in JNI. */
 package android.media;
+import android.annotation.*;
+import android.content.Context;
+import android.os.*;
+import android.util.*;
+import android.text.TextUtils;
+import android.media.audiopolicy.*;
+import android.media.projection.MediaProjection;
+import java.util.*;
 public class AudioManager {
     /** Pinned AudioSystem.AUDIO_SESSION_ALLOCATE value. */
     public static final int AUDIO_SESSION_ID_GENERATE = 0;
@@ -59,8 +70,7 @@ public class AudioManager {
     public static final int GET_DEVICES_OUTPUTS = 2;
     public static final int GET_DEVICES_INPUTS = 1;
     public AudioDeviceInfo[] getDevices(int flags) {
-        return (flags & GET_DEVICES_OUTPUTS) != 0
-                ? new AudioDeviceInfo[] { new AudioDeviceInfo() } : new AudioDeviceInfo[0];
+        return getDevicesStatic(flags);
     }
     public void registerAudioDeviceCallback(AudioDeviceCallback callback, android.os.Handler handler) {}
     public void unregisterAudioDeviceCallback(AudioDeviceCallback callback) {}
@@ -137,4 +147,357 @@ public class AudioManager {
     public static final String ACTION_SCO_AUDIO_STATE_UPDATED = "android.media.ACTION_SCO_AUDIO_STATE_UPDATED";
     public static final String INTERNAL_RINGER_MODE_CHANGED_ACTION = "android.media.INTERNAL_RINGER_MODE_CHANGED_ACTION";
     public static final String RINGER_MODE_CHANGED_ACTION = "android.media.RINGER_MODE_CHANGED";
+    public static boolean isInputDevice(int device)
+    {
+        return AudioSystem.isInputDevice(device);
+    }
+    public static boolean isPublicStreamType(int streamType) {
+        switch (streamType) {
+            case STREAM_VOICE_CALL:
+            case STREAM_SYSTEM:
+            case STREAM_RING:
+            case STREAM_MUSIC:
+            case STREAM_ALARM:
+            case STREAM_NOTIFICATION:
+            case STREAM_DTMF:
+            case STREAM_ACCESSIBILITY:
+                return true;
+            default:
+                return false;
+        }
+    }
+    static IAudioService getService()
+    {
+        if (sService != null) {
+            return sService;
+        }
+        IBinder b = ServiceManager.getService(Context.AUDIO_SERVICE);
+        sService = IAudioService.Stub.asInterface(b);
+        return sService;
+    }
+    static int registerAudioPolicyStatic(@NonNull AudioPolicy policy) {
+        if (policy == null) {
+            throw new IllegalArgumentException("Illegal null AudioPolicy argument");
+        }
+        final IAudioService service = getService();
+        try {
+            MediaProjection projection = policy.getMediaProjection();
+            String regId = service.registerAudioPolicy(policy.getConfig(), policy.cb(),
+                    policy.hasFocusListener(), policy.isFocusPolicy(), policy.isTestFocusPolicy(),
+                    policy.isVolumeController(),
+                    projection == null ? null : projection.getProjection(),
+                    policy.getAttributionSource());
+            if (regId == null) {
+                return ERROR;
+            } else {
+                policy.setRegistration(regId);
+            }
+            // successful registration
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        return SUCCESS;
+    }
+    static void unregisterAudioPolicyAsyncStatic(@NonNull AudioPolicy policy) {
+        if (policy == null) {
+            throw new IllegalArgumentException("Illegal null AudioPolicy argument");
+        }
+        final IAudioService service = getService();
+        try {
+            service.unregisterAudioPolicyAsync(policy.cb());
+            policy.reset();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    public static int listAudioPatches(ArrayList<AudioPatch> patches) {
+        return updateAudioPortCache(null, patches, null);
+    }
+    static int resetAudioPortGeneration() {
+        int generation;
+        synchronized (sAudioPortGenerationLock) {
+            generation = sAudioPortGeneration;
+            sAudioPortGeneration = AUDIOPORT_GENERATION_INIT;
+        }
+        return generation;
+    }
+    static int updateAudioPortCache(ArrayList<AudioPort> ports, ArrayList<AudioPatch> patches,
+                                    ArrayList<AudioPort> previousPorts) {
+        sAudioPortEventHandler.init();
+        synchronized (sAudioPortGenerationLock) {
+
+            if (sAudioPortGeneration == AUDIOPORT_GENERATION_INIT) {
+                int[] patchGeneration = new int[1];
+                int[] portGeneration = new int[1];
+                int status;
+                ArrayList<AudioPort> newPorts = new ArrayList<AudioPort>();
+                ArrayList<AudioPatch> newPatches = new ArrayList<AudioPatch>();
+
+                do {
+                    newPorts.clear();
+                    status = AudioSystem.listAudioPorts(newPorts, portGeneration);
+                    if (status != SUCCESS) {
+                        Log.w(TAG, "updateAudioPortCache: listAudioPorts failed");
+                        return status;
+                    }
+                    newPatches.clear();
+                    status = AudioSystem.listAudioPatches(newPatches, patchGeneration);
+                    if (status != SUCCESS) {
+                        Log.w(TAG, "updateAudioPortCache: listAudioPatches failed");
+                        return status;
+                    }
+                    // Loop until patch generation is the same as port generation unless audio ports
+                    // and audio patches are not null.
+                } while (patchGeneration[0] != portGeneration[0]
+                        && (ports == null || patches == null));
+                // If the patch generation doesn't equal port generation, return ERROR here in case
+                // of mismatch between audio ports and audio patches.
+                if (patchGeneration[0] != portGeneration[0]) {
+                    return ERROR;
+                }
+
+                for (int i = 0; i < newPatches.size(); i++) {
+                    for (int j = 0; j < newPatches.get(i).sources().length; j++) {
+                        AudioPortConfig portCfg = updatePortConfig(newPatches.get(i).sources()[j],
+                                                                   newPorts);
+                        newPatches.get(i).sources()[j] = portCfg;
+                    }
+                    for (int j = 0; j < newPatches.get(i).sinks().length; j++) {
+                        AudioPortConfig portCfg = updatePortConfig(newPatches.get(i).sinks()[j],
+                                                                   newPorts);
+                        newPatches.get(i).sinks()[j] = portCfg;
+                    }
+                }
+                for (Iterator<AudioPatch> i = newPatches.iterator(); i.hasNext(); ) {
+                    AudioPatch newPatch = i.next();
+                    boolean hasInvalidPort = false;
+                    for (AudioPortConfig portCfg : newPatch.sources()) {
+                        if (portCfg == null) {
+                            hasInvalidPort = true;
+                            break;
+                        }
+                    }
+                    for (AudioPortConfig portCfg : newPatch.sinks()) {
+                        if (portCfg == null) {
+                            hasInvalidPort = true;
+                            break;
+                        }
+                    }
+                    if (hasInvalidPort) {
+                        // Temporarily remove patches with invalid ports. One who created the patch
+                        // is responsible for dealing with the port change.
+                        i.remove();
+                    }
+                }
+
+                sPreviousAudioPortsCached = sAudioPortsCached;
+                sAudioPortsCached = newPorts;
+                sAudioPatchesCached = newPatches;
+                sAudioPortGeneration = portGeneration[0];
+            }
+            if (ports != null) {
+                ports.clear();
+                ports.addAll(sAudioPortsCached);
+            }
+            if (patches != null) {
+                patches.clear();
+                patches.addAll(sAudioPatchesCached);
+            }
+            if (previousPorts != null) {
+                previousPorts.clear();
+                previousPorts.addAll(sPreviousAudioPortsCached);
+            }
+        }
+        return SUCCESS;
+    }
+    static AudioPortConfig updatePortConfig(AudioPortConfig portCfg, ArrayList<AudioPort> ports) {
+        AudioPort port = portCfg.port();
+        int k;
+        for (k = 0; k < ports.size(); k++) {
+            // compare handles because the port returned by JNI is not of the correct
+            // subclass
+            if (ports.get(k).handle().equals(port.handle())) {
+                port = ports.get(k);
+                break;
+            }
+        }
+        if (k == ports.size()) {
+            // This can happen in case of stale audio patch referring to a removed device and is
+            // handled by the caller.
+            return null;
+        }
+        AudioGainConfig gainCfg = portCfg.gain();
+        if (gainCfg != null) {
+            AudioGain gain = port.gain(gainCfg.index());
+            gainCfg = gain.buildConfig(gainCfg.mode(),
+                                       gainCfg.channelMask(),
+                                       gainCfg.values(),
+                                       gainCfg.rampDurationMs());
+        }
+        return port.buildConfig(portCfg.samplingRate(),
+                                                 portCfg.channelMask(),
+                                                 portCfg.format(),
+                                                 gainCfg);
+    }
+    public static int listAudioDevicePorts(ArrayList<AudioDevicePort> devices) {
+        if (devices == null) {
+            return ERROR_BAD_VALUE;
+        }
+        ArrayList<AudioPort> ports = new ArrayList<AudioPort>();
+        int status = updateAudioPortCache(ports, null, null);
+        if (status == SUCCESS) {
+            filterDevicePorts(ports, devices);
+        }
+        return status;
+    }
+    private static void filterDevicePorts(ArrayList<AudioPort> ports,
+                                          ArrayList<AudioDevicePort> devices) {
+        devices.clear();
+        for (int i = 0; i < ports.size(); i++) {
+            if (ports.get(i) instanceof AudioDevicePort) {
+                devices.add((AudioDevicePort)ports.get(i));
+            }
+        }
+    }
+    private static boolean checkFlags(AudioDevicePort port, int flags) {
+        return port.role() == AudioPort.ROLE_SINK && (flags & GET_DEVICES_OUTPUTS) != 0 ||
+               port.role() == AudioPort.ROLE_SOURCE && (flags & GET_DEVICES_INPUTS) != 0;
+    }
+    private static boolean checkTypes(AudioDevicePort port) {
+        return AudioDeviceInfo.convertInternalDeviceToDeviceType(port.type()) !=
+                    AudioDeviceInfo.TYPE_UNKNOWN;
+    }
+    private static AudioDeviceInfo[]
+        infoListFromPortList(ArrayList<AudioDevicePort> ports, int flags) {
+
+        // figure out how many AudioDeviceInfo we need space for...
+        int numRecs = 0;
+        for (AudioDevicePort port : ports) {
+            if (checkTypes(port) && checkFlags(port, flags)) {
+                numRecs++;
+            }
+        }
+
+        // Now load them up...
+        AudioDeviceInfo[] deviceList = new AudioDeviceInfo[numRecs];
+        int slot = 0;
+        for (AudioDevicePort port : ports) {
+            if (checkTypes(port) && checkFlags(port, flags)) {
+                deviceList[slot++] = new AudioDeviceInfo(port);
+            }
+        }
+
+        return deviceList;
+    }
+    public static AudioDeviceInfo[] getDevicesStatic(int flags) {
+        ArrayList<AudioDevicePort> ports = new ArrayList<AudioDevicePort>();
+        int status = AudioManager.listAudioDevicePorts(ports);
+        if (status != AudioManager.SUCCESS) {
+            // fail and bail!
+            return new AudioDeviceInfo[0];  // Always return an array.
+        }
+
+        return infoListFromPortList(ports, flags);
+    }
+    public static AudioDeviceInfo getDeviceForPortId(int portId, int flags) {
+        if (portId == 0) {
+            return null;
+        }
+        AudioDeviceInfo[] devices = getDevicesStatic(flags);
+        for (AudioDeviceInfo device : devices) {
+            if (device.getId() == portId) {
+                return device;
+            }
+        }
+        return null;
+    }
+    public static void setPortIdForMicrophones(ArrayList<MicrophoneInfo> microphones) {
+        AudioDeviceInfo[] devices = getDevicesStatic(AudioManager.GET_DEVICES_INPUTS);
+        for (int i = microphones.size() - 1; i >= 0; i--) {
+            boolean foundPortId = false;
+            for (AudioDeviceInfo device : devices) {
+                if (device.getPort().type() == microphones.get(i).getInternalDeviceType()
+                        && TextUtils.equals(device.getAddress(), microphones.get(i).getAddress())) {
+                    microphones.get(i).setId(device.getId());
+                    foundPortId = true;
+                    break;
+                }
+            }
+            if (!foundPortId) {
+                Log.i(TAG, "Failed to find port id for device with type:"
+                        + microphones.get(i).getType() + " address:"
+                        + microphones.get(i).getAddress());
+                microphones.remove(i);
+            }
+        }
+    }
+    public static MicrophoneInfo microphoneInfoFromAudioDeviceInfo(AudioDeviceInfo deviceInfo) {
+        @AudioDeviceInfo.AudioDeviceType int deviceType = deviceInfo.getType();
+        int micLocation = (deviceType == AudioDeviceInfo.TYPE_BUILTIN_MIC
+                || deviceType == AudioDeviceInfo.TYPE_TELEPHONY) ? MicrophoneInfo.LOCATION_MAINBODY
+                : deviceType == AudioDeviceInfo.TYPE_UNKNOWN ? MicrophoneInfo.LOCATION_UNKNOWN
+                        : MicrophoneInfo.LOCATION_PERIPHERAL;
+        MicrophoneInfo microphone = new MicrophoneInfo(
+                deviceInfo.getPort().name() + deviceInfo.getId(),
+                deviceInfo.getPort().type(), deviceInfo.getAddress(), micLocation,
+                MicrophoneInfo.GROUP_UNKNOWN, MicrophoneInfo.INDEX_IN_THE_GROUP_UNKNOWN,
+                MicrophoneInfo.POSITION_UNKNOWN, MicrophoneInfo.ORIENTATION_UNKNOWN,
+                new ArrayList<Pair<Float, Float>>(), new ArrayList<Pair<Integer, Integer>>(),
+                MicrophoneInfo.SENSITIVITY_UNKNOWN, MicrophoneInfo.SPL_UNKNOWN,
+                MicrophoneInfo.SPL_UNKNOWN, MicrophoneInfo.DIRECTIONALITY_UNKNOWN);
+        microphone.setId(deviceInfo.getId());
+        return microphone;
+    }
+    public static abstract class AudioRecordingCallback {
+        /**
+         * Called whenever the device recording configuration has changed.
+         * @param configs list containing the results of
+         *      {@link AudioManager#getActiveRecordingConfigurations()}.
+         */
+        public void onRecordingConfigChanged(List<AudioRecordingConfiguration> configs) {}
+    }
+    public interface OnAudioPortUpdateListener {
+        /**
+         * Callback method called upon audio port list update.
+         * @param portList the updated list of audio ports
+         */
+        public void onAudioPortListUpdate(AudioPort[] portList);
+
+        /**
+         * Callback method called upon audio patch list update.
+         * @param patchList the updated list of audio patches
+         */
+        public void onAudioPatchListUpdate(AudioPatch[] patchList);
+
+        /**
+         * Callback method called when the mediaserver dies
+         */
+        public void onServiceDied();
+    }
+    public static final int STREAM_ACCESSIBILITY = AudioSystem.STREAM_ACCESSIBILITY;
+    public static final int STREAM_VOICE_CALL = AudioSystem.STREAM_VOICE_CALL;
+    public static final int STREAM_ALARM = AudioSystem.STREAM_ALARM;
+    public static final int STREAM_NOTIFICATION = AudioSystem.STREAM_NOTIFICATION;
+    public static final int STREAM_DTMF = AudioSystem.STREAM_DTMF;
+    public static final int SUCCESS = AudioSystem.SUCCESS;
+    public static final int ERROR = AudioSystem.ERROR;
+    public static final int ERROR_INVALID_OPERATION = AudioSystem.INVALID_OPERATION;
+    public static final int ERROR_BAD_VALUE = AudioSystem.BAD_VALUE;
+    public static final int DEVICE_OUT_SPEAKER = AudioSystem.DEVICE_OUT_SPEAKER;
+    public static final int CALL_REDIRECT_NONE = 0;
+    public static final int CALL_REDIRECT_PSTN = 1;
+    public static final int CALL_REDIRECT_VOIP = 2;
+    public @interface PublicStreamTypes {}
+    public @interface VolumeAdjustment {}
+    public @interface CallRedirectionMode {}
+    private static final String TAG = "AudioManager";
+    private static IAudioService sService;
+    private static final AudioPortEventHandler sAudioPortEventHandler = new AudioPortEventHandler();
+    private static final int AUDIOPORT_GENERATION_INIT = 0;
+    private static Object sAudioPortGenerationLock = new Object();
+    private static int sAudioPortGeneration = AUDIOPORT_GENERATION_INIT;
+    private static ArrayList<AudioPort> sAudioPortsCached = new ArrayList<AudioPort>();
+    private static ArrayList<AudioPort> sPreviousAudioPortsCached = new ArrayList<AudioPort>();
+    private static ArrayList<AudioPatch> sAudioPatchesCached = new ArrayList<AudioPatch>();
+
 }

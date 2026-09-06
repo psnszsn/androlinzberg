@@ -259,6 +259,7 @@ internal object FrameworkModuleSmoke {
         com.android.server.uri.StockUriPermissionSmoke.run()
         StockAudioPolicySmoke.run()
         StockAudioTransportSmoke.run()
+        StockAudioFoundationSmoke.run()
         StockWifiManagerSmoke.run()
         com.android.server.pm.StockApexManagerSmoke.run()
         com.android.server.pm.StockSharedUserSmoke.run()
@@ -4922,7 +4923,8 @@ internal object FrameworkModuleSmoke {
             check(encodedAttributes.readInt() == AudioAttributes.USAGE_MEDIA)
             check(encodedAttributes.readInt() == AudioAttributes.CONTENT_TYPE_UNKNOWN)
             check(encodedAttributes.readInt() == -1) // AOSP's unset capture preset.
-            check(encodedAttributes.readInt() == 0)
+            // Stock Builder mMuteHapticChannels defaults true; the old stub omitted this bit.
+            check(encodedAttributes.readInt() == AudioAttributes.FLAG_MUTE_HAPTIC)
             check(encodedAttributes.readInt() == AudioAttributes.FLATTEN_TAGS)
             check(encodedAttributes.readString() == "")
             check(encodedAttributes.readInt() == 1980) // AOSP's non-null bundle marker.

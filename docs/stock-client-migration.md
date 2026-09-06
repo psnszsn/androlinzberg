@@ -27,6 +27,20 @@ in force.
 
 Follow-up changes in the current tree:
 
+- The audio core foundation now compiles stock AudioFormat, AudioAttributes,
+  AudioDeviceInfo, PlayerBase, AudioRecord, MediaRecorder, AudioEffect and their
+  policy/value closure. The generated IAudioService protocol is available. JNI
+  exposes the existing logical PCM output, pinned audio limits and enum mappings,
+  and stock absent-service initialization failures for recording and effects.
+  AudioManager and AudioTrack remain adaptations; policy operations without a
+  hosted service report structured unsupported diagnostics. No new PipeWire or
+  FFmpeg backend is introduced. Module tests cover format validation, Parcel
+  behavior, device ports, enum conversion, retained playback defaults and absent
+  capture/effect/camera paths. The inventory is 41 stubs (23 pending, 18 survivors).
+  JVM/system suites, native/Binder/build checks and all 11 APK tests pass
+  (37 steps without runtime issues). The AOSP tarball is rebuilt and pinned with
+  PlayerBase and the original audio headers; ART is unchanged.
+
 - The audio transport foundation now generates 66 pinned AIDL inputs from
   frameworks/av and the shared audio HAL schema. AudioHalVersionInfo,
   AudioRoutesInfo and AudioPresentation compile verbatim. Module tests cover

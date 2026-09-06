@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 26 (budget 26). Survivors: 18. Total: 44.
+Pending: 23 (budget 23). Survivors: 18. Total: 41.
 
 ## Survivors
 
@@ -53,12 +53,9 @@ Pending: 26 (budget 26). Survivors: 18. Total: 44.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioAttributes.java` | blocked | frameworks/base/media/java/android/media/AudioAttributes.java (312 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioAttributes); android.hardware.Camera.CameraInfo: existing host class android.hardware.camera2.CameraManager lacks meth |
-| `android/media/AudioDeviceInfo.java` | blocked | frameworks/base/media/java/android/media/AudioDeviceInfo.java (315 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < AudioDeviceInfo); android.hardware.Camera.CameraInfo: existing host class android.hardware. |
 | `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (535 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioManager); android.hardware.Camera.CameraInfo: existing host class android.hardware.camera2.CameraManager lacks method get |
 | `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (317 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecordingConfiguration < IAudioService < LoudnessCodecController); android.hardware.Camera.Camer |
 | `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (327 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecord < MediaRoute2ProviderService < MediaRouter2); android.hardware.Camera.CameraInfo: existing host clas |
-| `android/media/PlayerBase.java` | blocked | frameworks/base/media/java/android/media/PlayerBase.java (312 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecordingConfiguration < IAudioService < PlayerBase); android.hardware.Camera.CameraInfo: existing host class |
 | `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (354 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < Utils < RingtoneManager); android.hardware.Camera.CameraInfo: existing host c |
 | `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (316 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < AudioDeviceAttributes < Spatializer); android.hardware.Camera.CameraInfo: existin |
 
@@ -122,43 +119,43 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `android.hardware.camera2.CameraCharacteristics` | 23 | 1 |
-| `android.hardware.camera2.CaptureRequest` | 23 | 1 |
-| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 23 | 1 |
-| `android.media.AudioHalVersionInfo` | 23 | 1 |
-| `android.media.AudioMix` | 23 | 1 |
-| `android.media.AudioPlaybackConfiguration` | 23 | 1 |
-| `android.media.AudioRecord` | 23 | 1 |
-| `android.media.AudioSystem` | 23 | 1 |
-| `android.media.IAudioService` | 23 | 1 |
-| `android.media.VolumeShaper` | 23 | 1 |
-| `android.hardware.camera2.params.StreamConfigurationMap` | 23 | 2 |
-| `android.media.AudioMixMatchCriterion` | 23 | 2 |
-| `android.media.AudioPolicyConfig` | 23 | 2 |
-| `android.media.AudioProductStrategy` | 23 | 2 |
-| `android.media.AudioVolumeGroup` | 23 | 2 |
-| `android.media.CamcorderProfile` | 23 | 2 |
-| `android.media.INativeAudioVolumeGroupCallback` | 23 | 2 |
-| `android.media.INativeSpatializerCallback` | 23 | 2 |
-| `android.media.ISoundDose` | 23 | 2 |
-| `android.media.ISpatializer` | 23 | 2 |
-| `android.media.audio.common.AidlConversion` | 23 | 2 |
-| `android.media.audio.common.AudioConfig` | 23 | 2 |
-| `android.media.AudioHwModule` | 23 | 3 |
-| `android.media.audio.common.AudioAttributes` | 23 | 3 |
-| `android.media.audio.common.AudioHalEngineConfig` | 23 | 3 |
-| `android.media.audio.common.AudioOffloadInfo` | 23 | 3 |
-| `android.media.audio.common.AudioPortExt` | 23 | 3 |
-| `android.renderscript.Allocation` | 23 | 3 |
-| `android.media.audio.common.AudioHalCapCriterionV2` | 23 | 4 |
-| `android.media.audio.common.AudioHalCapDomain` | 23 | 4 |
-| `android.media.audio.common.AudioHalProductStrategy` | 23 | 4 |
-| `android.media.audio.common.AudioHalVolumeGroup` | 23 | 4 |
-| `android.media.audio.common.AudioPortMixExt` | 23 | 4 |
-| `android.media.audio.common.AudioHalCapConfiguration` | 23 | 5 |
-| `android.hardware.camera2.CameraDevice` | 22 | 2 |
-| `android.hardware.Camera.CameraInfo` | 22 | 3 |
-| `android.hardware.camera2.TotalCaptureResult` | 22 | 3 |
-| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 22 | 4 |
-| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 22 | 4 |
-| `android.media.MediaRecorder` | 21 | 1 |
+| `android.hardware.camera2.CameraCharacteristics` | 20 | 1 |
+| `android.hardware.camera2.CaptureRequest` | 20 | 1 |
+| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 20 | 1 |
+| `android.media.AudioHalVersionInfo` | 20 | 1 |
+| `android.media.AudioMix` | 20 | 1 |
+| `android.media.AudioPlaybackConfiguration` | 20 | 1 |
+| `android.media.AudioRecord` | 20 | 1 |
+| `android.media.AudioSystem` | 20 | 1 |
+| `android.media.IAudioService` | 20 | 1 |
+| `android.media.VolumeShaper` | 20 | 1 |
+| `android.hardware.camera2.params.StreamConfigurationMap` | 20 | 2 |
+| `android.media.AudioMixMatchCriterion` | 20 | 2 |
+| `android.media.AudioPolicyConfig` | 20 | 2 |
+| `android.media.AudioProductStrategy` | 20 | 2 |
+| `android.media.AudioVolumeGroup` | 20 | 2 |
+| `android.media.CamcorderProfile` | 20 | 2 |
+| `android.media.INativeAudioVolumeGroupCallback` | 20 | 2 |
+| `android.media.INativeSpatializerCallback` | 20 | 2 |
+| `android.media.ISoundDose` | 20 | 2 |
+| `android.media.ISpatializer` | 20 | 2 |
+| `android.media.audio.common.AidlConversion` | 20 | 2 |
+| `android.media.audio.common.AudioConfig` | 20 | 2 |
+| `android.media.AudioHwModule` | 20 | 3 |
+| `android.media.audio.common.AudioAttributes` | 20 | 3 |
+| `android.media.audio.common.AudioHalEngineConfig` | 20 | 3 |
+| `android.media.audio.common.AudioOffloadInfo` | 20 | 3 |
+| `android.media.audio.common.AudioPortExt` | 20 | 3 |
+| `android.renderscript.Allocation` | 20 | 3 |
+| `android.media.audio.common.AudioHalCapCriterionV2` | 20 | 4 |
+| `android.media.audio.common.AudioHalCapDomain` | 20 | 4 |
+| `android.media.audio.common.AudioHalProductStrategy` | 20 | 4 |
+| `android.media.audio.common.AudioHalVolumeGroup` | 20 | 4 |
+| `android.media.audio.common.AudioPortMixExt` | 20 | 4 |
+| `android.media.audio.common.AudioHalCapConfiguration` | 20 | 5 |
+| `android.hardware.camera2.CameraDevice` | 19 | 2 |
+| `android.hardware.camera2.TotalCaptureResult` | 19 | 3 |
+| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 19 | 4 |
+| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 19 | 4 |
+| `android.media.MediaRecorder` | 18 | 1 |
+| `android.hardware.camera2.CameraMetadata` | 15 | 2 |

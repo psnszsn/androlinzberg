@@ -3,6 +3,11 @@
 package android.media;
 
 import java.nio.ByteBuffer;
+import android.annotation.IntDef;
+import android.annotation.SystemApi;
+import android.annotation.RequiresPermission;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 
 public class AudioTrack implements AudioRouting {
     public static final int STATE_UNINITIALIZED = 0;
@@ -53,10 +58,30 @@ public class AudioTrack implements AudioRouting {
 
     public AudioTrack(AudioAttributes attributes, AudioFormat format, int bufferSizeInBytes,
             int mode, int sessionId) {
-        mFormat = format;
+        mFormat = resolveHostedFormat(format);
         mBufferSize = bufferSizeInBytes;
         mSessionId = sessionId != 0 ? sessionId : nextSessionId();
-        mHandle = nativeOpen(format.getSampleRate(), Math.max(1, format.getChannelCount()));
+        mHandle = nativeOpen(mFormat.getSampleRate(), Math.max(1, mFormat.getChannelCount()));
+    }
+
+    /**
+     * Pinned AudioTrack constructor defaults: unspecified encoding selects PCM16 and
+     * absent channel masks select stereo. The native AudioTrack resolves a zero sample
+     * rate from the output; this adapter resolves it from the existing 48 kHz host output.
+     */
+    private static AudioFormat resolveHostedFormat(AudioFormat format) {
+        if (format == null) throw new IllegalArgumentException("Illegal null AudioFormat");
+        AudioFormat.Builder resolved = new AudioFormat.Builder(format);
+        if (format.getSampleRate() == AudioFormat.SAMPLE_RATE_UNSPECIFIED) {
+            resolved.setSampleRate(48000);
+        }
+        if ((format.getPropertySetMask() & AudioFormat.AUDIO_FORMAT_HAS_PROPERTY_ENCODING) == 0) {
+            resolved.setEncoding(AudioFormat.ENCODING_DEFAULT);
+        }
+        if (format.getChannelMask() == 0 && format.getChannelIndexMask() == 0) {
+            resolved.setChannelMask(AudioFormat.CHANNEL_OUT_STEREO);
+        }
+        return resolved.build();
     }
 
     private static synchronized int nextSessionId() { return sNextSessionId++; }
@@ -204,5 +229,84 @@ public class AudioTrack implements AudioRouting {
     public static boolean isDirectPlaybackSupported(AudioFormat format, AudioAttributes attributes) {
         return false;
     }
+
+
+    // Pinned AudioTrack encapsulation declarations used by stock AudioDevicePort.
+    /** @hide */
+    @IntDef({
+        ENCAPSULATION_MODE_NONE,
+        ENCAPSULATION_MODE_ELEMENTARY_STREAM,
+        // ENCAPSULATION_MODE_HANDLE, @SystemApi
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface EncapsulationMode {}
+
+    // Important: The ENCAPSULATION_MODE values must be kept in sync with native header files.
+    /**
+     * This mode indicates no metadata encapsulation,
+     * which is the default mode for sending audio data
+     * through {@code AudioTrack}.
+     */
+    public static final int ENCAPSULATION_MODE_NONE = 0;
+    /**
+     * This mode indicates metadata encapsulation with an elementary stream payload.
+     * Both compressed and PCM format is allowed.
+     */
+    public static final int ENCAPSULATION_MODE_ELEMENTARY_STREAM = 1;
+    /**
+     * This mode indicates metadata encapsulation with a handle payload
+     * and is set through {@link Builder#setEncapsulationMode(int)}.
+     * The handle is a 64 bit long, provided by the Tuner API
+     * in {@link android.os.Build.VERSION_CODES#R}.
+     * @hide
+     */
+    @SystemApi
+    @RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING)
+    public static final int ENCAPSULATION_MODE_HANDLE = 2;
+
+    /**
+     * Enumeration of metadata types permitted for use by
+     * encapsulation mode audio streams.
+     * @hide
+     */
+    @IntDef(prefix = {"ENCAPSULATION_METADATA_TYPE_"},
+            value =
+                    {
+                            ENCAPSULATION_METADATA_TYPE_NONE, /* reserved */
+                            ENCAPSULATION_METADATA_TYPE_FRAMEWORK_TUNER,
+                            ENCAPSULATION_METADATA_TYPE_DVB_AD_DESCRIPTOR,
+                            ENCAPSULATION_METADATA_TYPE_SUPPLEMENTARY_AUDIO_PLACEMENT,
+                    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface EncapsulationMetadataType {}
+
+    /**
+     * Reserved do not use.
+     * @hide
+     */
+    public static final int ENCAPSULATION_METADATA_TYPE_NONE = 0; // reserved
+
+    /**
+     * Encapsulation metadata type for framework tuner information.
+     *
+     * Refer to the Android Media TV Tuner API for details.
+     */
+    public static final int ENCAPSULATION_METADATA_TYPE_FRAMEWORK_TUNER = 1;
+
+    /**
+     * Encapsulation metadata type for DVB AD descriptor.
+     *
+     * This metadata is formatted per ETSI TS 101 154 Table E.1: AD_descriptor.
+     */
+    public static final int ENCAPSULATION_METADATA_TYPE_DVB_AD_DESCRIPTOR = 2;
+
+    /**
+     * Encapsulation metadata type for placement of supplementary audio.
+     *
+     * A 32 bit integer constant, one of {@link #SUPPLEMENTARY_AUDIO_PLACEMENT_NORMAL}, {@link
+     * #SUPPLEMENTARY_AUDIO_PLACEMENT_LEFT}, {@link #SUPPLEMENTARY_AUDIO_PLACEMENT_RIGHT}.
+     */
+    public static final int ENCAPSULATION_METADATA_TYPE_SUPPLEMENTARY_AUDIO_PLACEMENT = 3;
+
 
 }

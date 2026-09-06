@@ -5773,3 +5773,9 @@ F aosp frameworks/base/core/jni/android_hardware_UsbDeviceConnection.cpp
 F aosp frameworks/base/core/jni/android_hardware_UsbRequest.cpp
 F aosp system/core/libusbhost/usbhost_jni.cpp
 F aosp system/core/libusbhost/include/usbhost/usbhost_jni.h
+F aosp frameworks/base/media/java/android/media/PlayerBase.java
+F aosp system/media/audio/include/system/audio.h
+F aosp system/media/audio/include/system/audio-base-utils.h
+F aosp system/media/audio/include/system/audio-base.h
+F aosp system/media/audio/include/system/audio-hal-enums.h
+F aosp system/media/audio/include/system/audio_common-base.h

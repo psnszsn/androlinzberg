@@ -125,6 +125,8 @@ public final class MediaCodecInfo {
     public static final class EncoderCapabilities {}
 
     public static final class CodecProfileLevel {
+ // Pinned CodecProfileLevel constants consumed by stock EncoderProfiles.
+ public static final int AACObjectMain = 1, AACObjectELD = 39;
         public static final int AACObjectLC = 2;
         public static final int AACObjectHE = 5;
         public static final int AACObjectHE_PS = 29;
@@ -137,4 +139,5 @@ public final class MediaCodecInfo {
         public int profile;
         public int level;
     }
+
 }

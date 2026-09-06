@@ -10,7 +10,7 @@ pub const SourcePath = struct { source: Source, path: []const u8 };
 // satisfy javac; the audit forbids runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
-    .classes = [_][]const u8{ "android/media/ImageWriter", "android/media/MediaPlayer", "android/companion/virtual/VirtualDevice" },
+    .classes = [_][]const u8{ "android/media/ImageWriter", "android/media/MediaPlayer", "android/companion/virtual/VirtualDevice", "android/hardware/camera2/CameraMetadata" },
 };
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
@@ -214,6 +214,34 @@ pub const aidl_exports = [_]struct { input: SourcePath, output: []const u8 }{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IAudioDeviceVolumeDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IAudioFocusDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IAudioModeDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IAudioRoutesObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IAudioServerStateDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IAudioService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ICapturePresetDevicesRoleDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ICommunicationDeviceDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IDeviceVolumeBehaviorDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IDevicesForAttributesCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ILoudnessCodecUpdatesDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMuteAwaitConnectionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IPlaybackConfigDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IPreferredMixerAttributesDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IRecordingConfigDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IRingtonePlayer.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ISpatializerCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ISpatializerHeadToSoundStagePoseCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ISpatializerHeadTrackerAvailableCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ISpatializerHeadTrackingModeCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ISpatializerOutputCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IStrategyNonDefaultDevicesDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IStrategyPreferredDevicesDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IStreamAliasingDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IVolumeController.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/LoudnessCodecInfo.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/audiopolicy/IAudioPolicyCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/audiopolicy/IAudioVolumeChangeDispatcher.aidl" },
     // Pinned audio transport types shared by stock Java clients and native services.
     .{ .source = .aosp, .path = "frameworks/av/aidl/android/media/IAudioManagerNative.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/aidl/android/media/InterpolatorConfig.aidl" },
@@ -1260,6 +1288,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "android.media.audiopolicy", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/audiopolicy_framework.aconfig"} },
     .{ .package = "com.android.settingslib.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/packages/SettingsLib/aconfig/settingslib.aconfig"}, .values = &.{"build/release/aconfig/bp2a/com.android.settingslib.flags/write_system_preference_permission_enabled_flag_values.textproto"} },
     .{ .package = "com.android.internal.compat.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/compat/compat_logging_flags.aconfig"} },
     .{ .package = "com.android.server.compat", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/compat/platform_compat_flags.aconfig"} },
@@ -1375,6 +1404,7 @@ pub const nano = [_]Nano{
 };
 
 pub const proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/media/audioattributes.proto" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/proto/netstats.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app_shared/app_op_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/package.proto" },
@@ -1455,6 +1485,7 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/media/AudioAttributesProto.java",
     "android/service/NetworkStatsServiceDumpProto.java",
     "android/service/NetworkInterfaceProto.java",
     "android/service/NetworkIdentitySetProto.java",

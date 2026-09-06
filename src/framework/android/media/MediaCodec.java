@@ -469,4 +469,13 @@ public final class MediaCodec {
     }
     public void setParameters(android.os.Bundle params) {}
     public android.os.PersistableBundle getMetrics() { return new android.os.PersistableBundle(); }
+
+    // Pinned MediaCodec.PersistentSurface. The hosted codec has no persistent-surface factory.
+    static class PersistentSurface extends android.view.Surface {
+        PersistentSurface() {}
+        @Override public void release() { native_releasePersistentInputSurface(this); super.release(); }
+        private long mPersistentObject;
+    }
+    private static native void native_releasePersistentInputSurface(android.view.Surface surface);
+
 }

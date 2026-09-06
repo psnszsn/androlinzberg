@@ -10,12 +10,27 @@
 #include <Properties.h>
 #include <android_runtime/AndroidRuntime.h>
 #include <nativehelper/JNIHelp.h>
+#include <system/audio.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <unistd.h>
+
+// Pinned AudioSystem JNI capability results and device constants. Keep their
+// definitions in the original native audio headers; the hosted JNI lives in Zig.
+extern "C" int azk_audio_framework_capability(int key) {
+    switch (key) {
+        case 0: return FCC_LIMIT;
+        case 1: return SAMPLE_RATE_HZ_MAX;
+        case 2: return SAMPLE_RATE_HZ_MIN;
+        case 3: return AUDIO_DEVICE_OUT_SPEAKER;
+        case 4: return AUDIO_CHANNEL_OUT_MONO;
+        case 5: return AUDIO_CHANNEL_OUT_STEREO;
+        default: return -1;
+    }
+}
 
 // The exit smoke must fail deterministically if ART's exit hook runs libc
 // destructors while Java/native worker threads are still active.

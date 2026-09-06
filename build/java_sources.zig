@@ -2169,6 +2169,55 @@ fn collectStatic(c: *StaticCollector) !void {
     // Managers over hosted services, phase 3: the real media session family (MediaSession,
     // MediaController, MediaSessionManager, PlaybackState, MediaMetadata, MediaDescription,
     // Rating, MediaBrowser/MediaBrowserService) over the hosted ISessionManager, and the real
+    // Verbatim audio data, recording and player clients; native services remain hosted.
+    try c.file("$FB/media/java/android/media/AudioAttributes.java");
+    try c.file("$FB/media/java/android/media/AudioDescriptor.java");
+    try c.file("$FB/media/java/android/media/AudioDeviceAttributes.java");
+    try c.file("$FB/media/java/android/media/AudioDeviceInfo.java");
+    try c.file("$FB/media/java/android/media/AudioDevicePort.java");
+    try c.file("$FB/media/java/android/media/AudioDevicePortConfig.java");
+    try c.file("$FB/media/java/android/media/AudioFocusInfo.java");
+    try c.file("$FB/media/java/android/media/AudioFormat.java");
+    try c.file("$FB/media/java/android/media/AudioGain.java");
+    try c.file("$FB/media/java/android/media/AudioGainConfig.java");
+    try c.file("$FB/media/java/android/media/AudioHandle.java");
+    try c.file("$FB/media/java/android/media/AudioMixerAttributes.java");
+    try c.file("$FB/media/java/android/media/AudioPatch.java");
+    try c.file("$FB/media/java/android/media/AudioPlaybackCaptureConfiguration.java");
+    try c.file("$FB/media/java/android/media/AudioPlaybackConfiguration.java");
+    try c.file("$FB/media/java/android/media/AudioPort.java");
+    try c.file("$FB/media/java/android/media/AudioPortConfig.java");
+    try c.file("$FB/media/java/android/media/AudioPortEventHandler.java");
+    try c.file("$FB/media/java/android/media/AudioProfile.java");
+    try c.file("$FB/media/java/android/media/AudioRecord.java");
+    try c.file("$FB/media/java/android/media/AudioRecordingConfiguration.java");
+    try c.file("$FB/media/java/android/media/AudioRecordingMonitor.java");
+    try c.file("$FB/media/java/android/media/AudioRecordingMonitorClient.java");
+    try c.file("$FB/media/java/android/media/AudioRecordingMonitorImpl.java");
+    try c.file("$FB/media/java/android/media/AudioSystem.java");
+    try c.file("$FB/media/java/android/media/BluetoothProfileConnectionInfo.java");
+    try c.file("$FB/media/java/android/media/CamcorderProfile.java");
+    try c.file("$FB/media/java/android/media/EncoderProfiles.java");
+    try c.file("$FB/media/java/android/media/FadeManagerConfiguration.java");
+    try c.file("$FB/media/java/android/media/MediaRecorder.java");
+    try c.file("$FB/media/java/android/media/MediaSyncEvent.java");
+    try c.file("$FB/media/java/android/media/MicrophoneDirection.java");
+    try c.file("$FB/media/java/android/media/MicrophoneInfo.java");
+    try c.file("$FB/media/java/android/media/NativeRoutingEventHandlerDelegate.java");
+    try c.file("$FB/media/java/android/media/PlayerBase.java");
+    try c.file("$FB/media/java/android/media/PlayerProxy.java");
+    try c.file("$FB/media/java/android/media/Utils.java");
+    try c.file("$FB/media/java/android/media/VolumeInfo.java");
+    try c.file("$FB/media/java/android/media/VolumePolicy.java");
+    try c.file("$FB/media/java/android/media/VolumeShaper.java");
+    try c.file("$FB/media/java/android/media/audio/common/AidlConversion.java");
+    try c.file("$FB/media/java/android/media/audiofx/AudioEffect.java");
+    try c.file("$FB/media/java/android/media/audiopolicy/AudioMix.java");
+    try c.file("$FB/media/java/android/media/audiopolicy/AudioMixingRule.java");
+    try c.file("$FB/media/java/android/media/audiopolicy/AudioPolicy.java");
+    try c.file("$FB/media/java/android/media/audiopolicy/AudioPolicyConfig.java");
+    try c.file("$FB/media/java/android/media/audiopolicy/AudioProductStrategy.java");
+    try c.file("$FB/media/java/android/media/audiopolicy/AudioVolumeGroup.java");
     // Stock audio transport values. Player and manager clients still need the AudioSystem seam.
     try c.file("$FB/media/java/android/media/AudioHalVersionInfo.java");
     try c.file("$FB/media/java/android/media/AudioRoutesInfo.java");

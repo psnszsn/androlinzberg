@@ -23,4 +23,6 @@ public class VirtualDeviceManager {
     public void registerVirtualDeviceListener(java.util.concurrent.Executor executor,
             VirtualDeviceListener listener) {}
     public void unregisterVirtualDeviceListener(VirtualDeviceListener listener) {}
+// Pinned VirtualDeviceManager.getAudioRecordingSessionId: absent service returns SESSION_ID_GENERATE.
+    public int getAudioRecordingSessionId(int deviceId) { return 0; }
 }
