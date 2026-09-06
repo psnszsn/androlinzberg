@@ -152,7 +152,8 @@ gate (`/tmp/wayland-optional-wm-integration-4.log`). Full JVM and system-service
 gates pass. The full APK run has one fullscreen timeout and no structured runtime
 issues (`/tmp/wayland-optional-wm-regressions-1.log`); the retained failure is at
 `/tmp/wayland-optional-wm-fullscreen-failure`. Main's `30762a3` addresses fullscreen
-state changes without a new rendered frame; rebase validation is pending.
+state changes without a new rendered frame; the rebased focused regression now
+passes (`/tmp/wayland-main4-fullscreen-1.log`, eight issue-free steps).
 
 The closure against the patched package identifies 289 sources and one JNI
 boundary for the full WindowManagerInternal graph
@@ -182,7 +183,11 @@ intentionally does not compose color-only transactions before its first buffer.
 Binder, C++ facade and NDK regressions pass in
 `/tmp/wayland-live-wm-binder-system-1.log` (that earlier run's service fixture
 failed before its first buffer submission). Main's subsequent stock Activity
-commit `ed4c8da` is being incorporated before the full JVM/APK regressions.
+commit `ed4c8da` is incorporated, including its lifecycle/result checks and JNI
+loader-warning boundary. The source-package inputs are unchanged. Full JVM,
+system-service, build-tool, C++/graph and all 14 APK tests pass
+(`/tmp/wayland-main4-regressions-1.log`); the APK artifacts contain 46 steps with
+no runtime issues or failure records.
 Stock WMS/ATMS startup and the client/task presentation cutover remain pending.
 
 Prior checkpoint validation against committed main `8d17396`:
