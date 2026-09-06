@@ -27,6 +27,23 @@ in force.
 
 Follow-up changes in the current tree:
 
+- The pinned GLImpl and four remaining Khronos GLES1 interfaces now compile
+  directly with AOSP's GLImpl JNI. Native patch 32 retains the original JNI
+  array bases for positioned heap buffers, guards failed acquisitions, and
+  converts existing typed-buffer bounds checks from bytes to elements. The
+  Zig native ABI supplies the Android Bounds exports and resolves GLES
+  extensions through GLVND; core GLES1 calls use its GLESv1_CM library.
+  Regression coverage exercises fixed-function pixels, direct and heap buffer
+  positions/slices, texture and viewport bounds, OES framebuffer pixels, and
+  OES matrix queries with independently positioned outputs. Java, JVM,
+  separate-process system, native, Binder and build checks pass, along with
+  all 11 APK tests (38 steps without runtime issues). The first APK run hit a
+  transient NewPipe live-feed parse failure with no framework issues; the
+  complete rerun passed. The Androlinzberg AOSP
+  archive was rebuilt and its content hash pinned; the ART archive is
+  unchanged and current. The inventory remains 51 stubs: this closes GLImpl's
+  native prerequisite, while stock GLSurfaceView still needs legacy EGLImpl.
+
 - EGL15, EGLExt and EGLImage now use pinned AOSP Java, with the original EGL15
   JNI. EGLExt's native adapter follows the pinned JNI handle/exception contract
   and resolves Android extensions through Mesa/GLVND; the original JNI requires

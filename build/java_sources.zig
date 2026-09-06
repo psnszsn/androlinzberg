@@ -1756,6 +1756,11 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/opengl/java/android/opengl/EGL15.java");
     try c.file("$FB/opengl/java/android/opengl/EGLExt.java");
     try c.file("$FB/opengl/java/android/opengl/EGLImage.java");
+    try c.file("$FB/opengl/java/com/google/android/gles_jni/GLImpl.java");
+    try c.file("$FB/opengl/java/javax/microedition/khronos/opengles/GL10Ext.java");
+    try c.file("$FB/opengl/java/javax/microedition/khronos/opengles/GL11.java");
+    try c.file("$FB/opengl/java/javax/microedition/khronos/opengles/GL11Ext.java");
+    try c.file("$FB/opengl/java/javax/microedition/khronos/opengles/GL11ExtensionPack.java");
     try c.file("$FB/opengl/java/android/opengl/GLES20.java");
     try c.file("$FB/opengl/java/android/opengl/GLES30.java");
     try c.file("$FB/opengl/java/android/opengl/GLES31.java");

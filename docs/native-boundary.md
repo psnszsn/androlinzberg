@@ -86,6 +86,11 @@ zig build -j10 cpp-audit
   full libvintf build still needs Android HAL metadata and kernel-config
   generators. Null and zero query failures match the pinned target behavior.
 
+- `src/native/legacy_gles.zig` supplies the C ABI expected by pinned GLImpl
+  JNI: GLVND extension dispatch and Android client-buffer Bounds entry points.
+  The original GLES1 JNI remains C++, with framework patch 32 correcting heap
+  array release bases and existing typed-buffer bounds checks. The stock Java
+  GLImpl owns client-buffer retention; core calls use GLVND GLESv1_CM.
 - Stock GLES20–3.2 Java calls use AOSP's generated C++ JNI bindings and the
   existing Mesa GLES library. Frameworks-base patch 28 releases the original
   acquired JNI array pointer for positioned heap buffers and converts byte

@@ -203,6 +203,7 @@ internal object FrameworkModuleSmoke {
         testBinderCallStatistics()
         testStockDebugMemory()
         testStockEgl()
+        StockLegacyGlesSmoke.run()
         testStockGraphicBuffers()
         testStockOverlayProperties()
         testStockSurfaceSynchronization()

@@ -747,3 +747,7 @@ test "hardware buffer formats map to the expected byte widths" {
     try std.testing.expectEqual(@as(u32, 2), formatInfo(4).?.bytes_per_pixel);
     try std.testing.expect(formatInfo(3) == null);
 }
+
+comptime {
+    _ = @import("legacy_gles.zig");
+}

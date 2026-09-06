@@ -46,6 +46,8 @@ extern int register_android_graphics_RenderEffect(JNIEnv*);
 extern int register_android_graphics_Typeface(JNIEnv*);
 extern int register_android_hardware_SyncFence(JNIEnv*);
 extern int register_android_opengl_jni_EGL15(JNIEnv*);
+extern "C" int azk_register_legacy_gles_backend(JNIEnv*);
+extern int register_com_google_android_gles_jni_GLImpl(JNIEnv*);
 extern int register_android_opengl_jni_GLES20(JNIEnv*);
 extern int register_android_opengl_jni_GLES30(JNIEnv*);
 extern int register_android_opengl_jni_GLES31(JNIEnv*);
@@ -255,6 +257,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
     static const Entry entries[] = {
             E(register_android_hardware_SyncFence),
             E(register_android_opengl_jni_EGL15),
+            E(azk_register_legacy_gles_backend),
+            E(register_com_google_android_gles_jni_GLImpl),
             E(android::register_android_os_SELinux),
             E(registerPerfettoTrace),
             E(android::register_android_os_PerfettoTrackEventExtra),

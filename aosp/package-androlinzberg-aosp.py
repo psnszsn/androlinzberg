@@ -46,6 +46,7 @@ framework_patches = tuple(
         (29, "-HWUI-preserve-hardware-buffer-RGBA-byte-order.patch"),
         (30, "-OverlayProperties-marshal-LUT-sampling-keys.patch"),
         (31, "-HWUI-reject-pixel-copy-without-native-window.patch"),
+        (32, "-legacy-GLES-retain-JNI-array-bases-and-typed-buffer-bounds.patch"),
     )
 )
 
