@@ -57,7 +57,11 @@ class HostedSessionDisplayService(private val context: Context, private val hand
     override fun getPreferredWideGamutColorSpaceId(): Int = wideColorSpaceId
     override fun getRefreshRateSwitchingType(): Int = android.hardware.display.DisplayManager.SWITCHING_TYPE_NONE
     override fun getOverlaySupport(): OverlayProperties = overlays
-    override fun isMinimalPostProcessingRequested(displayId: Int): Boolean = false
+    override fun isMinimalPostProcessingRequested(displayId: Int): Boolean {
+        // The stock query dereferences the selected logical display directly.
+        display.getDisplayInfo(displayId)!!
+        return false
+    }
 
     override fun registerCallback(callback: IDisplayManagerCallback?) = registerCallbackWithEventMask(
         callback, DisplayManagerGlobal.INTERNAL_EVENT_FLAG_DISPLAY_ADDED or

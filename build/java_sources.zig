@@ -3314,7 +3314,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/core/java/android/service/voice/HotwordRejectedResult.java");
     try c.file("$FB/core/java/android/service/voice/HotwordDetectionServiceFailure.java");
     try c.file("$FB/core/java/android/service/voice/VisualQueryDetectionServiceFailure.java");
-    try c.file("$FB/core/java/android/service/voice/VisualQueryDetectedResult.java");
     try c.file("$FB/core/java/android/service/voice/FailureSuggestedAction.java");
     try c.file("$FB/core/java/android/service/voice/SoundTriggerFailure.java");
     try c.file("$FB/core/java/android/service/voice/VisualQueryAttentionResult.java");
@@ -4283,8 +4282,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionAllowlist.java");
     // Stock ActivityThread mainline module and process-support dependency closure.
     try c.file("$A/frameworks/base/core/java/android/app/RemoteServiceException.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/sandboxactivity/ActivityContextInfo.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/sandboxactivity/SdkSandboxActivityAuthority.java");
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/MediaFrameworkInitializer.java");
     try c.file("$A/frameworks/base/core/java/android/net/Proxy.java");
     try c.file("$A/packages/modules/Nfc/framework/java/android/nfc/NfcFrameworkInitializer.java");
@@ -4300,15 +4297,11 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$A/frameworks/base/omapi/java/android/se/omapi/SeFrameworkInitializer.java");
     try c.file("$A/frameworks/base/omapi/java/android/se/omapi/SeServiceManager.java");
     try c.file("$A/frameworks/base/core/java/android/security/NetworkSecurityPolicy.java");
-    try c.file("$A/frameworks/base/core/java/com/android/internal/os/logging/MetricsLoggerWrapper.java");
     try c.file("$A/frameworks/base/core/java/android/app/ConfigurationChangedListenerController.java");
     try c.file("$A/frameworks/base/core/java/android/app/OnActivityPausedListener.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SdkSandboxManager.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/sdkprovider/SdkSandboxActivityRegistry.java");
     try c.file("$A/packages/modules/common/java/com/android/modules/annotation/MinSdk.java");
     try c.file("$A/packages/modules/Profiling/framework/java/android/os/ProfilingManager.java");
     try c.file("$A/frameworks/base/core/java/android/text/format/TimeMigrationUtils.java");
-    try c.file("$A/frameworks/base/core/java/com/android/internal/os/ProcfsMemoryUtil.java");
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/MediaTranscodingManager.java");
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/MediaCommunicationManager.java");
     try c.file("$A/frameworks/base/core/java/android/net/PacProxySelector.java");
@@ -4376,25 +4369,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$A/packages/modules/Profiling/framework/java/android/os/ProfilingTrigger.java");
     try c.file("$A/packages/modules/Profiling/framework/java/android/os/ProfilingServiceHelper.java");
     try c.file("$A/packages/modules/Profiling/framework/java/android/os/ProfilingResult.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SharedPreferencesSyncManager.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/StatsdUtil.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/LoadSdkException.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SdkSandboxLocalSingleton.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SdkSandboxSystemServiceRegistry.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/RequestSurfacePackageException.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SharedPreferencesKey.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SharedPreferencesUpdate.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SandboxedSdkContext.java");
     try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/LogUtil.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SandboxedSdkProvider.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SandboxLatencyInfo.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SandboxedSdk.java");
     try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/FileUtil.java");
     try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/SdkSandboxManagerFrameworkInitializer.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/AppOwnedSdkSandboxInterface.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/sdkprovider/SdkSandboxClientImportanceListener.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/sdkprovider/SdkSandboxActivityHandler.java");
-    try c.file("$A/packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/sdkprovider/SdkSandboxController.java");
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/ApplicationMediaCapabilities.java");
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/MediaFeature.java");
     try c.file("$A/packages/modules/Media/apex/framework/java/android/media/MediaParceledListSlice.java");

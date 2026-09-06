@@ -189,7 +189,6 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "packages/modules/Connectivity/framework-t/src/",
         "packages/modules/Connectivity/framework/src/",
         "packages/modules/Media/apex/aidl/private/",
-        "packages/modules/AdServices/sdksandbox/framework/java/",
         "packages/modules/Permission/framework-s/java/",
         "packages/modules/Wifi/framework/java/",
     }) |prefix| {
@@ -319,7 +318,6 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "packages/modules/Connectivity/framework-t/src",
         "packages/modules/Connectivity/framework/src",
         "packages/modules/Media/apex/aidl/private",
-        "packages/modules/AdServices/sdksandbox/framework/java",
         "packages/modules/Permission/framework-s/java",
         "packages/modules/Wifi/framework/java",
         "packages/modules/Wifi/framework/aidl-export",

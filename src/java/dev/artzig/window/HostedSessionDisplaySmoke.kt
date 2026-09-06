@@ -56,6 +56,8 @@ object HostedSessionDisplaySmoke {
             val local = localService(service)
             check(service.getDisplayIds(false).contentEquals(intArrayOf(0)))
             check(service.getDisplayInfo(900) == null && local.getPossibleDisplayInfo(900).isEmpty())
+            check(runCatching { service.isMinimalPostProcessingRequested(900) }
+                .exceptionOrNull() is NullPointerException)
             check(local.getDisplayIdsForGroup(0).contentEquals(intArrayOf(0)))
             check(local.getDisplayIdsForGroup(3).isEmpty())
             val access = IntArray.wrap(intArrayOf(123, 456))

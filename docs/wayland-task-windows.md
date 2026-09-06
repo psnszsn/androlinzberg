@@ -62,9 +62,19 @@ identity/mode preservation, copied overrides, projection/offsets, per-display
 transaction selection, callback masks/registration ownership, permission checks,
 callback death and failed death links. Stock device-state tests still pass.
 
-Main subsequently committed `39807f7`, the stock ActivityThread mainline
-closure (120 Java sources, 45 AIDL). Incorporating that committed closure is the
-next rebase; its uncommitted networking migration is a separate session.
+Rebased onto main `39807f7`, the stock ActivityThread mainline closure
+(120 Java sources, 45 AIDL). The combined source package 59 preserves both
+branches' selections and removes duplicate source/generator declarations.
+Its archive SHA-256 is
+`6a474a526ec3617354f4f8a47a138465b086cf939446aa527e8d7272fbcf40a4`.
+Main's uncommitted networking migration remains separate.
+
+The complete rebased JVM, system-service, APK integration, C++/graph and build
+tools checks pass (`/tmp/wayland-main5-regressions-2.log`). Retained integration
+artifacts contain 14 step files, 41 steps, no runtime issues and no failure
+artifacts. The first run caught duplicate proto declarations in the build audit;
+the second run verifies their removal. The live stub audit records 35 stubs,
+20 pending and 15 survivors. Stock WMS/ATMS startup is still unfinished.
 
 ## Device-state service checkpoint (2026-09-06)
 
