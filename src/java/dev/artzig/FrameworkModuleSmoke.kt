@@ -219,6 +219,7 @@ internal object FrameworkModuleSmoke {
         StockGlSurfaceViewSmoke.run()
         StockActivitySupportSmoke.run(::drainMainQueue)
         StockConfigurationSmoke.run(::drainMainQueue)
+        StockActivityCallbacksSmoke.run()
         StockGraphicsEnvironmentSmoke.run()
         StockFenceSmoke.run()
         StockPerfettoSmoke.run()

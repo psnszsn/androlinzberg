@@ -29,6 +29,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
     static final String FRAGMENTS_TAG = "android:fragments";
     private static final String REQUEST_PERMISSIONS_WHO_PREFIX = "@android:requestPermissions:";
     private Window mWindow;
+    private android.content.ComponentCallbacksController mCallbacksController;
     private ActivityInfo mActivityInfo = new ActivityInfo();
     private android.os.IBinder mToken;
     private android.os.IBinder mAssistToken = new android.os.Binder();
@@ -555,8 +556,6 @@ public class Activity extends ContextWrapper implements Window.Callback,
         }
     }
     private Application appOrNull() { return getApplication(); }
-    public void registerComponentCallbacks(android.content.ComponentCallbacks callback) {}
-    public void unregisterComponentCallbacks(android.content.ComponentCallbacks callback) {}
     private int mThemeRes;
     private android.content.res.Resources.Theme mTheme;
     @Override public void setTheme(int resid) {
@@ -954,7 +953,27 @@ public class Activity extends ContextWrapper implements Window.Callback,
         if (!manager.isStateSaved() && manager.popBackStackImmediate()) return;
         finish();
     }
-    public void onConfigurationChanged(Configuration newConfig) {
+    /** Pinned Activity component-callback ownership. The activity/window class is still
+     * adapted; the stock controller preserves registration and snapshot dispatch behavior. */
+    @Override public void registerComponentCallbacks(android.content.ComponentCallbacks callback) {
+        if (android.app.compat.CompatChanges.isChangeEnabled(OVERRIDABLE_COMPONENT_CALLBACKS)
+                && mCallbacksController == null) {
+            mCallbacksController = new android.content.ComponentCallbacksController();
+        }
+        if (mCallbacksController != null) {
+            mCallbacksController.registerCallbacks(callback);
+        } else {
+            super.registerComponentCallbacks(callback);
+        }
+    }
+    @Override public void unregisterComponentCallbacks(android.content.ComponentCallbacks callback) {
+        if (mCallbacksController != null) {
+            mCallbacksController.unregisterCallbacks(callback);
+        } else {
+            super.unregisterComponentCallbacks(callback);
+        }
+    }
+    @Override public void onConfigurationChanged(Configuration newConfig) {
         mCalled = true;
         mFragments.dispatchConfigurationChanged(newConfig);
         if (mWindow != null) {
@@ -965,8 +984,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
         for (Application.ActivityLifecycleCallbacks callback : collectLifecycleCallbacks()) {
             callback.onActivityConfigurationChanged(this);
         }
-        // Stock Activity next dispatches its ComponentCallbacksController. Activity-level
-        // registerComponentCallbacks remains a separate hosted gap, so this seam stops here.
+        if (mCallbacksController != null) {
+            mCallbacksController.dispatchConfigurationChanged(newConfig);
+        }
     }
     /** AOSP Activity display-move dispatch; ContextWrapper updates the activity base context. */
     final void dispatchMovedToDisplay(int displayId, Configuration config) {
@@ -974,8 +994,16 @@ public class Activity extends ContextWrapper implements Window.Callback,
         onMovedToDisplay(displayId, config);
     }
     public void onMovedToDisplay(int displayId, Configuration config) {}
-    public void onLowMemory() { mFragments.dispatchLowMemory(); }
-    public void onTrimMemory(int level) { mFragments.dispatchTrimMemory(level); }
+    @Override public void onLowMemory() {
+        mCalled = true;
+        mFragments.dispatchLowMemory();
+        if (mCallbacksController != null) mCallbacksController.dispatchLowMemory();
+    }
+    @Override public void onTrimMemory(int level) {
+        mCalled = true;
+        mFragments.dispatchTrimMemory(level);
+        if (mCallbacksController != null) mCallbacksController.dispatchTrimMemory(level);
+    }
     public void onCreateContextMenu(android.view.ContextMenu menu, View view,
             android.view.ContextMenu.ContextMenuInfo menuInfo) {}
     public void onAttachFragment(Fragment fragment) {}

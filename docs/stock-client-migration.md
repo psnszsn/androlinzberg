@@ -27,6 +27,17 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Activity component callback registration now follows the pinned compatibility
+  rule and uses stock ComponentCallbacksController. Modern applications own
+  callbacks on the activity, including registration before attachment; older
+  applications retain application-level delivery. Configuration callbacks
+  follow activity lifecycle notifications, and low/trim-memory callbacks follow
+  fragment dispatch. Empty registration methods are removed. Regressions cover
+  both compatibility modes, ownership, ordering, memory callbacks and removal.
+  JVM, system, native, Binder and build checks pass, with all 11 APK tests
+  (37 steps without runtime issues). The inventory stays at 49 stubs and both
+  tarballs are unchanged and current.
+
 - Process configuration dispatch now uses verbatim AOSP ConfigurationController
   and ActivityThreadInternal. The controller owns pending configurations,
   resource updates, locale selection, density, theme rebasing and component
