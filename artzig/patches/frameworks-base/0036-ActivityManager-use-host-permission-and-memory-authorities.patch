@@ -1,0 +1,88 @@
+From: Androlinzberg <host@androlinzberg.local>
+Subject: [PATCH] ActivityManager: use hosted permission and memory authorities
+
+Keep the stock activity client, task descriptions and parcel shapes. The host
+package manager owns permission state; Process owns Linux RAM accounting.
+The optional procstats dump still targets the stock service name. Locale
+updates retain the stock configuration flow without an absent backup daemon.
+
+diff --git a/core/java/android/app/ActivityManager.java b/core/java/android/app/ActivityManager.java
+--- a/core/java/android/app/ActivityManager.java
++++ b/core/java/android/app/ActivityManager.java
+@@ -87,11 +87,9 @@
+ 
+ import com.android.internal.annotations.GuardedBy;
+ import com.android.internal.app.LocalePicker;
+-import com.android.internal.app.procstats.ProcessStats;
+ import com.android.internal.os.RoSystemProperties;
+ import com.android.internal.os.TransferPipe;
+ import com.android.internal.util.FastPrintWriter;
+-import com.android.internal.util.MemInfoReader;
+ import com.android.internal.util.Preconditions;
+ import com.android.internal.util.RateLimitingCache;
+ import com.android.modules.utils.TypedXmlPullParser;
+@@ -1794,9 +1792,9 @@
+      */
+     @TestApi
+     public long getTotalRam() {
+-        MemInfoReader memreader = new MemInfoReader();
+-        memreader.readMemInfo();
+-        return memreader.getTotalSize();
++        // Host Linux reports the same total RAM through Process; avoid the
++        // Android Debug/libmeminfo dependency for this single counter.
++        return Process.getTotalMemory();
+     }
+ 
+     /**
+@@ -5251,7 +5249,7 @@
+             return PackageManager.PERMISSION_GRANTED;
+         }
+         try {
+-            return AppGlobals.getPermissionManager().checkUidPermission(uid, permission, deviceId);
++            return dev.artzig.system.HostedComponentPermissions.checkUid(permission, uid, deviceId);
+         } catch (RemoteException e) {
+             throw e.rethrowFromSystemServer();
+         }
+@@ -5260,8 +5258,8 @@
+     /** @hide */
+     public static int checkUidPermission(String permission, int uid) {
+         try {
+-            return AppGlobals.getPermissionManager().checkUidPermission(
+-                    uid, permission, Context.DEVICE_ID_DEFAULT);
++            return dev.artzig.system.HostedComponentPermissions.checkUid(
++                    permission, uid, Context.DEVICE_ID_DEFAULT);
+         } catch (RemoteException e) {
+             throw e.rethrowFromSystemServer();
+         }
+@@ -5654,7 +5652,7 @@
+         pw.println();
+         dumpService(pw, fd, "meminfo", new String[] { "--local", "--package", packageName });
+         pw.println();
+-        dumpService(pw, fd, ProcessStats.SERVICE_NAME, new String[] { packageName });
++        dumpService(pw, fd, "procstats", new String[] { packageName });
+         pw.println();
+         dumpService(pw, fd, "usagestats", new String[] { packageName });
+         pw.println();
+diff --git a/core/java/com/android/internal/app/LocalePicker.java b/core/java/com/android/internal/app/LocalePicker.java
+--- a/core/java/com/android/internal/app/LocalePicker.java
++++ b/core/java/com/android/internal/app/LocalePicker.java
+@@ -22,7 +22,6 @@
+ import android.app.ActivityThread;
+ import android.app.IActivityManager;
+ import android.app.ListFragment;
+-import android.app.backup.BackupManager;
+ import android.compat.annotation.UnsupportedAppUsage;
+ import android.content.Context;
+ import android.content.res.Configuration;
+@@ -320,8 +319,9 @@
+ 
+             am.updatePersistentConfigurationWithAttribution(config,
+                     ActivityThread.currentOpPackageName(), null);
+-            // Trigger the dirty bit for the Settings Provider.
+-            BackupManager.dataChanged("com.android.providers.settings");
++            // The hosted service graph has no backup transport. Pinned
++            // BackupManager.dataChanged does nothing when its service is absent;
++            // avoid importing BackupAgent and native backup storage here.
+         } catch (RemoteException e) {
+             // Intentionally left blank
+         }

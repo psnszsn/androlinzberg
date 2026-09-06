@@ -1,0 +1,293 @@
+--- a/services/surfaceflinger/SurfaceFlingerProperties.cpp
++++ b/services/surfaceflinger/SurfaceFlingerProperties.cpp
+@@ -34,6 +34,9 @@
+ using android::hardware::graphics::common::V1_2::PixelFormat;
+ using android::ui::DisplayPrimaries;
+ 
++// Host adaptation of SurfaceFlingerProperties: generated sysprops retain their
++// pinned precedence and conversions. No configstore daemon exists on the host;
++// use the same defaults as the stock unavailable-service path.
+ // Keep logic in sync with WindowManagerService functions that query SurfaceFlinger properties.
+ // Consider exposing properties via ISurfaceComposer instead.
+ int64_t vsync_event_phase_offset_ns(int64_t defaultValue) {
+@@ -41,8 +44,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getInt64<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::vsyncEventPhaseOffsetNs>(
+             defaultValue);
++#endif
+ }
+ 
+ int64_t vsync_sf_event_phase_offset_ns(int64_t defaultValue) {
+@@ -50,8 +57,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getInt64<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::vsyncSfEventPhaseOffsetNs>(
+             defaultValue);
++#endif
+ }
+ 
+ bool use_context_priority(bool defaultValue) {
+@@ -59,8 +70,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::useContextPriority>(
+             defaultValue);
++#endif
+ }
+ 
+ int64_t max_frame_buffer_acquired_buffers(int64_t defaultValue) {
+@@ -68,8 +83,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getInt64<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::maxFrameBufferAcquiredBuffers>(
+             defaultValue);
++#endif
+ }
+ 
+ int32_t max_graphics_width(int32_t defaultValue) {
+@@ -93,8 +112,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::hasWideColorDisplay>(
+             defaultValue);
++#endif
+ }
+ 
+ bool running_without_sync_framework(bool defaultValue) {
+@@ -102,7 +125,11 @@
+     if (temp.has_value()) {
+         return !(*temp);
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::hasSyncFramework>(defaultValue);
++#endif
+ }
+ 
+ bool has_HDR_display(bool defaultValue) {
+@@ -110,7 +137,11 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::hasHDRDisplay>(defaultValue);
++#endif
+ }
+ 
+ int64_t present_time_offset_from_vsync_ns(int64_t defaultValue) {
+@@ -118,8 +149,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getInt64<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::presentTimeOffsetFromVSyncNs>(
+             defaultValue);
++#endif
+ }
+ 
+ bool force_hwc_copy_for_virtual_displays(bool defaultValue) {
+@@ -127,8 +162,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::useHwcForRGBtoYUV>(
+             defaultValue);
++#endif
+ }
+ 
+ int64_t max_virtual_display_dimension(int64_t defaultValue) {
+@@ -136,8 +175,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getUInt64<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::maxVirtualDisplaySize>(
+             defaultValue);
++#endif
+ }
+ 
+ bool use_vr_flinger(bool defaultValue) {
+@@ -145,7 +188,11 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::useVrFlinger>(defaultValue);
++#endif
+ }
+ 
+ bool start_graphics_allocator_service(bool defaultValue) {
+@@ -153,8 +200,12 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     return getBool<ISurfaceFlingerConfigs, &ISurfaceFlingerConfigs::startGraphicsAllocatorService>(
+             defaultValue);
++#endif
+ }
+ 
+ SurfaceFlingerProperties::primary_display_orientation_values primary_display_orientation(
+@@ -163,6 +214,9 @@
+     if (temp.has_value()) {
+         return *temp;
+     }
++#if defined(ARTZIG_HOST_GRAPHICS)
++    return defaultValue;
++#else
+     auto configDefault = DisplayOrientation::ORIENTATION_0;
+     switch (defaultValue) {
+         case SurfaceFlingerProperties::primary_display_orientation_values::ORIENTATION_90:
+@@ -193,6 +247,7 @@
+             break;
+     }
+     return SurfaceFlingerProperties::primary_display_orientation_values::ORIENTATION_0;
++#endif
+ }
+ 
+ int64_t default_composition_dataspace(Dataspace defaultValue) {
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -522,7 +522,11 @@
+         // would be brittle if the name that's not 'default' is used
+         // for production purposes later on.
+         ALOGI("Enabling Treble testing override");
++#if defined(ARTZIG_HOST_GRAPHICS)
++        ALOGW("Treble service discovery override is unavailable on the host");
++#else
+         android::hardware::details::setTrebleTestingOverride(true);
++#endif
+     }
+ 
+     // TODO (b/270966065) Update the HWC based refresh rate overlay to support spinner
+@@ -920,9 +924,14 @@
+             std::min(getRenderEngine().getMaxTextureSize(), getRenderEngine().getMaxViewportDims());
+ 
+     // Set SF main policy after initializing RenderEngine which has its own policy.
++#if defined(ARTZIG_HOST_GRAPHICS)
++    // init(): Android task profiles require its cgroup policy daemon/config.
++    ALOGI("Host SurfaceFlinger uses Linux scheduling without Android task profiles");
++#else
+     if (!SetTaskProfiles(0, {"SFMainPolicy"})) {
+         ALOGW("Failed to set main task profile");
+     }
++#endif
+ 
+     mCompositionEngine->setTimeStats(mTimeStats);
+ 
+--- a/services/surfaceflinger/Scheduler/EventThread.cpp
++++ b/services/surfaceflinger/Scheduler/EventThread.cpp
+@@ -322,7 +322,10 @@
+         ALOGE("Couldn't set SCHED_FIFO for EventThread");
+     }
+ 
++#if !defined(ARTZIG_HOST_GRAPHICS)
++    // Android cgroup profiles have no host equivalent; keep the Linux worker.
+     set_sched_policy(tid, SP_FOREGROUND);
++#endif
+ }
+ 
+ EventThread::~EventThread() {
+--- a/services/surfaceflinger/CompositionEngine/src/HwcAsyncWorker.cpp
++++ b/services/surfaceflinger/CompositionEngine/src/HwcAsyncWorker.cpp
+@@ -53,7 +53,10 @@
+ }
+ 
+ void HwcAsyncWorker::run() {
++#if !defined(ARTZIG_HOST_GRAPHICS)
++    // Android cgroup profiles have no host equivalent; keep the Linux worker.
+     set_sched_policy(0, SP_FOREGROUND);
++#endif
+     struct sched_param param = {0};
+     param.sched_priority = 2;
+     sched_setscheduler(gettid(), SCHED_FIFO, &param);
+--- a/services/powermanager/PowerHalController.cpp
++++ b/services/powermanager/PowerHalController.cpp
+@@ -33,6 +33,11 @@
+ // -------------------------------------------------------------------------------------------------
+ 
+ std::unique_ptr<HalWrapper> HalConnector::connect() {
++#if defined(ARTZIG_HOST_GRAPHICS)
++    // The host has no Android power HAL. PowerHalController::initHal retains
++    // its stock EmptyHalWrapper fallback, which reports unsupported hints.
++    return nullptr;
++#else
+     if (std::shared_ptr<aidl::android::hardware::power::IPower> halAidl =
+                 PowerHalLoader::loadAidl()) {
+         return std::make_unique<AidlHalWrapper>(halAidl);
+@@ -51,14 +56,27 @@
+         return std::make_unique<HidlHalWrapperV1_0>(halHidlV1_0);
+     }
+     return nullptr;
++#endif
+ }
+ 
+ void HalConnector::reset() {
++#if defined(ARTZIG_HOST_GRAPHICS)
++    // The host has no Android power HAL. PowerHalController::initHal retains
++    // its stock EmptyHalWrapper fallback, which reports unsupported hints.
++    // No retained HAL connection on this backend.
++#else
+     PowerHalLoader::unloadAll();
++#endif
+ }
+ 
+ int32_t HalConnector::getAidlVersion() {
++#if defined(ARTZIG_HOST_GRAPHICS)
++    // The host has no Android power HAL. PowerHalController::initHal retains
++    // its stock EmptyHalWrapper fallback, which reports unsupported hints.
++    return 0;
++#else
+     return PowerHalLoader::getAidlVersion();
++#endif
+ }
+ 
+ // -------------------------------------------------------------------------------------------------
+--- a/services/surfaceflinger/BackgroundExecutor.cpp
++++ b/services/surfaceflinger/BackgroundExecutor.cpp
+@@ -32,7 +32,10 @@
+ namespace {
+ 
+ void set_thread_priority(bool highPriority) {
++#if !defined(ARTZIG_HOST_GRAPHICS)
++    // Host Linux scheduling below remains active without Android cgroup profiles.
+     set_sched_policy(0, highPriority ? SP_FOREGROUND : SP_BACKGROUND);
++#endif
+     struct sched_param param = {0};
+     param.sched_priority = highPriority ? 2 : 0 /* must be 0 for non-RT */;
+     sched_setscheduler(gettid(), highPriority ? SCHED_FIFO : SCHED_NORMAL, &param);

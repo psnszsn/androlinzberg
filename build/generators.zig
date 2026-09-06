@@ -8,6 +8,7 @@ const SourceFiles = @import("artzig").SourceSet;
 const LazyPath = std.Build.LazyPath;
 
 pub const Options = struct {
+    perfetto_headers: LazyPath,
     aosp: *std.Build.Dependency,
     protobuf: *std.Build.Step.Compile,
     protoc: *std.Build.Step.Compile,
@@ -44,6 +45,12 @@ pub const GeneratedNative = struct {
     aconfig_header_roots: []const LazyPath,
     binder_graphics_headers: LazyPath,
     binder_graphics_sources: LazyPath,
+    gui: @import("graphics.zig").Generated,
+    renderengine: @import("renderengine.zig").Generated,
+    perfetto: @import("perfetto.zig").Generated,
+    surfaceflinger: @import("surfaceflinger.zig").Generated,
+    input: @import("input.zig").Generated,
+    input_dispatcher: @import("input_dispatcher.zig").Generated,
 };
 
 pub const FrameworkResources = struct {
@@ -148,6 +155,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/base/telephony/java/",
         "frameworks/base/telecomm/java/",
         "frameworks/base/mms/java/",
+        "hardware/interfaces/power/aidl/",
         "hardware/interfaces/gnss/aidl/",
         "hardware/interfaces/biometrics/common/aidl/",
         "hardware/interfaces/biometrics/face/aidl/",
@@ -260,6 +268,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/libs/modules-utils/java",
         "frameworks/native/libs/input",
         "frameworks/native/libs/gui",
+        "frameworks/native/aidl",
         "frameworks/native/aidl/binder",
         "frameworks/native/aidl",
         "frameworks/native/libs/binder/aidl",
@@ -274,6 +283,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/telephony/java",
         "frameworks/base/telecomm/java",
         "frameworks/base/mms/java",
+        "hardware/interfaces/power/aidl",
         "hardware/interfaces/gnss/aidl",
         "hardware/interfaces/biometrics/common/aidl",
         "hardware/interfaces/biometrics/face/aidl",
@@ -534,6 +544,15 @@ fn aconfigJava(
             cache.addArg("--values");
             cache.addFileArg(sourcePath(b, aosp, .{ .source = entry.source, .path = value }));
         }
+        if (entry.fixed_disabled_flags.len != 0) {
+            var values: []const u8 = "";
+            for (entry.fixed_disabled_flags) |name| {
+                values = b.fmt("{s}flag_value {{ package: \"{s}\" name: \"{s}\" state: DISABLED permission: READ_ONLY }}\n", .{ values, entry.package, name });
+            }
+            const inputs = b.addWriteFiles();
+            cache.addArg("--values");
+            cache.addFileArg(inputs.add("host-fixed-flags.textproto", values));
+        }
         cache.addArg("--cache");
         const cache_file = cache.addOutputFileArg(b.fmt("aconfig-{d}.pb", .{index}));
         cache.setName(b.fmt("create aconfig cache {s}", .{entry.package}));
@@ -725,11 +744,7 @@ fn statsJava(
     aosp: *std.Build.Dependency,
     stats_tool: *std.Build.Step.Compile,
 ) []const LazyPath {
-    const stage = b.addWriteFiles();
-    const base = "tools/out/etc/stats-log-api-gen";
-    _ = stage.addCopyDirectory(aosp.path("frameworks/proto_logging/stats/stats_log_api_gen/include_java"), base ++ "/java", .{});
-    _ = stage.addCopyDirectory(aosp.path("frameworks/proto_logging/stats/stats_log_api_gen/include_cc_hdrs"), base ++ "/cc_hdrs", .{});
-    _ = stage.addCopyDirectory(aosp.path("frameworks/proto_logging/stats/stats_log_api_gen/include_cc_srcs"), base ++ "/cc_srcs", .{});
+    const stage = @import("stats_tool.zig").templates(b, aosp.path(""));
 
     // One run per stats-log module, as Soong's stats-log-api-gen genrules do:
     // the framework's FrameworkStatsLog, StatsD's StatsdStatsLog, telephony's
@@ -739,7 +754,7 @@ fn statsJava(
     const result = b.allocator.alloc(LazyPath, specs.len) catch @panic("OOM");
     inline for (specs, 0..) |spec, index| {
         const run = b.addRunArtifact(stats_tool);
-        run.setCwd(stage.getDirectory());
+        run.setCwd(stage);
         run.addArg("--java");
         const java = run.addOutputFileArg(spec.class ++ ".java");
         run.addArgs(&.{
@@ -1145,6 +1160,9 @@ fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Ste
 
 pub fn build(b: *std.Build, o: Options) Result {
     const runner = hostTool(b, "aosp-tool-runner", "tools/aosp-tool-runner.zig");
+    const gui = @import("graphics.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
+    const renderengine = @import("renderengine.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
+    const perfetto = @import("perfetto.zig").generate(b, o.aosp.path(""), o.protobuf, o.protoc, o.perfetto_headers);
     const filter = hostTool(b, "filter-flagged-api", "tools/filter-flagged-api.zig");
     const package_rewriter = hostTool(b, "rewrite-java-package", "tools/rewrite-java-package.zig");
     const stats_tool = @import("stats_tool.zig").build(b, .{
@@ -1154,11 +1172,14 @@ pub fn build(b: *std.Build, o: Options) Result {
         .protoc = o.protoc,
     });
     _ = expose(b, "stats-tool", "Build stats-log-api-gen", &stats_tool.step);
+    const surfaceflinger = @import("surfaceflinger.zig").generate(b, o.aosp.path(""), runner, o.protoc, perfetto, stats_tool);
 
     const aidl_java = aidlJava(b, o.aosp, runner);
     const hidl_java = hidlJava(b, o.aosp, runner);
     const hidl_cpp = hidlCpp(b, o.aosp, runner);
     const aidl_cpp = aidlCpp(b, o.aosp, runner);
+    const input = @import("input.zig").generate(b, o.aosp.path(""), runner, gui, aidl_cpp.headers);
+    const input_dispatcher = @import("input_dispatcher.zig").generate(b, o.aosp.path(""), runner, o.protoc, stats_tool);
     const graphics = b.addRunArtifact(runner);
     graphics.addFileArg(o.aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
     graphics.addArgs(&.{ "--lang=cpp", "-I" });
@@ -1199,6 +1220,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (hidl_cpp.headers) |path| path.addStepDependencies(aggregate);
     for (hidl_cpp.sources) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
+    inline for (.{ gui, renderengine, perfetto, surfaceflinger, input, input_dispatcher }) |native| {
+        native.headers.addStepDependencies(aggregate);
+        native.sources.addStepDependencies(aggregate);
+    }
+    graphics_headers.addStepDependencies(aggregate);
+    graphics_sources.addStepDependencies(aggregate);
     res.apk.addStepDependencies(aggregate);
     mime_resources.addStepDependencies(aggregate);
     incremental_sysprop.source.addStepDependencies(aggregate);
@@ -1223,6 +1250,12 @@ pub fn build(b: *std.Build, o: Options) Result {
             .binder_graphics_sources = graphics_sources,
             .incremental_sysprop_headers = incremental_sysprop.headers,
             .incremental_sysprop_source = incremental_sysprop.source,
+            .gui = gui,
+            .renderengine = renderengine,
+            .surfaceflinger = surfaceflinger,
+            .perfetto = perfetto,
+            .input = input,
+            .input_dispatcher = input_dispatcher,
         },
         .resources = res,
         .fixtures = fixtures,

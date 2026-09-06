@@ -1,0 +1,64 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] libbase: route hosted properties through the session area
+
+Keep the pinned GetProperty default and typed parsing behavior. Hosted reads
+use the same snapshots as SystemProperties; writes use broker authorization.
+Disable the separate host map, including its eager static initialization.
+The ART source package does not select this patch.
+
+--- a/properties.cpp
++++ b/properties.cpp
+@@ -16,6 +16,10 @@
+ 
+ #include "android-base/properties.h"
+ 
++#if defined(ARTZIG_SHARED_PROPERTIES)
++#include <azk/binder.h>
++#endif
++
+ #if defined(__BIONIC__)
+ #include <sys/system_properties.h>
+ #endif
+@@ -31,7 +35,7 @@
+ #include <android-base/strings.h>
+ #include <android-base/thread_annotations.h>
+ 
+-#if !defined(__BIONIC__)
++#if !defined(__BIONIC__) && !defined(ARTZIG_SHARED_PROPERTIES)
+ 
+ // Here lies a rudimentary implementation of system properties for non-Bionic
+ // platforms. We are using weak symbols here because we want to allow
+@@ -158,6 +162,13 @@
+ 
+ std::string GetProperty(const std::string& key, const std::string& default_value) {
+   std::string property_value;
++#if defined(ARTZIG_SHARED_PROPERTIES)
++  // Host seam: share Java SystemProperties' AZKB area. The ordinary libbase
++  // host map is process-local and unsafe for early libgui static initializers.
++  azk_property_read(key.c_str(), [](void* cookie, const char* value, size_t length) {
++    static_cast<std::string*>(cookie)->assign(value, length);
++  }, &property_value);
++#else
+   const prop_info* pi = __system_property_find(key.c_str());
+   if (pi == nullptr) return default_value;
+ 
+@@ -168,6 +179,7 @@
+         *property_value = value;
+       },
+       &property_value);
++#endif
+   // If the property exists but is empty, also return the default value.
+   // Since we can't remove system properties, "empty" is traditionally
+   // the same as "missing" (this was true for cutils' property_get).
+@@ -175,7 +187,11 @@
+ }
+ 
+ bool SetProperty(const std::string& key, const std::string& value) {
++#if defined(ARTZIG_SHARED_PROPERTIES)
++  return azk_property_write(key.c_str(), value.c_str());
++#else
+   return (__system_property_set(key.c_str(), value.c_str()) == 0);
++#endif
+ }
+ 
+ #if defined(__BIONIC__)

@@ -242,6 +242,7 @@ internal object SystemTestClientA {
     }
 
     private fun run(context: Context) {
+        HostedUserLifecycleChecks.run()
         check(Process.myUid() != Process.SYSTEM_UID && Process.myUid() >= Process.FIRST_APPLICATION_UID, "app uid assigned")
         check(
             android.os.SystemProperties.get("sys.azk.boot_completed") == "1",
@@ -324,6 +325,19 @@ internal object SystemTestClientA {
         }
         check(bInfo?.versionCode == 7 && bInfo?.versionName == "7.0", "cross-process getPackageInfo")
         TextToSpeechSystemSmoke.run(context)
+        val packageService = ActivityThread.getPackageManager()
+        packageService.setSplashScreenTheme(context.packageName, "test:style/Splash", 0)
+        check(packageService.getSplashScreenTheme(context.packageName, 0) == "test:style/Splash",
+            "splash theme stored by resource name")
+        var themeDenied = false
+        try { packageService.setSplashScreenTheme("dev.artzig.test.b", "test:style/Other", 0) }
+        catch (_: SecurityException) { themeDenied = true }
+        check(themeDenied, "splash theme changes require package ownership")
+        check(packageService.getSplashScreenTheme("dev.artzig.test.b", 0) == null,
+            "another package's splash theme stays unchanged")
+        packageService.setSplashScreenTheme(context.packageName, null, 0)
+        check(packageService.getSplashScreenTheme(context.packageName, 0) == null,
+            "null resets the splash theme to the manifest default")
         val echoMatches = pm.queryIntentServices(Intent("dev.artzig.test.ECHO"), 0)
         check(
             echoMatches.size == 1 && echoMatches[0].serviceInfo.name == "dev.artzig.systemtest.EchoService",
@@ -442,6 +456,21 @@ internal object SystemTestClientA {
         check(connectedThread === Looper.getMainLooper().thread, "onServiceConnected ran on the main looper")
 
         val service = checkNotNull(proxy)
+        IntentCreatorChecks.remote(service)
+        val cpuTracker = com.android.internal.os.ProcessCpuTracker(false)
+        check(cpuTracker.getCpuTimeForPid(service.selfPid()) > 0,
+            "stock process CPU reader observes the remote app pid")
+        check(cpuTracker.getCpuTimeForPid(Int.MAX_VALUE) == 0L,
+            "stock process CPU reader returns zero for a vanished pid")
+        val remoteUid = context.packageManager.getPackageUid("dev.artzig.test.b", 0)
+        check(context.packageManager.checkPermission(android.Manifest.permission.INTERNET, "dev.artzig.test.b") ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED, "package holds INTERNET")
+        check(android.app.ActivityManager.getService().checkPermission(android.Manifest.permission.INTERNET,
+            service.selfPid(), remoteUid) == android.content.pm.PackageManager.PERMISSION_DENIED,
+            "manifest process denial overrides the package grant")
+        check(android.app.ActivityManager.getService().checkPermission(android.Manifest.permission.INTERNET,
+            Int.MAX_VALUE, remoteUid) == android.content.pm.PackageManager.PERMISSION_GRANTED,
+            "process denial does not revoke the UID's package grant")
         check(service.add(20, 22) == 42, "cross-process service call")
         check(service.echo("héllo") == "héllo", "string round trip")
         val bundle = android.os.Bundle()
@@ -1485,6 +1514,7 @@ internal object SystemTestClientA {
         stats.setPullAtomCallback(10000, null, java.util.concurrent.Executor { it.run() }) { _, _ ->
             error("a denied stats callback cannot be invoked")
         }
+        StockUriGrantsChecks.run(context)
 
         // --- settings through the verbatim AOSP client + hosted SettingsProvider.
         // The fixture requests WRITE_SECURE_SETTINGS (granted at install via
@@ -1535,6 +1565,12 @@ internal object SystemTestClientA {
         check(userManager.getUsers(false, false, false)?.size == 1, "single hosted user")
         check(userManager.isUserRunning(0) && userManager.isUserUnlocked(0), "system user running and unlocked")
         check(userManager.getUserInfo(0)?.id == 0, "user info for user 0")
+        check(userManager.getProfileType(0) == "" && userManager.getProfileType(99) == null,
+            "full user and absent user have distinct profile types")
+        check(userManager.getProfileIds(0, true).contentEquals(intArrayOf(0)) &&
+            userManager.getProfileIds(99, false).isEmpty() &&
+            userManager.getProfileIdsExcludingHidden(99, true).isEmpty() &&
+            userManager.getProfiles(99, false).isEmpty(), "unknown user has no profile group")
         val appOps = com.android.internal.app.IAppOpsService.Stub.asInterface(
             ServiceManager.getService("appops"),
         )
@@ -1556,6 +1592,29 @@ internal object SystemTestClientA {
             true
         }
         check(opsDenied, "app-op modes are system-only")
+        val appOpsClient = checkNotNull(context.getSystemService(android.app.AppOpsManager::class.java))
+        check(android.app.AppOpsManager.permissionToOpCode(android.Manifest.permission.CAMERA) ==
+            android.app.AppOpsManager.OP_CAMERA, "stock permission-to-op mapping")
+        check(android.app.AppOpsManager.strOpToOp(android.app.AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW) ==
+            android.app.AppOpsManager.OP_SYSTEM_ALERT_WINDOW, "stock operation names")
+        check(appOpsClient.noteOpNoThrow(android.app.AppOpsManager.OP_READ_CLIPBOARD,
+            Process.myUid(), context.packageName) == android.app.AppOpsManager.MODE_ALLOWED,
+            "stock app-ops client notes through the session service")
+        check(appOpsClient.startOpNoThrow(android.app.AppOpsManager.OP_TOAST_WINDOW,
+            Process.myUid(), context.packageName, false, null, "window gate") == android.app.AppOpsManager.MODE_ALLOWED,
+            "stock window app-op start")
+        appOpsClient.finishOp(android.app.AppOpsManager.OP_TOAST_WINDOW, Process.myUid(), context.packageName, null)
+        val clientPackageDenied = try {
+            appOpsClient.checkPackage(Process.myUid(), "dev.artzig.test.b")
+            false
+        } catch (_: SecurityException) { true }
+        check(clientPackageDenied, "stock client throws for a spoofed package")
+        val clientModeDenied = try {
+            appOpsClient.setUidMode(android.app.AppOpsManager.OPSTR_READ_CLIPBOARD,
+                Process.myUid(), android.app.AppOpsManager.MODE_IGNORED)
+            false
+        } catch (_: SecurityException) { true }
+        check(clientModeDenied, "stock client preserves mode mutation permission failure")
         val grantDenied = try {
             ipm.grantRuntimePermission("dev.artzig.test.a", "android.permission.CAMERA", 0)
             false

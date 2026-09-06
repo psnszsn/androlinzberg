@@ -1,0 +1,111 @@
+Subject: [PATCH] PendingIntent: accept hosted user, alarm and configuration authorities
+
+Keep the pinned record identity, cancellation ordering, permission checks and
+AM/ATM dispatch. The host has no full UserController, ActivityManagerConstants
+or alarm daemon; the session supplies current-user and warning settings and
+removes canceled alarms through its existing alarm authority.
+
+--- a/services/core/java/com/android/server/am/PendingIntentController.java
++++ b/services/core/java/com/android/server/am/PendingIntentController.java
+@@ -54,7 +54,6 @@
+ import com.android.internal.os.IResultReceiver;
+ import com.android.internal.util.RingBuffer;
+ import com.android.internal.util.function.pooled.PooledLambda;
+-import com.android.server.AlarmManagerInternal;
+ import com.android.server.LocalServices;
+ import com.android.server.am.PendingIntentRecord.CancellationReason;
+ import com.android.server.wm.ActivityTaskManagerInternal;
+@@ -86,7 +85,7 @@
+     final Object mLock = new Object();
+     final Handler mH;
+     ActivityManagerInternal mAmInternal;
+-    final UserController mUserController;
++    final java.util.function.IntSupplier mCurrentUserId;
+     final ActivityTaskManagerInternal mAtmInternal;
+ 
+     /** Set of IntentSenderRecord objects that are currently active. */
+@@ -101,17 +100,21 @@
+     @GuardedBy("mLock")
+     private final SparseArray<RingBuffer<String>> mRecentIntentsPerUid = new SparseArray<>();
+ 
+-    private final ActivityManagerConstants mConstants;
+-
+-    PendingIntentController(Looper looper, UserController userController,
+-            ActivityManagerConstants constants) {
++    private final java.util.function.IntSupplier mWarningThreshold;
++    private final java.util.function.Consumer<PendingIntent> mCancelAlarm;
++
++    public PendingIntentController(Looper looper,
++            java.util.function.IntSupplier currentUserId,
++            java.util.function.IntSupplier warningThreshold,
++            java.util.function.Consumer<PendingIntent> cancelAlarm) {
+         mH = new Handler(looper);
+         mAtmInternal = LocalServices.getService(ActivityTaskManagerInternal.class);
+-        mUserController = userController;
+-        mConstants = constants;
+-    }
+-
+-    void onActivityManagerInternalAdded() {
++        mCurrentUserId = java.util.Objects.requireNonNull(currentUserId);
++        mWarningThreshold = java.util.Objects.requireNonNull(warningThreshold);
++        mCancelAlarm = java.util.Objects.requireNonNull(cancelAlarm);
++    }
++
++    public void onActivityManagerInternalAdded() {
+         synchronized (mLock) {
+             mAmInternal = LocalServices.getService(ActivityManagerInternal.class);
+         }
+@@ -359,8 +362,7 @@
+                     PendingIntentController::handlePendingIntentCancelled, this, callbacks);
+             mH.sendMessage(m);
+         }
+-        final AlarmManagerInternal ami = LocalServices.getService(AlarmManagerInternal.class);
+-        ami.remove(new PendingIntent(rec));
++        mCancelAlarm.accept(new PendingIntent(rec));
+     }
+ 
+     private void handlePendingIntentCancelled(RemoteCallbackList<IResultReceiver> callbacks) {
+@@ -515,12 +517,12 @@
+         }
+ 
+         // If the number is within the range [threshold - N + 1, threshold], log it into buffer
+-        final int lowBound = mConstants.PENDINGINTENT_WARNING_THRESHOLD - RECENT_N + 1;
++        final int lowBound = mWarningThreshold.getAsInt() - RECENT_N + 1;
+         RingBuffer<String> recentHistory = null;
+         if (newCount == lowBound) {
+             recentHistory = new RingBuffer(String.class, RECENT_N);
+             mRecentIntentsPerUid.put(uid, recentHistory);
+-        } else if (newCount > lowBound && newCount <= mConstants.PENDINGINTENT_WARNING_THRESHOLD) {
++        } else if (newCount > lowBound && newCount <= mWarningThreshold.getAsInt()) {
+             recentHistory = mRecentIntentsPerUid.get(uid);
+         }
+         if (recentHistory == null) {
+@@ -530,7 +532,7 @@
+         recentHistory.append(pir.key.toString());
+ 
+         // Output the log if we are hitting the threshold
+-        if (newCount == mConstants.PENDINGINTENT_WARNING_THRESHOLD) {
++        if (newCount == mWarningThreshold.getAsInt()) {
+             Slog.wtf(TAG, "Too many PendingIntent created for uid " + uid
+                     + ", recent " + RECENT_N + ": " + Arrays.toString(recentHistory.toArray()));
+             // Clear the buffer, as we don't want to spam the log when the numbers
+@@ -549,7 +551,7 @@
+         if (idx >= 0) {
+             final int newCount = mIntentsPerUid.valueAt(idx) - 1;
+             // If we are going below the low threshold, no need to keep logs.
+-            if (newCount == mConstants.PENDINGINTENT_WARNING_THRESHOLD - RECENT_N) {
++            if (newCount == mWarningThreshold.getAsInt() - RECENT_N) {
+                 mRecentIntentsPerUid.delete(uid);
+             }
+             if (newCount == 0) {
+--- a/services/core/java/com/android/server/am/PendingIntentRecord.java
++++ b/services/core/java/com/android/server/am/PendingIntentRecord.java
+@@ -623,7 +623,7 @@
+ 
+             int userId = key.userId;
+             if (userId == UserHandle.USER_CURRENT) {
+-                userId = controller.mUserController.getCurrentOrTargetUserId();
++                userId = controller.mCurrentUserId.getAsInt();
+             }
+ 
+             // note: we on purpose don't pass in the information about the PendingIntent's creator,

@@ -26,7 +26,6 @@ framework_patches = tuple(
         (5, "-SystemFonts-env-overridable-font-config-paths-for-ho.patch"),
         (6, "-androidfw-replace-CombinedIterator-merge-in-Theme-Ap.patch"),
         (7, "-host-fixes-for-app-playback-static-Display-null-Disp.patch"),
-        (8, "-Surface-no-op-setFrameRate-on-artzig-fake-released-s.patch"),
         (9, "-add-direct-Wayland-EGL-presentation-to-host-HWUI.patch"),
         (11, "-CursorWindow-always-parcel-as-shared-memory-on-the-a.patch"),
         (12, "-AssetManager-env-overridable-framework-res.apk-path-.patch"),
@@ -52,6 +51,21 @@ framework_patches = tuple(
         (35, "-init-thread-pool-use-hosted-failure-diagnostics.patch"),
         (36, "-media-metrics-use-portable-JNI-registration-table.patch"),
         (37, "-HWUI-run-WebView-functors-without-SurfaceFlinger-overlays.patch"),
+        (28, "-SyncFence-qualify-documentation-only-media-links.patch"),
+        (30, "-Surface-use-stock-client-JNI-on-host.patch"),
+        (31, "-ReliableSurface-use-stock-buffer-recovery-on-host.patch"),
+        (32, "-RenderThread-restore-stock-vsync-scheduling.patch"),
+        (33, "-UriMetricsHelper-allow-absent-host-statistics-service.patch"),
+        (34, "-PackageUserState-match-nullable-splash-theme-contract.patch"),
+        (35, "-WM-route-process-helpers-through-host-authority.patch"),
+        (36, "-ActivityManager-use-host-permission-and-memory-authorities.patch"),
+        (37, "-ImageWriter-use-host-surface-query-adapter.patch"),
+        (38, "-ProtoLog-use-stock-host-logging-backend.patch"),
+        (39, "-WM-use-compositor-input-service-boundary.patch"),
+        (40, "-PendingIntent-use-host-session-authorities.patch"),
+        (41, "-WM-match-host-SF-capability-properties.patch"),
+        (42, "-AppOps-route-optional-module-queries-through-host.patch"),
+        (43, "-ATMS-use-the-session-user-authority.patch"),
     )
 )
 
@@ -82,8 +96,52 @@ packager.PATCH_SERIES = framework_patches + (
         patch_root / "packages/providers/DownloadProvider/0003-retain-download-inode-for-close-size-accounting.patch",
     ),
     (
+        "system/core",
+        patch_root / "system" / "core-host" / "0001-expose-host-thread-priority.patch",
+    ),
+    (
+        "system/core",
+        patch_root / "system" / "core-host" / "0002-expose-host-timed-mutex.patch",
+    ),
+    (
+        "system/core",
+        patch_root / "system" / "core-host" / "0003-host-looper-poll-state.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0001-libgui-host-binder-transport.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0002-renderengine-host-egl.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0003-surfaceflinger-host-build.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0004-surfaceflinger-host-service-boundaries.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0005-inputdispatcher-host-crypto.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0006-surfacetexture-host-egl.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0007-nativewindow-link-stock-parcel-operations.patch",
+    ),
+    (
         "system/libbase",
         patch_root / "system" / "libbase" / "0001-host-prop_info_cmp-operator-must-be-const-libc-std-s.patch",
+    ),
+    (
+        "system/libbase",
+        patch_root / "system" / "libbase-host" / "0001-share-native-properties-with-AZKB.patch",
     ),
     (
         "system/incremental_delivery",
@@ -92,6 +150,10 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "external/skia",
         patch_root / "external" / "skia" / "0001-linux-SkUserConfig-no-GIF-RAW-codecs-on-the-artzig-h.patch",
+    ),
+    (
+        "external/skia",
+        patch_root / "external" / "skia-host" / "0001-ahardwarebuffer-use-host-dmabuf-import.patch",
     ),
     (
         "frameworks/minikin",

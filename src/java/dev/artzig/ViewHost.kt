@@ -98,6 +98,7 @@ public final class ViewHost {
         private lateinit var sRoot: android.view.ViewRootImpl
         private lateinit var sStatusText: TextView
         private var sDownTime: Long = 0L
+        private var sRenderedFrameTime: Long = Long.MIN_VALUE
         private var sWidth: Int = 0
         private var sHeight: Int = 0
         private var sScale120: Int = 0
@@ -215,8 +216,7 @@ public final class ViewHost {
             }
             // drain main-looper messages posted by views (clicks, invalidations)
             drainLooper()
-            HostedDisplayEvents.dispatchFrame(System.nanoTime())
-            drainLooper()
+            sRenderedFrameTime = android.view.Choreographer.getInstance().lastFrameTimeNanos
             dev.artzig.HostedRenderer
                 .getInstance()
                 .render(sRoot.doTraversal(), bufferWidth, bufferHeight, sRoot)
@@ -260,7 +260,7 @@ public final class ViewHost {
         }
 
         @JvmStatic public fun needsFrame(): Boolean =
-            dev.artzig.HostedDisplayEvents.hasPendingFrame()
+            android.view.Choreographer.getInstance().lastFrameTimeNanos > sRenderedFrameTime
 
         @JvmStatic private fun drainLooper() { pumpMainLooper() }
 

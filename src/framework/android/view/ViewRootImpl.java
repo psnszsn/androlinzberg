@@ -56,6 +56,9 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public static void invokeFunctor(long functor, boolean waitForCompletion) { }
 
 
+    // Pinned ViewRootImpl policy switch shared with WMS until the stock client cutover.
+    public static final boolean CLIENT_TRANSIENT =
+            android.os.SystemProperties.getBoolean("persist.wm.debug.client_transient", false);
     private static final boolean TRACE_SLOW_FRAMES =
             System.getenv("ARTZIG_SLOW_FRAME_TRACE") != null;
     private static boolean sProtoLogInitialized;
@@ -75,6 +78,8 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public Choreographer getChoreographer() { return mChoreographer; }
 
     View mView;
+    private final dev.artzig.window.HostedTransitionInput mTransitionInput =
+            new dev.artzig.window.HostedTransitionInput();
     int mWidth, mHeight;
     final RenderNode mRenderNode = new RenderNode("artzig-view-root");
     boolean mTraversalScheduled;
@@ -1067,6 +1072,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
      * InputEventReceiver, IME input queues, and WindowManagerService are absent.
      */
     public boolean dispatchPointerEvent(MotionEvent event) {
+        if (mTransitionInput.shouldDrop(event)) return false;
         if (mView == null || mAttachInfo == null) return false;
 
         // EarlyPostImeInputStage ordering.
@@ -1125,6 +1131,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
      * adapted because this host has no InputChannel or system IME input queue.
      */
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (mTransitionInput.shouldDrop(event)) return false;
         if (mView == null || mAttachInfo == null) return false;
         if (mView.dispatchKeyEventPreIme(event)) return true;
         if (mAttachInfo.mTooltipHost != null) {
@@ -1176,6 +1183,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
 
     /** AOSP ViewPostImeInputStage.processTrackballEvent() host adaptation. */
     public boolean dispatchCapturedPointerEvent(MotionEvent event) {
+        if (mTransitionInput.shouldDrop(event)) return false;
         if (mView == null || mAttachInfo == null) return false;
         if (event.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
             if (!hasPointerCapture() || mView.dispatchCapturedPointerEvent(event)) return true;
@@ -2722,5 +2730,6 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     }
     public void setPausedForTransition(boolean paused) {
         mPausedForTransition = paused;
+        mTransitionInput.setPaused(paused);
     }
 }

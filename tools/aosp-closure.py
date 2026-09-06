@@ -83,6 +83,8 @@ KNOWN_GENERATED = {
     "com.android.internal.pm.RoSystemFeatures": "system feature generator (build/generator_sources.zig)",
     "android.aconfig.DeviceProtos": "aconfig device paths template (build/generator_sources.zig)",
     "android.aconfig.nano.Aconfig": "aconfig nano proto (build/generator_sources.zig)",
+    "android.stats.devicepolicy.nano.DevicePolicyEnums": "device_policy_enums.proto nano generator (build/generator_sources.zig)",
+    "android.app.AppOpEnums": "app_op_enums.proto generator (build/generator_sources.zig)",
     "android.os.UserManagerCache": "property_cache annotation processor (build/java.zig)",
     "android.util.AggStats": "framework common.proto generator (build/generator_sources.zig)",
     "android.util.Duration": "framework common.proto generator (build/generator_sources.zig)",

@@ -30,6 +30,19 @@ import android.util.Log
 class HostedActivityManagerService(private val context: android.content.Context? = null) : android.app.IActivityManager.Stub(), android.app.IActivityManager by unsupported<android.app.IActivityManager>() {
     override fun asBinder(): android.os.IBinder = this
 
+    private val intentCreators by lazy { HostedIntentCreators(context ?: android.app.ActivityThread.currentActivityThread().systemContext) }
+    private val processHistory by lazy { HostedProcessHistory((context ?: android.app.ActivityThread.currentActivityThread().systemContext).resources.getInteger(
+        com.android.internal.R.integer.config_app_exit_info_history_list_size)) }
+
+    internal fun addCreatorToken(intent: Intent?, creatorPackage: String?) =
+        intentCreators.add(intent, creatorPackage)
+
+    override fun refreshIntentCreatorToken(intent: Intent?): IBinder? {
+        enforceCallingPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+            "refreshIntentCreatorToken()")
+        return HostedIntentCreators.refresh(requireNotNull(intent))
+    }
+
     /** Launches a process for a package that is not attached (production: the launcher's --app-process). */
     fun interface ProcessLauncher {
         /** Returns false when the package cannot be launched. */
@@ -38,7 +51,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
 
     // AppExitInfoTracker equivalent for this hosted session. Binder death supplies no
     // wait status or tombstone, so retain REASON_UNKNOWN instead of inventing one.
-    private val processExits = java.util.ArrayDeque<android.app.ApplicationExitInfo>()
 
     private inner class ProcessRecord(
         val thread: IApplicationThread,
@@ -349,6 +361,25 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** The session's package manager; consulted for APK paths of packages with no running process. */
     @Volatile var packageService: HostedPackageManagerService? = null
     @Volatile var platformCompat: com.android.server.compat.PlatformCompat? = null
+    private val uriAccess by lazy {
+        HostedUriAccess(checkNotNull(packageService)) { caller ->
+            synchronized(lock) {
+                val record = caller?.asBinder()?.let { processes[it] }
+                    ?: throw SecurityException("Unable to find app for URI permission caller $caller")
+                val uid = Binder.getCallingUid()
+                if (uid != record.uid && uid != android.os.Process.SYSTEM_UID && uid != 0) {
+                    throw SecurityException("URI permission caller belongs to another uid")
+                }
+                record.uid
+            }
+        }
+    }
+
+    internal fun checkProviderUriPermissionFromHost(uri: android.net.Uri, userId: Int, uid: Int, mode: Int): Int =
+        uriAccess.checkProvider(uri, userId, uid, mode) { authority, providerUser ->
+            getContentProvider(null, "android", authority, providerUser, true)
+        }
+
     /** Activity/task ownership is separate in AOSP; this is the host seam between AMS and ATMS. */
     @Volatile internal var activityTaskManager: HostedActivityTaskManagerService? = null
 
@@ -386,6 +417,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
         // handleProcessDied against a record that is actually registered.
         synchronized(lock) {
             processes[record.binder] = record
+            HostActivityManagerAccess.attached(record.pid, record.binder,
+                packageService?.getPackage(packageName)?.processes?.get(processName)?.deniedPermissions)
         }
         try {
             record.binder.linkToDeath(record, 0)
@@ -488,20 +521,24 @@ class HostedActivityManagerService(private val context: android.content.Context?
     private fun handleProcessDied(record: ProcessRecord) {
         val notify = ArrayList<Pair<ConnectionRecord, ServiceRecord>>()
         synchronized(lock) {
-            if (processes.remove(record.binder) == null) return
-            processExits.addFirst(android.app.ApplicationExitInfo().apply {
+            if (processes[record.binder] !== record) return
+            processes.remove(record.binder)
+            processHistory.died(record.binder, android.app.ApplicationExitInfo().apply {
                 pid = record.pid
                 realUid = record.uid
                 packageUid = record.uid
                 definingUid = record.uid
-                processName = record.processName
                 packageName = record.packageName
+                packageList = arrayOf(record.packageName)
+                processName = record.processName
                 reason = record.exitReason
                 description = record.exitDescription
-                importance = android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
                 timestamp = System.currentTimeMillis()
+                // Matches the process state currently reported by this host's
+                // getRunningAppProcesses. Stock WPC attachment replaces that state.
+                importance = android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
             })
-            while (processExits.size > 64) processExits.removeLast()
+            HostActivityManagerAccess.died(record.pid, record.binder)
             // Services hosted by the dead process: tell every connection (ActiveServices.killServicesLocked).
             val dead = servicesByComponent.values.filter { it.app === record }
             for (service in dead) {
@@ -734,6 +771,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
     ): ComponentName? {
         service ?: return null
         val callingUid = Binder.getCallingUid()
+        if (callingPackage != null && packageService?.isSameAppInternal(callingPackage, callingUid) != true) {
+            throw SecurityException("uid $callingUid does not own $callingPackage")
+        }
+        addCreatorToken(service, callingPackage)
         val post = synchronized(lock) { doStartLocked(callingUid, service, callingPackage) }
         if (post.status == -1) throw SecurityException("startService denied")
         post.schedule?.invoke()
@@ -832,6 +873,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
         connection ?: return 0
         val flags = flags.toInt()
         val callingUid = Binder.getCallingUid()
+        if (callingPackage != null && packageService?.isSameAppInternal(callingPackage, callingUid) != true) {
+            throw SecurityException("uid $callingUid does not own $callingPackage")
+        }
+        addCreatorToken(service, callingPackage)
         val post = synchronized(lock) {
             val client = caller?.asBinder()?.let { processes[it] } ?: run {
                 Log.w(TAG, "bindService from an unattached process")
@@ -1132,7 +1177,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             ?: android.content.pm.PackageManager.PERMISSION_DENIED
 
     override fun checkPermission(permission: String?, pid: Int, uid: Int): Int =
-        permission?.let { checkUidPermission(it, uid) }
+        permission?.let { HostActivityManagerAccess.checkComponentPermission(it, pid, uid, -1, true) }
             ?: android.content.pm.PackageManager.PERMISSION_DENIED
 
     override fun handleIncomingUser(callingPid: Int, callingUid: Int, userId: Int,
@@ -1430,32 +1475,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
     }
 
-    override fun getHistoricalProcessExitReasons(
-        packageName: String?, pid: Int, maxNum: Int, userId: Int,
-    ): android.content.pm.ParceledListSlice<android.app.ApplicationExitInfo> {
-        checkNotIsolated("getHistoricalProcessExitReasons")
-        require(userId != UserHandle.USER_ALL && userId != UserHandle.USER_CURRENT) { "Unsupported userId" }
-        val packages = checkNotNull(packageService)
-        val permissions = HostedPermissions(packages)
-        val caller = Binder.getCallingUid()
-        if (userId != UserHandle.getUserId(caller) &&
-            !permissions.has(android.Manifest.permission.INTERACT_ACROSS_USERS)) {
-            permissions.enforce(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, "getHistoricalProcessExitReasons")
-        }
-        val uid = if (packageName.isNullOrEmpty()) caller else {
-            val target = if (userId == UserHandle.USER_SYSTEM) packages.getPackageUidInternal(packageName) else -1
-            if (UserHandle.getAppId(target) != UserHandle.getAppId(caller)) {
-                permissions.enforce(android.Manifest.permission.DUMP, "getHistoricalProcessExitReasons")
-            }
-            target
-        }
-        return android.content.pm.ParceledListSlice(synchronized(lock) {
-            processExits.filter { it.packageUid == uid && (pid == 0 || it.pid == pid) &&
-                (packageName.isNullOrEmpty() || it.packageName == packageName) }
-                .let { if (maxNum > 0) it.take(maxNum) else it }
-        })
-    }
-
     override fun getRunningAppProcesses(): MutableList<android.app.ActivityManager.RunningAppProcessInfo?>? =
         synchronized(lock) {
             processes.values.map { p ->
@@ -1495,6 +1514,38 @@ class HostedActivityManagerService(private val context: android.content.Context?
         outInfo.secondaryServerThreshold = 0
         outInfo.visibleAppThreshold = 0
         outInfo.foregroundAppThreshold = 0
+    }
+
+    /** Pinned AMS.getHistoricalProcessExitReasons permission order over host records. */
+    override fun getHistoricalProcessExitReasons(packageName: String?, pid: Int, maxNum: Int,
+        userId: Int): android.content.pm.ParceledListSlice<android.app.ApplicationExitInfo> {
+        val uid = Binder.getCallingUid()
+        if (UserHandle.isIsolated(uid)) throw SecurityException("Isolated process cannot query exit history")
+        require(userId != UserHandle.USER_ALL && userId != UserHandle.USER_CURRENT) { "Unsupported userId" }
+        com.android.server.LocalServices.getService(android.app.ActivityManagerInternal::class.java)
+            .handleIncomingUser(Binder.getCallingPid(), uid, userId, true, android.app.ActivityManagerInternal.ALLOW_NON_FULL,
+                "getHistoricalProcessExitReasons", packageName)
+        val filterUid = if (packageName.isNullOrEmpty()) uid else {
+            val target = packageService?.getPackageUidInternal(packageName) ?: -1
+            if (UserHandle.getAppId(target) != UserHandle.getAppId(uid)) {
+                enforceCallingPermission(android.Manifest.permission.DUMP, "getHistoricalProcessExitReasons")
+            }
+            target
+        }
+        return android.content.pm.ParceledListSlice(synchronized(lock) {
+            processHistory.query(packageName, filterUid, pid, maxNum)
+        })
+    }
+
+    override fun setProcessStateSummary(state: ByteArray?) {
+        require(state == null || state.size <= 128) { "Data size is too large" }
+        val pid = Binder.getCallingPid()
+        val uid = Binder.getCallingUid()
+        synchronized(lock) {
+            processes.values.firstOrNull { it.pid == pid && it.uid == uid }?.let {
+                processHistory.summary(it.binder, state)
+            }
+        }
     }
 
     override fun isUserRunning(userid: Int, flags: Int): Boolean = userid == android.os.UserHandle.USER_SYSTEM
@@ -1577,73 +1628,22 @@ class HostedActivityManagerService(private val context: android.content.Context?
     override fun setRenderThread(tid: Int) {}
     override fun noteAlarmStart(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, tag: String?) {}
     override fun noteAlarmFinish(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, tag: String?) {}
-    /** AOSP AMS URI entry points; the stock local grant service owns permission state. */
+    override fun checkUriPermission(uri: android.net.Uri?, pid: Int, uid: Int, mode: Int, userId: Int, callerToken: IBinder?): Int =
+        uriAccess.check(uri, pid, uid, mode, userId, false)
+    override fun checkContentUriPermissionFull(uri: android.net.Uri?, pid: Int, uid: Int, mode: Int, userId: Int): Int =
+        uriAccess.check(uri, pid, uid, mode, userId, true)
+    override fun checkUriPermissions(uris: MutableList<android.net.Uri?>?, pid: Int, uid: Int, mode: Int, userId: Int, callerToken: IBinder?): IntArray =
+        uriAccess.checkMany(checkNotNull(uris), pid, uid, mode, userId)
+    override fun grantUriPermission(caller: IApplicationThread?, targetPkg: String?, uri: android.net.Uri?, mode: Int, userId: Int) =
+        uriAccess.grant(caller, targetPkg, uri, mode, userId)
+    override fun revokeUriPermission(caller: IApplicationThread?, targetPkg: String?, uri: android.net.Uri?, mode: Int, userId: Int) =
+        uriAccess.revoke(caller, targetPkg, uri, mode, userId)
+
     private fun uriGrants(): com.android.server.uri.UriGrantsManagerInternal =
         checkNotNull(com.android.server.LocalServices.getService(com.android.server.uri.UriGrantsManagerInternal::class.java))
 
-    private fun checkUriAccess(uri: android.net.Uri?, pid: Int, uid: Int, mode: Int, userId: Int,
-                               full: Boolean): Int {
-        if (UserHandle.isIsolated(Binder.getCallingUid())) throw SecurityException("Isolated process cannot check URI permissions")
-        if (pid == android.os.Process.myPid()) return android.content.pm.PackageManager.PERMISSION_GRANTED
-        val granted = uriGrants().checkUriPermission(
-            com.android.server.uri.GrantUri(userId, uri, mode), uid, mode, full)
-        return if (granted) android.content.pm.PackageManager.PERMISSION_GRANTED else android.content.pm.PackageManager.PERMISSION_DENIED
-    }
-
-    override fun checkUriPermission(uri: android.net.Uri?, pid: Int, uid: Int, mode: Int, userId: Int, callerToken: IBinder?): Int =
-        checkUriAccess(uri, pid, uid, mode, userId, false)
-    override fun checkContentUriPermissionFull(uri: android.net.Uri?, pid: Int, uid: Int, mode: Int, userId: Int): Int =
-        checkUriAccess(uri, pid, uid, mode, userId, true)
-    override fun checkUriPermissions(uris: MutableList<android.net.Uri?>?, pid: Int, uid: Int, mode: Int, userId: Int, callerToken: IBinder?): IntArray {
-        val requested = checkNotNull(uris)
-        return IntArray(requested.size) { index ->
-            val uri = requested[index]
-            checkUriAccess(android.content.ContentProvider.getUriWithoutUserId(uri), pid, uid, mode,
-                android.content.ContentProvider.getUserIdFromUri(uri, userId), false)
-        }
-    }
-
-    override fun grantUriPermission(caller: IApplicationThread?, targetPkg: String?, uri: android.net.Uri?, mode: Int, userId: Int) {
-        if (UserHandle.isIsolated(Binder.getCallingUid())) throw SecurityException("Isolated process cannot grant URI permissions")
-        val process = attachedProcess(caller) ?: throw SecurityException("Unable to find app for caller $caller")
-        requireNotNull(targetPkg) { "null target" }
-        com.android.internal.util.Preconditions.checkFlagsArgument(mode, Intent.FLAG_GRANT_READ_URI_PERMISSION or
-            Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
-            Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
-        val intent = Intent().setData(android.content.ContentProvider.maybeAddUserId(uri, userId)).setFlags(mode)
-        val grants = uriGrants()
-        val needed = grants.checkGrantUriPermissionFromIntent(intent, process.uid, targetPkg, UserHandle.getUserId(process.uid))
-        grants.grantUriPermissionUncheckedFromIntent(needed, null)
-    }
-
-    override fun revokeUriPermission(caller: IApplicationThread?, targetPkg: String?, uri: android.net.Uri?, mode: Int, userId: Int) {
-        if (UserHandle.isIsolated(Binder.getCallingUid())) throw SecurityException("Isolated process cannot revoke URI permissions")
-        val process = attachedProcess(caller) ?: throw SecurityException("Unable to find app for caller $caller")
-        if (uri == null || !Intent.isAccessUriMode(mode)) return
-        if (packageService?.resolveContentProvider(uri.authority,
-                (android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AWARE or android.content.pm.PackageManager.MATCH_DIRECT_BOOT_UNAWARE).toLong(), userId) == null) return
-        uriGrants().revokeUriPermission(targetPkg, process.uid, com.android.server.uri.GrantUri(userId, uri, mode), mode)
-    }
-
-    /** AOSP ContentProviderHelper: dynamic URI permissions are checked by the provider itself. */
-    internal fun checkProviderUriPermission(uri: android.net.Uri, userId: Int, callingUid: Int, modeFlags: Int): Int {
-        val identity = Binder.clearCallingIdentity()
-        try {
-            val holder = getContentProvider(null, "android", uri.authority, userId, true)
-                ?: return android.content.pm.PackageManager.PERMISSION_DENIED
-            try {
-                val packageName = packageService?.getPackagesForUid(Binder.getCallingUid())?.firstOrNull()
-                    ?: return android.content.pm.PackageManager.PERMISSION_DENIED
-                return holder.provider.checkUriPermission(android.content.AttributionSource(callingUid, packageName, null),
-                    uri, callingUid, modeFlags)
-            } finally {
-                if (!holder.noReleaseNeeded) removeContentProvider(holder.connection, true)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Unable to check provider URI permission for $uri", e)
-            return android.content.pm.PackageManager.PERMISSION_DENIED
-        } finally { Binder.restoreCallingIdentity(identity) }
-    }
+    internal fun checkProviderUriPermission(uri: android.net.Uri, userId: Int, callingUid: Int, modeFlags: Int): Int =
+        checkProviderUriPermissionFromHost(uri, userId, callingUid, modeFlags)
 
     private companion object {
         const val TAG = "HostedActivityManager"

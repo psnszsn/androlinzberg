@@ -478,6 +478,7 @@ internal class HostedActivityTaskManagerService(
             }
             return ActivityManager.START_SUCCESS
         }
+        ams.addCreatorToken(intent, callingPackage)
         // AOSP ActivityStarter.Request.resolveActivity collects grants before changing the
         // activity graph. UriGrantsManagerService owns URI traversal and access validation.
         val grants = uriGrants()
@@ -1334,6 +1335,10 @@ internal class HostedActivityTaskManagerService(
         }
     }
 
+    private fun taskUidLocked(task: TaskRecord): Int = task.activities.firstOrNull()?.let {
+        packages.getPackageUidInternal(it.info.packageName)
+    } ?: -1
+
     override fun getFocusedRootTaskInfo(): ActivityTaskManager.RootTaskInfo? {
         enforceTaskPermission("getFocusedRootTaskInfo()")
         return synchronized(lock) {
@@ -1505,7 +1510,7 @@ internal class HostedActivityTaskManagerService(
         val top = task.activities.lastOrNull { !it.finishing }
         info.userId = task.userId
         info.taskId = task.taskId
-        info.effectiveUid = task.activities.firstOrNull { !it.finishing }?.let { packages.getPackageUidInternal(it.info.packageName) } ?: -1
+        info.effectiveUid = taskUidLocked(task)
         info.displayId = Display.DEFAULT_DISPLAY
         info.isRunning = top != null
         info.baseIntent = Intent(task.baseIntent).also { if (!keepExtras) it.replaceExtras(null as Bundle?) }

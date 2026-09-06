@@ -152,6 +152,10 @@ fn configureDataRoot(init: std.process.Init) !void {
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    // Session supervisor trampoline: establish child ownership before executing
+    // a service. exec failure becomes EOF on the child's readiness pipe.
+    if (args.len >= 3 and std.mem.eql(u8, args[1], "--service-exec"))
+        return std.process.replace(init.io, .{ .argv = args[2..] });
     try configureDataRoot(init);
 
     var frames_limit: ?u32 = null;
@@ -159,7 +163,7 @@ pub fn main(init: std.process.Init) !void {
     var fullscreen = false;
     var join_dir: ?[]const u8 = null;
     var apk: ?[]const u8 = null;
-    // Hosted Binder session: one broker and one system process per launch;
+    // Hosted Binder session: broker, SurfaceFlinger and system-server per launch;
     // every process started from this one inherits the socket and cookie and
     // joins the same object graph. Joined launches reuse an existing session.
     var binder: ?binder_session.Session = null;
@@ -262,7 +266,7 @@ pub fn main(init: std.process.Init) !void {
     return javaMain(init, frames_limit, apk, fullscreen, if (binder) |*session| session else null);
 }
 
-/// Starts this launch's session (broker + system process) unless one is
+/// Starts this launch's session (broker, compositor, system process) unless one is
 /// inherited (`AZK_BINDER_SOCKET` set) or joined with `--join`, and exports
 /// the socket and app cookie so every child process joins the same session.
 fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_dir: ?[]const u8) !void {
@@ -282,6 +286,7 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
     binder.* = try binder_session.Session.start(init.gpa, init.io, .{
         .broker_exe = broker_exe,
         .launcher_exe = launcher_exe,
+        .surfaceflinger_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-surfaceflinger" }),
         .environ = init.minimal.environ,
     });
     _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);
@@ -372,6 +377,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     try bindPlatformIo(&lib, init.io);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
+    const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
     const framework_jar = try std.fs.path.join(arena, &.{ tree, "framework", "framework.jar" });
     _ = setenv("ARTZIG_FRAMEWORK_JAR", try arena.dupeSentinel(u8, framework_jar, 0), 1);
     if (init.minimal.environ.getPosix("ARTZIG_FRAMEWORK_RES") == null) {
@@ -391,9 +397,11 @@ fn bootHeadless(init: std.process.Init) !Headless {
     });
     errdefer rt.releaseProcessState();
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
-        if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-        try host_natives.register(init.io, @ptrCast(rt.env), hwui);
+        // AndroidRuntime registers properties/Binder before display JNI: native
+        // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
         try registerBinderJni(arena, tree, @ptrCast(rt.env), try lookupProcessExit(&lib));
+        if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
+        try host_natives.register(init.io, @ptrCast(rt.env), hwui, looper_poll);
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -425,6 +433,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     try bindPlatformIo(&lib, init.io);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
+    const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
 
     configureFonts(init);
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
@@ -440,9 +449,11 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     });
     errdefer rt.releaseProcessState();
     if (init.minimal.environ.getPosix("AZK_NO_REG") == null) {
-        if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
-        try host_natives.register(init.io, @ptrCast(rt.env), hwui);
+        // AndroidRuntime registers properties/Binder before display JNI: native
+        // Choreographer lookup initializes DisplayManagerGlobal's sysprop fields.
         try registerBinderJni(arena, tree, @ptrCast(rt.env), try lookupProcessExit(&lib));
+        if (register(@ptrCast(rt.env)) != 0) return error.JniRegistrationFailed;
+        try host_natives.register(init.io, @ptrCast(rt.env), hwui, looper_poll);
     }
     return .{ .rt = rt, .tree = tree };
 }
@@ -520,6 +531,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     try bindPlatformIo(&lib, init.io);
     const register = lib.lookup(RegisterFn, "azk_register_graphics_jni") orelse return error.SymbolNotFound;
     const hwui = try lookupHwuiBridges(&lib);
+    const looper_poll = lib.lookup(host_natives.LooperPollStateFn, "azk_looper_poll_state") orelse return error.SymbolNotFound;
 
     configureFonts(init);
 
@@ -547,9 +559,9 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     // ART boot overlapped with the system process boot; services must be
     // published before any Java runs.
     if (session) |s| try s.awaitSystemReady();
-    if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
-    try host_natives.register(init.io, @ptrCast(env), hwui);
     try registerBinderJni(arena, tree, @ptrCast(env), try lookupProcessExit(&lib));
+    if (register(@ptrCast(env)) != 0) return error.JniRegistrationFailed;
+    try host_natives.register(init.io, @ptrCast(env), hwui, looper_poll);
     defer host_natives.deinitWakeups();
 
     const e = art.Env{ .env = env };
@@ -858,9 +870,11 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
         if (control_server) |*server| {
             wait_timeout_ms = minPollTimeout(wait_timeout_ms, server.waitTimeoutMs());
         }
+        const native_looper = host_natives.looperPollState();
+        wait_timeout_ms = minPollTimeout(wait_timeout_ms, native_looper.timeout_ms);
         const waited = try win.waitEvents(.{
             .video = video_layers.wakeupFd(),
-            .looper = host_natives.looperWakeupFd(),
+            .looper = native_looper.fd,
             .renderer = host_natives.rendererWakeupFd(),
             .optimizer = apk_optimizer.wakeupFd(),
             .control_listener = if (control_server) |*server| server.listenerFd() else null,

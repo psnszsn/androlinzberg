@@ -8,12 +8,12 @@ import android.os.UserManager
 /**
  * The session's user manager over the real `android.os.IUserManager` surface,
  * published as `Context.USER_SERVICE` (source note:
- * `com.android.server.pm.UserManagerService`, reduced to the single always-on
+ * `com.android.server.pm.UserManagerService`, reduced to the single
  * system user 0 — the AOSP class is inseparable from PackageManagerService and
- * per-user storage). Mutating calls are inert and queries answer for the one
- * user; that is the truthful single-user answer, not a stub gap.
+ * per-user storage). Runtime state comes from the same stock UserState as the
+ * local service and SystemServiceManager boot callbacks.
  */
-class HostedUserManagerService : IUserManager.Stub() {
+internal class HostedUserManagerService(private val lifecycle: HostedUserLifecycle) : IUserManager.Stub() {
     private fun user(): UserInfo = UserInfo(
         UserHandle.USER_SYSTEM,
         "host",
@@ -44,8 +44,12 @@ class HostedUserManagerService : IUserManager.Stub() {
     override fun getCommunalProfileId(): Int = 0
     override fun getPreviousFullUserToEnterForeground(): Int = 0
     override fun getUsers(excludePartial: Boolean, excludeDying: Boolean, excludePreCreated: Boolean): MutableList<android.content.pm.UserInfo?>? = mutableListOf(user())
-    override fun getProfiles(userId: Int, enabledOnly: Boolean): MutableList<android.content.pm.UserInfo?>? = mutableListOf(user())
-    override fun getProfileIds(userId: Int, enabledOnly: Boolean): IntArray? = intArrayOf(UserHandle.USER_SYSTEM)
+    // Pinned getProfilesLU/getProfileIdsLU include the queried user, but an
+    // unknown user has no profile group. The single hosted user is enabled.
+    override fun getProfiles(userId: Int, enabledOnly: Boolean): MutableList<android.content.pm.UserInfo?> =
+        if (userId == UserHandle.USER_SYSTEM) mutableListOf(user()) else mutableListOf()
+    override fun getProfileIds(userId: Int, enabledOnly: Boolean): IntArray =
+        if (userId == UserHandle.USER_SYSTEM) intArrayOf(UserHandle.USER_SYSTEM) else intArrayOf()
     override fun isUserTypeEnabled(userType: String?): Boolean = false
     override fun canAddMoreUsersOfType(userType: String?): Boolean = false
     override fun getRemainingCreatableUserCount(userType: String?): Int = 0
@@ -99,12 +103,13 @@ class HostedUserManagerService : IUserManager.Stub() {
     override fun clearSeedAccountData(userId: Int) {}
     override fun someUserHasSeedAccount(accountName: String?, accountType: String?): Boolean = false
     override fun someUserHasAccount(accountName: String?, accountType: String?): Boolean = false
-    override fun getProfileType(userId: Int): String? = null
+    // Pinned getProfileType distinguishes a full user (empty) from an absent one (null).
+    override fun getProfileType(userId: Int): String? = if (userId == UserHandle.USER_SYSTEM) "" else null
     override fun isDemoUser(userId: Int): Boolean = false
     override fun isAdminUser(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
     override fun isPreCreated(userId: Int): Boolean = false
     override fun createProfileForUserEvenWhenDisallowedWithThrow(name: String?, userType: String?, flags: Int, userId: Int, disallowedPackages: Array<String?>?): android.content.pm.UserInfo? = null
-    override fun isUserUnlockingOrUnlocked(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
+    override fun isUserUnlockingOrUnlocked(userId: Int): Boolean = lifecycle.isUnlockingOrUnlocked(userId)
     override fun getUserIconBadgeResId(userId: Int): Int = 0
     override fun getUserBadgeResId(userId: Int): Int = 0
     override fun getUserBadgeNoBackgroundResId(userId: Int): Int = 0
@@ -115,13 +120,13 @@ class HostedUserManagerService : IUserManager.Stub() {
     override fun hasBadge(userId: Int): Boolean = false
     override fun getProfileLabelResId(userId: Int): Int = 0
     override fun getProfileAccessibilityLabelResId(userId: Int): Int = 0
-    override fun isUserUnlocked(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
-    override fun isUserRunning(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
-    override fun isUserForeground(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
-    override fun isUserVisible(userId: Int): Boolean = false
-    override fun getVisibleUsers(): IntArray? = null
+    override fun isUserUnlocked(userId: Int): Boolean = lifecycle.isUnlocked(userId)
+    override fun isUserRunning(userId: Int): Boolean = lifecycle.isRunning(userId)
+    override fun isUserForeground(userId: Int): Boolean = lifecycle.isRunning(userId)
+    override fun isUserVisible(userId: Int): Boolean = lifecycle.isRunning(userId)
+    override fun getVisibleUsers(): IntArray = if (lifecycle.isRunning(0)) intArrayOf(0) else intArrayOf()
     override fun getMainDisplayIdAssignedToUser(userId: Int): Int = 0
-    override fun isForegroundUserAdmin(): Boolean = false
+    override fun isForegroundUserAdmin(): Boolean = lifecycle.isRunning(0)
     override fun isUserNameSet(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
     override fun hasRestrictedProfiles(userId: Int): Boolean = false
     override fun requestQuietModeEnabled(callingPackage: String?, enableQuietMode: Boolean, userId: Int, target: android.content.IntentSender?, flags: Int): Boolean = false
@@ -131,5 +136,5 @@ class HostedUserManagerService : IUserManager.Stub() {
     override fun setUserEphemeral(userId: Int, enableEphemeral: Boolean): Boolean = false
     override fun setBootUser(userId: Int) {}
     override fun getBootUser(): Int = 0
-    override fun getProfileIdsExcludingHidden(userId: Int, enabledOnly: Boolean): IntArray? = intArrayOf(UserHandle.USER_SYSTEM)
+    override fun getProfileIdsExcludingHidden(userId: Int, enabledOnly: Boolean): IntArray = getProfileIds(userId, enabledOnly)
 }

@@ -33,8 +33,10 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
                 "return packages.getNameForUid(p0);"
             name == "resolveContentProvider" && params == listOf("java.lang.String", "long", "int", "int") ->
                 "return packages.resolveContentProviderForUid(p0, p1, p2, p3);"
-            // All installed packages are already visible (filterAppAccess=false); an implicit
-            // AppsFilter grant therefore changes no lookup result in the hosted package service.
+            // The host currently has no package-visibility filtering (see the
+            // filterAppAccess/canQueryPackage cases below). An implicit query
+            // visibility grant adds no access under that policy; URI access
+            // itself is enforced by the stock UriGrantsManagerService.
             name == "grantImplicitAccess" -> "return;"
             name == "getPackage" && params == listOf("java.lang.String") -> "return packages.getPackage(p0);"
             name == "getPackageStateInternal" && params == listOf("java.lang.String") -> "return packages.getPackageStateInternal(p0);"
@@ -44,6 +46,10 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
             name == "removePackageListObserver" -> "packages.removePackageListObserverInternal(p0);"
             name == "isInstantApp" -> "return false;" // No instant-app install path in this session.
             name == "setExternalSourcesPolicy" -> "packages.setExternalSourcesPolicy(p0);"
+            name == "checkUidSignaturesForAllUsers" && params == listOf("int", "int") ->
+                "return packages.checkUidSignatures(p0, p1);"
+            name == "isUidPrivileged" && params == listOf("int") ->
+                "return packages.isUidPrivileged(p0);"
             name == "snapshot" && params.isEmpty() -> "return packages;"
             name == "filterAppAccess" -> "return false;"
             name == "canQueryPackage" -> "return true;"

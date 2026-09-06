@@ -33,6 +33,10 @@ pub fn build(b: *std.Build) void {
     build_tools_test.dependOn(&aosp_closure_tests.step);
     const doc_header_tests = b.addSystemCommand(&.{ "python3", "-B", "tools/test_javadoc_headers.py" });
     build_tools_test.dependOn(&doc_header_tests.step);
+    const native_runner_tests = b.addSystemCommand(&.{ "python3", "-B" });
+    native_runner_tests.addFileArg(b.path("tools/test_binder_facade_runner.py"));
+    native_runner_tests.addFileInput(b.path("tools/binder-facade-test.py"));
+    build_tools_test.dependOn(&native_runner_tests.step);
     const audit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tools/build-audit.zig"),
@@ -241,6 +245,8 @@ pub fn build(b: *std.Build) void {
         .protobuf = protobuf.library,
         .protoc = protobuf.protoc,
     });
+    b.step("sysprop-cpp-tool", "Build the AOSP native sysprop generator")
+        .dependOn(&b.addInstallArtifact(sysprop_cpp_tool, .{}).step);
 
     // --- protoc-gen-javastream: the AOSP protoc plugin that emits the framework
     // *Proto stream classes, built from packaged source against libprotoc.
@@ -264,6 +270,7 @@ pub fn build(b: *std.Build) void {
         .dependOn(&b.addInstallArtifact(javanano_tool, .{}).step);
 
     const generated = @import("build/generators.zig").build(b, .{
+        .perfetto_headers = perfetto.headers,
         .aosp = aosp_dep,
         .protobuf = protobuf.library,
         .protoc = protobuf.protoc,
@@ -304,6 +311,206 @@ pub fn build(b: *std.Build) void {
 
     const binder_cpp = @import("build/binder_cpp.zig").build(b, target, optimize, aosp, binder_ndk);
     b.step("binder-cpp", "Build the hosted C++ libbinder facade").dependOn(&binder_cpp.step);
+    const graphics = @import("build/graphics.zig").build(b, target, optimize, aosp, generated.native.gui);
+    const gui_host = graphics.gui;
+    const input_transport = @import("build/input.zig").build(b, target, aosp, generated.native.gui, generated.native.input, generated.native.aidl_header_roots, gui_host, binder_cpp, binder_ndk, binder_broker);
+    const renderengine = @import("build/renderengine.zig").build(b, target, aosp, generated.native.gui, generated.native.renderengine, gui_host, skia_lib);
+    b.step("renderengine", "Compile pinned GL/Ganesh RenderEngine over host graphics").dependOn(&renderengine.step);
+    const renderengine_test = b.addExecutable(.{ .name = "renderengine-test", .root_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+    }) });
+    @import("build/renderengine.zig").configure(b, renderengine_test.root_module, aosp, generated.native.gui, generated.native.renderengine);
+    var renderengine_test_flags: std.ArrayList([]const u8) = .empty;
+    renderengine_test_flags.appendSlice(b.allocator, @import("build/renderengine.zig").cppFlags(b)) catch @panic("oom");
+    renderengine_test_flags.append(b.allocator, "-UNDEBUG") catch @panic("oom");
+    renderengine_test.root_module.addCSourceFile(.{ .file = b.path("tests/native/RenderEngineTest.cpp"), .flags = renderengine_test_flags.items });
+    renderengine_test.root_module.linkLibrary(renderengine);
+    renderengine_test.root_module.linkLibrary(binder_cpp);
+    renderengine_test.root_module.linkLibrary(binder_ndk);
+    const renderengine_run = @import("build/command.zig").create(b);
+    renderengine_run.addFileArg(renderengine_test.getEmittedBin());
+    renderengine_run.run.has_side_effects = true;
+    renderengine_run.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    const renderengine_log = b.addInstallFileWithDir(renderengine_run.run.captureStdOut(.{}), .prefix, "test-results/renderengine/run.log");
+    const renderengine_errors = b.addInstallFileWithDir(renderengine_run.run.captureStdErr(.{}), .prefix, "test-results/renderengine/renderer.log");
+    const renderengine_check = b.step("renderengine-test", "Verify pinned GPU composition and buffer ownership");
+    renderengine_check.dependOn(&renderengine_log.step);
+    renderengine_check.dependOn(&renderengine_errors.step);
+    const sf = @import("build/surfaceflinger.zig");
+    const perfetto_build = @import("build/perfetto.zig");
+    const dispatcher_options: @import("build/input_dispatcher.zig").Options = .{
+        .target = target,
+        .aosp = aosp,
+        .gui = generated.native.gui,
+        .input_generated = generated.native.input,
+        .aidl = generated.native.aidl_header_roots,
+        .generated = generated.native.input_dispatcher,
+        .perfetto_generated = generated.native.perfetto,
+        .transport = input_transport,
+        .perfetto = perfetto.sdk,
+        .protobuf = protobuf.library,
+        .binder = binder_cpp,
+        .ndk = binder_ndk,
+        .broker = binder_broker,
+    };
+    const input_dispatcher = @import("build/input_dispatcher.zig").build(b, dispatcher_options);
+    const perfetto_test_mod = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    perfetto_build.configure(b, perfetto_test_mod, aosp, generated.native.perfetto);
+    perfetto_test_mod.addCSourceFile(.{ .file = b.path("tests/native/PerfettoTest.cpp"), .flags = perfetto_build.cpp_flags });
+    perfetto_test_mod.linkLibrary(perfetto.sdk);
+    const perfetto_test = b.addExecutable(.{ .name = "perfetto-test", .root_module = perfetto_test_mod });
+    const perfetto_run = b.addRunArtifact(perfetto_test);
+    perfetto_run.has_side_effects = true;
+    const perfetto_log = b.addInstallFileWithDir(perfetto_run.captureStdOut(.{}), .prefix, "test-results/perfetto/run.log");
+    b.step("perfetto-test", "Verify pinned tracing sessions and generated frame packet ABI").dependOn(&perfetto_log.step);
+    const sf_frontend = sf.build(b, target, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger, renderengine);
+    b.step("surfaceflinger-frontend", "Compile pinned SurfaceFlinger layer state and composition preparation").dependOn(&sf_frontend.step);
+    const host_composer = sf.buildHostComposer(b, target, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger);
+    b.step("host-composer", "Compile host GPU composer and software display clock").dependOn(&host_composer.step);
+    const host_composer_test = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    sf.configure(b, host_composer_test, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger);
+    var host_composer_flags: std.ArrayList([]const u8) = .empty;
+    host_composer_flags.appendSlice(b.allocator, sf.cppFlags(b)) catch @panic("oom");
+    host_composer_flags.append(b.allocator, "-UNDEBUG") catch @panic("oom");
+    host_composer_test.addCSourceFile(.{ .file = b.path("tests/native/HostComposerTest.cpp"), .flags = host_composer_flags.items });
+    host_composer_test.linkLibrary(host_composer);
+    host_composer_test.linkLibrary(renderengine);
+    host_composer_test.linkLibrary(binder_cpp);
+    host_composer_test.linkLibrary(binder_ndk);
+    sf.runTest(b, host_composer_test, binder_cpp, binder_ndk, binder_broker, "host-composer", "Verify host composer state, GPU target ownership and software vsync lifetime", .standalone, null);
+    const sf_core = sf.buildServiceCore(b, target, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger, sf_frontend, perfetto.sdk, protobuf.library);
+    b.step("surfaceflinger-core", "Compile pinned SurfaceFlinger scheduling and composition service core").dependOn(&sf_core.step);
+    const sf_service_mod = b.createModule(.{ .root_source_file = b.path("src/surfaceflinger_main.zig"), .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    sf_service_mod.linkLibrary(sf_core);
+    sf_service_mod.linkLibrary(host_composer);
+    sf_service_mod.linkLibrary(binder_cpp);
+    sf_service_mod.linkLibrary(binder_ndk);
+    sf_service_mod.addRPathSpecial("$ORIGIN/../lib/art");
+    const sf_service = b.addExecutable(.{ .name = "azk-surfaceflinger", .root_module = sf_service_mod });
+    @import("build/input_dispatcher.zig").testSurfaceFlinger(b, dispatcher_options, input_dispatcher, sf_service);
+    const sf_install = b.addInstallArtifact(sf_service, .{});
+    b.step("surfaceflinger", "Install the supervised hosted SurfaceFlinger process").dependOn(&sf_install.step);
+    const sf_service_test = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    sf.configure(b, sf_service_test, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger);
+    sf_service_test.addCSourceFile(.{ .file = b.path("tests/native/SurfaceFlingerServiceTest.cpp"), .flags = host_composer_flags.items });
+    sf_service_test.linkLibrary(gui_host);
+    sf_service_test.linkLibrary(binder_cpp);
+    sf_service_test.linkLibrary(binder_ndk);
+    sf.runTest(b, sf_service_test, binder_cpp, binder_ndk, binder_broker, "surfaceflinger-service", "Verify hosted SF publication, committed transactions, permissions and service death", .application, sf_service);
+
+    const sf_output_test = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true, .link_libcpp = true });
+    sf.configure(b, sf_output_test, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger);
+    sf_output_test.addCSourceFile(.{ .file = b.path("tests/native/SurfaceFlingerOutputTest.cpp"), .flags = host_composer_flags.items });
+    sf_output_test.linkLibrary(renderengine);
+    sf_output_test.linkLibrary(binder_cpp);
+    sf_output_test.linkLibrary(binder_ndk);
+    sf.runTest(b, sf_output_test, binder_cpp, binder_ndk, binder_broker, "surfaceflinger-output", "Verify running SF mirrored subtrees through independent GPU output queues", .system, sf_service);
+
+    for ([_]bool{ false, true }) |gpu_test|
+        sf.testTarget(b, target, aosp, generated.native.gui, generated.native.renderengine, generated.native.surfaceflinger, sf_frontend, binder_cpp, binder_ndk, binder_broker, gpu_test);
+    b.step("ui", "Compile pinned GraphicBuffer/AHardwareBuffer over host GBM").dependOn(&graphics.ui.step);
+    b.step("gui", "Compile pinned BufferQueue/Surface with the host gralloc backend").dependOn(&gui_host.step);
+    const gui_test = b.addExecutable(.{ .name = "bufferqueue-test", .root_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+    }) });
+    @import("build/graphics.zig").configure(b, gui_test.root_module, aosp, generated.native.gui);
+    gui_test.root_module.addCSourceFile(.{ .file = b.path("tests/native/BufferQueueTest.cpp"), .flags = &.{
+        "-std=c++23", "-fno-rtti", "-fno-exceptions", "-UNDEBUG", "-Wno-invalid-specialization", "-Wno-inconsistent-missing-override", "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}),
+    } });
+    gui_test.root_module.linkLibrary(gui_host);
+    gui_test.root_module.linkLibrary(binder_cpp);
+    gui_test.root_module.linkLibrary(binder_ndk);
+    gui_test.root_module.linkSystemLibrary("GLESv2", .{});
+    const gui_run = b.addSystemCommand(&.{"python3"});
+    gui_run.addFileArg(b.path("tools/binder-facade-test.py"));
+    gui_run.addArg("--probe");
+    gui_run.addArtifactArg(gui_test);
+    gui_run.addArg("--library");
+    gui_run.addArtifactArg(binder_cpp);
+    gui_run.addArg("--library");
+    gui_run.addArtifactArg(binder_ndk);
+    gui_run.addArg("--broker");
+    gui_run.addArtifactArg(binder_broker);
+    gui_run.addArgs(&.{ "--output", b.pathResolve(&.{"zig-out/test-results/bufferqueue"}) });
+    gui_run.addArg("--producer-crash");
+    gui_run.has_side_effects = true;
+    b.step("gui-test", "Exercise stock BufferQueue and host GBM allocation across AZKB (requires GPU)").dependOn(&gui_run.step);
+    const surface_queue_mod = b.createModule(.{
+        .root_source_file = b.path("src/platform/surface_queue.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "wayland", .module = wayland_mod }},
+    });
+    @import("build/graphics.zig").configure(b, surface_queue_mod, aosp, generated.native.gui);
+    const surface_server = b.addExecutable(.{ .name = "wayland-surface-server", .root_module = b.createModule(.{
+        .root_source_file = b.path("tests/native/wayland_surface_server.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+        .imports = &.{.{ .name = "surface_queue", .module = surface_queue_mod }},
+    }) });
+    surface_server.root_module.linkLibrary(gui_host);
+    surface_server.root_module.linkLibrary(binder_cpp);
+    surface_server.root_module.linkLibrary(binder_ndk);
+    surface_server.root_module.linkSystemLibrary("wayland-client", .{});
+    surface_server.root_module.linkSystemLibrary("xkbcommon", .{});
+    const surface_producer = b.addExecutable(.{ .name = "wayland-surface-producer", .root_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+    }) });
+    @import("build/graphics.zig").configure(b, surface_producer.root_module, aosp, generated.native.gui);
+    surface_producer.root_module.addCSourceFile(.{ .file = b.path("tests/native/WaylandSurfaceProducer.cpp"), .flags = &.{
+        "-std=c++23", "-fno-rtti", "-fno-exceptions", "-UNDEBUG", "-Wno-invalid-specialization", "-Wno-inconsistent-missing-override", "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}),
+    } });
+    surface_producer.root_module.linkLibrary(gui_host);
+    surface_producer.root_module.linkLibrary(binder_cpp);
+    surface_producer.root_module.linkLibrary(binder_ndk);
+    const surface_test_step = b.step("surface-wayland-test", "Present stock Surface frames in Cage and verify resize, teardown and peer loss");
+    var previous_surface_run: ?*std.Build.Step = null;
+    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure" }) |scenario| {
+        const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
+        const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
+        surface_run.addFileArg(b.path("tools/shot.sh"));
+        surface_run.addArgs(&.{ b.pathResolve(&.{ output, "screenshot.png" }), "--runner", "--", "python3" });
+        surface_run.addFileArg(b.path("tests/native/wayland-surface-test.py"));
+        surface_run.addArg("--broker");
+        surface_run.addArtifactArg(binder_broker);
+        surface_run.addArg("--server");
+        surface_run.addArtifactArg(surface_server);
+        surface_run.addArg("--producer");
+        surface_run.addArtifactArg(surface_producer);
+        surface_run.addArg("--library");
+        surface_run.addArtifactArg(binder_cpp);
+        surface_run.addArg("--library");
+        surface_run.addArtifactArg(binder_ndk);
+        surface_run.addArgs(&.{ "--output", output });
+        surface_run.has_side_effects = true;
+        surface_run.addArgs(&.{ "--scenario", scenario });
+        if (previous_surface_run) |previous| surface_run.step.dependOn(previous);
+        previous_surface_run = &surface_run.step;
+        surface_test_step.dependOn(&surface_run.step);
+    }
+    const graphics_buffer_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/platform/graphics_buffer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    graphics_buffer_tests.root_module.linkSystemLibrary("gbm", .{});
+    graphics_buffer_tests.root_module.linkSystemLibrary("EGL", .{});
+    graphics_buffer_tests.root_module.linkLibrary(binder_cpp);
+    graphics_buffer_tests.root_module.linkLibrary(binder_ndk);
+    b.step("graphics-buffer-test", "Check host graphics handle validation without a GPU")
+        .dependOn(&b.addRunArtifact(graphics_buffer_tests).step);
 
     const facade_test = b.addExecutable(.{ .name = "binder-facade-test", .root_module = b.createModule(.{
         .target = target,
@@ -355,7 +562,15 @@ pub fn build(b: *std.Build) void {
         .skia = skia_lib,
         .binder_ndk = binder_ndk,
         .binder_cpp = binder_cpp,
+        .ui = graphics.ui,
+        .gui = gui_host,
+        .input = input_transport,
+        .input_dispatcher = input_dispatcher,
+        .input_dispatcher_jni = @import("build/input_dispatcher.zig").buildJni(b, dispatcher_options),
         .perfetto = perfetto,
+        .protobuf = protobuf.library,
+        .input_headers = generated.native.input.headers,
+        .graphics_headers = generated.native.gui.headers,
         .art = art_mod,
         .aidl_header_roots = generated.native.aidl_header_roots,
         .aidl_source_roots = generated.native.aidl_source_roots,
@@ -392,6 +607,7 @@ pub fn build(b: *std.Build) void {
         .source_audit = &jvm_source_audit.step,
     });
     const testkit = @import("build/testkit.zig").build(b, aosp_dep);
+    const window_fixture = @import("build/window_fixtures.zig").build(b, aosp_dep, java);
     const testkit_jars = testkit.jars.all();
     const testkit_bundle = b.addWriteFiles();
     inline for (.{
@@ -548,11 +764,6 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/platform/message_queue.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "art", .module = art_mod },
-            .{ .name = "event_fd", .module = event_fd_mod },
-        },
     });
     const apk_optimizer_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/apk_optimizer.zig"),
@@ -653,6 +864,7 @@ pub fn build(b: *std.Build) void {
     const application_tree = @import("build/application.zig").build(b, .{
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
+        .surfaceflinger = sf_service.getEmittedBin(),
         .island = island.file,
         .idmap2 = idmap2.file,
         .stats_jni = stats_jni.getEmittedBin(),
@@ -684,6 +896,14 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "",
     }).step);
 
+    const session_test = b.addExecutable(.{
+        .name = "azk-session-test",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/binder/session_test.zig"), .target = target, .optimize = .Debug }),
+    });
+    const session_test_run = b.addRunArtifact(session_test);
+    session_test_run.addArg("--test");
+    session_test_run.has_side_effects = true;
+    b.step("session-test", "Verify service startup ordering, failures, deadlines and teardown").dependOn(&session_test_run.step);
     const binder_test_driver = b.addExecutable(.{
         .name = "azk-binder-test",
         .root_module = b.createModule(.{
@@ -757,6 +977,15 @@ pub fn build(b: *std.Build) void {
     b.step("egl-test", "Test EGL offscreen rendering and surface lifetime").dependOn(&run_egl_backend_tests.step);
     native_test_step.dependOn(&run_egl_backend_tests.step);
     native_test_step.dependOn(&run_process_memory_tests.step);
+    native_test_step.dependOn(&session_test_run.step);
+    const proc_parser_test = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/binder/proc_parser.zig"),
+        .target = target,
+        .optimize = .Debug,
+    }) });
+    const proc_parser_run = b.addRunArtifact(proc_parser_test);
+    b.step("proc-parser-test", "Verify AOSP process numeric parsing").dependOn(&proc_parser_run.step);
+    native_test_step.dependOn(&proc_parser_run.step);
     native_test_step.dependOn(&run_audio_tests.step);
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
@@ -783,6 +1012,105 @@ pub fn build(b: *std.Build) void {
     jvm_test_run.run.setName("run JVM integration tests");
     const jvm_test_step = b.step("jvm-test", "Run JVM and Kotlin class-loading integration tests");
     jvm_test_step.dependOn(&jvm_test_run.run.step);
+    @import("build/task_shell.zig").addGeometryTests(b, aosp_dep, jvm_test_step);
+    const intent_policy = @import("build/command.zig").create(b);
+    setApplicationEnvironment(intent_policy, application_tree);
+    intent_policy.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    intent_policy.addArg("--javatest");
+    intent_policy.setEnvironment("AZK_TEST_CLASS", "dev.artzig.IntentFirewallSmoke");
+    intent_policy.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    _ = intent_policy.setOutputDirectoryEnvironment("ARTZIG_DATA_DIR", "intent-policy-data");
+    intent_policy.run.setName("verify pinned intent policy and Linux file observation");
+    intent_policy.run.has_side_effects = true;
+    b.step("intent-policy-test", "Verify stock intent matching and live policy reload").dependOn(&intent_policy.run.step);
+    jvm_test_step.dependOn(&intent_policy.run.step);
+    const activity_options = @import("build/command.zig").create(b);
+    setApplicationEnvironment(activity_options, application_tree);
+    activity_options.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    activity_options.addArg("--javatest");
+    activity_options.setEnvironment("AZK_TEST_CLASS", "dev.artzig.ActivityOptionsSmoke");
+    activity_options.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    activity_options.run.setName("verify stock launch options, transition input and splash listener ownership");
+    b.step("activity-options-test", "Verify stock launch options and transition input semantics").dependOn(&activity_options.run.step);
+    jvm_test_step.dependOn(&activity_options.run.step);
+
+    const buffer_jni_test = @import("build/buffer_jni.zig").testLibrary(b, target, aosp, generated.native.gui, binder_cpp, binder_ndk, island.file);
+    const task_output = @import("build/command.zig").create(b);
+    setApplicationEnvironment(task_output, application_tree);
+    task_output.addArg("python3");
+    task_output.addFileArg(b.path("tools/binder-facade-test.py"));
+    task_output.addArgs(&.{ "--system-client", "--server" });
+    task_output.addFileArg(sf_service.getEmittedBin());
+    task_output.addArg("--broker");
+    task_output.addFileArg(binder_broker.getEmittedBin());
+    // Java registration and C++ DT_NEEDED must load the same installed runtime.
+    task_output.addArg("--library");
+    task_output.addFileArg(application_tree.path(b, "lib/art/libbinder.so"));
+    task_output.addArg("--library");
+    task_output.addFileArg(application_tree.path(b, "lib/art/libbinder_ndk.so"));
+    task_output.addArg("--probe");
+    task_output.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    task_output.addArg("--probe-arg=--javatest");
+    task_output.addPrefixedFileArg("--probe-file-arg=", buffer_jni_test.getEmittedBin());
+    task_output.addArg("--probe-arg=--task-outputs");
+    task_output.setEnvironment("AZK_TEST_CLASS", "dev.artzig.SurfaceBufferSmoke");
+    task_output.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    task_output.addArg("--output");
+    const task_output_results = task_output.addOutputDirectoryArg("task-output-jvm");
+    task_output.run.has_side_effects = true;
+    const task_output_install = b.addInstallDirectory(.{ .source_dir = task_output_results, .install_dir = .prefix, .install_subdir = "test-results/task-output-jvm" });
+    b.step("task-output-jvm-test", "Verify private task output composition through stock Java/JNI and SF death").dependOn(&task_output_install.step);
+    b.step("input-dispatcher-jvm-test", "Verify Java policy and receiver delivery from SF-published geometry").dependOn(&task_output_install.step);
+    jvm_test_step.dependOn(&task_output_install.step);
+    const buffer_jvm = @import("build/command.zig").create(b);
+    setApplicationEnvironment(buffer_jvm, application_tree);
+    buffer_jvm.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    buffer_jvm.addArg("--javatest");
+    buffer_jvm.addFileArg(buffer_jni_test.getEmittedBin());
+    buffer_jvm.setEnvironment("AZK_TEST_CLASS", "dev.artzig.BufferJniSmoke");
+    buffer_jvm.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    buffer_jvm.run.setName("verify stock Java buffer ownership, pixels and fences");
+    buffer_jvm.run.has_side_effects = true;
+    const buffer_jvm_log = b.addInstallFileWithDir(buffer_jvm.run.captureStdOut(.{}), .prefix, "test-results/buffer-jvm/run.log");
+    b.step("buffer-jvm-test", "Verify stock GraphicBuffer, HardwareBuffer and SyncFence JNI").dependOn(&buffer_jvm_log.step);
+    b.step("image-queue-jvm-test", "Verify stock image queues, ownership transfer and transition luminance").dependOn(&buffer_jvm_log.step);
+    const texture_jvm = @import("build/command.zig").create(b);
+    setApplicationEnvironment(texture_jvm, application_tree);
+    texture_jvm.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    texture_jvm.addArg("--javatest");
+    texture_jvm.addFileArg(buffer_jni_test.getEmittedBin());
+    texture_jvm.setEnvironment("AZK_TEST_CLASS", "dev.artzig.SurfaceBufferSmoke");
+    texture_jvm.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    texture_jvm.run.setName("verify Surface queues and native scheduling alongside Wayland owner pacing");
+    texture_jvm.run.has_side_effects = true;
+    const texture_jvm_log = b.addInstallFileWithDir(texture_jvm.run.captureStdOut(.{}), .prefix, "test-results/surface-buffer-jvm/run.log");
+    b.step("surface-buffer-jvm-test", "Verify stock Surface queues, private task outputs and JNI lifetimes").dependOn(&texture_jvm_log.step);
+    const surface_jvm = @import("build/command.zig").create(b);
+    setApplicationEnvironment(surface_jvm, application_tree);
+    surface_jvm.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    surface_jvm.addArg("--javatest");
+    surface_jvm.setEnvironment("AZK_TEST_CLASS", "dev.artzig.SurfaceClientSmoke");
+    surface_jvm.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    surface_jvm.run.setName("verify stock Java surface clients and frame dispatch through SF");
+    surface_jvm.run.has_side_effects = true;
+    const surface_jvm_log = b.addInstallFileWithDir(surface_jvm.run.captureStdOut(.{}), .prefix, "test-results/surface-client-jvm/run.log");
+    const surface_jvm_step = b.step("surface-client-jvm-test", "Verify stock SurfaceControl transactions, ownership and vsync");
+    surface_jvm_step.dependOn(&surface_jvm_log.step);
+    jvm_test_step.dependOn(surface_jvm_step);
+    const input_handle_test = @import("build/input_jni.zig").testLibrary(b, target, aosp, generated.native.gui, binder_cpp, binder_ndk, island.file);
+    const input_channel_jvm = @import("build/command.zig").create(b);
+    setApplicationEnvironment(input_channel_jvm, application_tree);
+    input_channel_jvm.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    input_channel_jvm.addArg("--javatest");
+    input_channel_jvm.addFileArg(input_handle_test.getEmittedBin());
+    input_channel_jvm.setEnvironment("AZK_TEST_CLASS", "dev.artzig.InputChannelSmoke");
+    input_channel_jvm.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    input_channel_jvm.run.setName("verify stock input channels, event JNI and MessageQueue callbacks");
+    input_channel_jvm.run.has_side_effects = true;
+    const input_channel_log = b.addInstallFileWithDir(input_channel_jvm.run.captureStdOut(.{}), .prefix, "test-results/input-channel-jvm/run.log");
+    const input_channel_jvm_step = b.step("input-channel-jvm-test", "Verify stock input JNI, Binder identity, Parcel, event callbacks and Looper");
+    input_channel_jvm_step.dependOn(&input_channel_log.step);
+    jvm_test_step.dependOn(input_channel_jvm_step);
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -799,6 +1127,7 @@ pub fn build(b: *std.Build) void {
     // to wayland-0).
     framework_module_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_module_smoke.run.setName("run hosted framework module tests");
+    b.step("framework-module-test", "Test stock framework values and hosted service contracts").dependOn(&framework_module_smoke.run.step);
     jvm_test_step.dependOn(&framework_module_smoke.run.step);
     const webview_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(webview_smoke, application_tree);
@@ -904,7 +1233,8 @@ pub fn build(b: *std.Build) void {
     // Through the wrapper, not Step.Run.setEnvironmentVariable: the harness must
     // inherit the invoking shell's live environment (Mesa for Cage, the APK paths).
     integration_run.setEnvironment("WLR_RENDERER", "gles2");
-    integration_run.setEnvironment("AZK_APK_REGISTRY", "tests/apks.json");
+    integration_run.setFileEnvironment("AZK_APK_REGISTRY", window_fixture.registry);
+    integration_run.setFileEnvironment("AZK_APK_WINDOW_FIXTURE", window_fixture.apk);
     integration_run.setEnvironment("AZK_ARTIFACT_ROOT", "zig-out/test-results/integration");
     integration_run.setEnvironment("AZK_SHARED_CACHE", "zig-out/test-cache/integration");
     integration_run.addArg("bash");

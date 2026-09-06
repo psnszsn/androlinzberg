@@ -11,6 +11,7 @@ const jni = art.jni;
 const ndk = @import("ndk.zig");
 const prop_area = @import("prop_area.zig");
 comptime { _ = @import("native_properties.zig"); }
+const proc_parser = @import("proc_parser.zig");
 
 const JNIEnvPtr = [*c]jni.JNIEnv;
 const alloc = std.heap.c_allocator;
@@ -48,6 +49,23 @@ pub fn props() ?*const prop_area.Reader {
         3 => return null,
         else => std.atomic.spinLoopHint(),
     };
+}
+
+// Native libbase clients share the same property area as SystemProperties.
+// The callback borrows one consistent snapshot for the duration of this call.
+pub export fn azk_property_read(name: [*:0]const u8, callback: *const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void, context: ?*anyopaque) callconv(.c) bool {
+    const reader = props() orelse return false;
+    var buffer: [prop_area.long_value_max]u8 = undefined;
+    const value = reader.get(std.mem.span(name), &buffer) orelse return false;
+    callback(context, value.ptr, value.len);
+    return true;
+}
+
+pub export fn azk_property_write(name: [*:0]const u8, value: [*:0]const u8) callconv(.c) bool {
+    const key = std.mem.span(name);
+    const bytes = std.mem.span(value);
+    if (key.len == 0 or key.len >= prop_area.name_max or bytes.len >= prop_area.long_value_max) return false;
+    return ndk.setSystemProperty(key, bytes) == .ok;
 }
 
 fn readHandle(handle: i64, buf: *[prop_area.long_value_max]u8) ?[]const u8 {
@@ -489,18 +507,27 @@ fn procGetSchedAffinity(env: JNIEnvPtr, _: jni.jclass, tid: jni.jint) callconv(.
 }
 fn procGetThreadScheduler(env: JNIEnvPtr, _: jni.jclass, tid: jni.jint) callconv(.c) jni.jint {
     const rc = linux.sched_getscheduler(tid);
-    if (linux.errno(rc) != .SUCCESS) {
-        throwNamed(env, "java/lang/IllegalArgumentException", "Given thread does not exist");
+    const err = linux.errno(rc);
+    if (err != .SUCCESS) {
+        throwSchedulerError(env, err);
         return SCHED_OTHER;
     }
     return @intCast(rc);
 }
 fn procSetThreadScheduler(env: JNIEnvPtr, _: jni.jclass, tid: jni.jint, policy: jni.jint, prio: jni.jint) callconv(.c) void {
     const param = linux.sched_param{ .priority = prio };
-    const rc = linux.sched_setscheduler(tid, @bitCast(@as(u32, @intCast(policy))), &param);
-    switch (linux.errno(rc)) {
-        .SUCCESS, .PERM, .ACCES => {},
-        else => throwNamed(env, "java/lang/IllegalArgumentException", "sched_setscheduler failed"),
+    const rc = linux.sched_setscheduler(tid, @bitCast(policy), &param);
+    const err = linux.errno(rc);
+    if (err != .SUCCESS) throwSchedulerError(env, err);
+}
+
+// Pinned android_util_Process.cpp signalExceptionForPriorityError: a denied
+// scheduling request must never look like a successful priority transition.
+fn throwSchedulerError(env: JNIEnvPtr, err: linux.E) void {
+    switch (err) {
+        .PERM, .ACCES => throwNamed(env, "java/lang/SecurityException", "No permission to modify thread scheduler"),
+        .INVAL, .SRCH => throwNamed(env, "java/lang/IllegalArgumentException", "Invalid scheduler argument or missing thread"),
+        else => throwNamed(env, "java/lang/RuntimeException", "Unknown thread scheduler error"),
     }
 }
 fn procSetArgV0Native(env: JNIEnvPtr, _: jni.jclass, text: jni.jstring) callconv(.c) void {
@@ -574,105 +601,297 @@ fn procGetTotalMemory(_: JNIEnvPtr, _: jni.jclass) callconv(.c) jni.jlong {
 
 /// Reads a whole (small) file such as /proc/<pid>/status into an owned buffer.
 fn readSmallFile(path: [*:0]const u8) ?[]u8 {
-    const fd_rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    if (linux.errno(fd_rc) != .SUCCESS) return null;
-    const fd: i32 = @intCast(fd_rc);
-    defer _ = linux.close(fd);
+    const io = ndk.frameworkIo();
+    const file = std.Io.Dir.cwd().openFile(io, std.mem.span(path), .{}) catch return null;
+    defer file.close(io);
     var buf = std.ArrayListUnmanaged(u8).empty;
+    defer buf.deinit(alloc);
     var chunk: [4096]u8 = undefined;
     while (true) {
-        const n = linux.read(fd, &chunk, chunk.len);
-        if (linux.errno(n) != .SUCCESS or n == 0) break;
-        buf.appendSlice(std.heap.c_allocator, chunk[0..n]) catch break;
+        const n = file.readStreaming(io, &.{&chunk}) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return null,
+        };
+        if (n == 0) break;
+        if (buf.items.len + n >= 64 << 20) return null;
+        buf.appendSlice(alloc, chunk[0..n]) catch return null;
     }
-    return buf.toOwnedSlice(std.heap.c_allocator) catch null;
+    return buf.toOwnedSlice(alloc) catch null;
 }
 
-/// Process.readProcLines: for each requested "Field:" line, the numeric value
-/// (kB values scaled to bytes, as AOSP does).
+/// Pinned Process.readProcLines returns numeric prefixes without unit scaling,
+/// clears requested outputs only after open succeeds, and reads at most 4095 bytes.
 fn procReadProcLines(env: JNIEnvPtr, _: jni.jclass, path: jni.jstring, req: jni.jobjectArray, out: jni.jlongArray) callconv(.c) void {
-    if (path == null or req == null or out == null) return;
-    const pchars = env.*.*.GetStringUTFChars.?(env, path, null) orelse return;
-    defer env.*.*.ReleaseStringUTFChars.?(env, path, pchars);
-    const contents = readSmallFile(pchars) orelse return;
-    defer std.heap.c_allocator.free(contents);
+    if (path == null or req == null or out == null) {
+        throwNamed(env, "java/lang/NullPointerException", "proc path, fields and outputs are required");
+        return;
+    }
     const count: usize = @intCast(env.*.*.GetArrayLength.?(env, req));
-    var values = std.heap.c_allocator.alloc(jni.jlong, count) catch return;
-    defer std.heap.c_allocator.free(values);
-    env.*.*.GetLongArrayRegion.?(env, out, 0, @intCast(count), values.ptr);
+    if (count > env.*.*.GetArrayLength.?(env, out)) {
+        throwNamed(env, "java/lang/IllegalArgumentException", "Array lengths differ");
+        return;
+    }
+    var fields = std.ArrayList([]u8).empty;
+    defer {
+        for (fields.items) |field| alloc.free(field);
+        fields.deinit(alloc);
+    }
     for (0..count) |i| {
-        const jf: jni.jstring = @ptrCast(env.*.*.GetObjectArrayElement.?(env, req, @intCast(i)));
-        if (jf == null) continue;
-        const fchars = env.*.*.GetStringUTFChars.?(env, jf, null) orelse continue;
-        const field = std.mem.span(fchars);
-        var lines = std.mem.splitScalar(u8, contents, '\n');
-        while (lines.next()) |line| {
+        const field = env.*.*.GetObjectArrayElement.?(env, req, @intCast(i)) orelse {
+            throwNamed(env, "java/lang/NullPointerException", "Element in reqFields");
+            return;
+        };
+        defer env.*.*.DeleteLocalRef.?(env, field);
+        const chars = env.*.*.GetStringUTFChars.?(env, field, null) orelse return;
+        defer env.*.*.ReleaseStringUTFChars.?(env, field, chars);
+        const copy = alloc.dupe(u8, std.mem.span(chars)) catch {
+            throwNamed(env, "java/lang/OutOfMemoryError", "proc fields");
+            return;
+        };
+        fields.append(alloc, copy) catch {
+            alloc.free(copy);
+            throwNamed(env, "java/lang/OutOfMemoryError", "proc fields");
+            return;
+        };
+    }
+    const path_chars = env.*.*.GetStringUTFChars.?(env, path, null) orelse return;
+    defer env.*.*.ReleaseStringUTFChars.?(env, path, path_chars);
+    const io = ndk.frameworkIo();
+    const file = std.Io.Dir.cwd().openFile(io, std.mem.span(path_chars), .{}) catch return;
+    defer file.close(io);
+    const values = alloc.alloc(i64, count) catch {
+        throwNamed(env, "java/lang/OutOfMemoryError", "proc values");
+        return;
+    };
+    defer alloc.free(values);
+    @memset(values, 0);
+    var buffer: [4095]u8 = undefined;
+    const n = file.readStreaming(io, &.{&buffer}) catch 0;
+    const bytes = buffer[0..n];
+    var lines = std.mem.splitScalar(u8, bytes[0 .. std.mem.indexOfScalar(u8, bytes, 0) orelse n], '\n');
+    var found: usize = 0;
+    while (found < count) {
+        const line = lines.next() orelse break;
+        for (fields.items, 0..) |field, i| {
             if (!std.mem.startsWith(u8, line, field)) continue;
-            var rest = std.mem.trim(u8, line[field.len..], " \t");
-            var scale: jni.jlong = 1;
-            if (std.mem.endsWith(u8, rest, "kB")) {
-                scale = 1024;
-                rest = std.mem.trim(u8, rest[0 .. rest.len - 2], " \t");
-            }
-            values[i] = (std.fmt.parseInt(jni.jlong, rest, 10) catch 0) * scale;
+            const rest = std.mem.trimStart(u8, line[field.len..], " \t");
+            var digits: usize = 0;
+            while (digits < rest.len and std.ascii.isDigit(rest[digits])) digits += 1;
+            values[i] = proc_parser.long(rest[0..digits]);
+            found += 1;
             break;
         }
-        env.*.*.ReleaseStringUTFChars.?(env, jf, fchars);
-        env.*.*.DeleteLocalRef.?(env, jf);
     }
     env.*.*.SetLongArrayRegion.?(env, out, 0, @intCast(count), values.ptr);
 }
 
 /// Process.getPids: the numeric entries of a /proc-style directory, padded with
 /// -1 (reusing `last` when it is large enough, as AOSP does).
+// Pinned android_os_Process_getPids: sorted numeric entries, geometric array
+// growth, reuse when capacity suffices, and -1 padding. std.Io owns the directory.
 fn procGetPids(env: JNIEnvPtr, _: jni.jclass, path: jni.jstring, last: jni.jintArray) callconv(.c) jni.jintArray {
-    if (path == null) return last;
-    const pchars = env.*.*.GetStringUTFChars.?(env, path, null) orelse return last;
-    defer env.*.*.ReleaseStringUTFChars.?(env, path, pchars);
-    const fd_rc = linux.open(pchars, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0);
-    if (linux.errno(fd_rc) != .SUCCESS) return last;
-    const fd: i32 = @intCast(fd_rc);
-    defer _ = linux.close(fd);
-    var pids = std.ArrayListUnmanaged(jni.jint).empty;
-    defer pids.deinit(std.heap.c_allocator);
-    var buf: [8192]u8 = undefined;
-    while (true) {
-        const n = linux.getdents64(fd, &buf, buf.len);
-        if (linux.errno(n) != .SUCCESS or n == 0) break;
-        var off: usize = 0;
-        while (off < n) {
-            const reclen = std.mem.readInt(u16, buf[off + 16 ..][0..2], .little);
-            const name_start = off + 19;
-            const name_end = std.mem.indexOfScalarPos(u8, buf[0..n], name_start, 0) orelse (off + reclen);
-            const name = buf[name_start..name_end];
-            if (std.fmt.parseInt(jni.jint, name, 10)) |pid| pids.append(std.heap.c_allocator, pid) catch {} else |_| {}
-            off += reclen;
+    if (path == null) {
+        throwNamed(env, "java/lang/NullPointerException", "directory is required");
+        return null;
+    }
+    const chars = env.*.*.GetStringUTFChars.?(env, path, null) orelse return null;
+    defer env.*.*.ReleaseStringUTFChars.?(env, path, chars);
+    const io = ndk.frameworkIo();
+    var dir = std.Io.Dir.cwd().openDir(io, std.mem.span(chars), .{ .iterate = true }) catch return null;
+    defer dir.close(io);
+    var pids: std.ArrayList(jni.jint) = .empty;
+    defer pids.deinit(alloc);
+    var iterator = dir.iterate();
+    while (iterator.next(io) catch null) |entry| {
+        if (entry.name.len == 0) continue;
+        for (entry.name) |c| {
+            if (!std.ascii.isDigit(c)) break;
+        } else {
+            // strtol's saturated long is narrowed to int by the pinned native.
+            pids.append(alloc, @truncate(proc_parser.long(entry.name))) catch {
+                throwNamed(env, "java/lang/OutOfMemoryError", "process IDs");
+                return null;
+            };
         }
     }
-    const have: usize = if (last != null) @intCast(env.*.*.GetArrayLength.?(env, last)) else 0;
-    const arr: jni.jintArray = if (last != null and have >= pids.items.len + 1) last else env.*.*.NewIntArray.?(env, @intCast(pids.items.len + 1)) orelse return null;
-    const len: usize = @intCast(env.*.*.GetArrayLength.?(env, arr));
-    const tmp = std.heap.c_allocator.alloc(jni.jint, len) catch return arr;
-    defer std.heap.c_allocator.free(tmp);
-    @memset(tmp, -1);
-    @memcpy(tmp[0..pids.items.len], pids.items);
-    env.*.*.SetIntArrayRegion.?(env, arr, 0, @intCast(len), tmp.ptr);
-    return arr;
+    std.mem.sort(jni.jint, pids.items, {}, std.sort.asc(jni.jint));
+    const previous: usize = if (last != null) @intCast(env.*.*.GetArrayLength.?(env, last)) else 0;
+    var capacity = previous;
+    while (capacity < pids.items.len) capacity = if (capacity == 0) 10 else capacity * 2;
+    const result = if (capacity == previous) last else env.*.*.NewIntArray.?(env, @intCast(capacity));
+    if (result == null) return null;
+    const values = env.*.*.GetIntArrayElements.?(env, result, null) orelse return null;
+    defer env.*.*.ReleaseIntArrayElements.?(env, result, values, 0);
+    @memcpy(values[0..pids.items.len], pids.items);
+    @memset(values[pids.items.len..capacity], -1);
+    return result;
 }
-fn procReadProcFile(_: JNIEnvPtr, _: jni.jclass, _: jni.jstring, _: jni.jintArray, _: jni.jobjectArray, _: jni.jlongArray, _: jni.jfloatArray) callconv(.c) jni.jboolean {
-    return jni.JNI_FALSE; // PROC_* format parsing (ProcessCpuTracker) is not hosted
+// Follows pinned android_util_Process.cpp parseProcLineArray. The stock native
+// file cannot be reused with its bionic process-group dependencies; std.Io owns
+// host proc files, and the shared parser preserves partial writes and indices.
+fn parseProcBuffer(env: JNIEnvPtr, bytes: []u8, format: jni.jintArray, strings: jni.jobjectArray, longs: jni.jlongArray, floats: jni.jfloatArray) jni.jboolean {
+    const nf: usize = @intCast(env.*.*.GetArrayLength.?(env, format));
+    const ns: usize = if (strings != null) @intCast(env.*.*.GetArrayLength.?(env, strings)) else 0;
+    const nl: usize = if (longs != null) @intCast(env.*.*.GetArrayLength.?(env, longs)) else 0;
+    const nr: usize = if (floats != null) @intCast(env.*.*.GetArrayLength.?(env, floats)) else 0;
+    const modes = env.*.*.GetIntArrayElements.?(env, format, null) orelse return jni.JNI_FALSE;
+    defer env.*.*.ReleaseIntArrayElements.?(env, format, modes, jni.JNI_ABORT);
+    var parser: proc_parser.Parser = .{ .bytes = bytes };
+    var di: usize = 0;
+    for (modes[0..nf]) |mode| {
+        const field = parser.next(mode) orelse return jni.JNI_FALSE;
+        if (mode & 0x7000 == 0) continue;
+        if (mode & 0x4000 != 0 and di < nr) {
+            const value = proc_parser.float(field.bytes);
+            env.*.*.SetFloatArrayRegion.?(env, floats, @intCast(di), 1, &value);
+        }
+        if (mode & 0x2000 != 0 and di < nl) {
+            const value: i64 = if (mode & 0x800 != 0)
+                (if (field.bytes.len == 0) @as(i64, 0) else @as(i8, @bitCast(field.bytes[0])))
+            else
+                proc_parser.long(field.bytes);
+            env.*.*.SetLongArrayRegion.?(env, longs, @intCast(di), 1, &value);
+        }
+        if (mode & 0x1000 != 0 and di < ns) {
+            for (field.bytes) |*byte| if (byte.* < 0x20 or byte.* > 0x7e) {
+                byte.* = '?';
+            };
+            const text = alloc.dupeSentinel(u8, field.bytes, 0) catch {
+                throwNamed(env, "java/lang/OutOfMemoryError", "proc field");
+                return jni.JNI_FALSE;
+            };
+            defer alloc.free(text);
+            const str = env.*.*.NewStringUTF.?(env, text.ptr) orelse return jni.JNI_FALSE;
+            defer env.*.*.DeleteLocalRef.?(env, str);
+            env.*.*.SetObjectArrayElement.?(env, strings, @intCast(di), str);
+        }
+        if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
+        di += 1;
+    }
+    return jni.JNI_TRUE;
 }
-fn procParseProcLine(_: JNIEnvPtr, _: jni.jclass, _: jni.jbyteArray, _: jni.jint, _: jni.jint, _: jni.jintArray, _: jni.jobjectArray, _: jni.jlongArray, _: jni.jfloatArray) callconv(.c) jni.jboolean {
-    return jni.JNI_FALSE;
+fn procReadProcFile(env: JNIEnvPtr, _: jni.jclass, path: jni.jstring, format: jni.jintArray, strings: jni.jobjectArray, longs: jni.jlongArray, floats: jni.jfloatArray) callconv(.c) jni.jboolean {
+    if (path == null or format == null) {
+        throwNamed(env, "java/lang/NullPointerException", "file and format are required");
+        return jni.JNI_FALSE;
+    }
+    const chars = env.*.*.GetStringUTFChars.?(env, path, null) orelse return jni.JNI_FALSE;
+    defer env.*.*.ReleaseStringUTFChars.?(env, path, chars);
+    const bytes = readSmallFile(chars) orelse return jni.JNI_FALSE;
+    defer alloc.free(bytes);
+    return parseProcBuffer(env, bytes, format, strings, longs, floats);
 }
-fn procGetPidsForCommands(env: JNIEnvPtr, _: jni.jclass, _: jni.jobjectArray) callconv(.c) jni.jintArray {
-    return env.*.*.NewIntArray.?(env, 0);
+fn procParseProcLine(env: JNIEnvPtr, _: jni.jclass, buffer: jni.jbyteArray, start: jni.jint, end: jni.jint, format: jni.jintArray, strings: jni.jobjectArray, longs: jni.jlongArray, floats: jni.jfloatArray) callconv(.c) jni.jboolean {
+    if (buffer == null or format == null) {
+        throwNamed(env, "java/lang/NullPointerException", "buffer and format are required");
+        return jni.JNI_FALSE;
+    }
+    if (start < 0 or end < start or end > env.*.*.GetArrayLength.?(env, buffer)) {
+        throwNamed(env, "java/lang/IndexOutOfBoundsException", "invalid proc byte range");
+        return jni.JNI_FALSE;
+    }
+    const bytes = env.*.*.GetByteArrayElements.?(env, buffer, null) orelse return jni.JNI_FALSE;
+    defer env.*.*.ReleaseByteArrayElements.?(env, buffer, bytes, 0);
+    return parseProcBuffer(env, @as([*]u8, @ptrCast(bytes))[@intCast(start)..@intCast(end)], format, strings, longs, floats);
 }
-fn procGetPss(_: JNIEnvPtr, _: jni.jclass, _: jni.jint) callconv(.c) jni.jlong {
-    return 0;
+// Pinned android_util_Process.cpp: argv[0] ends at the first NUL or space;
+// match whole names, include each PID once, and reject null command elements.
+fn procGetPidsForCommands(env: JNIEnvPtr, _: jni.jclass, names: jni.jobjectArray) callconv(.c) jni.jintArray {
+    if (names == null) {
+        throwNamed(env, "java/lang/NullPointerException", "commandNames");
+        return null;
+    }
+    var commands: std.ArrayList([]u8) = .empty;
+    defer {
+        for (commands.items) |command| alloc.free(command);
+        commands.deinit(alloc);
+    }
+    const count = env.*.*.GetArrayLength.?(env, names);
+    var index: jni.jint = 0;
+    while (index < count) : (index += 1) {
+        const name = env.*.*.GetObjectArrayElement.?(env, names, index) orelse {
+            throwNamed(env, "java/lang/NullPointerException", "Element in commandNames");
+            return null;
+        };
+        defer env.*.*.DeleteLocalRef.?(env, name);
+        const chars = env.*.*.GetStringUTFChars.?(env, name, null) orelse return null;
+        defer env.*.*.ReleaseStringUTFChars.?(env, name, chars);
+        const copy = alloc.dupe(u8, std.mem.span(chars)) catch {
+            throwNamed(env, "java/lang/OutOfMemoryError", "command name");
+            return null;
+        };
+        commands.append(alloc, copy) catch {
+            alloc.free(copy);
+            throwNamed(env, "java/lang/OutOfMemoryError", "commands");
+            return null;
+        };
+    }
+    const io = ndk.frameworkIo();
+    var dir = std.Io.Dir.cwd().openDir(io, "/proc", .{ .iterate = true }) catch return null;
+    defer dir.close(io);
+    var pids: std.ArrayList(jni.jint) = .empty;
+    defer pids.deinit(alloc);
+    var iterator = dir.iterate();
+    while (iterator.next(io) catch null) |entry| {
+        const pid = std.fmt.parseInt(jni.jint, entry.name, 10) catch continue;
+        if (pid <= 0) continue;
+        var path: [64]u8 = undefined;
+        const filename = std.fmt.bufPrintSentinel(&path, "/proc/{d}/cmdline", .{pid}, 0) catch continue;
+        const file = std.Io.Dir.cwd().openFile(io, filename, .{}) catch continue;
+        defer file.close(io);
+        var bytes: [4095]u8 = undefined;
+        const len = file.readStreaming(io, &.{&bytes}) catch |err| switch (err) {
+            error.EndOfStream => 0,
+            else => continue,
+        };
+        const command = bytes[0 .. std.mem.indexOfAny(u8, bytes[0..len], "\x00 ") orelse len];
+        for (commands.items) |wanted| {
+            if (std.mem.eql(u8, wanted, command)) {
+                pids.append(alloc, pid) catch {
+                    throwNamed(env, "java/lang/OutOfMemoryError", "process IDs");
+                    return null;
+                };
+                break;
+            }
+        }
+    }
+    const result = env.*.*.NewIntArray.?(env, @intCast(pids.items.len)) orelse return null;
+    if (pids.items.len != 0) env.*.*.SetIntArrayRegion.?(env, result, 0, @intCast(pids.items.len), pids.items.ptr);
+    return result;
 }
-fn procGetRss(env: JNIEnvPtr, _: jni.jclass, _: jni.jint) callconv(.c) jni.jlongArray {
-    return env.*.*.NewLongArray.?(env, 4);
+// ProcMemInfo::SmapsOrRollupPss; the host has procfs, without libmeminfo's
+// Android daemon dependencies. RSS remains kB; only PSS is returned in bytes.
+fn procGetPss(_: JNIEnvPtr, _: jni.jclass, pid: jni.jint) callconv(.c) jni.jlong {
+    const io = ndk.frameworkIo();
+    const rollup = std.Io.Dir.cwd().openFile(io, "/proc/self/smaps_rollup", .{}) catch null;
+    if (rollup) |file| file.close(io);
+    var path: [64]u8 = undefined;
+    const filename = std.fmt.bufPrintSentinel(&path, "/proc/{d}/{s}", .{ pid, if (rollup != null) "smaps_rollup" else "smaps" }, 0) catch return -1;
+    const bytes = readSmallFile(filename) orelse return -1;
+    defer alloc.free(bytes);
+    var total: i64 = 0;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "Pss:")) total +%= proc_parser.long(line[4..]);
+    }
+    return total *% 1024;
+}
+fn procGetRss(env: JNIEnvPtr, _: jni.jclass, pid: jni.jint) callconv(.c) jni.jlongArray {
+    var rss: [5]jni.jlong = @splat(0);
+    var path: [64]u8 = undefined;
+    const filename = std.fmt.bufPrintSentinel(&path, "/proc/{d}/status", .{pid}, 0) catch unreachable;
+    if (readSmallFile(filename)) |bytes| {
+        defer alloc.free(bytes);
+        var lines = std.mem.splitScalar(u8, bytes, '\n');
+        while (lines.next()) |line| {
+            for ([_][]const u8{ "VmRSS:", "RssFile:", "RssAnon:", "VmSwap:", "RssShmem:" }, 0..) |key, i| {
+                if (std.mem.startsWith(u8, line, key)) rss[i] = proc_parser.long(line[key.len..]);
+            }
+        }
+    }
+    const result = env.*.*.NewLongArray.?(env, 5) orelse return null;
+    env.*.*.SetLongArrayRegion.?(env, result, 0, 5, &rss);
+    return result;
 }
 fn procPidFdOpen(env: JNIEnvPtr, _: jni.jclass, pid: jni.jint, flags: jni.jint) callconv(.c) jni.jint {
     const rc = linux.pidfd_open(pid, @intCast(flags));
@@ -1290,7 +1509,6 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("media_player_jni.zig").register(env) catch return -1;
     @import("sensor_manager_jni.zig").register(env) catch return -1;
     @import("media_drm_jni.zig").register(env) catch return -1;
-    @import("display_event_receiver_jni.zig").register(env) catch return -1;
     @import("legacy_camera_jni.zig").register(env) catch return -1;
     @import("media_codec_list_jni.zig").register(env) catch return -1;
     @import("activity_jni.zig").register(env) catch return -1;
@@ -1306,4 +1524,27 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("egl_extensions_jni.zig").register(env) catch return -1;
     @import("legacy_egl_jni.zig").register(env, &g_platform_library) catch return -1;
     return 0;
+}
+
+// Shared libbase's POSIX strerror ABI on glibc. Keep it with the common native
+// runtime so standalone libgui peers do not depend on the JVM/HWUI island.
+extern "c" fn __xpg_strerror_r(c_int, [*]u8, usize) c_int;
+pub export fn posix_strerror_r(number: c_int, buffer: [*]u8, length: usize) callconv(.c) c_int {
+    return __xpg_strerror_r(number, buffer, length);
+}
+
+// libcutils' legacy property ABI uses a caller-provided PROP_VALUE_MAX buffer.
+// Typed libbase reads use azk_property_read and retain long read-only values.
+pub export fn __system_property_get(name: [*:0]const u8, output: [*]u8) callconv(.c) c_int {
+    output[0] = 0;
+    const reader = props() orelse return 0;
+    var buffer: [prop_area.long_value_max]u8 = undefined;
+    const value = reader.get(std.mem.span(name), &buffer) orelse return 0;
+    const count = @min(value.len, prop_area.value_max - 1);
+    @memcpy(output[0..count], value[0..count]);
+    output[count] = 0;
+    return @intCast(count);
+}
+pub export fn __system_property_set(name: [*:0]const u8, value: [*:0]const u8) callconv(.c) c_int {
+    return if (azk_property_write(name, value)) 0 else -1;
 }

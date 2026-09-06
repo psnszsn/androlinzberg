@@ -1,0 +1,27 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] ReliableSurface: use stock buffer recovery on the host
+
+HWUI now renders into stock ANativeWindow queues. Enable the platform scratch
+buffer and reserved slot ownership; compile stock ReliableSurface.cpp so queue
+timeouts and abandoned producers follow CanvasContext's normal recovery path.
+
+--- a/libs/hwui/renderthread/ReliableSurface.h
++++ b/libs/hwui/renderthread/ReliableSurface.h
+@@ -21,7 +21,7 @@
+ #include <apex/window.h>
+ #include <utils/Errors.h>
+ #include <utils/Macros.h>
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+ #include <utils/NdkUtils.h>
+ #endif
+ #include <utils/StrongPointer.h>
+@@ -64,7 +64,7 @@
+     mutable std::mutex mMutex;
+ 
+     uint64_t mUsage = AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER;
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+     AHardwareBuffer_Format mFormat = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
+     UniqueAHardwareBuffer mScratchBuffer;
+     ANativeWindowBuffer* mReservedBuffer = nullptr;

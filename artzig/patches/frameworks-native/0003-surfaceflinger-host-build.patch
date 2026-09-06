@@ -1,0 +1,64 @@
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -8836,8 +8836,14 @@
+     if (client->initCheck() == NO_ERROR) {
+         *outClient = client;
+         if (FlagManager::getInstance().misc1()) {
++#if defined(ARTZIG_HOST_GRAPHICS)
++            // AZKB currently dispatches on host workers without Binder node
++            // priority inheritance. Keep the client usable at normal priority.
++            ALOGW("AZKB Binder node realtime scheduling is unavailable");
++#else
+             const int policy = SCHED_FIFO;
+             client->setMinSchedulerPolicy(policy, sched_get_priority_min(policy));
++#endif
+         }
+         return binder::Status::ok();
+     } else {
+--- a/services/surfaceflinger/Scheduler/EventThread.cpp
++++ b/services/surfaceflinger/Scheduler/EventThread.cpp
+@@ -353,8 +353,14 @@
+                                                       eventRegistration);
+     if (FlagManager::getInstance().misc1() &&
+         !FlagManager::getInstance().disable_sched_fifo_sf_sched()) {
++#if defined(ARTZIG_HOST_GRAPHICS)
++        // EventThread::createEventConnection keeps stock connection behavior;
++        // AZKB has no kernel Binder node scheduler policy to configure.
++        ALOGW("AZKB Binder node realtime scheduling is unavailable");
++#else
+         const int policy = SCHED_FIFO;
+         connection->setMinSchedulerPolicy(policy, sched_get_priority_min(policy));
++#endif
+     }
+     return connection;
+ }
+--- a/services/surfaceflinger/Scheduler/OneShotTimer.h
++++ b/services/surfaceflinger/Scheduler/OneShotTimer.h
+@@ -15,6 +15,7 @@
+  */
+ 
+ #pragma once
++#include <functional>
+ 
+ #include <semaphore.h>
+ #include <chrono>
+--- a/services/surfaceflinger/PowerAdvisor/SessionLayerMap.h
++++ b/services/surfaceflinger/PowerAdvisor/SessionLayerMap.h
+@@ -15,6 +15,7 @@
+  */
+ 
+ #pragma once
++#include <vector>
+ 
+ #include <log/log.h>
+ #include <set>
+--- a/services/surfaceflinger/Scheduler/src/Timer.cpp
++++ b/services/surfaceflinger/Scheduler/src/Timer.cpp
+@@ -20,6 +20,7 @@
+ #include <chrono>
+ #include <cstdint>
+ 
++#include <fcntl.h>
+ #include <sys/epoll.h>
+ #include <sys/timerfd.h>
+ #include <sys/unistd.h>

@@ -261,10 +261,18 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/ArtzigGpuPipeline.cpp",
         "src/native/GraphicsEnvironmentBackend.cpp",
         "src/native/HardwareBufferRender.cpp",
+        "src/native/HostInputDispatcher.cpp",
+        "src/native/HostLooper.cpp",
         "src/native/HwuiRenderProxyBridge.cpp",
         "src/native/WebViewGraphicBuffer.cpp",
         "src/native/binder/Binder.cpp",
         "src/native/binder/Parcel.cpp",
+        "src/native/graphics/HostComposer.cpp",
+        "src/native/graphics/HostGralloc.cpp",
+        "src/native/graphics/HostRenderEngineCapabilities.cpp",
+        "src/native/graphics/HostTrace.cpp",
+        "src/native/graphics/SurfaceFlingerHost.cpp",
+        "src/native/graphics/SurfaceQueue.cpp",
     };
     if (files.len != expected.len) return error.AuditFailed;
     for (files, expected) |actual, suffix| {

@@ -1,0 +1,289 @@
+From: Androlinzberg <host@androlinzberg.local>
+Subject: [PATCH] wm: route AMS process helpers through the host authority
+
+Pinned AMS owns zygote processes and cannot be imported into the hosted
+process supervisor. Retain WM call order and policy through the tested host
+permission, creator-token and scheduler boundary. Stock WM keeps task state.
+
+diff --git a/services/core/java/com/android/server/wm/ActivityMetricsLogger.java b/services/core/java/com/android/server/wm/ActivityMetricsLogger.java
+--- a/services/core/java/com/android/server/wm/ActivityMetricsLogger.java
++++ b/services/core/java/com/android/server/wm/ActivityMetricsLogger.java
+@@ -68,7 +68,7 @@
+ import static com.android.internal.util.FrameworkStatsLog.APP_START_OCCURRED__PACKAGE_STOPPED_STATE__PACKAGE_STATE_STOPPED;
+ import static com.android.server.am.MemoryStatUtil.MemoryStat;
+ import static com.android.server.am.MemoryStatUtil.readMemoryStatFromFilesystem;
+-import static com.android.server.am.ProcessList.INVALID_ADJ;
++import static dev.artzig.system.HostActivityManagerAccess.INVALID_ADJ;
+ import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_METRICS;
+ import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_ATM;
+ import static com.android.server.wm.ActivityTaskManagerDebugConfig.TAG_WITH_CLASS_NAME;
+diff --git a/services/core/java/com/android/server/wm/WindowProcessController.java b/services/core/java/com/android/server/wm/WindowProcessController.java
+--- a/services/core/java/com/android/server/wm/WindowProcessController.java
++++ b/services/core/java/com/android/server/wm/WindowProcessController.java
+@@ -29,7 +29,7 @@
+ 
+ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_CONFIGURATION;
+ import static com.android.internal.util.Preconditions.checkArgument;
+-import static com.android.server.am.ProcessList.INVALID_ADJ;
++import static dev.artzig.system.HostActivityManagerAccess.INVALID_ADJ;
+ import static com.android.server.wm.ActivityRecord.State.DESTROYED;
+ import static com.android.server.wm.ActivityRecord.State.DESTROYING;
+ import static com.android.server.wm.ActivityRecord.State.PAUSED;
+diff --git a/services/core/java/com/android/server/wm/ActivityStartController.java b/services/core/java/com/android/server/wm/ActivityStartController.java
+--- a/services/core/java/com/android/server/wm/ActivityStartController.java
++++ b/services/core/java/com/android/server/wm/ActivityStartController.java
+@@ -53,7 +53,7 @@
+ 
+ import com.android.internal.annotations.VisibleForTesting;
+ import com.android.internal.util.ArrayUtils;
+-import com.android.server.am.ActivityManagerService;
++import dev.artzig.system.HostActivityManagerAccess;
+ import com.android.server.am.PendingIntentRecord;
+ import com.android.server.uri.NeededUriGrants;
+ import com.android.server.wm.ActivityStarter.DefaultFactory;
+@@ -238,7 +238,7 @@
+             final List<ResolveInfo> ris =
+                     mService.mContext.getPackageManager().queryIntentActivities(intent,
+                             PackageManager.MATCH_SYSTEM_ONLY | PackageManager.GET_META_DATA
+-                                    | ActivityManagerService.STOCK_PM_FLAGS);
++                                    | HostActivityManagerAccess.STOCK_PM_FLAGS);
+             if (!ris.isEmpty()) {
+                 final ResolveInfo ri = ris.get(0);
+                 String vers = ri.activityInfo.metaData != null
+@@ -458,9 +458,9 @@
+                 aInfo = mService.mAmInternal.getActivityInfoForUser(aInfo, userId);
+                 int creatorUid = DEFAULT_INTENT_CREATOR_UID;
+                 String creatorPackage = null;
+-                if (ActivityManagerService.IntentCreatorToken.isValid(intent)) {
+-                    ActivityManagerService.IntentCreatorToken creatorToken =
+-                            (ActivityManagerService.IntentCreatorToken) intent.getCreatorToken();
++                if (dev.artzig.system.HostedIntentCreators.Token.isValid(intent)) {
++                    dev.artzig.system.HostedIntentCreators.Token creatorToken =
++                            (dev.artzig.system.HostedIntentCreators.Token) intent.getCreatorToken();
+                     if (creatorToken.getCreatorUid() != filterCallingUid) {
+                         creatorUid = creatorToken.getCreatorUid();
+                         creatorPackage = creatorToken.getCreatorPackage();
+diff --git a/services/core/java/com/android/server/wm/ActivityStarter.java b/services/core/java/com/android/server/wm/ActivityStarter.java
+--- a/services/core/java/com/android/server/wm/ActivityStarter.java
++++ b/services/core/java/com/android/server/wm/ActivityStarter.java
+@@ -143,7 +143,7 @@
+ import com.android.internal.protolog.ProtoLog;
+ import com.android.internal.util.FrameworkStatsLog;
+ import com.android.server.UiThread;
+-import com.android.server.am.ActivityManagerService.IntentCreatorToken;
++import dev.artzig.system.HostedIntentCreators.Token;
+ import com.android.server.am.PendingIntentRecord;
+ import com.android.server.pm.InstantAppResolver;
+ import com.android.server.pm.PackageArchiver;
+@@ -629,8 +629,8 @@
+                         intentCreatorUid, intentCreatorPackage, resolvedCallingUid,
+                         resolvedCallingPackage, null);
+             }
+-            if (IntentCreatorToken.isValid(intent)) {
+-                IntentCreatorToken creatorToken = (IntentCreatorToken) intent.getCreatorToken();
++            if (Token.isValid(intent)) {
++                Token creatorToken = (Token) intent.getCreatorToken();
+                 if (creatorToken.getCreatorUid() != resolvedCallingUid) {
+                     intentCreatorUid = creatorToken.getCreatorUid();
+                     intentCreatorPackage = creatorToken.getCreatorPackage();
+diff --git a/services/core/java/com/android/server/wm/ActivityTaskManagerService.java b/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
+--- a/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
++++ b/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
+@@ -77,7 +77,7 @@
+ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_IMMERSIVE;
+ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_LOCKTASK;
+ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_TASKS;
+-import static com.android.server.am.ActivityManagerService.STOCK_PM_FLAGS;
++import static dev.artzig.system.HostActivityManagerAccess.STOCK_PM_FLAGS;
+ import static com.android.server.am.ActivityManagerServiceDumpActivitiesProto.ROOT_WINDOW_CONTAINER;
+ import static com.android.server.am.ActivityManagerServiceDumpProcessesProto.CONFIG_WILL_CHANGE;
+ import static com.android.server.am.ActivityManagerServiceDumpProcessesProto.CONTROLLER;
+@@ -264,7 +264,7 @@
+ import com.android.server.SystemServiceManager;
+ import com.android.server.UiThread;
+ import com.android.server.Watchdog;
+-import com.android.server.am.ActivityManagerService;
++import dev.artzig.system.HostActivityManagerAccess;
+ import com.android.server.am.ActivityManagerServiceDumpProcessesProto;
+ import com.android.server.am.AppTimeTracker;
+ import com.android.server.am.AssistDataRequester;
+@@ -3423,7 +3423,7 @@
+ 
+     public static int checkComponentPermission(String permission, int pid, int uid,
+             int owningUid, boolean exported) {
+-        return ActivityManagerService.checkComponentPermission(
++        return HostActivityManagerAccess.checkComponentPermission(
+                 permission, pid, uid, owningUid, exported);
+     }
+ 
+diff --git a/services/core/java/com/android/server/wm/RecentTasks.java b/services/core/java/com/android/server/wm/RecentTasks.java
+--- a/services/core/java/com/android/server/wm/RecentTasks.java
++++ b/services/core/java/com/android/server/wm/RecentTasks.java
+@@ -83,7 +83,7 @@
+ import com.android.internal.annotations.VisibleForTesting;
+ import com.android.internal.protolog.ProtoLog;
+ import com.android.internal.util.function.pooled.PooledLambda;
+-import com.android.server.am.ActivityManagerService;
++import dev.artzig.system.HostActivityManagerAccess;
+ import com.android.window.flags.Flags;
+ 
+ import com.google.android.collect.Sets;
+@@ -837,7 +837,7 @@
+                         // current system state.
+                         ai = pm.getActivityInfo(task.realActivity,
+                                 PackageManager.MATCH_DEBUG_TRIAGED_MISSING
+-                                        | ActivityManagerService.STOCK_PM_FLAGS, userId);
++                                        | HostActivityManagerAccess.STOCK_PM_FLAGS, userId);
+                     } catch (RemoteException e) {
+                         // Will never happen.
+                         continue;
+diff --git a/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java b/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java
+--- a/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java
++++ b/services/core/java/com/android/server/wm/ActivityTaskSupervisor.java
+@@ -159,7 +159,7 @@
+ import com.android.internal.util.ArrayUtils;
+ import com.android.internal.util.function.pooled.PooledLambda;
+ import com.android.server.LocalServices;
+-import com.android.server.am.ActivityManagerService;
++import dev.artzig.system.HostActivityManagerAccess;
+ import com.android.server.am.HostingRecord;
+ import com.android.server.am.UserState;
+ import com.android.server.companion.virtual.VirtualDeviceManagerInternal;
+@@ -766,7 +766,7 @@
+         try {
+             Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER, "resolveIntent");
+             int modifiedFlags = flags
+-                    | PackageManager.MATCH_DEFAULT_ONLY | ActivityManagerService.STOCK_PM_FLAGS;
++                    | PackageManager.MATCH_DEFAULT_ONLY | HostActivityManagerAccess.STOCK_PM_FLAGS;
+             if (intent.isWebIntent()
+                         || (intent.getFlags() & Intent.FLAG_ACTIVITY_MATCH_EXTERNAL) != 0) {
+                 modifiedFlags |= PackageManager.MATCH_INSTANT;
+diff --git a/services/core/java/com/android/server/wm/RootWindowContainer.java b/services/core/java/com/android/server/wm/RootWindowContainer.java
+--- a/services/core/java/com/android/server/wm/RootWindowContainer.java
++++ b/services/core/java/com/android/server/wm/RootWindowContainer.java
+@@ -144,7 +144,7 @@
+ import com.android.internal.util.function.pooled.PooledLambda;
+ import com.android.internal.util.function.pooled.PooledPredicate;
+ import com.android.server.LocalServices;
+-import com.android.server.am.ActivityManagerService;
++import dev.artzig.system.HostActivityManagerAccess;
+ import com.android.server.am.AppTimeTracker;
+ import com.android.server.am.UserState;
+ import com.android.server.pm.UserManagerInternal;
+@@ -1411,7 +1411,7 @@
+      */
+     @VisibleForTesting
+     ActivityInfo resolveHomeActivity(int userId, Intent homeIntent) {
+-        final int flags = ActivityManagerService.STOCK_PM_FLAGS;
++        final int flags = HostActivityManagerAccess.STOCK_PM_FLAGS;
+         final ComponentName comp = homeIntent.getComponent();
+         ActivityInfo aInfo = null;
+         try {
+@@ -1525,7 +1525,7 @@
+             final String resolvedType =
+                     homeIntent.resolveTypeIfNeeded(mService.mContext.getContentResolver());
+             resolutions = AppGlobals.getPackageManager().queryIntentActivities(homeIntent,
+-                    resolvedType, ActivityManagerService.STOCK_PM_FLAGS, userId).getList();
++                    resolvedType, HostActivityManagerAccess.STOCK_PM_FLAGS, userId).getList();
+ 
+         } catch (RemoteException e) {
+             resolutions = new ArrayList<>();
+diff --git a/services/core/java/com/android/server/wm/Task.java b/services/core/java/com/android/server/wm/Task.java
+--- a/services/core/java/com/android/server/wm/Task.java
++++ b/services/core/java/com/android/server/wm/Task.java
+@@ -180,7 +180,7 @@
+ import com.android.modules.utils.TypedXmlPullParser;
+ import com.android.modules.utils.TypedXmlSerializer;
+ import com.android.server.Watchdog;
+-import com.android.server.am.ActivityManagerService;
++import dev.artzig.system.HostActivityManagerAccess;
+ import com.android.server.am.AppTimeTracker;
+ import com.android.server.uri.NeededUriGrants;
+ import com.android.window.flags.Flags;
+@@ -5992,7 +5992,7 @@
+                 activities.add(topActivity);
+             }
+         } else {
+-            ActivityManagerService.ItemMatcher matcher = new ActivityManagerService.ItemMatcher();
++            HostActivityManagerAccess.ItemMatcher matcher = new HostActivityManagerAccess.ItemMatcher();
+             matcher.build(name);
+ 
+             forAllActivities((r) -> {
+diff --git a/services/core/java/com/android/server/wm/VrController.java b/services/core/java/com/android/server/wm/VrController.java
+--- a/services/core/java/com/android/server/wm/VrController.java
++++ b/services/core/java/com/android/server/wm/VrController.java
+@@ -24,8 +24,7 @@
+ import android.util.proto.ProtoUtils;
+ 
+ import com.android.server.LocalServices;
+-import com.android.server.am.ActivityManagerService;
+-import com.android.server.am.ProcessList;
++import dev.artzig.system.HostActivityManagerAccess;
+ import com.android.server.am.VrControllerProto;
+ import com.android.server.vr.VrManagerInternal;
+ 
+@@ -116,7 +115,7 @@
+                 // Note: This is the only place where mVrState should have its
+                 // FLAG_PERSISTENT_VR_MODE setting changed.
+                 if (enabled) {
+-                    setVrRenderThreadLocked(0, ProcessList.SCHED_GROUP_TOP_APP, true);
++                    setVrRenderThreadLocked(0, HostActivityManagerAccess.SCHED_GROUP_TOP_APP, true);
+                     mVrState |= FLAG_PERSISTENT_VR_MODE;
+                 } else {
+                     setPersistentVrRenderThreadLocked(0, true);
+@@ -167,7 +166,7 @@
+      */
+     public void onTopProcChangedLocked(WindowProcessController proc) {
+         final int curSchedGroup = proc.getCurrentSchedulingGroup();
+-        if (curSchedGroup == ProcessList.SCHED_GROUP_TOP_APP) {
++        if (curSchedGroup == HostActivityManagerAccess.SCHED_GROUP_TOP_APP) {
+             setVrRenderThreadLocked(proc.mVrThreadTid, curSchedGroup, true);
+         } else {
+             if (proc.mVrThreadTid == mVrRenderThreadTid) {
+@@ -344,13 +343,13 @@
+         }
+ 
+         if (mVrRenderThreadTid > 0) {
+-            ActivityManagerService.scheduleAsRegularPriority(mVrRenderThreadTid, suppressLogs);
++            HostActivityManagerAccess.scheduleAsRegularPriority(mVrRenderThreadTid, suppressLogs);
+             mVrRenderThreadTid = 0;
+         }
+ 
+         if (newTid > 0) {
+             mVrRenderThreadTid = newTid;
+-            ActivityManagerService.scheduleAsFifoPriority(mVrRenderThreadTid, suppressLogs);
++            HostActivityManagerAccess.scheduleAsFifoPriority(mVrRenderThreadTid, suppressLogs);
+         }
+         return mVrRenderThreadTid;
+     }
+@@ -397,7 +396,7 @@
+     private int setVrRenderThreadLocked(int newTid, int schedGroup, boolean suppressLogs) {
+         boolean inVr = inVrMode();
+         boolean inPersistentVr = hasPersistentVrFlagSet();
+-        if (!inVr || inPersistentVr || schedGroup != ProcessList.SCHED_GROUP_TOP_APP) {
++        if (!inVr || inPersistentVr || schedGroup != HostActivityManagerAccess.SCHED_GROUP_TOP_APP) {
+             if (!suppressLogs) {
+                String reason = "caller is not the current top application.";
+                if (!inVr) {
+diff --git a/services/core/java/com/android/server/wm/LockTaskController.java b/services/core/java/com/android/server/wm/LockTaskController.java
+--- a/services/core/java/com/android/server/wm/LockTaskController.java
++++ b/services/core/java/com/android/server/wm/LockTaskController.java
+@@ -68,7 +68,6 @@
+ import com.android.internal.telephony.CellBroadcastUtils;
+ import com.android.internal.widget.LockPatternUtils;
+ import com.android.server.LocalServices;
+-import com.android.server.am.ActivityManagerService;
+ import com.android.server.statusbar.StatusBarManagerInternal;
+ 
+ import java.io.PrintWriter;
+diff --git a/services/core/java/com/android/server/wm/ActivityStartInterceptor.java b/services/core/java/com/android/server/wm/ActivityStartInterceptor.java
+--- a/services/core/java/com/android/server/wm/ActivityStartInterceptor.java
++++ b/services/core/java/com/android/server/wm/ActivityStartInterceptor.java
+@@ -71,7 +71,6 @@
+ import com.android.internal.app.SuspendedAppActivity;
+ import com.android.internal.app.UnlaunchableAppActivity;
+ import com.android.server.LocalServices;
+-import com.android.server.am.ActivityManagerService;
+ import com.android.server.wm.ActivityInterceptorCallback.ActivityInterceptResult;
+ 
+ /**

@@ -1,6 +1,5 @@
-// HWUI/Skia side of the AHardwareBuffer seam. Storage, lifetime, mapping, and
-// JNI live in platform_abi.zig; this file only imports DMA-BUFs into EGL/Skia
-// and supplies the two C++-namespace wrappers required by AOSP.
+// HWUI/Skia side of the stock AHardwareBuffer/GraphicBuffer seam. GBM storage
+// lives in graphics_buffer.zig; opaque Java handles remain in platform_abi.zig.
 #include "HardwareBufferRender.h"
 
 #define LOG_TAG "HardwareBufferRender"
@@ -9,6 +8,9 @@
 #include <EGL/eglext.h>
 #include <GL/gl.h>
 #include <android/hardware_buffer_jni.h>
+#include <vndk/hardware_buffer.h>
+#include <azk/graphics_buffer.h>
+#include <azk/graphics_egl.h>
 #include <drm/drm_fourcc.h>
 #include <log/log.h>
 
@@ -69,22 +71,26 @@ void releaseImportedTexture(void* context) {
     delete imported;
 }
 
-extern "C" bool azk_hardware_buffer_describe_dmabuf(
-        const AHardwareBuffer*, artzig::DmabufDescription*);
-extern "C" gbm_device* azk_hardware_buffer_gbm_device();
-extern "C" AHardwareBuffer* azk_hardware_buffer_get_native(JNIEnv*, jobject);
-extern "C" jobject azk_hardware_buffer_create_java(JNIEnv*, AHardwareBuffer*);
 
 }  // namespace
 
 namespace artzig {
 
 bool describeDmabuf(const AHardwareBuffer* buffer, DmabufDescription* description) {
-    return azk_hardware_buffer_describe_dmabuf(buffer, description);
+    if (!buffer || !description) return false;
+    AzkGraphicsBufferInfo info{};
+    if (azk_graphics_describe(AHardwareBuffer_getNativeHandle(buffer), &info) != 0) return false;
+    *description = {};
+    description->width = info.width;
+    description->height = info.height;
+    description->drmFormat = info.drm_format;
+    description->planeCount = 1;
+    description->planes[0] = {info.fd, info.offset, info.stride, info.modifier};
+    return true;
 }
 
 gbm_device* hardwareBufferGbmDevice() {
-    return azk_hardware_buffer_gbm_device();
+    return static_cast<gbm_device*>(azk_graphics_gbm_device());
 }
 
 sk_sp<SkSurface> makeHardwareBufferSurface(GrDirectContext* context,
@@ -102,39 +108,15 @@ sk_sp<SkSurface> makeHardwareBufferSurface(GrDirectContext* context,
     EGLDisplay display = eglGetCurrentDisplay();
     if (display == EGL_NO_DISPLAY || eglGetCurrentContext() == EGL_NO_CONTEXT) return nullptr;
 
-    auto createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(
-            eglGetProcAddress("eglCreateImageKHR"));
     auto imageTarget = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
             eglGetProcAddress("glEGLImageTargetTexture2DOES"));
-    if (!createImage || !imageTarget) return nullptr;
-
-    EGLint attributes[32];
-    size_t count = 0;
-    auto append = [&](EGLint key, EGLint value) {
-        attributes[count++] = key;
-        attributes[count++] = value;
-    };
-    append(EGL_WIDTH, static_cast<EGLint>(dmaBuf.width));
-    append(EGL_HEIGHT, static_cast<EGLint>(dmaBuf.height));
-    append(EGL_LINUX_DRM_FOURCC_EXT, static_cast<EGLint>(dmaBuf.drmFormat));
-    append(EGL_DMA_BUF_PLANE0_FD_EXT, dmaBuf.planes[0].fd);
-    append(EGL_DMA_BUF_PLANE0_OFFSET_EXT, static_cast<EGLint>(dmaBuf.planes[0].offset));
-    append(EGL_DMA_BUF_PLANE0_PITCH_EXT, static_cast<EGLint>(dmaBuf.planes[0].stride));
-    const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
-    if (dmaBuf.planes[0].modifier != DRM_FORMAT_MOD_INVALID && extensions &&
-        std::strstr(extensions, "EGL_EXT_image_dma_buf_import_modifiers")) {
-        append(EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
-               static_cast<EGLint>(dmaBuf.planes[0].modifier & 0xffffffffu));
-        append(EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,
-               static_cast<EGLint>(dmaBuf.planes[0].modifier >> 32));
-    }
-    attributes[count++] = EGL_NONE;
-
-    EGLImageKHR image = createImage(display, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr,
-                                    attributes);
-    if (image == EGL_NO_IMAGE_KHR) {
-        ALOGE("EGL DMA-BUF import failed for AHardwareBuffer %" PRIu64 " (0x%x)", id,
-              eglGetError());
+    if (!imageTarget) return nullptr;
+    EGLImageKHR image = EGL_NO_IMAGE_KHR;
+    const int status = azk_graphics_import_egl_image(
+            display, AHardwareBuffer_getNativeHandle(buffer), &image);
+    if (status != 0) {
+        ALOGE("EGL DMA-BUF import failed for AHardwareBuffer %" PRIu64 " (status %d, EGL 0x%x)",
+              id, status, eglGetError());
         return nullptr;
     }
 
@@ -190,16 +172,11 @@ sk_sp<SkImage> makeHardwareBufferImage(GrDirectContext* context,
 
 }  // namespace artzig
 
-namespace android {
-
-AHardwareBuffer* android_hardware_HardwareBuffer_getNativeHardwareBuffer(
-        JNIEnv* env, jobject object) {
-    return azk_hardware_buffer_get_native(env, object);
+// NDK Java conversions use the stock JNI wrapper and its GraphicBuffer owner.
+extern "C" AHardwareBuffer* AHardwareBuffer_fromHardwareBuffer(JNIEnv* env, jobject object) {
+    return android::android_hardware_HardwareBuffer_getNativeHardwareBuffer(env, object);
 }
 
-jobject android_hardware_HardwareBuffer_createFromAHardwareBuffer(
-        JNIEnv* env, AHardwareBuffer* buffer) {
-    return azk_hardware_buffer_create_java(env, buffer);
+extern "C" jobject AHardwareBuffer_toHardwareBuffer(JNIEnv* env, AHardwareBuffer* buffer) {
+    return android::android_hardware_HardwareBuffer_createFromAHardwareBuffer(env, buffer);
 }
-
-}  // namespace android

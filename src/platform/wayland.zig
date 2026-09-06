@@ -36,6 +36,10 @@ fn selectDmabufImportModifier(formats: []const DmabufFormat, format: u32, modifi
 pub const DmabufFrame = struct {
     context: *anyopaque,
     release_fn: *const fn (*anyopaque) void,
+    /// Teardown without wl_buffer.release must abandon a queue lease, not make
+    /// its storage available to a still-connected producer. Video owners may
+    /// omit this when release only drops their independently owned frame.
+    abandon_fn: ?*const fn (*anyopaque) void = null,
     width: i32,
     height: i32,
     format: u32,
@@ -47,6 +51,10 @@ pub const DmabufFrame = struct {
 
     pub fn release(self: DmabufFrame) void {
         self.release_fn(self.context);
+    }
+
+    pub fn abandon(self: DmabufFrame) void {
+        (self.abandon_fn orelse self.release_fn)(self.context);
     }
 };
 
@@ -363,6 +371,7 @@ pub const Window = struct {
     ui_surface: *wl.Surface = undefined,
     ui_subsurface: *wl.Subsurface = undefined,
     ui_viewport: *wp.Viewport = undefined,
+    ui_dmabuf_buffers: std.ArrayList(*ImportedDmabuf) = .empty,
 
     width: i32,
     height: i32,
@@ -1145,6 +1154,77 @@ pub const Window = struct {
         return self.ui_surface;
     }
 
+    const ImportedDmabuf = struct {
+        win: *Window,
+        pending: *std.ArrayList(*ImportedDmabuf),
+        wl_buffer: *wl.Buffer,
+        frame: DmabufFrame,
+
+        fn listener(_: *wl.Buffer, event: wl.Buffer.Event, state: *ImportedDmabuf) void {
+            switch (event) {
+                .release => {
+                    for (state.pending.items, 0..) |candidate, index| {
+                        if (candidate == state) {
+                            _ = state.pending.orderedRemove(index);
+                            break;
+                        }
+                    }
+                    state.wl_buffer.destroy();
+                    state.frame.release();
+                    state.win.gpa.destroy(state);
+                },
+            }
+        }
+    };
+
+    /// Shared importer for decoded video and stock BufferQueue task output.
+    /// The caller must complete its acquire fence off the Wayland event thread
+    /// before transfer. Only wl_buffer.release permits normal queue reuse.
+    fn importDmabuf(self: *Window, frame: DmabufFrame, pending: *std.ArrayList(*ImportedDmabuf)) !*wl.Buffer {
+        errdefer frame.release();
+        const factory = self.dmabuf orelse return error.DmabufUnavailable;
+        if (frame.width <= 0 or frame.height <= 0 or frame.plane_count == 0 or frame.plane_count > frame.fds.len)
+            return error.InvalidDmabuf;
+        if (pending.items.len >= 64) return error.TooManyPendingBuffers;
+        for (0..frame.plane_count) |index| {
+            if (frame.fds[index] < 0 or frame.strides[index] == 0) return error.InvalidDmabuf;
+            if (selectDmabufImportModifier(self.dmabuf_formats.items, frame.format, frame.modifiers[index]) == null)
+                return error.UnsupportedDmabufFormat;
+        }
+        const params = try factory.createParams();
+        defer params.destroy();
+        for (0..frame.plane_count) |index| {
+            const modifier = frame.modifiers[index];
+            params.add(frame.fds[index], @intCast(index), frame.offsets[index], frame.strides[index], @truncate(modifier >> 32), @truncate(modifier));
+        }
+        const buffer = try params.createImmed(frame.width, frame.height, frame.format, .{});
+        errdefer buffer.destroy();
+        const state = try self.gpa.create(ImportedDmabuf);
+        errdefer self.gpa.destroy(state);
+        state.* = .{ .win = self, .pending = pending, .wl_buffer = buffer, .frame = frame };
+        try pending.append(self.gpa, state);
+        buffer.setListener(*ImportedDmabuf, ImportedDmabuf.listener, state);
+        return buffer;
+    }
+
+    /// Present a completed task output on the existing UI child. Ownership
+    /// transfers on every outcome. A queue owner must supply abandonment for
+    /// disconnect/error teardown; a frame callback is never a release signal.
+    pub fn pushUiDmabuf(self: *Window, frame: DmabufFrame) !void {
+        if (frame.abandon_fn == null) {
+            frame.release();
+            return error.QueueAbandonmentRequired;
+        }
+        const buffer = try self.importDmabuf(frame, &self.ui_dmabuf_buffers);
+        self.ui_surface.attach(buffer, 0, 0);
+        self.ui_viewport.setSource(wl.Fixed.fromDouble(0), wl.Fixed.fromDouble(0), wl.Fixed.fromDouble(@floatFromInt(frame.width)), wl.Fixed.fromDouble(@floatFromInt(frame.height)));
+        self.ui_viewport.setDestination(self.width, self.height);
+        self.ui_surface.damageBuffer(0, 0, frame.width, frame.height);
+        self.ui_surface.commit();
+        self.ui_initialized = true;
+        self.presentation_dirty = true;
+    }
+
     /// Register a callback to pace the next application-window transaction.
     /// The parent commit always carries this callback, including when HWUI
     /// drops a child frame before producing a buffer.
@@ -1258,8 +1338,7 @@ pub const Window = struct {
     /// Inject a compositor-routed primary-button drag between Android buffer
     /// coordinates. Each motion gets its own pointer frame so the client sees
     /// the same ordered gesture stream as it would from a physical mouse.
-    pub fn testDrag(self: *Window, from_buffer_x: i32, from_buffer_y: i32,
-            to_buffer_x: i32, to_buffer_y: i32) !void {
+    pub fn testDrag(self: *Window, from_buffer_x: i32, from_buffer_y: i32, to_buffer_x: i32, to_buffer_y: i32) !void {
         const pointer = try self.ensureVirtualPointer();
         const from_x: u32 = @intCast(std.math.clamp(self.bufferToSurfaceX(from_buffer_x), 0, @max(0, self.width - 1)));
         const from_y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(from_buffer_y), 0, @max(0, self.height - 1)));
@@ -1480,6 +1559,7 @@ pub const Window = struct {
         if (self.pointer_constraints) |constraints| constraints.destroy();
         if (self.seat) |seat| seat.release();
         // Tear down the child surface tree before destroying its xdg parent.
+        for (self.ui_dmabuf_buffers.items) |state| state.wl_buffer.destroy();
         self.ui_viewport.destroy();
         self.ui_subsurface.destroy();
         self.ui_surface.destroy();
@@ -1502,6 +1582,11 @@ pub const Window = struct {
         self.events.deinit(self.gpa);
         self.dmabuf_formats.deinit(self.gpa);
         self.display.disconnect();
+        for (self.ui_dmabuf_buffers.items) |state| {
+            state.frame.abandon();
+            self.gpa.destroy(state);
+        }
+        self.ui_dmabuf_buffers.deinit(self.gpa);
         self.gpa.destroy(self);
     }
 
@@ -1510,12 +1595,6 @@ pub const Window = struct {
     // scaled by the compositor via wp_viewport. The UI punches a transparent
     // hole where the SurfaceView sits, so the video shows through.
     pub const VideoLayer = struct {
-        const DmabufBuffer = struct {
-            layer: *VideoLayer,
-            wl_buffer: *wl.Buffer,
-            frame: DmabufFrame,
-        };
-
         win: *Window,
         surface: *wl.Surface,
         subsurface: *wl.Subsurface,
@@ -1533,23 +1612,7 @@ pub const Window = struct {
         full_w: i32 = 0,
         full_h: i32 = 0,
         geometry_visible: bool = false,
-        dmabuf_buffers: std.ArrayList(*DmabufBuffer) = .empty,
-
-        fn dmabufBufferListener(_: *wl.Buffer, event: wl.Buffer.Event, state: *DmabufBuffer) void {
-            switch (event) {
-                .release => {
-                    for (state.layer.dmabuf_buffers.items, 0..) |candidate, index| {
-                        if (candidate == state) {
-                            _ = state.layer.dmabuf_buffers.orderedRemove(index);
-                            break;
-                        }
-                    }
-                    state.wl_buffer.destroy();
-                    state.frame.release();
-                    state.layer.win.gpa.destroy(state);
-                },
-            }
-        }
+        dmabuf_buffers: std.ArrayList(*ImportedDmabuf) = .empty,
 
         fn configureViewport(self: *VideoLayer) void {
             const vp = self.viewport;
@@ -1627,30 +1690,7 @@ pub const Window = struct {
         /// Import and present an owned decoded DMA-BUF frame. The frame remains
         /// alive until the compositor sends wl_buffer.release.
         pub fn pushDmabuf(self: *VideoLayer, frame: DmabufFrame) !void {
-            errdefer frame.release();
-            const factory = self.win.dmabuf orelse return error.DmabufUnavailable;
-            if (frame.plane_count == 0 or frame.plane_count > frame.fds.len)
-                return error.InvalidDmabuf;
-
-            for (0..frame.plane_count) |index| {
-                if (self.win.videoDmabufImportModifier(frame.format, frame.modifiers[index]) == null)
-                    return error.UnsupportedDmabufFormat;
-            }
-
-            const params = try factory.createParams();
-            defer params.destroy();
-            for (0..frame.plane_count) |index| {
-                const modifier = self.win.videoDmabufImportModifier(frame.format, frame.modifiers[index]).?;
-                params.add(frame.fds[index], @intCast(index), frame.offsets[index], frame.strides[index], @truncate(modifier >> 32), @truncate(modifier));
-            }
-            const wl_buffer = try params.createImmed(frame.width, frame.height, frame.format, .{});
-            errdefer wl_buffer.destroy();
-
-            const state = try self.win.gpa.create(DmabufBuffer);
-            errdefer self.win.gpa.destroy(state);
-            state.* = .{ .layer = self, .wl_buffer = wl_buffer, .frame = frame };
-            try self.dmabuf_buffers.append(self.win.gpa, state);
-            wl_buffer.setListener(*DmabufBuffer, dmabufBufferListener, state);
+            const wl_buffer = try self.win.importDmabuf(frame, &self.dmabuf_buffers);
 
             self.src_w = frame.width;
             self.src_h = frame.height;
@@ -1664,7 +1704,7 @@ pub const Window = struct {
         pub fn destroy(self: *VideoLayer) void {
             for (self.dmabuf_buffers.items) |state| {
                 state.wl_buffer.destroy();
-                state.frame.release();
+                state.frame.abandon();
                 self.win.gpa.destroy(state);
             }
             self.dmabuf_buffers.deinit(self.win.gpa);

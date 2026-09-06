@@ -35,6 +35,55 @@ AIBinder_Class *localClass(const String16 &descriptor) {
   return cls;
 }
 } // namespace
+// Follows pinned BpBinder::ObjectManager and BBinder's locking. The registry
+// belongs to the cached C++ object view; its tags never enter AZKB parcels.
+IBinder::~IBinder() {
+  for (const auto &[id, object] : objects)
+    if (object.cleanup)
+      object.cleanup(id, object.value, object.cookie);
+}
+void *IBinder::attachObject(const void *id, void *value, void *cookie,
+                            object_cleanup_func cleanup) {
+  std::lock_guard lock(objectsMutex);
+  auto [entry, inserted] = objects.emplace(id, Object{value, cookie, cleanup});
+  return inserted ? nullptr : entry->second.value;
+}
+void *IBinder::findObject(const void *id) const {
+  std::lock_guard lock(objectsMutex);
+  auto entry = objects.find(id);
+  return entry == objects.end() ? nullptr : entry->second.value;
+}
+void *IBinder::detachObject(const void *id) {
+  std::lock_guard lock(objectsMutex);
+  auto entry = objects.find(id);
+  if (entry == objects.end())
+    return nullptr;
+  auto value = entry->second.value;
+  objects.erase(entry);
+  return value;
+}
+void IBinder::withLock(const std::function<void()> &action) {
+  std::lock_guard lock(objectsMutex);
+  action();
+}
+sp<IBinder> IBinder::lookupOrCreateWeak(const void *id, object_make_func make,
+                                        const void *args) {
+  std::lock_guard lock(objectsMutex);
+  auto &entry = objects[id];
+  if (entry.value) {
+    if (auto live = static_cast<wp<IBinder> *>(entry.value)->promote())
+      return live;
+  } else {
+    entry.value = new wp<IBinder>();
+  }
+  auto created = make(args);
+  *static_cast<wp<IBinder> *>(entry.value) = created;
+  entry.cookie = nullptr;
+  entry.cleanup = [](const void *, void *value, void *) {
+    delete static_cast<wp<IBinder> *>(value);
+  };
+  return created;
+}
 sp<IInterface> IBinder::queryLocalInterface(const String16 &) {
   return nullptr;
 }
@@ -87,6 +136,51 @@ bool IBinder::isBinderAlive() const {
 status_t IBinder::pingBinder() {
   Parcel in, out;
   return transact(PING_TRANSACTION, in, &out);
+}
+// Pinned BpBinder::dump and BBinder::onTransact use the ordinary Parcel FD
+// ownership path. This also makes SurfaceFlinger's priority dump reachable
+// through its real Binder object instead of a host-only diagnostics callback.
+status_t IBinder::dump(int fd, const Vector<String16> &args) {
+  if (args.size() > INT32_MAX)
+    return BAD_VALUE;
+  Parcel input, output;
+  status_t status = input.writeFileDescriptor(fd);
+  if (status != OK)
+    return status;
+  if ((status = input.writeInt32(static_cast<int32_t>(args.size()))) != OK)
+    return status;
+  for (const auto &arg : args)
+    if ((status = input.writeString16(arg)) != OK)
+      return status;
+  return transact(DUMP_TRANSACTION, input, &output);
+}
+status_t BBinder::dump(int, const Vector<String16> &) { return OK; }
+status_t BBinder::onTransact(uint32_t code, const Parcel &input, Parcel *output,
+                             uint32_t) {
+  switch (code) {
+  case INTERFACE_TRANSACTION:
+    return output ? output->writeString16(getInterfaceDescriptor()) : BAD_VALUE;
+  case DUMP_TRANSACTION: {
+    int fd = input.readFileDescriptor();
+    if (fd < 0)
+      return BAD_VALUE;
+    int32_t count = 0;
+    if (input.readInt32(&count) != OK)
+      return BAD_VALUE;
+    Vector<String16> args;
+    // Follow AOSP's bounded-by-available-data argument traversal.
+    for (int32_t i = 0; i < count && input.dataAvail() > 0; ++i) {
+      String16 arg;
+      if (input.readString16(&arg) != OK)
+        return BAD_VALUE;
+      if (args.add(arg) < 0)
+        return NO_MEMORY;
+    }
+    return dump(fd, args);
+  }
+  default:
+    return UNKNOWN_TRANSACTION;
+  }
 }
 status_t BBinder::transact(uint32_t code, const Parcel &input, Parcel *output,
                            uint32_t flags) {
@@ -265,7 +359,22 @@ sp<IBinder> IBinder::fromNative(AIBinder *n) {
 }
 } // namespace android
 #include <android/binder_process.h>
+#include <android/binder_libbinder.h>
 #include <binder/IPCThreadState.h>
+// Pinned ndk/libbinder.cpp conversions borrow their input and return a strong
+// reference. The host registry replaces AOSP's kernel Binder wrapper registry.
+android::sp<android::IBinder> AIBinder_toPlatformBinder(AIBinder *binder) {
+  if (!binder)
+    return nullptr;
+  AIBinder_incStrong(binder);
+  return android::IBinder::fromNative(binder);
+}
+
+AIBinder *
+AIBinder_fromPlatformBinder(const android::sp<android::IBinder> &binder) {
+  return binder ? binder->acquireNative() : nullptr;
+}
+
 namespace android {
 void IPCThreadState::joinThreadPool(bool) { ABinderProcess_joinThreadPool(); }
 } // namespace android

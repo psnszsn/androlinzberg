@@ -1,0 +1,16 @@
+--- a/services/inputflinger/dispatcher/InputDispatcher.cpp
++++ b/services/inputflinger/dispatcher/InputDispatcher.cpp
+@@ -36,7 +36,13 @@
+ #include <input/InputFlags.h>
+ #include <input/PrintTools.h>
+ #include <input/TraceTools.h>
++#if defined(ARTZIG_HOST_GRAPHICS)
++// InputDispatcher::verifyInputEvent uses the same constant-time CRYPTO_memcmp
++// contract; the host OpenSSL declares it in crypto.h instead of BoringSSL mem.h.
++#include <openssl/crypto.h>
++#else
+ #include <openssl/mem.h>
++#endif
+ #include <private/android_filesystem_config.h>
+ #include <unistd.h>
+ #include <utils/Trace.h>

@@ -6,37 +6,37 @@ import javax.lang.model.element.ExecutableElement
 /** Exact stock AM local-interface signatures; hosted behavior remains in Kotlin. */
 class ActivityManagerInternalProcessor : LocalServiceAdapterProcessor() {
     override val targetName = "android.app.ActivityManagerInternal"
-    override val adapterName = "dev.artzig.system.HostedActivityManagerInternal"
+    override val adapterName = "android.app.HostedActivityManagerInternal"
 
     override fun writeFieldsAndConstructor(writer: Writer) {
-        writer.appendLine("    private final HostedActivityManagerInternalService service;")
-        writer.appendLine("    public HostedActivityManagerInternal(HostedActivityManagerInternalService service) {")
-        writer.appendLine("        this.service = service;")
+        writer.appendLine("    private final dev.artzig.system.HostActivityManagerInternalAccess host;")
+        writer.appendLine("    public HostedActivityManagerInternal(dev.artzig.system.HostActivityManagerInternalAccess host) {")
+        writer.appendLine("        this.host = host;")
         writer.appendLine("    }")
     }
 
-    override fun bodyFor(method: ExecutableElement): String {
-        val params = method.parameters.map { processingEnv.typeUtils.erasure(it.asType()).toString() }
-        return when {
-            // Hosted activity launches are synchronous; neither pending-top nor FGS
-            // while-in-use temporary allowlists exist. Process state is sent to AppOps.
-            method.simpleName.toString() in listOf("isPendingTopUid", "isTempAllowlistedForFgsWhileInUse") -> "return false;"
-            method.simpleName.toString() == "getInstrumentationSourceUid" -> "return android.os.Process.INVALID_UID;"
-            method.simpleName.toString() == "isSystemReady" && params.isEmpty() ->
-                "return service.getSystemReady();"
-            method.simpleName.toString() == "getUidProcessState" && params == listOf("int") ->
-                "return service.getUidProcessState(p0);"
-            method.simpleName.toString() == "handleIncomingUser" && params ==
-                listOf("int", "int", "int", "boolean", "int", "java.lang.String", "java.lang.String") ->
-                "return service.handleIncomingUser(p0, p1, p2, p3, p4, p5, p6);"
-            method.simpleName.toString() == "enforceCallingPermission" && params ==
-                listOf("java.lang.String", "java.lang.String") ->
-                "service.enforceCallingPermission(p0, p1);"
-            method.simpleName.toString() == "checkContentProviderUriPermission" && params ==
-                listOf("android.net.Uri", "int", "int", "int") ->
-                "return service.checkContentProviderUriPermission(p0, p1, p2, p3);"
-            else -> "throw dev.artzig.ArtzigTestDiagnostics.unsupported(" +
-                "\"ActivityManagerInternal\", \"${method.simpleName}\", \"not hosted\");"
+    private fun signature(method: ExecutableElement): String =
+        method.simpleName.toString() + method.parameters.joinToString(",", "(", ")") {
+            processingEnv.typeUtils.erasure(it.asType()).toString()
         }
+
+    override fun bodyFor(method: ExecutableElement): String {
+        val target = processingEnv.elementUtils.getTypeElement(
+            "dev.artzig.system.HostActivityManagerInternalAccess")
+        val hostMethod = processingEnv.elementUtils.getAllMembers(target)
+            .filterIsInstance<ExecutableElement>()
+            .firstOrNull { javax.lang.model.element.Modifier.PUBLIC in it.modifiers &&
+                signature(it) == signature(method) }
+        val name = method.simpleName.toString()
+        if (hostMethod != null) {
+            check(processingEnv.typeUtils.isSameType(method.returnType, hostMethod.returnType)) {
+                "Host return type differs from ActivityManagerInternal.$name"
+            }
+            val args = method.parameters.indices.joinToString(", ") { "p$it" }
+            return (if (method.returnType.kind == javax.lang.model.type.TypeKind.VOID) "" else "return ") +
+                "host.$name($args);"
+        }
+        return "throw dev.artzig.ArtzigTestDiagnostics.unsupported(" +
+            "\"ActivityManagerInternal\", \"$name\", \"not hosted\");"
     }
 }

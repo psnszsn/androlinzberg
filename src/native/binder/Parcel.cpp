@@ -1,5 +1,7 @@
 #include <binder/Parcel.h>
 #include <binder/Status.h>
+#include <cerrno>
+#include <fcntl.h>
 #include <utils/Unicode.h>
 #include <cutils/ashmem.h>
 #include <sys/mman.h>
@@ -13,11 +15,6 @@ status_t Parcel::writeByteArray(size_t len, const uint8_t* val) {
   status_t ret = writeInt32(static_cast<uint32_t>(len));
   if (ret == NO_ERROR) ret = write(val, len * sizeof(*val));
   return ret;
-}
-int32_t Parcel::readExceptionCode() const {
-  binder::Status status;
-  status.readFromParcel(*this);
-  return status.exceptionCode();
 }
 // Pinned Parcel.cpp Blob lifecycle and wire format. Only mAllowFds is mapped
 // to the shared Zig Parcel accessor; descriptor transfer remains in writeFileDescriptor.
@@ -174,38 +171,6 @@ void Parcel::Blob::clear() {
     mMutable = false;
 }
 
-// Pinned Parcel::writeNoException delegates to the stock exception header writer.
-status_t Parcel::writeNoException() {
-  binder::Status status;
-  return status.writeToParcel(this);
-}
-// Pinned Parcel UTF conversion and readString16Inplace failure semantics over
-// the shared storage. String8/String16 convenience constructors hide failures.
-status_t Parcel::writeUtf8AsUtf16(const std::string &s) {
-  const auto *data = reinterpret_cast<const uint8_t *>(s.data());
-  const ssize_t length = utf8_to_utf16_length(data, s.size());
-  if (length < 0 || length > INT32_MAX) return BAD_VALUE;
-  auto status = writeInt32(static_cast<int32_t>(length));
-  if (status != OK) return status;
-  auto *out = static_cast<char16_t *>(writeInplace((size_t(length) + 1) * sizeof(char16_t)));
-  if (!out) return NO_MEMORY;
-  utf8_to_utf16(data, s.size(), out, size_t(length) + 1);
-  return OK;
-}
-status_t Parcel::readUtf8FromUtf16(std::string *s) const {
-  const int32_t length = readInt32();
-  if (length < 0 || length == INT32_MAX) return UNEXPECTED_NULL;
-  const auto *data = static_cast<const char16_t *>(
-      readInplace((size_t(length) + 1) * sizeof(char16_t)));
-  if (!data || data[length] != u'\0') return UNEXPECTED_NULL;
-  if (length == 0) { s->clear(); return OK; }
-  const ssize_t bytes = utf16_to_utf8_length(data, size_t(length)) + 1;
-  if (bytes < 1) return BAD_VALUE;
-  s->resize(size_t(bytes));
-  utf16_to_utf8(data, size_t(length), s->data(), size_t(bytes));
-  s->resize(size_t(bytes) - 1);
-  return OK;
-}
 Parcel::Parcel() : mParcel(AParcel_create()), mOwned(true) {}
 Parcel::Parcel(AParcel *p) : mParcel(p), mOwned(false) {}
 Parcel::~Parcel() {
@@ -218,6 +183,16 @@ Parcel *Parcel::forNative(AParcel *p) {
   return static_cast<Parcel *>(azk_parcel_cppView(
       p, [](AParcel *n) -> void * { return new Parcel(n); },
       [](void *n) { delete static_cast<Parcel *>(n); }));
+}
+// AOSP Parcel::writeNoException/readExceptionCode delegate to binder::Status.
+status_t Parcel::writeNoException() {
+  binder::Status status;
+  return status.writeToParcel(this);
+}
+int32_t Parcel::readExceptionCode() const {
+  binder::Status status;
+  status.readFromParcel(*this);
+  return status.exceptionCode();
 }
 void Parcel::markSensitive() const { AParcel_markSensitive(mParcel); }
 bool Parcel::allowFds() const { return AParcel_getAllowFds(mParcel); }
@@ -313,6 +288,166 @@ status_t Parcel::readString16(String16 *out) const {
   *out = std::move(*s);
   return OK;
 }
+// Source: pinned Parcel::{readString16Inplace,writeUtf8AsUtf16,
+// readUtf8FromUtf16,readData,writeData}. Keep the stock Unicode conversion,
+// nullable framing and partial-read mutation over the shared Zig storage.
+const char16_t *Parcel::readString16Inplace(size_t *length) const {
+  const int32_t size = readInt32();
+  if (size >= 0 && size < INT32_MAX) {
+    const auto *str = static_cast<const char16_t *>(
+        readInplace((size_t(size) + 1) * sizeof(char16_t)));
+    if (str && str[size] == u'\0') {
+      *length = size;
+      return str;
+    }
+    if (str)
+      android_errorWriteLog(0x534e4554, "172655291");
+  }
+  *length = 0;
+  return nullptr;
+}
+status_t Parcel::writeUtf8AsUtf16(const std::string &str) {
+  const auto *bytes = reinterpret_cast<const uint8_t *>(str.data());
+  const ssize_t length = utf8_to_utf16_length(bytes, str.size());
+  if (length < 0 || length > INT32_MAX)
+    return BAD_VALUE;
+  const auto status = writeInt32(length);
+  if (status != OK)
+    return status;
+  auto *dst = static_cast<char16_t *>(
+      writeInplace((size_t(length) + 1) * sizeof(char16_t)));
+  if (!dst)
+    return NO_MEMORY;
+  utf8_to_utf16(bytes, str.size(), dst, size_t(length) + 1);
+  return OK;
+}
+status_t Parcel::readUtf8FromUtf16(std::string *str) const {
+  size_t length;
+  const char16_t *src = readString16Inplace(&length);
+  if (!src)
+    return UNEXPECTED_NULL;
+  if (length == 0) {
+    str->clear();
+    return OK;
+  }
+  const ssize_t bytes = utf16_to_utf8_length(src, length) + 1;
+  if (bytes < 1)
+    return BAD_VALUE;
+  str->resize(bytes);
+  utf16_to_utf8(src, length, str->data(), bytes);
+  str->resize(bytes - 1);
+  return OK;
+}
+namespace {
+template <class T, class Read>
+status_t readNullableUtf8(const Parcel &parcel, std::optional<T> *out,
+                          Read read) {
+  const size_t position = parcel.dataPosition();
+  int32_t peek;
+  const auto status = parcel.readInt32(&peek);
+  if (status != OK)
+    return status;
+  if (peek == -1) {
+    out->reset();
+    return OK;
+  }
+  out->emplace(T());
+  parcel.setDataPosition(position);
+  return read(&**out);
+}
+template <class T, class Read>
+status_t readNullableUtf8(const Parcel &parcel, std::unique_ptr<T> *out,
+                          Read read) {
+  const size_t position = parcel.dataPosition();
+  int32_t peek;
+  const auto status = parcel.readInt32(&peek);
+  if (status != OK)
+    return status;
+  if (peek == -1) {
+    out->reset();
+    return OK;
+  }
+  T *value = new (std::nothrow) T;
+  if (!value)
+    return NO_MEMORY;
+  out->reset(value);
+  parcel.setDataPosition(position);
+  return read(out->get());
+}
+template <class T>
+status_t writeUtf8Vector(Parcel &parcel, const std::vector<T> &values) {
+  if (values.size() > INT32_MAX)
+    return BAD_VALUE;
+  auto status = parcel.writeInt32(values.size());
+  if (status != OK)
+    return status;
+  for (const auto &value : values) {
+    status = parcel.writeUtf8AsUtf16(value);
+    if (status != OK)
+      return status;
+  }
+  return OK;
+}
+template <class T>
+status_t readUtf8Vector(const Parcel &parcel, std::vector<T> *values) {
+  int32_t size;
+  auto status = parcel.readInt32(&size);
+  if (status != OK)
+    return status;
+  if (size < 0)
+    return UNEXPECTED_NULL;
+  if (size_t(size) > parcel.dataAvail())
+    return BAD_VALUE;
+  values->clear();
+  values->resize(size);
+  for (auto &value : *values) {
+    status = parcel.readUtf8FromUtf16(&value);
+    if (status != OK)
+      return status;
+  }
+  return OK;
+}
+} // namespace
+status_t Parcel::writeUtf8AsUtf16(const std::optional<std::string> &str) {
+  return str ? writeUtf8AsUtf16(*str) : writeInt32(-1);
+}
+status_t Parcel::writeUtf8AsUtf16(const std::unique_ptr<std::string> &str) {
+  return str ? writeUtf8AsUtf16(*str) : writeInt32(-1);
+}
+status_t Parcel::readUtf8FromUtf16(std::optional<std::string> *str) const {
+  return readNullableUtf8(
+      *this, str, [this](auto *value) { return readUtf8FromUtf16(value); });
+}
+status_t Parcel::readUtf8FromUtf16(std::unique_ptr<std::string> *str) const {
+  return readNullableUtf8(
+      *this, str, [this](auto *value) { return readUtf8FromUtf16(value); });
+}
+status_t
+Parcel::writeUtf8VectorAsUtf16Vector(const std::vector<std::string> &v) {
+  return writeUtf8Vector(*this, v);
+}
+status_t Parcel::writeUtf8VectorAsUtf16Vector(
+    const std::optional<std::vector<std::optional<std::string>>> &v) {
+  return v ? writeUtf8Vector(*this, *v) : writeInt32(-1);
+}
+status_t Parcel::writeUtf8VectorAsUtf16Vector(
+    const std::unique_ptr<std::vector<std::unique_ptr<std::string>>> &v) {
+  return v ? writeUtf8Vector(*this, *v) : writeInt32(-1);
+}
+status_t
+Parcel::readUtf8VectorFromUtf16Vector(std::vector<std::string> *v) const {
+  return readUtf8Vector(*this, v);
+}
+status_t Parcel::readUtf8VectorFromUtf16Vector(
+    std::optional<std::vector<std::optional<std::string>>> *v) const {
+  return readNullableUtf8(
+      *this, v, [this](auto *values) { return readUtf8Vector(*this, values); });
+}
+status_t Parcel::readUtf8VectorFromUtf16Vector(
+    std::unique_ptr<std::vector<std::unique_ptr<std::string>>> *v) const {
+  return readNullableUtf8(
+      *this, v, [this](auto *values) { return readUtf8Vector(*this, values); });
+}
 const char *Parcel::readCString() const {
   if (!dataAvail())
     return nullptr;
@@ -365,6 +500,33 @@ status_t Parcel::readUniqueFileDescriptor(base::unique_fd *out) const {
   out->reset(dup);
   return OK;
 }
+// Pinned ParcelFileDescriptor framing includes a reliable-channel marker,
+// unlike the NDK's raw descriptor entry. Keep that protocol at this API seam.
+status_t Parcel::writeDupParcelFileDescriptor(int fd) {
+  base::unique_fd duplicate(fcntl(fd, F_DUPFD_CLOEXEC, 0));
+  if (duplicate.get() < 0)
+    return -errno;
+  auto status = writeInt32(0);
+  return status ? status : writeDupFileDescriptor(duplicate.get());
+}
+int Parcel::readParcelFileDescriptor() const {
+  const int32_t hasComm = readInt32();
+  const int fd = readFileDescriptor();
+  if (hasComm &&
+      azk_parcel_detachParcelFileDescriptor(readFileDescriptor()) != OK)
+    return BAD_TYPE;
+  return fd;
+}
+status_t Parcel::readUniqueParcelFileDescriptor(base::unique_fd *out) const {
+  const int fd = readParcelFileDescriptor();
+  if (fd == BAD_TYPE)
+    return BAD_TYPE;
+  const int duplicate = azk_parcel_dupFd(fd);
+  if (duplicate < 0)
+    return BAD_VALUE;
+  out->reset(duplicate);
+  return OK;
+}
 status_t Parcel::writeNativeHandle(const native_handle_t *h) {
   if (!h || h->version != sizeof(native_handle_t) || h->numFds < 0 ||
       h->numFds > 64 || h->numInts < 0 || h->numInts > 4096)
@@ -403,3 +565,11 @@ native_handle_t *Parcel::readNativeHandle() const {
   return h;
 }
 } // namespace android
+
+// Pinned binder_libbinder.h language views retain the AParcel owner's lifetime.
+android::Parcel *AParcel_viewPlatformParcel(AParcel *parcel) {
+  return android::Parcel::forNative(parcel);
+}
+const android::Parcel *AParcel_viewPlatformParcel(const AParcel *parcel) {
+  return android::Parcel::forNative(const_cast<AParcel *>(parcel));
+}

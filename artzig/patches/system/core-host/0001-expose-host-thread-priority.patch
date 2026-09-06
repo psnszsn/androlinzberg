@@ -1,0 +1,29 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] libutils: expose Linux thread priority helpers to host graphics
+
+The pinned implementations only call Linux setpriority/getpriority; make this
+transport-independent functionality available without selecting Android-only
+scheduling, process-group or thread creation paths.
+
+--- a/libutils/include/utils/AndroidThreads.h
++++ b/libutils/include/utils/AndroidThreads.h
+@@ -73,7 +73,7 @@
+ // ------------------------------------------------------------------
+ // Extra functions working with raw pids.
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_THREAD_PRIORITY)
+ // Change the priority AND scheduling group of a particular thread.  The priority
+ // should be one of the ANDROID_PRIORITY constants.  Returns INVALID_OPERATION
+ // if the priority set failed, else another value if just the group set failed;
+--- a/libutils/Threads.cpp
++++ b/libutils/Threads.cpp
+@@ -309,7 +309,7 @@
+     gCreateThreadFn = func;
+ }
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_THREAD_PRIORITY)
+ int androidSetThreadPriority(pid_t tid, int pri)
+ {
+     int rc = 0;

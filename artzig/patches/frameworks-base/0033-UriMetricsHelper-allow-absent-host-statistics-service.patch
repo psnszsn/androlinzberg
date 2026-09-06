@@ -1,0 +1,18 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] UriMetricsHelper: permit a host without a statistics service
+
+Retain the stock grant implementation and metrics accounting. Pull registration
+is optional at the host service boundary, where no stats daemon is published.
+
+--- a/services/core/java/com/android/server/uri/UriMetricsHelper.java
++++ b/services/core/java/com/android/server/uri/UriMetricsHelper.java
+@@ -47,6 +47,9 @@
+ 
+     void registerPuller() {
+         final StatsManager statsManager = mContext.getSystemService(StatsManager.class);
++        // Hosted system-server has no stats daemon/StatsManager capability.
++        // The grant state machine and persistence do not depend on a puller.
++        if (statsManager == null) return;
+         statsManager.setPullAtomCallback(
+                 FrameworkStatsLog.PERSISTENT_URI_PERMISSIONS_AMOUNT_PER_PACKAGE,
+                 DAILY_PULL_METADATA,

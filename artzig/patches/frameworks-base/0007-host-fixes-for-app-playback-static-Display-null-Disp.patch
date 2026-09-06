@@ -174,48 +174,6 @@ index 5c816543e..bf5272f10 100644
          // Note: The display manager caches display info objects on our behalf.
          DisplayInfo newInfo = mGlobal.getDisplayInfo(mDisplayId);
          if (newInfo == null) {
-diff --git a/core/java/android/view/Surface.java b/core/java/android/view/Surface.java
-index 4fc1cfc0c..3c1fbaecb 100644
---- a/core/java/android/view/Surface.java
-+++ b/core/java/android/view/Surface.java
-@@ -381,16 +381,18 @@ public class Surface implements Parcelable {
-      * @throws OutOfResourcesException if the surface could not be created.
-      */
-     public Surface(SurfaceTexture surfaceTexture) {
-+        // artzig: no native GL consumer — a fake, always-"valid" surface used
-+        // only as a token (e.g. ExoPlayer's PlaceholderSurface).
-         if (surfaceTexture == null) {
-             throw new IllegalArgumentException("surfaceTexture must not be null");
-         }
--        mIsSingleBuffered = surfaceTexture.isSingleBuffered();
-+        mIsSingleBuffered = false;
-         synchronized (mLock) {
-             mName = surfaceTexture.toString();
--            setNativeObjectLocked(nativeCreateFromSurfaceTexture(surfaceTexture));
-+            mArtzigFake = true;
-         }
--        registerNativeMemoryUsage();
-     }
-+    private boolean mArtzigFake;
- 
-     /* called from android_view_Surface_createFromIGraphicBufferProducer() */
-     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-@@ -421,6 +423,7 @@ public class Surface implements Parcelable {
-      */
-     public void release() {
-         synchronized (mLock) {
-+            if (mArtzigFake) { mArtzigFake = false; return; }
-             if (mHwuiContext != null) {
-                 mHwuiContext.destroy();
-                 mHwuiContext = null;
-@@ -468,6 +471,7 @@ public class Surface implements Parcelable {
-      */
-     public boolean isValid() {
-         synchronized (mLock) {
-+            if (mArtzigFake) return true;
-             if (mNativeObject == 0) return false;
-             return nativeIsValid(mNativeObject);
-         }
 diff --git a/core/java/android/widget/Toast.java b/core/java/android/widget/Toast.java
 index ead8887fd..c6b8628d1 100644
 --- a/core/java/android/widget/Toast.java

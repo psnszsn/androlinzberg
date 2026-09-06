@@ -41,6 +41,7 @@ public final class ApkHost {
         private lateinit var sRoot: android.view.ViewRootImpl
         private var sRootActive: Boolean = false
         private lateinit var sClassLoader: ClassLoader
+        private var sRenderedFrameTime: Long = Long.MIN_VALUE
         private var sWidth: Int = 0
         private var sHeight: Int = 0
         private var sScale120: Int = 0
@@ -761,7 +762,9 @@ public final class ApkHost {
                 e.root.`prepareWindowTraversal$artzig`(e.lp, width, height)
             }
             val tracePrepared: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            HostedDisplayEvents.dispatchFrame(System.nanoTime())
+            // Stock DisplayEventReceiver dispatches traversal from the native Looper.
+            // The host frame presents the latest completed Android frame.
+            sRenderedFrameTime = android.view.Choreographer.getInstance().lastFrameTimeNanos
             val traceChoreographer: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
             // Dispatching vsync runs stock Choreographer and releases traversal barriers.
             // Synchronous View.post callbacks then observe this frame's geometry.
@@ -936,7 +939,7 @@ public final class ApkHost {
         }
 
         @JvmStatic public fun needsFrame(): Boolean =
-            dev.artzig.HostedDisplayEvents.hasPendingFrame()
+            android.view.Choreographer.getInstance().lastFrameTimeNanos > sRenderedFrameTime
 
         @JvmStatic private fun drainLooper() { pumpMainLooper() }
 

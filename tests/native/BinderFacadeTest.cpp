@@ -3,12 +3,14 @@
 #include <cassert>
 
 #include <android/binder_manager.h>
+#include <android/binder_libbinder.h>
 #include <android/gui/BnFpsListener.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IResultReceiver.h>
 #include <binder/IMemory.h>
 #include <binder/MemoryDealer.h>
 #include <binder/Parcel.h>
+#include <binder/ParcelFileDescriptor.h>
 #include <fcntl.h>
 
 #include <atomic>
@@ -86,9 +88,16 @@ struct RemoteTracked final : BBinder {
 };
 struct Service final : BBinder {
   int ownUid = IPCThreadState::self()->getCallingUid();
+  status_t dump(int fd, const Vector<String16> &args) override {
+    if (args.size() != 2 || args[0] != String16("--layers") ||
+        args[1] != String16(u"task \u03bb"))
+      return BAD_VALUE;
+    assert(IPCThreadState::self()->getCallingPid() != getpid());
+    return write(fd, "layers\n", 7) == 7 ? OK : UNKNOWN_ERROR;
+  }
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
-                      uint32_t) override {
-    if (code == 7) {
+                      uint32_t flags) override {
+    if (code == 11) {
       auto memory = interface_cast<IMemory>(in.readStrongBinder());
       assert(memory && memory->size() == 8192 && memory->offset() > 0);
       auto *bytes = static_cast<uint8_t *>(memory->unsecurePointer());
@@ -117,11 +126,21 @@ struct Service final : BBinder {
       return out->writeStrongBinder(sp<RemoteTracked>::make());
     if (code == 5)
       return out->writeInt32(remoteDestroyed.load());
+    if (code == 6) {
+      os::ParcelFileDescriptor descriptor;
+      auto status = descriptor.readFromParcel(&in);
+      return status ? status : descriptor.writeToParcel(out);
+    }
+    if (code == 7) {
+      std::optional<std::vector<std::optional<std::string>>> values;
+      const auto status = in.readUtf8VectorFromUtf16Vector(&values);
+      return status ? status : out->writeUtf8VectorAsUtf16Vector(values);
+    }
     if (code == NESTED) {
       return out->writeInt32(in.readInt32() + 1);
     }
     if (code != EXCHANGE)
-      return UNKNOWN_TRANSACTION;
+      return BBinder::onTransact(code, in, out, flags);
     auto listenerBinder = in.readStrongBinder();
     auto nested = in.readStrongBinder();
     assert(listenerBinder && listenerBinder->remoteBinder());
@@ -216,10 +235,93 @@ int main(int argc, char **argv) {
   }
   assert(!weak.promote());
   pass("AOSP RefBase/sp/wp; local interface identity and destruction");
+  {
+    auto owner = sp<BBinder>::make();
+    int tag, detachedTag, weakTag, cleaned = 0;
+    auto cleanup = [](const void *, void *, void *cookie) {
+      ++*static_cast<int *>(cookie);
+    };
+    assert(owner->attachObject(&tag, &tag, &cleaned, cleanup) == nullptr);
+    assert(owner->attachObject(&tag, &detachedTag, &cleaned, cleanup) == &tag);
+    assert(owner->findObject(&tag) == &tag);
+    assert(owner->attachObject(&detachedTag, &detachedTag, &cleaned, cleanup) ==
+           nullptr);
+    assert(owner->detachObject(&detachedTag) == &detachedTag && cleaned == 0);
+    std::atomic<int> made = 0;
+    auto make = [](const void *args) -> sp<IBinder> {
+      ++*static_cast<std::atomic<int> *>(const_cast<void *>(args));
+      return sp<BBinder>::make();
+    };
+    std::array<sp<IBinder>, 8> views;
+    std::array<std::thread, 8> workers;
+    for (size_t i = 0; i < workers.size(); ++i)
+      workers[i] = std::thread([&, i] {
+        views[i] = owner->lookupOrCreateWeak(&weakTag, make, &made);
+      });
+    for (auto &worker : workers)
+      worker.join();
+    for (const auto &view : views)
+      assert(view == views[0]);
+    assert(made == 1);
+    wp<IBinder> weakView = views[0];
+    for (auto &view : views)
+      view.clear();
+    assert(!weakView.promote());
+    auto replacement = owner->lookupOrCreateWeak(&weakTag, make, &made);
+    assert(replacement && made == 2);
+    owner.clear();
+    assert(cleaned == 1 && replacement->localBinder());
+    pass("Binder attachments clean once; concurrent delegates share a weak "
+         "cached identity");
+  }
   auto *raw = AServiceManager_waitForService("dev.artzig.facade.v2");
   assert(raw);
   auto server = IBinder::fromNative(raw);
+  {
+    const std::optional<std::vector<std::optional<std::string>>> values{
+        std::vector<std::optional<std::string>>{std::nullopt, std::string{},
+                                                std::string("task \xce\xbb")}};
+    Parcel request, reply;
+    assert(request.writeUtf8VectorAsUtf16Vector(values) == OK);
+    assert(server->transact(7, request, &reply) == OK);
+    std::optional<std::vector<std::optional<std::string>>> returned;
+    assert(reply.readUtf8VectorFromUtf16Vector(&returned) == OK);
+    assert(returned == values && reply.dataAvail() == 0);
+    pass("nullable Unicode string vectors across AZKB service process");
+  }
+
   assert(server->remoteBinder() && !server->localBinder());
+  {
+    auto *native = AIBinder_fromPlatformBinder(server);
+    auto converted = AIBinder_toPlatformBinder(native);
+    assert(converted == server);
+    AIBinder_decStrong(native);
+    assert(converted->pingBinder() == OK);
+    assert(AIBinder_toPlatformBinder(nullptr) == nullptr);
+    assert(AIBinder_fromPlatformBinder(nullptr) == nullptr);
+    pass("NDK/platform Binder conversion preserves remote identity and "
+         "ownership");
+  }
+  {
+    int descriptors[2];
+    assert(pipe2(descriptors, O_CLOEXEC | O_NONBLOCK) == 0);
+    Vector<String16> args;
+    args.add(String16("--layers"));
+    args.add(String16(u"task \u03bb"));
+    assert(server->dump(descriptors[1], args) == OK);
+    char content[7];
+    assert(read(descriptors[0], content, sizeof(content)) == sizeof(content));
+    assert(std::string(content, sizeof(content)) == "layers\n");
+    args.clear();
+    assert(server->dump(descriptors[1], args) == BAD_VALUE);
+    // Serialization borrows the caller FD; the receiver owns its transferred
+    // copy only for the transaction. Closing here must produce EOF.
+    assert(fcntl(descriptors[1], F_GETFD) >= 0);
+    close(descriptors[1]);
+    assert(read(descriptors[0], content, sizeof(content)) == 0);
+    close(descriptors[0]);
+    pass("remote dump Unicode arguments, status, identity and FD ownership");
+  }
   auto same = IBinder::fromNative(
       AServiceManager_waitForService("dev.artzig.facade.v2"));
   assert(server == same);
@@ -237,7 +339,7 @@ int main(int argc, char **argv) {
     dealer.clear();
     Parcel request, response;
     assert(request.writeStrongBinder(IInterface::asBinder(memory)) == OK);
-    assert(server->transact(7, request, &response) == OK);
+    assert(server->transact(11, request, &response) == OK);
     auto returned = interface_cast<IMemory>(response.readStrongBinder());
     assert(returned == memory && bytes[0] == 93);
     pass("stock shared-memory Binder, allocation lifetime and remote writes");
@@ -305,6 +407,26 @@ int main(int argc, char **argv) {
          "overflow");
   }
   auto listener = sp<Listener>::make();
+  {
+    int fds[2];
+    assert(pipe(fds) == 0);
+    base::unique_fd writer(fds[1]);
+    Parcel request, response;
+    {
+      os::ParcelFileDescriptor original{binder::unique_fd(fds[0])};
+      assert(original.writeToParcel(&request) == OK);
+    }
+    assert(server->transact(6, request, &response) == OK);
+    os::ParcelFileDescriptor returned;
+    assert(returned.readFromParcel(&response) == OK);
+    request.freeData();
+    response.freeData();
+    assert((fcntl(returned.get(), F_GETFD) & FD_CLOEXEC) != 0);
+    assert(write(writer.get(), "p", 1) == 1);
+    char value = 0;
+    assert(read(returned.get(), &value, 1) == 1 && value == 'p');
+    pass("stock ParcelFileDescriptor survives cross-process parcel ownership");
+  }
   auto nested = sp<Nested>::make(server);
   auto local = IInterface::asBinder(listener);
   Parcel data, reply;
@@ -582,6 +704,149 @@ void parcelTests() {
     assert(p.readEnumVector(&decodedWords) == BAD_VALUE && decodedWords.empty());
     pass("enum vectors preserve packed byte and full-width AIDL encodings");
   }
+  {
+    const std::vector<std::string> text{"", "task \xce\xbb", "\xf0\x9f\x98\x80",
+                                        std::string("a\0b", 3)};
+    Parcel p, wire;
+    assert(p.writeUtf8VectorAsUtf16Vector(text) == OK);
+    // Independent UTF-16 framing, including a surrogate pair and embedded NUL.
+    assert(wire.writeInt32(4) == OK);
+    assert(wire.writeString16(u"", 0) == OK);
+    assert(wire.writeString16(u"task \u03bb", 6) == OK);
+    assert(wire.writeString16(u"\U0001f600", 2) == OK);
+    assert(wire.writeString16(u"a\0b", 3) == OK);
+    assert(p.dataSize() == wire.dataSize());
+    assert(memcmp(p.data(), wire.data(), p.dataSize()) == 0);
+    p.setDataPosition(0);
+    std::vector<std::string> decoded{"old"};
+    assert(p.readUtf8VectorFromUtf16Vector(&decoded) == OK && decoded == text);
+    assert(p.dataAvail() == 0);
+    const size_t before = p.dataSize();
+    assert(p.writeUtf8AsUtf16(std::string("\xf0\x9f", 2)) == BAD_VALUE);
+    assert(p.dataSize() == before && p.dataPosition() == before);
+
+    using OptionalVector =
+        std::optional<std::vector<std::optional<std::string>>>;
+    OptionalVector values{std::vector<std::optional<std::string>>{
+        std::nullopt, std::string{}, text[2]}},
+        copy;
+    p.freeData();
+    assert(p.writeUtf8VectorAsUtf16Vector(values) == OK);
+    assert(p.writeUtf8VectorAsUtf16Vector(OptionalVector{}) == OK);
+    p.setDataPosition(0);
+    assert(p.readUtf8VectorFromUtf16Vector(&copy) == OK && copy == values);
+    assert(p.readUtf8VectorFromUtf16Vector(&copy) == OK && !copy);
+    using OwnedVector =
+        std::unique_ptr<std::vector<std::unique_ptr<std::string>>>;
+    OwnedVector owned;
+    p.setDataPosition(0);
+    assert(p.readUtf8VectorFromUtf16Vector(&owned) == OK);
+    assert(owned && owned->size() == 3 && !(*owned)[0] &&
+           (*owned)[1]->empty() && *(*owned)[2] == text[2]);
+    wire.freeData();
+    assert(wire.writeUtf8VectorAsUtf16Vector(owned) == OK);
+    wire.setDataPosition(0);
+    assert(wire.readUtf8VectorFromUtf16Vector(&copy) == OK && copy == values);
+    assert(p.readUtf8VectorFromUtf16Vector(&owned) == OK && !owned);
+    assert(wire.writeUtf8VectorAsUtf16Vector(owned) == OK);
+
+    // AOSP leaves a resized, partially decoded vector on an element failure.
+    p.freeData();
+    assert(p.writeInt32(3) == OK);
+    assert(p.writeUtf8AsUtf16(std::string("first")) == OK);
+    assert(p.writeInt32(-1) == OK);
+    p.setDataPosition(0);
+    assert(p.readUtf8VectorFromUtf16Vector(&decoded) == UNEXPECTED_NULL);
+    assert((decoded == std::vector<std::string>{"first", "", ""}));
+    p.freeData();
+    assert(p.writeInt32(100) == OK);
+    p.setDataPosition(0);
+    assert(p.readUtf8VectorFromUtf16Vector(&decoded) == BAD_VALUE);
+    assert(decoded.size() == 3 && decoded[0] == "first");
+    p.freeData();
+    assert(p.writeInt32(-2) == OK);
+    p.setDataPosition(0);
+    assert(p.readUtf8VectorFromUtf16Vector(&copy) == UNEXPECTED_NULL);
+    assert(copy && copy->empty());
+    p.freeData();
+    assert(p.writeInt32(2) == OK); // Truncated UTF-16 payload.
+    p.setDataPosition(0);
+    std::string unchanged = "unchanged";
+    assert(p.readUtf8FromUtf16(&unchanged) == UNEXPECTED_NULL);
+    assert(unchanged == "unchanged");
+    pass("UTF-16 string-vector framing, nullable ownership and AOSP failure "
+         "mutation");
+  }
+  {
+    Parcel p;
+    auto listener = sp<Listener>::make();
+    sp<gui::IFpsListener> input = listener, decoded;
+    assert(p.writeStrongBinder(input) == OK);
+    assert(p.writeStrongBinder(sp<gui::IFpsListener>{}) == OK);
+    p.setDataPosition(0);
+    assert(p.readStrongBinder(&decoded) == OK && decoded == input);
+    assert(p.readNullableStrongBinder(&decoded) == OK && !decoded);
+    p.setDataPosition(0);
+    std::vector<sp<IBinder>> binders{IInterface::asBinder(input)},
+        decodedBinders;
+    p.freeData();
+    assert(p.writeStrongBinderVector(binders) == OK);
+    p.setDataPosition(0);
+    assert(p.readStrongBinderVector(&decodedBinders) == OK &&
+           decodedBinders == binders);
+    enum class Byte : int8_t { first = 1, last = 127 };
+    std::vector<Byte> values{Byte::first, Byte::last}, decodedValues;
+    p.freeData();
+    assert(p.writeEnumVector(values) == OK && p.dataSize() == 8);
+    p.setDataPosition(0);
+    assert(p.readEnumVector(&decodedValues) == OK && decodedValues == values);
+    std::optional<std::vector<Byte>> absent;
+    p.freeData();
+    assert(p.writeEnumVector(absent) == OK);
+    p.setDataPosition(0);
+    absent = values;
+    assert(p.readEnumVector(&absent) == OK && !absent);
+    pass("typed Binder references, Binder vectors and nullable byte enum "
+         "vectors");
+  }
+  {
+    Parcel reply;
+    assert(reply.writeNoException() == OK);
+    assert(reply.writeInt32(42) == OK);
+    reply.setDataPosition(0);
+    assert(reply.readExceptionCode() == 0 && reply.readInt32() == 42);
+    reply.freeData();
+    auto denied =
+        binder::Status::fromExceptionCode(binder::Status::EX_SECURITY);
+    assert(denied.writeToParcel(&reply) == OK);
+    reply.setDataPosition(0);
+    assert(reply.readExceptionCode() == binder::Status::EX_SECURITY);
+    reply.freeData();
+    assert(reply.readExceptionCode() != 0);
+  }
+  {
+    Parcel sizes;
+    const std::vector<int32_t> original{1, 2, 3};
+    assert(sizes.writeVectorSize(original) == OK);
+    sizes.setDataPosition(0);
+    std::vector<int32_t> out;
+    assert(sizes.resizeOutVector(&out) == OK && out.size() == 3);
+    // Unlike an input vector, no element bytes accompany an out-vector count.
+    assert(sizes.dataAvail() == 0);
+    sizes.freeData();
+    sizes.writeInt32(250000); // AOSP refuses allocations of one million bytes.
+    sizes.setDataPosition(0);
+    assert(sizes.resizeOutVector(&out) == NO_MEMORY && out.size() == 3);
+    sizes.freeData();
+    sizes.writeInt32(-1);
+    sizes.setDataPosition(0);
+    assert(sizes.resizeOutVector(&out) == UNEXPECTED_NULL);
+    sizes.setDataPosition(0);
+    std::optional<std::vector<int32_t>> optional{original};
+    assert(sizes.resizeOutVector(&optional) == OK && !optional);
+    sizes.freeData();
+    assert(sizes.resizeOutVector(&out) != OK && out.size() == 3);
+  }
   // A native Parcel has its own durable language view, also across reset.
   auto *first = AParcel_create();
   auto *second = AParcel_create();
@@ -613,22 +878,27 @@ void parcelTests() {
   {
     Parcel source, copy;
     auto binder = sp<Tracked>::make(destroyed);
+    assert(source.objectsCount() == 0);
     assert(source.writeStrongBinder(binder) == OK);
+    assert(source.objectsCount() == 1);
     binder.clear();
     assert(destroyed == 0);
     assert(copy.appendFrom(&source, 0, source.dataSize()) == OK);
+    assert(copy.objectsCount() == 1);
     assert(copy.appendFrom(&source, 1, 3) == BAD_VALUE);
     source.freeData();
+    assert(source.objectsCount() == 0 && copy.objectsCount() == 1);
     assert(destroyed == 0);
     copy.setDataPosition(0);
     auto one = copy.readStrongBinder();
     copy.setDataPosition(0);
     auto two = copy.readStrongBinder();
-    assert(one == two);
+    assert(one == two && copy.objectsCount() == 1);
     one.clear();
     two.clear();
     copy.setDataPosition(0);
     copy.writeInt32(7);
+    assert(copy.objectsCount() == 0);
     assert(destroyed == 1);
     copy.setDataPosition(0);
     sp<IBinder> invalid;
@@ -640,6 +910,7 @@ void parcelTests() {
     p.writeStrongBinder(binder);
     binder.clear();
     p.setDataSize(0);
+    assert(p.objectsCount() == 0);
     assert(destroyed == 2);
   }
   {
@@ -647,6 +918,7 @@ void parcelTests() {
     assert(pipe(fds) == 0);
     Parcel p, q;
     assert(p.writeDupFileDescriptor(fds[0]) == OK);
+    assert(p.objectsCount() == 1);
     close(fds[0]);
     p.setDataPosition(0);
     int borrowed = p.readFileDescriptor();
@@ -668,6 +940,39 @@ void parcelTests() {
     close(fds[1]);
   }
   {
+    int data[2], comm[2];
+    assert(pipe(data) == 0 && pipe(comm) == 0);
+    base::unique_fd reader(data[0]), writer(data[1]);
+    base::unique_fd commReader(comm[0]), commWriter(comm[1]);
+    Parcel p;
+    assert(p.writeInt32(1) == OK);
+    assert(p.writeDupFileDescriptor(reader.get()) == OK);
+    assert(p.writeDupFileDescriptor(commWriter.get()) == OK);
+    p.setDataPosition(0);
+    os::ParcelFileDescriptor decoded;
+    assert(decoded.readFromParcel(&p) == OK);
+    unsigned char detached[4] = {};
+    assert(read(commReader.get(), detached, sizeof(detached)) == 4);
+    assert(detached[0] == 0 && detached[1] == 0 && detached[2] == 0 &&
+           detached[3] == 2);
+    assert(fcntl(commWriter.get(), F_GETFD) >= 0);
+    p.freeData();
+    assert(write(writer.get(), "r", 1) == 1);
+    char value = 0;
+    assert(read(decoded.get(), &value, 1) == 1 && value == 'r');
+    const int previous = decoded.get();
+    assert(p.writeInt32(1) == OK);
+    assert(p.writeDupFileDescriptor(reader.get()) == OK);
+    assert(p.writeDupFileDescriptor(commReader.get()) == OK);
+    p.setDataPosition(0);
+    assert(decoded.readFromParcel(&p) == BAD_TYPE);
+    assert(decoded.get() == previous && fcntl(previous, F_GETFD) >= 0);
+    p.freeData();
+    assert(p.writeDupParcelFileDescriptor(-1) == -EBADF);
+    assert(p.dataPosition() == 0 && p.dataSize() == 0);
+    pass("reliable ParcelFileDescriptor detach framing and failure ownership");
+  }
+  {
     Parcel p;
     auto status = binder::Status::fromServiceSpecificError(47, "failure");
     assert(status.writeToParcel(&p) == OK);
@@ -677,17 +982,18 @@ void parcelTests() {
     assert(decoded.serviceSpecificErrorCode() == 47);
     assert(decoded.exceptionMessage() == String8("failure"));
     p.setDataPosition(0);
-    AStatus* ndkStatus=nullptr;
-    assert(AParcel_readStatusHeader(p.native(),&ndkStatus)==OK);
-    assert(AStatus_getServiceSpecificError(ndkStatus)==47);
+    AStatus *ndkStatus = nullptr;
+    assert(AParcel_readStatusHeader(p.native(), &ndkStatus) == OK);
+    assert(AStatus_getServiceSpecificError(ndkStatus) == 47);
     AStatus_delete(ndkStatus);
     p.freeData();
-    ndkStatus=AStatus_fromServiceSpecificErrorWithMessage(81,"ndk failure");
-    assert(AParcel_writeStatusHeader(p.native(),ndkStatus)==OK);
+    ndkStatus = AStatus_fromServiceSpecificErrorWithMessage(81, "ndk failure");
+    assert(AParcel_writeStatusHeader(p.native(), ndkStatus) == OK);
     AStatus_delete(ndkStatus);
     p.setDataPosition(0);
-    assert(decoded.readFromParcel(p)==OK&&decoded.serviceSpecificErrorCode()==81);
-    assert(decoded.exceptionMessage()==String8("ndk failure"));
+    assert(decoded.readFromParcel(p) == OK &&
+           decoded.serviceSpecificErrorCode() == 81);
+    assert(decoded.exceptionMessage() == String8("ndk failure"));
     p.freeData();
     p.writeString16(u"a\xd800z", 3);
     p.setDataPosition(0);
@@ -736,6 +1042,13 @@ void parcelTests() {
     // release.
     auto binder = sp<Tracked>::make(destroyed);
     auto *native = binder->acquireNative();
+    {
+      auto converted = AIBinder_toPlatformBinder(native);
+      assert(converted == binder);
+      auto *roundtrip = AIBinder_fromPlatformBinder(converted);
+      assert(roundtrip == native);
+      AIBinder_decStrong(roundtrip);
+    }
     assert(AServiceManager_addService(native, "forbidden.system.service") !=
            OK);
     AIBinder_decStrong(native);

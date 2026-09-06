@@ -26,7 +26,10 @@ internal object SystemServices {
     private external fun nativeCreateMediaExtractorService(): android.os.IBinder
 
     /** Single hosted user; `SystemServiceManager` asks for it on user start. */
-    private class HostedUserManagerInternal(private val context: Context) : UserManagerInternal() {
+    private class HostedUserManagerInternal(
+        private val context: Context,
+        private val lifecycle: HostedUserLifecycle,
+    ) : UserManagerInternal() {
         private fun users(): MutableList<UserInfo> = UserManager.get(context).users
 
         override fun getUserInfo(userId: Int): UserInfo? =
@@ -60,9 +63,9 @@ internal object SystemServices {
             token: Any?,
         ): UserInfo = throw UnsupportedOperationException("the hosted runtime has one fixed user")
         override fun removeUserEvenWhenDisallowed(userId: Int): Boolean = false
-        override fun isUserUnlockingOrUnlocked(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
-        override fun isUserUnlocked(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
-        override fun isUserRunning(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
+        override fun isUserUnlockingOrUnlocked(userId: Int): Boolean = lifecycle.isUnlockingOrUnlocked(userId)
+        override fun isUserUnlocked(userId: Int): Boolean = lifecycle.isUnlocked(userId)
+        override fun isUserRunning(userId: Int): Boolean = lifecycle.isRunning(userId)
         override fun isUserInitialized(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
         override fun exists(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
         override fun setUserState(userId: Int, userState: Int) {}
@@ -107,8 +110,9 @@ internal object SystemServices {
             userId == UserHandle.USER_SYSTEM
         override fun unassignUserFromDisplayOnStop(userId: Int) {}
         override fun unassignUserFromExtraDisplay(userId: Int, displayId: Int): Boolean = false
-        override fun isUserVisible(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
-        override fun isUserVisible(userId: Int, displayId: Int): Boolean = userId == UserHandle.USER_SYSTEM
+        override fun isUserVisible(userId: Int): Boolean = lifecycle.isRunning(userId)
+        override fun isUserVisible(userId: Int, displayId: Int): Boolean =
+            displayId == 0 && lifecycle.isRunning(userId)
         override fun isVisibleBackgroundFullUser(userId: Int): Boolean = false
         override fun getMainDisplayAssignedToUser(userId: Int): Int = 0
         override fun getDisplaysAssignedToUser(userId: Int): IntArray? =
@@ -155,7 +159,8 @@ internal object SystemServices {
         )
         val manager = SystemServiceManager(context)
         LocalServices.addService(SystemServiceManager::class.java, manager)
-        LocalServices.addService(UserManagerInternal::class.java, HostedUserManagerInternal(context))
+        val userLifecycle = HostedUserLifecycle()
+        LocalServices.addService(UserManagerInternal::class.java, HostedUserManagerInternal(context, userLifecycle))
         // Seams the reused AOSP services consult (clipboard first): window focus,
         // URI grants, and the IUserManager binder.
         LocalServices.addService(
@@ -168,7 +173,7 @@ internal object SystemServices {
         )
         // Identity/policy services on the real AIDL surfaces, session-global
         // (any process may ask about users or app-ops).
-        android.os.ServiceManager.addService(Context.USER_SERVICE, HostedUserManagerService())
+        android.os.ServiceManager.addService(Context.USER_SERVICE, HostedUserManagerService(userLifecycle))
         android.os.ServiceManager.addService(Context.NSD_SERVICE, HostedNsdService(context))
 
         val trace = TimingsTraceAndSlog()
@@ -218,12 +223,10 @@ internal object SystemServices {
         activityManager.activityTaskManager = activityTaskManager
         android.os.ServiceManager.addService(Context.ACTIVITY_TASK_SERVICE, activityTaskManager)
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
-        val activityManagerInternalService = HostedActivityManagerInternalService(
-            activityManager, HostedPermissions(packageManager),
-        )
-        val activityManagerInternal = Class.forName("dev.artzig.system.HostedActivityManagerInternal")
-            .getConstructor(HostedActivityManagerInternalService::class.java)
-            .newInstance(activityManagerInternalService) as android.app.ActivityManagerInternal
+        val activityManagerAccess = HostActivityManagerInternalAccess(activityManager, packageManager, userLifecycle)
+        val activityManagerInternal = Class.forName("android.app.HostedActivityManagerInternal")
+            .getConstructor(HostActivityManagerInternalAccess::class.java)
+            .newInstance(activityManagerAccess) as android.app.ActivityManagerInternal
         LocalServices.addService(android.app.ActivityManagerInternal::class.java, activityManagerInternal)
         com.android.server.LocalManagerRegistry.addManager(
             com.android.server.pm.PackageManagerLocal::class.java,
@@ -365,15 +368,20 @@ internal object SystemServices {
         platformCompat.registerPackageReceiver(context)
         platformCompat.registerContentObserver()
         manager.preSystemReady()
-        activityManagerInternalService.markSystemReady()
         appOps.systemReady()
         manager.startBootPhase(trace, SystemService.PHASE_SYSTEM_SERVICES_READY)
         LocalServices.getService(com.android.server.uri.UriGrantsManagerInternal::class.java).onSystemReady()
+        // Pinned AMS.systemReady marks its state before the phase callback.
+        activityManagerAccess.setSystemReady()
         manager.startBootPhase(trace, SystemService.PHASE_ACTIVITY_MANAGER_READY)
         com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions).start()
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
+        userLifecycle.start(object : HostedUserLifecycle.Services {
+            override fun starting(userId: Int) { manager.onUserStarting(trace, userId) }
+            override fun unlocking(userId: Int) { manager.onUserUnlocking(userId) }
+            override fun unlocked(userId: Int) { manager.onUserUnlocked(userId) }
+        })
         manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
-        manager.onUserStarting(trace, UserHandle.USER_SYSTEM)
         // BatteryService publishes its sticky broadcast once the broadcast queue is up.
         battery.start()
         // Session-wide marker: app processes (system-test) observe a property

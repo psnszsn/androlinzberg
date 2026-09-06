@@ -15,6 +15,8 @@ pub const Options = struct {
 };
 
 pub const Result = struct {
+    classes_jar: LazyPath,
+    compile_boot_jar: LazyPath,
     /// Classpath jar containing classes.dex and any secondary dex files.
     classpath_jar: LazyPath,
     compat_config: LazyPath,
@@ -544,6 +546,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     return .{
         .classpath_jar = classpath_jar,
         .compat_config = compat_config,
+        .classes_jar = classes_jar,
+        .compile_boot_jar = core_plus,
         .app_context_jar = app_context_jar,
         .framework_odex = framework_odex,
         .framework_vdex = framework_vdex,

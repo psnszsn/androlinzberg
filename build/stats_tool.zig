@@ -93,3 +93,12 @@ pub fn build(b: *std.Build, o: Options) *std.Build.Step.Compile {
     mod.linkLibrary(o.protobuf);
     return exe;
 }
+
+/// Runtime templates located by the pinned generator relative to its cwd.
+pub fn templates(b: *std.Build, aosp: std.Build.LazyPath) std.Build.LazyPath {
+    const stage = b.addWriteFiles();
+    for ([_][]const u8{ "java", "cc_hdrs", "cc_srcs" }) |directory| {
+        _ = stage.addCopyDirectory(aosp.path(b, b.fmt("frameworks/proto_logging/stats/stats_log_api_gen/include_{s}", .{directory})), b.fmt("tools/out/etc/stats-log-api-gen/{s}", .{directory}), .{});
+    }
+    return stage.getDirectory();
+}

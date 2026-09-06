@@ -17,9 +17,12 @@ Pending: 6 (budget 6). Survivors: 5. Total: 11.
 | Stub | Reason | Audit |
 |---|---|---|
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
-| `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | blocked |
-| `android/view/SurfaceControl.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
-| `android/view/SurfaceSession.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
+| `android/net/ConnectivityManager.java` | hosted synthetic network has no IConnectivityManager/ConnectivityService; stock closure reaches NetworkUtils/BPF JNI | blocked |
+| `android/net/NetworkAgent.java` | no hosted ConnectivityService/IConnectivityManager network-agent path; stock closure reaches BPF JNI and unwired stats generation | blocked |
+| `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | blocked |
+| `android/os/VintfObject.java` | JNI natives (libvintf) | blocked |
+| `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | replaceable |
+| `android/view/SurfaceControlViewHost.java` | window seam (SurfaceFlinger) | blocked |
 | `android/view/TextureView.java` | window seam (HWUI layer natives; players use SurfaceView) | blocked |
 
 ## Pending replacement

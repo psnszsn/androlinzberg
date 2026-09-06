@@ -1,0 +1,56 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] ANativeWindow: bind stock libgui parcel operations directly
+
+The host source-links these libraries in one native island. Keep stock NDK
+operations and link the libgui parcel exports instead of dlopening libgui.so.
+
+--- a/libs/nativewindow/ANativeWindow.cpp
++++ b/libs/nativewindow/ANativeWindow.cpp
+@@ -35,35 +35,26 @@
+ #error libnativewindow can only be built for system
+ #endif
+ 
+-using android_view_Surface_writeToParcel = status_t (*)(ANativeWindow* _Nonnull window,
++using SurfaceWriteToParcel = status_t (*)(ANativeWindow* _Nonnull window,
+                                                         Parcel* _Nonnull parcel);
+ 
+-using android_view_Surface_readFromParcel =
++using SurfaceReadFromParcel =
+         status_t (*)(const Parcel* _Nonnull parcel, ANativeWindow* _Nullable* _Nonnull outWindow);
+ 
+ struct SurfaceParcelables {
+-    android_view_Surface_writeToParcel write = nullptr;
+-    android_view_Surface_readFromParcel read = nullptr;
++    SurfaceWriteToParcel write = nullptr;
++    SurfaceReadFromParcel read = nullptr;
+ };
+ 
++// Host libgui is source-linked with libnativewindow into the native island.
++// Resolve its stock parcel operations directly, retaining the NDK's wire and
++// ownership contracts without requiring a second libgui shared object.
++extern "C" status_t android_view_Surface_writeToParcel(ANativeWindow*, Parcel*);
++extern "C" status_t android_view_Surface_readFromParcel(const Parcel*, ANativeWindow**);
++
+ const SurfaceParcelables* getSurfaceParcelFunctions() {
+-    static SurfaceParcelables funcs = []() -> SurfaceParcelables {
+-        SurfaceParcelables ret;
+-        void* dl = dlopen("libgui.so", RTLD_NOW);
+-        LOG_ALWAYS_FATAL_IF(!dl, "Failed to find libgui.so");
+-        ret.write =
+-                (android_view_Surface_writeToParcel)dlsym(dl, "android_view_Surface_writeToParcel");
+-        LOG_ALWAYS_FATAL_IF(!ret.write,
+-                            "libgui.so missing android_view_Surface_writeToParcel; "
+-                            "loaded wrong libgui?");
+-        ret.read =
+-                (android_view_Surface_readFromParcel)dlsym(dl,
+-                                                           "android_view_Surface_readFromParcel");
+-        LOG_ALWAYS_FATAL_IF(!ret.read,
+-                            "libgui.so missing android_view_Surface_readFromParcel; "
+-                            "loaded wrong libgui?");
+-        return ret;
+-    }();
++    static const SurfaceParcelables funcs = {
++            android_view_Surface_writeToParcel, android_view_Surface_readFromParcel};
+     return &funcs;
+ }
+ 

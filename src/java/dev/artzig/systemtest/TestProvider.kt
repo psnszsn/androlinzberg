@@ -60,16 +60,26 @@ internal open class TestProvider : ContentProvider() {
     ): Int = 2
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
-        if (method == "grant-uri" || method == "revoke-uri") {
-            val target = requireNotNull(arg)
-            val params = requireNotNull(extras)
-            val uri = Uri.parse(requireNotNull(params.getString("uri")))
-            val mode = params.getInt("mode")
-            // The provider process grants access as the owner, just as a document picker does.
+        if (method in setOf("grant-uri", "revoke-uri", "clipboard-uri", "clear-clipboard")) {
+            val request = checkNotNull(extras)
+            val uri = when (val value = request.get("uri")) {
+                is Uri -> value
+                is String -> Uri.parse(value)
+                else -> error("missing fixture URI")
+            }
+            val target = checkNotNull(arg ?: request.getString("package"))
+            val mode = request.getInt("mode")
             val identity = android.os.Binder.clearCallingIdentity()
             try {
-                if (method == "grant-uri") requireNotNull(context).grantUriPermission(target, uri, mode)
-                else requireNotNull(context).revokeUriPermission(target, uri, mode)
+                val owner = checkNotNull(context)
+                when (method) {
+                    "grant-uri" -> owner.grantUriPermission(target, uri, mode)
+                    "revoke-uri" -> owner.revokeUriPermission(target, uri, mode)
+                    "clipboard-uri" -> owner.getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newRawUri("grant fixture", uri))
+                    "clear-clipboard" -> owner.getSystemService(android.content.ClipboardManager::class.java)
+                        .clearPrimaryClip()
+                }
             } finally { android.os.Binder.restoreCallingIdentity(identity) }
         }
         return Bundle().apply { putString("echo", method + ":" + arg) }

@@ -13,7 +13,15 @@ pub const Options = struct {
     /// libbinder_ndk.so — the hwui parcel JNI (android 16) calls its AParcel ABI.
     binder_ndk: *std.Build.Step.Compile,
     binder_cpp: *std.Build.Step.Compile,
+    ui: *std.Build.Step.Compile,
+    gui: *std.Build.Step.Compile,
+    input: @import("input.zig").Library,
+    input_dispatcher: *std.Build.Step.Compile,
+    input_dispatcher_jni: *std.Build.Step.Compile,
     perfetto: @import("perfetto.zig").Result,
+    protobuf: *std.Build.Step.Compile,
+    input_headers: std.Build.LazyPath,
+    graphics_headers: std.Build.LazyPath,
     art: *std.Build.Module,
     aidl_header_roots: []const std.Build.LazyPath,
     aidl_source_roots: []const std.Build.LazyPath,
@@ -79,7 +87,7 @@ const skia_extra_srcs = [_][]const u8{"tools/SkSharingProc.cpp"};
 const our_srcs = [_][]const u8{
     "src/native/ArtzigGpuPipeline.cpp",     "src/native/HardwareBufferRender.cpp",
     "src/native/HwuiRenderProxyBridge.cpp", "src/native/AospJniBridge.cpp",
-    "src/native/AospParcelAbi.cpp",
+    "src/native/AospParcelAbi.cpp",         "src/native/HostLooper.cpp",
 };
 
 pub fn build(b: *std.Build, o: Options) Result {
@@ -108,7 +116,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         // Keep the LazyPath include root below as the dependency identity. Zig's
         // C cache currently requires the force-included header itself to be an
         // absolute compiler argument when many source roots share one module.
-        "-include",  b.pathResolve(&.{"src/native/azk_prelude.h"}),
+        "-include",  b.pathResolve(&.{"src/native/azk_prelude.h"}), "-include",      b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}),
     }) catch @panic("oom");
     var cc = std.ArrayList([]const u8).empty;
     cc.appendSlice(b.allocator, &.{ "-std=gnu17", "-w", "-D_GNU_SOURCE", "-DNDEBUG", "-fno-sanitize=undefined" }) catch @panic("oom");
@@ -133,12 +141,28 @@ pub fn build(b: *std.Build, o: Options) Result {
     // other hostgraphics headers while overriding only ui/Fence.h.
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "frameworks/native/libs/ui/include/ui/Fence.h"), "ui/Fence.h");
     var common_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    common_includes.append(b.allocator, o.perfetto.headers) catch @panic("oom");
     common_includes.append(b.allocator, ashmem_headers.getDirectory()) catch @panic("oom");
+    // The native Choreographer FD needs Android's Looper-driven ThreadBase.
+    // Select this stock header alone; the remaining host HWUI platform headers
+    // still provide the GBM context boundary instead of Android EGL/Vulkan.
+    const thread_headers = b.addWriteFiles();
+    _ = thread_headers.addCopyFile(o.aosp.path(b, "frameworks/base/libs/hwui/platform/android/thread/ThreadBase.h"), "thread/ThreadBase.h");
+    common_includes.append(b.allocator, thread_headers.getDirectory()) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native/binder/include")) catch @panic("oom");
+    // Use real libui/libgui types throughout the island. Hostgraphics' abbreviated
+    // Surface and producer classes must not shadow the stock JNI object layout.
+    common_includes.append(b.allocator, o.aosp.path(b, "frameworks/native/libs/ui/include")) catch @panic("oom");
+    common_includes.append(b.allocator, o.aosp.path(b, "frameworks/native/libs/gui/include")) catch @panic("oom");
+    common_includes.append(b.allocator, o.aosp.path(b, "frameworks/native/libs/nativedisplay/include-private")) catch @panic("oom");
+    common_includes.append(b.allocator, o.aosp.path(b, "frameworks/native/libs/nativedisplay/include")) catch @panic("oom");
+    common_includes.append(b.allocator, o.graphics_headers) catch @panic("oom");
     for (gen.include_dirs) |d| common_includes.append(b.allocator, r.resolve(b, d)) catch @panic("oom");
+    for (@import("graphics.zig").includes) |path| common_includes.append(b.allocator, o.aosp.path(b, path)) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &binder_ndk_includes) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native")) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native/input-compat")) catch @panic("oom");
+    common_includes.append(b.allocator, o.input_headers) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aidl_header_roots) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aconfig_header_roots) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.hidl_header_roots) catch @panic("oom");
@@ -384,9 +408,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/camera"), &.{ "CameraMetadata.cpp", "VendorTagDescriptor.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/media/camera/src"), &.{"camera_metadata.c"}, &.{}, &.{});
     g.add(o.aosp.path(b, "system/core/libusbhost"), &.{ "usbhost.c", "usbhost_jni.cpp" }, &.{}, &.{});
-    g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
+    for (gen.libbase_srcs) |file| {
+        if (!@import("binder_cpp.zig").sharedBase(file)) g.add(o.aosp.path(b, "system/libbase"), &.{file}, &.{o.aosp.path(b, "system/libbase")}, &.{});
+    }
     for (gen.libcutils_srcs) |file| {
-        if (!std.mem.eql(u8, file, "native_handle.cpp") and !std.mem.eql(u8, file, "ashmem-host.cpp")) g.add(o.aosp.path(b, "system/core/libcutils"), &.{file}, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
+        if (!std.mem.eql(u8, file, "native_handle.cpp") and !std.mem.eql(u8, file, "ashmem-host.cpp") and !std.mem.eql(u8, file, "trace-host.cpp")) g.add(o.aosp.path(b, "system/core/libcutils"), &.{file}, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
     }
     for (gen.libutils_srcs) |file| {
         if (!@import("binder_cpp.zig").sharedUtils(file)) g.add(o.aosp.path(b, "system/core/libutils"), &.{file}, &.{o.aosp.path(b, "system/core/libutils")}, &.{"-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION"});
@@ -394,18 +420,23 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "external/fmtlib"), &gen.fmtlib_srcs, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/minikin"), &minikin_srcs, &.{ o.aosp.path(b, "frameworks/minikin/libs"), o.aosp.path(b, "frameworks/minikin/libs/minikin") }, &.{});
     g.add(o.aosp.path(b, "external/skia"), &skia_extra_srcs, &.{}, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hostgraphics"), &gen.hostgraphics_srcs, &.{}, &.{});
-    g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &.{"Fence.cpp"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
-    g.add(o.aosp.path(b, "system/core/libsync"), &.{"sync.c"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
+    for (gen.hostgraphics_srcs) |file| {
+        if (!std.mem.eql(u8, file, "Fence.cpp") and !std.mem.eql(u8, file, "ANativeWindow.cpp")) g.add(o.aosp.path(b, "frameworks/base/libs/hostgraphics"), &.{file}, &.{}, &.{});
+    }
+    for (gen.fn_ui_srcs) |file| {
+        const shared = for (@import("graphics.zig").ui_sources) |source| {
+            if (std.mem.eql(u8, file, source)) break true;
+        } else false;
+        if (!shared) g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &.{file}, &.{o.aosp.path(b, "frameworks/native/libs/ui/include_private")}, &.{});
+    }
     g.add(b.path("tests/native"), &.{"FenceTest.cpp"}, &.{}, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_hardware_SyncFence.cpp", "android_opengl_EGL15.cpp" }, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_opengl_EGL15.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     const tracing_includes = &.{
         o.aosp.path(b, "frameworks/native/libs/tracing_perfetto/include"),
         o.aosp.path(b, "external/perfetto/include"),
     };
     g.add(o.aosp.path(b, "frameworks/native/libs/tracing_perfetto"), &.{ "tracing_perfetto.cpp", "tracing_perfetto_internal.cpp", "tracing_sdk.cpp" }, tracing_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_os_PerfettoTrace.cpp", "android_os_PerfettoTrackEventExtra.cpp" }, tracing_includes, &.{});
-    g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &gen.fn_ui_srcs, &.{o.aosp.path(b, "frameworks/native/libs/ui/include_private")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/androidfw"), &gen.androidfw_srcs, &.{ o.aosp.path(b, "frameworks/base/libs/androidfw/include_pathutils"), zip_inc, zip_incfs_inc, binder_inc }, &.{});
     g.add(o.aosp.path(b, "system/libziparchive"), &gen.ziparchive_srcs, &.{ zip_inc, zip_incfs_inc, o.aosp.path(b, "system/libziparchive") }, &.{ "-DINCFS_SUPPORT_DISABLED=1", "-DZIPARCHIVE_DISABLE_CALLBACK_API=1", "-DZLIB_CONST", "-D_FILE_OFFSET_BITS=64" });
     g.add(o.aosp.path(b, "system/incremental_delivery/incfs/util"), &.{"map_ptr.cpp"}, &.{}, &.{});
@@ -423,7 +454,14 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/native/libs/graphicsenv"), &.{ "FeatureOverrides.cpp", "GpuStatsInfo.cpp", "GraphicsEnv.cpp", "IGpuService.cpp" }, graphics_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_os_GraphicsEnvironment.cpp"}, graphics_includes, &.{ "-include", b.pathResolve(&.{"src/native/GraphicsEnvironmentBackend.h"}) });
     g.add(b.path("src/native"), &.{"GraphicsEnvironmentBackend.cpp"}, graphics_includes, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.core_jni_srcs, &.{ b.path("src/native/sqlite-compat"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), zip_inc, apex_inc, input_compat_inc, binder_inc }, &.{aidl_inc});
+    for (gen.core_jni_srcs) |file| {
+        // The host AndroidRuntime header omits the platform's transitive trace include.
+        const extra: []const []const u8 = if (std.mem.eql(u8, file, "android_view_InputEventReceiver.cpp"))
+            &.{ aidl_inc, "-include", "utils/Trace.h" }
+        else
+            &.{aidl_inc};
+        g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{file}, &.{ b.path("src/native/sqlite-compat"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), zip_inc, apex_inc, input_compat_inc, binder_inc }, extra);
+    }
     // These pinned files rely on Bionic/transitive includes for all_of, ioctl
     // and EXT4_SUPER_MAGIC. Declare those headers explicitly for host libc++.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
@@ -443,7 +481,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/base/native/webview/plat_support"),
         apex_inc,
     };
-    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{ "looper.cpp", "input.cpp", "native_window_jni.cpp", "trace.cpp" }, webview_includes, &.{ "-include", "utils/Timers.h" });
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{ "looper.cpp", "input.cpp", "trace.cpp" }, webview_includes, &.{ "-include", "utils/Timers.h" });
     // The NDK uses original sealed-memfd operations; Binder retains its existing backing.
     const ndk_ashmem_flags = &.{
         "-DARTZIG_HOST_MEMFD",
@@ -457,8 +495,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     };
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sharedmem.cpp"}, webview_includes, ndk_ashmem_flags);
     g.add(o.aosp.path(b, "system/core/libcutils"), &.{"ashmem-dev.cpp"}, webview_includes, ndk_ashmem_flags);
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_os_MessageQueue.cpp", "android_view_InputQueue.cpp", "core_jni_helpers.cpp" }, webview_includes, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_view_Surface.cpp"}, webview_includes, &.{ "-include", "utils/Timers.h" });
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_view_InputQueue.cpp", "core_jni_helpers.cpp" }, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui/apex"), &.{"android_bitmap.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/native/graphics/jni"), &.{"bitmap.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{ "draw_functor.cpp", "draw_gl_functor.cpp", "functor_utils.cpp", "graphics_utils.cpp" }, webview_includes, &.{"-D__unused=__attribute__((unused))"});
@@ -469,11 +506,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_content_om_OverlayManagerImpl.cpp"}, webview_includes, &.{});
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{"com_android_server_display_DisplayControl.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
-    bridge_includes.appendSlice(b.allocator, &.{ o.aosp.path(b, "frameworks/av/include"), o.aosp.path(b, "frameworks/av/media/libstagefright/include"), o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/av/services/mediaextractor"), o.aosp.path(b, "frameworks/av/media/libmedia/include"), o.aosp.path(b, "frameworks/av/media/libmediametrics/include"), o.aosp.path(b, "frameworks/base/media/jni"), hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }) catch @panic("OOM");
+    bridge_includes.appendSlice(b.allocator, &.{ o.aosp.path(b, "frameworks/av/include"), o.aosp.path(b, "frameworks/av/media/libstagefright/include"), o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/av/services/mediaextractor"), o.aosp.path(b, "frameworks/av/media/libmedia/include"), o.aosp.path(b, "frameworks/av/media/libmediametrics/include"), o.aosp.path(b, "frameworks/base/media/jni"), hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/native/graphics/include"), b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }) catch @panic("OOM");
     bridge_includes.appendSlice(b.allocator, &.{
         o.aosp.path(b, "frameworks/av/media/libaaudio/include"),
         o.aosp.path(b, "frameworks/av/media/libaaudio/src"),
@@ -486,6 +524,18 @@ pub fn build(b: *std.Build, o: Options) Result {
         &.{ "core/AAudioStreamParameters.cpp", "utility/AAudioUtilities.cpp" },
         bridge_includes.items, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"core_jni_helpers.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_region.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.buffer_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_canvas.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.surface_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/properties.cpp"}, &.{apex_inc}, &.{});
+    const texture_inc = o.aosp.path(b, "frameworks/native/libs/nativedisplay/include");
+    g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &gen.surface_texture_srcs, &.{ texture_inc, b.path("src/native/graphics/include") }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.texture_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc, texture_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/native/libs/nativewindow"), &.{"ANativeWindow.cpp"}, &.{}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_PublicFormatUtils.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
 
@@ -529,13 +579,22 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addFileArg(o.perfetto.base.getEmittedBin());
     link.addFileArg(o.binder_ndk.getEmittedBin());
     link.addFileArg(o.binder_cpp.getEmittedBin());
+    // Stock InputChannel JNI uses InputChannelCore and the shared native
+    // transport. This final ELF link owns the C++ runtime and Rust archive.
+    link.addArtifactArg(o.input_dispatcher_jni);
+    link.addFileArg(o.input_dispatcher.getEmittedBin());
+    link.addFileArg(o.protobuf.getEmittedBin());
+    link.addFileArg(o.input.native.getEmittedBin());
+    link.addFileArg(o.input.verifier);
+    link.addFileArg(o.gui.getEmittedBin());
+    link.addFileArg(o.ui.getEmittedBin());
     for (o.host_library_roots) |root| {
         link.addPrefixedDirectoryArg("-L", root);
         link.addPrefixedDirectoryArg("-Wl,-rpath,", root);
     }
     for (o.host_libraries) |library| link.addArg(b.fmt("-l{s}", .{library}));
     link.addArgs(o.host_link_flags);
-    link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-o" });
+    link.addArgs(&.{ "-ldl", "-lpthread", "-lm", "-lcrypto", "-o" });
     const output = link.addOutputFileArg("libandroid_platform.so");
     return .{ .file = output, .step = &link.step };
 }

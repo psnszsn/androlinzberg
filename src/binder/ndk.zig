@@ -1058,6 +1058,13 @@ const Runtime = struct {
             // objects (a Java Binder answers them itself in execTransact).
         } else if (!token_ok) {
             binder_status = STATUS_BAD_TYPE; // wrong interface descriptor (AOSP)
+        } else if (g_jvm != null and jniEnv() == null) {
+            // AndroidRuntime::javaThreadShell attaches Binder pool threads
+            // before native dispatch, including C++ listeners that call JNI.
+            // AZKB owns these workers instead; their exit paths detach them.
+            // Attaching only in Java Binder callbacks misses stock libgui's
+            // transaction listeners running on the serial oneway workers.
+            binder_status = STATUS_FAILED_TRANSACTION;
         } else {
             const prev_routing = current_routing;
             const prev_uid = current_caller_uid;
@@ -4212,6 +4219,11 @@ export fn azk_parcel_setCapacity(p: *AParcel, size: usize) callconv(.c) i32 {
     if (size > std.math.maxInt(i32)) return STATUS_BAD_VALUE;
     return p.reserve(size);
 }
+// Stock Parcel::objectsCount: all retained Binder/FD entries, independent of
+// read position. SurfaceControl metadata rejects any object-bearing Parcel.
+export fn azk_parcel_objectsCount(p: *const AParcel) callconv(.c) usize {
+    return p.entries.items.len;
+}
 export fn azk_parcel_capacity(p: *const AParcel) callconv(.c) usize {
     return p.data.capacity;
 }
@@ -4276,6 +4288,16 @@ export fn azk_parcel_dupFd(fd: i32) callconv(.c) i32 {
 }
 export fn azk_parcel_closeFd(fd: i32) callconv(.c) void {
     closeFd(fd);
+}
+// Parcel::readParcelFileDescriptor follows the Java reliable-PFD protocol:
+// detach the borrowed communication channel with the big-endian DETACHED code.
+export fn azk_parcel_detachParcelFileDescriptor(fd: i32) callconv(.c) i32 {
+    if (fd < 0) return STATUS_BAD_TYPE;
+    ensureIo();
+    const borrowed: Io.File = .{ .handle = fd, .flags = .{ .nonblocking = true } };
+    const detached = [4]u8{ 0, 0, 0, 2 };
+    const written = borrowed.writeStreaming(g_io, &.{}, &.{&detached}, 1) catch return STATUS_BAD_TYPE;
+    return if (written == detached.len) STATUS_OK else STATUS_BAD_TYPE;
 }
 export fn azk_parcel_cppView(p: *AParcel, create: *const fn (*AParcel) callconv(.c) ?*anyopaque, destroy_view: *const fn (*anyopaque) callconv(.c) void) callconv(.c) ?*anyopaque {
     if (p.cpp_view == null) {

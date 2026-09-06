@@ -1,0 +1,27 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] libutils: expose borrowed poll state to the host owner loop
+
+Reuse stock MessageQueue and Looper for Java and native input callbacks. The
+Wayland owner polls the current epoll descriptor without taking ownership, and
+includes native message deadlines alongside Java deadlines. Read the first
+envelope under the same lock as sendMessageAtTime, including newly posted work.
+Cross-thread posts still use the stock wake path. No Looper state is added.
+
+--- a/libutils/include/utils/Looper.h
++++ b/libutils/include/utils/Looper.h
+@@ -416,6 +416,15 @@
+      */
+     bool isPolling() const;
+ 
++    // Hosted outer loops borrow this descriptor and combine both queues' deadlines.
++    // Call on the owning thread after pollOnce; never read or close the descriptor.
++    void getHostPollState(int* fd, int* timeoutMillis) {
++        AutoMutex lock(mLock);
++        *fd = mEpollFd.get();
++        *timeoutMillis = mMessageEnvelopes.isEmpty() ? -1 : toMillisecondTimeoutDelay(
++                systemTime(SYSTEM_TIME_MONOTONIC), mMessageEnvelopes.itemAt(0).uptime);
++    }
++
+     /**
+      * Prepares a looper associated with the calling thread, and returns it.
+      * If the thread already has a looper, it is returned.  Otherwise, a new

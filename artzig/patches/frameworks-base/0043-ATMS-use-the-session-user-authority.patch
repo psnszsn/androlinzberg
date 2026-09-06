@@ -1,0 +1,39 @@
+Subject: [PATCH] ATMS: bind to the existing hosted user authority
+
+ATMS and the user service live in the same system process, as on Android.
+Use that published concrete authority rather than casting its Binder to
+the absent PackageManagerService-backed Android implementation.
+
+--- a/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
++++ b/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
+@@ -275,7 +275,7 @@
+ import com.android.server.firewall.IntentFirewall;
+ import com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal;
+ import com.android.server.pm.UserManagerInternal;
+-import com.android.server.pm.UserManagerService;
++import dev.artzig.system.HostedUserManagerService;
+ import com.android.server.policy.PermissionPolicyInternal;
+ import com.android.server.sdksandbox.SdkSandboxManagerLocal;
+ import com.android.server.statusbar.StatusBarManagerInternal;
+@@ -401,7 +401,7 @@
+     ActivityClientController mActivityClientController;
+     RootWindowContainer mRootWindowContainer;
+     WindowManagerService mWindowManager;
+-    private UserManagerService mUserManager;
++    private HostedUserManagerService mUserManager;
+     private AppOpsManager mAppOpsManager;
+     /** All active uids in the system. */
+     final MirrorActiveUids mActiveUids = new MirrorActiveUids();
+@@ -1074,10 +1074,10 @@
+         return mUiContext;
+     }
+ 
+-    UserManagerService getUserManager() {
++    HostedUserManagerService getUserManager() {
+         if (mUserManager == null) {
+             IBinder b = ServiceManager.getService(Context.USER_SERVICE);
+-            mUserManager = (UserManagerService) IUserManager.Stub.asInterface(b);
++            mUserManager = (HostedUserManagerService) IUserManager.Stub.asInterface(b);
+         }
+         return mUserManager;
+     }

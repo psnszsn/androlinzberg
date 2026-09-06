@@ -253,6 +253,10 @@ pub const core_jni_srcs = [_][]const u8{
     "android_view_KeyEvent.cpp",
     "android_view_KeyCharacterMap.cpp",
     "android_view_InputDevice.cpp",
+    "android_view_InputChannel.cpp",
+    "android_os_MessageQueue.cpp",
+    "android_view_InputEventReceiver.cpp",
+    "android_view_InputEventSender.cpp",
     "android_view_VelocityTracker.cpp",
     "android_animation_PropertyValuesHolder.cpp",
     "com_android_internal_util_VirtualRefBasePtr.cpp",
@@ -262,6 +266,13 @@ pub const core_jni_srcs = [_][]const u8{
     "android_database_SQLiteGlobal.cpp",
     "android_database_SQLiteDebug.cpp",
     "android_database_SQLiteRawStatement.cpp",
+};
+
+// Java window metadata consumed by stock input dispatch and SurfaceControl JNI.
+pub const input_handle_jni_srcs = [_][]const u8{
+    "jni_common.cpp",
+    "android_hardware_input_InputApplicationHandle.cpp",
+    "android_hardware_input_InputWindowHandle.cpp",
 };
 
 pub const input_srcs = [_][]const u8{
@@ -359,7 +370,7 @@ pub const hwui_srcs = [_][]const u8{
     "VectorDrawable.cpp",
     "platform/host/renderthread/CacheManager.cpp",
     "platform/host/renderthread/HintSessionWrapper.cpp",
-    "platform/host/renderthread/ReliableSurface.cpp",
+    "renderthread/ReliableSurface.cpp",
     "platform/host/renderthread/RenderThread.cpp",
     "platform/host/ProfileDataContainer.cpp",
     "platform/host/Readback.cpp",
@@ -477,4 +488,42 @@ pub const legacy_drm_client_srcs = [_][]const u8{
     "DrmManagerClientImpl.cpp",
     "DrmManagerClient.cpp",
     "NoOpDrmManagerClientImpl.cpp",
+};
+
+// Stock Java buffer ownership, parceling and fence lifecycle over shared libui.
+pub const buffer_jni_srcs = [_][]const u8{
+    "android_hardware_HardwareBuffer.cpp",
+    "android_graphics_GraphicBuffer.cpp",
+    "android_hardware_SyncFence.cpp",
+};
+
+// Stock surface clients and frame dispatch, using the same libgui and Looper.
+pub const surface_jni_srcs = [_][]const u8{
+    "android_media_ImageReader.cpp",
+    "android_media_ImageWriter.cpp",
+    "android_media_Utils.cpp",
+    "android_media_PublicFormatUtils.cpp",
+    "android_hardware_camera2_utils_SurfaceUtils.cpp",
+    "android_hardware_OverlayProperties.cpp",
+    "android_view_SurfaceSession.cpp",
+    "android_view_SurfaceControl.cpp",
+    "android_view_DisplayEventReceiver.cpp",
+    "android_window_ScreenCapture.cpp",
+};
+
+// Stock Java Surface/SurfaceTexture and BLAST object ownership over libgui.
+pub const texture_jni_srcs = [_][]const u8{
+    "android_graphics_SurfaceTexture.cpp",
+    "android_view_Surface.cpp",
+    "android_graphics_BLASTBufferQueue.cpp",
+    "platform/host/native_window_jni.cpp",
+    "android_hardware_display_DisplayManagerGlobal.cpp",
+};
+
+pub const surface_texture_srcs = [_][]const u8{
+    "surfacetexture/SurfaceTexture.cpp",
+    "surfacetexture/EGLConsumer.cpp",
+    "surfacetexture/ImageConsumer.cpp",
+    "surfacetexture/surface_texture.cpp",
+    "AChoreographer.cpp",
 };

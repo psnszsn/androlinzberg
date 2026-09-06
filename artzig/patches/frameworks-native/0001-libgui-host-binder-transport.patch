@@ -1,0 +1,608 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] libgui: use Binder-only producer interfaces on the host
+
+Pinned AOSP IGraphicBufferProducer and IProducerListener contain optional
+HIDL token-wrapper discovery. The host has no hwbinder domain or token service.
+Use the existing Bp/Bn implementation directly; preserve transaction codes,
+parcels and BufferQueue state. Consumer interfaces remain local as in AOSP.
+BufferQueueThreadState uses authenticated AZKB caller identity. Remove an unused
+ComposerService include from BufferQueueCore.
+
+Select host allocator/mapper factories at libui's Gralloc boundary. Retain the
+stock GraphicBuffer validation, metadata, accounting and ownership above it;
+the host backend owns GBM allocations and imported DMA-BUF descriptors.
+
+GLConsumer imports DMA-BUF images through the shared host EGL seam. EGL
+capability probes use the graphics device's GBM display. Explicit host display
+references preserve AOSP's balanced image/probe lifetime over Mesa, whose
+initialize/terminate calls do not implement Android's reference counting.
+
+--- a/libs/gui/include/gui/IGraphicBufferProducer.h
++++ b/libs/gui/include/gui/IGraphicBufferProducer.h
+@@ -25,6 +25,7 @@
+ #include <utils/RefBase.h>
+ 
+ #include <binder/IInterface.h>
++#include <binder/Parcel.h>
+ 
+ #include <ui/BufferQueueDefs.h>
+ #include <ui/Fence.h>
+@@ -37,9 +38,6 @@
+ #include <gui/FrameTimestamps.h>
+ #include <gui/HdrMetadata.h>
+ 
+-#include <hidl/HybridInterface.h>
+-#include <android/hardware/graphics/bufferqueue/1.0/IGraphicBufferProducer.h>
+-#include <android/hardware/graphics/bufferqueue/2.0/IGraphicBufferProducer.h>
+ 
+ #include <optional>
+ #include <vector>
+@@ -52,13 +50,6 @@
+ class IProducerListener;
+ class NativeHandle;
+ class Surface;
+-
+-using HGraphicBufferProducerV1_0 =
+-        ::android::hardware::graphics::bufferqueue::V1_0::
+-        IGraphicBufferProducer;
+-using HGraphicBufferProducerV2_0 =
+-        ::android::hardware::graphics::bufferqueue::V2_0::
+-        IGraphicBufferProducer;
+ 
+ /*
+  * This class defines the Binder IPC interface for the producer side of
+@@ -84,9 +75,7 @@
+  */
+ #ifndef NO_BINDER
+ class IGraphicBufferProducer : public IInterface {
+-    DECLARE_HYBRID_META_INTERFACE(GraphicBufferProducer,
+-                                  HGraphicBufferProducerV1_0,
+-                                  HGraphicBufferProducerV2_0)
++    DECLARE_META_INTERFACE(GraphicBufferProducer)
+ #else
+ class IGraphicBufferProducer : public RefBase {
+ #endif
+--- a/libs/gui/IGraphicBufferProducer.cpp
++++ b/libs/gui/IGraphicBufferProducer.cpp
+@@ -31,18 +31,9 @@
+ 
+ #include <gui/IGraphicBufferProducer.h>
+ #include <gui/IProducerListener.h>
+-#include <gui/bufferqueue/1.0/H2BGraphicBufferProducer.h>
+-#include <gui/bufferqueue/2.0/H2BGraphicBufferProducer.h>
+ 
+ namespace android {
+ // ----------------------------------------------------------------------------
+-
+-using H2BGraphicBufferProducerV1_0 =
+-        ::android::hardware::graphics::bufferqueue::V1_0::utils::
+-        H2BGraphicBufferProducer;
+-using H2BGraphicBufferProducerV2_0 =
+-        ::android::hardware::graphics::bufferqueue::V2_0::utils::
+-        H2BGraphicBufferProducer;
+ 
+ enum {
+     REQUEST_BUFFER = IBinder::FIRST_CALL_TRANSACTION,
+@@ -819,179 +810,7 @@
+ // translation unit (see clang warning -Wweak-vtables)
+ BpGraphicBufferProducer::~BpGraphicBufferProducer() {}
+ 
+-class HpGraphicBufferProducer : public HpInterface<
+-        BpGraphicBufferProducer,
+-        H2BGraphicBufferProducerV1_0,
+-        H2BGraphicBufferProducerV2_0> {
+-public:
+-    explicit HpGraphicBufferProducer(const sp<IBinder>& base) : PBase(base) {}
+-
+-    status_t requestBuffer(int slot, sp<GraphicBuffer>* buf) override {
+-        return mBase->requestBuffer(slot, buf);
+-    }
+-
+-    status_t requestBuffers(
+-            const std::vector<int32_t>& slots,
+-            std::vector<RequestBufferOutput>* outputs) override {
+-        return mBase->requestBuffers(slots, outputs);
+-    }
+-
+-    status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers) override {
+-        return mBase->setMaxDequeuedBufferCount(maxDequeuedBuffers);
+-    }
+-
+-    status_t setAsyncMode(bool async) override {
+-        return mBase->setAsyncMode(async);
+-    }
+-
+-    status_t dequeueBuffer(int* slot, sp<Fence>* fence, uint32_t w, uint32_t h, PixelFormat format,
+-                           uint64_t usage, uint64_t* outBufferAge,
+-                           FrameEventHistoryDelta* outTimestamps) override {
+-        return mBase->dequeueBuffer(slot, fence, w, h, format, usage, outBufferAge, outTimestamps);
+-    }
+-
+-    status_t dequeueBuffers(
+-            const std::vector<DequeueBufferInput>& inputs,
+-            std::vector<DequeueBufferOutput>* outputs) override {
+-        return mBase->dequeueBuffers(inputs, outputs);
+-    }
+-
+-    status_t detachBuffer(int slot) override {
+-        return mBase->detachBuffer(slot);
+-    }
+-
+-    status_t detachBuffers(const std::vector<int32_t>& slots,
+-                           std::vector<status_t>* results) override {
+-        return mBase->detachBuffers(slots, results);
+-    }
+-
+-    status_t detachNextBuffer(
+-            sp<GraphicBuffer>* outBuffer, sp<Fence>* outFence) override {
+-        return mBase->detachNextBuffer(outBuffer, outFence);
+-    }
+-
+-    status_t attachBuffer(
+-            int* outSlot, const sp<GraphicBuffer>& buffer) override {
+-        return mBase->attachBuffer(outSlot, buffer);
+-    }
+-
+-    status_t attachBuffers(
+-            const std::vector<sp<GraphicBuffer>>& buffers,
+-            std::vector<AttachBufferOutput>* outputs) override {
+-        return mBase->attachBuffers(buffers, outputs);
+-    }
+-
+-    status_t queueBuffer(
+-            int slot,
+-            const QueueBufferInput& input,
+-            QueueBufferOutput* output) override {
+-        return mBase->queueBuffer(slot, input, output);
+-    }
+-
+-    status_t queueBuffers(const std::vector<QueueBufferInput>& inputs,
+-                          std::vector<QueueBufferOutput>* outputs) override {
+-        return mBase->queueBuffers(inputs, outputs);
+-    }
+-
+-    status_t cancelBuffer(int slot, const sp<Fence>& fence) override {
+-        return mBase->cancelBuffer(slot, fence);
+-    }
+-
+-    status_t cancelBuffers(
+-            const std::vector<CancelBufferInput>& inputs,
+-            std::vector<status_t>* results) override {
+-        return mBase->cancelBuffers(inputs, results);
+-    }
+-
+-    int query(int what, int* value) override {
+-        return mBase->query(what, value);
+-    }
+-
+-    status_t query(const std::vector<int32_t> inputs,
+-                   std::vector<QueryOutput>* outputs) override {
+-        return mBase->query(inputs, outputs);
+-    }
+-
+-    status_t connect(
+-            const sp<IProducerListener>& listener,
+-            int api, bool producerControlledByApp,
+-            QueueBufferOutput* output) override {
+-        return mBase->connect(listener, api, producerControlledByApp, output);
+-    }
+-
+-    status_t disconnect(
+-            int api, DisconnectMode mode = DisconnectMode::Api) override {
+-        return mBase->disconnect(api, mode);
+-    }
+-
+-    status_t setSidebandStream(const sp<NativeHandle>& stream) override {
+-        return mBase->setSidebandStream(stream);
+-    }
+-
+-    void allocateBuffers(uint32_t width, uint32_t height,
+-            PixelFormat format, uint64_t usage) override {
+-        return mBase->allocateBuffers(width, height, format, usage);
+-    }
+-
+-    status_t allowAllocation(bool allow) override {
+-        return mBase->allowAllocation(allow);
+-    }
+-
+-    status_t setGenerationNumber(uint32_t generationNumber) override {
+-        return mBase->setGenerationNumber(generationNumber);
+-    }
+-
+-    String8 getConsumerName() const override {
+-        return mBase->getConsumerName();
+-    }
+-
+-    status_t setSharedBufferMode(bool sharedBufferMode) override {
+-        return mBase->setSharedBufferMode(sharedBufferMode);
+-    }
+-
+-    status_t setAutoRefresh(bool autoRefresh) override {
+-        return mBase->setAutoRefresh(autoRefresh);
+-    }
+-
+-    status_t setDequeueTimeout(nsecs_t timeout) override {
+-        return mBase->setDequeueTimeout(timeout);
+-    }
+-
+-    status_t setLegacyBufferDrop(bool drop) override {
+-        return mBase->setLegacyBufferDrop(drop);
+-    }
+-
+-    status_t getLastQueuedBuffer(
+-            sp<GraphicBuffer>* outBuffer,
+-            sp<Fence>* outFence,
+-            float outTransformMatrix[16]) override {
+-        return mBase->getLastQueuedBuffer(
+-                outBuffer, outFence, outTransformMatrix);
+-    }
+-
+-    status_t getLastQueuedBuffer(sp<GraphicBuffer>* outBuffer, sp<Fence>* outFence, Rect* outRect,
+-                                 uint32_t* outTransform) override {
+-        return mBase->getLastQueuedBuffer(outBuffer, outFence, outRect, outTransform);
+-    }
+-
+-    void getFrameTimestamps(FrameEventHistoryDelta* outDelta) override {
+-        return mBase->getFrameTimestamps(outDelta);
+-    }
+-
+-    status_t getUniqueId(uint64_t* outId) const override {
+-        return mBase->getUniqueId(outId);
+-    }
+-
+-    status_t getConsumerUsage(uint64_t* outUsage) const override {
+-        return mBase->getConsumerUsage(outUsage);
+-    }
+-
+-    status_t setAutoPrerotation(bool autoPrerotation) override {
+-        return mBase->setAutoPrerotation(autoPrerotation);
+-    }
+-};
+-
+-IMPLEMENT_HYBRID_META_INTERFACE(GraphicBufferProducer,
++DO_NOT_DIRECTLY_USE_ME_IMPLEMENT_META_INTERFACE(GraphicBufferProducer,
+         "android.gui.IGraphicBufferProducer");
+ 
+ // ----------------------------------------------------------------------
+--- a/libs/gui/include/gui/IProducerListener.h
++++ b/libs/gui/include/gui/IProducerListener.h
+@@ -19,10 +19,8 @@
+ 
+ #include <vector>
+ 
+-#include <android/hardware/graphics/bufferqueue/1.0/IProducerListener.h>
+-#include <android/hardware/graphics/bufferqueue/2.0/IProducerListener.h>
+ #include <binder/IInterface.h>
+-#include <hidl/HybridInterface.h>
++#include <binder/Parcel.h>
+ #include <utils/RefBase.h>
+ 
+ #include <com_android_graphics_libgui_flags.h>
+@@ -73,14 +71,7 @@
+ class IProducerListener : public ProducerListener, public IInterface
+ {
+ public:
+-    using HProducerListener1 =
+-            ::android::hardware::graphics::bufferqueue::V1_0::IProducerListener;
+-    using HProducerListener2 =
+-            ::android::hardware::graphics::bufferqueue::V2_0::IProducerListener;
+-    DECLARE_HYBRID_META_INTERFACE(
+-            ProducerListener,
+-            HProducerListener1,
+-            HProducerListener2)
++    DECLARE_META_INTERFACE(ProducerListener)
+ };
+ 
+ class BnProducerListener : public BnInterface<IProducerListener>
+--- a/libs/gui/IProducerListener.cpp
++++ b/libs/gui/IProducerListener.cpp
+@@ -15,8 +15,6 @@
+  */
+ 
+ #include <binder/Parcel.h>
+-#include <gui/bufferqueue/1.0/H2BProducerListener.h>
+-#include <gui/bufferqueue/2.0/H2BProducerListener.h>
+ #include <gui/IProducerListener.h>
+ 
+ namespace android {
+@@ -105,27 +103,7 @@
+ // translation unit (see clang warning -Wweak-vtables)
+ BpProducerListener::~BpProducerListener() {}
+ 
+-class HpProducerListener : public HpInterface<
+-        BpProducerListener,
+-        hardware::graphics::bufferqueue::V1_0::utils::H2BProducerListener,
+-        hardware::graphics::bufferqueue::V2_0::utils::H2BProducerListener> {
+-public:
+-    explicit HpProducerListener(const sp<IBinder>& base) : PBase{base} {}
+-
+-    virtual void onBufferReleased() override {
+-        mBase->onBufferReleased();
+-    }
+-
+-    virtual bool needsReleaseNotify() override {
+-        return mBase->needsReleaseNotify();
+-    }
+-
+-    virtual void onBuffersDiscarded(const std::vector<int32_t>& discardedSlots) override {
+-        return mBase->onBuffersDiscarded(discardedSlots);
+-    }
+-};
+-
+-IMPLEMENT_HYBRID_META_INTERFACE(ProducerListener,
++DO_NOT_DIRECTLY_USE_ME_IMPLEMENT_META_INTERFACE(ProducerListener,
+         "android.gui.IProducerListener")
+ 
+ status_t BnProducerListener::onTransact(uint32_t code, const Parcel& data,
+--- a/libs/gui/BufferQueueThreadState.cpp
++++ b/libs/gui/BufferQueueThreadState.cpp
+@@ -14,36 +14,11 @@
+  * limitations under the License.
+  */
+ 
+-#ifndef NO_BINDER
++// Host adaptation of BufferQueueThreadState: AZKB has one Binder dispatch
++// domain and no HIDL Binder service. Preserve its authenticated caller identity.
+ #include <binder/IPCThreadState.h>
+-#include <binderthreadstate/CallerUtils.h>
+-#endif // NO_BINDER
+-#include <hwbinder/IPCThreadState.h>
+ #include <private/gui/BufferQueueThreadState.h>
+-#include <unistd.h>
+-
+ namespace android {
+-
+-uid_t BufferQueueThreadState::getCallingUid() {
+-#ifndef NO_BINDER
+-    if (getCurrentServingCall() == BinderCallType::HWBINDER) {
+-        return hardware::IPCThreadState::self()->getCallingUid();
+-    }
+-    return IPCThreadState::self()->getCallingUid();
+-#else // NO_BINDER
+-    return hardware::IPCThreadState::self()->getCallingUid();
+-#endif // NO_BINDER
++uid_t BufferQueueThreadState::getCallingUid() { return IPCThreadState::self()->getCallingUid(); }
++pid_t BufferQueueThreadState::getCallingPid() { return IPCThreadState::self()->getCallingPid(); }
+ }
+-
+-pid_t BufferQueueThreadState::getCallingPid() {
+-#ifndef NO_BINDER
+-    if (getCurrentServingCall() == BinderCallType::HWBINDER) {
+-        return hardware::IPCThreadState::self()->getCallingPid();
+-    }
+-    return IPCThreadState::self()->getCallingPid();
+-#else // NO_BINDER
+-    return hardware::IPCThreadState::self()->getCallingPid();
+-#endif // NO_BINDER
+-}
+-
+-} // namespace android
+--- a/libs/gui/BufferQueueCore.cpp
++++ b/libs/gui/BufferQueueCore.cpp
+@@ -34,7 +34,6 @@
+ #include <gui/BufferQueueCore.h>
+ #include <gui/IConsumerListener.h>
+ #include <gui/IProducerListener.h>
+-#include <private/gui/ComposerService.h>
+ 
+ #include <system/window.h>
+ 
+--- a/libs/ui/GraphicBufferMapper.cpp
++++ b/libs/ui/GraphicBufferMapper.cpp
+@@ -33,10 +33,7 @@
+ #include <utils/Trace.h>
+ 
+ #include <ui/Gralloc.h>
+-#include <ui/Gralloc2.h>
+-#include <ui/Gralloc3.h>
+-#include <ui/Gralloc4.h>
+-#include <ui/Gralloc5.h>
++#include <azk/HostGralloc.h>
+ #include <ui/GraphicBuffer.h>
+ 
+ #include <system/graphics.h>
+@@ -50,37 +47,10 @@
+ 
+ ANDROID_SINGLETON_STATIC_INSTANCE( GraphicBufferMapper )
+ 
+-void GraphicBufferMapper::preloadHal() {
+-    Gralloc2Mapper::preload();
+-    Gralloc3Mapper::preload();
+-    Gralloc4Mapper::preload();
+-    Gralloc5Mapper::preload();
+-}
+-
+-GraphicBufferMapper::GraphicBufferMapper() {
+-    mMapper = std::make_unique<const Gralloc5Mapper>();
+-    if (mMapper->isLoaded()) {
+-        mMapperVersion = Version::GRALLOC_5;
+-        return;
+-    }
+-    mMapper = std::make_unique<const Gralloc4Mapper>();
+-    if (mMapper->isLoaded()) {
+-        mMapperVersion = Version::GRALLOC_4;
+-        return;
+-    }
+-    mMapper = std::make_unique<const Gralloc3Mapper>();
+-    if (mMapper->isLoaded()) {
+-        mMapperVersion = Version::GRALLOC_3;
+-        return;
+-    }
+-    mMapper = std::make_unique<const Gralloc2Mapper>();
+-    if (mMapper->isLoaded()) {
+-        mMapperVersion = Version::GRALLOC_2;
+-        return;
+-    }
+-
+-    LOG_ALWAYS_FATAL("gralloc-mapper is missing");
+-}
++// Host backend selection; the remaining mapper contracts are pinned AOSP.
++void GraphicBufferMapper::preloadHal() {}
++GraphicBufferMapper::GraphicBufferMapper() : mMapper(azk::createGrallocMapper()),
++    mMapperVersion(Version::GRALLOC_4) {}
+ 
+ void GraphicBufferMapper::dumpBuffer(buffer_handle_t bufferHandle, std::string& result,
+                                      bool less) const {
+--- a/libs/ui/GraphicBufferAllocator.cpp
++++ b/libs/ui/GraphicBufferAllocator.cpp
+@@ -31,10 +31,7 @@
+ #include <utils/Trace.h>
+ 
+ #include <ui/Gralloc.h>
+-#include <ui/Gralloc2.h>
+-#include <ui/Gralloc3.h>
+-#include <ui/Gralloc4.h>
+-#include <ui/Gralloc5.h>
++#include <azk/HostGralloc.h>
+ #include <ui/GraphicBufferMapper.h>
+ 
+ namespace android {
+@@ -48,29 +45,9 @@
+ KeyedVector<buffer_handle_t,
+     GraphicBufferAllocator::alloc_rec_t> GraphicBufferAllocator::sAllocList;
+ 
+-GraphicBufferAllocator::GraphicBufferAllocator() : mMapper(GraphicBufferMapper::getInstance()) {
+-    switch (mMapper.getMapperVersion()) {
+-        case GraphicBufferMapper::GRALLOC_5:
+-            mAllocator = std::make_unique<const Gralloc5Allocator>(
+-                    reinterpret_cast<const Gralloc5Mapper&>(mMapper.getGrallocMapper()));
+-            break;
+-        case GraphicBufferMapper::GRALLOC_4:
+-            mAllocator = std::make_unique<const Gralloc4Allocator>(
+-                    reinterpret_cast<const Gralloc4Mapper&>(mMapper.getGrallocMapper()));
+-            break;
+-        case GraphicBufferMapper::GRALLOC_3:
+-            mAllocator = std::make_unique<const Gralloc3Allocator>(
+-                    reinterpret_cast<const Gralloc3Mapper&>(mMapper.getGrallocMapper()));
+-            break;
+-        case GraphicBufferMapper::GRALLOC_2:
+-            mAllocator = std::make_unique<const Gralloc2Allocator>(
+-                    reinterpret_cast<const Gralloc2Mapper&>(mMapper.getGrallocMapper()));
+-            break;
+-    }
+-    LOG_ALWAYS_FATAL_IF(!mAllocator->isLoaded(),
+-                        "Failed to load matching allocator for mapper version %d",
+-                        mMapper.getMapperVersion());
+-}
++// Host backend selection; AOSP retains allocation validation and accounting.
++GraphicBufferAllocator::GraphicBufferAllocator() : mMapper(GraphicBufferMapper::getInstance()),
++    mAllocator(azk::createGrallocAllocator()) {}
+ 
+ GraphicBufferAllocator::~GraphicBufferAllocator() {}
+ 
+--- a/libs/ui/include/ui/Gralloc.h
++++ b/libs/ui/include/ui/Gralloc.h
+@@ -17,7 +17,6 @@
+ #ifndef ANDROID_UI_GRALLOC_H
+ #define ANDROID_UI_GRALLOC_H
+ 
+-#include <gralloctypes/Gralloc4.h>
+ #include <hidl/HidlSupport.h>
+ #include <ui/GraphicTypes.h>
+ #include <ui/PixelFormat.h>
+
+--- a/libs/gui/GLConsumer.cpp
++++ b/libs/gui/GLConsumer.cpp
+@@ -36,6 +36,7 @@
+ #include <gui/BufferItem.h>
+ #include <gui/DebugEGLImageTracker.h>
+ #include <gui/GLConsumer.h>
++#include <azk/graphics_egl.h>
+ #include <gui/ISurfaceComposer.h>
+ #include <gui/Surface.h>
+ #include <gui/SurfaceComposerClient.h>
+@@ -83,7 +84,7 @@
+ sp<GraphicBuffer> GLConsumer::sReleasedTexImageBuffer;
+ 
+ static bool hasEglProtectedContentImpl() {
+-    EGLDisplay dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
++    EGLDisplay dpy = azk_graphics_egl_display();
+     const char* exts = eglQueryString(dpy, EGL_EXTENSIONS);
+     size_t cropExtLen = strlen(PROT_CONTENT_EXT_STR);
+     size_t extsLen = strlen(exts);
+@@ -1071,7 +1072,7 @@
+            ALOGE("~EglImage: eglDestroyImageKHR failed");
+         }
+         DEBUG_EGL_IMAGE_TRACKER_DESTROY();
+-        eglTerminate(mEglDisplay);
++        azk_graphics_egl_terminate(mEglDisplay);
+     }
+ }
+ 
+@@ -1085,7 +1086,7 @@
+            ALOGE("createIfNeeded: eglDestroyImageKHR failed");
+         }
+         DEBUG_EGL_IMAGE_TRACKER_DESTROY();
+-        eglTerminate(mEglDisplay);
++        azk_graphics_egl_terminate(mEglDisplay);
+         mEglImage = EGL_NO_IMAGE_KHR;
+         mEglDisplay = EGL_NO_DISPLAY;
+     }
+@@ -1116,24 +1117,16 @@
+ 
+ EGLImageKHR GLConsumer::EglImage::createImage(EGLDisplay dpy,
+         const sp<GraphicBuffer>& graphicBuffer) {
+-    EGLClientBuffer cbuf =
+-            static_cast<EGLClientBuffer>(graphicBuffer->getNativeBuffer());
+-    const bool createProtectedImage =
+-            (graphicBuffer->getUsage() & GRALLOC_USAGE_PROTECTED) &&
+-            hasEglProtectedContent();
+-    EGLint attrs[] = {
+-        EGL_IMAGE_PRESERVED_KHR, EGL_TRUE,
+-        createProtectedImage ? EGL_PROTECTED_CONTENT_EXT : EGL_NONE,
+-        createProtectedImage ? EGL_TRUE : EGL_NONE,
+-        EGL_NONE,
+-    };
+-    eglInitialize(dpy, nullptr, nullptr);
+-    EGLImageKHR image = eglCreateImageKHR(dpy, EGL_NO_CONTEXT,
+-            EGL_NATIVE_BUFFER_ANDROID, cbuf, attrs);
++    // Mesa imports the registered DMA-BUF. Keep AOSP's EGL display and image
++    // lifetime, GL binding, transforms and fence handling above this seam.
++    azk_graphics_egl_initialize(dpy, nullptr, nullptr);
++    EGLImageKHR image = EGL_NO_IMAGE_KHR;
++    const auto status = azk_graphics_import_egl_image(dpy, graphicBuffer->handle, &image);
++    if (status != OK) ALOGE("host EGLImage import failed: %d", status);
+     if (image == EGL_NO_IMAGE_KHR) {
+         EGLint error = eglGetError();
+         ALOGE("error creating EGLImage: %#x", error);
+-        eglTerminate(dpy);
++        azk_graphics_egl_terminate(dpy);
+     } else {
+         DEBUG_EGL_IMAGE_TRACKER_CREATE();
+     }
+
+--- a/libs/gui/SyncFeatures.cpp
++++ b/libs/gui/SyncFeatures.cpp
+@@ -19,6 +19,7 @@
+ #define EGL_EGLEXT_PROTOTYPES
+ 
+ #include <EGL/egl.h>
++#include <azk/graphics_egl.h>
+ #include <EGL/eglext.h>
+ 
+ #include <utils/Log.h>
+@@ -35,12 +36,12 @@
+         mHasNativeFenceSync(false),
+         mHasFenceSync(false),
+         mHasWaitSync(false) {
+-    EGLDisplay dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
++    EGLDisplay dpy = azk_graphics_egl_display();
+     // eglQueryString can only be called after EGL has been initialized;
+     // otherwise the check below will abort.  If RenderEngine is using SkiaVk,
+     // EGL will not have been initialized.  There's no problem with initializing
+     // it again here (it is ref counted), and then terminating it later.
+-    EGLBoolean initialized = eglInitialize(dpy, nullptr, nullptr);
++    EGLBoolean initialized = azk_graphics_egl_initialize(dpy, nullptr, nullptr);
+     LOG_ALWAYS_FATAL_IF(!initialized, "eglInitialize failed");
+     const char* exts = eglQueryString(dpy, EGL_EXTENSIONS);
+     LOG_ALWAYS_FATAL_IF(exts == nullptr, "eglQueryString failed");
+@@ -68,7 +69,7 @@
+     }
+     mString.append("]");
+     // Terminate EGL to match the eglInitialize above
+-    eglTerminate(dpy);
++    azk_graphics_egl_terminate(dpy);
+ }
+ 
+ bool SyncFeatures::useNativeFenceSync() const {
+

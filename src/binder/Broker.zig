@@ -208,6 +208,9 @@ pub fn init(gpa: Allocator, io: Io, options: Options) !*Broker {
 /// `ro.boot.qemu` stays unset: hosted processes are not emulators.
 fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
     const seeds = [_][2][]const u8{
+        // Pinned ART gc::Heap::kDefaultMaximumSize; hosted boot does not override
+        // -Xmx or set a separate growth limit. ActivityManager reads this value.
+        .{ "dalvik.vm.heapsize", "256m" },
         .{ "ro.build.version.sdk", "35" },
         .{ "ro.build.version.sdk_full", "35.0" },
         .{ "ro.build.version.release", "15" },
@@ -228,6 +231,8 @@ fn seedProperties(props: *prop_area.Area) prop_area.Error!void {
         .{ "ro.build.host", "artzig" },
         .{ "ro.build.date.utc", "0" },
         .{ "ro.build.fingerprint", "artzig/artzig:16" },
+        // Logical host-composer display; task outputs apply their own scale.
+        .{ "ro.sf.lcd_density", "160" },
         .{ "ro.product.brand", "artzig" },
         .{ "ro.product.device", "artzig" },
         .{ "ro.product.model", "artzig" },

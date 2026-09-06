@@ -1,0 +1,26 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] libutils: expose Linux timed mutex for hosted SurfaceFlinger
+
+Linux provides pthread_mutex_timedlock; retain the pinned relative-time behavior
+without selecting Android-only libc or process infrastructure.
+
+--- a/libutils/include/utils/Mutex.h
++++ b/libutils/include/utils/Mutex.h
+@@ -110,7 +110,7 @@
+     // lock if possible; returns 0 on success, error otherwise
+     status_t tryLock() TRY_ACQUIRE(0);
+ 
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GRAPHICS)
+     // Lock the mutex, but don't wait longer than timeoutNs (relative time).
+     // Returns 0 on success, TIMED_OUT for failure due to timeout expiration.
+     //
+@@ -188,7 +188,7 @@
+ inline status_t Mutex::tryLock() {
+     return -pthread_mutex_trylock(&mMutex);
+ }
+-#if defined(__ANDROID__)
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GRAPHICS)
+ inline status_t Mutex::timedLock(nsecs_t timeoutNs) {
+     timeoutNs += systemTime(SYSTEM_TIME_REALTIME);
+     const struct timespec ts = {

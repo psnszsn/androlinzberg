@@ -14,10 +14,8 @@ public:
   BBinder *localBinder() override { return this; }
   AIBinder *acquireNative() override;
   status_t transact(uint32_t, const Parcel &, Parcel *, uint32_t = 0) override;
-  virtual status_t onTransact(uint32_t, const Parcel &, Parcel *,
-                              uint32_t = 0) {
-    return UNKNOWN_TRANSACTION;
-  }
+  status_t dump(int fd, const Vector<String16> &args) override;
+  virtual status_t onTransact(uint32_t, const Parcel &, Parcel *, uint32_t = 0);
 };
 // Source note: pinned Binder.cpp BpRefBase lifecycle. The surrounding file
 // depends on kernel Binder; these reference transitions are transport agnostic.

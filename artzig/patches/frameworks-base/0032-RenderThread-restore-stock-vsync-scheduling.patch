@@ -1,0 +1,276 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] Host RenderThread: restore pinned vsync and callback scheduling
+
+Follow renderthread/RenderThread.cpp's initializeChoreographer, frameCallback,
+threadLoop and callback registration/dispatch verbatim. The host variant is
+still needed for the GBM/Ganesh context seam instead of Android EglManager and
+VulkanManager. Empty host frame methods lose retries and render-thread animations
+when CanvasContext defers a frame. Reuse native Choreographer/DisplayManager JNI
+and SF timing, retaining callback deduplication, cancellation and phase ordering.
+
+--- a/libs/hwui/platform/host/renderthread/RenderThread.cpp
++++ b/libs/hwui/platform/host/renderthread/RenderThread.cpp
+@@ -15,6 +15,13 @@
+  */
+ 
+ #include "renderthread/RenderThread.h"
++#include "DeviceInfo.h"
++#include "utils/TimeUtils.h"
++#include <gui/TraceUtils.h>
++#include <private/android/choreographer.h>
++#include <sys/resource.h>
++#include <chrono>
++#include <limits>
+ 
+ #include "HostHardwareBuffer.h"
+ 
+@@ -35,6 +42,93 @@
+ 
+ static bool gHasRenderThreadInstance = false;
+ static JVMAttachHook gOnStartHook = nullptr;
++
++void RenderThread::extendedFrameCallback(const AChoreographerFrameCallbackData* cbData,
++                                         void* data) {
++    RenderThread* rt = reinterpret_cast<RenderThread*>(data);
++    size_t preferredFrameTimelineIndex =
++            AChoreographerFrameCallbackData_getPreferredFrameTimelineIndex(cbData);
++    AVsyncId vsyncId = AChoreographerFrameCallbackData_getFrameTimelineVsyncId(
++            cbData, preferredFrameTimelineIndex);
++    int64_t frameDeadline = AChoreographerFrameCallbackData_getFrameTimelineDeadlineNanos(
++            cbData, preferredFrameTimelineIndex);
++    int64_t frameTimeNanos = AChoreographerFrameCallbackData_getFrameTimeNanos(cbData);
++    // TODO(b/193273294): Remove when shared memory in use w/ expected present time always current.
++    int64_t frameInterval = AChoreographer_getFrameInterval(rt->mChoreographer);
++    rt->frameCallback(vsyncId, frameDeadline, frameTimeNanos, frameInterval);
++}
++
++void RenderThread::frameCallback(int64_t vsyncId, int64_t frameDeadline, int64_t frameTimeNanos,
++                                 int64_t frameInterval) {
++    mVsyncRequested = false;
++    if (timeLord().vsyncReceived(frameTimeNanos, frameTimeNanos, vsyncId, frameDeadline,
++                                 frameInterval) &&
++        !mFrameCallbackTaskPending) {
++        mFrameCallbackTaskPending = true;
++
++        using SteadyClock = std::chrono::steady_clock;
++        using Nanos = std::chrono::nanoseconds;
++        using toNsecs_t = std::chrono::duration<nsecs_t, std::nano>;
++        using toFloatMillis = std::chrono::duration<float, std::milli>;
++
++        const auto frameTimeTimePoint = SteadyClock::time_point(Nanos(frameTimeNanos));
++        const auto deadlineTimePoint = SteadyClock::time_point(Nanos(frameDeadline));
++
++        const auto timeUntilDeadline = deadlineTimePoint - frameTimeTimePoint;
++        const auto runAt = (frameTimeTimePoint + (timeUntilDeadline / 4));
++
++        ATRACE_FORMAT("queue mFrameCallbackTask to run after %.2fms",
++                      toFloatMillis(runAt - SteadyClock::now()).count());
++        queue().postAt(toNsecs_t(runAt.time_since_epoch()).count(),
++                       [this]() { dispatchFrameCallbacks(); });
++    }
++}
++
++void RenderThread::refreshRateCallback(int64_t vsyncPeriod, void* data) {
++    ATRACE_NAME("refreshRateCallback");
++    RenderThread* rt = reinterpret_cast<RenderThread*>(data);
++    DeviceInfo::get()->onRefreshRateChanged(vsyncPeriod);
++    rt->setupFrameInterval();
++}
++
++class ChoreographerSource : public VsyncSource {
++public:
++    ChoreographerSource(RenderThread* renderThread) : mRenderThread(renderThread) {}
++
++    virtual void requestNextVsync() override {
++        AChoreographer_postVsyncCallback(mRenderThread->mChoreographer,
++                                         RenderThread::extendedFrameCallback, mRenderThread);
++    }
++
++    virtual void drainPendingEvents() override {
++        AChoreographer_handlePendingEvents(mRenderThread->mChoreographer, mRenderThread);
++    }
++
++private:
++    RenderThread* mRenderThread;
++};
++
++class DummyVsyncSource : public VsyncSource {
++public:
++    DummyVsyncSource(RenderThread* renderThread) : mRenderThread(renderThread) {}
++
++    virtual void requestNextVsync() override {
++        mRenderThread->queue().postDelayed(16_ms, [this]() {
++            mRenderThread->frameCallback(UiFrameInfoBuilder::INVALID_VSYNC_ID,
++                                         std::numeric_limits<int64_t>::max(),
++                                         systemTime(SYSTEM_TIME_MONOTONIC), 16_ms);
++        });
++    }
++
++    virtual void drainPendingEvents() override {
++        mRenderThread->frameCallback(UiFrameInfoBuilder::INVALID_VSYNC_ID,
++                                     std::numeric_limits<int64_t>::max(),
++                                     systemTime(SYSTEM_TIME_MONOTONIC), 16_ms);
++    }
++
++private:
++    RenderThread* mRenderThread;
++};
+ 
+ bool RenderThread::hasInstance() {
+     return gHasRenderThreadInstance;
+@@ -73,7 +167,32 @@
+ 
+ RenderThread::~RenderThread() {}
+ 
++void RenderThread::initializeChoreographer() {
++    LOG_ALWAYS_FATAL_IF(mVsyncSource, "Initializing a second Choreographer?");
++
++    if (!Properties::isolatedProcess) {
++        mChoreographer = AChoreographer_create();
++        LOG_ALWAYS_FATAL_IF(mChoreographer == nullptr, "Initialization of Choreographer failed");
++        AChoreographer_registerRefreshRateCallback(mChoreographer,
++                                                   RenderThread::refreshRateCallback, this);
++
++        // Register the FD
++        mLooper->addFd(AChoreographer_getFd(mChoreographer), 0, Looper::EVENT_INPUT,
++                       RenderThread::choreographerCallback, this);
++        mVsyncSource = new ChoreographerSource(this);
++    } else {
++        mVsyncSource = new DummyVsyncSource(this);
++    }
++}
++
++void RenderThread::setupFrameInterval() {
++    nsecs_t frameIntervalNanos = DeviceInfo::getVsyncPeriod();
++    mTimeLord.setFrameInterval(frameIntervalNanos);
++}
++
+ void RenderThread::initThreadLocals() {
++    setupFrameInterval();
++    initializeChoreographer();
+     mHostThreadId.store(gettid(), std::memory_order_release);
+     mRenderState = new RenderState(*this);
+     mCacheManager = new CacheManager(*this);
+@@ -112,7 +231,54 @@
+     return mGrContext;
+ }
+ 
++int RenderThread::choreographerCallback(int fd, int events, void* data) {
++    if (events & (Looper::EVENT_ERROR | Looper::EVENT_HANGUP)) {
++        ALOGE("Display event receiver pipe was closed or an error occurred.  "
++              "events=0x%x",
++              events);
++        return 0;  // remove the callback
++    }
++
++    if (!(events & Looper::EVENT_INPUT)) {
++        ALOGW("Received spurious callback for unhandled poll event.  "
++              "events=0x%x",
++              events);
++        return 1;  // keep the callback
++    }
++    RenderThread* rt = reinterpret_cast<RenderThread*>(data);
++    AChoreographer_handlePendingEvents(rt->mChoreographer, data);
++
++    return 1;
++}
++
++void RenderThread::dispatchFrameCallbacks() {
++    ATRACE_CALL();
++    mFrameCallbackTaskPending = false;
++
++    std::set<IFrameCallback*> callbacks;
++    mFrameCallbacks.swap(callbacks);
++
++    if (callbacks.size()) {
++        // Assume one of them will probably animate again so preemptively
++        // request the next vsync in case it occurs mid-frame
++        requestVsync();
++        for (std::set<IFrameCallback*>::iterator it = callbacks.begin(); it != callbacks.end();
++             it++) {
++            (*it)->doFrame();
++        }
++    }
++}
++
++void RenderThread::requestVsync() {
++    if (!mVsyncRequested) {
++        mVsyncRequested = true;
++        mVsyncSource->requestNextVsync();
++    }
++}
++
+ bool RenderThread::threadLoop() {
++    setpriority(PRIO_PROCESS, 0, PRIORITY_DISPLAY);
++    Looper::setForThread(mLooper);
+     if (gOnStartHook) {
+         gOnStartHook("RenderThread");
+     }
+@@ -121,19 +287,45 @@
+     while (true) {
+         waitForWork();
+         processQueue();
++
++        if (mPendingRegistrationFrameCallbacks.size() && !mFrameCallbackTaskPending) {
++            mVsyncSource->drainPendingEvents();
++            mFrameCallbacks.insert(mPendingRegistrationFrameCallbacks.begin(),
++                                   mPendingRegistrationFrameCallbacks.end());
++            mPendingRegistrationFrameCallbacks.clear();
++            requestVsync();
++        }
++
++        if (!mFrameCallbackTaskPending && !mVsyncRequested && mFrameCallbacks.size()) {
++            // TODO: Clean this up. This is working around an issue where a combination
++            // of bad timing and slow drawing can result in dropping a stale vsync
++            // on the floor (correct!) but fails to schedule to listen for the
++            // next vsync (oops), so none of the callbacks are run.
++            requestVsync();
++        }
++
+         mCacheManager->onThreadIdle();
+     }
+ 
+     return false;
+ }
+ 
+-void RenderThread::postFrameCallback(IFrameCallback* callback) {}
++void RenderThread::postFrameCallback(IFrameCallback* callback) {
++    mPendingRegistrationFrameCallbacks.insert(callback);
++}
+ 
+ bool RenderThread::removeFrameCallback(IFrameCallback* callback) {
+-    return false;
+-}
+-
+-void RenderThread::pushBackFrameCallback(IFrameCallback* callback) {}
++    size_t erased;
++    erased = mFrameCallbacks.erase(callback);
++    erased |= mPendingRegistrationFrameCallbacks.erase(callback);
++    return erased;
++}
++
++void RenderThread::pushBackFrameCallback(IFrameCallback* callback) {
++    if (mFrameCallbacks.erase(callback)) {
++        mPendingRegistrationFrameCallbacks.insert(callback);
++    }
++}
+ 
+ sk_sp<Bitmap> RenderThread::allocateHardwareBitmap(SkBitmap& skBitmap) {
+     if (!mGrContext) return nullptr;
+
+--- a/libs/hwui/renderthread/CanvasContext.cpp
++++ b/libs/hwui/renderthread/CanvasContext.cpp
+@@ -988,6 +988,13 @@
+ 
+ // Called by choreographer to do an RT-driven animation
+ void CanvasContext::doFrame() {
++#ifdef ARTZIG_HOST_GPU
++    // The legacy Wayland target is a synchronized child: only its UI owner can
++    // commit the parent. Autonomous RT draws can exhaust Mesa's buffers while
++    // that owner waits in syncAndDraw. HardwareBuffer jobs are also explicitly
++    // submitted. Native Surface/BLAST targets retain stock RT scheduling.
++    if (!mNativeSurface) return;
++#endif
+     if (!mRenderPipeline->isSurfaceReady()) return;
+     mIdleDuration =
+             systemTime(SYSTEM_TIME_MONOTONIC) - mRenderThread.timeLord().computeFrameTimeNanos();

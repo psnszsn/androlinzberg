@@ -64,11 +64,10 @@ public:
   explicit Parcel(AParcel *borrowed);
   AParcel *native() const { return mParcel; }
   static Parcel *forNative(AParcel *);
-  status_t writeNoException();
-  int32_t readExceptionCode() const;
   status_t writeByteArray(size_t len, const uint8_t* val);
   size_t dataPosition() const { return AParcel_getDataPosition(mParcel); }
   size_t dataSize() const { return AParcel_getDataSize(mParcel); }
+  size_t objectsCount() const { return azk_parcel_objectsCount(mParcel); }
   size_t dataAvail() const {
     return dataPosition() >= dataSize() ? 0 : dataSize() - dataPosition();
   }
@@ -236,27 +235,29 @@ public:
   }
   status_t readString16(String16 *) const;
   status_t readString16(std::optional<String16> *) const;
-  status_t writeUtf8AsUtf16(const std::string &s);
-  status_t writeUtf8AsUtf16(const std::optional<std::string> &s) {
-    return s ? writeUtf8AsUtf16(*s) : writeInt32(-1);
-  }
-  status_t readUtf8FromUtf16(std::string *s) const;
-  status_t readUtf8FromUtf16(std::optional<std::string> *s) const {
-    // Pinned readData(nullable): a missing length preserves the destination;
-    // null resets it, and a present string is reconstructed before conversion.
-    const size_t start = dataPosition();
-    int32_t length;
-    status_t status = readInt32(&length);
-    if (status != OK) return status;
-    if (length == -1) { s->reset(); return OK; }
-    s->emplace(std::string());
-    setDataPosition(start);
-    return readUtf8FromUtf16(&**s);
-  }
+  const char16_t *readString16Inplace(size_t *) const;
+  status_t writeUtf8AsUtf16(const std::string &);
+  status_t writeUtf8AsUtf16(const std::optional<std::string> &);
+  status_t writeUtf8AsUtf16(const std::unique_ptr<std::string> &);
+  status_t readUtf8FromUtf16(std::string *) const;
+  status_t readUtf8FromUtf16(std::optional<std::string> *) const;
+  status_t readUtf8FromUtf16(std::unique_ptr<std::string> *) const;
+  status_t writeUtf8VectorAsUtf16Vector(const std::vector<std::string> &);
+  status_t writeUtf8VectorAsUtf16Vector(
+      const std::optional<std::vector<std::optional<std::string>>> &);
+  status_t writeUtf8VectorAsUtf16Vector(
+      const std::unique_ptr<std::vector<std::unique_ptr<std::string>>> &);
+  status_t readUtf8VectorFromUtf16Vector(std::vector<std::string> *) const;
+  status_t readUtf8VectorFromUtf16Vector(
+      std::optional<std::vector<std::optional<std::string>>> *) const;
+  status_t readUtf8VectorFromUtf16Vector(
+      std::unique_ptr<std::vector<std::unique_ptr<std::string>>> *) const;
   status_t writeCString(const char *s) {
     return s ? write(s, strlen(s) + 1) : BAD_VALUE;
   }
   const char *readCString() const;
+  status_t writeNoException();
+  int32_t readExceptionCode() const;
   status_t writeInterfaceToken(const String16 &);
   bool enforceInterface(const String16 &,
                         class IPCThreadState * = nullptr) const;
@@ -267,9 +268,27 @@ public:
     return dataAvail() == 0 ? OK : BAD_VALUE;
   }
   status_t writeStrongBinder(const sp<IBinder> &);
-  template <class T, std::enable_if_t<std::is_base_of_v<IInterface, T>, bool> = true>
-  status_t writeStrongBinder(const sp<T> &value) {
-    return writeStrongBinder(T::asBinder(value));
+  template <class T> status_t writeStrongBinder(const sp<T> &value) {
+    if constexpr (std::is_base_of_v<IBinder, T>)
+      return writeStrongBinder(sp<IBinder>(value));
+    else
+      return writeStrongBinder(T::asBinder(value));
+  }
+  template <class T> status_t readStrongBinder(sp<T> *value) const {
+    sp<IBinder> binder;
+    auto status = readStrongBinder(&binder);
+    if (status != OK)
+      return status;
+    *value = interface_cast<T>(binder);
+    return *value ? OK : UNKNOWN_ERROR;
+  }
+  template <class T> status_t readNullableStrongBinder(sp<T> *value) const {
+    sp<IBinder> binder;
+    auto status = readNullableStrongBinder(&binder);
+    if (status != OK)
+      return status;
+    *value = interface_cast<T>(binder);
+    return !binder || *value ? OK : UNKNOWN_ERROR;
   }
   status_t readNullableStrongBinder(sp<IBinder> *) const;
   status_t readStrongBinder(sp<IBinder> *b) const {
@@ -293,6 +312,9 @@ public:
     return s ? s : fd;
   }
   status_t readUniqueFileDescriptor(base::unique_fd *) const;
+  status_t writeDupParcelFileDescriptor(int fd);
+  int readParcelFileDescriptor() const;
+  status_t readUniqueParcelFileDescriptor(base::unique_fd *) const;
   status_t writeUniqueFileDescriptor(const base::unique_fd &fd) {
     return writeDupFileDescriptor(fd.get());
   }
@@ -357,79 +379,84 @@ public:
     *v = std::make_unique<T>();
     return (*v)->readFromParcel(this);
   }
-  // Pinned Parcel size-only helpers are used for AIDL out parameters and GPU metadata.
   template <class T> status_t writeVectorSize(const std::vector<T> &v) {
-    return v.size() > INT32_MAX ? BAD_VALUE : writeInt32(static_cast<int32_t>(v.size()));
+    return v.size() > INT32_MAX ? BAD_VALUE
+                                : writeInt32(static_cast<int32_t>(v.size()));
   }
-  template <class T> status_t writeVectorSize(const std::optional<std::vector<T>> &v) {
+  template <class T>
+  status_t writeVectorSize(const std::optional<std::vector<T>> &v) {
     return v ? writeVectorSize(*v) : writeInt32(-1);
   }
-  template <class T> status_t writeVectorSize(const std::unique_ptr<std::vector<T>> &v) {
+  template <class T>
+  status_t writeVectorSize(const std::unique_ptr<std::vector<T>> &v) {
     return v ? writeVectorSize(*v) : writeInt32(-1);
   }
   template <class T> status_t resizeOutVector(std::vector<T> *v) const {
-    int32_t size;
-    auto status = readOutVectorSizeWithCheck(sizeof(T), &size);
-    if (status != OK) return status;
-    if (size < 0) return UNEXPECTED_NULL;
-    v->resize(static_cast<size_t>(size));
+    int32_t count;
+    const auto status = readOutVectorSizeWithCheck(sizeof(T), &count);
+    if (status != OK)
+      return status;
+    if (count < 0)
+      return UNEXPECTED_NULL;
+    v->resize(static_cast<size_t>(count));
     return OK;
   }
-  template <class T> status_t resizeOutVector(std::optional<std::vector<T>> *v) const {
-    int32_t size;
-    auto status = readOutVectorSizeWithCheck(sizeof(T), &size);
+  template <class T>
+  status_t resizeOutVector(std::optional<std::vector<T>> *v) const {
+    int32_t count;
+    const auto status = readOutVectorSizeWithCheck(sizeof(T), &count);
+    if (status != OK)
+      return status;
+    v->reset();
+    if (count >= 0) v->emplace(static_cast<size_t>(count));
+    return OK;
+  }
+  template <class T>
+  status_t resizeOutVector(std::unique_ptr<std::vector<T>> *v) const {
+    int32_t count;
+    const auto status = readOutVectorSizeWithCheck(sizeof(T), &count);
     if (status != OK) return status;
     v->reset();
-    if (size >= 0) v->emplace(static_cast<size_t>(size));
+    if (count >= 0) *v = std::make_unique<std::vector<T>>(static_cast<size_t>(count));
     return OK;
   }
-  template <class T> status_t resizeOutVector(std::unique_ptr<std::vector<T>> *v) const {
-    int32_t size;
-    auto status = readOutVectorSizeWithCheck(sizeof(T), &size);
-    if (status != OK) return status;
-    v->reset();
-    if (size >= 0) v->reset(new std::vector<T>(static_cast<size_t>(size)));
-    return OK;
-  }
-  status_t writeUtf8VectorAsUtf16Vector(const std::vector<std::string> &v) {
+  template <class T>
+  status_t writeParcelableVector(const std::optional<std::vector<T>> &v) {
     return writeVector(v);
   }
-  status_t readUtf8VectorFromUtf16Vector(std::vector<std::string> *v) const {
-    return readUtf8Vector(v);
+  template <class T>
+  status_t readParcelableVector(std::optional<std::vector<T>> *v) const {
+    return readVector(v);
   }
-  status_t writeUtf8VectorAsUtf16Vector(
-      const std::optional<std::vector<std::optional<std::string>>> &v) {
-    return writeNullableUtf8Vector(v);
+  template <class T> status_t writeEnumVector(const T &v) {
+    return writeVector(v);
   }
-  status_t writeUtf8VectorAsUtf16Vector(
-      const std::unique_ptr<std::vector<std::unique_ptr<std::string>>> &v) {
-    return writeNullableUtf8Vector(v);
+  template <class T> status_t readEnumVector(T *v) const {
+    return readVector(v);
   }
-  status_t readUtf8VectorFromUtf16Vector(
-      std::optional<std::vector<std::optional<std::string>>> *v) const {
-    return readNullableUtf8Vector(v);
+  template <class T> status_t writeStrongBinderVector(const T &v) {
+    return writeVector(v);
   }
-  status_t readUtf8VectorFromUtf16Vector(
-      std::unique_ptr<std::vector<std::unique_ptr<std::string>>> *v) const {
-    return readNullableUtf8Vector(v);
+  template <class T> status_t readStrongBinderVector(T *v) const {
+    return readVector(v);
   }
-  template <class T> status_t readStrongBinder(sp<T> *v) const {
-    sp<IBinder> binder;
-    auto status = readStrongBinder(&binder);
-    if (status == OK) {
-      *v = interface_cast<T>(binder);
-      if (*v == nullptr) return UNKNOWN_ERROR;
+  template <class T>
+  status_t writeVector(const std::optional<std::vector<T>> &v) {
+    return v ? writeVector(*v) : writeInt32(-1);
+  }
+  template <class T>
+  status_t readVector(std::optional<std::vector<T>> *v) const {
+    int32_t count;
+    auto status = readInt32(&count);
+    if (status != OK)
+      return status;
+    if (count < 0) {
+      v->reset();
+      return OK;
     }
-    return status;
-  }
-  template <class T> status_t readNullableStrongBinder(sp<T> *v) const {
-    sp<IBinder> binder;
-    auto status = readNullableStrongBinder(&binder);
-    if (status == OK) {
-      *v = interface_cast<T>(binder);
-      if (*v == nullptr && binder != nullptr) return UNKNOWN_ERROR;
-    }
-    return status;
+    if (!*v)
+      v->emplace();
+    return readVectorElements(count, &**v);
   }
   template <class T> status_t writeVector(const std::vector<T> &v) {
     if (v.size() > INT32_MAX)
@@ -437,11 +464,17 @@ public:
     auto s = writeInt32(v.size());
     if (s)
       return s;
-    if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
+    if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t> ||
+                  (std::is_enum_v<T> && sizeof(T) == 1))
       return write(v.data(), v.size());
-    else {
+    else if constexpr (std::is_same_v<T, bool>) {
+      for (bool x : v)
+        if ((s = writeBool(x)))
+          return s;
+      return OK;
+    } else {
       for (const auto &x : v)
-        if ((s = writeData(static_cast<T>(x))))
+        if ((s = writeData(x)))
           return s;
       return OK;
     }
@@ -453,11 +486,17 @@ public:
       return s;
     if (n < 0)
       return UNEXPECTED_NULL;
+    return readVectorElements(n, v);
+  }
+  template <class T>
+  status_t readVectorElements(int32_t n, std::vector<T> *v) const {
+    status_t s;
     if (static_cast<size_t>(n) > dataAvail())
       return BAD_VALUE;
     v->clear();
     v->reserve(n);
-    if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>) {
+    if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t> ||
+                  (std::is_enum_v<T> && sizeof(T) == 1)) {
       v->resize(n);
       return read(v->data(), n);
     } else {
@@ -574,14 +613,34 @@ public:
   template <class T> status_t write(const Flattenable<T> &);
   template <class T> status_t read(Flattenable<T> &) const;
   template <class T> status_t write(const LightFlattenable<T> &v) {
-    void *p = writeInplace(v.getFlattenedSize());
-    return p ? v.flatten(p, v.getFlattenedSize()) : NO_MEMORY;
+    const size_t size = v.getFlattenedSize();
+    if (!v.isFixedSize()) {
+      if (size > INT32_MAX)
+        return BAD_VALUE;
+      const auto status = writeInt32(static_cast<int32_t>(size));
+      if (status != OK)
+        return status;
+    }
+    if (!size)
+      return OK;
+    void *p = writeInplace(size);
+    return p ? v.flatten(p, size) : NO_MEMORY;
   }
   template <class T> status_t read(LightFlattenable<T> &v) const {
-    if (!v.isFixedSize())
-      return INVALID_OPERATION;
-    auto *p = readInplace(v.getFlattenedSize());
-    return p ? v.unflatten(p, v.getFlattenedSize()) : NOT_ENOUGH_DATA;
+    size_t size;
+    if (v.isFixedSize()) {
+      size = v.getFlattenedSize();
+    } else {
+      int32_t encodedSize;
+      const auto status = readInt32(&encodedSize);
+      if (status != OK)
+        return status;
+      size = static_cast<size_t>(encodedSize);
+    }
+    if (!size)
+      return OK;
+    auto *p = readInplace(size);
+    return p ? v.unflatten(p, size) : NO_MEMORY;
   }
   template <class T> status_t writeData(const T &v) {
     if constexpr (std::is_enum_v<T>)
@@ -602,6 +661,12 @@ public:
       return writeUtf8AsUtf16(v);
     else
       return writeParcelable(v);
+  }
+  template <class T> status_t writeData(const sp<T> &v) {
+    return writeStrongBinder(v);
+  }
+  template <class T> status_t readData(sp<T> *v) const {
+    return readStrongBinder(v);
   }
   template <class T> status_t readData(T *v) const {
     if constexpr (std::is_enum_v<T>) {
@@ -641,54 +706,6 @@ private:
     if (__builtin_smul_overflow(static_cast<int32_t>(elementSize), *size, &bytes)
         || bytes >= 1000000) return NO_MEMORY;
     return OK;
-  }
-  template <class T> status_t readUtf8Vector(std::vector<T> *v) const {
-    int32_t size;
-    auto status = readInt32(&size);
-    if (status != OK) return status;
-    if (size < 0) return UNEXPECTED_NULL;
-    if (static_cast<size_t>(size) > dataAvail()) return BAD_VALUE;
-    v->clear();
-    v->resize(static_cast<size_t>(size));
-    for (auto &entry : *v) {
-      if constexpr (std::is_same_v<T, std::string>) {
-        status = readUtf8FromUtf16(&entry);
-      } else {
-        const size_t position = dataPosition();
-        int32_t peek;
-        status = readInt32(&peek);
-        if (status != OK) return status;
-        if (peek == -1) { entry.reset(); continue; }
-        setDataPosition(position);
-        if constexpr (std::is_same_v<T, std::optional<std::string>>) entry.emplace();
-        else entry = std::make_unique<std::string>();
-        status = readUtf8FromUtf16(&*entry);
-      }
-      if (status != OK) return status;
-    }
-    return OK;
-  }
-  template <class T> status_t writeNullableUtf8Vector(const T &v) {
-    if (!v) return writeInt32(-1);
-    auto status = writeVectorSize(*v);
-    if (status != OK) return status;
-    for (const auto &entry : *v) {
-      status = entry ? writeUtf8AsUtf16(*entry) : writeInt32(-1);
-      if (status != OK) return status;
-    }
-    return OK;
-  }
-  template <class T> status_t readNullableUtf8Vector(T *v) const {
-    const size_t position = dataPosition();
-    int32_t peek;
-    auto status = readInt32(&peek);
-    if (status != OK) return status;
-    if (peek == -1) { v->reset(); return OK; }
-    setDataPosition(position);
-    if constexpr (std::is_same_v<T, std::optional<std::vector<std::optional<std::string>>>>)
-      v->emplace();
-    else *v = std::make_unique<std::vector<std::unique_ptr<std::string>>>();
-    return readUtf8Vector(&**v);
   }
   AParcel *mParcel;
   bool mOwned;

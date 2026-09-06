@@ -26,6 +26,12 @@ internal class EchoService : Service() {
             out.putString("server", "seen")
             out.putString("action", lastIntent?.action)
             out.putString("data", lastIntent?.data?.toString())
+            value.getParcelable("creator-intent", Intent::class.java)?.let {
+                if (!android.security.Flags.preventIntentRedirect()) {
+                    it.setCreatorToken(checkNotNull(value.getBinder("creator-token")))
+                }
+                out.putBoolean("creator-valid-in-peer", dev.artzig.system.HostedIntentCreators.isValid(it))
+            }
             return out
         }
 

@@ -177,6 +177,7 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
         record: Record, code: Int, fillIn: Intent?, resolvedType: String?,
         finishedReceiver: IIntentReceiver?, requiredPermission: String?, options: Bundle?,
     ): Int {
+        ams.addCreatorToken(fillIn, record.key.packageName)
         val prepared = synchronized(lock) {
             if (record.canceled) return ActivityManager.START_CANCELED
             prepareIntent(record, fillIn, resolvedType, 0, 0).also {
@@ -238,6 +239,7 @@ internal class HostedPendingIntentController(private val ams: HostedActivityMana
         options: Bundle?,
     ): Int {
         val record = sender as? Record ?: return ActivityManager.START_CANCELED
+        ams.addCreatorToken(fillIn, record.key.packageName)
         val prepared = synchronized(lock) {
             if (record.canceled) return ActivityManager.START_CANCELED
             if (record.key.type != ActivityManager.INTENT_SENDER_ACTIVITY) {

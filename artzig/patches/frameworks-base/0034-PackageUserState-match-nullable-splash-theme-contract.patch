@@ -1,0 +1,20 @@
+From: Artzig host adaptation
+Subject: [PATCH] PackageUserState: match the nullable splash theme contract
+
+PackageManagerService.setSplashScreenTheme accepts null to restore the manifest
+theme. The stored field and getter are already nullable, but the pinned setter
+parameter says NonNull, preventing the same call from Kotlin. Correct only the
+parameter annotation; storage and change notification remain stock.
+
+diff --git a/services/core/java/com/android/server/pm/pkg/PackageUserStateImpl.java b/services/core/java/com/android/server/pm/pkg/PackageUserStateImpl.java
+--- a/services/core/java/com/android/server/pm/pkg/PackageUserStateImpl.java
++++ b/services/core/java/com/android/server/pm/pkg/PackageUserStateImpl.java
+@@ -549,7 +549,7 @@
+         return this;
+     }
+ 
+-    public @NonNull PackageUserStateImpl setSplashScreenTheme(@NonNull String value) {
++    public @NonNull PackageUserStateImpl setSplashScreenTheme(@Nullable String value) {
+         mSplashScreenTheme = value;
+         onChanged();
+         return this;

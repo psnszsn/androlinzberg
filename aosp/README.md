@@ -5,6 +5,22 @@ packages consumed by Artzig and Androlinzberg. The checkout is pinned to
 `android-16.0.0_r1`; it is not intended to contain every project in the AOSP
 manifest.
 
+The Androlinzberg package includes the selected Soong Rust 1.83.0 compiler and
+its Linux x86-64 runtime for stock libinput. Its crate closure is compiled from
+the pinned source trees listed in `build/rust_sources.zig`; Cargo does not fetch
+dependencies during a build. The development shell supplies bindgen and sets
+`AZK_AOSP_TOOL_LIBRARY_PATH` for the compiler's host zlib dependency. On a
+standard Linux installation the loader can normally find zlib without that
+override.
+
+The host Looper patch exposes a borrowed epoll descriptor and the next native
+message deadline to the Wayland owner loop. The application compiles pinned
+`android_os_MessageQueue.cpp`, `android_view_InputChannel.cpp`,
+`android_view_InputEventReceiver.cpp` and `android_view_InputEventSender.cpp`
+directly; queue and input callbacks retain their stock native object lifetimes.
+The island also reuses InputApplicationHandle/InputWindowHandle JNI and its
+Rect/Size/region helpers for the Java/native window-metadata boundary.
+
 ## Create the checkout
 
 Enter the development shell from the repository root. It provides Google's
@@ -153,3 +169,10 @@ is not the Zig package hash.
 
 Do not use `zig fetch`, `--fetch`, or a Zig global-cache environment override
 for this workflow.
+
+The input closure includes the pinned inputflinger dispatcher and policy
+interfaces, its upstream test fixtures, and StatsD native libraries/flags.
+`build/input_dispatcher.zig` generates package-manager/StatsD Binder interfaces,
+KLL protobuf, native statistics and native window/StatsD flags. Dispatcher
+verification uses host OpenSSL's constant-time comparison declaration through
+`0005-inputdispatcher-host-crypto.patch`; dispatch behavior stays upstream.

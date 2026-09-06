@@ -22,6 +22,10 @@ import android.view.ArtzigDisplay
  * display service the unchanged AOSP DisplayManagerGlobal client talks to.
  */
 object HostContexts {
+    init {
+        android.view.HostedWindowLogging.initialize()
+    }
+
     private var processServiceCacheInitialized = false
     private var systemInfoInstalled = false
     private var windowService: dev.artzig.system.HostedWindowManagerService? = null

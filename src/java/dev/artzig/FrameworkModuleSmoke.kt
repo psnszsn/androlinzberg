@@ -201,6 +201,7 @@ internal object FrameworkModuleSmoke {
         testPackageNames()
         testStockModuleClientContracts()
         testTaskInfoParcelableContracts()
+        testWindowContextTransactionContracts()
         testAccessibilityHtmlFiltering()
         testFrameworkServiceValueContracts()
         testBinderCallStatistics()
@@ -1222,14 +1223,14 @@ internal object FrameworkModuleSmoke {
         // LocalServices belongs to system_server; exercise the generated stock adapter
         // with a separate in-memory service so these contracts do not depend on IPC identity.
         val packages = HostedPackageManagerService()
-        val local = dev.artzig.system.HostedActivityManagerInternalService(
-            HostedActivityManagerService(), dev.artzig.system.HostedPermissions(packages),
+        val local = dev.artzig.system.HostActivityManagerInternalAccess(
+            HostedActivityManagerService(), packages, dev.artzig.system.HostedUserLifecycle(),
         )
-        val internal = Class.forName("dev.artzig.system.HostedActivityManagerInternal")
-            .getConstructor(dev.artzig.system.HostedActivityManagerInternalService::class.java)
+        val internal = Class.forName("android.app.HostedActivityManagerInternal")
+            .getConstructor(dev.artzig.system.HostActivityManagerInternalAccess::class.java)
             .newInstance(local) as android.app.ActivityManagerInternal
         check(!internal.isSystemReady)
-        local.markSystemReady()
+        local.setSystemReady()
         check(internal.isSystemReady)
         check(internal.getUidProcessState(12345) == ActivityManager.PROCESS_STATE_NONEXISTENT)
         check(internal.handleIncomingUser(1, 10001, 0, false, 2, "test", null) == 0)
@@ -1996,6 +1997,45 @@ internal object FrameworkModuleSmoke {
         override fun onPause() { events += "pause"; super.onPause() }
         override fun onStop() { events += "stop"; super.onStop() }
         override fun onDestroy() { events += "destroy"; super.onDestroy() }
+    }
+
+    private fun testWindowContextTransactionContracts() {
+        // These stock WM messages must retain token identity over our Parcel and
+        // snapshot configuration before the sender mutates its next update.
+        val token = Binder()
+        val configuration = Configuration().apply { densityDpi = 240 }
+        val change = android.app.servertransaction.WindowContextInfoChangeItem(
+            token, configuration, 7,
+        )
+        configuration.densityDpi = 320
+        val parcel = Parcel.obtain()
+        try {
+            change.writeToParcel(parcel, 0)
+            parcel.setDataPosition(0)
+            check(parcel.readStrongBinder() === token)
+            val info = checkNotNull(parcel.readTypedObject(android.window.WindowContextInfo.CREATOR))
+            check(info.displayId == 7)
+            check(info.configuration.densityDpi == 240)
+            check(parcel.dataAvail() == 0)
+            parcel.setDataPosition(0)
+            check(android.app.servertransaction.WindowContextInfoChangeItem.CREATOR
+                .createFromParcel(parcel) == change)
+        } finally {
+            parcel.recycle()
+        }
+        val removal = android.app.servertransaction.WindowContextWindowRemovalItem(token)
+        val removalParcel = Parcel.obtain()
+        try {
+            removal.writeToParcel(removalParcel, 0)
+            removalParcel.setDataPosition(0)
+            check(removalParcel.readStrongBinder() === token)
+            check(removalParcel.dataAvail() == 0)
+            removalParcel.setDataPosition(0)
+            check(android.app.servertransaction.WindowContextWindowRemovalItem.CREATOR
+                .createFromParcel(removalParcel) == removal)
+        } finally {
+            removalParcel.recycle()
+        }
     }
 
     private fun testPackageNames() {
@@ -3219,13 +3259,17 @@ internal object FrameworkModuleSmoke {
         check(task.numActivities == 2 && task.baseActivity == component("HandledOne"))
         check(service.getRecentTasks(1, 0, UserHandle.USER_SYSTEM).list.single().taskId == task.taskId)
         val appTask = android.app.IAppTask.Stub.asInterface(service.getAppTasks(callerPackage).single())
-        check(appTask.taskInfo.taskId == task.taskId)
+        check(appTask.taskInfo.taskId == task.taskId && appTask.taskInfo.numActivities == 2)
         appTask.setExcludeFromRecents(true)
         check(appTask.taskInfo.baseIntent.flags and Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS != 0)
-        check(service.getAppTasks(callerPackage).size == 1) // Exclusion does not hide owned handles.
         appTask.setExcludeFromRecents(false)
         check(appTask.taskInfo.baseIntent.flags and Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS == 0)
-
+        var taskPackageDenied = false
+        try { service.getAppTasks("dev.artzig.unowned") } catch (_: SecurityException) {
+            taskPackageDenied = true
+        }
+        check(taskPackageDenied)
+        check(service.getAppTasks(callerPackage).size == 1)
 
         threadOne.transactions.clear()
         threadTwo.transactions.clear()
@@ -4434,7 +4478,7 @@ internal object FrameworkModuleSmoke {
             // Mirror the hosted frame lifecycle. AOSP's traversal sync barrier keeps the
             // synchronous View.post callback queued until CALLBACK_TRAVERSAL updates bounds.
             drainMainQueue()
-            dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
+            awaitChoreographerFrame()
             drainMainQueue()
             root.doTraversal()
 
@@ -4547,24 +4591,9 @@ internal object FrameworkModuleSmoke {
                 null,
             )
         }
-        var wakeMessages = 0
-        val queue = checkNotNull(Looper.getMainLooper()).queue
-        while (true) {
-            val message = queue.`pollDueMessage$artzig`() ?: break
-            wakeMessages++
-            try {
-                message.target.dispatchMessage(message)
-            } finally {
-                android.os.MessageQueue.`recycleDispatched$artzig`(message)
-            }
-        }
-        check(wakeMessages <= 1) {
-            "Choreographer produced $wakeMessages host wakes for one callback deadline"
-        }
-        HostedDisplayEvents.dispatchFrame(System.nanoTime())
-        drainMainQueue()
+        awaitChoreographerFrame()
         check(floodCallbacks == 100) {
-            "coalescing host wakes lost frame callbacks: $floodCallbacks"
+            "stock frame dispatch lost callbacks: $floodCallbacks"
         }
 
         val observed = mutableListOf<String>()
@@ -4573,8 +4602,7 @@ internal object FrameworkModuleSmoke {
         choreographer.postCallback(Choreographer.CALLBACK_INSETS_ANIMATION, { observed += "insets" }, null)
         choreographer.postCallback(Choreographer.CALLBACK_INPUT, { observed += "input" }, null)
         choreographer.postCallback(Choreographer.CALLBACK_ANIMATION, { observed += "animation" }, null)
-        HostedDisplayEvents.dispatchFrame(System.nanoTime())
-        drainMainQueue()
+        awaitChoreographerFrame()
         check(observed == listOf("input", "animation", "insets", "traversal", "commit")) {
             "Choreographer callback phase order: $observed"
         }
@@ -4638,9 +4666,21 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private fun awaitChoreographerFrame() {
+        var committed = false
+        Choreographer.getInstance().postCallback(Choreographer.CALLBACK_COMMIT,
+            { committed = true }, null)
+        val deadline = System.nanoTime() + 2_000_000_000L
+        while (!committed && System.nanoTime() < deadline) {
+            drainMainQueue()
+            if (!committed) Thread.sleep(1)
+        }
+        check(committed) { "Stock DisplayEventReceiver did not deliver a frame" }
+    }
+
     private fun runHostedFrame() {
         drainMainQueue()
-        dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
+        awaitChoreographerFrame()
         drainMainQueue()
     }
 
@@ -4649,7 +4689,7 @@ internal object FrameworkModuleSmoke {
         // Keep driving the headless compositor until all currently due frame work is done.
         repeat(16) {
             runHostedFrame()
-            if (!dev.artzig.HostedDisplayEvents.hasPendingFrame()) return
+            if (!Choreographer.getInstance().`hasDueCallbacks$artzig`()) return
         }
         error("Activity frame callbacks did not settle")
     }
@@ -4754,7 +4794,7 @@ internal object FrameworkModuleSmoke {
             root.setView(button, 200, 200)
             ArtzigAccessibilityBridge.setActivityRoot(root)
             check(!ArtzigAccessibilityBridge.isIdle())
-            dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
+            awaitChoreographerFrame()
             drainMainQueue()
             root.doTraversal()
             drainMainQueue()

@@ -1,0 +1,190 @@
+From: Androlinzberg <host@androlinzberg.local>
+Subject: [PATCH] ImageWriter: query host surfaces without camera-session policy
+
+Reuse the complete stock image reader/writer and native surface query code.
+The Java surface adapter follows the pinned error and public-format mapping.
+The host registers these natives from its platform island before Java starts;
+retain the class initialization while omitting the Android media DSO load.
+Enable actual gralloc usage, HardwareBuffer and image-plane operations; the
+Layoutlib branches deliberately erase CPU usage and are unsuitable for GBM.
+
+diff --git a/core/java/android/media/ImageWriter.java b/core/java/android/media/ImageWriter.java
+--- a/core/java/android/media/ImageWriter.java
++++ b/core/java/android/media/ImageWriter.java
+@@ -29,7 +29,9 @@
+ import android.hardware.HardwareBuffer;
+ import android.hardware.HardwareBuffer.Usage;
+ import android.hardware.SyncFence;
+-import android.hardware.camera2.utils.SurfaceUtils;
++// Host surface queries reuse SurfaceUtils' native libgui operations. Its Java
++// class also owns camera-session validation, which is not part of this host.
++import dev.artzig.window.HostSurfaceInfo;
+ import android.os.Handler;
+ import android.os.Looper;
+ import android.os.Message;
+@@ -266,8 +268,8 @@
+         if (useSurfaceImageFormatInfo) {
+             // nativeInit internally overrides UNKNOWN format. So does surface format query after
+             // nativeInit and before getEstimatedNativeAllocBytes().
+-            mHardwareBufferFormat = hardwareBufferFormat = SurfaceUtils.getSurfaceFormat(surface);
+-            mDataSpace = dataSpace = SurfaceUtils.getSurfaceDataspace(surface);
++            mHardwareBufferFormat = hardwareBufferFormat = HostSurfaceInfo.getSurfaceFormat(surface);
++            mDataSpace = dataSpace = HostSurfaceInfo.getSurfaceDataspace(surface);
+             imageFormat = PublicFormatUtils.getPublicFormat(hardwareBufferFormat, dataSpace);
+         }
+ 
+@@ -277,7 +279,7 @@
+         // Only include memory for 1 buffer, since actually accounting for the memory used is
+         // complex, and 1 buffer is enough for the VM to treat the ImageWriter as being of some
+         // size.
+-        Size surfSize = SurfaceUtils.getSurfaceSize(surface);
++        Size surfSize = HostSurfaceInfo.getSurfaceSize(surface);
+         mWidth = width == -1 ? surfSize.getWidth() : width;
+         mHeight = height == -1 ? surfSize.getHeight() : height;
+ 
+diff --git a/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp b/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
+--- a/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
++++ b/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
+@@ -16,7 +16,6 @@
+ 
+ #define LOG_TAG "Camera-SurfaceUtils-JNI"
+ // #define LOG_NDEBUG 0
+-#include <camera/CameraUtils.h>
+ #include <utils/Errors.h>
+ #include <utils/Log.h>
+ #include <utils/Trace.h>
+@@ -39,7 +38,8 @@
+ using namespace android;
+ 
+ // fully-qualified class name
+-#define CAMERA_UTILS_CLASS_NAME "android/hardware/camera2/utils/SurfaceUtils"
++// Retain stock native queries; the host Java adapter omits camera-session policy.
++#define CAMERA_UTILS_CLASS_NAME "dev/artzig/window/HostSurfaceInfo"
+ 
+ #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
+ 
+diff --git a/core/java/android/media/ImageReader.java b/core/java/android/media/ImageReader.java
+--- a/core/java/android/media/ImageReader.java
++++ b/core/java/android/media/ImageReader.java
+@@ -1528,4 +1528,5 @@
+     static {
+-        System.loadLibrary("media_jni");
++        // AOSP natives are registered by the host's libandroid_platform bootstrap.
++        // Keep the stock field-cache initialization after that registration.
+         nativeClassInit();
+     }
+diff --git a/core/java/android/media/ImageWriter.java b/core/java/android/media/ImageWriter.java
+--- a/core/java/android/media/ImageWriter.java
++++ b/core/java/android/media/ImageWriter.java
+@@ -1325,4 +1325,5 @@
+     static {
+-        System.loadLibrary("media_jni");
++        // AOSP natives are registered by the host's libandroid_platform bootstrap.
++        // Keep the stock field-cache initialization after that registration.
+         nativeClassInit();
+     }
+diff --git a/core/jni/android_media_ImageReader.cpp b/core/jni/android_media_ImageReader.cpp
+--- a/core/jni/android_media_ImageReader.cpp
++++ b/core/jni/android_media_ImageReader.cpp
+@@ -25,7 +25,7 @@
+ #include <android_runtime/android_view_Surface.h>
+ #include <com_android_graphics_libgui_flags.h>
+ #include <cutils/atomic.h>
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+ #include <grallocusage/GrallocUsageConversion.h>
+ #else
+ #define GRALLOC_USAGE_PROTECTED 0
+@@ -38,7 +38,7 @@
+ #include <jni.h>
+ #include <jni_wrappers.h>
+ #include <nativehelper/JNIHelp.h>
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+ #include <private/android/AHardwareBufferHelpers.h>
+ #endif
+ #include <stdint.h>
+@@ -402,7 +402,7 @@
+     String8 consumerName = String8::format("ImageReader-%dx%df%xm%d-%d-%d",
+             width, height, nativeHalFormat, maxImages, getpid(),
+             createProcessUniqueId());
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+     uint64_t consumerUsage =
+             android_hardware_HardwareBuffer_convertToGrallocUsageBits(ndkUsage);
+ #else
+@@ -786,7 +786,7 @@
+     return true;
+ }
+ 
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+ static void ImageReader_unlockGraphicBuffer(JNIEnv* env, jobject /*thiz*/,
+         jobject buffer) {
+     sp<GraphicBuffer> graphicBuffer =
+@@ -979,7 +979,7 @@
+     }
+ }
+ 
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+ static jobject Image_getHardwareBuffer(JNIEnv* env, jobject thiz) {
+     BufferItem* buffer = Image_getBufferItem(env, thiz);
+     if (buffer == nullptr) {
+@@ -1006,7 +1006,7 @@
+          {"nativeImageSetup", "(Landroid/media/Image;)I", (void*)ImageReader_imageSetup},
+          {"nativeGetSurface", "()Landroid/view/Surface;", (void*)ImageReader_getSurface},
+          {"nativeDetachImage", "(Landroid/media/Image;Z)I", (void*)ImageReader_detachImage},
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+          {"nativeCreateImagePlanes",
+           "(ILandroid/graphics/GraphicBuffer;IIIIII)[Landroid/media/ImageReader$ImagePlane;",
+           (void*)ImageReader_createImagePlanes},
+@@ -1022,7 +1022,7 @@
+         {"nativeGetHeight", "()I", (void*)Image_getHeight},
+         {"nativeGetFormat", "(I)I", (void*)Image_getFormat},
+         {"nativeGetFenceFd", "()I", (void*)Image_getFenceFd},
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+         {"nativeGetHardwareBuffer", "()Landroid/hardware/HardwareBuffer;",
+          (void*)Image_getHardwareBuffer},
+ #endif
+diff --git a/core/jni/android_media_Utils.cpp b/core/jni/android_media_Utils.cpp
+--- a/core/jni/android_media_Utils.cpp
++++ b/core/jni/android_media_Utils.cpp
+@@ -19,7 +19,7 @@
+ 
+ #include "android_media_Utils.h"
+ 
+-#ifdef __ANDROID__ // Layoutlib does not support hardware
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU) // Layoutlib does not support hardware
+ #include <aidl/android/hardware/graphics/common/PixelFormat.h>
+ #include <aidl/android/hardware/graphics/common/PlaneLayoutComponentType.h>
+ #include <ui/GraphicBufferMapper.h>
+@@ -36,7 +36,7 @@
+ 
+ // -----------Utility functions used by ImageReader/Writer JNI-----------------
+ 
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+ using AidlPixelFormat = aidl::android::hardware::graphics::common::PixelFormat;
+ #else
+ namespace AidlPixelFormat {
+@@ -525,7 +525,7 @@
+     return OK;
+ }
+ 
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+ static status_t extractP010Gralloc4PlaneLayout(
+         sp<GraphicBuffer> buffer, void *pData, int format, LockedImage *outputImage) {
+     using aidl::android::hardware::graphics::common::PlaneLayoutComponent;
+@@ -711,7 +711,7 @@
+             ALOGE("Lock buffer failed!");
+             return res;
+         }
+-#ifdef __ANDROID__
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GPU)
+         if (isPossibly10BitYUV(format)) {
+             if (format == HAL_PIXEL_FORMAT_YCBCR_P010 &&
+                 OK == extractP010Gralloc4PlaneLayout(buffer, pData, format, outputImage)) {

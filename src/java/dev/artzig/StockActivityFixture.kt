@@ -26,9 +26,9 @@ internal class StockActivityFixture(apk: String, private val drain: () -> Unit) 
     private fun pump() {
         repeat(16) {
             drain()
-            dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
+            android.view.Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
             drain()
-            if (!dev.artzig.HostedDisplayEvents.hasPendingFrame()) return
+            if (!android.view.Choreographer.getInstance().`hasDueCallbacks$artzig`()) return
         }
         error("Activity fixture frame callbacks did not settle")
     }

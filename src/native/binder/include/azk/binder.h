@@ -18,6 +18,7 @@ int32_t AParcel_reset(AParcel *);
 int32_t azk_parcel_setSize(AParcel *, size_t);
 int32_t azk_parcel_setCapacity(AParcel *, size_t);
 size_t azk_parcel_capacity(const AParcel *);
+size_t azk_parcel_objectsCount(const AParcel *);
 int32_t azk_parcel_error(const AParcel *);
 void azk_parcel_setError(AParcel *, int32_t);
 const void *azk_parcel_data(const AParcel *);
@@ -29,6 +30,7 @@ int32_t azk_parcel_writeFd(AParcel *, int, bool);
 int32_t azk_parcel_dupFd(int);
 void azk_parcel_closeFd(int);
 int32_t azk_parcel_readFileDescriptorBorrowed(const AParcel *, int *);
+int32_t azk_parcel_detachParcelFileDescriptor(int);
 void *azk_parcel_cppView(AParcel *, void *(*)(AParcel *), void (*)(void *));
 int32_t azk_binder_transact(AIBinder *, uint32_t, const AParcel *, AParcel *,
                             uint32_t);
@@ -37,6 +39,11 @@ const void *azk_binder_servingStack(void);
 uint64_t azk_binder_clearCallingIdentity(void);
 void azk_binder_restoreCallingIdentity(uint64_t);
 void azk_binder_flush(void);
+bool azk_property_write(const char *name, const char *value);
+// Snapshot callback: value bytes are borrowed until the callback returns.
+bool azk_property_read(const char *name,
+                       void (*callback)(void *, const char *, size_t),
+                       void *context);
 #ifdef __cplusplus
 }
 #endif

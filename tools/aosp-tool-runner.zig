@@ -10,7 +10,7 @@ pub fn main(init: std.process.Init) !void {
         return error.InvalidArguments;
     }
     var tool_index: usize = 1;
-    var library_dir: ?[]const u8 = null;
+    var library_dir: ?[]const u8 = init.environ_map.get("AZK_AOSP_TOOL_LIBRARY_PATH");
     if (std.mem.eql(u8, args[tool_index], "--library-dir")) {
         if (args.len < 4) return error.InvalidArguments;
         library_dir = args[tool_index + 1];
