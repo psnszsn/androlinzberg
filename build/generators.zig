@@ -89,6 +89,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/base/core/java/",
         "frameworks/base/graphics/java/",
         "frameworks/base/media/java/",
+        "frameworks/base/media/aidl/",
         "frameworks/av/aidl/",
         "frameworks/av/media/libaudioclient/aidl/",
         "system/hardware/interfaces/media/aidl/",
@@ -179,6 +180,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
     inline for (.{
         "packages/modules/Connectivity/framework-t/src",
         "frameworks/base/media/java",
+        "frameworks/base/media/aidl",
         "frameworks/av/aidl",
         "frameworks/av/media/libaudioclient/aidl",
         "system/hardware/interfaces/media/aidl",

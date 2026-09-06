@@ -27,6 +27,17 @@ in force.
 
 Follow-up changes in the current tree:
 
+- VisibleActivityInfo and its voice-session/sound-trigger client closure now
+  compile verbatim, with 40 additional generated AIDL inputs and two original
+  flag packages. Activity identity now has the stock task/token type and Parcel
+  validation. Module tests cover identity equality, rejected null tokens,
+  keyphrase matching, result transport and validation, and failure recovery hints.
+  The inventory is 40 stubs (22 pending, 18 survivors). All 98 selected inputs
+  match the current AOSP archive; neither tarball needs repackaging. This imports
+  client types and protocols; no assistant, recognition engine or sound-trigger
+  hardware service is installed. JVM/system suites, native/Binder/build checks
+  and all 11 APK tests pass (41 steps without runtime issues).
+
 - The audio core foundation now compiles stock AudioFormat, AudioAttributes,
   AudioDeviceInfo, PlayerBase, AudioRecord, MediaRecorder, AudioEffect and their
   policy/value closure. The generated IAudioService protocol is available. JNI

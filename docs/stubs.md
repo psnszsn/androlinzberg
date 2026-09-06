@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 23 (budget 23). Survivors: 18. Total: 41.
+Pending: 22 (budget 22). Survivors: 18. Total: 40.
 
 ## Survivors
 
@@ -41,23 +41,23 @@ Pending: 23 (budget 23). Survivors: 18. Total: 41.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (368 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < MediaPlayer < Ringtone < AccessibilityShortcutControlle |
+| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (56 to add); android.media.MediaDrm: JNI natives (via MediaDrm < MediaPlayer < Ringtone < AccessibilityShortcutController); android.media.MediaHTTPConnection: JNI natives (via MediaHTTPConnection < Medi |
 
 ### appops
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (677 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < PermissionUsageHelper < AppOpsManager); android.companion.virtual.VirtualDevi |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (366 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < PermissionUsageHelper < AppOpsManager); android.companion.virtual.VirtualDevi |
 
 ### audio
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (535 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioManager); android.hardware.Camera.CameraInfo: existing host class android.hardware.camera2.CameraManager lacks method get |
-| `android/media/LoudnessCodecController.java` | blocked | frameworks/base/media/java/android/media/LoudnessCodecController.java (317 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecordingConfiguration < IAudioService < LoudnessCodecController); android.hardware.Camera.Camer |
-| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (327 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecord < MediaRoute2ProviderService < MediaRouter2); android.hardware.Camera.CameraInfo: existing host clas |
-| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (354 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < Utils < RingtoneManager); android.hardware.Camera.CameraInfo: existing host c |
-| `android/media/Spatializer.java` | blocked | frameworks/base/media/java/android/media/Spatializer.java (316 to add), not vendored; android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < AudioDeviceAttributes < Spatializer); android.hardware.Camera.CameraInfo: existin |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (221 to add); android.hardware.cas.AidlCasPluginDescriptor: AIDL outside the configured include roots (via AidlCasPluginDescriptor < MediaCas < MediaExtractor < AudioManager); android.hardware.cas.DestinationBuffer: AIDL outside the configur |
+| `android/media/LoudnessCodecController.java` | replaceable | frameworks/base/media/java/android/media/LoudnessCodecController.java (5 to add), not vendored |
+| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (16 to add), not vendored; android.media.MediaRouter2: existing stub android.app.AppOpsManager lacks member OPSTR_MEDIA_ROUTING_CONTROL (via MediaRouter2); android.media.MediaRouter: existing stub android.media.AudioManager lacks member EXTR |
+| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (42 to add), not vendored; android.media.MediaDrm: JNI natives (via MediaDrm < MediaPlayer < Ringtone < RingtoneManager); android.media.MediaHTTPConnection: JNI natives (via MediaHTTPConnection < MediaHTTPService < MediaPlayer < Ringtone  |
+| `android/media/Spatializer.java` | replaceable | frameworks/base/media/java/android/media/Spatializer.java (5 to add), not vendored |
 
 ### autofill
 
@@ -69,10 +69,10 @@ Pending: 23 (budget 23). Survivors: 18. Total: 41.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3090 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3088 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3200 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3102 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2931 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2929 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3041 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2943 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
 
 ### runtime
 
@@ -84,21 +84,15 @@ Pending: 23 (budget 23). Survivors: 18. Total: 41.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3088 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3088 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
-
-### textclassifier
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (370 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecord < HotwordDetectedResult < IMicrophoneHotwordDetectionVoiceInteractionCallback < IVoiceInteractionMan |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2929 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2929 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
 
 ### virtualdevice
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (344 to add, AIDL interface); android.companion.virtual.VirtualDevice: existing stub android.companion.virtual.VirtualDeviceParams lacks member POLICY_TYPE_CAMERA (via VirtualDevice < VirtualCameraConfig < IVirtualDevice); andro |
-| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (363 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceManager); android.companion.virtual.Virtual |
+| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (188 to add, AIDL interface); android.companion.virtual.VirtualDevice: existing stub android.companion.virtual.VirtualDeviceParams lacks member POLICY_TYPE_CAMERA (via VirtualDevice < VirtualCameraConfig < IVirtualDevice); andro |
+| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (207 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceManager); android.companion.virtual.Virtual |
 | `android/companion/virtual/VirtualDeviceParams.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add); android.companion.virtual.sensor.VirtualSensor: existing host class android.companion.virtual.IVirtualDevice lacks method getDeviceId (via VirtualSensor < VirtualDeviceParams); android.companion.virtual.sensor.V |
 | `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceMan |
 
@@ -119,43 +113,43 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `android.hardware.camera2.CameraCharacteristics` | 20 | 1 |
-| `android.hardware.camera2.CaptureRequest` | 20 | 1 |
-| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 20 | 1 |
-| `android.media.AudioHalVersionInfo` | 20 | 1 |
-| `android.media.AudioMix` | 20 | 1 |
-| `android.media.AudioPlaybackConfiguration` | 20 | 1 |
-| `android.media.AudioRecord` | 20 | 1 |
-| `android.media.AudioSystem` | 20 | 1 |
-| `android.media.IAudioService` | 20 | 1 |
-| `android.media.VolumeShaper` | 20 | 1 |
-| `android.hardware.camera2.params.StreamConfigurationMap` | 20 | 2 |
-| `android.media.AudioMixMatchCriterion` | 20 | 2 |
-| `android.media.AudioPolicyConfig` | 20 | 2 |
-| `android.media.AudioProductStrategy` | 20 | 2 |
-| `android.media.AudioVolumeGroup` | 20 | 2 |
-| `android.media.CamcorderProfile` | 20 | 2 |
-| `android.media.INativeAudioVolumeGroupCallback` | 20 | 2 |
-| `android.media.INativeSpatializerCallback` | 20 | 2 |
-| `android.media.ISoundDose` | 20 | 2 |
-| `android.media.ISpatializer` | 20 | 2 |
-| `android.media.audio.common.AidlConversion` | 20 | 2 |
-| `android.media.audio.common.AudioConfig` | 20 | 2 |
-| `android.media.AudioHwModule` | 20 | 3 |
-| `android.media.audio.common.AudioAttributes` | 20 | 3 |
-| `android.media.audio.common.AudioHalEngineConfig` | 20 | 3 |
-| `android.media.audio.common.AudioOffloadInfo` | 20 | 3 |
-| `android.media.audio.common.AudioPortExt` | 20 | 3 |
-| `android.renderscript.Allocation` | 20 | 3 |
-| `android.media.audio.common.AudioHalCapCriterionV2` | 20 | 4 |
-| `android.media.audio.common.AudioHalCapDomain` | 20 | 4 |
-| `android.media.audio.common.AudioHalProductStrategy` | 20 | 4 |
-| `android.media.audio.common.AudioHalVolumeGroup` | 20 | 4 |
-| `android.media.audio.common.AudioPortMixExt` | 20 | 4 |
-| `android.media.audio.common.AudioHalCapConfiguration` | 20 | 5 |
-| `android.hardware.camera2.CameraDevice` | 19 | 2 |
-| `android.hardware.camera2.TotalCaptureResult` | 19 | 3 |
-| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 19 | 4 |
-| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 19 | 4 |
-| `android.media.MediaRecorder` | 18 | 1 |
-| `android.hardware.camera2.CameraMetadata` | 15 | 2 |
+| `android.webkit.WebViewFactory` | 12 | 1 |
+| `android.webkit.WebViewFactoryProvider` | 12 | 1 |
+| `com.android.internal.os.ZygoteInit` | 12 | 1 |
+| `android.net.http.HttpEngine` | 12 | 2 |
+| `android.print.PrintAttributes` | 12 | 2 |
+| `com.android.internal.os.Zygote` | 12 | 2 |
+| `org.chromium.net.ExperimentalCronetEngine` | 12 | 3 |
+| `org.chromium.net.impl.CronetLibraryLoader` | 12 | 3 |
+| `org.chromium.net.impl.NativeCronetEngineBuilderImpl` | 12 | 3 |
+| `org.chromium.base.ContextUtils` | 12 | 4 |
+| `org.chromium.net.ConnectionMigrationOptions` | 12 | 4 |
+| `org.chromium.net.NetworkChangeNotifier` | 12 | 4 |
+| `org.chromium.net.impl.CronetLogger.CronetSource` | 12 | 4 |
+| `org.chromium.net.impl.CronetUrlRequestContext` | 12 | 4 |
+| `org.chromium.base.StrictModeContext` | 12 | 5 |
+| `org.chromium.net.NetworkChangeNotifierAutoDetect` | 12 | 5 |
+| `org.chromium.net.impl.CronetBidirectionalStream` | 12 | 5 |
+| `org.chromium.net.impl.CronetEngineBase` | 12 | 5 |
+| `org.chromium.net.impl.CronetUrlRequest` | 12 | 5 |
+| `org.chromium.base.TraceEvent` | 12 | 6 |
+| `org.chromium.net.impl.BidirectionalStreamNetworkException` | 12 | 6 |
+| `org.chromium.net.impl.UrlRequestBuilderImpl` | 12 | 6 |
+| `android.print.PrintDocumentAdapter` | 11 | 1 |
+| `android.webkit.ServiceWorkerController` | 11 | 2 |
+| `android.media.MediaHTTPService` | 10 | 1 |
+| `android.media.MediaPlayer` | 10 | 2 |
+| `android.media.SubtitleController` | 10 | 3 |
+| `android.webkit.WebViewProvider` | 10 | 3 |
+| `android.widget.VideoView` | 10 | 3 |
+| `android.hardware.camera2.CameraCharacteristics` | 9 | 1 |
+| `android.hardware.camera2.CaptureRequest` | 9 | 1 |
+| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 9 | 1 |
+| `android.net.Proxy` | 9 | 1 |
+| `android.hardware.camera2.params.StreamConfigurationMap` | 9 | 2 |
+| `android.net.PacProxySelector` | 9 | 2 |
+| `android.renderscript.Allocation` | 9 | 3 |
+| `android.media.Ringtone` | 8 | 1 |
+| `android.hardware.camera2.CameraDevice` | 8 | 2 |
+| `android.hardware.camera2.TotalCaptureResult` | 8 | 3 |
+| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 8 | 4 |

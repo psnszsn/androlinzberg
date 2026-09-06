@@ -2169,6 +2169,25 @@ fn collectStatic(c: *StaticCollector) !void {
     // Managers over hosted services, phase 3: the real media session family (MediaSession,
     // MediaController, MediaSessionManager, PlaybackState, MediaMetadata, MediaDescription,
     // Rating, MediaBrowser/MediaBrowserService) over the hosted ISessionManager, and the real
+    // Stock voice session, activity identity and sound-trigger client closure.
+    try c.file("$FB/core/java/android/service/voice/VoiceInteractionSession.java");
+    try c.file("$FB/core/java/android/service/voice/VoiceInteractionWindow.java");
+    try c.file("$FB/core/java/android/service/voice/VisibleActivityInfo.java");
+    try c.file("$FB/core/java/android/service/voice/HotwordAudioStream.java");
+    try c.file("$FB/core/java/android/service/voice/HotwordDetectedResult.java");
+    try c.file("$FB/core/java/android/service/voice/HotwordRejectedResult.java");
+    try c.file("$FB/core/java/android/service/voice/HotwordDetectionServiceFailure.java");
+    try c.file("$FB/core/java/android/service/voice/VisualQueryDetectionServiceFailure.java");
+    try c.file("$FB/core/java/android/service/voice/VisualQueryDetectedResult.java");
+    try c.file("$FB/core/java/android/service/voice/FailureSuggestedAction.java");
+    try c.file("$FB/core/java/android/service/voice/SoundTriggerFailure.java");
+    try c.file("$FB/core/java/android/service/voice/VisualQueryAttentionResult.java");
+    try c.file("$FB/core/java/android/hardware/soundtrigger/SoundTrigger.java");
+    try c.file("$FB/core/java/android/hardware/soundtrigger/SoundTriggerModule.java");
+    try c.file("$FB/core/java/android/hardware/soundtrigger/ConversionUtil.java");
+    try c.file("$FB/core/java/android/hardware/soundtrigger/KeyphraseMetadata.java");
+    try c.file("$FB/media/java/android/media/permission/ClearCallingIdentityContext.java");
+    try c.file("$FB/media/java/android/media/permission/SafeCloseable.java");
     // Verbatim audio data, recording and player clients; native services remain hosted.
     try c.file("$FB/media/java/android/media/AudioAttributes.java");
     try c.file("$FB/media/java/android/media/AudioDescriptor.java");
