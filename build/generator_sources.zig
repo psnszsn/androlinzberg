@@ -1092,6 +1092,7 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "packages/modules/Profiling/aidl/android/os/IProfilingService.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Profiling/aidl/android/os/ProfilingTriggerValueParcel.aidl" },
 
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IPermissionController.aidl" },
     // Voice manager and sound-trigger middleware transport.
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/soundtrigger/ModelParams.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/voice/IMicrophoneHotwordDetectionVoiceInteractionCallback.aidl" },

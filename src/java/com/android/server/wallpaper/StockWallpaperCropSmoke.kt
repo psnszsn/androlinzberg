@@ -36,11 +36,9 @@ object StockWallpaperCropSmoke {
         check(WallpaperCropper.getTotalCrop(hints) == Rect(20, 10, 170, 90))
 
         val context: Context = ActivityThread.currentActivityThread().systemContext
-        val windows = object : WindowManagerInternal() {
-            override fun isUidFocused(uid: Int): Boolean = error("Wallpaper crop must not query focus")
-            override fun getTopFocusedDisplayId(): Int = Display.DEFAULT_DISPLAY
-            override fun isHomeSupportedOnDisplay(displayId: Int): Boolean = displayId == Display.DEFAULT_DISPLAY
-        }
+        val windows = Class.forName("com.android.server.wm.HostedLegacyWindowManagerInternal")
+            .getConstructor(java.util.function.IntPredicate::class.java)
+            .newInstance(java.util.function.IntPredicate { error("Wallpaper crop must not query focus") }) as WindowManagerInternal
         val helper = WallpaperDisplayHelper(context.getSystemService(DisplayManager::class.java),
             context.getSystemService(WindowManager::class.java), windows, context.resources)
         helper.getDisplayDataOrCreate(Display.DEFAULT_DISPLAY).apply { mWidth = 8; mHeight = 8 }

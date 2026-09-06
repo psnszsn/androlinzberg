@@ -9048,3 +9048,6 @@ F aosp frameworks/base/core/java/com/android/internal/policy/PhoneFallbackEventH
 F aosp frameworks/native/opengl/include/ETC1/etc1.h
 
 F aosp frameworks/native/opengl/libs/ETC1/etc1.cpp
+
+F aosp frameworks/base/core/java/android/os/IPermissionController.aidl
+F aosp frameworks/base/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp

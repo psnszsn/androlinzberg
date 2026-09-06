@@ -213,6 +213,13 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/net/http/HttpResponseCache.java");
     try c.file("$CJ/android/os/VintfObject.java");
     try c.file("$FB/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java");
+    // Stock WM/ATMS graph. Desktop input, process and optional services stay at host seams.
+    try c.add("$FB/services/core/java/com/android/server/wm", .{});
+    try c.file("$FB/services/core/java/com/android/server/policy/WindowManagerPolicy.java");
+    try c.file("$FB/services/core/java/com/android/server/am/PendingIntentController.java");
+    try c.file("$FB/services/core/java/com/android/server/am/PendingIntentRecord.java");
+    try c.file("$FB/services/core/java/com/android/server/am/AssistDataRequester.java");
+
     try c.file("$CJ/android/view/WindowManagerGlobal.java");
     try c.file("$CJ/android/view/WindowManagerImpl.java");
     try c.file("$CJ/android/os/StatsServiceManager.java");
@@ -652,7 +659,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/com/android/internal/org/bouncycastle/util/io/TeeInputStream.java");
     try c.file("$A/external/bouncycastle/repackaged_platform/bcprov/src/main/java/com/android/internal/org/bouncycastle/util/io/TeeOutputStream.java");
     try c.file("$CJ/com/android/internal/security/VerityUtils.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/SurfaceSyncGroupController.java");
     try c.file("$CJ/android/util/MemoryIntArray.java");
     try c.file("$CJ/android/util/jar/StrictJarFile.java");
     try c.file("$CJ/android/util/jar/StrictJarManifest.java");
@@ -1481,7 +1487,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/ResourcePressureUtil.java");
     try c.file("$FB/services/core/java/com/android/server/am/TraceErrorLogger.java");
     try c.file("$FB/services/core/java/com/android/server/am/DropboxRateLimiter.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/SurfaceAnimationThread.java");
     try c.file("$FB/core/java/com/android/internal/os/ZygoteConnectionConstants.java");
     try c.file("$FB/services/core/java/com/android/server/criticalevents/CriticalEventLog.java");
     try c.file("$FB/services/core/java/com/android/server/am/HostingRecord.java");
@@ -1815,7 +1820,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/os/ProcessCpuTracker.java");
     try c.file("$CJ/com/android/internal/os/ProcStatsUtil.java");
     try c.file("$CJ/com/android/internal/protolog/WmProtoLogGroups.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/WindowProcessListener.java");
     // Stock service diagnostics and IME collaborator interfaces used by WMS.
     try c.file("$CJ/com/android/internal/protolog/LegacyProtoLogImpl.java");
     try c.file("$CJ/com/android/internal/protolog/LegacyProtoLogViewerConfigReader.java");
@@ -1838,13 +1842,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/utils/UserTokenWatcher.java");
     try c.file("$FB/services/core/java/com/android/server/vr/VrManagerInternal.java");
     try c.file("$FB/services/core/java/com/android/server/wallpaper/WallpaperManagerInternal.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/utils/RegionUtils.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/utils/RotationCache.java");
-
-    try c.file("$FB/services/core/java/com/android/server/wm/WindowManagerGlobalLock.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/WindowManagerDebugConfig.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/ActivityTaskManagerDebugConfig.java");
-    try c.file("$FB/services/core/java/com/android/server/wm/utils/OptPropFactory.java");
 
     try c.file("$CJ/android/media/NearbyMediaDevicesProvider.java");
     try c.file("$CJ/com/android/internal/statusbar/AppClipsServiceConnector.java");

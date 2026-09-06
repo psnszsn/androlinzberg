@@ -471,6 +471,35 @@ internal object SystemTestClientA {
         check(android.app.ActivityManager.getService().checkPermission(android.Manifest.permission.INTERNET,
             Int.MAX_VALUE, remoteUid) == android.content.pm.PackageManager.PERMISSION_GRANTED,
             "process denial does not revoke the UID's package grant")
+        val nativePermissions = android.os.IPermissionController.Stub.asInterface(
+            checkNotNull(ServiceManager.getService("permission")))
+        check(!nativePermissions.checkPermission(android.Manifest.permission.INTERNET,
+            service.selfPid(), remoteUid), "native permission protocol preserves process denial")
+        check(nativePermissions.checkPermission(android.Manifest.permission.INTERNET,
+            Int.MAX_VALUE, remoteUid), "native permission protocol preserves UID grant")
+        check(nativePermissions.getPackageUid("dev.artzig.test.a", 0) == Process.myUid(),
+            "native permission package lookup uses installed UID")
+        check(nativePermissions.getPackageUid("missing.native.permission.fixture", 0) == -1,
+            "native permission package lookup preserves missing result")
+        check(nativePermissions.getPackagesForUid(Process.myUid()).contains("dev.artzig.test.a"),
+            "native permission reverse UID lookup")
+        check(nativePermissions.isRuntimePermission(android.Manifest.permission.CAMERA) &&
+            !nativePermissions.isRuntimePermission(android.Manifest.permission.INTERNET),
+            "native permission classification uses platform declarations")
+        check(!nativePermissions.checkPermission(android.Manifest.permission.READ_FRAME_BUFFER,
+            service.selfPid(), remoteUid), "native permission does not grant unrequested capture")
+        check(nativePermissions.checkPermission(android.Manifest.permission.READ_FRAME_BUFFER,
+            Process.myPid(), Process.myUid()), "native permission accepts signed fixture capture grant")
+        check(nativePermissions.getPackageUid(null, 0) == -1 &&
+            !nativePermissions.isRuntimePermission(null), "native permission nullable names preserve missing results")
+        val invalidOp = runCatching { nativePermissions.noteOp(null, Process.myUid(), context.packageName) }.exceptionOrNull()
+        check(invalidOp is IllegalArgumentException && invalidOp.message == "Unknown operation string: null",
+            "native permission rejects an unknown nullable operation")
+        val nativeAppOps = context.getSystemService(android.app.AppOpsManager::class.java)
+        check(nativePermissions.noteOp(android.app.AppOpsManager.OPSTR_CAMERA, Process.myUid(), context.packageName) ==
+            nativeAppOps.noteOpNoThrow(android.app.AppOpsManager.OPSTR_CAMERA, Process.myUid(), context.packageName),
+            "native permission noteOp uses the existing app-op mode")
+        com.android.server.wm.StockTaskFpsSmoke.granted()
         check(service.add(20, 22) == 42, "cross-process service call")
         check(service.echo("héllo") == "héllo", "string round trip")
         val bundle = android.os.Bundle()

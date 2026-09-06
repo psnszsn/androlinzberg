@@ -77,6 +77,7 @@ framework_patches = tuple(
         (52, "-WallpaperCropper-use-host-image-record.patch"),
         (53, "-GLUtils-normalize-host-bitmap-upload-byte-order.patch"),
         (54, "-WM-bind-optional-services-to-hosted-authorities.patch"),
+        (55, "-WM-release-FPS-callbacks-on-transport-failure.patch"),
     )
 )
 

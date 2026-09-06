@@ -157,8 +157,33 @@ state changes without a new rendered frame; rebase validation is pending.
 The closure against the patched package identifies 289 sources and one JNI
 boundary for the full WindowManagerInternal graph
 (`/tmp/wayland-stock-wmi-closure-2.log`): TaskFpsCallbackController. The successful
-WM probe has not yet been promoted into the live framework source list, and stock
-WMS/ATMS still do not boot.
+WM probe was then promoted after rebasing through main `48f6f7b`, which includes
+the fullscreen fix and stock network, TTS, USB, audio and voice foundations.
+All 250 WM sources, the policy API, pending-intent records/controller and assist
+requester now compile in the regular framework build. The full stock
+WindowManagerInternal replaces its stub; the temporary legacy implementation is
+generated from that exact API and exposes only its existing three operations.
+The stub budget is now 20 pending, with 36 stubs total.
+
+Package `N-V-__8AALLakU07fnHzI275LUUuao9EcLNyA_19-FBLCHi5` includes stock task-FPS
+JNI and registration failure/death cleanup. The session publishes the distinct
+`android.os.IPermissionController` used by C++ PermissionCache through the
+existing activity, package and app-op authorities. The live Java and C++/graph
+audits pass (`/tmp/wayland-live-wm-java-3.log`). The first FPS denial test exposed
+native Binder reference destruction on an unattached JVM thread. Local payload
+cleanup now borrows the caller's JVM attachment or acquires and releases one
+around the destructor. The framework-module gate passes with repeated denied
+registrations (`/tmp/wayland-live-wm-runtime-2.log`). Cross-process FPS delivery and native permission results now pass, including
+process-specific denials, signed grants, package lookup, app-op results, duplicate
+registration, death cleanup and concurrent registration/removal
+(`/tmp/wayland-live-wm-binder-system-4.log`). The fixture activates the physical
+display and submits a painted hardware buffer before expecting FPS: stock SF
+intentionally does not compose color-only transactions before its first buffer.
+Binder, C++ facade and NDK regressions pass in
+`/tmp/wayland-live-wm-binder-system-1.log` (that earlier run's service fixture
+failed before its first buffer submission). Main's subsequent stock Activity
+commit `ed4c8da` is being incorporated before the full JVM/APK regressions.
+Stock WMS/ATMS startup and the client/task presentation cutover remain pending.
 
 Prior checkpoint validation against committed main `8d17396`:
 - The combined framework builds, including stock AppOps, window-context

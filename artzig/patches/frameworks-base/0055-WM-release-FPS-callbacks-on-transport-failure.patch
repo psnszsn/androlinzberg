@@ -1,0 +1,83 @@
+From: Androlinzberg host integration
+Subject: [PATCH] WM: retain FPS callbacks safely across transport failures
+
+AZKB services can disconnect independently of the JVM. Preserve the stock
+callback protocol while releasing failed registrations and serializing client
+registration/death. SurfaceFlinger add/remove only update listener state; they
+do not synchronously invoke Java callbacks while this controller is locked.
+
+diff --git a/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp b/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp
+--- a/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp
++++ b/services/core/jni/com_android_server_wm_TaskFpsCallbackController.cpp
+@@ -73,16 +73,18 @@
+ };
+ 
+ jlong nativeRegister(JNIEnv* env, jclass clazz, jobject obj, jint taskId) {
+-    TaskFpsCallback* callback = new TaskFpsCallback(env, obj);
++    // Keep the callback alive across failed remote registration.
++    sp<TaskFpsCallback> callback = sp<TaskFpsCallback>::make(env, obj);
+ 
+     if (SurfaceComposerClient::addFpsListener(taskId, callback) != OK) {
+         constexpr auto error_msg = "Couldn't addFpsListener";
+         ALOGE(error_msg);
+         jniThrowRuntimeException(env, error_msg);
++        return 0;
+     }
+     callback->incStrong((void*)nativeRegister);
+ 
+-    return reinterpret_cast<jlong>(callback);
++    return reinterpret_cast<jlong>(callback.get());
+ }
+ 
+ void nativeUnregister(JNIEnv* env, jclass clazz, jlong ptr) {
+diff --git a/services/core/java/com/android/server/wm/TaskFpsCallbackController.java b/services/core/java/com/android/server/wm/TaskFpsCallbackController.java
+--- a/services/core/java/com/android/server/wm/TaskFpsCallbackController.java
++++ b/services/core/java/com/android/server/wm/TaskFpsCallbackController.java
+@@ -32,7 +32,7 @@
+         mDeathRecipients = new HashMap<>();
+     }
+ 
+-    void registerListener(int taskId, ITaskFpsCallback callback) {
++    synchronized void registerListener(int taskId, ITaskFpsCallback callback) {
+         if (callback == null) {
+             return;
+         }
+@@ -50,11 +50,14 @@
+             binder.linkToDeath(deathRecipient, 0);
+             mDeathRecipients.put(binder, deathRecipient);
+         } catch (RemoteException e) {
+-            // ignore
++            // The client died during registration. Release the native registration
++            // without retaining an entry which could later retry a freed pointer.
++            mTaskFpsCallbacks.remove(binder);
++            nativeUnregister(nativeListener);
+         }
+     }
+ 
+-    void unregisterListener(ITaskFpsCallback callback) {
++    synchronized void unregisterListener(ITaskFpsCallback callback) {
+         if (callback == null) {
+             return;
+         }
+@@ -64,11 +67,16 @@
+             return;
+         }
+ 
+-        binder.unlinkToDeath(mDeathRecipients.get(binder), 0);
+-        mDeathRecipients.remove(binder);
+-
+-        nativeUnregister(mTaskFpsCallbacks.get(binder));
+-        mTaskFpsCallbacks.remove(binder);
++        final long nativeListener = mTaskFpsCallbacks.remove(binder);
++        final IBinder.DeathRecipient deathRecipient = mDeathRecipients.remove(binder);
++        try {
++            if (deathRecipient != null) {
++                binder.unlinkToDeath(deathRecipient, 0);
++            }
++        } finally {
++            // nativeUnregister consumes its owned reference even if SF has disconnected.
++            nativeUnregister(nativeListener);
++        }
+     }
+ 
+     private static native long nativeRegister(ITaskFpsCallback callback, int taskId);

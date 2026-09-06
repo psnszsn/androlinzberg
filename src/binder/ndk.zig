@@ -564,6 +564,12 @@ const AIBinder = struct {
 /// Runs a local object's onDestroy and releases its extension. Called once when
 /// the last strong ref drops; the struct memory is freed later by decWeak.
 fn destroyLocalPayload(b: *AIBinder) void {
+    // C++ Binder listeners can own JNI references even though they are native
+    // local objects. RELEASE on the reader (or a native caller's last decStrong)
+    // must provide the same JVM environment as dispatch. Only detach an
+    // attachment acquired here; Java callers and pool workers retain theirs.
+    const detach = attachCallbackThread();
+    defer if (detach) detachCurrentThread();
     if (b.class) |c| if (c.on_destroy) |cb| cb(b.user_data);
     if (b.extension) |e| {
         b.extension = null;
@@ -2876,6 +2882,16 @@ pub fn ensureJavaVm(env: JNIEnvPtr) void {
     if (g_jvm != null) return;
     var vm: [*c]jni.JavaVM = null;
     if (env.*.*.GetJavaVM.?(env, &vm) == jni.JNI_OK) g_jvm = @ptrCast(vm);
+}
+
+/// Borrow an existing JVM attachment, or acquire one for a synchronous native
+/// callback. The caller releases only the attachment this function acquired.
+fn attachCallbackThread() bool {
+    const vm: [*c]jni.JavaVM = @ptrCast(@alignCast(g_jvm orelse return false));
+    var env: ?*anyopaque = null;
+    if (vm.*.*.GetEnv.?(vm, &env, jni.JNI_VERSION_1_6) == jni.JNI_OK) return false;
+    if (jniEnv() == null) @panic("cannot attach Binder object cleanup to the JVM");
+    return true;
 }
 
 pub fn jniEnv() JNIEnvPtr {

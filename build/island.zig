@@ -534,7 +534,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_content_om_OverlayManagerImpl.cpp"}, webview_includes, &.{});
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{"com_android_server_display_DisplayControl.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;

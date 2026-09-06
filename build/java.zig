@@ -277,6 +277,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     );
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/LocalServiceAdapterProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/ActivityManagerInternalProcessor.kt"));
+    package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/WindowManagerInternalProcessor.kt"));
     package_manager_internal_processor.run.setName("compile local-service adapter processors");
 
     var safeparcel_sources = SourceFiles.Collector.init(b);
@@ -383,7 +384,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     });
     javac.addArgs(&.{
         "-processor",
-        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor,dev.artzig.tools.ActivityManagerInternalProcessor," ++ @import("generator_sources.zig").system_features.processor_class ++ "," ++ compat_declaration.processor_class,
+        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor,dev.artzig.tools.ActivityManagerInternalProcessor,dev.artzig.tools.WindowManagerInternalProcessor," ++ @import("generator_sources.zig").system_features.processor_class ++ "," ++ compat_declaration.processor_class,
     });
     javac.addArg("-d");
     const java_classes = javac.addOutputDirectoryArg("java-classes");
@@ -544,10 +545,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         path.addStepDependencies(java_step);
     }
     return .{
-        .classpath_jar = classpath_jar,
-        .compat_config = compat_config,
         .classes_jar = classes_jar,
         .compile_boot_jar = core_plus,
+        .classpath_jar = classpath_jar,
+        .compat_config = compat_config,
         .app_context_jar = app_context_jar,
         .framework_odex = framework_odex,
         .framework_vdex = framework_vdex,

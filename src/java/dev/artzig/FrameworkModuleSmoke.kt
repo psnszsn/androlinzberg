@@ -1805,6 +1805,7 @@ internal object FrameworkModuleSmoke {
             testStockGlesContext()
             StockEgl15Smoke.run(display, context)
             StockGlUtilitiesSmoke.run()
+        com.android.server.wm.StockTaskFpsSmoke.denied()
             val value = intArrayOf(-5, -5, -5)
             check(android.opengl.EGL14.eglQuerySurface(display, surface, android.opengl.EGL14.EGL_WIDTH, value, 1))
             check(value.contentEquals(intArrayOf(-5, 16, -5)))

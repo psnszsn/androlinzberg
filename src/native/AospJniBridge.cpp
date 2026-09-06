@@ -352,6 +352,7 @@ extern "C" int azk_register_graphics_environment_backend(JNIEnv*);
 extern int register_dev_artzig_StockFenceSmoke(JNIEnv*);
 extern int register_dev_artzig_StockReadbackSmoke(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
+namespace android { int register_com_android_server_wm_TaskFpsCallbackController(JNIEnv*); }
 extern int register_android_hardware_UsbDevice(JNIEnv*);
 extern int register_android_hardware_UsbDeviceConnection(JNIEnv*);
 extern int register_android_hardware_UsbRequest(JNIEnv*);
@@ -622,6 +623,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_dev_artzig_StockFenceSmoke),
             E(register_dev_artzig_StockReadbackSmoke),
             E(android::register_android_os_GraphicsEnvironment),
+            E(android::register_com_android_server_wm_TaskFpsCallbackController),
             E(register_android_hardware_UsbDevice),
             E(register_android_hardware_UsbDeviceConnection),
             E(register_android_hardware_UsbRequest),

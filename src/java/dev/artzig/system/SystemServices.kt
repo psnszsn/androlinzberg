@@ -128,14 +128,6 @@ internal object SystemServices {
         override fun getSupervisingProfileId(): Int = UserHandle.USER_NULL
     }
 
-    /** Every hosted window is its own focused Wayland toplevel. */
-    private class HostedWindowManagerInternal : com.android.server.wm.WindowManagerInternal() {
-        override fun isUidFocused(uid: Int): Boolean = true
-        override fun getTopFocusedDisplayId(): Int = 0
-        // The hosted display service publishes one Android logical display.
-        override fun isHomeSupportedOnDisplay(displayId: Int): Boolean = displayId == android.view.Display.DEFAULT_DISPLAY
-    }
-
     /** App-process hosts this session spawned, destroyed when the system process exits. */
     private val spawnedProcesses = java.util.concurrent.CopyOnWriteArrayList<Process>()
 
@@ -167,7 +159,9 @@ internal object SystemServices {
         // URI grants, and the IUserManager binder.
         LocalServices.addService(
             com.android.server.wm.WindowManagerInternal::class.java,
-            HostedWindowManagerInternal(),
+            Class.forName("com.android.server.wm.HostedLegacyWindowManagerInternal")
+                .getConstructor(java.util.function.IntPredicate::class.java)
+                .newInstance(java.util.function.IntPredicate { true }) as com.android.server.wm.WindowManagerInternal,
         )
         LocalServices.addService(
             VirtualDeviceManagerInternal::class.java,
@@ -213,6 +207,9 @@ internal object SystemServices {
         activityManager.processLauncher = sessionProcessLauncher()
         activityManager.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
+        // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
+        android.os.ServiceManager.addService("permission",
+            HostedNativePermissionController(context, activityManager, appOps))
         android.os.ServiceManager.addService(Context.WIFI_SERVICE,
             HostedWifiService(HostedPermissions(packageManager)))
         android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
@@ -237,7 +234,6 @@ internal object SystemServices {
             HostedSensorPrivacyService(context))
         val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
         activityManager.appOps = appOps
-        android.os.ServiceManager.addService("permission", HostedNativePermissionController(context, activityManager, appOps))
         LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
             HostedPermissionPolicy(packageManager))
         com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())
