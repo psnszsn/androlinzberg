@@ -27,6 +27,20 @@ in force.
 
 Follow-up changes in the current tree:
 
+- UsbManager, UsbDeviceConnection, UsbRequest and the port/accessory closure now
+  compile verbatim, with generated USB Binder interfaces, HAL enums, HIDL constants
+  and release flags. The original connection/request JNI and usbhost JNI helper
+  use the existing AOSP Linux USB library. The stock registry preserves missing-
+  service behavior. Module tests exercise proxy/Stub device transport, descriptor
+  duplication and reads through JNI, rejected ioctls on a regular file, closed
+  connections, request lifecycle, port role bits and Parcel values. JVM/system,
+  native/Binder/build checks and all 11 APK tests pass (39 steps without runtime
+  issues), including the launcher fullscreen fix below. All 35 new manifest inputs
+  match pinned AOSP; AOSP is rebuilt and pinned, ART is unchanged. The inventory
+  is 44 stubs: 26 pending and 18 survivors. No USB discovery/permission service is
+  hosted yet, and this container has no USB device nodes; the descriptor fixture
+  does not claim a physical USB transfer.
+
 - The launcher now synchronizes fullscreen requests after input/Handler work even
   when it submits no Java frame. A window-state change after the last rendered
   frame previously left the compositor unchanged, causing intermittent desktop

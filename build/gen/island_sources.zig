@@ -224,6 +224,8 @@ pub const core_jni_srcs = [_][]const u8{
     "android_util_jar_StrictJarFile.cpp",
     "android_util_MemoryIntArray.cpp",
     "android_hardware_UsbDevice.cpp",
+    "android_hardware_UsbDeviceConnection.cpp",
+    "android_hardware_UsbRequest.cpp",
     "android_hardware_OverlayProperties.cpp",
     "com_android_internal_security_VerityUtils.cpp",
     "android_os_SELinux.cpp",

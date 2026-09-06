@@ -144,6 +144,16 @@ public final class SystemServiceRegistry {
                 IAlarmManager service = IAlarmManager.Stub.asInterface(b);
                 return new AlarmManager(service, ctx);
             }});
+        registerService(Context.USB_SERVICE, android.hardware.usb.UsbManager.class,
+                new CachedServiceFetcher<android.hardware.usb.UsbManager>() {
+            @Override
+            public android.hardware.usb.UsbManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                android.os.IBinder b = android.os.ServiceManager.getServiceOrThrow(Context.USB_SERVICE);
+                return new android.hardware.usb.UsbManager(ctx,
+                        android.hardware.usb.IUsbManager.Stub.asInterface(b));
+            }});
+
         registerService(Context.NETWORK_POLICY_SERVICE, android.net.NetworkPolicyManager.class,
                 new CachedServiceFetcher<android.net.NetworkPolicyManager>() {
             @Override public android.net.NetworkPolicyManager createService(ContextImpl ctx) throws ServiceNotFoundException {

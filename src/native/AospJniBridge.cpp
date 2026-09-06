@@ -134,6 +134,8 @@ extern "C" int azk_register_graphics_environment_backend(JNIEnv*);
 extern int register_dev_artzig_StockFenceSmoke(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
 extern int register_android_hardware_UsbDevice(JNIEnv*);
+extern int register_android_hardware_UsbDeviceConnection(JNIEnv*);
+extern int register_android_hardware_UsbRequest(JNIEnv*);
 extern int register_android_hardware_OverlayProperties(JNIEnv*);
 
 // Pinned PerfettoTrace.native_register is @FastNative, but its C++ registration
@@ -274,6 +276,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_dev_artzig_StockFenceSmoke),
             E(android::register_android_os_GraphicsEnvironment),
             E(register_android_hardware_UsbDevice),
+            E(register_android_hardware_UsbDeviceConnection),
+            E(register_android_hardware_UsbRequest),
             E(register_android_hardware_OverlayProperties),
             E(android::register_android_graphics_Canvas),
             E(android::register_android_graphics_Color),

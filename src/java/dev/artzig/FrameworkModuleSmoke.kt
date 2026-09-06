@@ -217,6 +217,7 @@ internal object FrameworkModuleSmoke {
         StockPerformanceHintSmoke.run()
         StockNetworkStatsSmoke.run()
         StockNetworkPolicySmoke.run()
+        StockUsbSmoke.run()
         StockMediaCryptoSmoke.run()
         StockImageSmoke.run()
         testStockProtoLog()

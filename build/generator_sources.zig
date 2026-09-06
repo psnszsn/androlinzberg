@@ -160,6 +160,7 @@ pub const aconfig_device_paths = .{
 /// HIDL Java is generated from the pinned .hal declarations, matching Soong's
 /// hidl_interface backend. Only outputs required by framework clients are compiled.
 pub const hidl = [_]Hidl{
+    .{ .fqname = "android.hardware.usb@1.0", .language = .java_constants, .outputs = &.{"android/hardware/usb/V1_0/Constants.java"} },
     .{ .fqname = "android.hardware.health@1.0", .language = .java_constants, .outputs = &.{
         "android/hardware/health/V1_0/Constants.java",
     } },
@@ -217,6 +218,21 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkPolicyManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/usb/IDisplayPortAltModeInfoListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/usb/IUsbManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/usb/IUsbOperationInternal.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/ComplianceWarning.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/ContaminantDetectionStatus.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/ContaminantProtectionMode.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/ContaminantProtectionStatus.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/DisplayPortAltModeStatus.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/LinkTrainingStatus.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/PortDataRole.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/PortMode.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/PortPowerRole.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/aidl/android/hardware/usb/UsbDataStatus.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/gadget/aidl/android/hardware/usb/gadget/GadgetFunction.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/usb/gadget/aidl/android/hardware/usb/gadget/UsbSpeed.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechSession.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechSessionCallback.aidl" },
@@ -1252,6 +1268,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "com.android.ranging.flags", .container = "com.android.uwb", .source = .aosp, .declarations = &.{"packages/modules/Uwb/ranging/flags/ranging_flags.aconfig"} },
     .{ .package = "android.media.tv.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig"} },
     .{ .package = "android.app.supervision.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/supervision/flags.aconfig"} },
+    .{ .package = "android.hardware.usb.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/hardware/usb/flags/system_sw_usb_flags.aconfig", "frameworks/base/core/java/android/hardware/usb/flags/usb_framework_flags.aconfig" } },
     .{ .package = "android.net.platform.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/net/flags.aconfig"} },
     .{ .package = "android.net.wifi.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/wifi/wifi.aconfig"} },
     .{ .package = "android.webkit", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/webkit/flags.aconfig"} },

@@ -240,7 +240,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const hw_jni_inc = o.aosp.path(b, "frameworks/base/libs/hwui/jni");
     const fn_inc = o.aosp.path(b, "frameworks/native/include");
 
-    g.add(o.aosp.path(b, "system/core/libusbhost"), &.{"usbhost.c"}, &.{}, &.{});
+    g.add(o.aosp.path(b, "system/core/libusbhost"), &.{ "usbhost.c", "usbhost_jni.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
     for (gen.libcutils_srcs) |file| {
         if (!std.mem.eql(u8, file, "native_handle.cpp")) g.add(o.aosp.path(b, "system/core/libcutils"), &.{file}, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});

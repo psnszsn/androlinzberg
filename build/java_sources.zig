@@ -212,6 +212,15 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/hardware/usb/UsbConfiguration.java");
     try c.file("$CJ/android/hardware/usb/UsbConstants.java");
     try c.file("$CJ/android/hardware/usb/UsbDevice.java");
+    try c.file("$CJ/android/hardware/usb/DisplayPortAltModeInfo.java");
+    try c.file("$CJ/android/hardware/usb/ParcelableUsbPort.java");
+    try c.file("$CJ/android/hardware/usb/UsbAccessory.java");
+    try c.file("$CJ/android/hardware/usb/UsbDeviceConnection.java");
+    try c.file("$CJ/android/hardware/usb/UsbManager.java");
+    try c.file("$CJ/android/hardware/usb/UsbOperationInternal.java");
+    try c.file("$CJ/android/hardware/usb/UsbPort.java");
+    try c.file("$CJ/android/hardware/usb/UsbPortStatus.java");
+    try c.file("$CJ/android/hardware/usb/UsbRequest.java");
     try c.file("$CJ/android/hardware/usb/UsbEndpoint.java");
     try c.file("$CJ/android/hardware/usb/UsbInterface.java");
     try c.file("$CJ/android/hardware/HardwareBuffer.java");
