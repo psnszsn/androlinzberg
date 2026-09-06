@@ -67,7 +67,22 @@ were absent after rebase. Establish fresh results when implementation begins.
 
 ### Additional verified service and output work (2026-09-06)
 
-Rebase validation against committed main `8d17396`:
+Rebased again through committed main `fa575e3`, preserving the shared graphics,
+input and Binder work. This adds the main worktree's stock performance-hint
+clients, activity launch/configuration/affinity fixes and permission-usage values.
+The union archive also initializes HWUI for hardware bitmaps before the first
+window. The merged framework-module, Binder facade, build-tool, C++ and graph
+checks pass (`/tmp/wayland-stock-readback-21.log`). The first-use hardware bitmap,
+lazy hardware image and queued PixelCopy paths all verify their pixels. Full JVM,
+APK and affected graphics/input regression validation is in progress.
+
+`Binder.blockUntilThreadAvailable` now waits on AZKB's actual dispatch capacity,
+shared with the C++ facade. A real cross-process regression fills all 32 dispatch
+workers, observes the monitor remain blocked, then releases one worker and
+requires the monitor to resume. This is the stock Watchdog Binder-monitor
+contract; Watchdog itself has not yet joined the running service graph.
+
+Prior checkpoint validation against committed main `8d17396`:
 - The combined framework builds, including stock AppOps, window-context
   transactions and resolver/chooser clients. Main supplies stock window clients,
   SurfaceSyncGroup, Debug, SystemConfig and the Linux Perfetto SDK.

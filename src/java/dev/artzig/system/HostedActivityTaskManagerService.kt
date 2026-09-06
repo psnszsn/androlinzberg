@@ -1335,7 +1335,7 @@ internal class HostedActivityTaskManagerService(
         }
     }
 
-    private fun taskUidLocked(task: TaskRecord): Int = task.activities.firstOrNull()?.let {
+    private fun taskUidLocked(task: TaskRecord): Int = task.activities.firstOrNull { !it.finishing }?.let {
         packages.getPackageUidInternal(it.info.packageName)
     } ?: -1
 

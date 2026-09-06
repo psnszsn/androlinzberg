@@ -4,6 +4,7 @@
 
 #include <android/binder_manager.h>
 #include <android/binder_libbinder.h>
+#include <android/binder_process.h>
 #include <android/gui/BnFpsListener.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IResultReceiver.h>
@@ -12,6 +13,7 @@
 #include <binder/Parcel.h>
 #include <binder/ParcelFileDescriptor.h>
 #include <fcntl.h>
+#include <poll.h>
 
 #include <atomic>
 #include <chrono>
@@ -21,6 +23,8 @@
 using namespace android;
 using namespace std::chrono_literals;
 constexpr uint32_t EXCHANGE = 1, NESTED = 2, GRAPHICS = 3;
+constexpr uint32_t HOLD_WORKER = 8, MONITOR_POOL = 9;
+constexpr int POOL_WORKERS = 32;
 static void pass(const char *s) { std::cout << "PASS " << s << std::endl; }
 struct Listener final : gui::BnFpsListener {
   std::mutex mutex;
@@ -122,6 +126,24 @@ struct Service final : BBinder {
       assert(out->writeInt32(size) == OK);
       return out->writeDupImmutableBlobFileDescriptor(blob.fd());
     }
+    if (code == HOLD_WORKER) {
+      const int release = in.readFileDescriptor();
+      const int ready = in.readFileDescriptor();
+      assert(write(ready, "R", 1) == 1);
+      char signal;
+      assert(read(release, &signal, 1) == 1 && signal == 'R');
+      return out->writeInt32(42);
+    }
+    if (code == MONITOR_POOL) {
+      // Oneway dispatch has a serial queue independent of the saturated
+      // two-way pool, as does Watchdog's foreground monitor thread.
+      assert(flags & IBinder::FLAG_ONEWAY);
+      const int result = in.readFileDescriptor();
+      assert(write(result, "S", 1) == 1);
+      IPCThreadState::self()->blockUntilThreadAvailable();
+      assert(write(result, "A", 1) == 1);
+      return OK;
+    }
     if (code == 4)
       return out->writeStrongBinder(sp<RemoteTracked>::make());
     if (code == 5)
@@ -207,8 +229,43 @@ struct Death final : IBinder::DeathRecipient {
 };
 void parcelTests();
 void blobTests();
+static void poolMonitorTest(const sp<IBinder>& server) {
+  IPCThreadState::self()->blockUntilThreadAvailable();
+  int release[2], ready[2], monitor[2];
+  assert(pipe(release) == 0 && pipe(ready) == 0 && pipe(monitor) == 0);
+  std::vector<std::thread> callers;
+  for (int i = 0; i < POOL_WORKERS; ++i) {
+    callers.emplace_back([&] {
+      Parcel request, reply;
+      assert(request.writeFileDescriptor(release[0]) == OK);
+      assert(request.writeFileDescriptor(ready[1]) == OK);
+      assert(server->transact(HOLD_WORKER, request, &reply) == OK);
+      assert(reply.readInt32() == 42);
+    });
+  }
+  auto receive = [](int fd, char expected) {
+    pollfd event{fd, POLLIN, 0};
+    assert(poll(&event, 1, 5000) == 1 && (event.revents & POLLIN));
+    char value;
+    assert(read(fd, &value, 1) == 1 && value == expected);
+  };
+  for (int i = 0; i < POOL_WORKERS; ++i) receive(ready[0], 'R');
+  Parcel request;
+  assert(request.writeFileDescriptor(monitor[1]) == OK);
+  assert(server->transact(MONITOR_POOL, request, nullptr, IBinder::FLAG_ONEWAY) == OK);
+  receive(monitor[0], 'S');
+  pollfd waiting{monitor[0], POLLIN, 0};
+  assert(poll(&waiting, 1, 200) == 0);
+  assert(write(release[1], "R", 1) == 1);
+  receive(monitor[0], 'A');
+  for (int i = 1; i < POOL_WORKERS; ++i) assert(write(release[1], "R", 1) == 1);
+  for (auto& caller : callers) caller.join();
+  for (int fd : {release[0], release[1], ready[0], ready[1], monitor[0], monitor[1]}) close(fd);
+  pass("Watchdog pool monitor blocks at capacity and resumes when one worker completes");
+}
 int main(int argc, char **argv) {
   if (argc > 1 && std::string(argv[1]) == "server") {
+    assert(ABinderProcess_setThreadPoolMaxThreadCount(POOL_WORKERS - 1));
     auto service = sp<Service>::make();
     auto *n = service->acquireNative();
     assert(AServiceManager_addService(n, "dev.artzig.facade.v2") == OK);
@@ -277,6 +334,7 @@ int main(int argc, char **argv) {
   auto *raw = AServiceManager_waitForService("dev.artzig.facade.v2");
   assert(raw);
   auto server = IBinder::fromNative(raw);
+  poolMonitorTest(server);
   {
     const std::optional<std::vector<std::optional<std::string>>> values{
         std::vector<std::optional<std::string>>{std::nullopt, std::string{},

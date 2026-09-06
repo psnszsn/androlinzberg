@@ -18,6 +18,7 @@ public:
     azk_binder_restoreCallingIdentity(token);
   }
   void flushCommands() { azk_binder_flush(); }
+  void blockUntilThreadAvailable() { azk_binder_blockUntilThreadAvailable(); }
   void joinThreadPool(bool isMain = true);
 };
 } // namespace android

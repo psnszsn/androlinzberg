@@ -39,6 +39,7 @@ const void *azk_binder_servingStack(void);
 uint64_t azk_binder_clearCallingIdentity(void);
 void azk_binder_restoreCallingIdentity(uint64_t);
 void azk_binder_flush(void);
+void azk_binder_blockUntilThreadAvailable(void);
 bool azk_property_write(const char *name, const char *value);
 // Snapshot callback: value bytes are borrowed until the callback returns.
 bool azk_property_read(const char *name,

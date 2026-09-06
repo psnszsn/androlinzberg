@@ -674,6 +674,7 @@ const Runtime = struct {
     /// All three fields are guarded by `mu`.
     dispatch_queue: std.ArrayListUnmanaged(*Incoming) = .empty,
     dispatch_cv: Io.Condition = .init,
+    dispatch_available: Io.Condition = .init,
     dispatch_idle: usize = 0,
     dispatch_total: usize = 0,
     max_dispatch_workers: usize = 32,
@@ -977,6 +978,7 @@ const Runtime = struct {
             const th = std.Thread.spawn(.{}, dispatchWorker, .{r}) catch {
                 r.mu.lockUncancelable(g_io);
                 r.dispatch_total -= 1;
+                r.dispatch_available.broadcast(g_io);
                 const no_workers = r.dispatch_total == 0;
                 r.mu.unlock(g_io);
                 // Could not grow the pool. A live worker will pick the item up;
@@ -1001,6 +1003,7 @@ const Runtime = struct {
         while (true) {
             r.mu.lockUncancelable(g_io);
             r.dispatch_idle += 1;
+            r.dispatch_available.broadcast(g_io);
             while (r.dispatch_queue.items.len == 0 and !r.disconnected.load(.acquire)) r.dispatch_cv.waitUncancelable(g_io, &r.mu);
             r.dispatch_idle -= 1;
             if (r.dispatch_queue.items.len == 0) {
@@ -1380,6 +1383,7 @@ const Runtime = struct {
         }
         r.pending.clearRetainingCapacity();
         r.dispatch_cv.broadcast(g_io);
+        r.dispatch_available.broadcast(g_io);
         // Every remote object is now unreachable: mark proxies dead so
         // AIBinder_isAlive reports false, and deliver each registered death
         // notification (the broker will send no more object_dead frames).
@@ -2615,7 +2619,22 @@ export fn ABinderProcess_setThreadPoolMaxThreadCount(count: u32) callconv(.c) bo
     const limit: usize = @as(usize, count) + 1;
     if (limit < r.dispatch_total) return false;
     r.max_dispatch_workers = limit;
+    r.dispatch_available.broadcast(g_io);
     return true;
+}
+
+// Pinned IPCThreadState::blockUntilThreadAvailable waits until the executing
+// count falls below the pool limit. AZKB owns the dispatch pool, so watch its
+// actual capacity instead of the absent kernel Binder driver's thread count.
+export fn azk_binder_blockUntilThreadAvailable() callconv(.c) void {
+    const r = Runtime.get();
+    r.mu.lockUncancelable(g_io);
+    defer r.mu.unlock(g_io);
+    while (!r.disconnected.load(.acquire) and
+        r.dispatch_total - r.dispatch_idle >= r.max_dispatch_workers)
+    {
+        r.dispatch_available.waitUncancelable(g_io, &r.mu);
+    }
 }
 export fn ABinderProcess_isThreadPoolStarted() callconv(.c) bool {
     return Runtime.instance != null;
@@ -3760,6 +3779,7 @@ fn bFlushPendingCommands(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
 fn bBlockUntilThreadAvailable(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
     _ = env;
     _ = cls;
+    azk_binder_blockUntilThreadAvailable();
 }
 fn bSetExtensionNative(env: JNIEnvPtr, this: jni.jobject, ext: jni.jobject) callconv(.c) void {
     // Set the extension on this Binder's holder AIBinder (used by getExtension
