@@ -76,6 +76,7 @@ framework_patches = tuple(
         (51, "-SaferIntentUtils-use-host-receiver-metadata.patch"),
         (52, "-WallpaperCropper-use-host-image-record.patch"),
         (53, "-GLUtils-normalize-host-bitmap-upload-byte-order.patch"),
+        (54, "-WM-bind-optional-services-to-hosted-authorities.patch"),
     )
 )
 

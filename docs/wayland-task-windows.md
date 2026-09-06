@@ -140,6 +140,26 @@ all 14 APK tests and the C++/graph audits pass
 42 steps with no runtime issues or failure records; the NewPipe drawer screenshot
 was inspected. Build-tool checks also pass at this checkpoint.
 
+The WM compile probe now succeeds without errors (`/tmp/wm-compile-probe-19.log`).
+Assist retains the absent-service result, archived-state detection follows the
+stock predicate and reports an unavailable unarchive backend, and organizer
+shortcut calls use the hosted launcher authority with the original caller UID.
+Device reboot/shutdown requests report unsupported after their existing permission
+checks. The legacy splash parcel now exposes cleanup of its empty resource state;
+the real splash transfer still awaits the stock window-client cutover.
+These adapters and their negative-result/identity tests pass the framework-module
+gate (`/tmp/wayland-optional-wm-integration-4.log`). Full JVM and system-service
+gates pass. The full APK run has one fullscreen timeout and no structured runtime
+issues (`/tmp/wayland-optional-wm-regressions-1.log`); the retained failure is at
+`/tmp/wayland-optional-wm-fullscreen-failure`. Main's `30762a3` addresses fullscreen
+state changes without a new rendered frame; rebase validation is pending.
+
+The closure against the patched package identifies 289 sources and one JNI
+boundary for the full WindowManagerInternal graph
+(`/tmp/wayland-stock-wmi-closure-2.log`): TaskFpsCallbackController. The successful
+WM probe has not yet been promoted into the live framework source list, and stock
+WMS/ATMS still do not boot.
+
 Prior checkpoint validation against committed main `8d17396`:
 - The combined framework builds, including stock AppOps, window-context
   transactions and resolver/chooser clients. Main supplies stock window clients,

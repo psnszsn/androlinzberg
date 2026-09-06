@@ -150,6 +150,32 @@ class HostedLauncherAppsService(
     }
     override fun pinShortcuts(callingPackage: String?, packageName: String?, shortcutIds: MutableList<String?>?, user: UserHandle?) = ensureShortcutPermission(callingPackage)
     override fun startShortcut(callingPackage: String?, packageName: String?, featureId: String?, id: String?, sourceBounds: Rect?, startActivityOptions: Bundle?, userId: Int): Boolean {
+        return startShortcut(android.os.Binder.getCallingUid(), android.os.Binder.getCallingPid(),
+            callingPackage, packageName, featureId, id, sourceBounds, startActivityOptions, userId)
+    }
+
+    /**
+     * LauncherAppsImpl.startShortcutInner / LocalService.startShortcut. WOC has
+     * cleared Binder identity, so package and permission checks use the supplied
+     * caller. The same service owns Binder and organizer calls. This session has
+     * one user, no profiles, no pinned shortcuts and no default launcher role.
+     */
+    fun startShortcut(callerUid: Int, callerPid: Int, callingPackage: String?,
+        packageName: String?, featureId: String?, id: String?, sourceBounds: Rect?,
+        startActivityOptions: Bundle?, userId: Int): Boolean {
+        val callerUser = UserHandle.getUserId(callerUid)
+        val flags = (PackageManager.MATCH_DIRECT_BOOT_AWARE or PackageManager.MATCH_DIRECT_BOOT_UNAWARE or
+            PackageManager.MATCH_UNINSTALLED_PACKAGES).toLong()
+        if (packages.getPackageUid(callingPackage, flags, callerUser) != callerUid) {
+            throw SecurityException("Calling package name mismatch")
+        }
+        if (userId != callerUser &&
+            !permissions.has(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, callerUid)) {
+            val users = checkNotNull(com.android.server.LocalServices.getService(
+                com.android.server.pm.UserManagerInternal::class.java)) { "User authority is not started" }
+            if (users.getUserInfo(callerUser)?.isProfile == true) return false
+            if (!users.isProfileAccessible(callerUser, userId, "Cannot start activity", true)) return false
+        }
         ensureShortcutPermission(callingPackage)
         return false
     }

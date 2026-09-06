@@ -93,6 +93,7 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     inline for (.{
         "java/android/annotation/AppIdInt.java",
         "java/android/annotation/ColorInt.java",
+        "java/android/annotation/CurrentTimeMillisLong.java",
         "java/android/annotation/Size.java",
         "java/android/annotation/UserIdInt.java",
     }) |path| annotations.addFile(modules_utils, path);

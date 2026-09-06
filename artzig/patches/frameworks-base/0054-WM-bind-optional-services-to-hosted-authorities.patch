@@ -1,0 +1,177 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] WM: bind optional services to hosted authorities
+
+Keep activity eligibility, caller identity restoration and organizer transactions
+in stock WM. Host seams own absent device/assistant/archiver capabilities and
+launcher shortcut calls use the same hosted launcher authority as Binder clients.
+
+--- a/services/core/java/com/android/server/wm/WindowManagerService.java
++++ b/services/core/java/com/android/server/wm/WindowManagerService.java
+@@ -352,7 +352,7 @@
+ import com.android.server.pm.UserManagerInternal;
+ import com.android.server.policy.WindowManagerPolicy;
+ import com.android.server.policy.WindowManagerPolicy.ScreenOffListener;
+-import com.android.server.power.ShutdownThread;
++import dev.artzig.system.HostedDevicePower;
+ import com.android.server.utils.PriorityDump;
+ import com.android.window.flags.Flags;
+ 
+@@ -3756,7 +3756,7 @@
+     @Override
+     public void shutdown(boolean confirm) {
+         // Pass in the UI context, since ShutdownThread requires it (to show UI).
+-        ShutdownThread.shutdown(ActivityThread.currentActivityThread().getSystemUiContext(),
++        HostedDevicePower.shutdown(ActivityThread.currentActivityThread().getSystemUiContext(),
+                 PowerManager.SHUTDOWN_USER_REQUESTED, confirm);
+     }
+ 
+@@ -3764,7 +3764,7 @@
+     @Override
+     public void reboot(boolean confirm) {
+         // Pass in the UI context, since ShutdownThread requires it (to show UI).
+-        ShutdownThread.reboot(ActivityThread.currentActivityThread().getSystemUiContext(),
++        HostedDevicePower.reboot(ActivityThread.currentActivityThread().getSystemUiContext(),
+                 PowerManager.SHUTDOWN_USER_REQUESTED, confirm);
+     }
+ 
+@@ -3772,7 +3772,7 @@
+     @Override
+     public void rebootSafeMode(boolean confirm) {
+         // Pass in the UI context, since ShutdownThread requires it (to show UI).
+-        ShutdownThread.rebootSafeMode(ActivityThread.currentActivityThread().getSystemUiContext(),
++        HostedDevicePower.rebootSafeMode(ActivityThread.currentActivityThread().getSystemUiContext(),
+                 confirm);
+     }
+ 
+@@ -5534,10 +5534,10 @@
+         mSafeMode = menuState > 0 || sState > 0 || dpadState > 0 || trackballState > 0
+                 || volumeDownState > 0;
+         try {
+-            if (SystemProperties.getInt(ShutdownThread.REBOOT_SAFEMODE_PROPERTY, 0) != 0
+-                    || SystemProperties.getInt(ShutdownThread.RO_SAFEMODE_PROPERTY, 0) != 0) {
++            if (SystemProperties.getInt(HostedDevicePower.REBOOT_SAFEMODE_PROPERTY, 0) != 0
++                    || SystemProperties.getInt(HostedDevicePower.RO_SAFEMODE_PROPERTY, 0) != 0) {
+                 mSafeMode = true;
+-                SystemProperties.set(ShutdownThread.REBOOT_SAFEMODE_PROPERTY, "");
++                SystemProperties.set(HostedDevicePower.REBOOT_SAFEMODE_PROPERTY, "");
+             }
+         } catch (IllegalArgumentException e) {
+         }
+@@ -5545,8 +5545,8 @@
+             ProtoLog.i(WM_ERROR, "SAFE MODE ENABLED (menu=%d s=%d dpad=%d"
+                     + " trackball=%d)", menuState, sState, dpadState, trackballState);
+             // May already be set if (for instance) this process has crashed
+-            if (SystemProperties.getInt(ShutdownThread.RO_SAFEMODE_PROPERTY, 0) == 0) {
+-                SystemProperties.set(ShutdownThread.RO_SAFEMODE_PROPERTY, "1");
++            if (SystemProperties.getInt(HostedDevicePower.RO_SAFEMODE_PROPERTY, 0) == 0) {
++                SystemProperties.set(HostedDevicePower.RO_SAFEMODE_PROPERTY, "1");
+             }
+         } else {
+             ProtoLog.i(WM_ERROR, "SAFE MODE not enabled");
+--- a/services/core/java/com/android/server/wm/ActivityClientController.java
++++ b/services/core/java/com/android/server/wm/ActivityClientController.java
+@@ -37,7 +37,6 @@
+ import static android.os.Process.INVALID_UID;
+ import static android.os.Process.SYSTEM_UID;
+ import static android.os.Trace.TRACE_TAG_WINDOW_MANAGER;
+-import static android.service.voice.VoiceInteractionSession.SHOW_SOURCE_APPLICATION;
+ import static android.view.Display.DEFAULT_DISPLAY;
+ import static android.view.Display.INVALID_DISPLAY;
+ import static android.view.WindowManager.TRANSIT_CHANGE;
+@@ -102,7 +101,7 @@
+ import android.window.TransitionInfo;
+ 
+ import com.android.internal.annotations.VisibleForTesting;
+-import com.android.internal.app.AssistUtils;
++import dev.artzig.system.HostedAssistSessions;
+ import com.android.internal.policy.IKeyguardDismissCallback;
+ import com.android.internal.protolog.ProtoLog;
+ import com.android.server.LocalServices;
+@@ -137,7 +136,7 @@
+     private static final long SET_PIP_ASPECT_RATIO_TIME_WINDOW_MS = 60_000;
+ 
+     /** Wrapper around VoiceInteractionServiceManager. */
+-    private AssistUtils mAssistUtils;
++    private HostedAssistSessions mAssistUtils;
+ 
+     /**
+      * Grants access to the launching app's identity if the app opted-in to sharing its identity
+@@ -160,7 +159,7 @@
+     }
+ 
+     void onSystemReady() {
+-        mAssistUtils = new AssistUtils(mContext);
++        mAssistUtils = new HostedAssistSessions();
+     }
+ 
+     @Override
+@@ -1373,8 +1372,7 @@
+                 }
+                 callingAttributionTag = top.launchedFromFeatureId;
+             }
+-            return mAssistUtils.showSessionForActiveService(args, SHOW_SOURCE_APPLICATION,
+-                    callingAttributionTag, null /* showCallback */, token);
++            return mAssistUtils.showFromActivity(args, callingAttributionTag, token);
+         } finally {
+             Binder.restoreCallingIdentity(ident);
+         }
+--- a/services/core/java/com/android/server/wm/ActivityStarter.java
++++ b/services/core/java/com/android/server/wm/ActivityStarter.java
+@@ -66,7 +66,6 @@
+ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_TASKS;
+ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_WINDOW_TRANSITIONS;
+ import static com.android.internal.util.FrameworkStatsLog.INTENT_REDIRECT_BLOCKED;
+-import static com.android.server.pm.PackageArchiver.isArchivingEnabled;
+ import static com.android.server.wm.ActivityRecord.State.RESUMED;
+ import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_PERMISSIONS_REVIEW;
+ import static com.android.server.wm.ActivityTaskManagerDebugConfig.DEBUG_RESULTS;
+@@ -146,7 +145,7 @@
+ import dev.artzig.system.HostedIntentCreators.Token;
+ import com.android.server.am.PendingIntentRecord;
+ import com.android.server.pm.InstantAppResolver;
+-import com.android.server.pm.PackageArchiver;
++import dev.artzig.system.HostedPackageArchiving;
+ import com.android.server.power.ShutdownCheckPoints;
+ import com.android.server.statusbar.StatusBarManagerInternal;
+ import com.android.server.uri.NeededUriGrants;
+@@ -1163,16 +1162,8 @@
+             // We couldn't find the specific class specified in the Intent.
+             err = ActivityManager.START_CLASS_NOT_FOUND;
+ 
+-            if (isArchivingEnabled()) {
+-                PackageArchiver packageArchiver = mService
+-                        .getPackageManagerInternalLocked()
+-                        .getPackageArchiver();
+-                if (packageArchiver.isIntentResolvedToArchivedApp(intent, mRequest.userId)) {
+-                    err = packageArchiver
+-                            .requestUnarchiveOnActivityStart(
+-                                    intent, callingPackage, mRequest.userId, realCallingUid);
+-                }
+-            }
++            err = HostedPackageArchiving.resolveMissingActivity(
++                    mService.getPackageManagerInternalLocked(), intent, mRequest.userId);
+         }
+ 
+         if (err == ActivityManager.START_SUCCESS && sourceRecord != null
+--- a/services/core/java/com/android/server/wm/WindowOrganizerController.java
++++ b/services/core/java/com/android/server/wm/WindowOrganizerController.java
+@@ -146,7 +146,7 @@
+ import com.android.internal.protolog.WmProtoLogGroups;
+ import com.android.internal.util.ArrayUtils;
+ import com.android.server.LocalServices;
+-import com.android.server.pm.LauncherAppsService.LauncherAppsServiceInternal;
++import dev.artzig.system.HostedLauncherAppsService;
+ import com.android.window.flags.Flags;
+ 
+ import java.util.ArrayList;
+@@ -1317,8 +1317,8 @@
+                 launchOpts.remove(
+                         WindowContainerTransaction.HierarchyOp.LAUNCH_KEY_SHORTCUT_CALLING_PACKAGE);
+ 
+-                final LauncherAppsServiceInternal launcherApps = LocalServices.getService(
+-                        LauncherAppsServiceInternal.class);
++                final HostedLauncherAppsService launcherApps = LocalServices.getService(
++                        HostedLauncherAppsService.class);
+ 
+                 final boolean success = launcherApps.startShortcut(caller.mUid, caller.mPid,
+                         callingPackage, hop.getShortcutInfo().getPackage(), null /* featureId */,

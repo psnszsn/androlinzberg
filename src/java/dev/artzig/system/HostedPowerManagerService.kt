@@ -228,9 +228,18 @@ class HostedPowerManagerService : android.os.IPowerManager.Stub(), android.os.IP
     override fun setPowerBoost(boost: Int, durationMs: Int) {}
     override fun setPowerMode(mode: Int, enabled: Boolean) {}
     override fun setPowerModeChecked(mode: Int, enabled: Boolean): Boolean = false
-    override fun reboot(confirm: Boolean, reason: String?, wait: Boolean) = enforceSystem("reboot", "REBOOT")
-    override fun rebootSafeMode(confirm: Boolean, wait: Boolean) = enforceSystem("rebootSafeMode", "REBOOT")
-    override fun shutdown(confirm: Boolean, reason: String?, wait: Boolean) = enforceSystem("shutdown", "REBOOT")
+    override fun reboot(confirm: Boolean, reason: String?, wait: Boolean) {
+        enforceSystem("reboot", "REBOOT")
+        HostedDevicePower.unavailable("reboot")
+    }
+    override fun rebootSafeMode(confirm: Boolean, wait: Boolean) {
+        enforceSystem("rebootSafeMode", "REBOOT")
+        HostedDevicePower.unavailable("rebootSafeMode")
+    }
+    override fun shutdown(confirm: Boolean, reason: String?, wait: Boolean) {
+        enforceSystem("shutdown", "REBOOT")
+        HostedDevicePower.unavailable("shutdown")
+    }
     override fun crash(message: String?) = enforceSystem("crash", "REBOOT")
     override fun getLastShutdownReason(): Int = PowerManager.SHUTDOWN_REASON_UNKNOWN
     override fun getLastSleepReason(): Int = PowerManager.GO_TO_SLEEP_REASON_MIN

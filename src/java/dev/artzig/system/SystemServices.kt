@@ -359,7 +359,9 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.WALLPAPER_SERVICE, HostedWallpaperManagerService(hostedPermissions))
         android.os.ServiceManager.addService(Context.CREDENTIAL_SERVICE, HostedCredentialManagerService(hostedPermissions))
         android.os.ServiceManager.addService(Context.SHORTCUT_SERVICE, HostedShortcutService(context, hostedPermissions))
-        android.os.ServiceManager.addService(Context.LAUNCHER_APPS_SERVICE, HostedLauncherAppsService(context, packageManager, hostedPermissions))
+        val launcherApps = HostedLauncherAppsService(context, packageManager, hostedPermissions)
+        android.os.ServiceManager.addService(Context.LAUNCHER_APPS_SERVICE, launcherApps)
+        LocalServices.addService(HostedLauncherAppsService::class.java, launcherApps)
         android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
