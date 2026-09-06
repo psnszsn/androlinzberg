@@ -52,10 +52,9 @@ BOOT_PREFIXES = (
     "android.annotation.",  # libcore core-all carries the framework annotations (tools/make-core-plus.sh)
 )
 
-# Most android.system classes come from libcore, but keystore2 is an AIDL
-# module generated from system/hardware/interfaces. Treating the whole
-# namespace as boot-provided hid that generated dependency from closures.
-BOOT_PREFIX_EXCEPTIONS = ("android.system.keystore2.",)
+# keystore2 comes from generated AIDL, and the legacy Khronos APIs belong to
+# frameworks/base/opengl. Neither is supplied by libcore's boot image.
+BOOT_PREFIX_EXCEPTIONS = ("android.system.keystore2.", "javax.microedition.khronos.")
 
 # Checkout directories that never hold framework sources worth indexing.
 SKIP_DIRS = {
@@ -189,7 +188,7 @@ def strip_code(text: str) -> str:
 
 
 PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;?", re.M)
-IMPORT_RE = re.compile(r"^\s*import\s+(static\s+)?([\w.]+)(\.\*)?\s*;?", re.M)
+IMPORT_RE = re.compile(r"^\s*import\s+(static\s+)?([\w$]+(?:\.[\w$]+)*)(\.\*)?\s*;?", re.M)
 QUALIFIED_RE = re.compile(r"(?<![\w.])((?:[a-z_][\w]*\.)+[A-Z]\w*(?:\.[A-Z]\w*)*)")
 SIMPLE_QUALIFIED_RE = re.compile(r"\b([A-Z]\w*(?:\.[A-Z]\w*)+)\b")
 ACONFIG_PACKAGE_RE = re.compile(r'^\s*package:\s*"([\w.]+)"', re.M)
@@ -511,6 +510,8 @@ class Resolver:
             static, name, star = m.group(1), m.group(2), m.group(3)
             if star:
                 wildcards.append(name)
+                if static:
+                    static_owners.add(name)
             elif static:
                 owner, member = name.rsplit(".", 1)
                 static_owners.add(owner)

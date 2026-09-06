@@ -17,6 +17,50 @@ SPEC.loader.exec_module(aosp_closure)
 
 
 class SourceIndexTest(unittest.TestCase):
+    def test_khronos_apis_are_not_assumed_to_be_boot_classes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "javax/microedition/khronos/egl").mkdir(parents=True)
+            (root / "javax/microedition/khronos/egl/EGLConfig.class").write_bytes(b"")
+            classes = aosp_closure.Classes([root])
+            self.assertTrue(classes.has("javax.crypto.Cipher"))
+            self.assertTrue(classes.has("javax.microedition.khronos.egl.EGLConfig"))
+            self.assertFalse(classes.has("javax.microedition.khronos.egl.EGLContext"))
+            self.assertFalse(classes.has("javax.microedition.khronos.opengles.GL11"))
+
+    def test_wildcard_import_closure_includes_legacy_egl_and_static_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, text in {
+                "seed/Renderer.java": """package seed;
+import javax.microedition.khronos.egl.*;
+import static config.Flags.*;
+class Renderer { EGLContext context; int flag = ENABLED; }
+""",
+                "javax/microedition/khronos/egl/EGLContext.java": """
+package javax.microedition.khronos.egl;
+public class EGLContext { backend.EGLImpl implementation; }
+""",
+                "backend/EGLImpl.java": "package backend; public class EGLImpl {}",
+                "config/Flags.java": "package config; public class Flags { public static int ENABLED; }",
+            }.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+            manifest, sources = root / "manifest", root / "sources"
+            manifest.write_text("")
+            sources.write_text("")
+            classes = root / "classes/java/lang"
+            classes.mkdir(parents=True)
+            (classes / "Object.class").write_bytes(b"")
+            resolver = aosp_closure.Resolver(root, aosp_closure.SourceIndex(root, None),
+                aosp_closure.Manifest(manifest), aosp_closure.SourceRules(sources),
+                aosp_closure.Classes([root / "classes"]), aosp_closure.Stubs(root / "stubs"))
+            closure = resolver.closure(["seed.Renderer"])
+            self.assertEqual({"seed.Renderer", "javax.microedition.khronos.egl.EGLContext",
+                              "backend.EGLImpl", "config.Flags"}, set(closure))
+            self.assertTrue(all(node.kind == "java" for node in closure.values()))
+
     def test_proto_outer_class_uses_declared_java_package(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -27,6 +27,13 @@ in force.
 
 Follow-up changes in the current tree:
 
+- The closure audit now resolves wildcard imports and treats legacy Khronos
+  APIs as framework sources instead of assuming they are in libcore. Static
+  wildcard imports retain their declaring class. GLSurfaceView's live closure
+  now includes the EGLImpl/GLImpl Java dependencies and reports their JNI
+  blockers. The refreshed inventory remains 51 stubs; build-tool regressions
+  pass. This corrects migration accounting without changing runtime behavior.
+
 - SyncFence and its JNI now use verbatim pinned AOSP sources, backed by the
   stock native Fence/libsync implementation. The stock EGLSync handle is also
   selected. Two Javadoc-only camera imports use exact headers from the pinned
