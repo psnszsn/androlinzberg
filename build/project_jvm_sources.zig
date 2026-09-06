@@ -124,6 +124,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockPerfettoSmoke.kt",
     "src/java/dev/artzig/StockWifiP2pSmoke.kt",
     "src/java/dev/artzig/StockAudioPolicySmoke.kt",
+    "src/java/dev/artzig/StockAudioTransportSmoke.kt",
     "src/java/dev/artzig/StockWifiManagerSmoke.kt",
     "src/java/dev/artzig/system/HostedWifiService.kt",
     "src/java/dev/artzig/system/HostedApexService.kt",

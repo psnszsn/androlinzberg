@@ -2169,9 +2169,10 @@ fn collectStatic(c: *StaticCollector) !void {
     // Managers over hosted services, phase 3: the real media session family (MediaSession,
     // MediaController, MediaSessionManager, PlaybackState, MediaMetadata, MediaDescription,
     // Rating, MediaBrowser/MediaBrowserService) over the hosted ISessionManager, and the real
-    // MediaMetricsManager over the hosted IMediaMetricsManager. AudioManager and the audio value
-    // types stay pending: their closure needs an AudioSystem host seam and the frameworks/av +
-    // hardware/interfaces audio AIDL roots (see docs/stubs.md).
+    // Stock audio transport values. Player and manager clients still need the AudioSystem seam.
+    try c.file("$FB/media/java/android/media/AudioHalVersionInfo.java");
+    try c.file("$FB/media/java/android/media/AudioRoutesInfo.java");
+    try c.file("$FB/media/java/android/media/AudioPresentation.java");
     try c.file("$FB/media/java/android/media/MediaDescription.java");
     try c.file("$FB/media/java/android/media/MediaFrameworkPlatformInitializer.java");
     try c.file("$FB/media/java/android/media/MediaMetadata.java");

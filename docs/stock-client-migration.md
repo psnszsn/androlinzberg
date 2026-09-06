@@ -27,6 +27,18 @@ in force.
 
 Follow-up changes in the current tree:
 
+- The audio transport foundation now generates 66 pinned AIDL inputs from
+  frameworks/av and the shared audio HAL schema. AudioHalVersionInfo,
+  AudioRoutesInfo and AudioPresentation compile verbatim. Module tests cover
+  nested configuration and address unions, invalid Parcel tags and sizes,
+  presentation metadata and validation, and ordered player commands through the
+  generated proxy/Stub protocol. JVM/system suites, native/Binder/build checks
+  and all 11 APK tests pass (37 steps without runtime issues). All 69 selected
+  source files already match the pinned AOSP archive; both tarballs remain
+  current without repackaging. The inventory remains 44 stubs (26 pending,
+  18 survivors). This supplies transport and metadata, not an AudioService or
+  new playback, recording or HAL backend.
+
 - UsbManager, UsbDeviceConnection, UsbRequest and the port/accessory closure now
   compile verbatim, with generated USB Binder interfaces, HAL enums, HIDL constants
   and release flags. The original connection/request JNI and usbhost JNI helper

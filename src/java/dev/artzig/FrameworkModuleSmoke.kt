@@ -258,6 +258,7 @@ internal object FrameworkModuleSmoke {
         com.android.server.stats.StockStatsManagerSmoke.run()
         com.android.server.uri.StockUriPermissionSmoke.run()
         StockAudioPolicySmoke.run()
+        StockAudioTransportSmoke.run()
         StockWifiManagerSmoke.run()
         com.android.server.pm.StockApexManagerSmoke.run()
         com.android.server.pm.StockSharedUserSmoke.run()
