@@ -1157,6 +1157,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "com.android.settingslib.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/packages/SettingsLib/aconfig/settingslib.aconfig"}, .values = &.{"build/release/aconfig/bp2a/com.android.settingslib.flags/write_system_preference_permission_enabled_flag_values.textproto"} },
     .{ .package = "com.android.internal.compat.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/compat/compat_logging_flags.aconfig"} },
     .{ .package = "com.android.server.compat", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/compat/platform_compat_flags.aconfig"} },
     .{ .package = "com.android.media.codec.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/aconfig/mediacodec_flags.aconfig"} },
@@ -1269,6 +1270,7 @@ pub const nano = [_]Nano{
 };
 
 pub const proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app_shared/app_op_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/package.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/server/activitymanagerservice.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/service/enums.proto" },
@@ -1347,6 +1349,7 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/app/AppOpEnums.java",
     "android/service/pm/PackageProto.java",
     "android/service/pm/PackageServiceDumpProto.java",
     "com/android/server/am/GrantUriProto.java",

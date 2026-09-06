@@ -27,6 +27,15 @@ in force.
 
 Follow-up changes in the current tree:
 
+- AppOps prerequisites now include verbatim PermissionGroupUsage and generated
+  AppOpEnums and SettingsLib flags. The latter uses the pinned bp2a read-only,
+  enabled WRITE_SYSTEM_PREFERENCE permission value. Parcel tests preserve UID,
+  timestamps, permission/device identity, state and optional attribution labels;
+  the release flag is checked as well. JVM tests and build/C++/graph audits pass.
+  All four inputs match pinned AOSP. The AOSP archive is rebuilt and pinned;
+  ART remains current and unchanged. This is dependency preparation: AppOpsManager
+  itself remains pending, and the inventory stays at 48 stubs.
+
 - Activity.finishAffinity now uses the pinned ActivityClient call and result/
   embedded-activity guards. The hosted controller closes only the contiguous
   matching-affinity range at and below the caller, preserving a different

@@ -5725,3 +5725,4 @@ F aosp frameworks/native/libs/binder/IResultReceiver.cpp
 # Pinned SDK headers for Javadoc-only imports (never packaged at runtime).
 F aosp prebuilts/sdk/current/public/android.jar
 F aosp prebuilts/sdk/NOTICE
+F aosp build/release/aconfig/bp2a/com.android.settingslib.flags/write_system_preference_permission_enabled_flag_values.textproto

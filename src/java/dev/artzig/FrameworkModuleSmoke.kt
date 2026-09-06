@@ -2,6 +2,8 @@
 
 package dev.artzig
 
+import com.android.settingslib.flags.Flags as SettingsLibFlags
+
 import com.android.internal.org.bouncycastle.cert.X509CertificateHolder
 import com.android.internal.org.bouncycastle.cms.CMSSignedData
 import com.android.internal.org.bouncycastle.util.CollectionStore
@@ -2221,6 +2223,24 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testFrameworkServiceValueContracts() {
+        check(SettingsLibFlags.writeSystemPreferencePermissionEnabled())
+        for (labels in listOf(null, "attribution")) {
+            val usage = android.permission.PermissionGroupUsage("dev.artzig.fixture", 12345,
+                987654L, android.Manifest.permission_group.MICROPHONE, true, false,
+                labels, labels, labels, "virtual-device-7")
+            val permissionParcel = Parcel.obtain()
+            val copy = try {
+                usage.writeToParcel(permissionParcel, 0)
+                permissionParcel.setDataPosition(0)
+                android.permission.PermissionGroupUsage.CREATOR.createFromParcel(permissionParcel)
+            } finally { permissionParcel.recycle() }
+            check(copy == usage && copy.hashCode() == usage.hashCode())
+            check(copy.packageName == "dev.artzig.fixture" && copy.uid == 12345 &&
+                copy.lastAccessTimeMillis == 987654L && copy.isActive && !copy.isPhoneCall)
+            check(copy.permissionGroupName == android.Manifest.permission_group.MICROPHONE &&
+                copy.persistentDeviceId == "virtual-device-7" && copy.attributionTag == labels &&
+                copy.attributionLabel == labels && copy.proxyLabel == labels)
+        }
         val visualResult = VisualQueryDetectedResult.Builder()
             .setPartialQuery("weather tomorrow")
             .setSpeakerId(3)
