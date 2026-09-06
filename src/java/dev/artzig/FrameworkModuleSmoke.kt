@@ -211,6 +211,7 @@ internal object FrameworkModuleSmoke {
         StockLegacyEglSmoke.run()
         testStockGraphicBuffers()
         testStockOverlayProperties()
+        dev.artzig.window.HostedLogicalDisplaySmoke.run()
         testStockSurfaceSynchronization()
         testStockPixelCopy()
         testStockVerity()
@@ -237,6 +238,7 @@ internal object FrameworkModuleSmoke {
         com.android.server.StockWatchdogSmoke.run()
         dev.artzig.system.StockSdkSandboxSmoke.run()
         dev.artzig.system.DesktopDeviceStateSmoke.run(ActivityThread.currentActivityThread().systemContext)
+        dev.artzig.window.HostedSessionDisplaySmoke.run(ActivityThread.currentActivityThread().systemContext)
         com.android.server.devicestate.StockDeviceStateSmoke.run(ActivityThread.currentActivityThread().systemContext)
         dev.artzig.system.StockOptionalWmServicesSmoke.run(
             ActivityThread.currentActivityThread().systemContext, checkNotNull(permissionsFixtureApk))

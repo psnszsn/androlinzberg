@@ -20,6 +20,11 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/HostedHardwareSnapshot.kt",
     "src/java/dev/artzig/StockRendererSmoke.kt",
     "src/java/dev/artzig/StockSplashScreenSmoke.kt",
+    "src/java/dev/artzig/window/HostedSessionDisplaySmoke.kt",
+    "src/java/dev/artzig/window/SurfaceFlingerDisplayOutput.kt",
+    "src/java/dev/artzig/window/HostedLogicalDisplay.kt",
+    "src/java/dev/artzig/window/HostedLogicalDisplaySmoke.kt",
+    "src/java/dev/artzig/window/HostedSessionDisplayService.kt",
 
     "src/java/com/android/server/devicestate/StockDeviceStateSmoke.kt",
     "src/java/dev/artzig/system/HostedDesktopDeviceStatePolicy.kt",

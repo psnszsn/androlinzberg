@@ -41,6 +41,31 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Session display checkpoint (2026-09-06)
+
+HostedSessionDisplayService and its generated DisplayManagerInternal adapter
+share one HostedLogicalDisplay. Stock DisplayInfoOverrides supplies the exact
+WM override fields. Geometry follows LogicalDisplay's aspect-preserving
+projection, rotation and offsets, and traversal uses the display-specific
+transaction while notifying listeners with the global transaction afterward.
+SurfaceFlingerDisplayOutput obtains real primary-display metadata and submits
+the projection through stock SurfaceControl. Private virtual task outputs do
+not enter Android display discovery. These services are not yet registered in
+normal startup; WMS/ATMS boot and the default cutover remain outstanding.
+
+Java and graph audit pass (`/tmp/wayland-session-display-java-2.log`). The system
+suite passes in `/tmp/wayland-session-display-runtime-1.log`, including the real
+SF backend and private-output discovery check. That combined run's module gate
+failed because the test supplied an invalid display mode; after correcting the
+fixture, `/tmp/wayland-session-display-runtime-2.log` passes. Module checks cover
+identity/mode preservation, copied overrides, projection/offsets, per-display
+transaction selection, callback masks/registration ownership, permission checks,
+callback death and failed death links. Stock device-state tests still pass.
+
+Main subsequently committed `39807f7`, the stock ActivityThread mainline
+closure (120 Java sources, 45 AIDL). Incorporating that committed closure is the
+next rebase; its uncommitted networking migration is a separate session.
+
 ## Device-state service checkpoint (2026-09-06)
 
 The normal framework now compiles the stock DeviceStateManagerService,

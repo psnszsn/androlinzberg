@@ -500,6 +500,7 @@ internal object SystemTestClientA {
             nativeAppOps.noteOpNoThrow(android.app.AppOpsManager.OPSTR_CAMERA, Process.myUid(), context.packageName),
             "native permission noteOp uses the existing app-op mode")
         com.android.server.wm.StockTaskFpsSmoke.granted()
+        dev.artzig.window.HostedSessionDisplaySmoke.compositor(context, android.os.Handler(Looper.getMainLooper()))
         check(service.add(20, 22) == 42, "cross-process service call")
         check(service.echo("héllo") == "héllo", "string round trip")
         val bundle = android.os.Bundle()
