@@ -37,6 +37,7 @@ open class UriGrantActivity : Activity() {
     override fun onResume() {
         super.onResume()
         observation.putBoolean("resumed", true)
+        recordCallback("resume")
     }
 
     override fun onPause() {
@@ -56,6 +57,7 @@ open class UriGrantActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         data?.let(::verifyUris)
+        recordCallback("result:$requestCode")
         observation.putInt("resultRequest", requestCode)
         observation.putInt("resultCode", resultCode)
         observation.putString("resultUri", data?.dataString)
@@ -65,6 +67,13 @@ open class UriGrantActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         ActivityUriGrantSystemSmoke.activities.remove(id, this)
+    }
+
+    private fun recordCallback(callback: String) {
+        val callbacks = observation.getStringArrayList("callbacks") ?: ArrayList<String>().also {
+            observation.putStringArrayList("callbacks", it)
+        }
+        callbacks.add(callback)
     }
 
     private fun rememberCaller(kind: String, caller: ComponentCaller?) {
@@ -240,12 +249,12 @@ internal object ActivityUriGrantSystemSmoke {
     }
 
     private fun args(id: Int) = Bundle().apply { putInt("id", id) }
-    private fun awaitState(pkg: String, id: Int, condition: (Bundle) -> Boolean) {
+    private fun awaitState(pkg: String, id: Int, condition: (Bundle) -> Boolean): Bundle {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         var state: Bundle
         do {
             state = call(pkg, STATUS, args(id))
-            if (condition(state)) return
+            if (condition(state)) return state
             Thread.sleep(10)
         } while (System.nanoTime() < deadline)
         error("activity $pkg/$id did not reach expected state: $state")
@@ -393,8 +402,6 @@ internal object ActivityUriGrantSystemSmoke {
             launch(source, 101, target, 102, flags = Intent.FLAG_ACTIVITY_SINGLE_TOP)
             awaitState(target, 102) { it.getInt("newIntents") == 2 }
             expected(identity(target, 102, "new"), Process.INVALID_UID, null)
-            call(target, FINISH, args(102))
-            awaitState(source, 101) { it.getBoolean("resumed") }
             launch(source, 101, target, 103, shared = true, request = 42)
             awaitState(target, 103) { it.getBoolean("resumed") }
             val shared = identity(target, 103)
@@ -403,7 +410,22 @@ internal object ActivityUriGrantSystemSmoke {
             check(shared.getParcelable("callingActivity", ComponentName::class.java) ==
                 activityIntent(source, 101).component)
             call(target, FINISH, args(103))
-            awaitState(source, 101) { it.getInt("resultRequest") == 42 }
+            awaitState(target, 102) { it.getBoolean("resumed") }
+            check(call(source, STATUS, args(101)).getInt("resultRequest", -1) == -1)
+            // A second result must join the same queue without waking the covered recipient.
+            launch(source, 101, target, 105, request = 44)
+            awaitState(target, 105) { it.getBoolean("resumed") }
+            call(target, FINISH, args(105))
+            awaitState(target, 102) { it.getBoolean("resumed") }
+            check(call(source, STATUS, args(101)).getInt("resultRequest", -1) == -1)
+            call(target, FINISH, args(102))
+            val delivered = awaitState(source, 101) {
+                it.getInt("resultRequest") == 44 && it.getBoolean("resumed")
+            }
+            val callbacks = checkNotNull(delivered.getStringArrayList("callbacks"))
+            check(callbacks.takeLast(3) == listOf("result:42", "result:44", "resume")) { callbacks }
+            check(callbacks.count { it.startsWith("result:") } == 2) { callbacks }
+            awaitState(target, 103) { !it.getBoolean("live") }
             expected(identity(source, 101, "result"), Process.INVALID_UID, null, launching = false)
             // The retained object loses access once its owning activity record is removed.
             expected(identity(target, 103), Process.INVALID_UID, null)

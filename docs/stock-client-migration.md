@@ -27,6 +27,17 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Finishing an activity now queues its result on the recipient independently
+  of the activity that becomes visible. A covered recipient keeps its results
+  until its own next resume, following ActivityRecord.finishActivityResults;
+  the controller reveals the actual top activity instead of trying to resume
+  the covered recipient and dropping the result. The cross-process regression
+  finishes two children while their recipient remains covered and verifies
+  exactly-once, ordered callbacks before onResume. JVM and system tests pass,
+  as do the launch regression, native/Binder/build checks and all 11 APK tests
+  (37 steps without runtime issues). Both tarballs remain current and unchanged;
+  the inventory stays at 50 stubs. Task-affinity reuse remains open.
+
 - Activity launch/calling identity queries now use the pinned ActivityClient
   transport. The controller records each delivery's share-identity choice and
   applies the stock compatibility, same-UID, system-UID and platform-signature
@@ -41,8 +52,8 @@ Follow-up changes in the current tree:
   result callers and removed activity records. Java, JVM and system tests pass,
   along with native, Binder, build checks and all 11 APK tests (37 steps
   without runtime issues). The inventory stays at 50 stubs; both tarballs are
-  unchanged and current. Task-affinity reuse and deferred results for covered
-  recipients remain activity-controller work.
+  unchanged and current. Task-affinity reuse remains activity-controller work; the later batch
+  above covers deferred results for covered recipients.
 
 - GLSurfaceView now uses verbatim AOSP Java, including GLThread, EGL helpers,
   debug wrappers, GLU and Matrix. Legacy EGLImpl and its Java handles/interfaces

@@ -751,7 +751,7 @@ internal class HostedActivityTaskManagerService(
         schedule(process, StopActivityItem(record.token))
     }
 
-    private fun scheduleResume(record: ActivityRecord, result: ResultInfo? = null): Boolean {
+    private fun scheduleResume(record: ActivityRecord): Boolean {
         val process: ProcessRecord
         val results: List<ResultInfo>
         synchronized(lock) {
@@ -759,10 +759,7 @@ internal class HostedActivityTaskManagerService(
                 focusedActivityLocked() !== record
             ) return false
             process = record.process ?: return false
-            results = ArrayList<ResultInfo>(record.pendingResults.size + if (result == null) 0 else 1).also {
-                it.addAll(record.pendingResults)
-                result?.let(it::add)
-            }
+            results = record.pendingResults.toList()
             record.pendingResults.clear()
         }
         val transaction = ClientTransaction(process.thread)
@@ -1706,8 +1703,6 @@ internal class HostedActivityTaskManagerService(
         val finishing: List<ActivityRecord>
         val reveal: ActivityRecord?
         val removedTasks = ArrayList<Int>()
-        var resultTarget: ActivityRecord? = null
-        var result: ResultInfo? = null
         synchronized(lock) {
             val record = activityForTokenLocked(token) ?: return false
             if (record !== source || record.finishing) return false
@@ -1717,7 +1712,7 @@ internal class HostedActivityTaskManagerService(
             finishing = if (finishWholeTask) record.task.activities.toList() else listOf(record)
             finishing.forEach { it.finishing = true }
             if (record.requestCode >= 0) {
-                resultTarget = record.resultTo?.let(activities::get)?.takeIf {
+                val resultTarget = record.resultTo?.let(activities::get)?.takeIf {
                     it !in finishing && !it.finishing && it.process != null
                 }
                 resultTarget?.let { target ->
@@ -1734,7 +1729,7 @@ internal class HostedActivityTaskManagerService(
                         record.info.packageName,
                         callerUris,
                     )
-                    result = ResultInfo(
+                    target.pendingResults += ResultInfo(
                         record.resultWho,
                         record.requestCode,
                         resultCode,
@@ -1753,12 +1748,10 @@ internal class HostedActivityTaskManagerService(
         for (taskId in removedTasks.distinct()) notifyTaskRemoved(taskId)
         if (finishing.any { it.process == null }) notifyTaskStackChanged()
         val liveFinishing = finishing.filter { it.process != null }
-        val target = resultTarget
-        val resultInfo = result
-        val resumeTarget = target ?: reveal
-        val complete = {
-            completeFinish(liveFinishing, resumeTarget, if (target === resumeTarget) resultInfo else null)
-        }
+        // ActivityRecord.finishActivityResults queues results independently of
+        // which activity becomes visible. A covered recipient receives them on
+        // its own next resume; finishing this child must reveal the actual top.
+        val complete = { completeFinish(liveFinishing, reveal) }
         val pausing = liveFinishing.firstOrNull { it.state == STATE_RESUMED }
         if (pausing != null) gateAfterPause(pausing, true, complete) else complete()
         return true
@@ -1767,7 +1760,6 @@ internal class HostedActivityTaskManagerService(
     private fun completeFinish(
         requestedFinishing: List<ActivityRecord>,
         requestedResumeTarget: ActivityRecord?,
-        result: ResultInfo?,
     ) {
         val finishing = synchronized(lock) {
             requestedFinishing.filter { activities[it.token] === it && it.finishing }
@@ -1782,10 +1774,11 @@ internal class HostedActivityTaskManagerService(
             return
         }
         if (resumeTarget.state == STATE_RESUMED) {
-            result?.let { value ->
-                resumeTarget.process?.let {
-                    schedule(it, ActivityResultItem(resumeTarget.token, listOf(value)))
-                }
+            val results = synchronized(lock) {
+                resumeTarget.pendingResults.toList().also { resumeTarget.pendingResults.clear() }
+            }
+            if (results.isNotEmpty()) resumeTarget.process?.let {
+                schedule(it, ActivityResultItem(resumeTarget.token, results))
             }
             finishing.forEach(::scheduleDestroy)
             return
@@ -1793,7 +1786,7 @@ internal class HostedActivityTaskManagerService(
         synchronized(lock) {
             resumeTarget.destroyAfterResume.addAll(finishing.map { it.token })
         }
-        if (!scheduleResume(resumeTarget, result)) {
+        if (!scheduleResume(resumeTarget)) {
             finishing.forEach(::scheduleDestroy)
         }
     }
