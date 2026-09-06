@@ -77,6 +77,21 @@ If a build reports a missing AOSP input, add the smallest suitable rule to the
 appropriate file manifest. If the path belongs to a project that is not already
 selected, also add and sync that project as described above.
 
+## Refresh Perfetto build declarations
+
+`tools/gen-perfetto-sources.py` exports the pinned Linux Perfetto C SDK's GN
+source and generator declarations into `build/gen/perfetto_sources.zig` and
+`build/generator_sources.zig`:
+
+```sh
+nix develop ./artzig -c python3 tools/gen-perfetto-sources.py aosp/external/perfetto
+```
+
+This refresh uses GN from the development shell. Normal builds use Zig and the
+packaged AOSP protobuf, build-flag, and version generators; they do not run GN
+or Ninja or download Perfetto buildtools. `zig build -j10 perfetto` builds the
+SDK and its generators alone.
+
 ## Regenerate the tarballs
 
 The Androlinzberg package includes the pinned `prebuilts/r8/keepanno-annotations.jar`

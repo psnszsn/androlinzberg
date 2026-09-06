@@ -13,6 +13,7 @@ pub const Options = struct {
     /// libbinder_ndk.so — the hwui parcel JNI (android 16) calls its AParcel ABI.
     binder_ndk: *std.Build.Step.Compile,
     binder_cpp: *std.Build.Step.Compile,
+    perfetto: @import("perfetto.zig").Result,
     art: *std.Build.Module,
     aidl_header_roots: []const std.Build.LazyPath,
     aidl_source_roots: []const std.Build.LazyPath,
@@ -254,6 +255,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &.{"Fence.cpp"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
     g.add(o.aosp.path(b, "system/core/libsync"), &.{"sync.c"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
     g.add(b.path("tests/native"), &.{"FenceTest.cpp"}, &.{}, &.{});
+    const tracing_includes = &.{
+        o.aosp.path(b, "frameworks/native/libs/tracing_perfetto/include"),
+        o.aosp.path(b, "external/perfetto/include"),
+    };
+    g.add(o.aosp.path(b, "frameworks/native/libs/tracing_perfetto"), &.{ "tracing_perfetto.cpp", "tracing_perfetto_internal.cpp", "tracing_sdk.cpp" }, tracing_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_os_PerfettoTrace.cpp", "android_os_PerfettoTrackEventExtra.cpp" }, tracing_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &gen.fn_ui_srcs, &.{o.aosp.path(b, "frameworks/native/libs/ui/include_private")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/androidfw"), &gen.androidfw_srcs, &.{ o.aosp.path(b, "frameworks/base/libs/androidfw/include_pathutils"), zip_inc, zip_incfs_inc, binder_inc }, &.{});
     g.add(o.aosp.path(b, "system/libziparchive"), &gen.ziparchive_srcs, &.{ zip_inc, zip_incfs_inc, o.aosp.path(b, "system/libziparchive") }, &.{ "-DINCFS_SUPPORT_DISABLED=1", "-DZIPARCHIVE_DISABLE_CALLBACK_API=1", "-DZLIB_CONST", "-D_FILE_OFFSET_BITS=64" });
@@ -298,6 +305,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     link.addArtifactArg(abi_object);
     for (objects.items) |object| link.addFileArg(object);
     link.addFileArg(o.skia.getEmittedBin());
+    link.addFileArg(o.perfetto.sdk.getEmittedBin());
+    link.addFileArg(o.perfetto.base.getEmittedBin());
     link.addFileArg(o.binder_ndk.getEmittedBin());
     link.addFileArg(o.binder_cpp.getEmittedBin());
     for (o.host_library_roots) |root| {

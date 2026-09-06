@@ -253,6 +253,16 @@ D aosp external/libphonenumber/repackaged/geocoder/src
 D aosp external/libphonenumber/repackaged/internal/prefixmapper/src
 D aosp external/libphonenumber/repackaged/libphonenumber/src
 D aosp external/perfetto/protos
+D aosp external/perfetto/include
+D aosp external/perfetto/src
+F aosp external/perfetto/CHANGELOG
+F aosp external/perfetto/gn/write_buildflag_header.py
+F aosp external/perfetto/tools/write_version_header.py
+F aosp frameworks/base/core/java/android/os/PerfettoTrace.java
+F aosp frameworks/base/core/java/android/os/PerfettoTrackEventExtra.java
+F aosp frameworks/base/core/jni/android_os_PerfettoTrace.cpp
+F aosp frameworks/base/core/jni/android_os_PerfettoTrackEventExtra.cpp
+D aosp frameworks/native/libs/tracing_perfetto
 D aosp external/protobuf
 D aosp external/skia
 D aosp external/tagsoup/src/org/ccil/cowan/tagsoup

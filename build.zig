@@ -211,6 +211,17 @@ pub fn build(b: *std.Build) void {
     b.step("protoc", "Build protoc from packaged AOSP sources")
         .dependOn(&b.addInstallArtifact(protobuf.protoc, .{}).step);
 
+    const perfetto = @import("build/perfetto.zig").build(b, .{
+        .root = aosp.path(b, "external/perfetto"),
+        .protobuf_root = aosp.path(b, "external/protobuf"),
+        .protobuf = protobuf.library,
+        .protoc = protobuf.protoc,
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    b.step("perfetto", "Build the stock Linux Perfetto C SDK and generators")
+        .dependOn(&perfetto.sdk.step);
+
     // --- sysprop_java: the AOSP sysprop host generator, built from packaged
     // source against libprotobuf (no prebuilt exists). Generates android.sysprop.*.
     const sysprop_tool = @import("build/sysprop.zig").build(b, .{
@@ -342,6 +353,7 @@ pub fn build(b: *std.Build) void {
         .skia = skia_lib,
         .binder_ndk = binder_ndk,
         .binder_cpp = binder_cpp,
+        .perfetto = perfetto,
         .art = art_mod,
         .aidl_header_roots = generated.native.aidl_header_roots,
         .aidl_source_roots = generated.native.aidl_source_roots,

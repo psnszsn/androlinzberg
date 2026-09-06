@@ -1361,6 +1361,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/logging/MetricsLogger.java");
     try c.file("$CJ/com/android/internal/protolog/ProtoLogConfigurationService.java");
     try c.file("$CJ/com/android/internal/util/LatencyTracker.java");
+    try c.file("$CJ/android/os/PerfettoTrace.java");
+    try c.file("$CJ/android/os/PerfettoTrackEventExtra.java");
     try c.file("$CJ/com/android/internal/util/PerfettoTrigger.java");
     try c.file("$CJ/android/accessibilityservice/util/AccessibilityUtils.java");
     try c.file("$CJ/android/content/ContentCaptureOptions.java");

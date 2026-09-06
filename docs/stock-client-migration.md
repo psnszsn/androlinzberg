@@ -27,6 +27,22 @@ in force.
 
 Follow-up changes in the current tree:
 
+- PerfettoTrace and PerfettoTrackEventExtra now use their verbatim pinned AOSP
+  sources, backed by the original JNI, libtracing_perfetto, and Linux Perfetto C
+  SDK. Zig builds the SDK and its three protoc plugins; all 648 generated native
+  message files match the original GN/Ninja output. A small native adapter fixes
+  the pinned register method's FastNative calling convention. OS flags use the
+  stock generator's read-only default permissions, preserving all 50 constants
+  and their defaults while avoiding a DeviceConfig lookup before SystemServer
+  publishes the activity service. Runtime DeviceConfig overrides for this flag
+  package are consequently disabled. The in-process trace regression decodes
+  typed arguments, slices, counters, flow IDs, and category filtering. JVM,
+  system, native, Binder and build checks pass, along with all 11 APK integration
+  tests (38 steps without runtime issues). The rebuilt AOSP tarball includes the
+  native SDK and generators. The inventory is 52 stubs: 28 pending, 24 survivors.
+  No system tracing daemon is added; the SDK's system IPC backend remains
+  dependent on an external Perfetto service.
+
 - Activity launch, new-intent and result URI permissions now flow through the
   stock `UriGrantsManagerService`. Grants are checked before activity state
   changes and applied before client delivery. Each activity record has a stock
@@ -69,9 +85,9 @@ Follow-up changes in the current tree:
   Java SyncFence remains blocked by Image/ImageWriter's compilation closure;
   this native prerequisite does not reduce the 57-stub inventory.
 
-- The latest validated inventory is 53 stubs: 28 pending and 25 documented
-  survivors, down from 134 at the start of this follow-up. Of these, 46 are
-  outside `com.android.server` (21 pending, 25 survivors). The inventory does
+- The latest validated inventory is 52 stubs: 28 pending and 24 documented
+  survivors, down from 134 at the start of this follow-up. Of these, 45 are
+  outside `com.android.server` (21 pending, 24 survivors). The inventory does
   not count the adapted Activity and ActivityThread implementations and is not
   an overall completion percentage. Those classes and the remaining service
   and native dependencies still prevent completion of the stock-client goal.

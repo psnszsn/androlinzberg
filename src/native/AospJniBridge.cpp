@@ -103,6 +103,9 @@ extern int register_android_backup_BackupDataOutput(JNIEnv*);
 extern int register_com_android_internal_os_ApplicationSharedMemory(JNIEnv*);
 extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv*);
 extern int register_android_os_SELinux(JNIEnv*);
+extern int register_android_os_PerfettoTrace(JNIEnv*);
+extern void android_os_PerfettoTrace_register(bool);
+extern int register_android_os_PerfettoTrackEventExtra(JNIEnv*);
 extern int register_android_util_jar_StrictJarFile(JNIEnv*);
 extern int register_android_util_MemoryIntArray(JNIEnv*);
 extern int register_com_android_internal_security_VerityUtils(JNIEnv*);
@@ -127,6 +130,22 @@ extern int register_dev_artzig_StockFenceSmoke(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
 extern int register_android_hardware_UsbDevice(JNIEnv*);
 extern int register_android_hardware_OverlayProperties(JNIEnv*);
+
+// Pinned PerfettoTrace.native_register is @FastNative, but its C++ registration
+// points at a CriticalNative-style bool-only entry. Keep the stock Java and SDK;
+// supply the implicit JNI arguments here so the requested backend reaches it.
+static void registerPerfettoBackend(JNIEnv*, jclass, jboolean inProcess) {
+    android::android_os_PerfettoTrace_register(inProcess == JNI_TRUE);
+}
+
+static int registerPerfettoTrace(JNIEnv* env) {
+    const int result = android::register_android_os_PerfettoTrace(env);
+    if (result != 0) return result;
+    const JNINativeMethod methods[] = {
+        {"native_register", "(Z)V", reinterpret_cast<void*>(registerPerfettoBackend)},
+    };
+    return jniRegisterNativeMethods(env, "android/os/PerfettoTrace", methods, 1);
+}
 
 static jint azk_Bitmap_nativeConfig(JNIEnv*, jclass, jlong bitmap_handle) {
     android::Bitmap& bitmap = android::bitmap::toBitmap(bitmap_handle);
@@ -233,6 +252,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
     }
     static const Entry entries[] = {
             E(android::register_android_os_SELinux),
+            E(registerPerfettoTrace),
+            E(android::register_android_os_PerfettoTrackEventExtra),
             E(android::register_android_util_jar_StrictJarFile),
             E(android::register_android_util_MemoryIntArray),
             E(android::register_com_android_internal_security_VerityUtils),

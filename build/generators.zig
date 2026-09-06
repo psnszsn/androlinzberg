@@ -378,6 +378,7 @@ fn aconfigJava(
         const cache = b.addRunArtifact(runner);
         cache.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/aconfig"));
         cache.addArgs(&.{ "create-cache", "--package", entry.package, "--container", entry.container });
+        if (entry.default_permission == .read_only) cache.addArgs(&.{ "--default-permission", "READ_ONLY" });
         for (entry.declarations) |declaration| {
             cache.addArg("--declarations");
             cache.addFileArg(sourcePath(b, aosp, .{ .source = entry.source, .path = declaration }));
