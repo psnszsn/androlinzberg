@@ -3,7 +3,7 @@
  * supply the resolved launch identity used by the standard attach entry point. */
 package android.app;
 import android.content.Context;
-import android.content.ContextWrapper;
+import android.view.ContextThemeWrapper;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
@@ -23,7 +23,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import com.android.internal.policy.PhoneWindow;
-public class Activity extends ContextWrapper implements Window.Callback,
+public class Activity extends ContextThemeWrapper implements Window.Callback,
         KeyEvent.Callback, android.view.LayoutInflater.Factory2, android.content.ComponentCallbacks2 {
     private static final String TAG = "Activity";
     public static final int RESULT_OK = -1, RESULT_CANCELED = 0, RESULT_FIRST_USER = 1;
@@ -77,7 +77,7 @@ public class Activity extends ContextWrapper implements Window.Callback,
         android.util.ArrayMap<String, LoaderManager> loaders;
     }
     NonConfigurationInstances mLastNonConfigurationInstances;
-    public Activity() { super(null); }
+    public Activity() { super(); }
     public void attach(Context base) {
         attach(base, null, mIntent);
     }
@@ -224,7 +224,6 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public boolean isTaskRoot() {
         return ActivityClient.getInstance().getTaskForActivity(mToken, true /* onlyRoot */) >= 0;
     }
-    public void applyOverrideConfiguration(Configuration overrideConfiguration) {}
     public void overridePendingTransition(int enterAnim, int exitAnim) {}
     public void setRequestedOrientation(int requestedOrientation) {
         mRequestedOrientation = requestedOrientation;
@@ -571,33 +570,12 @@ public class Activity extends ContextWrapper implements Window.Callback,
         }
     }
     private Application appOrNull() { return getApplication(); }
-    private int mThemeRes;
-    private android.content.res.Resources.Theme mTheme;
+    // Pinned Activity.setTheme and ContextThemeWrapper own theme/resource state.
     @Override public void setTheme(int resid) {
-        if (mThemeRes != resid) { mThemeRes = resid; mTheme = null; }
-        // AOSP Activity.setTheme() also updates PhoneWindow so decor features such as
-        // windowNoTitle and windowActionBar are resolved from the Activity theme.
-        if (mWindow != null) mWindow.setTheme(resid);
+        super.setTheme(resid);
+        mWindow.setTheme(resid);
     }
-    @Override public int getThemeResId() { return mThemeRes; }
-    @Override public android.content.res.Resources.Theme getTheme() {
-        if (mThemeRes == 0) return super.getTheme();
-        if (mTheme == null) {
-            mTheme = getResources().newTheme();
-            android.content.res.Resources.Theme base = super.getTheme();
-            if (base != null) mTheme.setTo(base);
-            mTheme.applyStyle(mThemeRes, true);
-        }
-        return mTheme;
-    }
-    private android.view.LayoutInflater mInflater;
     @Override public Object getSystemService(String name) {
-        if (Context.LAYOUT_INFLATER_SERVICE.equals(name)) {
-            if (mInflater == null) {
-                mInflater = android.view.LayoutInflater.from(getBaseContext()).cloneInContext(this);
-            }
-            return mInflater;
-        }
         if (Context.WINDOW_SERVICE.equals(name)) return getWindowManager();
         return super.getSystemService(name);
     }

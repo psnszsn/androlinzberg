@@ -19,6 +19,52 @@ import java.io.StringWriter
 import java.util.concurrent.TimeUnit
 
 internal object StockActivitySupportSmoke {
+    private fun testActivityThemeAndOverride(base: Context) {
+        check(android.app.Activity::class.java.superclass == android.view.ContextThemeWrapper::class.java)
+        val baseConfig = android.content.res.Configuration(base.resources.configuration)
+        val override = android.content.res.Configuration().apply { fontScale = 1.75f }
+        val activity = android.app.Activity()
+        activity.applyOverrideConfiguration(override)
+        check(runCatching { activity.applyOverrideConfiguration(override) }.exceptionOrNull()
+            is IllegalStateException)
+        override.fontScale = 2.25f // The wrapper owns a copy.
+        activity.attach(base)
+        try {
+            check(activity.resources.configuration.fontScale == 1.75f)
+            check(base.resources.configuration == baseConfig)
+            check(activity.resources === activity.resources)
+            check(activity.assets === activity.resources.assets)
+            check(runCatching { activity.applyOverrideConfiguration(override) }.exceptionOrNull()
+                is IllegalStateException)
+
+            activity.setTheme(android.R.style.Theme_Material_Light)
+            val theme = activity.theme
+            check(theme !== base.theme && activity.themeResId == android.R.style.Theme_Material_Light)
+            val before = android.util.TypedValue()
+            check(theme.resolveAttribute(android.R.attr.colorAccent, before, true))
+            activity.setTheme(android.R.style.ThemeOverlay_Material_Dark_ActionBar)
+            check(activity.theme === theme) { "applying a style discarded the existing Activity theme" }
+            val expected = android.view.ContextThemeWrapper(base, android.R.style.Theme_Material_Light)
+            expected.theme // Constructor theme application is lazy; initialize before layering.
+            expected.setTheme(android.R.style.ThemeOverlay_Material_Dark_ActionBar)
+            val actualValue = android.util.TypedValue()
+            val expectedValue = android.util.TypedValue()
+            for (attribute in listOf(android.R.attr.colorAccent, android.R.attr.textColorPrimary)) {
+                check(theme.resolveAttribute(attribute, actualValue, true) ==
+                    expected.theme.resolveAttribute(attribute, expectedValue, true))
+                check(actualValue.type == expectedValue.type && actualValue.data == expectedValue.data &&
+                    actualValue.resourceId == expectedValue.resourceId)
+            }
+            val replacement = activity.resources.newTheme().apply { setTo(theme) }
+            activity.setTheme(replacement)
+            check(activity.theme === replacement)
+            val inflater = activity.getSystemService(Context.LAYOUT_INFLATER_SERVICE) as android.view.LayoutInflater
+            check(inflater.context === activity && inflater === activity.getSystemService(Context.LAYOUT_INFLATER_SERVICE))
+            check(activity.getSystemService(Context.WINDOW_SERVICE) === activity.windowManager)
+        } finally { activity.window.destroy() }
+        System.err.println("stock-activity-theme: inherited wrapper, isolated overrides, theme layering/identity and inflater context passed")
+    }
+
     private fun testActivityAttachment(base: Context, pump: () -> Unit) {
         val pkg = base.packageName
         for ((className, localName) in listOf(
@@ -79,6 +125,7 @@ internal object StockActivitySupportSmoke {
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
         testLegacyActionBar(base)
         testActivityAttachment(base, pump)
+        testActivityThemeAndOverride(base)
         val provider = object : dev.artzig.systemtest.TestProvider() {
             override fun query(uri: Uri, projection: Array<String>?, selection: String?,
                 selectionArgs: Array<String>?, sortOrder: String?): Cursor {

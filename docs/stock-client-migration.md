@@ -27,6 +27,20 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Activity now inherits the verbatim ContextThemeWrapper, replacing its private
+  theme/inflater implementation and empty applyOverrideConfiguration method.
+  Stock resource isolation, one-time override checks, layered theme identity,
+  explicit theme replacement and inflater context now apply to activities.
+  ActivityThread combines the app override with server configuration before
+  resource updates and callbacks, including the host configuration entry point;
+  caller-owned configurations remain unchanged. Module tests cover themes and
+  resources, both configuration paths and null initial server overrides. JVM
+  and separate-process system suites, the NewPipe launch regression, native,
+  Binder and build checks, and all 11 APK tests pass (37 steps without runtime
+  issues). Both tarballs
+  remain current and unchanged; the inventory stays at 48 stubs. Activity and
+  ActivityThread still require the remaining stock activity/service closure.
+
 - PerformanceHintManager and WorkDuration now compile verbatim from pinned AOSP.
   The eleven-method native adapter follows APerformanceHintManager::create's
   unavailable-service path: no Android hint manager, Power HAL or FMQ is hosted,

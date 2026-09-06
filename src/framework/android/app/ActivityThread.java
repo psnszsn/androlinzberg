@@ -11,6 +11,8 @@
  * stock client transactions; window presentation remains hosted. */
 package android.app;
 
+import static android.app.ConfigurationController.createNewConfigAndUpdateIfNotNull;
+
 import android.content.ComponentName;
 import android.content.ContentProvider;
 import android.content.Context;
@@ -1187,17 +1189,24 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
         final boolean shouldReportChange = r.activity.mCurrentConfig.diffPublicOnly(newConfig) != 0;
 
         // AOSP requires token-scoped Resources to observe the new values before either callback.
+        // Pinned performActivityConfigurationChanged combines the app context's
+        // override with the server override before updating Resources and callbacks.
+        final Configuration contextOverride = r.activity.getOverrideConfiguration();
+        final Configuration finalOverride = createNewConfigAndUpdateIfNotNull(
+                overrideConfig, contextOverride);
+        final Configuration configToReport = createNewConfigAndUpdateIfNotNull(
+                newConfig, contextOverride);
         ResourcesManager.getInstance().updateResourcesForActivity(
-                r.token, overrideConfig, displayId);
+                r.token, finalOverride, displayId);
 
         if (movedToDifferentDisplay) {
-            r.activity.dispatchMovedToDisplay(displayId, newConfig);
+            r.activity.dispatchMovedToDisplay(displayId, configToReport);
         }
         r.activity.mConfigChangeFlags = 0;
         if (shouldReportChange) {
             r.activity.mCalled = false;
             r.activity.mCurrentConfig = new Configuration(newConfig);
-            r.activity.onConfigurationChanged(newConfig);
+            r.activity.onConfigurationChanged(configToReport);
             if (!r.activity.mCalled) {
                 throw new android.util.SuperNotCalledException("Activity "
                         + r.activity.getLocalClassName()
@@ -1598,7 +1607,14 @@ public final class ActivityThread extends ClientTransactionHandler implements Ac
                 r.activity.mConfigChangeFlags = 0;
                 r.activity.mCalled = false;
                 r.activity.mCurrentConfig = new Configuration(config);
-                r.activity.onConfigurationChanged(config);
+                final Configuration contextOverride = r.activity.getOverrideConfiguration();
+                ResourcesManager.getInstance().updateResourcesForActivity(r.token,
+                        createNewConfigAndUpdateIfNotNull(
+                                r.overrideConfig != null ? r.overrideConfig : new Configuration(),
+                                contextOverride),
+                        r.activity.getDisplayId());
+                r.activity.onConfigurationChanged(
+                        createNewConfigAndUpdateIfNotNull(config, contextOverride));
                 if (!r.activity.mCalled) {
                     throw new android.util.SuperNotCalledException("Activity "
                             + r.activity.getLocalClassName()

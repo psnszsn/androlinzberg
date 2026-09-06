@@ -304,6 +304,7 @@ internal object FrameworkModuleSmoke {
             testInstrumentationResultTransactions()
             testActivityThreadTransactionCompletion()
             testActivityThreadConfigurationChange()
+            testActivityThreadConfigurationChange(true)
             testActivityThreadRelaunch()
             // Pinned ActivityGroup overrides the caller-aware result signature.
             withContentUriPermissionApis(true) {
@@ -6677,7 +6678,7 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    private fun testActivityThreadConfigurationChange() {
+    private fun testActivityThreadConfigurationChange(withContextOverride: Boolean = false) {
         val context = HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
             320,
@@ -6710,6 +6711,9 @@ internal object FrameworkModuleSmoke {
         val applicationCallback = configurationLifecycleCallback("application-callback")
         val activityCallback = configurationLifecycleCallback("activity-callback")
         application.registerActivityLifecycleCallbacks(applicationCallback)
+        configurationContextOverride = if (withContextOverride) Configuration().apply {
+            fontScale = 1.75f
+        } else null
         try {
             val token = Binder()
             val activity = thread.startActivityNow(
@@ -6731,7 +6735,21 @@ internal object FrameworkModuleSmoke {
                 PendingTransactionActions().apply { setCallOnPostCreate(true) },
                 null,
             )
-            check(thread.performResumeActivity(record, false, "configuration-smoke"))
+            thread.handleResumeActivity(record, true, false, false, "configuration-smoke")
+            check(activity.isResumed)
+            if (withContextOverride) {
+                record.activityInfo.configChanges = ActivityInfo.CONFIG_FONT_SCALE
+                val hostConfig = Configuration(activity.resources.configuration).apply {
+                    fontScale = 2f
+                }
+                check(!ActivityThread.applyConfigurationInProcess(hostConfig,
+                    ActivityInfo.CONFIG_FONT_SCALE, 320, 240))
+                check(activity.callbackConfiguration?.fontScale == 1.75f &&
+                    activity.resourcesMatchedDuringCallback) {
+                    "host resize lost the app context override or delivered mismatched resources"
+                }
+                check(hostConfig.fontScale == 2f)
+            }
             val lifecycleState = record.lifecycleState
             val initialOrientation = activity.resources.configuration.orientation
             val targetOrientation = if (initialOrientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -6774,7 +6792,11 @@ internal object FrameworkModuleSmoke {
                     activityConfigurationEvents
             }
             check(activity.callbackConfiguration?.orientation == targetOrientation)
-            check(activity.callbackConfiguration?.fontScale == 1.5f)
+            check(activity.callbackConfiguration?.fontScale == if (withContextOverride) 1.75f else 1.5f)
+            check(record.overrideConfig.fontScale == 1.5f) {
+                "app context override mutated the server configuration"
+            }
+            check(newer.fontScale == 1.5f && older.fontScale == 1.25f)
             check(activity.resourcesMatchedDuringCallback) {
                 "Activity Resources were not updated before onConfigurationChanged"
             }
@@ -6917,6 +6939,7 @@ internal object FrameworkModuleSmoke {
             }
             check(missingSuperRecord.lifecycleState == missingLifecycleState)
         } finally {
+            configurationContextOverride = null
             configurationActivity?.unregisterActivityLifecycleCallbacks(activityCallback)
             application.unregisterActivityLifecycleCallbacks(applicationCallback)
             ClientTransactionListenerController.getInstance()
@@ -8630,7 +8653,12 @@ internal object FrameworkModuleSmoke {
         }
     }
 
+    private var configurationContextOverride: Configuration? = null
     class ConfigurationDispatchActivity : Activity() {
+        override fun attachBaseContext(base: Context) {
+            configurationContextOverride?.let(::applyOverrideConfiguration)
+            super.attachBaseContext(base)
+        }
         var callbackConfiguration: Configuration? = null
             private set
         var resourcesMatchedDuringCallback = false
