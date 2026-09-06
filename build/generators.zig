@@ -188,6 +188,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "packages/modules/Connectivity/framework-t/src/",
         "packages/modules/Connectivity/framework/src/",
         "packages/modules/Media/apex/aidl/private/",
+        "packages/modules/AdServices/sdksandbox/framework/java/",
         "packages/modules/Permission/framework-s/java/",
         "packages/modules/Wifi/framework/java/",
     }) |prefix| {
@@ -316,6 +317,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "packages/modules/Connectivity/framework-t/src",
         "packages/modules/Connectivity/framework/src",
         "packages/modules/Media/apex/aidl/private",
+        "packages/modules/AdServices/sdksandbox/framework/java",
         "packages/modules/Permission/framework-s/java",
         "packages/modules/Wifi/framework/java",
         "packages/modules/Wifi/framework/aidl-export",
@@ -751,7 +753,7 @@ fn statsJava(
     // the framework's FrameworkStatsLog, StatsD's StatsdStatsLog, telephony's
     // TelephonyStatsLog (AnomalyReporter), and telephony-common's
     // TelephonyCommonStatsLog (TelephonyPermissions).
-    const specs = declarations.stats_log;
+    const specs = declarations.stats_java;
     const result = b.allocator.alloc(LazyPath, specs.len) catch @panic("OOM");
     inline for (specs, 0..) |spec, index| {
         const run = b.addRunArtifact(stats_tool);

@@ -1323,6 +1323,14 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/provider/INetworkStatsProvider.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/provider/INetworkStatsProviderCallback.aidl" },
 
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/ISensitiveContentProtectionManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/IInstantAppResolver.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/ILoadSdkCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/IRequestSurfacePackageCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/ISdkSandboxManager.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/ISdkSandboxProcessDeathCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/ISdkToServiceCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/modules/AdServices/sdksandbox/framework/java/android/app/sdksandbox/ISharedPreferencesSyncCallback.aidl" },
     .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexInfo.aidl" },
     .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexInfoList.aidl" },
     .{ .source = .aosp, .path = "system/apex/apexd/aidl/android/apex/ApexSessionInfo.aidl" },
@@ -2303,6 +2311,10 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.media.soundtrigger", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/soundtrigger.aconfig"} },
     .{ .package = "android.service.voice.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/voice/flags/flags.aconfig"} },
     .{ .package = "android.media.audiopolicy", .container = "system", .source = .aosp, .declarations = &.{"frameworks/av/media/audio/aconfig/audiopolicy_framework.aconfig"} },
+    .{ .package = "com.android.server.accessibility", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/accessibility/accessibility.aconfig"} },
+    .{ .package = "android.adpf", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/power/hint/adpf_flags.aconfig"} },
+    .{ .package = "android.app.contextualsearch.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/contextualsearch/flags.aconfig"} },
+    .{ .package = "com.android.sdksandbox.flags", .container = "com.android.adservices", .source = .aosp, .declarations = &.{"packages/modules/AdServices/sdksandbox/flags/sandbox_flags.aconfig"} },
     .{ .package = "com.android.settingslib.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/packages/SettingsLib/aconfig/settingslib.aconfig"}, .values = &.{"build/release/aconfig/bp2a/com.android.settingslib.flags/write_system_preference_permission_enabled_flag_values.textproto"} },
     .{ .package = "com.android.internal.compat.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/com/android/internal/compat/compat_logging_flags.aconfig"} },
     .{ .package = "com.android.server.compat", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/compat/platform_compat_flags.aconfig"} },
@@ -2404,6 +2416,7 @@ pub const aconfig = [_]Aconfig{
 pub const sysprop = [_]Sysprop{
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/HypervisorProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/MediaProperties.sysprop" } },
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/ViewProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/WatchdogProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/BluetoothProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/VndkProperties.sysprop" } },
@@ -2451,6 +2464,7 @@ pub const proto_inputs = [_]SourcePath{
 
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/media/audioattributes.proto" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/proto/netstats.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/viewrootimpl.proto" },
     .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/app_shared/app_op_enums.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/package.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/hardware/sensorprivacy.proto" },
@@ -2607,6 +2621,7 @@ pub const proto_outputs = [_][]const u8{
     "android/service/NetworkStatsHistoryProto.java",
     "android/service/NetworkStatsHistoryBucketProto.java",
 
+    "android/view/ViewRootImplProto.java",
     "android/app/AppOpEnums.java",
     "android/service/AllSensorPrivacyServiceDumpProto.java",
     "android/service/SensorPrivacyServiceDumpProto.java",
@@ -3562,15 +3577,6 @@ test "generator declarations map typed inputs to unique Java outputs" {
 // The permanent native Binder regression compiles this pinned graphics Bp/Bn.
 pub const binder_graphics_aidl = "frameworks/native/libs/gui/aidl/android/gui/IFpsListener.aidl";
 
-pub const stats_log = .{
-    .{ .module = "ike", .package = "com.android.internal.net.ipsec.ike.utils", .class = "IkeMetricsInterface" },
-    .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },
-    .{ .module = "statsd", .package = "com.android.internal.statsd", .class = "StatsdStatsLog" },
-    .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },
-    .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
-    .{ .module = "expresslog", .package = "com.android.modules.expresslog", .class = "StatsExpressLog" },
-    .{ .module = "connectivity", .package = "com.android.net.module.util", .class = "FrameworkConnectivityStatsLog" },
-};
 
 // Pinned native GUI source closure, generated by AOSP aidl/aconfig/sysprop.
 pub const gui_cpp_aidl = [_][]const u8{
@@ -4246,3 +4252,14 @@ pub const input_dispatcher_stats_flags = [_][]const u8{
 // Pinned libs/hwui/Android.bp. Native host metrics use the same bootstrap
 // Binder transport as SurfaceFlinger instead of requiring Android's statsd socket.
 pub const hwui_native_stats = .{ .module = "hwui", .namespace = "android,uirenderer,stats", .stem = "statslog_hwui" };
+
+pub const stats_java = .{
+    .{ .module = "ike", .package = "com.android.internal.net.ipsec.ike.utils", .class = "IkeMetricsInterface" },
+    .{ .module = "connectivity", .package = "com.android.net.module.util", .class = "FrameworkConnectivityStatsLog" },
+    .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },
+    .{ .module = "statsd", .package = "com.android.internal.statsd", .class = "StatsdStatsLog" },
+    .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },
+    .{ .module = "telephony_common", .package = "com.android.internal.telephony", .class = "TelephonyCommonStatsLog" },
+    .{ .module = "expresslog", .package = "com.android.modules.expresslog", .class = "StatsExpressLog" },
+    .{ .module = "hwui", .package = "com.android.os.coregraphics", .class = "HwuiStatsLog" },
+};

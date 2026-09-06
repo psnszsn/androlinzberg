@@ -7,6 +7,9 @@ public final class PackageManagerService {
     // Pinned PMS URI scheme consumed by the stock package-monitor dispatcher.
     static final String PACKAGE_SCHEME = "package";
     static final String TAG = "PackageManager";
+    // Pinned PMS constants used by intent matching and activity interception.
+    static final boolean DEBUG_INTENT_MATCHING = false;
+    public static final String PLATFORM_PACKAGE_NAME = "android";
     public static final boolean DEBUG_SETTINGS = false;
     public static final boolean DEBUG_DEXOPT = false;
     public static final boolean DEBUG_PACKAGE_SCANNING = false;

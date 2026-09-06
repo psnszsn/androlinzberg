@@ -70,6 +70,9 @@ framework_patches = tuple(
         (45, "-HWUI-use-host-EGL-fences-for-stock-texture-layers.patch"),
         (46, "-WM-reuse-stock-session-diagnostics.patch"),
         (47, "-Watchdog-use-host-session-diagnostics.patch"),
+        (48, "-WM-use-policy-interface-and-optional-local-services.patch"),
+        (49, "-ATMS-use-host-SDK-sandbox-capability.patch"),
+        (50, "-ColorDisplayService-use-hosted-user-client.patch"),
     )
 )
 
@@ -98,6 +101,10 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "packages/providers/DownloadProvider",
         patch_root / "packages/providers/DownloadProvider/0003-retain-download-inode-for-close-size-accounting.patch",
+    ),
+    (
+        "packages/modules/AdServices",
+        patch_root / "packages-modules-AdServices" / "0001-name-optional-verifier-keep-target.patch",
     ),
     (
         "system/core",

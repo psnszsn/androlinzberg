@@ -1,0 +1,36 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] ATMS: validate sandbox launches at the host service boundary
+
+--- a/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
++++ b/services/core/java/com/android/server/wm/ActivityTaskManagerService.java
+@@ -166,7 +166,7 @@
+ import android.app.assist.AssistContent;
+ import android.app.assist.AssistStructure;
+ import android.app.compat.CompatChanges;
+-import android.app.sdksandbox.sandboxactivity.SdkSandboxActivityAuthority;
++import dev.artzig.system.HostedSdkSandboxActivities;
+ import android.app.usage.UsageStatsManagerInternal;
+ import android.content.ActivityNotFoundException;
+ import android.content.ComponentName;
+@@ -1262,7 +1262,7 @@
+     }
+ 
+     static boolean isSdkSandboxActivityIntent(Context context, Intent intent) {
+-        return SdkSandboxActivityAuthority.isSdkSandboxActivityIntent(context, intent);
++        return HostedSdkSandboxActivities.isIntent(context, intent);
+     }
+ 
+     private int startActivityAsUser(IApplicationThread caller, String callingPackage,
+@@ -1279,11 +1279,7 @@
+         enforceNotIsolatedCaller("startActivityAsUser");
+ 
+         if (isSdkSandboxActivityIntent(mContext, intent)) {
+-            SdkSandboxManagerLocal sdkSandboxManagerLocal = LocalManagerRegistry.getManager(
+-                    SdkSandboxManagerLocal.class);
+-            sdkSandboxManagerLocal.enforceAllowedToHostSandboxedActivity(
+-                    intent, callingUid, callingPackage
+-            );
++            HostedSdkSandboxActivities.enforceHosting(intent, callingUid, callingPackage);
+         }
+ 
+         if (Process.isSdkSandboxUid(callingUid)) {

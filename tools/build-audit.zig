@@ -94,7 +94,7 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
     try putForbidden(&result, allocator, generator_sources.aconfig_device_paths.output);
     try putForbidden(&result, allocator, generator_sources.system_features.output);
     try putForbidden(&result, allocator, generator_sources.system_features.metadata_output);
-    inline for (generator_sources.stats_log) |entry| {
+    inline for (generator_sources.stats_java) |entry| {
         const package_path = try std.mem.replaceOwned(u8, allocator, entry.package, ".", "/");
         defer allocator.free(package_path);
         const output = try std.fmt.allocPrint(allocator, "{s}/{s}.java", .{ package_path, entry.class });

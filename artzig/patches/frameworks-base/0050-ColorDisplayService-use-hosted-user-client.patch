@@ -1,0 +1,33 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] ColorDisplayService: query the hosted user authority through its stock client
+
+--- a/services/core/java/com/android/server/display/color/ColorDisplayService.java
++++ b/services/core/java/com/android/server/display/color/ColorDisplayService.java
+@@ -85,7 +85,7 @@
+ import com.android.server.SystemService;
+ import com.android.server.accessibility.Flags;
+ import com.android.server.display.feature.DisplayManagerFlags;
+-import com.android.server.pm.UserManagerService;
++import android.os.UserManager;
+ import com.android.server.twilight.TwilightListener;
+ import com.android.server.twilight.TwilightManager;
+ import com.android.server.twilight.TwilightState;
+@@ -200,7 +200,7 @@
+     private final Object mCctTintApplierLock = new Object();
+ 
+     private final boolean mVisibleBackgroundUsersEnabled;
+-    private final UserManagerService mUserManager;
++    private final UserManager mUserManager;
+ 
+     private Spline mEvenDimmerSpline;
+     private boolean mEvenDimmerActivated;
+@@ -215,7 +215,8 @@
+         mReduceBrightColorsTintController = rbcController;
+         mHandler = new TintHandler(DisplayThread.get().getLooper());
+         mVisibleBackgroundUsersEnabled = isVisibleBackgroundUsersEnabled();
+-        mUserManager = UserManagerService.getInstance();
++        // The hosted user authority is published through the stock UserManager client.
++        mUserManager = context.getSystemService(UserManager.class);
+     }
+ 
+     @Override

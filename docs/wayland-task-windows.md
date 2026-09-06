@@ -96,6 +96,34 @@ The full JVM and system-service suites also pass
 boot yet. The current WMS/ATMS compile probe
 reports 63 errors (`/tmp/wm-compile-probe-16.log`), down from 78.
 
+The next source package adds stock SDK-sandbox clients and their six AIDL
+interfaces, stock ColorDisplayService and its saturation controller, and stock
+instant-app resolution helpers. SDK activity validation uses a host capability
+boundary: ordinary launches do not query an absent sandbox package; explicit
+sandbox hosting fails when no local manager exists. The optional verifier's
+shrinker annotation retains its target by name. ColorDisplayService queries the
+published UserManager client instead of requiring the full Android user service.
+Neither new service is started by this checkpoint.
+
+The Java, build-tool, C++ and graph gates pass
+(`/tmp/wayland-wm-closures-java-1.log`). The framework-module runtime gate also
+passes (`/tmp/wayland-wm-closures-runtime-1.log`), including SDK Parcel/Binder
+identity, authority denials, per-app saturation arbitration and weak-controller
+lifetime, and instant-app intent sanitization/installer handoff.
+Full JVM and system-service regressions pass as well
+(`/tmp/wayland-wm-closures-regressions-1.log`). The WMS/ATMS
+compile probe now reports 33 errors (`/tmp/wm-compile-probe-17.log`). Remaining
+families include shutdown, intent/receiver policy, wallpaper data, assist,
+launcher shortcuts, camera callbacks, archiving and splash-screen transfer.
+
+The stock window-client probe now has one compile error: the hosted AudioManager
+lacks `areNavigationRepeatSoundEffectsEnabled`
+(`/tmp/window-clients-compile-2.log`). This follows adding the declared view-root
+proto, view sysprops, HWUI Java stats, sensitive-content AIDL and view/secure-surface
+flags. ViewRootImpl, ThreadedRenderer, SurfaceView, TextureView,
+SurfaceControlViewHost, WindowlessWindowManager, accessibility interaction and
+SplashScreenView remain a separate probe; their runtime cutover is still pending.
+
 Prior checkpoint validation against committed main `8d17396`:
 - The combined framework builds, including stock AppOps, window-context
   transactions and resolver/chooser clients. Main supplies stock window clients,

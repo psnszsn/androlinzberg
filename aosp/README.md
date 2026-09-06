@@ -150,6 +150,13 @@ attempt to restore every applied patch before exiting.
 
 ## Refresh the Zig package hashes
 
+The SDK-sandbox client/interface closure comes from
+`platform/packages/modules/AdServices` at Android 16 r1, commit
+`a6ee8245f54f1719a899809cc8727f7fcce9ca35`. Its curated framework sources,
+six AIDL interfaces and declared aconfig flags are compiled directly; the SDK
+sandbox daemon is not part of the hosted session. Stock ATMS checks availability
+through `HostedSdkSandboxActivities` before permitting sandbox activity hosting.
+
 After regenerating a tarball, update its `.aosp` dependency hash:
 
 - Artzig archive: `artzig/build.zig.zon`

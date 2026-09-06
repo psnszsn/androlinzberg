@@ -1,0 +1,15 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] SDK sandbox: name the optional verifier in its keep annotation
+
+--- a/sdksandbox/service/java/com/android/server/sdksandbox/SdkSandboxManagerLocal.java
++++ b/sdksandbox/service/java/com/android/server/sdksandbox/SdkSandboxManagerLocal.java
+@@ -56,7 +56,8 @@
+             additionalTargets = {
+                 @KeepTarget(
+                         kind = KeepItemKind.CLASS_AND_MEMBERS,
+-                        classConstant = SdkSandboxVerifierReceiver.class,
++                        // Keep the optional verifier by name without compiling its daemon closure.
++                        className = "com.android.server.sdksandbox.SdkSandboxVerifierReceiver",
+                         memberAccess = {MemberAccessFlags.PUBLIC})
+             })
+     String VERIFIER_RECEIVER = "com.android.server.sdksandbox.SdkSandboxVerifierReceiver";
