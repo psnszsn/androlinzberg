@@ -27,6 +27,14 @@ in force.
 
 Follow-up changes in the current tree:
 
+- EmulatorClipboardMonitor now uses its pinned AOSP source. ClipboardService
+  already selects it only for an emulator, and hosted SystemServer verifies
+  `Build.IS_EMULATOR` is false. The replacement therefore needs no QEMU/vsock
+  endpoint or desktop clipboard integration. Existing cross-process clipboard
+  reads, writes and listeners pass, along with JVM, system, native, Binder and
+  build checks and all 11 integration tests (38 steps without runtime issues).
+  The inventory is 56 stubs: 28 pending and 28 survivors.
+
 - HWUI now uses stock native libui Fence and Linux libsync, replacing the
   hostgraphics fence placeholder. Every native translation unit sees the same
   stock layout. Tests cover timeouts, readiness, shared/duplicate ownership,
@@ -38,7 +46,7 @@ Follow-up changes in the current tree:
   Java SyncFence remains blocked by Image/ImageWriter's compilation closure;
   this native prerequisite does not reduce the 57-stub inventory.
 
-- The latest validated inventory is 57 stubs: 28 pending and 29 documented
+- The latest validated inventory is 56 stubs: 28 pending and 28 documented
   survivors, down from 134 at the start of this follow-up. Of these, 49 are
   outside `com.android.server` (21 pending, 28 survivors). The inventory does
   not count the adapted Activity and ActivityThread implementations and is not

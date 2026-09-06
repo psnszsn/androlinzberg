@@ -1154,7 +1154,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/utils/TimingsTraceAndSlog.java");
     // Reused AOSP clipboard. The qemu monitor stays an inert host seam because hosted
     // sessions have no goldfish/vsock clipboard endpoint; the ARC bridge is stock.
-    try c.add("$FB/services/core/java/com/android/server/clipboard", .{ .not_names = &.{"EmulatorClipboardMonitor.java"} });
+    try c.add("$FB/services/core/java/com/android/server/clipboard", .{});
     try c.file("$CJ/android/content/ClipboardManager.java");
     try c.file("$CJ/android/text/ClipboardManager.java");
     try c.file("$CJ/android/util/SparseArrayMap.java");

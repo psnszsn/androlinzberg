@@ -49,7 +49,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/com/android/internal/accessibility/AccessibilityShortcutController.java",
     "src/framework-stubs/com/android/internal/os/SystemServerClassLoaderFactory.java",
     "src/framework-stubs/com/android/server/SystemServerInitThreadPool.java",
-    "src/framework-stubs/com/android/server/clipboard/EmulatorClipboardMonitor.java",
     "src/framework-stubs/com/android/server/pm/Computer.java",
     "src/framework-stubs/com/android/server/pm/PackageArchiver.java",
     "src/framework-stubs/com/android/server/pm/PackageManagerService.java",

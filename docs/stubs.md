@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 28 (budget 28). Survivors: 29. Total: 57.
+Pending: 28 (budget 28). Survivors: 28. Total: 56.
 
 ## Survivors
 
@@ -41,7 +41,6 @@ Pending: 28 (budget 28). Survivors: 29. Total: 57.
 | `android/webkit/HostedWebViewProvider.kt` | host-only WebView provider (Chromium WebView is not available) | no-aosp-source |
 | `android/webkit/WebView.java` | WebView host seam (Chromium WebView provider is not available) | blocked |
 | `android/window/SplashScreenView.java` | window seam (no system splash window on the desktop host) | blocked |
-| `com/android/server/clipboard/EmulatorClipboardMonitor.java` | qemu goldfish/vsock clipboard endpoint is unavailable on the host | replaceable |
 | `com/android/tools/r8/keepanno/annotations/KeepTarget.java` | r8 keepanno annotations are not vendored | no-aosp-source |
 | `com/android/tools/r8/keepanno/annotations/TypePattern.java` | r8 keepanno annotations are not vendored | no-aosp-source |
 | `com/android/tools/r8/keepanno/annotations/UsesReflection.java` | r8 keepanno annotations are not vendored | no-aosp-source |
