@@ -77,7 +77,7 @@ Pending: 28 (budget 28). Survivors: 23. Total: 51.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/opengl/GLSurfaceView.kt` | blocked | frameworks/base/opengl/java/android/opengl/GLSurfaceView.java (25 to add); android.opengl.EGLExt: JNI natives (via EGLExt < GLSurfaceView); com.google.android.gles_jni.EGLImpl: JNI natives (via EGLImpl < EGLContext < GLSurfaceView); com.google.android.gles_jni.GLImpl: JNI natives (via GLImpl < EGLCo |
+| `android/opengl/GLSurfaceView.kt` | blocked | frameworks/base/opengl/java/android/opengl/GLSurfaceView.java (24 to add); com.google.android.gles_jni.EGLImpl: JNI natives (via EGLImpl < EGLContext < GLSurfaceView); com.google.android.gles_jni.GLImpl: JNI natives (via GLImpl < EGLContextImpl < EGL10 < GLSurfaceView) |
 
 ### packagemanager
 

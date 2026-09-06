@@ -1753,6 +1753,9 @@ fn collectStatic(c: *StaticCollector) !void {
     // Real LoadedApk/ResourcesManager/Instrumentation (+ ApplicationLoaders, AppComponentFactory);
     // the hosted ActivityThread carries the members they use.
     try c.file("$FB/opengl/java/android/opengl/EGL14.java");
+    try c.file("$FB/opengl/java/android/opengl/EGL15.java");
+    try c.file("$FB/opengl/java/android/opengl/EGLExt.java");
+    try c.file("$FB/opengl/java/android/opengl/EGLImage.java");
     try c.file("$FB/opengl/java/android/opengl/GLES20.java");
     try c.file("$FB/opengl/java/android/opengl/GLES30.java");
     try c.file("$FB/opengl/java/android/opengl/GLES31.java");

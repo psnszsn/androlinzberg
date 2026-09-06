@@ -1671,6 +1671,7 @@ internal object FrameworkModuleSmoke {
             check(android.opengl.EGL14.eglGetCurrentDisplay() == display)
             check(android.opengl.EGL14.eglGetCurrentSurface(android.opengl.EGL14.EGL_DRAW) == surface)
             testStockGlesContext()
+            StockEgl15Smoke.run(display, context)
             val value = intArrayOf(-5, -5, -5)
             check(android.opengl.EGL14.eglQuerySurface(display, surface, android.opengl.EGL14.EGL_WIDTH, value, 1))
             check(value.contentEquals(intArrayOf(-5, 16, -5)))

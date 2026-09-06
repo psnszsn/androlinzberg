@@ -27,6 +27,18 @@ in force.
 
 Follow-up changes in the current tree:
 
+- EGL15, EGLExt and EGLImage now use pinned AOSP Java, with the original EGL15
+  JNI. EGLExt's native adapter follows the pinned JNI handle/exception contract
+  and resolves Android extensions through Mesa/GLVND; the original JNI requires
+  unavailable Android GLConsumer definitions and libEGL extension exports.
+  Tests cover real sync waits, output-array offsets, error returns, texture-image
+  lifetime, and an exported GPU sync_file that survives destruction of its
+  EGLSync and original SyncFence owners. Java, JVM, separate-process system,
+  native, Binder and build checks pass, along with all 11 APK integration tests
+  (38 steps without runtime issues). The stock sources were already packaged;
+  both tarballs remain current and the inventory stays at 51 stubs. Native-window
+  presentation remains at the existing backend boundary.
+
 - The closure audit now resolves wildcard imports and treats legacy Khronos
   APIs as framework sources instead of assuming they are in libcore. Static
   wildcard imports retain their declaring class. GLSurfaceView's live closure

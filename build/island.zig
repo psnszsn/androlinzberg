@@ -255,7 +255,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &.{"Fence.cpp"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
     g.add(o.aosp.path(b, "system/core/libsync"), &.{"sync.c"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
     g.add(b.path("tests/native"), &.{"FenceTest.cpp"}, &.{}, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_hardware_SyncFence.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_hardware_SyncFence.cpp", "android_opengl_EGL15.cpp" }, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     const tracing_includes = &.{
         o.aosp.path(b, "frameworks/native/libs/tracing_perfetto/include"),
         o.aosp.path(b, "external/perfetto/include"),
