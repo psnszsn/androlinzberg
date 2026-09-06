@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 27 (budget 27). Survivors: 23. Total: 50.
+Pending: 27 (budget 27). Survivors: 22. Total: 49.
 
 ## Survivors
 
@@ -21,7 +21,6 @@ Pending: 27 (budget 27). Survivors: 23. Total: 50.
 | `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | generated callback requires the legacy libhwbinder runtime | no-aosp-source |
 | `android/hardware/usb/UsbManager.java` | no hosted IUsbManager; device connection/request use JNI and legacy HIDL plus gadget AIDL generation is unwired | blocked |
 | `android/media/MediaCommunicationManager.java` | no media_communication service; stock closure crosses fenced media/audio/camera JNI | blocked |
-| `android/media/MediaCrypto.java` | JNI natives (libmedia_jni; DRM is not supported) | blocked |
 | `android/media/MediaMetadataRetriever.java` | JNI natives (libmedia_jni) | blocked |
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
 | `android/net/ConnectivityManager.java` | hosted synthetic network has no IConnectivityManager/ConnectivityService; stock closure reaches NetworkUtils/BPF JNI | blocked |

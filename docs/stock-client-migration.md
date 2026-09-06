@@ -27,6 +27,18 @@ in force.
 
 Follow-up changes in the current tree:
 
+- MediaCrypto now uses verbatim AOSP Java. Its seven-method Zig JNI adapter
+  follows JCrypto's no-plugin path because the host has no Android AIDL/HIDL
+  DRM factories: capability queries return false and construction throws the
+  pinned NO_INIT MediaCryptoException. UUID validation, null-argument failures,
+  released-object errors and failed-constructor cleanup retain the stock
+  contract. This provides no decryption implementation and changes none of the
+  excluded media backends. Java, JVM, system, native, Binder and build checks
+  pass, together with all 11 APK tests (39 steps without runtime issues).
+  The AOSP archive is rebuilt and pinned; the ART archive remains unchanged
+  and current. The inventory is 49 stubs: 27 pending and 22 survivors,
+  with 42 outside com.android.server (20 pending, 22 survivors).
+
 - Finishing an activity now queues its result on the recipient independently
   of the activity that becomes visible. A covered recipient keeps its results
   until its own next resume, following ActivityRecord.finishActivityResults;

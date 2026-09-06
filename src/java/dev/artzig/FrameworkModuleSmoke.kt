@@ -212,6 +212,7 @@ internal object FrameworkModuleSmoke {
         testStockVerity()
         testStockUsbDevice()
         testStockMediaContracts()
+        StockMediaCryptoSmoke.run()
         testStockProtoLog()
         testStockActivityOptions()
         testStockInstrumentation()

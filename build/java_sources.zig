@@ -2543,6 +2543,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/AudioFocusRequest.java");
     try c.file("$FB/media/java/android/media/MediaRoute2Info.java");
     try c.file("$FB/media/java/android/media/MediaRouter2Utils.java");
+    try c.file("$FB/media/java/android/media/MediaCrypto.java");
     try c.file("$FB/media/java/android/media/MediaCryptoException.java");
     try c.file("$FB/media/java/android/media/MediaDrmThrowable.java");
     try c.file("$FB/media/java/android/media/RouteDiscoveryPreference.java");

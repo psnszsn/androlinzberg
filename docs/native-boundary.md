@@ -86,6 +86,14 @@ zig build -j10 cpp-audit
   the partially constructed object's finalizer. The pinned ashmem UAPI header
   is isolated from bionic's other headers in the host C++ include tree.
 
+- `src/binder/media_crypto_jni.zig` supplies stock MediaCrypto's seven native
+  methods at the absent DRM-factory boundary. The original JNI requires
+  ICrypto and Android AIDL/HIDL DRM plugins. Capability queries return false,
+  construction reports the pinned NO_INIT MediaCryptoException, and released
+  or uninitialized objects retain the stock argument failures and safe cleanup.
+  No decryption implementation is supplied. The installed libmedia_jni alias
+  exposes the registered framework JNI library under the stock load name.
+
 - `src/binder/vintf_jni.zig` implements VintfRuntimeInfo's independently cached
   runtime-info groups. Uname reuses libcore Posix JNI; CPU and SELinux policy
   files use `std.Io`, and AVB versions come from stock system properties. The
