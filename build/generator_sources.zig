@@ -2404,6 +2404,7 @@ pub const aconfig = [_]Aconfig{
 pub const sysprop = [_]Sysprop{
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/HypervisorProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/MediaProperties.sysprop" } },
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/WatchdogProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/BluetoothProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/VndkProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/LocalizationProperties.sysprop" } },

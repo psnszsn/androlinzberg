@@ -69,6 +69,7 @@ framework_patches = tuple(
         (44, "-HWUI-initialize-host-context-for-offscreen-work.patch"),
         (45, "-HWUI-use-host-EGL-fences-for-stock-texture-layers.patch"),
         (46, "-WM-reuse-stock-session-diagnostics.patch"),
+        (47, "-Watchdog-use-host-session-diagnostics.patch"),
     )
 )
 

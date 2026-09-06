@@ -1,0 +1,169 @@
+From: Androlinzberg maintainers
+Subject: [PATCH] Watchdog: retain stock monitoring through the host session boundary
+
+The hosted session provides process discovery, DropBox reports and failure
+recovery. Keep stock HandlerChecker ordering, timeout states, controller and
+debugger decisions. HIDL and host-kernel reset are outside this process graph.
+
+--- a/services/core/java/com/android/server/Watchdog.java
++++ b/services/core/java/com/android/server/Watchdog.java
+@@ -27,7 +27,6 @@
+ import android.content.Intent;
+ import android.content.IntentFilter;
+ import android.database.ContentObserver;
+-import android.hidl.manager.V1_0.IServiceManager;
+ import android.net.Uri;
+ import android.os.Binder;
+ import android.os.Build;
+@@ -55,7 +54,6 @@
+ import com.android.internal.os.ProcessCpuTracker;
+ import com.android.internal.os.ZygoteConnectionConstants;
+ import com.android.internal.util.FrameworkStatsLog;
+-import com.android.server.am.ActivityManagerService;
+ import com.android.server.am.StackTracesDumpHelper;
+ import com.android.server.am.TraceErrorLogger;
+ import com.android.server.criticalevents.CriticalEventLog;
+@@ -113,7 +111,9 @@
+     static final int OVERDUE = 3;
+ 
+     // Track watchdog timeout history and break the crash loop if there is.
+-    private static final String TIMEOUT_HISTORY_FILE = "/data/system/watchdog-timeout-history.txt";
++    private static final String TIMEOUT_HISTORY_FILE = new File(
++            android.os.Environment.getDataSystemDirectory(), "watchdog-timeout-history.txt")
++            .getAbsolutePath();
+     private static final String PROP_FATAL_LOOP_COUNT = "framework_watchdog.fatal_count";
+     private static final String PROP_FATAL_LOOP_WINDOWS_SECS =
+             "framework_watchdog.fatal_window.second";
+@@ -205,7 +205,7 @@
+     /* This handler will be used to post message back onto the main thread */
+     private final ArrayList<HandlerCheckerAndTimeout> mHandlerCheckers = new ArrayList<>();
+     private final HandlerChecker mMonitorChecker;
+-    private ActivityManagerService mActivity;
++    private HostedWatchdogEnvironment mHost;
+     private IActivityController mController;
+     private boolean mAllowRestart = true;
+     // We start with DEFAULT_TIMEOUT. This will then be update with the timeout values from Settings
+@@ -532,8 +532,8 @@
+      * Should be called during boot after the ActivityManagerService is up and registered
+      * as a system service so it can handle registration of a {@link BroadcastReceiver}.
+      */
+-    public void init(Context context, ActivityManagerService activity) {
+-        mActivity = activity;
++    public void init(Context context) {
++        mHost = new HostedWatchdogEnvironment(context);
+         context.registerReceiver(new RebootRequestReceiver(),
+                 new IntentFilter(Intent.ACTION_REBOOT),
+                 android.Manifest.permission.REBOOT, null);
+@@ -596,8 +596,8 @@
+         Slog.i(TAG, "Watchdog timeout updated to " + mWatchdogTimeoutMillis + " millis");
+     }
+ 
+-    private static boolean isInterestingJavaProcess(String processName) {
+-        return processName.equals(StorageManagerService.sMediaStoreAuthorityProcessName)
++    private boolean isInterestingJavaProcess(String processName) {
++        return (mHost != null && mHost.isMediaProcess(processName))
+                 || processName.equals("com.android.phone");
+     }
+ 
+@@ -778,27 +778,6 @@
+         return builder.toString();
+     }
+ 
+-    private static void addInterestingHidlPids(HashSet<Integer> pids) {
+-        try {
+-            IServiceManager serviceManager = IServiceManager.getService();
+-            ArrayList<IServiceManager.InstanceDebugInfo> dump =
+-                    serviceManager.debugDump();
+-            for (IServiceManager.InstanceDebugInfo info : dump) {
+-                if (info.pid == IServiceManager.PidConstant.NO_PID) {
+-                    continue;
+-                }
+-
+-                if (!HAL_INTERFACES_OF_INTEREST.contains(info.interfaceName)) {
+-                    continue;
+-                }
+-
+-                pids.add(info.pid);
+-            }
+-        } catch (RemoteException e) {
+-            Log.w(TAG, e);
+-        }
+-    }
+-
+     private static void addInterestingAidlPids(HashSet<Integer> pids) {
+         ServiceDebugInfo[] infos = ServiceManager.getServiceDebugInfo();
+         if (infos == null) return;
+@@ -815,7 +794,7 @@
+     static ArrayList<Integer> getInterestingNativePids() {
+         HashSet<Integer> pids = new HashSet<>();
+         addInterestingAidlPids(pids);
+-        addInterestingHidlPids(pids);
++        pids.addAll(HostedWatchdogEnvironment.nativePids());
+ 
+         int[] nativePids = Process.getPidsForCommands(NATIVE_STACKS_OF_INTEREST);
+         if (nativePids != null) {
+@@ -1015,11 +994,9 @@
+         report.append(tracesFileException.getBuffer());
+ 
+         if (!preWatchdog) {
+-            // Trigger the kernel to dump all blocked threads, and backtraces on all CPUs to the
+-            // kernel log
+-            doSysRq('w');
+-            doSysRq('m');
+-            doSysRq('l');
++            // The session owns its processes, not the host kernel. Capture the
++            // process state alongside the stock PSI/CPU/stack report.
++            report.append(HostedWatchdogEnvironment.processDiagnostics());
+         }
+ 
+         // Try to add the error to the dropbox, but assuming that the ActivityManager
+@@ -1027,13 +1004,9 @@
+         // deadlock and the watchdog as a whole to be ineffective)
+         Thread dropboxThread = new Thread("watchdogWriteToDropbox") {
+                 public void run() {
+-                    // If a watched thread hangs before init() is called, we don't have a
+-                    // valid mActivity. So we can't log the error to dropbox.
+-                    if (mActivity != null) {
+-                        mActivity.addErrorToDropBox(
+-                                dropboxTag, null, "system_server", null, null, null,
+-                                null, report.toString(), stack, null, null, null,
+-                                errorId, null);
++                    // A pre-init hang has no report store, as in the stock service.
++                    if (mHost != null) {
++                        mHost.report(dropboxTag, report.toString(), stack, errorId);
+                     }
+                 }
+             };
+@@ -1041,16 +1014,6 @@
+         try {
+             dropboxThread.join(2000);  // wait up to 2 seconds for it to return.
+         } catch (InterruptedException ignored) { }
+-    }
+-
+-    private void doSysRq(char c) {
+-        try {
+-            FileWriter sysrq_trigger = new FileWriter("/proc/sysrq-trigger");
+-            sysrq_trigger.write(c);
+-            sysrq_trigger.close();
+-        } catch (IOException e) {
+-            Slog.w(TAG, "Failed to write to /proc/sysrq-trigger", e);
+-        }
+     }
+ 
+     private void resetTimeoutHistory() {
+@@ -1148,12 +1111,9 @@
+     }
+ 
+     private void breakCrashLoop() {
+-        try (FileWriter kmsg = new FileWriter("/dev/kmsg_debug", /* append= */ true)) {
+-            kmsg.append("Fatal reset to escape the system_server crashing loop\n");
+-        } catch (IOException e) {
+-            Slog.w(TAG, "Failed to append to kmsg", e);
+-        }
+-        doSysRq('c');
++        // Session supervision handles repeated process failure. A hosted
++        // system service must never reset the machine's kernel to recover.
++        HostedWatchdogEnvironment.exitCrashLoop();
+     }
+ 
+     @Override

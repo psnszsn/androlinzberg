@@ -1433,6 +1433,13 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/am/AppTimeTracker.java");
     try c.file("$FB/services/core/java/com/android/server/power/ShutdownCheckPoints.java");
     try c.file("$FB/services/core/java/com/android/server/am/StackTracesDumpHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/Watchdog.java");
+    try c.file("$FB/services/core/java/com/android/server/WatchdogDiagnostics.java");
+    try c.file("$FB/services/core/java/com/android/server/ResourcePressureUtil.java");
+    try c.file("$FB/services/core/java/com/android/server/am/TraceErrorLogger.java");
+    try c.file("$FB/services/core/java/com/android/server/am/DropboxRateLimiter.java");
+    try c.file("$FB/services/core/java/com/android/server/wm/SurfaceAnimationThread.java");
+    try c.file("$FB/core/java/com/android/internal/os/ZygoteConnectionConstants.java");
     try c.file("$FB/services/core/java/com/android/server/criticalevents/CriticalEventLog.java");
     try c.file("$FB/services/core/java/com/android/server/am/HostingRecord.java");
     try c.file("$FB/services/core/java/com/android/server/am/UserState.java");

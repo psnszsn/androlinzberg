@@ -6706,15 +6706,6 @@ F aosp frameworks/base/core/java/android/hardware/camera2/utils/ExtensionSession
 F aosp frameworks/base/core/java/android/hardware/camera2/utils/SubmitInfo.java
 F aosp frameworks/base/core/java/android/hardware/camera2/utils/TaskDrainer.java
 F aosp frameworks/base/core/java/android/hardware/camera2/utils/TaskSingleDrainer.java
-F aosp frameworks/base/core/java/android/hardware/devicestate/DeviceState.java
-F aosp frameworks/base/core/java/android/hardware/devicestate/DeviceStateInfo.aidl
-F aosp frameworks/base/core/java/android/hardware/devicestate/DeviceStateInfo.java
-F aosp frameworks/base/core/java/android/hardware/devicestate/DeviceStateManager.java
-F aosp frameworks/base/core/java/android/hardware/devicestate/DeviceStateManagerGlobal.java
-F aosp frameworks/base/core/java/android/hardware/devicestate/DeviceStateRequest.java
-F aosp frameworks/base/core/java/android/hardware/devicestate/IDeviceStateManager.aidl
-F aosp frameworks/base/core/java/android/hardware/devicestate/IDeviceStateManagerCallback.aidl
-F aosp frameworks/base/core/java/android/hardware/devicestate/feature/flags.aconfig
 F aosp frameworks/base/core/java/android/hardware/input/VirtualDpad.java
 F aosp frameworks/base/core/java/android/hardware/input/VirtualDpadConfig.java
 F aosp frameworks/base/core/java/android/hardware/input/VirtualInputDevice.java
@@ -7019,7 +7010,6 @@ F aosp frameworks/base/media/jni/android_media_MediaHTTPConnection.cpp
 F aosp frameworks/base/media/jni/android_media_MediaHTTPConnection.h
 
 # Native handle and HIDL memory value types.
-F aosp system/libhidl/base/HidlSupport.cpp
 F aosp system/libhidl/base/include/hidl/HidlSupport.h
 F aosp system/libhidl/base/include/hidl/HidlInternal.h
 F aosp system/libhidl/base/include/hidl/Status.h
@@ -7227,7 +7217,6 @@ F aosp packages/modules/IPsec/src/java/com/android/internal/net/utils/BigInteger
 F aosp packages/modules/IPsec/src/java/com/android/internal/net/utils/IkeDeviceConfigUtils.java
 F aosp packages/modules/IPsec/src/java/com/android/internal/net/utils/Log.java
 F aosp packages/modules/IPsec/src/java/com/android/internal/net/utils/SimpleStateMachine.java
-F aosp frameworks/base/core/java/android/view/Choreographer.java
 F aosp frameworks/base/core/java/android/permission/PermissionManager.java
 F aosp frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java
 F aosp frameworks/base/core/jni/com_android_internal_os_ZygoteCommandBuffer.cpp
@@ -7237,23 +7226,13 @@ F aosp bionic/libc/async_safe/include/async_safe/log.h
 F aosp bionic/libc/include/sys/system_properties.h
 
 # Stock AppOps service and permission-mode storage closure.
-F aosp frameworks/base/core/java/android/app/AppOpsManagerInternal.java
-F aosp frameworks/base/core/java/android/app/admin/DevicePolicyCache.java
-F aosp frameworks/base/core/java/android/app/admin/DevicePolicyManagerInternal.java
-F aosp frameworks/base/core/java/android/app/admin/DeviceStateCache.java
-F aosp frameworks/base/core/java/android/hardware/ISensorPrivacyListener.aidl
-F aosp frameworks/base/core/java/android/hardware/ISensorPrivacyManager.aidl
-F aosp frameworks/base/core/java/android/hardware/SensorPrivacyManager.java
 F aosp frameworks/base/core/java/android/os/storage/ICeStorageLockEventListener.java
 F aosp frameworks/base/core/java/android/os/storage/StorageManagerInternal.java
 F aosp frameworks/base/core/java/android/permission/PermissionManagerInternal.java
-F aosp frameworks/base/core/java/android/service/voice/VoiceInteractionManagerInternal.java
 F aosp frameworks/base/core/java/com/android/internal/os/AtomicDirectory.java
 F aosp frameworks/base/core/proto/android/hardware/sensorprivacy.proto
 F aosp frameworks/base/location/java/android/location/LocationManagerInternal.java
 F aosp frameworks/base/location/java/android/location/util/identity/CallerIdentity.java
-F aosp frameworks/base/services/core/java/com/android/server/LocalManagerRegistry.java
-F aosp frameworks/base/services/core/java/com/android/server/LockGuard.java
 F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsCheckingServiceImpl.java
 F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsCheckingServiceInterface.java
 F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsCheckingServiceTracingDecorator.java
@@ -7311,8 +7290,6 @@ F aosp frameworks/av/include/media/NdkMediaFormatPriv.h
 F aosp frameworks/av/media/libmedia/NdkMediaFormatPriv.cpp
 
 # Stock Linux filesystem notifications used by provider clients.
-F aosp frameworks/base/core/java/android/os/FileObserver.java
-F aosp frameworks/base/core/jni/android_util_FileObserver.cpp
 
 # Stock legacy DRM client, including its built-in absent-service implementation.
 F aosp frameworks/base/drm/java/android/drm/DrmConvertedStatus.java
@@ -9014,3 +8991,9 @@ F aosp frameworks/base/cmds/idmap2/libidmap2/XmlParser.cpp
 F aosp frameworks/base/cmds/idmap2/libidmap2/proto/fabricated_v1.proto
 F aosp frameworks/base/cmds/idmap2/self_targeting/SelfTargeting.cpp
 F aosp frameworks/base/core/java/com/android/internal/content/om/OverlayManagerImpl.java
+F aosp frameworks/base/services/core/java/com/android/server/Watchdog.java
+F aosp frameworks/base/services/core/java/com/android/server/WatchdogDiagnostics.java
+F aosp frameworks/base/services/core/java/com/android/server/ResourcePressureUtil.java
+F aosp frameworks/base/services/core/java/com/android/server/am/TraceErrorLogger.java
+F aosp frameworks/base/services/core/java/com/android/server/am/DropboxRateLimiter.java
+F aosp frameworks/base/core/sysprop/WatchdogProperties.sysprop

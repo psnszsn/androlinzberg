@@ -234,6 +234,7 @@ internal object FrameworkModuleSmoke {
         StockImageSmoke.run()
         testStockProtoLog()
         com.android.server.criticalevents.StockCriticalEventLogSmoke.run()
+        com.android.server.StockWatchdogSmoke.run()
         testStockActivityOptions()
         testStockInstrumentation()
         StockGlSurfaceViewSmoke.run()

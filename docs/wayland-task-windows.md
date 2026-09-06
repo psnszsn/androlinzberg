@@ -73,14 +73,28 @@ clients, activity launch/configuration/affinity fixes and permission-usage value
 The union archive also initializes HWUI for hardware bitmaps before the first
 window. The merged framework-module, Binder facade, build-tool, C++ and graph
 checks pass (`/tmp/wayland-stock-readback-21.log`). The first-use hardware bitmap,
-lazy hardware image and queued PixelCopy paths all verify their pixels. Full JVM,
-APK and affected graphics/input regression validation is in progress.
+lazy hardware image and queued PixelCopy paths all verify their pixels. Full JVM, all 14 APK tests, RenderEngine, graphics-buffer and real-SF task/input
+output regression gates pass (`/tmp/wayland-main-2-regressions-1.log`). The APK
+artifacts contain 44 steps, no runtime issues and no failure records.
 
 `Binder.blockUntilThreadAvailable` now waits on AZKB's actual dispatch capacity,
 shared with the C++ facade. A real cross-process regression fills all 32 dispatch
 workers, observes the monitor remain blocked, then releases one worker and
 requires the monitor to resume. This is the stock Watchdog Binder-monitor
 contract; Watchdog itself has not yet joined the running service graph.
+
+The stock Watchdog, WatchdogDiagnostics, ResourcePressureUtil, TraceErrorLogger,
+DropboxRateLimiter and SurfaceAnimationThread now compile in the live framework.
+The host adapter retains stock checker/timeout/controller/debugger decisions,
+uses session DropBox and paths, discovers native service owners through the
+broker, and captures local process state instead of issuing global kernel reset
+commands. Framework-module and build/audit gates pass
+(`/tmp/wayland-watchdog-integration-1.log`), including monitor ordering, timeout
+stages, nested/timed pauses, report truncation and dropped-count retention.
+The full JVM and system-service suites also pass
+(`/tmp/wayland-watchdog-regressions-1.log`). Watchdog is not started in service
+boot yet. The current WMS/ATMS compile probe
+reports 63 errors (`/tmp/wm-compile-probe-16.log`), down from 78.
 
 Prior checkpoint validation against committed main `8d17396`:
 - The combined framework builds, including stock AppOps, window-context
