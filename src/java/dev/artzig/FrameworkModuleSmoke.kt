@@ -218,6 +218,7 @@ internal object FrameworkModuleSmoke {
         testStockInstrumentation()
         StockGlSurfaceViewSmoke.run()
         StockActivitySupportSmoke.run(::drainMainQueue)
+        StockConfigurationSmoke.run(::drainMainQueue)
         StockGraphicsEnvironmentSmoke.run()
         StockFenceSmoke.run()
         StockPerfettoSmoke.run()
@@ -7671,7 +7672,13 @@ internal object FrameworkModuleSmoke {
             check(ActivityThread.currentActivity() === first)
             adapter.implicitActivity = null
 
-            val handledConfiguration = Configuration().apply { setToDefaults() }
+            // Stock process callbacks require an actual public configuration change;
+            // an arbitrary change mask with an unchanged Configuration is insufficient.
+            val handledConfiguration = Configuration(application.resources.configuration).apply {
+                seq = 0
+                screenWidthDp += 10
+                screenHeightDp += 10
+            }
             check(firstInfo.configChanges and ActivityInfo.CONFIG_SCREEN_SIZE == 0)
             check(firstInfo.getRealConfigChanged() and ActivityInfo.CONFIG_SCREEN_SIZE != 0) {
                 "pre-HONEYCOMB_MR2 ActivityInfo omitted the implicit screen-size change"
@@ -7694,6 +7701,9 @@ internal object FrameworkModuleSmoke {
             first.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             changingConfigurationEvents.clear()
             val relaunchEventStart = events.size
+            handledConfiguration.orientation = if (handledConfiguration.orientation ==
+                Configuration.ORIENTATION_LANDSCAPE) Configuration.ORIENTATION_PORTRAIT
+                else Configuration.ORIENTATION_LANDSCAPE
             ActivityThread.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_ORIENTATION,
@@ -7745,6 +7755,9 @@ internal object FrameworkModuleSmoke {
             )) { "last Activity finish ordering: $events" }
 
             events.clear()
+            handledConfiguration.orientation = if (handledConfiguration.orientation ==
+                Configuration.ORIENTATION_LANDSCAPE) Configuration.ORIENTATION_PORTRAIT
+                else Configuration.ORIENTATION_LANDSCAPE
             check(!ActivityThread.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_ORIENTATION,
@@ -7756,6 +7769,7 @@ internal object FrameworkModuleSmoke {
             }
 
             fixture.launch(missingConfigurationSuperName)
+            handledConfiguration.screenWidthDp += 10
             val hostedMissingSuperFailure = runCatching {
                 ActivityThread.applyConfigurationInProcess(
                     handledConfiguration,

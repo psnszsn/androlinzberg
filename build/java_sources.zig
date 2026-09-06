@@ -2556,6 +2556,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$A/packages/modules/HealthFitness/framework/java", .{});
     try c.add("$A/packages/modules/HealthFitness/flags/src", .{});
     try c.file("$CJ/android/app/ActivityOptions.java");
+    try c.file("$CJ/android/app/ActivityThreadInternal.java");
+    try c.file("$CJ/android/app/ConfigurationController.java");
     try c.file("$CJ/android/app/ActivityTransitionCoordinator.java");
     try c.file("$CJ/android/app/ActivityTransitionState.java");
     try c.file("$CJ/android/app/EnterTransitionCoordinator.java");

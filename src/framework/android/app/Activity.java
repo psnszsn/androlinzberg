@@ -23,7 +23,7 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import com.android.internal.policy.PhoneWindow;
 public class Activity extends ContextWrapper implements Window.Callback,
-        KeyEvent.Callback, android.view.LayoutInflater.Factory2 {
+        KeyEvent.Callback, android.view.LayoutInflater.Factory2, android.content.ComponentCallbacks2 {
     private static final String TAG = "Activity";
     public static final int RESULT_OK = -1, RESULT_CANCELED = 0, RESULT_FIRST_USER = 1;
     static final String FRAGMENTS_TAG = "android:fragments";

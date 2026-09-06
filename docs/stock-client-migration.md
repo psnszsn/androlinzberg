@@ -27,6 +27,21 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Process configuration dispatch now uses verbatim AOSP ConfigurationController
+  and ActivityThreadInternal. The controller owns pending configurations,
+  resource updates, locale selection, density, theme rebasing and component
+  callbacks. The hosted thread supplies the application/service/provider list,
+  deduplicating providers by identity, and retains its existing activity resize
+  and recreation boundary. Activity now declares its stock ComponentCallbacks2
+  interface. Regressions cover resource-before-callback ordering, service
+  delivery, equivalent-update suppression and pending updates; existing stale
+  sequence, handled/unhandled configuration and saved-state/lifecycle checks
+  also pass. Lifecycle fixtures now supply real configuration changes instead
+  of expecting callbacks from a change mask alone. JVM, separate-process,
+  native, Binder and build checks pass, as do all 11 APK tests (38 steps with
+  no runtime issues). Both sources were already packaged and match pinned AOSP;
+  both tarballs remain current. The stub inventory remains 49.
+
 - MediaCrypto now uses verbatim AOSP Java. Its seven-method Zig JNI adapter
   follows JCrypto's no-plugin path because the host has no Android AIDL/HIDL
   DRM factories: capability queries return false and construction throws the

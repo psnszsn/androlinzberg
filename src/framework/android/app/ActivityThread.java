@@ -43,7 +43,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
 
-public final class ActivityThread extends ClientTransactionHandler {
+public final class ActivityThread extends ClientTransactionHandler implements ActivityThreadInternal {
     public static final String TAG = "ActivityThread";
     public static final boolean DEBUG = false;
     public static final boolean DEBUG_CONFIGURATION = false;
@@ -197,6 +197,8 @@ public final class ActivityThread extends ClientTransactionHandler {
     Application mInitialApplication;
     final ArrayList<Application> mAllApplications = new ArrayList<>();
     final ResourcesManager mResourcesManager = ResourcesManager.getInstance();
+    private final ConfigurationController mConfigurationController = new ConfigurationController(this);
+    private boolean mDensityCompatMode;
     CompatibilityInfo mCompatibilityInfo = CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO;
     private final ArrayMap<String, WeakReference<LoadedApk>> mPackages = new ArrayMap<>();
     private final ArrayMap<String, WeakReference<LoadedApk>> mResourcePackages = new ArrayMap<>();
@@ -234,6 +236,7 @@ public final class ActivityThread extends ClientTransactionHandler {
     private final ArrayMap<String, ContentProvider> mLocalProvidersByAuthority = new ArrayMap<>();
 
     private ActivityThread() {
+        mConfigurationController.setConfiguration(mResourcesManager.getConfiguration());
         sMainThreadHandler = mH;
         mInstrumentation = new Instrumentation();
         mInstrumentation.basicInit(this);
@@ -370,6 +373,42 @@ public final class ActivityThread extends ClientTransactionHandler {
         }
     }
     public ContextImpl getSystemUiContext() { return getSystemContext(); }
+    @Override public Context getSystemUiContextNoCreate() {
+        synchronized (this) { return mSystemContext; }
+    }
+    @Override public boolean isInDensityCompatMode() { return mDensityCompatMode; }
+
+    /** Pinned ActivityThread.collectComponentCallbacks. The hosted provider map is keyed by
+     * authority instead of provider Binder, so deduplicate its values before dispatching. */
+    @Override public ArrayList<android.content.ComponentCallbacks2> collectComponentCallbacks(
+            boolean includeUiContexts) {
+        final ArrayList<android.content.ComponentCallbacks2> callbacks = new ArrayList<>();
+        synchronized (mResourcesManager) {
+            callbacks.addAll(mAllApplications);
+            if (includeUiContexts) {
+                for (int i = mActivities.size() - 1; i >= 0; i--) {
+                    final Activity activity = mActivities.valueAt(i).activity;
+                    if (activity != null && !activity.mFinished) callbacks.add(activity);
+                }
+            }
+            for (int i = 0; i < mServices.size(); i++) {
+                final Service service = mServices.valueAt(i);
+                if (includeUiContexts || !(service instanceof android.window.WindowProviderService)) {
+                    callbacks.add(service);
+                }
+            }
+        }
+        synchronized (mLocalProvidersByAuthority) {
+            final java.util.Set<ContentProvider> seen = java.util.Collections.newSetFromMap(
+                    new java.util.IdentityHashMap<ContentProvider, Boolean>());
+            for (int i = 0; i < mLocalProvidersByAuthority.size(); i++) {
+                final ContentProvider provider = mLocalProvidersByAuthority.valueAt(i);
+                if (seen.add(provider)) callbacks.add(provider);
+            }
+        }
+        return callbacks;
+    }
+
     /** AOSP ActivityThread.installSystemApplicationInfo (SystemServer calls it once the "android"
      * package is known): gives the system context its data directory and class loader. */
     public void installSystemApplicationInfo(ApplicationInfo info, ClassLoader classLoader) {
@@ -531,6 +570,10 @@ public final class ActivityThread extends ClientTransactionHandler {
             dalvik.system.ZipPathValidator.clearCallback();
         }
         mBoundApplication = data;
+        mConfigurationController.setConfiguration(data.config);
+        mDensityCompatMode = (data.appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES) == 0;
+        if (mDensityCompatMode) android.graphics.Bitmap.setDefaultDensity(android.util.DisplayMetrics.DENSITY_DEFAULT);
+        mConfigurationController.updateDefaultDensity(data.config.densityDpi);
         ResourcesManager.getInstance().applyConfigurationToResources(data.config, null);
         mCompatibilityInfo = data.compatInfo;
         synchronized (mCoreSettings) { mCoreSettings.putAll(data.coreSettings); }
@@ -557,6 +600,8 @@ public final class ActivityThread extends ClientTransactionHandler {
         if (mInitialApplication != null) return mInitialApplication;
         ContextImpl context = getSystemContext();
         mInitialApplication = context.mPackageInfo.makeApplicationInner(true, null);
+        mConfigurationController.setConfiguration(mResourcesManager.getConfiguration());
+        mDensityCompatMode = false;
         mInitialApplication.onCreate();
         return mInitialApplication;
     }
@@ -934,7 +979,6 @@ public final class ActivityThread extends ClientTransactionHandler {
     private final ArrayMap<IBinder, android.app.servertransaction.DestroyActivityItem>
             mActivitiesToBeDestroyed = new ArrayMap<>();
     private final ArrayList<ActivityClientRecord> mRelaunchingActivities = new ArrayList<>();
-    private Configuration mPendingConfiguration;
     /** Pinned AOSP ordering guard populated by configuration transaction preExecute. */
     private final ArrayMap<IBinder, Configuration> mPendingOverrideConfigs = new ArrayMap<>();
     @Override android.app.servertransaction.TransactionExecutor getTransactionExecutor() { return mTransactionExecutor; }
@@ -947,44 +991,40 @@ public final class ActivityThread extends ClientTransactionHandler {
     @Override public Activity getActivity(IBinder token) { ActivityClientRecord r = mActivities.get(token); return r != null ? r.activity : null; }
     @Override public ActivityClientRecord getActivityClient(IBinder token) { return mActivities.get(token); }
     @Override public void updatePendingConfiguration(Configuration config) {
-        synchronized (mRelaunchingActivities) {
-            if (mPendingConfiguration == null
-                    || mPendingConfiguration.isOtherSeqNewer(config)) {
-                mPendingConfiguration = new Configuration(config);
-            }
-        }
+        mConfigurationController.updatePendingConfiguration(config);
     }
 
     private Configuration consumePendingConfiguration(Configuration requested) {
-        synchronized (mRelaunchingActivities) {
-            if (mPendingConfiguration != null
-                    && (requested == null || requested.isOtherSeqNewer(mPendingConfiguration))) {
-                requested = mPendingConfiguration;
-            }
-            mPendingConfiguration = null;
-            return requested;
+        final Configuration pending = mConfigurationController.getPendingConfiguration(true);
+        return pending != null && (requested == null || requested.isOtherSeqNewer(pending))
+                ? pending : requested;
+    }
+
+    /** Stock ConfigurationController owns resources, locales, themes and component callbacks.
+     * The host may configure resources before an Application exists during bootstrap. */
+    private void dispatchProcessConfiguration(Configuration config) {
+        if (mInitialApplication == null) {
+            mResourcesManager.applyConfigurationToResources(config, null);
+            mConfigurationController.setConfiguration(config);
+        } else {
+            mConfigurationController.handleConfigurationChanged(config);
         }
     }
 
     private int applyProcessConfiguration(Configuration requested,
             boolean dispatchHostedActivityPolicy) {
         if (requested == null) return 0;
-        final Configuration current = ResourcesManager.getInstance().getConfiguration();
-        if (!current.isOtherSeqNewer(requested) && current.diff(requested) != 0) {
-            return 0;
-        }
+        final Configuration current = mResourcesManager.getConfiguration();
+        if (!current.isOtherSeqNewer(requested) && current.diff(requested) != 0) return 0;
+        // The hosted service sends Configuration.updateFrom deltas. Expand the request once
+        // at this boundary before passing it to the stock process controller.
         final Configuration next = new Configuration(current);
         final int changes = next.updateFrom(requested);
-        // Sequence-only updates still become the canonical process configuration, so a delayed
-        // lower-sequence delta cannot subsequently be mistaken for a new request.
-        ResourcesManager.getInstance().applyConfigurationToResources(next, null);
-        if (changes == 0) return 0;
-        if (dispatchHostedActivityPolicy) {
+        dispatchProcessConfiguration(next);
+        if (changes != 0 && dispatchHostedActivityPolicy) {
             final android.util.DisplayMetrics metrics =
                     android.content.res.Resources.getSystem().getDisplayMetrics();
-            applyConfigurationInProcess(next, changes, metrics.widthPixels, metrics.heightPixels);
-        } else if (mInitialApplication != null) {
-            mInitialApplication.onConfigurationChanged(next);
+            applyConfigurationToCurrentActivity(next, changes, metrics.widthPixels, metrics.heightPixels);
         }
         return changes;
     }
@@ -1526,28 +1566,24 @@ public final class ActivityThread extends ClientTransactionHandler {
     public static void setIntentBeingBroadcast$artzig(Intent intent) { sCurrentBroadcastIntent.set(intent); }
     public static boolean applyConfigurationInProcess(Configuration config, int changes, int width, int height) {
         final ActivityThread thread = currentActivityThread();
+        thread.dispatchProcessConfiguration(config);
+        return thread.applyConfigurationToCurrentActivity(config, changes, width, height);
+    }
+
+    private boolean applyConfigurationToCurrentActivity(Configuration config, int changes, int width, int height) {
         final Activity presented = sPresentedTransactionActivity;
         final ActivityClientRecord record = presented != null
-                ? thread.mActivities.get(presented.getActivityToken()) : null;
-        if (record != null && record.activity == presented) {
-            return thread.applyConfigurationToTransactionActivity(
-                    record, config, changes, width, height);
-        }
-        if (changes != 0 && thread.mInitialApplication != null) {
-            thread.mInitialApplication.onConfigurationChanged(config);
-        }
-        return false;
+                ? mActivities.get(presented.getActivityToken()) : null;
+        return record != null && record.activity == presented
+                && applyConfigurationToTransactionActivity(record, config, changes, width, height);
     }
 
     /** Host-compositor counterpart of AOSP ActivityTaskManager/ActivityThread configuration
      * dispatch for an activity launched through ClientTransaction. Resources have already been
-     * updated by ApkHost; this preserves the remaining Application callback, handled-change
-     * callback, or save/stop/destroy/create/start/restore/post-create/resume ordering. */
+     * updated by the process controller; this preserves the handled-change callback
+     * or save/stop/destroy/create/start/restore/post-create/resume ordering. */
     private boolean applyConfigurationToTransactionActivity(ActivityClientRecord r,
             Configuration config, int changes, int width, int height) {
-        if (changes != 0 && mInitialApplication != null) {
-            mInitialApplication.onConfigurationChanged(config);
-        }
         if (r == null || r.activity == null) return false;
 
         final int handledChanges = r.activityInfo != null
