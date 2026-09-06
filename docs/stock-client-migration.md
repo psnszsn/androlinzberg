@@ -27,6 +27,18 @@ in force.
 
 Follow-up changes in the current tree:
 
+- ComponentCaller now checks immutable delivery-time URI access snapshots for
+  launches, new intents, and activity results. The hosted controller follows
+  stock ActivityCallerState, including nested ClipData/EXTRA_STREAM, separate
+  read/write access, denied versus absent URIs, and the receiver's current-access
+  requirement. ActivityThread retains the initial caller token through launch
+  and recreation. Starting a child before the parent's resume acknowledgement
+  now preserves the parent and its result delivery. JVM and separate-process
+  regressions pass, along with all 11 APK integration tests (38 steps without
+  runtime issues). The inventory remains 52 stubs; package inputs are unchanged
+  and both tarballs remain current. Task-affinity/NEW_TASK reuse and caller
+  identity-sharing permission gates remain incomplete in the hosted controller.
+
 - PerfettoTrace and PerfettoTrackEventExtra now use their verbatim pinned AOSP
   sources, backed by the original JNI, libtracing_perfetto, and Linux Perfetto C
   SDK. Zig builds the SDK and its three protoc plugins; all 648 generated native
@@ -55,7 +67,8 @@ Follow-up changes in the current tree:
   shared owners, results, persistence, and root versus non-root task removal.
   JVM, system, native, Binder and build checks pass, along with all 11 APK
   integration tests (38 steps without runtime issues). The inventory remains
-  53 stubs. ComponentCaller's delivery-time URI access snapshots remain unfinished.
+  53 stubs at that checkpoint. Delivery-time caller snapshots are now implemented
+  as described above.
 
 - R8 keep annotations now come from AOSP's pinned `keepanno-annotations` Java
   import. The three handwritten KeepTarget, TypePattern and UsesReflection

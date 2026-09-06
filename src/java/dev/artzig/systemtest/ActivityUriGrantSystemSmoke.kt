@@ -1,6 +1,7 @@
 package dev.artzig.systemtest
 
 import android.app.Activity
+import android.app.ComponentCaller
 import android.content.ClipData
 import android.content.ComponentName
 import android.content.Context
@@ -30,6 +31,7 @@ open class UriGrantActivity : Activity() {
         observation.putInt("creates", observation.getInt("creates") + 1)
         ActivityUriGrantSystemSmoke.activities[id] = this
         verifyUris(intent)
+        rememberCaller("initial", initialCaller)
     }
 
     override fun onResume() {
@@ -46,6 +48,9 @@ open class UriGrantActivity : Activity() {
         super.onNewIntent(intent)
         verifyUris(intent)
         observation.putInt("newIntents", observation.getInt("newIntents") + 1)
+        if (android.security.Flags.contentUriPermissionApis()) {
+            rememberCaller("new", currentCaller)
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -54,11 +59,18 @@ open class UriGrantActivity : Activity() {
         observation.putInt("resultRequest", requestCode)
         observation.putInt("resultCode", resultCode)
         observation.putString("resultUri", data?.dataString)
+        if (android.security.Flags.contentUriPermissionApis()) rememberCaller("result", currentCaller)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         ActivityUriGrantSystemSmoke.activities.remove(id, this)
+    }
+
+    private fun rememberCaller(kind: String, caller: ComponentCaller?) {
+        if (!android.security.Flags.contentUriPermissionApis()) return
+        val old = ActivityUriGrantSystemSmoke.callers.put(id to kind, checkNotNull(caller))
+        if (kind == "initial" && old != null) check(old == caller) { "recreation changed the caller" }
     }
 
     private fun verifyUris(delivered: Intent) {
@@ -89,22 +101,37 @@ internal object ActivityUriGrantSystemSmoke {
     private const val PERMISSIONS = 5
     private const val TAKE_PERSISTABLE = 6
     private const val RELEASE_PERSISTABLE = 7
+    private const val CALLER_APIS = 8
+    private const val GRANT = 9
+    private const val REVOKE = 10
+    private const val CALLER_PERMISSION = 11
     private const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
     private const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
     val activities = HashMap<Int, UriGrantActivity>()
     val observations = HashMap<Int, Bundle>()
+    val callers = HashMap<Pair<Int, String>, ComponentCaller>()
+    private var originalCallerFlags: Any? = null
 
     fun publish(context: Context) {
         val name = context.packageName + ".activity-uri-grants"
         val handler = Handler(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-                if (code !in START..RELEASE_PERSISTABLE) return false
+                if (code !in START..CALLER_PERMISSION) return false
                 data.enforceInterface(name)
                 val args = checkNotNull(data.readBundle())
                 val action = FutureTask {
                     val id = args.getInt("id", -1)
                     when (code) {
+                        CALLER_APIS -> setCallerApis(args.getBoolean("enabled"))
+                        GRANT, REVOKE -> {
+                            val uri = Uri.parse(checkNotNull(args.getString("uri")))
+                            val target = args.getString("target")
+                            val mode = args.getInt("mode")
+                            if (code == GRANT) context.grantUriPermission(checkNotNull(target), uri, mode)
+                            else if (target != null) context.revokeUriPermission(target, uri, mode)
+                            else context.revokeUriPermission(uri, mode)
+                        }
                         START -> {
                             val intent = checkNotNull(args.getParcelable("intent", Intent::class.java))
                             if (id < 0) context.startActivity(intent) else {
@@ -128,7 +155,13 @@ internal object ActivityUriGrantSystemSmoke {
                             } else context.contentResolver.releasePersistableUriPermission(uri, READ)
                         }
                     }
-                    if (code == PERMISSIONS) {
+                    if (code == CALLER_PERMISSION) {
+                        val caller = checkNotNull(callers[id to args.getString("kind")])
+                        Bundle().apply {
+                            putInt("permission", caller.checkContentUriPermission(
+                                Uri.parse(checkNotNull(args.getString("uri"))), args.getInt("mode")))
+                        }
+                    } else if (code == PERMISSIONS) {
                         val uris = checkNotNull(args.getStringArray("uris"))
                         Bundle().apply {
                             for ((key, mode) in listOf("read" to READ, "write" to WRITE)) {
@@ -154,6 +187,24 @@ internal object ActivityUriGrantSystemSmoke {
                 return true
             }
         })
+    }
+
+    private fun setCallerApis(enabled: Boolean) {
+        val field = android.security.Flags::class.java.getDeclaredField("FEATURE_FLAGS")
+        field.isAccessible = true
+        if (!enabled) {
+            field.set(null, checkNotNull(originalCallerFlags))
+            originalCallerFlags = null
+            return
+        }
+        check(originalCallerFlags == null)
+        val original = field.get(null)
+        originalCallerFlags = original
+        field.set(null, java.lang.reflect.Proxy.newProxyInstance(field.type.classLoader,
+            arrayOf(field.type)) { _, method, arguments ->
+                if (method.name == "contentUriPermissionApis") true
+                else method.invoke(original, *(arguments ?: emptyArray()))
+            })
     }
 
     private fun call(pkg: String, code: Int, args: Bundle = Bundle()): Bundle {
@@ -271,7 +322,108 @@ internal object ActivityUriGrantSystemSmoke {
         call(B, FINISH, args(4).apply { putBoolean("removeTask", true) })
         awaitState(B, 4) { !it.getBoolean("live") }
         requireAccess(B, false, data)
+        verifyCallerSnapshots()
         System.err.println("system-test: activity URI grants cover launch, ClipData, rejection, " +
             "recreation, new intents, shared owners, results, persistence and task removal")
     }
+
+    private fun verifyCallerSnapshots() {
+        fun toggle(pkg: String, enabled: Boolean) = call(pkg, CALLER_APIS,
+            Bundle().apply { putBoolean("enabled", enabled) })
+        fun grant(uri: String, mode: Int, revoke: Boolean = false) = call(B,
+            if (revoke) REVOKE else GRANT, Bundle().apply {
+                putString("uri", uri); putString("target", A); putInt("mode", mode)
+            })
+        fun permission(pkg: String, id: Int, kind: String, uri: String, mode: Int) =
+            call(pkg, CALLER_PERMISSION, args(id).apply {
+                putString("kind", kind); putString("uri", uri); putInt("mode", mode)
+            }).getInt("permission")
+        fun expect(id: Int, kind: String, uri: String, mode: Int, granted: Boolean) {
+            check(permission(B, id, kind, uri, mode) == if (granted)
+                PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED) {
+                "caller permission $id/$kind $uri mode=$mode granted=$granted"
+            }
+        }
+        toggle(A, true)
+        toggle(B, true)
+        try {
+            val data = "content://$B.secret/caller/data"
+            val clip = "content://$B.secret/caller/clip"
+            val stream = "content://$B.secret/caller/stream"
+            val denied = "content://$B.secret/caller/denied"
+            val unknown = "content://$B.secret/caller/unknown"
+            val unshared = "content://$A.secret/caller/unshared"
+            val readable = arrayOf(data, clip, stream)
+            readable.forEach { grant(it, READ) }
+            start(-1, activityIntent(A, 19).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            awaitState(A, 19) { it.getBoolean("resumed") }
+            val launch = activityIntent(B, 20).setData(Uri.parse(data)).apply {
+                    putParcelableArrayListExtra(Intent.EXTRA_STREAM,
+                        arrayListOf(Uri.parse(denied), Uri.parse(unshared)))
+                    clipData = ClipData.newRawUri("clip", Uri.parse(clip)).apply {
+                        addItem(ClipData.Item(Intent().putExtra(Intent.EXTRA_STREAM, Uri.parse(stream))))
+                    }
+                }
+            start(19, launch)
+            awaitState(B, 20) { it.getBoolean("resumed") }
+            readable.forEach {
+                expect(20, "initial", it, READ, true)
+                expect(20, "initial", it, WRITE, false)
+                expect(20, "initial", it, READ or WRITE, false)
+            }
+            expect(20, "initial", denied, READ, false)
+            check(runCatching { permission(B, 20, "initial", unknown, READ) }.exceptionOrNull()
+                is IllegalArgumentException)
+            check(runCatching { permission(B, 20, "initial", data, 0) }.exceptionOrNull()
+                is IllegalArgumentException)
+            check(runCatching { permission(B, 20, "initial", unshared, READ) }.exceptionOrNull()
+                is SecurityException)
+            readable.forEach { grant(it, READ, true) }
+            requireAccess(A, false, *readable)
+            // Revocation and recreation must not recompute the original caller snapshot.
+            call(B, RECREATE, args(20))
+            awaitState(B, 20) { it.getInt("creates") == 2 && it.getBoolean("resumed") }
+            readable.forEach { expect(20, "initial", it, READ, true) }
+            grant(data, WRITE)
+            start(19, activityIntent(B, 20).setData(Uri.parse(data))
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            awaitState(B, 20) { it.getInt("newIntents") == 1 }
+            expect(20, "new", data, READ, false)
+            expect(20, "new", data, WRITE, true)
+            expect(20, "initial", data, READ, true)
+            expect(20, "initial", data, WRITE, false)
+            grant(data, WRITE, true)
+            call(B, FINISH, args(20))
+            awaitState(B, 20) { !it.getBoolean("live") }
+            expect(20, "initial", data, READ, false)
+            expect(20, "new", data, WRITE, false)
+            call(A, FINISH, args(19))
+            awaitState(A, 19) { !it.getBoolean("live") }
+
+            start(-1, activityIntent(A, 21).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            awaitState(A, 21) { it.getBoolean("resumed") }
+            start(21, activityIntent(B, 22), 71)
+            awaitState(B, 22) { it.getBoolean("resumed") }
+            val result = "content://$B.secret/caller/result"
+            call(B, FINISH, args(22).apply {
+                putParcelable("intent", Intent().setData(Uri.parse(result)).addFlags(READ))
+            })
+            awaitState(A, 21) { it.getInt("resultRequest") == 71 && it.getBoolean("resumed") }
+            check(permission(A, 21, "result", result, READ) == PackageManager.PERMISSION_GRANTED)
+            // The receiver must still have access when checking a retained caller.
+            // The package-specific revoke overload intentionally excludes Intent-owned grants.
+            call(B, REVOKE, Bundle().apply { putString("uri", result); putInt("mode", READ) })
+            requireAccess(A, false, result)
+            check(runCatching { permission(A, 21, "result", result, READ) }.exceptionOrNull()
+                is SecurityException)
+            call(A, FINISH, args(21))
+            awaitState(A, 21) { !it.getBoolean("live") }
+            System.err.println("system-test: ComponentCaller URI snapshots preserve delivery-time " +
+                "read/write access, nested streams, denied/absent distinctions and activity lifetime")
+        } finally {
+            toggle(B, false)
+            toggle(A, false)
+        }
+    }
+
 }

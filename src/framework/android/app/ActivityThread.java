@@ -777,8 +777,14 @@ public final class ActivityThread extends ClientTransactionHandler {
             if (r.state != null) r.state.setClassLoader(classLoader);
 
             final Intent launchIntent = customIntent != null ? customIntent : r.intent;
-            activity.attach(activityContext, info, launchIntent, r.parent, r.embeddedID, r.token,
-                    r.assistToken, r.shareableActivityToken);
+            // AOSP performLaunchActivity carries the initial ComponentCaller token through
+            // the stock attach signature; it must survive launch and local recreation.
+            activity.attach(activityContext, this, mInstrumentation, r.token, 0,
+                    currentApplication(), launchIntent, info, "", r.parent, r.embeddedID,
+                    r.lastNonConfigurationInstances,
+                    new Configuration(activityContext.getResources().getConfiguration()),
+                    r.referrer, null, null, null, r.assistToken, r.shareableActivityToken,
+                    r.initialCallerInfoAccessToken);
             activity.mReferrer = r.referrer;
             activity.mLastNonConfigurationInstances = r.lastNonConfigurationInstances;
             r.lastNonConfigurationInstances = null;
@@ -1453,6 +1459,7 @@ public final class ActivityThread extends ClientTransactionHandler {
         public Activity.NonConfigurationInstances lastNonConfigurationInstances;
         public IBinder assistToken;
         public IBinder shareableActivityToken;
+        public IBinder initialCallerInfoAccessToken;
         public Configuration overrideConfig;
         Configuration createdConfig;
         List<ResultInfo> pendingResults;
@@ -1476,6 +1483,7 @@ public final class ActivityThread extends ClientTransactionHandler {
             this.pendingIntents = pendingNewIntents;
             this.assistToken = assistToken;
             this.shareableActivityToken = shareableActivityToken;
+            this.initialCallerInfoAccessToken = initialCallerInfoAccessToken;
             this.overrideConfig = overrideConfig;
             this.activityWindowInfo = activityWindowInfo;
             if (activityWindowInfo != null) this.mActivityWindowInfo.set(activityWindowInfo);

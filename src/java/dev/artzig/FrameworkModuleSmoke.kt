@@ -3476,6 +3476,41 @@ internal object FrameworkModuleSmoke {
         raceController.activityDestroyed(raceTopToken)
         check(runCatching { ownedTask.taskInfo }.exceptionOrNull() is IllegalArgumentException)
 
+        // A child can be started from onCreate/onResume before the parent's oneway resume
+        // report arrives. That parent is a live result recipient, not a superseded launch.
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        check(raceLaunch("ReentrantParentOne") == ActivityManager.START_SUCCESS)
+        val reentrantParent = raceThreadOne.transactions.flatMap { it.transactionItems }
+            .filterIsInstance<LaunchActivityItem>().single().activityToken
+        raceController.activityPaused(raceFirstToken)
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        check(raceService.startActivity(null, callerPackage, null,
+            Intent().setComponent(component("ReentrantChildTwo")), null,
+            reentrantParent, null, 99, 0, null, null) == ActivityManager.START_SUCCESS)
+        val reentrantChild = raceThreadTwo.transactions.flatMap { it.transactionItems }
+            .filterIsInstance<LaunchActivityItem>().single().activityToken
+        raceController.activityResumed(reentrantParent, false)
+        check((raceThreadOne.transactions + raceThreadTwo.transactions).flatMap { it.transactionItems }
+            .none { it is DestroyActivityItem && it.activityToken == reentrantParent }) {
+            "late initial resume report destroyed an activity that had already launched its child"
+        }
+        raceController.activityStopped(reentrantParent, null, null, null)
+        raceController.activityResumed(reentrantChild, false)
+        check(raceService.getTasks(10, false, true, Display.DEFAULT_DISPLAY)
+            .single { it.topActivity == component("ReentrantChildTwo") }.numActivities == 2)
+        raceThreadOne.transactions.clear()
+        raceThreadTwo.transactions.clear()
+        check(raceController.finishActivity(reentrantChild, Activity.RESULT_OK,
+            Intent("dev.artzig.REENTRANT_RESULT"), 0))
+        raceController.activityPaused(reentrantChild)
+        val reentrantResult = raceThreadOne.transactions.single().transactionItems
+        check(reentrantResult.first() is ActivityResultItem && reentrantResult.last() is ResumeActivityItem)
+        raceController.activityResumed(reentrantParent, false)
+        check(raceThreadTwo.transactions.last().transactionItems.single() is DestroyActivityItem)
+        raceController.activityDestroyed(reentrantChild)
+
     }
 
     private fun testHostedAudioCapabilities() {

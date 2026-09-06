@@ -163,6 +163,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedAccessibilityManagerService.kt",
     "src/java/dev/artzig/system/HostedActivityManagerService.kt",
     "src/java/dev/artzig/system/HostedActivityManagerInternalService.kt",
+    "src/java/dev/artzig/system/ActivityCallerUris.kt",
     "src/java/dev/artzig/system/HostedActivityTaskManagerService.kt",
     "src/java/dev/artzig/system/HostedAlarmManagerService.kt",
     "src/java/dev/artzig/system/HostedAppOpsService.kt",

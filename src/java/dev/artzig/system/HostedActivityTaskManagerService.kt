@@ -43,6 +43,7 @@ import android.window.IWindowContainerToken
 import android.window.WindowContainerToken
 import com.android.internal.content.ReferrerIntent
 import com.android.server.LocalServices
+import com.android.server.uri.GrantUri
 import com.android.server.uri.NeededUriGrants
 import com.android.server.uri.UriGrantsManagerInternal
 import com.android.server.uri.UriPermissionOwner
@@ -137,6 +138,7 @@ internal class HostedActivityTaskManagerService(
         val ownerActivityToken: IBinder,
         val uid: Int,
         val packageName: String?,
+        val uris: ActivityCallerUris,
     )
 
     private data class ConfigurationDispatch(
@@ -395,12 +397,15 @@ internal class HostedActivityTaskManagerService(
         callerUid: Int,
         callerPackage: String?,
     ): Boolean {
+        val callerUris = if (callerUid != android.os.Process.INVALID_UID) {
+            ActivityCallerUris.capture(uriGrants(), data, callerUid)
+        } else null
         var deliverNow = false
         lateinit var result: ResultInfo
         val record = synchronized(lock) {
             activityForTokenLocked(activityToken)?.also {
                 val callerToken = if (callerUid != android.os.Process.INVALID_UID) {
-                    registerCallerIdentityLocked(it.token, callerUid, callerPackage)
+                    registerCallerIdentityLocked(it.token, callerUid, callerPackage, checkNotNull(callerUris))
                 } else {
                     null
                 }
@@ -494,6 +499,7 @@ internal class HostedActivityTaskManagerService(
         onRecordSelected: ((ActivityRecord) -> Unit)?,
         neededGrants: NeededUriGrants?,
     ): Int {
+        val callerUris = ActivityCallerUris.capture(uriGrants(), intent, effectiveUid)
         val component = ComponentName(info.packageName, info.name)
         intent.component = component
         var record: ActivityRecord? = null
@@ -504,6 +510,10 @@ internal class HostedActivityTaskManagerService(
         var createdTask = false
         synchronized(lock) {
             val source = resultTo?.let(activities::get)
+            // AOSP ActivityStarter keeps an activity that starts a child in its task. The
+            // request proves that source has run, even if its oneway resume acknowledgement
+            // has not reached this controller yet; it is no longer a cancelable stale launch.
+            source?.cancelIfStale = false
             val task = taskOverride ?: if (source != null &&
                 (intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK) == 0
             ) {
@@ -528,7 +538,7 @@ internal class HostedActivityTaskManagerService(
                 // predecessor's pause acknowledgement. The newer record supersedes that pending
                 // top; continue gating on the real resumed predecessor instead of launching both.
                 if (taskOverride == null && focused != null &&
-                    focused.state == STATE_INITIALIZING &&
+                    focused !== source && focused.state == STATE_INITIALIZING &&
                     focused.previousToStop != null
                 ) {
                     val predecessor = focused.previousToStop?.let(activities::get)?.takeIf {
@@ -568,7 +578,7 @@ internal class HostedActivityTaskManagerService(
                 task.lastActiveTime = android.os.SystemClock.elapsedRealtime()
                 activities[token] = checkNotNull(record)
                 callerIdentities[checkNotNull(record).initialCallerInfoAccessToken] =
-                    CallerIdentity(token, effectiveUid, effectivePackage)
+                    CallerIdentity(token, effectiveUid, effectivePackage, callerUris)
                 grantActivityUrisLocked(checkNotNull(record), neededGrants)
                 moveTaskToFrontLocked(task)
             }
@@ -585,7 +595,7 @@ internal class HostedActivityTaskManagerService(
                     return ActivityManager.START_CANCELED
                 }
                 grantActivityUrisLocked(top, neededGrants)
-                registerCallerIdentityLocked(top.token, effectiveUid, effectivePackage)
+                registerCallerIdentityLocked(top.token, effectiveUid, effectivePackage, callerUris)
             }
             schedule(
                 process,
@@ -824,8 +834,9 @@ internal class HostedActivityTaskManagerService(
         ownerActivityToken: IBinder,
         uid: Int,
         packageName: String?,
+        uris: ActivityCallerUris,
     ): IBinder = Binder().also {
-        callerIdentities[it] = CallerIdentity(ownerActivityToken, uid, packageName)
+        callerIdentities[it] = CallerIdentity(ownerActivityToken, uid, packageName, uris)
     }
 
     private fun callerIdentityLocked(
@@ -1566,11 +1577,22 @@ internal class HostedActivityTaskManagerService(
             uri: android.net.Uri?,
             modeFlags: Int,
             userId: Int,
-        ): Int = synchronized(lock) {
-            // ComponentCaller requires the caller's delivery-time URI access snapshot, which
-            // is not yet retained. An identity or the receiver's current grant is insufficient.
-            callerIdentityLocked(activityToken, callerToken)
-            PackageManager.PERMISSION_DENIED
+        ): Int {
+            // AOSP ActivityClientController checks the receiver's current full access before
+            // consulting the caller snapshot. Keep provider resolution outside the activity lock.
+            val grant = GrantUri(userId, uri, modeFlags)
+            if (!uriGrants().checkUriPermission(grant, Binder.getCallingUid(), modeFlags, true)) {
+                throw SecurityException("You don't have access to the content URI, hence can't " +
+                    "check if the caller has access to it: $uri")
+            }
+            return synchronized(lock) {
+                if (activityForTokenLocked(activityToken) == null) return@synchronized PackageManager.PERMISSION_DENIED
+                require(Intent.isAccessUriMode(modeFlags)) {
+                    "Mode flags are not access URI mode flags: $modeFlags"
+                }
+                if (callerIdentityLocked(activityToken, callerToken)?.uris?.check(grant, modeFlags) == true)
+                    PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
+            }
         }
 
         override fun setRequestedOrientation(token: IBinder?, requestedOrientation: Int) {
@@ -1659,6 +1681,8 @@ internal class HostedActivityTaskManagerService(
                 it.info.packageName,
                 UserHandle.getUserId(packages.getPackageUidInternal(it.info.packageName)))
         }
+        val callerUris = ActivityCallerUris.capture(uriGrants(), resultData,
+            packages.getPackageUidInternal(source.info.packageName))
         val finishing: List<ActivityRecord>
         val reveal: ActivityRecord?
         val removedTasks = ArrayList<Int>()
@@ -1688,6 +1712,7 @@ internal class HostedActivityTaskManagerService(
                         target.token,
                         packages.getPackageUidInternal(record.info.packageName),
                         record.info.packageName,
+                        callerUris,
                     )
                     result = ResultInfo(
                         record.resultWho,
