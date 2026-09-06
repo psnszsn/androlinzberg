@@ -1,6 +1,8 @@
 /* artzig stub (auto-generated placeholder; members added on demand). */
 package android.media;
 public class AudioManager {
+    /** Pinned AudioSystem.AUDIO_SESSION_ALLOCATE value. */
+    public static final int AUDIO_SESSION_ID_GENERATE = 0;
     /** AOSP IntDef markers for the volume flag parameters. */
     public @interface SystemVolumeFlags {}
     public @interface Flags {}

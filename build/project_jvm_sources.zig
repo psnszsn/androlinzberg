@@ -2,7 +2,6 @@
 //! Add new sources here so graph membership changes with this Zig file.
 pub const framework = [_][]const u8{
     "src/framework-stubs/android/companion/virtual/VirtualDeviceParams.java",
-    "src/framework-stubs/android/speech/tts/TextToSpeech.java",
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
     "src/framework-stubs/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java",
     "src/framework-stubs/android/app/AppOpsManager.java",
@@ -235,6 +234,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/SystemServer.kt",
     "src/java/dev/artzig/system/SystemServices.kt",
     "src/java/dev/artzig/systemtest/EchoService.kt",
+    "src/java/dev/artzig/systemtest/TtsProtocolTestEngine.kt",
+    "src/java/dev/artzig/systemtest/TextToSpeechSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/DevicePolicyManagerSystemSmoke.kt",
     "src/java/dev/artzig/systemtest/SystemTestClientA.kt",
     "src/java/dev/artzig/systemtest/ActivityUriGrantSystemSmoke.kt",

@@ -6,10 +6,11 @@ pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
 
 // SyncFence imports ImageWriter and TrafficStats imports MediaPlayer only for
-// Javadoc. Pinned SDK headers satisfy javac; the audit forbids runtime use.
+// Javadoc; TextToSpeech similarly imports VirtualDevice. Pinned SDK headers
+// satisfy javac; the audit forbids runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
-    .classes = [_][]const u8{ "android/media/ImageWriter", "android/media/MediaPlayer" },
+    .classes = [_][]const u8{ "android/media/ImageWriter", "android/media/MediaPlayer", "android/companion/virtual/VirtualDevice" },
 };
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
@@ -214,6 +215,12 @@ pub const aidl_exports = [_]struct { input: SourcePath, output: []const u8 }{
 pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkPolicyListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkPolicyManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechSession.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechSessionCallback.aidl" },
+
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsService.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsSession.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/StatsResult.aidl" },

@@ -27,6 +27,21 @@ in force.
 
 Follow-up changes in the current tree:
 
+- TextToSpeech, TtsEngines, UtteranceProgressListener and Voice now compile
+  verbatim, with five generated Binder interfaces and the stock TTS manager,
+  per-user session service and shared server infrastructure. SystemServices
+  starts the AOSP manager. Virtual-device playback uses the pinned absent-service
+  session value; VirtualDevice itself is a Javadoc-only SDK header and is barred
+  from runtime references. A separate-process protocol fixture verifies engine
+  discovery and binding, missing-engine failure, voice transport, ordered progress
+  and error callbacks, rate/pitch parameter merging, file-descriptor ownership and
+  shutdown. JVM/system suites, native/Binder/build checks and all 11 APK tests pass
+  (37 steps without runtime issues). The inventory is 45 stubs: 26 pending and
+  19 survivors. All six new archive inputs match pinned AOSP; AOSP is rebuilt and
+  pinned, and ART is unchanged. This supplies the client/session protocol, not a
+  synthesizer: TextToSpeechService still needs the media playback closure, and no
+  production speech engine is installed.
+
 - NetworkPolicyManager and NetworkPolicy now compile verbatim, with their
   generated Binder interfaces and platform flags. The hosted policy service
   exposes the default unrestricted state, preserves permission and UID validation

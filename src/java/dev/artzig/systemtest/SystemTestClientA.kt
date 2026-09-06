@@ -309,6 +309,7 @@ internal object SystemTestClientA {
             }
         }
         check(bInfo?.versionCode == 7 && bInfo?.versionName == "7.0", "cross-process getPackageInfo")
+        TextToSpeechSystemSmoke.run(context)
         val echoMatches = pm.queryIntentServices(Intent("dev.artzig.test.ECHO"), 0)
         check(
             echoMatches.size == 1 && echoMatches[0].serviceInfo.name == "dev.artzig.systemtest.EchoService",

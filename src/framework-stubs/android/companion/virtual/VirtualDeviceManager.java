@@ -13,6 +13,10 @@ public class VirtualDeviceManager {
         default void onVirtualDeviceCreated(int deviceId) {}
         default void onVirtualDeviceClosed(int deviceId) {}
     }
+    /** AOSP getAudioPlaybackSessionId: no virtual-device service is hosted. */
+    public int getAudioPlaybackSessionId(int deviceId) {
+        return android.media.AudioManager.AUDIO_SESSION_ID_GENERATE;
+    }
     public boolean isValidVirtualDeviceId(int deviceId) { return false; }
     public int getDevicePolicy(int deviceId, int policyType) { return 0; }
     public int getDeviceIdForDisplayId(int displayId) { return 0; }

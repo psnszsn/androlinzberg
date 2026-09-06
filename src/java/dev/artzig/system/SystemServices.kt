@@ -338,6 +338,7 @@ internal object SystemServices {
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
         manager.startService(com.android.server.NetworkScoreService.Lifecycle::class.java)
+        manager.startService(com.android.server.texttospeech.TextToSpeechManagerService::class.java)
         // SystemServer registers compatibility observers after the activity and
         // content services can receive package broadcasts and settings changes.
         platformCompat.registerPackageReceiver(context)

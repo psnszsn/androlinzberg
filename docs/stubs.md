@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 27 (budget 27). Survivors: 19. Total: 46.
+Pending: 26 (budget 26). Survivors: 19. Total: 45.
 
 ## Survivors
 
@@ -42,7 +42,7 @@ Pending: 27 (budget 27). Survivors: 19. Total: 46.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (369 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < MediaPlayer < Ringtone < AccessibilityShortcutControlle |
+| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (368 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioMixingRule < AudioSystem < MediaPlayer < Ringtone < AccessibilityShortcutControlle |
 
 ### appops
 
@@ -96,7 +96,6 @@ Pending: 27 (budget 27). Survivors: 19. Total: 46.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/service/voice/VisibleActivityInfo.java` | blocked | frameworks/base/core/java/android/service/voice/VisibleActivityInfo.java (370 to add); android.hardware.Camera.CameraInfo: JNI natives (via CameraInfo < CamcorderProfile < MediaRecorder < AudioRecord < HotwordDetectedResult < IMicrophoneHotwordDetectionVoiceInteractionCallback < IVoiceInteractionMan |
-| `android/speech/tts/TextToSpeech.java` | blocked | frameworks/base/core/java/android/speech/tts/TextToSpeech.java (11 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < TextToSpeech); android.companion.virtual.VirtualDevice: existing host cl |
 
 ### virtualdevice
 
@@ -104,7 +103,7 @@ Pending: 27 (budget 27). Survivors: 19. Total: 46.
 |---|---|---|
 | `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (344 to add, AIDL interface); android.companion.virtual.VirtualDevice: existing stub android.companion.virtual.VirtualDeviceParams lacks member POLICY_TYPE_CAMERA (via VirtualDevice < VirtualCameraConfig < IVirtualDevice); andro |
 | `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (363 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceManager); android.companion.virtual.Virtual |
-| `android/companion/virtual/VirtualDeviceParams.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add); android.companion.virtual.VirtualDeviceParams: existing stub android.media.AudioManager lacks member AUDIO_SESSION_ID_GENERATE (via VirtualDeviceParams); android.companion.virtual.sensor.VirtualSensor: existing  |
+| `android/companion/virtual/VirtualDeviceParams.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add); android.companion.virtual.sensor.VirtualSensor: existing host class android.companion.virtual.IVirtualDevice lacks method getDeviceId (via VirtualSensor < VirtualDeviceParams); android.companion.virtual.sensor.V |
 | `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceMan |
 
 ### webkit

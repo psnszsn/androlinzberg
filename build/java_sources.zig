@@ -1040,6 +1040,16 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/net/netstats/NetworkStatsDataMigrationUtils.java");
     try c.file("$CJ/android/net/NetworkPolicy.java");
     try c.file("$CJ/android/net/NetworkPolicyManager.java");
+    try c.file("$CJ/android/speech/tts/TextToSpeech.java");
+    try c.file("$CJ/android/speech/tts/TtsEngines.java");
+    try c.file("$CJ/android/speech/tts/UtteranceProgressListener.java");
+    try c.file("$CJ/android/speech/tts/Voice.java");
+    try c.file("$FB/services/core/java/com/android/server/infra/AbstractMasterSystemService.java");
+    try c.file("$FB/services/core/java/com/android/server/infra/AbstractPerUserSystemService.java");
+    try c.file("$FB/services/core/java/com/android/server/infra/ServiceNameResolver.java");
+    try c.file("$FB/services/texttospeech/java/com/android/server/texttospeech/TextToSpeechManagerPerUserService.java");
+    try c.file("$FB/services/texttospeech/java/com/android/server/texttospeech/TextToSpeechManagerService.java");
+
     try c.file("$CJ/com/android/internal/util/FileRotator.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/QosSessionAttributes.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/RouteInfo.java");
@@ -1155,7 +1165,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/com/android/internal/inputmethod", .{ .max_depth = 1 });
     try c.add("$FB/core/java/com/android/internal/protolog/common", .{});
     try c.file("$FB/core/java/com/android/internal/protolog/ProtoLogGroup.java");
-    try c.add("$FB/core/java/com/android/internal/infra", .{ .max_depth = 1, .not_names = &.{ "AbstractRemoteService.java", "ServiceConnector.java", "AbstractMultiplePendingRequestsRemoteService.java", "AbstractSinglePendingRequestRemoteService.java" } });
+    try c.add("$FB/core/java/com/android/internal/infra", .{ .max_depth = 1, .not_names = &.{ "ServiceConnector.java", "AbstractMultiplePendingRequestsRemoteService.java", "AbstractSinglePendingRequestRemoteService.java" } });
     try c.add("$FB/core/java/android/app/assist", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/accessibilityservice", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/textclassifier", .{ .max_depth = 1 });

@@ -16,6 +16,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name="dev.artzig.systemtest.TtsProtocolTestEngine" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.TTS_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
         <service android:name="dev.artzig.systemtest.EchoService" android:exported="true">
             <!-- The client binds with data "test://echo"; a real IntentFilter
                  only matches a data-carrying intent if it declares the scheme. -->
