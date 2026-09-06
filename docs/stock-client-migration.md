@@ -27,6 +27,23 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Activity launch/calling identity queries now use the pinned ActivityClient
+  transport. The controller records each delivery's share-identity choice and
+  applies the stock compatibility, same-UID, system-UID and platform-signature
+  checks to Activity and ComponentCaller getters. New intents retain their own
+  sharing decisions; result callers cannot opt into sharing. Calling activity
+  and package are exposed only for starts that requested a result. Parsed
+  package metadata now carries the platform-signature flag following
+  ScanPackageUtils, including packages installed before the platform.
+  Two new fixture apps use a separate public test key so cross-process tests
+  exercise restricted callers, alongside the platform-signed fixture exception.
+  Tests cover hidden/shared identity, same-UID access, new intents, recreation,
+  result callers and removed activity records. Java, JVM and system tests pass,
+  along with native, Binder, build checks and all 11 APK tests (37 steps
+  without runtime issues). The inventory stays at 50 stubs; both tarballs are
+  unchanged and current. Task-affinity reuse and deferred results for covered
+  recipients remain activity-controller work.
+
 - GLSurfaceView now uses verbatim AOSP Java, including GLThread, EGL helpers,
   debug wrappers, GLU and Matrix. Legacy EGLImpl and its Java handles/interfaces
   are also stock. Its 28-method Zig JNI adapter follows the pinned native
@@ -102,8 +119,8 @@ Follow-up changes in the current tree:
   now preserves the parent and its result delivery. JVM and separate-process
   regressions pass, along with all 11 APK integration tests (38 steps without
   runtime issues). The inventory remains 52 stubs; package inputs are unchanged
-  and both tarballs remain current. Task-affinity/NEW_TASK reuse and caller
-  identity-sharing permission gates remain incomplete in the hosted controller.
+  and both tarballs remain current. Task-affinity/NEW_TASK reuse remains incomplete in the hosted controller;
+  identity-sharing gates are covered by the later batch above.
 
 - PerfettoTrace and PerfettoTrackEventExtra now use their verbatim pinned AOSP
   sources, backed by the original JNI, libtracing_perfetto, and Linux Perfetto C

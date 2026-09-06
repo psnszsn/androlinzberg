@@ -139,6 +139,7 @@ internal class HostedActivityTaskManagerService(
         val uid: Int,
         val packageName: String?,
         val uris: ActivityCallerUris,
+        val shareIdentity: Boolean = false,
     )
 
     private data class ConfigurationDispatch(
@@ -500,6 +501,7 @@ internal class HostedActivityTaskManagerService(
         neededGrants: NeededUriGrants?,
     ): Int {
         val callerUris = ActivityCallerUris.capture(uriGrants(), intent, effectiveUid)
+        val shareIdentity = android.app.ActivityOptions.fromBundle(options)?.isShareIdentityEnabled == true
         val component = ComponentName(info.packageName, info.name)
         intent.component = component
         var record: ActivityRecord? = null
@@ -578,7 +580,7 @@ internal class HostedActivityTaskManagerService(
                 task.lastActiveTime = android.os.SystemClock.elapsedRealtime()
                 activities[token] = checkNotNull(record)
                 callerIdentities[checkNotNull(record).initialCallerInfoAccessToken] =
-                    CallerIdentity(token, effectiveUid, effectivePackage, callerUris)
+                    CallerIdentity(token, effectiveUid, effectivePackage, callerUris, shareIdentity)
                 grantActivityUrisLocked(checkNotNull(record), neededGrants)
                 moveTaskToFrontLocked(task)
             }
@@ -595,7 +597,7 @@ internal class HostedActivityTaskManagerService(
                     return ActivityManager.START_CANCELED
                 }
                 grantActivityUrisLocked(top, neededGrants)
-                registerCallerIdentityLocked(top.token, effectiveUid, effectivePackage, callerUris)
+                registerCallerIdentityLocked(top.token, effectiveUid, effectivePackage, callerUris, shareIdentity)
             }
             schedule(
                 process,
@@ -835,8 +837,9 @@ internal class HostedActivityTaskManagerService(
         uid: Int,
         packageName: String?,
         uris: ActivityCallerUris,
+        shareIdentity: Boolean = false,
     ): IBinder = Binder().also {
-        callerIdentities[it] = CallerIdentity(ownerActivityToken, uid, packageName, uris)
+        callerIdentities[it] = CallerIdentity(ownerActivityToken, uid, packageName, uris, shareIdentity)
     }
 
     private fun callerIdentityLocked(
@@ -846,6 +849,27 @@ internal class HostedActivityTaskManagerService(
         if (activityToken == null || callerToken == null) return null
         return callerIdentities[callerToken]?.takeIf {
             it.ownerActivityToken == activityToken && activities.containsKey(activityToken)
+        }
+    }
+
+    /** Pinned ActivityClientController.getUid/getPackage and canGetLaunchedFromLocked.
+     * The hosted installer runs under the system UID; there is no separately designated
+     * Android package-installer app. Platform certificates come from parsed package state.
+     * Query compatibility outside the activity lock, as it can cross the service boundary.
+     */
+    private fun visibleCallerIdentity(
+        activityToken: IBinder?, callerToken: IBinder?, activityCaller: Boolean,
+    ): CallerIdentity? {
+        val uid = Binder.getCallingUid()
+        val internal = UserHandle.getAppId(uid) == android.os.Process.SYSTEM_UID ||
+            packages.isPlatformSignedUid(uid)
+        val sharedIdentityEnabled = internal || android.app.compat.CompatChanges.isChangeEnabled(
+            259743961L /* ActivityClientController.ACCESS_SHARED_IDENTITY */, uid)
+        return synchronized(lock) {
+            val record = activityForTokenLocked(activityToken) ?: return@synchronized null
+            val token = if (activityCaller) callerToken else record.initialCallerInfoAccessToken
+            val identity = callerIdentityLocked(activityToken, token) ?: return@synchronized null
+            identity.takeIf { internal || (sharedIdentityEnabled && (it.shareIdentity || it.uid == uid)) }
         }
     }
 
@@ -1546,30 +1570,26 @@ internal class HostedActivityTaskManagerService(
         }
 
         override fun getCallingActivity(token: IBinder?): ComponentName? = synchronized(lock) {
-            activityForTokenLocked(token)?.resultTo?.let(activities::get)?.intent?.component
+            activityForTokenLocked(token)?.takeIf { it.requestCode >= 0 }
+                ?.resultTo?.let(activities::get)?.intent?.component
         }
 
         override fun getCallingPackage(token: IBinder?): String? = synchronized(lock) {
-            activityForTokenLocked(token)?.resultTo?.let(activities::get)?.info?.packageName
+            activityForTokenLocked(token)?.takeIf { it.requestCode >= 0 }
+                ?.resultTo?.let(activities::get)?.info?.packageName
         }
 
-        override fun getLaunchedFromUid(token: IBinder?): Int = synchronized(lock) {
-            activityForTokenLocked(token)?.launchedFromUid ?: -1
-        }
+        override fun getLaunchedFromUid(token: IBinder?): Int =
+            visibleCallerIdentity(token, null, false)?.uid ?: android.os.Process.INVALID_UID
 
-        override fun getLaunchedFromPackage(token: IBinder?): String? = synchronized(lock) {
-            activityForTokenLocked(token)?.launchedFromPackage
-        }
+        override fun getLaunchedFromPackage(token: IBinder?): String? =
+            visibleCallerIdentity(token, null, false)?.packageName
 
         override fun getActivityCallerUid(activityToken: IBinder?, callerToken: IBinder?): Int =
-            synchronized(lock) {
-                callerIdentityLocked(activityToken, callerToken)?.uid ?: -1
-            }
+            visibleCallerIdentity(activityToken, callerToken, true)?.uid ?: android.os.Process.INVALID_UID
 
-        override fun getActivityCallerPackage(
-            activityToken: IBinder?,
-            callerToken: IBinder?,
-        ): String? = synchronized(lock) { callerIdentityLocked(activityToken, callerToken)?.packageName }
+        override fun getActivityCallerPackage(activityToken: IBinder?, callerToken: IBinder?): String? =
+            visibleCallerIdentity(activityToken, callerToken, true)?.packageName
 
         override fun checkActivityCallerContentUriPermission(
             activityToken: IBinder?,

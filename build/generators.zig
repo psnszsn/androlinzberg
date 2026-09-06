@@ -52,9 +52,11 @@ pub const FixtureApks = struct {
     test_b: LazyPath,
     example: LazyPath,
     permissions: LazyPath,
+    identity_a: LazyPath,
+    identity_b: LazyPath,
 
-    pub fn all(self: FixtureApks) [4]LazyPath {
-        return .{ self.test_a, self.test_b, self.example, self.permissions };
+    pub fn all(self: FixtureApks) [6]LazyPath {
+        return .{ self.test_a, self.test_b, self.example, self.permissions, self.identity_a, self.identity_b };
     }
 };
 
@@ -695,13 +697,14 @@ fn signApk(
     unsigned: LazyPath,
     output_name: []const u8,
     v1_signing: bool,
+    key_name: []const u8,
 ) LazyPath {
     const sign = b.addSystemCommand(&.{ "java", "-jar" });
     sign.addFileArg(aosp.path("prebuilts/sdk/tools/linux/lib/apksigner.jar"));
     sign.addArgs(&.{ "sign", "--key" });
-    sign.addFileArg(b.path("tools/signing/azk-platform.pk8"));
+    sign.addFileArg(b.path(b.fmt("tools/signing/{s}.pk8", .{key_name})));
     sign.addArg("--cert");
-    sign.addFileArg(b.path("tools/signing/azk-platform.x509.pem"));
+    sign.addFileArg(b.path(b.fmt("tools/signing/{s}.x509.pem", .{key_name})));
     sign.addArgs(&.{
         "--v1-signing-enabled", if (v1_signing) "true" else "false",
         "--v2-signing-enabled", "true",
@@ -759,7 +762,7 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
         run.setName(b.fmt("filter generated {s}", .{path}));
         java_sources.append(b.allocator, filtered) catch @panic("OOM");
     }
-    const signed = signApk(b, aosp, unsigned, "framework-res.apk", false);
+    const signed = signApk(b, aosp, unsigned, "framework-res.apk", false, "azk-platform");
     const result = java_sources.toOwnedSlice(b.allocator) catch @panic("OOM");
     var outputs: std.ArrayList(LazyPath) = .empty;
     outputs.appendSlice(b.allocator, result) catch @panic("OOM");
@@ -811,6 +814,8 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
         "dev.artzig.test.b",
         "org.example",
         "org.example.permissions",
+        "dev.artzig.identity.a",
+        "dev.artzig.identity.b",
     };
     var outputs: [packages.len]LazyPath = undefined;
     inline for (packages, 0..) |package, index| {
@@ -835,7 +840,7 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
         link.setName(b.fmt("aapt2 link fixture {s}", .{package}));
         // Keep a real v1 signature alongside v2 for strict JAR verification
         // and signature-stripping regression tests.
-        const signed = signApk(b, aosp, unsigned, package ++ ".apk", comptime std.mem.eql(u8, package, "org.example.permissions"));
+        const signed = signApk(b, aosp, unsigned, package ++ ".apk", comptime std.mem.eql(u8, package, "org.example.permissions"), if (index >= 4) "azk-untrusted" else "azk-platform");
         outputs[index] = signed;
     }
     _ = exposePaths(b, "gen-fixture-apks", "Build and sign fixture APKs", &outputs);
@@ -844,6 +849,8 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
         .test_b = outputs[1],
         .example = outputs[2],
         .permissions = outputs[3],
+        .identity_a = outputs[4],
+        .identity_b = outputs[5],
     };
 }
 

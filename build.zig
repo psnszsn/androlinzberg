@@ -673,6 +673,8 @@ pub fn build(b: *std.Build) void {
     system_test_run.addFileArg(java.fixtures.test_a);
     system_test_run.addFileArg(java.fixtures.test_b);
     system_test_run.addFileArg(ndk_system_client.getEmittedBin());
+    system_test_run.addFileArg(java.fixtures.identity_a);
+    system_test_run.addFileArg(java.fixtures.identity_b);
     system_test_run.run.setName("run hosted system-service tests");
     b.step("system-test", "Run multi-process hosted system-service tests").dependOn(&system_test_run.run.step);
 

@@ -105,6 +105,8 @@ internal object ActivityUriGrantSystemSmoke {
     private const val GRANT = 9
     private const val REVOKE = 10
     private const val CALLER_PERMISSION = 11
+    private const val IDENTITY = 12
+    private const val STOP = 13
     private const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
     private const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
     val activities = HashMap<Int, UriGrantActivity>()
@@ -117,13 +119,14 @@ internal object ActivityUriGrantSystemSmoke {
         val handler = Handler(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-                if (code !in START..CALLER_PERMISSION) return false
+                if (code !in START..STOP) return false
                 data.enforceInterface(name)
                 val args = checkNotNull(data.readBundle())
                 val action = FutureTask {
                     val id = args.getInt("id", -1)
                     when (code) {
                         CALLER_APIS -> setCallerApis(args.getBoolean("enabled"))
+                        STOP -> handler.postDelayed({ Runtime.getRuntime().exit(0) }, 100)
                         GRANT, REVOKE -> {
                             val uri = Uri.parse(checkNotNull(args.getString("uri")))
                             val target = args.getString("target")
@@ -134,9 +137,10 @@ internal object ActivityUriGrantSystemSmoke {
                         }
                         START -> {
                             val intent = checkNotNull(args.getParcelable("intent", Intent::class.java))
-                            if (id < 0) context.startActivity(intent) else {
+                            val options = args.getBundle("options")
+                            if (id < 0) context.startActivity(intent, options) else {
                                 checkNotNull(activities[id]).startActivityForResult(intent,
-                                    args.getInt("request", -1))
+                                    args.getInt("request", -1), options)
                             }
                         }
                         RECREATE -> checkNotNull(activities[id]).recreate()
@@ -155,7 +159,19 @@ internal object ActivityUriGrantSystemSmoke {
                             } else context.contentResolver.releasePersistableUriPermission(uri, READ)
                         }
                     }
-                    if (code == CALLER_PERMISSION) {
+                    if (code == IDENTITY) {
+                        val activity = activities[id]
+                        val kind = args.getString("kind")
+                        val caller = kind?.let { checkNotNull(callers[id to it]) }
+                        Bundle().apply {
+                            putInt("callerUid", caller?.uid ?: Process.INVALID_UID)
+                            putString("callerPackage", caller?.getPackage())
+                            putInt("launchUid", activity?.launchedFromUid ?: Process.INVALID_UID)
+                            putString("launchPackage", activity?.launchedFromPackage)
+                            putString("callingPackage", activity?.callingPackage)
+                            putParcelable("callingActivity", activity?.callingActivity)
+                        }
+                    } else if (code == CALLER_PERMISSION) {
                         val caller = checkNotNull(callers[id to args.getString("kind")])
                         Bundle().apply {
                             putInt("permission", caller.checkContentUriPermission(
@@ -173,6 +189,7 @@ internal object ActivityUriGrantSystemSmoke {
                         }
                     } else Bundle(observations[id] ?: Bundle()).apply {
                         putBoolean("live", activities.containsKey(id))
+                        putInt("uid", Process.myUid())
                     }
                 }
                 handler.post(action)
@@ -277,6 +294,10 @@ internal object ActivityUriGrantSystemSmoke {
             }
         start(1, launch, 42)
         awaitState(B, 2) { it.getBoolean("resumed") && it.getInt("creates") == 1 }
+        val platformIdentity = call(B, IDENTITY, args(2))
+        check(platformIdentity.getInt("launchUid") == call(A, STATUS).getInt("uid"))
+        check(platformIdentity.getString("launchPackage") == A)
+        check(platformIdentity.getString("callingPackage") == A)
         requireAccess(B, true, data, clip, nested)
         requireAccess(B, false, "$data/child", extra)
         call(B, RECREATE, args(2))
@@ -326,6 +347,80 @@ internal object ActivityUriGrantSystemSmoke {
         System.err.println("system-test: activity URI grants cover launch, ClipData, rejection, " +
             "recreation, new intents, shared owners, results, persistence and task removal")
     }
+
+    /** Run from a separately signed process; both peers share a test key but not a UID. */
+    fun verifyCallerIdentity() {
+        val source = "dev.artzig.identity.a"
+        val target = "dev.artzig.identity.b"
+        fun identity(pkg: String, id: Int, kind: String = "initial") = call(pkg, IDENTITY,
+            args(id).apply { putString("kind", kind) })
+        fun launch(pkg: String, parent: Int, to: String, id: Int, shared: Boolean = false,
+            request: Int = -1, flags: Int = 0) = call(pkg, START, args(parent).apply {
+                putParcelable("intent", activityIntent(to, id).addFlags(flags))
+                putInt("request", request)
+                putBundle("options", android.app.ActivityOptions.makeBasic().apply {
+                    setShareIdentityEnabled(shared)
+                }.toBundle())
+            })
+        fun expected(snapshot: Bundle, uid: Int, pkg: String?, launching: Boolean = true) {
+            check(snapshot.getInt("callerUid") == uid && snapshot.getString("callerPackage") == pkg) {
+                "caller identity: $snapshot expected $uid/$pkg"
+            }
+            if (launching) check(snapshot.getInt("launchUid") == uid &&
+                snapshot.getString("launchPackage") == pkg) { "launch identity: $snapshot" }
+        }
+        call(source, CALLER_APIS, Bundle().apply { putBoolean("enabled", true) })
+        call(target, CALLER_APIS, Bundle().apply { putBoolean("enabled", true) })
+        val sourceUid = call(source, STATUS).getInt("uid")
+        val targetUid = call(target, STATUS).getInt("uid")
+        check(sourceUid != targetUid && sourceUid != Process.SYSTEM_UID && targetUid != Process.SYSTEM_UID)
+        try {
+            launch(source, -1, source, 101, flags = Intent.FLAG_ACTIVITY_NEW_TASK)
+            awaitState(source, 101) { it.getBoolean("resumed") }
+            expected(identity(source, 101), sourceUid, source)
+            check(identity(source, 101).getString("callingPackage") == null)
+            launch(source, 101, target, 102)
+            awaitState(target, 102) { it.getBoolean("resumed") }
+            expected(identity(target, 102), Process.INVALID_UID, null)
+            check(identity(target, 102).getString("callingPackage") == null)
+            call(target, RECREATE, args(102))
+            awaitState(target, 102) { it.getInt("creates") == 2 && it.getBoolean("resumed") }
+            expected(identity(target, 102), Process.INVALID_UID, null)
+            launch(source, 101, target, 102, shared = true, flags = Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            awaitState(target, 102) { it.getInt("newIntents") == 1 }
+            expected(identity(target, 102, "new"), sourceUid, source, launching = false)
+            expected(identity(target, 102), Process.INVALID_UID, null)
+            launch(source, 101, target, 102, flags = Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            awaitState(target, 102) { it.getInt("newIntents") == 2 }
+            expected(identity(target, 102, "new"), Process.INVALID_UID, null)
+            call(target, FINISH, args(102))
+            awaitState(source, 101) { it.getBoolean("resumed") }
+            launch(source, 101, target, 103, shared = true, request = 42)
+            awaitState(target, 103) { it.getBoolean("resumed") }
+            val shared = identity(target, 103)
+            expected(shared, sourceUid, source)
+            check(shared.getString("callingPackage") == source)
+            check(shared.getParcelable("callingActivity", ComponentName::class.java) ==
+                activityIntent(source, 101).component)
+            call(target, FINISH, args(103))
+            awaitState(source, 101) { it.getInt("resultRequest") == 42 }
+            expected(identity(source, 101, "result"), Process.INVALID_UID, null, launching = false)
+            // The retained object loses access once its owning activity record is removed.
+            expected(identity(target, 103), Process.INVALID_UID, null)
+            launch(source, 101, source, 104, request = 43)
+            awaitState(source, 104) { it.getBoolean("resumed") }
+            expected(identity(source, 104), sourceUid, source)
+            call(source, FINISH, args(104))
+            awaitState(source, 101) { it.getInt("resultRequest") == 43 }
+            expected(identity(source, 101, "result"), sourceUid, source)
+            System.err.println("system-test: caller identity hides unshared cross-UID callers, retains per-delivery sharing, same-UID access, results and recreation")
+        } finally {
+            for (pkg in listOf(target, source)) call(pkg, CALLER_APIS,
+                Bundle().apply { putBoolean("enabled", false) })
+        }
+    }
+
+    fun stopIdentityHost() { call("dev.artzig.identity.b", STOP) }
 
     private fun verifyCallerSnapshots() {
         fun toggle(pkg: String, enabled: Boolean) = call(pkg, CALLER_APIS,

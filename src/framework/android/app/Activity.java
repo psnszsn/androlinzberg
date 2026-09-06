@@ -263,8 +263,8 @@ public class Activity extends ContextWrapper implements Window.Callback,
     final android.os.Handler mHandler = new android.os.Handler();
     /** AOSP Activity.mFragments: stock legacy fragments hosted behind the Activity seam. */
     final FragmentController mFragments = FragmentController.createController(new HostCallbacks());
-    /** AOSP Activity.getLaunchedFromPackage: the activity task manager knows the launcher; this host has no record. */
-    public String getLaunchedFromPackage() { return null; }
+    /** Pinned Activity identity queries delegate to the stock ActivityClient transport. */
+    public String getLaunchedFromPackage() { return ActivityClient.getInstance().getLaunchedFromPackage(getActivityToken()); }
     /** AOSP Activity.requestWindowFeature: a feature request on the activity window. */
     public final boolean requestWindowFeature(int featureId) { return getWindow().requestFeature(featureId); }
     /** AOSP Activity.onActivityResult: results reach the activity through dispatchActivityResult. */
@@ -505,9 +505,9 @@ public class Activity extends ContextWrapper implements Window.Callback,
                 ? new android.net.Uri.Builder().scheme("android-app").authority(mReferrer).build()
                 : null;
     }
-    public int getLaunchedFromUid() { return android.os.Process.myUid(); }
-    public String getCallingPackage() { return null; }
-    public android.content.ComponentName getCallingActivity() { return null; }
+    public int getLaunchedFromUid() { return ActivityClient.getInstance().getLaunchedFromUid(getActivityToken()); }
+    public String getCallingPackage() { return ActivityClient.getInstance().getCallingPackage(mToken); }
+    public android.content.ComponentName getCallingActivity() { return ActivityClient.getInstance().getCallingActivity(mToken); }
     public void setShowWhenLocked(boolean showWhenLocked) {}
     public void setTurnScreenOn(boolean turnScreenOn) {}
     public boolean hasWindowFocus() { return true; }

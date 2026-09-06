@@ -1,6 +1,6 @@
 //! Multi-process hosted system-service test driver.
 //!
-//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-client>
+//! Usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-client> <identity-a.apk> <identity-b.apk>
 //!
 //! Starts one broker and one system process, then two ART app peers: package
 //! `dev.artzig.test.b` hosting a real `android.app.Service` through the
@@ -18,8 +18,8 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 6) {
-        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client>\n", .{});
+    if (args.len < 8) {
+        std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk>\n", .{});
         return error.InvalidArguments;
     }
     const launcher = args[1];
@@ -27,6 +27,8 @@ pub fn main(init: std.process.Init) !void {
     const fixture_a = args[3];
     const fixture_b = args[4];
     const ndk_client = args[5];
+    const identity_a = args[6];
+    const identity_b = args[7];
 
     var random: [8]u8 = undefined;
     io.random(&random);
@@ -45,6 +47,8 @@ pub fn main(init: std.process.Init) !void {
     // The peers install their packages from build-time fixture APKs.
     try env.put("AZK_FIXTURE_APK_A", fixture_a);
     try env.put("AZK_FIXTURE_APK_B", fixture_b);
+    try env.put("AZK_FIXTURE_IDENTITY_A", identity_a);
+    try env.put("AZK_FIXTURE_IDENTITY_B", identity_b);
     // Hermetic: a nonexistent display keeps the hosted clipboard monitor off
     // the developer's real Wayland clipboard (an empty value would fall back
     // to wayland-0; parallel test sessions would cross-talk through it).
@@ -105,12 +109,16 @@ pub fn main(init: std.process.Init) !void {
 
     var failed = false;
     failed = !expectExit(io, &client, "client") or failed;
+    peer_pids[1].store(0, .release);
     failed = !expectExit(io, &ndkc, "ndk system client") or failed;
+    peer_pids[2].store(0, .release);
     failed = !expectExit(io, &host, "service host") or failed;
+    peer_pids[0].store(0, .release);
     if (!failed) {
         var crashing = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.RuntimeCrashSystemSmoke", "dev.artzig.test.a");
         peer_pids[0].store(crashing.id.?, .release);
         const crash_term = try crashing.wait(io);
+        peer_pids[0].store(0, .release);
         const killed = switch (crash_term) {
             .signal => |signal| signal == .KILL,
             else => false,
@@ -123,7 +131,18 @@ pub fn main(init: std.process.Init) !void {
             var verifier = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.RuntimeCrashSystemSmoke", "dev.artzig.test.a");
             peer_pids[0].store(verifier.id.?, .release);
             failed = !expectExit(io, &verifier, "runtime crash verifier") or failed;
+            peer_pids[0].store(0, .release);
         }
+    }
+    if (!failed) {
+        var identity_host = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.CallerIdentitySystemSmoke", "dev.artzig.identity.b");
+        peer_pids[0].store(identity_host.id.?, .release);
+        var identity_client = try spawnPeer(io, &env, launcher, "dev.artzig.systemtest.CallerIdentitySystemSmoke", "dev.artzig.identity.a");
+        peer_pids[1].store(identity_client.id.?, .release);
+        failed = !expectExit(io, &identity_client, "caller identity client") or failed;
+        peer_pids[1].store(0, .release);
+        failed = !expectExit(io, &identity_host, "caller identity host") or failed;
+        peer_pids[0].store(0, .release);
     }
     if (expired.load(.acquire)) {
         std.debug.print("system-test: timed out after {d}s\n", .{timeout_seconds});

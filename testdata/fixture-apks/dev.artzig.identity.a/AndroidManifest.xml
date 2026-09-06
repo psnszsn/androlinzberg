@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.artzig.identity.a">
+    <application android:hasCode="false" android:debuggable="true">
+        <activity android:name="dev.artzig.systemtest.BUriGrantActivity" android:exported="true" />
+    </application>
+</manifest>

@@ -249,6 +249,14 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         state.userState.setInstalled(true)
         state.userState.setFirstInstallTimeMillis(System.currentTimeMillis())
         packages[pkg.packageName] = state
+        // ScanPackageUtils.applyPolicy marks packages whose certificates match
+        // the platform. Recompute when the platform arrives after an app too.
+        val platformSigning = packages["android"]?.signingDetails
+        for (installed in packages.values) {
+            (installed.pkg as PackageImpl).setSignedWithPlatformKey(
+                installed.packageName == "android" ||
+                    (platformSigning != null && platformSigning.signaturesMatchExactly(installed.signingDetails)))
+        }
         componentResolver.addAllComponents(pkg, false, null, this)
         // A package installed before its permission's definer was denied that
         // permission at its own install (the definition did not exist yet).
@@ -349,6 +357,11 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
 
     fun getPackageUidInternal(packageName: String): Int =
         synchronized(lock) { packages[packageName]?.appId ?: -1 }
+
+    /** ActivityClientController's internal-caller check uses the parsed platform-signature flag. */
+    internal fun isPlatformSignedUid(uid: Int): Boolean = synchronized(lock) {
+        packagesByUid[uid]?.pkg?.isSignedWithPlatformKey == true
+    }
 
     /** Hosted identity map used by PackageManagerInternal.isSameApp. */
     fun isSameAppInternal(packageName: String?, uid: Int): Boolean {
