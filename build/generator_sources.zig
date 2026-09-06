@@ -5,11 +5,11 @@ const std = @import("std");
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
 
-// SyncFence imports these types only for Javadoc. Exact pinned SDK headers satisfy
-// javac without importing the camera stack. The bytecode audit forbids runtime use.
+// SyncFence imports ImageWriter only for Javadoc. Its exact pinned SDK header
+// satisfies javac without the producer stack; the audit forbids runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
-    .classes = [_][]const u8{ "android/media/Image", "android/media/ImageWriter" },
+    .classes = [_][]const u8{"android/media/ImageWriter"},
 };
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
@@ -130,6 +130,8 @@ pub const xsd = [_]Xsd{
 };
 
 pub const CppAidl = struct {
+    backend: enum { cpp, ndk } = .cpp,
+    vintf_stable: bool = false,
     root: []const u8,
     input: []const u8,
     output: ?[]const u8 = null,
@@ -144,6 +146,7 @@ pub const cpp_aidl = [_]CppAidl{
     .{ .root = "frameworks/native/libs/input", .input = "android/os/InputEventInjectionResult.aidl" },
     .{ .root = "frameworks/native/libs/gui/aidl", .input = "android/gui/OverlayProperties.aidl", .output = "android/gui/OverlayProperties.cpp" },
     .{ .root = "frameworks/native/libs/gui/aidl", .input = "android/gui/LutProperties.aidl", .output = "android/gui/LutProperties.cpp" },
+    .{ .backend = .ndk, .vintf_stable = true, .root = "hardware/interfaces/graphics/common/aidl", .input = "android/hardware/graphics/common/Dataspace.aidl" },
 };
 
 /// Soong libaconfig_java_device_paths_src: insert the pinned partition paths into its template.

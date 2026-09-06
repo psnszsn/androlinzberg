@@ -27,6 +27,20 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Image and PublicFormatUtils now use verbatim AOSP Java, with the original
+  format JNI and libui PublicFormat.cpp. Image's former compile-only SDK header
+  is removed; ImageWriter remains Javadoc-only and barred from runtime use.
+  Native public/HAL conversions now preserve JPEG, HEIC, depth and raw format
+  distinctions instead of returning identity formats and unknown dataspaces.
+  The Dataspace header comes from the pinned VINTF-stable AIDL's NDK backend.
+  Tests cover crop clipping/copies, dataspace, closed-image behavior, fence
+  defaults, format round trips and unknown-format fallbacks. JVM, system,
+  native, Binder and build checks pass, together with all 11 APK tests
+  (37 steps without runtime issues). This supplies the abstract Image base
+  contract, not ImageReader/ImageWriter producers or codecs. All selected
+  sources were already packaged and match pinned AOSP; both tarballs remain
+  current and the inventory stays at 49 stubs.
+
 - Activity component callback registration now follows the pinned compatibility
   rule and uses stock ComponentCallbacksController. Modern applications own
   callbacks on the activity, including registration before attachment; older

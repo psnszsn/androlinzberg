@@ -290,6 +290,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     g.add(b.path(""), &our_srcs, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform") }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_PublicFormatUtils.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
 
     // Zig's bundled LLD rejects valid weak-hidden libc++ COMDAT relocations in
     // Skia before resolving them locally. Keep Zig's compiler and libc++, but

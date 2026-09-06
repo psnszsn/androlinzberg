@@ -332,14 +332,15 @@ fn aidlCpp(
         const root = aosp.path(entry.root);
         const run = b.addRunArtifact(runner);
         run.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
-        run.addArgs(&.{ "--lang=cpp", "-I" });
+        run.addArgs(&.{ b.fmt("--lang={s}", .{@tagName(entry.backend)}), "-I" });
         run.addDirectoryArg(root);
+        if (entry.vintf_stable) run.addArgs(&.{ "--structured", "--stability=vintf" });
         run.addArg("-h");
         const headers = run.addOutputDirectoryArg(b.fmt("aidl-cpp-headers-{d}", .{index}));
         run.addArg("-o");
         const sources = run.addOutputDirectoryArg(b.fmt("aidl-cpp-sources-{d}", .{index}));
         run.addFileArg(root.path(b, entry.input));
-        run.setName(b.fmt("generate C++ AIDL {s}", .{entry.input}));
+        run.setName(b.fmt("generate {s} AIDL {s}", .{ @tagName(entry.backend), entry.input }));
         roots.append(b.allocator, headers) catch @panic("OOM");
         files.append(b.allocator, sources) catch @panic("OOM");
     }

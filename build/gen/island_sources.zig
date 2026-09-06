@@ -90,7 +90,6 @@ pub const skia_extra_srcs = [_][]const u8{
 pub const hostgraphics_srcs = [_][]const u8{
     "ADisplay.cpp",
     "ANativeWindow.cpp",
-    "PublicFormat.cpp",
 };
 
 pub const jni_srcs = [_][]const u8{
@@ -164,6 +163,7 @@ pub const nativehelper_srcs = [_][]const u8{
 };
 
 pub const fn_ui_srcs = [_][]const u8{
+    "PublicFormat.cpp",
     "ColorSpace.cpp",
     "Transform.cpp",
     "Region.cpp",

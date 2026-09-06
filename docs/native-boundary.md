@@ -207,7 +207,16 @@ HWUI and JNI share its actual layout. `tests/native/FenceTest.cpp`, invoked by
 the Kotlin framework smoke, exercises readiness, timeout, shared ownership,
 Parcel descriptor lifetime and invalid flattening input. Its pipe fixture tests
 libsync's polling contract; it does not simulate sync-file merge/timestamp
-ioctls. Java `SyncFence` still needs the Image/ImageWriter compilation closure.
+ioctls. Java `SyncFence` and its JNI use pinned AOSP directly.
+
+`Image` and `PublicFormatUtils` now compile from pinned AOSP. The latter uses
+its original three JNI methods and libui's real `PublicFormat.cpp`, replacing
+hostgraphics' identity format mapping and always-unknown dataspace. The
+graphics-common Dataspace enum is generated from its VINTF-stable AIDL with
+the NDK backend. `Image` supplies the abstract base contract (crop rectangles,
+dataspace and validity checks); concrete ImageReader/ImageWriter producers
+remain unavailable. Only ImageWriter still needs a Javadoc-only SDK header,
+which the bytecode audit forbids using at runtime or packaging.
 
 These files can use HWUI, Skia, and AOSP C++ types. Put new platform behavior in
 Zig behind a small C interface. Update this document and the build audit when
