@@ -1264,5 +1264,6 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("runtime_init_jni.zig").register(env) catch return -1;
     @import("egl_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("egl_extensions_jni.zig").register(env) catch return -1;
+    @import("legacy_egl_jni.zig").register(env, &g_platform_library) catch return -1;
     return 0;
 }

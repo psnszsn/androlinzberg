@@ -1,4 +1,4 @@
-//! EGL platform seam for the stock EGL14 JNI client. The pinned Android EGL
+//! EGL platform seam for stock EGL14 and legacy EGL clients. The pinned Android EGL
 //! entry points delegate configuration/surface ownership to the platform driver.
 //! Mesa GBM offers window configs but no pbuffers; provide offscreen drawables
 //! using GBM buffers, preserving pbuffer dimensions, no-op swaps, and deferred
@@ -37,6 +37,7 @@ extern "EGL" fn eglSwapBuffers(Handle, Handle) u32;
 extern "EGL" fn eglGetCurrentSurface(i32) Handle;
 extern "EGL" fn eglMakeCurrent(Handle, Handle, Handle, Handle) u32;
 extern "EGL" fn eglReleaseThread() u32;
+extern "EGL" fn eglInitialize(Handle, ?*i32, ?*i32) u32;
 extern "EGL" fn eglTerminate(Handle) u32;
 extern "gbm" fn gbm_surface_create(Handle, u32, u32, u32, u32) Handle;
 extern "gbm" fn gbm_surface_destroy(Handle) void;
@@ -46,6 +47,8 @@ var gbm_device: std.atomic.Value(usize) = .init(0);
 threadlocal var host_error: i32 = success;
 var mutex: Io.Mutex = .init;
 var surfaces: std.AutoHashMapUnmanaged(usize, Surface) = .empty;
+const Display = struct { refs: i32, major: i32, minor: i32 };
+var displays: std.AutoHashMapUnmanaged(usize, Display) = .empty;
 const Surface = struct {
     display: Handle,
     buffer: Handle,
@@ -274,9 +277,44 @@ pub fn releaseThread(io: Io) u32 {
     if (result != 0) releaseBindings(old);
     return result;
 }
+// Pinned egl_display_t::initialize/terminate reference-count Android client
+// initializations. Serialize the driver transition under the existing Io mutex
+// so repeated initializers see the established version and only the last
+// terminator destroys display resources. GLVND itself does not count these calls.
+pub fn initialize(io: Io, display: Handle, major: ?*i32, minor: ?*i32) u32 {
+    mutex.lockUncancelable(io);
+    defer mutex.unlock(io);
+    const entry = displays.getOrPut(alloc, @intFromPtr(display)) catch {
+        fail(bad_alloc);
+        return 0;
+    };
+    if (!entry.found_existing) {
+        var version_major: i32 = 0;
+        var version_minor: i32 = 0;
+        if (eglInitialize(display, &version_major, &version_minor) == 0) {
+            _ = displays.remove(@intFromPtr(display));
+            return 0;
+        }
+        entry.value_ptr.* = .{ .refs = 0, .major = version_major, .minor = version_minor };
+    }
+    entry.value_ptr.refs += 1;
+    if (major) |value| value.* = entry.value_ptr.major;
+    if (minor) |value| value.* = entry.value_ptr.minor;
+    return 1;
+}
+pub fn initCount(io: Io, display: Handle) i32 {
+    mutex.lockUncancelable(io);
+    defer mutex.unlock(io);
+    return if (displays.get(@intFromPtr(display))) |state| state.refs else 0;
+}
 pub fn terminate(io: Io, display: Handle) u32 {
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
+    if (displays.getPtr(@intFromPtr(display))) |state| {
+        state.refs -= 1;
+        if (state.refs > 0) return 1;
+        _ = displays.remove(@intFromPtr(display));
+    }
     const result = eglTerminate(display);
     if (result != 0) {
         while (true) {
@@ -302,7 +340,6 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
     const api = struct {
         extern "gbm" fn gbm_create_device(c_int) Handle;
         extern "gbm" fn gbm_device_destroy(Handle) void;
-        extern "EGL" fn eglInitialize(Handle, ?*i32, ?*i32) u32;
         extern "EGL" fn eglBindAPI(u32) u32;
         extern "EGL" fn eglCreateContext(Handle, Handle, Handle, ?[*]const i32) Handle;
         extern "EGL" fn eglDestroyContext(Handle, Handle) u32;
@@ -317,8 +354,16 @@ test "GBM pbuffers render, preserve pixels across swaps, and survive deferred de
     const device = api.gbm_create_device(file.handle) orelse return error.SkipZigTest;
     defer api.gbm_device_destroy(device);
     const display = defaultDisplay(device);
-    if (api.eglInitialize(display, null, null) == 0) return error.SkipZigTest;
+    if (initialize(io, display, null, null) == 0) return error.SkipZigTest;
     defer _ = terminate(io, display);
+    try std.testing.expectEqual(@as(i32, 1), initCount(io, display));
+    var version_major: i32 = -1;
+    var version_minor: i32 = -1;
+    try std.testing.expectEqual(@as(u32, 1), initialize(io, display, &version_major, &version_minor));
+    try std.testing.expect(version_major >= 1 and version_minor >= 0);
+    try std.testing.expectEqual(@as(i32, 2), initCount(io, display));
+    try std.testing.expectEqual(@as(u32, 1), terminate(io, display));
+    try std.testing.expectEqual(@as(i32, 1), initCount(io, display));
     var config: Handle = null;
     var count: i32 = 0;
     const attrs = [_]i32{ 0x3040, 4, 0x3024, 8, 0x3021, 8, surface_type, window_bit | pbuffer_bit, none };

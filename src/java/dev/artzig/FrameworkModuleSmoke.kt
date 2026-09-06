@@ -204,6 +204,7 @@ internal object FrameworkModuleSmoke {
         testStockDebugMemory()
         testStockEgl()
         StockLegacyGlesSmoke.run()
+        StockLegacyEglSmoke.run()
         testStockGraphicBuffers()
         testStockOverlayProperties()
         testStockSurfaceSynchronization()
@@ -214,6 +215,7 @@ internal object FrameworkModuleSmoke {
         testStockProtoLog()
         testStockActivityOptions()
         testStockInstrumentation()
+        StockGlSurfaceViewSmoke.run()
         StockActivitySupportSmoke.run(::drainMainQueue)
         StockGraphicsEnvironmentSmoke.run()
         StockFenceSmoke.run()
@@ -4147,24 +4149,6 @@ internal object FrameworkModuleSmoke {
             120,
             0,
         )
-        val glView = GLSurfaceView(context, null)
-        glView.setRenderer(object : GLSurfaceView.Renderer {
-            override fun onSurfaceCreated(
-                gl: javax.microedition.khronos.opengles.GL10?,
-                config: javax.microedition.khronos.egl.EGLConfig?,
-            ) = Unit
-            override fun onSurfaceChanged(
-                gl: javax.microedition.khronos.opengles.GL10?,
-                width: Int,
-                height: Int,
-            ) = Unit
-            override fun onDrawFrame(gl: javax.microedition.khronos.opengles.GL10?) = Unit
-        })
-        glView.setEGLContextClientVersion(2)
-        glView.setPreserveEGLContextOnPause(true)
-        glView.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY)
-        check(glView.getRenderMode() == GLSurfaceView.RENDERMODE_WHEN_DIRTY)
-        check(glView.getPreserveEGLContextOnPause())
         val callbacks = mutableListOf<String>()
         val surfaceView = SurfaceView(context).apply {
             visibility = View.INVISIBLE

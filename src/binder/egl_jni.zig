@@ -170,7 +170,7 @@ fn initialize(env: Env, _: jni.jclass, dpy: jni.jobject, major: jni.jintArray, m
     defer a.deinit(true);
     const b = intArray(env, minor, minor_offset, "minor", "minorOffset", true, 1) orelse return jni.JNI_FALSE;
     defer b.deinit(true);
-    return boolean(eglInitialize(display, a.one(), b.one()));
+    return boolean(backend.initialize(frameworkIo(), display, a.one(), b.one()));
 }
 fn queryString(env: Env, _: jni.jclass, dpy: jni.jobject, name: jni.jint) callconv(.c) jni.jstring {
     const display = handle(env, .display, dpy);

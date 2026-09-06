@@ -54,6 +54,12 @@ zig build -j10 cpp-audit
   remain owned by their Java streams. Binder object counts come from the hosted
   Binder runtime. Android-only debuggerd, malloc_debug, memtrack, and heap-tracing
   facilities retain failure results or explicit unsupported diagnostics.
+- `src/binder/legacy_egl_jni.zig` registers the 28 pinned EGLImpl methods. Its
+  Java objects and EGL 1.0 reporting remain stock; Android display reference
+  counts are shared with EGL14 in `egl_backend.zig`, including concurrent
+  initialization and final-owner cleanup. GLSurfaceView uses its stock GLThread;
+  the regression renders through its public pbuffer surface factory while
+  native-window presentation remains at the existing compositor boundary.
 - `src/binder/egl_jni.zig` registers the stock EGL14 native methods and handle
   classes. `egl_backend.zig` uses the existing GBM render device and supplies
   pbuffer drawables over GBM buffers, including pixel preservation on swaps and

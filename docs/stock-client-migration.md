@@ -27,6 +27,24 @@ in force.
 
 Follow-up changes in the current tree:
 
+- GLSurfaceView now uses verbatim AOSP Java, including GLThread, EGL helpers,
+  debug wrappers, GLU and Matrix. Legacy EGLImpl and its Java handles/interfaces
+  are also stock. Its 28-method Zig JNI adapter follows the pinned native
+  contract over the existing EGL backend, including EGL 1.0 version reporting,
+  handle/configuration arrays, errors and unsupported pixmap behavior. Display
+  initialization is reference-counted across legacy EGL and EGL14 callers,
+  preserving resources until the last owner terminates the display.
+  Tests cover concurrent owners, pbuffer pixels, renderer callback ordering,
+  queued work, dirty-mode redraws, pause/resume with and without preserved
+  contexts, surface replacement, and render-thread cleanup. The GLSurfaceView
+  test uses its public EGLWindowSurfaceFactory to create real pbuffers;
+  default native-window presentation still needs an excluded host compositor
+  adapter. Java, JVM, separate-process system, native, Binder and build checks
+  pass, as do all 11 APK tests (37 steps without runtime issues). All 20 new
+  Java sources were already packaged and match AOSP byte for byte; both
+  tarballs remain current. The inventory falls to 50 stubs: 27 pending and
+  23 survivors, with 43 outside com.android.server (20 pending, 23 survivors).
+
 - The pinned GLImpl and four remaining Khronos GLES1 interfaces now compile
   directly with AOSP's GLImpl JNI. Native patch 32 retains the original JNI
   array bases for positioned heap buffers, guards failed acquisitions, and
@@ -146,9 +164,9 @@ Follow-up changes in the current tree:
   That native prerequisite left the inventory at 57 stubs. Java SyncFence is
   now stock as described above; its camera imports require only Javadoc headers.
 
-- The latest validated inventory is 51 stubs: 28 pending and 23 documented
-  survivors, down from 134 at the start of this follow-up. Of these, 44 are
-  outside `com.android.server` (21 pending, 23 survivors). The inventory does
+- The latest validated inventory is 50 stubs: 27 pending and 23 documented
+  survivors, down from 134 at the start of this follow-up. Of these, 43 are
+  outside `com.android.server` (20 pending, 23 survivors). The inventory does
   not count the adapted Activity and ActivityThread implementations and is not
   an overall completion percentage. Those classes and the remaining service
   and native dependencies still prevent completion of the stock-client goal.
