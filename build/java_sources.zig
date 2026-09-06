@@ -1265,6 +1265,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/app/NavItemSelectedListener.java");
     try c.file("$CJ/com/android/internal/app/WindowDecorActionBar.java");
     try c.file("$CJ/com/android/internal/widget/ActionBarContainer.java");
+    try c.file("$CJ/com/android/internal/widget/ActionBarView.java");
     try c.file("$CJ/com/android/internal/widget/ActionBarOverlayLayout.java");
     try c.file("$CJ/android/app/LocalActivityManager.java");
     try c.file("$CJ/android/app/ActivityGroup.java");

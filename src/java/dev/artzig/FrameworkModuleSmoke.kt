@@ -215,6 +215,7 @@ internal object FrameworkModuleSmoke {
         testStockInstrumentation()
         StockActivitySupportSmoke.run(::drainMainQueue)
         StockGraphicsEnvironmentSmoke.run()
+        StockFenceSmoke.run()
         testSplashScreenLifecycle()
         testStockWindowContexts()
         testQueuedRootInput()

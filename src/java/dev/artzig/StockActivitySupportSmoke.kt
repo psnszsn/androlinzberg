@@ -19,9 +19,27 @@ import java.io.StringWriter
 import java.util.concurrent.TimeUnit
 
 internal object StockActivitySupportSmoke {
+    private fun testLegacyActionBar(base: Context) {
+        val themed = android.view.ContextThemeWrapper(base, android.R.style.Theme_Holo)
+        val window = com.android.internal.policy.PhoneWindow(themed)
+        try {
+            window.setTitle("Legacy action bar")
+            window.setContentView(android.widget.TextView(themed).apply { text = "Content" })
+            val bar = checkNotNull(window.decorView.findViewById<
+                com.android.internal.widget.ActionBarView>(com.android.internal.R.id.action_bar))
+            check(bar.title.toString() == "Legacy action bar")
+            window.setTitle("Updated title")
+            check(bar.title.toString() == "Updated title")
+        } finally {
+            window.destroy()
+        }
+        System.err.println("stock-action-bar: Holo PhoneWindow inflation and title updates passed")
+    }
+
     fun run(pump: () -> Unit) {
         val base = HostContexts.systemContext(
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
+        testLegacyActionBar(base)
         val provider = object : dev.artzig.systemtest.TestProvider() {
             override fun query(uri: Uri, projection: Array<String>?, selection: String?,
                 selectionArgs: Array<String>?, sortOrder: String?): Cursor {

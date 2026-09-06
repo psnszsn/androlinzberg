@@ -181,6 +181,15 @@ Run `zig build -j6 binder-cpp-test` for generated IFpsListener Bp/Bn transaction
 Parcel ownership, status, callbacks, identity and death regressions. The original
 optional hardware experiment remains under `tools/prototypes/binder-facade`.
 
+The native island uses pinned libui `Fence.cpp` and Linux `libsync` for fence
+waits, descriptor ownership and flattening. An isolated copy of stock
+`ui/Fence.h` precedes the hostgraphics headers for every translation unit, so
+HWUI and JNI share its actual layout. `tests/native/FenceTest.cpp`, invoked by
+the Kotlin framework smoke, exercises readiness, timeout, shared ownership,
+Parcel descriptor lifetime and invalid flattening input. Its pipe fixture tests
+libsync's polling contract; it does not simulate sync-file merge/timestamp
+ioctls. Java `SyncFence` still needs the Image/ImageWriter compilation closure.
+
 These files can use HWUI, Skia, and AOSP C++ types. Put new platform behavior in
 Zig behind a small C interface. Update this document and the build audit when
 you add an application-owned C++ file.

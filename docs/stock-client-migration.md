@@ -27,6 +27,17 @@ in force.
 
 Follow-up changes in the current tree:
 
+- HWUI now uses stock native libui Fence and Linux libsync, replacing the
+  hostgraphics fence placeholder. Every native translation unit sees the same
+  stock layout. Tests cover timeouts, readiness, shared/duplicate ownership,
+  Parcel descriptor lifetime and malformed flattening input. The JVM regression
+  also exposed a missing ActionBarView; its pinned source is now selected, with
+  explicit Holo PhoneWindow inflation and title-update coverage. JVM, system,
+  native, Binder and build checks pass, as do all 11 integration tests (38 steps
+  without runtime issues) and the hardware-buffer Canvas/pixel-readback probe.
+  Java SyncFence remains blocked by Image/ImageWriter's compilation closure;
+  this native prerequisite does not reduce the 57-stub inventory.
+
 - The latest validated inventory is 57 stubs: 28 pending and 29 documented
   survivors, down from 134 at the start of this follow-up. Of these, 49 are
   outside `com.android.server` (21 pending, 28 survivors). The inventory does

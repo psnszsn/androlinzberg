@@ -90,7 +90,6 @@ pub const skia_extra_srcs = [_][]const u8{
 pub const hostgraphics_srcs = [_][]const u8{
     "ADisplay.cpp",
     "ANativeWindow.cpp",
-    "Fence.cpp",
     "PublicFormat.cpp",
 };
 

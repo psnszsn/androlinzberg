@@ -124,6 +124,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Isolate the pinned ashmem UAPI header from the rest of bionic's libc headers.
     const ashmem_headers = b.addWriteFiles();
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/ashmem.h"), "linux/ashmem.h");
+    // Every HWUI translation unit must see the real Fence layout. Preserve the
+    // other hostgraphics headers while overriding only ui/Fence.h.
+    _ = ashmem_headers.addCopyFile(o.aosp.path(b, "frameworks/native/libs/ui/include/ui/Fence.h"), "ui/Fence.h");
     var common_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     common_includes.append(b.allocator, ashmem_headers.getDirectory()) catch @panic("oom");
     common_includes.append(b.allocator, b.path("src/native/binder/include")) catch @panic("oom");
@@ -248,6 +251,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/minikin"), &minikin_srcs, &.{ o.aosp.path(b, "frameworks/minikin/libs"), o.aosp.path(b, "frameworks/minikin/libs/minikin") }, &.{});
     g.add(o.aosp.path(b, "external/skia"), &skia_extra_srcs, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hostgraphics"), &gen.hostgraphics_srcs, &.{}, &.{});
+    g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &.{"Fence.cpp"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
+    g.add(o.aosp.path(b, "system/core/libsync"), &.{"sync.c"}, &.{o.aosp.path(b, "system/core/libsync/include")}, &.{});
+    g.add(b.path("tests/native"), &.{"FenceTest.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/native/libs/ui"), &gen.fn_ui_srcs, &.{o.aosp.path(b, "frameworks/native/libs/ui/include_private")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/androidfw"), &gen.androidfw_srcs, &.{ o.aosp.path(b, "frameworks/base/libs/androidfw/include_pathutils"), zip_inc, zip_incfs_inc, binder_inc }, &.{});
     g.add(o.aosp.path(b, "system/libziparchive"), &gen.ziparchive_srcs, &.{ zip_inc, zip_incfs_inc, o.aosp.path(b, "system/libziparchive") }, &.{ "-DINCFS_SUPPORT_DISABLED=1", "-DZIPARCHIVE_DISABLE_CALLBACK_API=1", "-DZLIB_CONST", "-D_FILE_OFFSET_BITS=64" });

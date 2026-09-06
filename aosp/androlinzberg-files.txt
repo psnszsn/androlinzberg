@@ -368,6 +368,8 @@ F aosp prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/gu
 D aosp system/core/libcutils
 D aosp system/core/libprocessgroup/include
 D aosp system/core/libsystem/include
+D aosp system/core/libsync/include
+F aosp system/core/libsync/sync.c
 D aosp system/core/libutils
 D aosp system/incremental_delivery/incfs/util
 D aosp system/libbase
@@ -3132,6 +3134,7 @@ F aosp frameworks/base/core/java/android/app/Dialog.java
 F aosp frameworks/base/core/java/com/android/internal/app/NavItemSelectedListener.java
 F aosp frameworks/base/core/java/com/android/internal/app/WindowDecorActionBar.java
 F aosp frameworks/base/core/java/com/android/internal/widget/ActionBarContainer.java
+F aosp frameworks/base/core/java/com/android/internal/widget/ActionBarView.java
 F aosp frameworks/base/core/java/com/android/internal/widget/ActionBarOverlayLayout.java
 F aosp frameworks/base/core/java/android/app/LocalActivityManager.java
 F aosp frameworks/base/core/java/android/app/ActivityGroup.java

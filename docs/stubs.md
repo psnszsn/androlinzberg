@@ -17,7 +17,7 @@ Pending: 28 (budget 28). Survivors: 29. Total: 57.
 | Stub | Reason | Audit |
 |---|---|---|
 | `android/hardware/Camera.java` | legacy camera client is JNI/cameraserver-backed and no camera service is hosted | blocked |
-| `android/hardware/SyncFence.java` | window seam (JNI natives) | blocked |
+| `android/hardware/SyncFence.java` | stock Image/ImageWriter camera compilation closure is unavailable; native libui Fence is now compiled | blocked |
 | `android/hardware/camera2/CameraManager.java` | camera stack (cameraserver, CameraMetadataNative JNI, frameworks/av camera AIDL) not hosted; android.telecom.Connection javadoc import | blocked |
 | `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | generated callback requires the legacy libhwbinder runtime | no-aosp-source |
 | `android/hardware/usb/UsbManager.java` | no hosted IUsbManager; device connection/request use JNI and legacy HIDL plus gadget AIDL generation is unwired | blocked |
