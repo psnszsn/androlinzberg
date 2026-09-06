@@ -76,6 +76,7 @@ internal object SystemTestHostB {
         HardwareBufferSystemSmoke.publish()
         SurfaceSyncSystemSmoke.publish()
         ActivityRecreationSystemSmoke.publish()
+        ActivityUriGrantSystemSmoke.publish(context)
         // A real android.os.Messenger over the binder stack: replies what+1 /
         // arg1*2 through msg.replyTo (client A asserts the cross-process round trip).
         val messengerHandler = android.os.Handler(Looper.getMainLooper()) { msg ->

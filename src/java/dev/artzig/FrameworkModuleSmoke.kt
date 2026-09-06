@@ -267,45 +267,47 @@ internal object FrameworkModuleSmoke {
         testHostedVirtualDeviceDefaults()
         testPictureInPictureContracts()
         testRemoteActionContract()
-        testHostedActivityTaskServiceTransactions()
-        testHostedAudioCapabilities()
-        testAsyncMediaCodecFlushRestartsOnePump()
-        testMediaMetricsContracts()
-        testWebViewCallbackContracts()
-        testAlertDialogContracts()
-        testDialogLifecycleAndStateContracts()
-        testSurfaceViewLifecycle()
-        testNetworkServiceDiscovery()
-        testHostedInputEvents()
-        testEditableTextSavedStateRoundTrips()
-        testHostedInputDispatch()
-        testHostedPhysicalInputLifecycle()
-        testHostedInputHierarchyDispatch()
-        testHostedMouseSeekBarDrag()
-        testHostedInputCancelOnInterception()
-        testHostedInputSiblingDispatch()
-        testHostedInputWindowRouting()
-        testWindowPresentation()
-        StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
-            testLocalActivityManagerLifecycleAndRecreation(it)
-        }
-        testActivityThreadResultDelivery()
-        testInstrumentationResultTransactions()
-        testActivityThreadTransactionCompletion()
-        testActivityThreadConfigurationChange()
-        testActivityThreadRelaunch()
-        // Pinned ActivityGroup overrides the caller-aware result signature.
-        withContentUriPermissionApis(true) {
+        com.android.server.uri.StockUriPermissionSmoke.withService {
+            testHostedActivityTaskServiceTransactions()
+            testHostedAudioCapabilities()
+            testAsyncMediaCodecFlushRestartsOnePump()
+            testMediaMetricsContracts()
+            testWebViewCallbackContracts()
+            testAlertDialogContracts()
+            testDialogLifecycleAndStateContracts()
+            testSurfaceViewLifecycle()
+            testNetworkServiceDiscovery()
+            testHostedInputEvents()
+            testEditableTextSavedStateRoundTrips()
+            testHostedInputDispatch()
+            testHostedPhysicalInputLifecycle()
+            testHostedInputHierarchyDispatch()
+            testHostedMouseSeekBarDrag()
+            testHostedInputCancelOnInterception()
+            testHostedInputSiblingDispatch()
+            testHostedInputWindowRouting()
+            testWindowPresentation()
             StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
-                testActivityGroupLifecycleStateAndResults(it)
+                testLocalActivityManagerLifecycleAndRecreation(it)
             }
-        }
-        testLegacyFragmentTransactionsAndRecreation()
-        StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
-            testLegacyFragmentHostedResultsAndRetention(it)
-        }
-        StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
-            testActivityLifecycle(it)
+            testActivityThreadResultDelivery()
+            testInstrumentationResultTransactions()
+            testActivityThreadTransactionCompletion()
+            testActivityThreadConfigurationChange()
+            testActivityThreadRelaunch()
+            // Pinned ActivityGroup overrides the caller-aware result signature.
+            withContentUriPermissionApis(true) {
+                StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
+                    testActivityGroupLifecycleStateAndResults(it)
+                }
+            }
+            testLegacyFragmentTransactionsAndRecreation()
+            StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
+                testLegacyFragmentHostedResultsAndRetention(it)
+            }
+            StockActivityFixture(checkNotNull(args.getOrNull(1)), ::drainMainQueue).use {
+                testActivityLifecycle(it)
+            }
         }
         testHostedPermissionGrants()
         println("hosted framework module smoke: PASS")

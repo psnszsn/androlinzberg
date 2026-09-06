@@ -56,7 +56,9 @@ internal object SystemTestClientA {
         check(installer.installPackage(fixture, null) == "dev.artzig.test.a")
         val context: android.content.Context =
             android.app.HostedServiceClient.attachApplication("dev.artzig.test.a")
-        check(ApplicationBindingEvents.events == listOf("application:attach", "application:create"))
+        check(ApplicationBindingEvents.events == listOf("application:attach",
+            "provider:SecretProvider", "application:create"))
+        ActivityUriGrantSystemSmoke.publish(context)
         thread(name = "system-test", isDaemon = true) {
             try {
                 run(context)
@@ -203,6 +205,7 @@ internal object SystemTestClientA {
         HardwareBufferSystemSmoke.verify()
         SurfaceSyncSystemSmoke.verify()
         ActivityRecreationSystemSmoke.verify(context)
+        ActivityUriGrantSystemSmoke.verify()
         testCompanionAssociations(context)
         val networkScores = context.getSystemService(android.net.NetworkScoreManager::class.java)
         check(networkScores != null && networkScores === context.getSystemService(android.content.Context.NETWORK_SCORE_SERVICE),

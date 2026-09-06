@@ -618,8 +618,16 @@ public class Activity extends ContextWrapper implements Window.Callback,
     public static final int FULLSCREEN_MODE_REQUEST_ENTER = 1;
     public interface ScreenCaptureCallback { void onScreenCaptured(); }
 
-    /** Pinned Activity.finish: the task manager accepts the finish and owns result routing. */
+    public static final int DONT_FINISH_TASK_WITH_ACTIVITY = 0;
+    public static final int FINISH_TASK_WITH_ROOT_ACTIVITY = 1;
+    public static final int FINISH_TASK_WITH_ACTIVITY = 2;
+
+    /** Pinned Activity.finish(int)/finishAndRemoveTask. The containing Activity still needs
+     * its voice-interaction and window closure; the stock service owns task/result routing. */
     public void finish() {
+        finish(DONT_FINISH_TASK_WITH_ACTIVITY);
+    }
+    private void finish(int finishTask) {
         if (mParent != null) {
             mParent.finishFromChild(this);
         } else {
@@ -630,14 +638,22 @@ public class Activity extends ContextWrapper implements Window.Callback,
                 resultData = mResultData;
             }
             if (resultData != null) resultData.prepareToLeaveProcess(this);
-            if (ActivityClient.getInstance().finishActivity(mToken, resultCode, resultData, 0)) {
+            if (ActivityClient.getInstance().finishActivity(mToken, resultCode, resultData, finishTask)) {
                 mFinished = true;
             }
         }
+        getAutofillClientController().onActivityFinish(mIntent);
     }
     /** AOSP's default finishes the parent; ActivityGroup subclasses may route to their manager. */
     @Deprecated public void finishFromChild(Activity child) { finish(); }
-    public void finishAndRemoveTask() {}
+    public void finishAndRemoveTask() { finish(FINISH_TASK_WITH_ROOT_ACTIVITY); }
+    private android.view.autofill.AutofillClientController mAutofillClientController;
+    private android.view.autofill.AutofillClientController getAutofillClientController() {
+        if (mAutofillClientController == null) {
+            mAutofillClientController = new android.view.autofill.AutofillClientController(this);
+        }
+        return mAutofillClientController;
+    }
     public boolean moveTaskToBack(boolean nonRoot) { return false; }
     public ActivityInfo getActivityInfo() { return mActivityInfo; }
     public void runOnUiThread(Runnable action) { action.run(); }

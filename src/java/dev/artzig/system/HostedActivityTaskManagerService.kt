@@ -42,6 +42,10 @@ import android.window.ActivityWindowInfo
 import android.window.IWindowContainerToken
 import android.window.WindowContainerToken
 import com.android.internal.content.ReferrerIntent
+import com.android.server.LocalServices
+import com.android.server.uri.NeededUriGrants
+import com.android.server.uri.UriGrantsManagerInternal
+import com.android.server.uri.UriPermissionOwner
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -69,10 +73,9 @@ internal class HostedActivityTaskManagerService(
         const val STATE_RESUMED = 1
         const val STATE_PAUSED = 2
         const val STATE_STOPPED = 3
-        // Activity.finish(int) modes are hidden from the current hosted Activity surface.
-        const val DONT_FINISH_TASK_WITH_ACTIVITY = 0
-        const val FINISH_TASK_WITH_ROOT_ACTIVITY = 1
-        const val FINISH_TASK_WITH_ACTIVITY = 2
+        const val DONT_FINISH_TASK_WITH_ACTIVITY = Activity.DONT_FINISH_TASK_WITH_ACTIVITY
+        const val FINISH_TASK_WITH_ROOT_ACTIVITY = Activity.FINISH_TASK_WITH_ROOT_ACTIVITY
+        const val FINISH_TASK_WITH_ACTIVITY = Activity.FINISH_TASK_WITH_ACTIVITY
     }
 
     private class ProcessRecord(
@@ -127,6 +130,7 @@ internal class HostedActivityTaskManagerService(
         var sceneTransitionInfo: android.app.ActivityOptions.SceneTransitionInfo? = null
         var launchScheduled = false
         var cancelIfStale = true
+        var uriPermissions: UriPermissionOwner? = null
     }
 
     private data class CallerIdentity(
@@ -143,6 +147,7 @@ internal class HostedActivityTaskManagerService(
 
     private val lock = Any()
     private val nextTaskId = AtomicInteger(1)
+    private val nextLaunchRequestId = AtomicInteger(1)
     private val processes = LinkedHashMap<IBinder, ProcessRecord>()
     private val activities = LinkedHashMap<IBinder, ActivityRecord>()
     /** ComponentCaller identities are scoped to the receiving activity record. */
@@ -439,18 +444,56 @@ internal class HostedActivityTaskManagerService(
         if (callingPackage != null && !packages.isSameAppInternal(callingPackage, callingUid)) {
             throw SecurityException("uid $callingUid does not own $callingPackage")
         }
-        val effectiveUid = callingUid
-        val effectivePackage = callingPackage
-        if (!info.exported && callingUid != targetUid && callingUid != android.os.Process.SYSTEM_UID) {
-            return ActivityManager.START_PERMISSION_DENIED
+        // AOSP ActivityStarter.Request.resolveActivity collects grants before changing the
+        // activity graph. UriGrantsManagerService owns URI traversal and access validation.
+        val grants = uriGrants()
+        val requestId = nextLaunchRequestId.getAndIncrement()
+        val callerActivityName = synchronized(lock) {
+            resultTo?.let(activities::get)?.info?.name
         }
-        val permission = info.permission
-        if (permission != null && callingUid != targetUid && callingUid != android.os.Process.SYSTEM_UID &&
-            packages.checkUidPermission(permission, callingUid) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return ActivityManager.START_PERMISSION_DENIED
+        var successful = false
+        try {
+            val needed = if (android.security.Flags.contentUriPermissionApis()) {
+                grants.checkGrantUriPermissionFromIntent(intent, callingUid, info.packageName,
+                    UserHandle.getUserId(targetUid), info.requireContentUriPermissionFromCaller,
+                    requestId)
+            } else {
+                grants.checkGrantUriPermissionFromIntent(intent, callingUid, info.packageName,
+                    UserHandle.getUserId(targetUid))
+            }
+            if (!info.exported && callingUid != targetUid && callingUid != android.os.Process.SYSTEM_UID) {
+                return ActivityManager.START_PERMISSION_DENIED
+            }
+            val permission = info.permission
+            if (permission != null && callingUid != targetUid && callingUid != android.os.Process.SYSTEM_UID &&
+                packages.checkUidPermission(permission, callingUid) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return ActivityManager.START_PERMISSION_DENIED
+            }
+            return startResolvedActivity(intent, info, callingUid, callingPackage, resultTo,
+                resultWho, requestCode, options, taskOverride, cancelIfStale, onRecordSelected,
+                needed).also { successful = ActivityManager.isStartResultSuccessful(it) }
+        } finally {
+            // AOSP ActivityStarter.execute also clears unsuccessful launch accounting.
+            grants.notifyActivityLaunchRequestCompleted(requestId, successful, intent.action,
+                callingUid, callerActivityName, targetUid, info.name, resultTo != null)
         }
+    }
 
+    private fun startResolvedActivity(
+        intent: Intent,
+        info: ActivityInfo,
+        effectiveUid: Int,
+        effectivePackage: String?,
+        resultTo: IBinder?,
+        resultWho: String?,
+        requestCode: Int,
+        options: Bundle?,
+        taskOverride: TaskRecord?,
+        cancelIfStale: Boolean,
+        onRecordSelected: ((ActivityRecord) -> Unit)?,
+        neededGrants: NeededUriGrants?,
+    ): Int {
         val component = ComponentName(info.packageName, info.name)
         intent.component = component
         var record: ActivityRecord? = null
@@ -526,6 +569,7 @@ internal class HostedActivityTaskManagerService(
                 activities[token] = checkNotNull(record)
                 callerIdentities[checkNotNull(record).initialCallerInfoAccessToken] =
                     CallerIdentity(token, effectiveUid, effectivePackage)
+                grantActivityUrisLocked(checkNotNull(record), neededGrants)
                 moveTaskToFrontLocked(task)
             }
         }
@@ -537,6 +581,10 @@ internal class HostedActivityTaskManagerService(
         deliveredToTop?.let { top ->
             val process = top.process ?: return ActivityManager.START_CANCELED
             val callerToken = synchronized(lock) {
+                if (activities[top.token] !== top || top.finishing) {
+                    return ActivityManager.START_CANCELED
+                }
+                grantActivityUrisLocked(top, neededGrants)
                 registerCallerIdentityLocked(top.token, effectiveUid, effectivePackage)
             }
             schedule(
@@ -580,12 +628,7 @@ internal class HostedActivityTaskManagerService(
         }
         if (!accepted) {
             synchronized(lock) {
-                activities.remove(launch.token)
-                callerIdentities.entries.removeAll {
-                    it.value.ownerActivityToken == launch.token
-                }
-                launch.task.activities.remove(launch)
-                if (launch.task.activities.isEmpty()) tasks.remove(launch.task.taskId)
+                removeActivityRecordLocked(launch)
             }
             return ActivityManager.START_CANCELED
         }
@@ -744,8 +787,25 @@ internal class HostedActivityTaskManagerService(
     private fun activityForTokenLocked(token: IBinder?): ActivityRecord? =
         token?.let(activities::get)
 
+    private fun uriGrants(): UriGrantsManagerInternal =
+        checkNotNull(LocalServices.getService(UriGrantsManagerInternal::class.java))
+
+    /** AOSP ActivityRecord.getUriPermissionsLocked/deliverNewIntentLocked/finishActivityResults.
+     * The owner belongs to the server record and survives client configuration recreation. */
+    private fun grantActivityUrisLocked(record: ActivityRecord, needed: NeededUriGrants?) {
+        if (needed == null) return
+        val grants = uriGrants()
+        val owner = record.uriPermissions ?: UriPermissionOwner(grants, record).also {
+            record.uriPermissions = it
+        }
+        grants.grantUriPermissionUncheckedFromIntent(needed, owner)
+    }
+
     private fun removeActivityRecordLocked(record: ActivityRecord): Int? {
         if (activities.remove(record.token) !== record) return null
+        // AOSP ActivityRecord.removeFromHistory: only final record removal releases grants.
+        record.uriPermissions?.removeUriPermissions()
+        record.uriPermissions = null
         callerIdentities.entries.removeAll { it.value.ownerActivityToken == record.token }
         for (other in activities.values) {
             if (other.previousToStop == record.token) other.previousToStop = null
@@ -1507,8 +1567,8 @@ internal class HostedActivityTaskManagerService(
             modeFlags: Int,
             userId: Int,
         ): Int = synchronized(lock) {
-            // Hosted AMS currently tracks no URI grants. A valid caller identity therefore does
-            // not imply a grant; malformed/cross-activity caller tokens are denied identically.
+            // ComponentCaller requires the caller's delivery-time URI access snapshot, which
+            // is not yet retained. An identity or the receiver's current grant is insufficient.
             callerIdentityLocked(activityToken, callerToken)
             PackageManager.PERMISSION_DENIED
         }
@@ -1587,6 +1647,18 @@ internal class HostedActivityTaskManagerService(
         resultData: Intent?,
         finishTask: Int,
     ): Boolean {
+        if (resultData?.hasFileDescriptors() == true) {
+            throw IllegalArgumentException("File descriptors passed in Intent")
+        }
+        // AOSP ActivityClientController.finishActivity/ATMS.collectGrants validate the
+        // result under the Binder caller's identity before acquiring the activity lock.
+        val source = synchronized(lock) { activityForTokenLocked(token) } ?: return false
+        val destination = synchronized(lock) { source.resultTo?.let(activities::get) }
+        val resultGrants = destination?.let {
+            uriGrants().checkGrantUriPermissionFromIntent(resultData, Binder.getCallingUid(),
+                it.info.packageName,
+                UserHandle.getUserId(packages.getPackageUidInternal(it.info.packageName)))
+        }
         val finishing: List<ActivityRecord>
         val reveal: ActivityRecord?
         val removedTasks = ArrayList<Int>()
@@ -1594,7 +1666,7 @@ internal class HostedActivityTaskManagerService(
         var result: ResultInfo? = null
         synchronized(lock) {
             val record = activityForTokenLocked(token) ?: return false
-            if (record.finishing) return false
+            if (record !== source || record.finishing) return false
             val finishWholeTask = finishTask == FINISH_TASK_WITH_ACTIVITY ||
                 (finishTask == FINISH_TASK_WITH_ROOT_ACTIVITY &&
                     record.task.activities.firstOrNull() === record)
@@ -1605,6 +1677,13 @@ internal class HostedActivityTaskManagerService(
                     it !in finishing && !it.finishing && it.process != null
                 }
                 resultTarget?.let { target ->
+                    if (target === destination) grantActivityUrisLocked(target, resultGrants)
+                    val sourceUserId = UserHandle.getUserId(
+                        packages.getPackageUidInternal(record.info.packageName))
+                    if (sourceUserId != UserHandle.getUserId(
+                            packages.getPackageUidInternal(target.info.packageName))) {
+                        resultData?.prepareToLeaveUser(sourceUserId)
+                    }
                     val callerToken = registerCallerIdentityLocked(
                         target.token,
                         packages.getPackageUidInternal(record.info.packageName),

@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- system-test peer A: a client package whose only manifest state is the
-     signature-protected settings-write permission (granted because the
-     fixture and framework-res.apk share the azk-platform test key). -->
+<!-- system-test peer A: client permissions and service, activity, and provider
+     fixtures. Signature permissions share the framework-res.apk test key. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="dev.artzig.test.a"
     android:versionCode="1"
@@ -27,6 +26,10 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <application android:name="dev.artzig.systemtest.BindingApplication" android:hasCode="false" android:label="azk test a">
+        <provider android:name="dev.artzig.systemtest.SecretProvider"
+            android:authorities="dev.artzig.test.a.secret" android:exported="false"
+            android:grantUriPermissions="true" />
+        <activity android:name="dev.artzig.systemtest.AUriGrantActivity" android:exported="true" />
         <service android:name="dev.artzig.systemtest.TestNetworkRecommendationService" android:exported="true">
             <intent-filter>
                 <action android:name="android.net.action.RECOMMEND_NETWORKS" />

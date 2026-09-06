@@ -27,6 +27,20 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Activity launch, new-intent and result URI permissions now flow through the
+  stock `UriGrantsManagerService`. Grants are checked before activity state
+  changes and applied before client delivery. Each activity record has a stock
+  `UriPermissionOwner`; recreation preserves it, while final removal, canceled
+  launch cleanup and process-record removal release it. Persisted grants keep
+  their independent lifetime. `Activity.finishAndRemoveTask` now dispatches the
+  pinned root-task finish mode through the shared finish path, including its
+  stock autofill finish callback. Separate-process tests cover data and nested
+  ClipData, unauthorized grants, read/write isolation, recreation, new intents,
+  shared owners, results, persistence, and root versus non-root task removal.
+  JVM, system, native, Binder and build checks pass, along with all 11 APK
+  integration tests (38 steps without runtime issues). The inventory remains
+  53 stubs. ComponentCaller's delivery-time URI access snapshots remain unfinished.
+
 - R8 keep annotations now come from AOSP's pinned `keepanno-annotations` Java
   import. The three handwritten KeepTarget, TypePattern and UsesReflection
   stubs are deleted; all 22 original annotation classes are included and match
@@ -591,8 +605,8 @@ Follow-up changes in the current tree:
   revoke, provider-access and permission checks to the stock implementation.
   Separate-process tests cover a private provider, prefix and read-only grants,
   denied writes and unoffered persistence, persistence release, and revocation.
-  Activity-launch Intent grants and task-bound grant lifetime still depend on
-  the unfinished activity core.
+  Activity-launch Intent grants and activity-record lifetime are now connected
+  to this service, as described in the later follow-up above.
 - `StatsManager`, its query models, initializer, and `StatsManagerService` are
   stock, with generated StatsD Binder interfaces. No statsd daemon is added;
   the stock service caches pull-atom registrations while it is absent. Module

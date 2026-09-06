@@ -7,6 +7,20 @@ import dev.artzig.system.unsupported
 
 /** Stock owner lifetimes, persistable modes, and URI user normalization. */
 object StockUriPermissionSmoke {
+    /** Supply the actual local service to isolated activity-transaction fixtures. */
+    fun withService(block: () -> Unit) {
+        check(com.android.server.LocalServices.getService(UriGrantsManagerInternal::class.java) == null)
+        val directory = java.nio.file.Files.createTempDirectory("activity-uri-grants").toFile()
+        try {
+            val service = UriGrantsManagerService.createForTest(directory).localService
+            com.android.server.LocalServices.addService(UriGrantsManagerInternal::class.java, service)
+            block()
+        } finally {
+            com.android.server.LocalServices.removeServiceForTest(UriGrantsManagerInternal::class.java)
+            check(directory.deleteRecursively())
+        }
+    }
+
     @JvmStatic fun run() {
         val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
         val write = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
