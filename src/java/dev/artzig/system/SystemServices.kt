@@ -272,6 +272,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService("batteryproperties", battery.registrar)
         android.os.ServiceManager.addService(android.os.BatteryStats.SERVICE_NAME, battery.batteryStats)
         android.os.ServiceManager.addService(Context.NETWORK_STATS_SERVICE, HostedNetworkStatsService())
+        android.os.ServiceManager.addService(Context.NETWORK_POLICY_SERVICE, HostedNetworkPolicyService(context))
         val usageStats = HostedUsageStatsService()
         usageStats.packageService = packageManager
         activityManager.processObserver = { packageName, _, foreground -> usageStats.reportProcessState(packageName, foreground) }

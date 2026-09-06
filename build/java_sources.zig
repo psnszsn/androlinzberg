@@ -1038,6 +1038,8 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/LruCacheWithExpiry.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/NetworkIdentityUtils.java");
     try c.file("$CJ/android/net/netstats/NetworkStatsDataMigrationUtils.java");
+    try c.file("$CJ/android/net/NetworkPolicy.java");
+    try c.file("$CJ/android/net/NetworkPolicyManager.java");
     try c.file("$CJ/com/android/internal/util/FileRotator.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/QosSessionAttributes.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/RouteInfo.java");

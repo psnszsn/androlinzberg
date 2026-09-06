@@ -212,6 +212,8 @@ pub const aidl_exports = [_]struct { input: SourcePath, output: []const u8 }{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkPolicyListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetworkPolicyManager.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsService.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsSession.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/StatsResult.aidl" },
@@ -1243,6 +1245,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "com.android.ranging.flags", .container = "com.android.uwb", .source = .aosp, .declarations = &.{"packages/modules/Uwb/ranging/flags/ranging_flags.aconfig"} },
     .{ .package = "android.media.tv.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig"} },
     .{ .package = "android.app.supervision.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/supervision/flags.aconfig"} },
+    .{ .package = "android.net.platform.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/net/flags.aconfig"} },
     .{ .package = "android.net.wifi.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/wifi/wifi.aconfig"} },
     .{ .package = "android.webkit", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/webkit/flags.aconfig"} },
     .{ .package = "android.appwidget.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/appwidget/flags.aconfig"} },

@@ -5726,3 +5726,9 @@ F aosp frameworks/native/libs/binder/IResultReceiver.cpp
 F aosp prebuilts/sdk/current/public/android.jar
 F aosp prebuilts/sdk/NOTICE
 F aosp build/release/aconfig/bp2a/com.android.settingslib.flags/write_system_preference_permission_enabled_flag_values.textproto
+F aosp frameworks/base/core/java/android/net/INetworkPolicyListener.aidl
+F aosp frameworks/base/core/java/android/net/INetworkPolicyManager.aidl
+F aosp frameworks/base/core/java/android/net/NetworkPolicy.aidl
+F aosp frameworks/base/core/java/android/net/NetworkPolicy.java
+F aosp frameworks/base/core/java/android/net/NetworkPolicyManager.java
+F aosp frameworks/base/core/java/android/net/flags.aconfig

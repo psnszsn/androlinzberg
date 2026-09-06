@@ -27,6 +27,21 @@ in force.
 
 Follow-up changes in the current tree:
 
+- NetworkPolicyManager and NetworkPolicy now compile verbatim, with their
+  generated Binder interfaces and platform flags. The hosted policy service
+  exposes the default unrestricted state, preserves permission and UID validation
+  ordering, and rejects changes that need Android firewall or carrier enforcement.
+  Applications obtain a cached stock manager through SystemServiceRegistry.
+  Module tests cover policy thresholds, snoozes, Parcel round trips, empty policy
+  state and rejected mutations; separate-process tests cover service lookup and
+  denied privileged queries, mutations and factory reset. The inventory is
+  46 stubs: 27 pending and 19 survivors. The six new archive inputs match pinned
+  AOSP; the AOSP tarball is rebuilt and pinned, and ART is unchanged.
+  JVM/system suites, native/Binder/build checks and the final full APK suite pass.
+  Two earlier desktop fullscreen runs timed out without runtime issues; three
+  traced retries and the final suite passed. The timeout is not claimed fixed;
+  temporary tracing was removed and no presentation code changed in this batch.
+
 - TrafficStats, NetworkStatsManager and the statistics/template/history closure
   now compile verbatim, with generated statistics Binder interfaces and proto
   constants. A hosted netstats service supplies Linux interface/total byte and

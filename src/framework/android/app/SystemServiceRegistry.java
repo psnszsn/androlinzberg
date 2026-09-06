@@ -144,6 +144,13 @@ public final class SystemServiceRegistry {
                 IAlarmManager service = IAlarmManager.Stub.asInterface(b);
                 return new AlarmManager(service, ctx);
             }});
+        registerService(Context.NETWORK_POLICY_SERVICE, android.net.NetworkPolicyManager.class,
+                new CachedServiceFetcher<android.net.NetworkPolicyManager>() {
+            @Override public android.net.NetworkPolicyManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                android.os.IBinder binder = android.os.ServiceManager.getServiceOrThrow(Context.NETWORK_POLICY_SERVICE);
+                return new android.net.NetworkPolicyManager(ctx.getOuterContext(),
+                        android.net.INetworkPolicyManager.Stub.asInterface(binder));
+            }});
         registerService(Context.NETWORK_STATS_SERVICE, android.app.usage.NetworkStatsManager.class,
                 new CachedServiceFetcher<android.app.usage.NetworkStatsManager>() {
             @Override public android.app.usage.NetworkStatsManager createService(ContextImpl ctx) throws ServiceNotFoundException {

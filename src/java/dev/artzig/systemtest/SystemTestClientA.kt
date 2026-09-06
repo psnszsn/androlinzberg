@@ -127,6 +127,16 @@ internal object SystemTestClientA {
     }
 
     private fun testNetworkStatistics(context: Context) {
+        val policy = context.getSystemService(android.net.NetworkPolicyManager::class.java)
+        check(policy != null && policy === context.getSystemService(Context.NETWORK_POLICY_SERVICE),
+            "stock network policy manager is registered and cached")
+        check(try { policy.getUidPolicy(Process.myUid()); false } catch (_: SecurityException) { true },
+            "app cannot inspect privileged network policies")
+        check(try { policy.setUidPolicy(Process.myUid(), 1); false } catch (_: SecurityException) { true },
+            "app cannot mutate privileged network policies")
+        check(try { policy.factoryReset(null); false } catch (_: SecurityException) { true },
+            "app cannot reset privileged network policies")
+
         val manager = context.getSystemService(android.app.usage.NetworkStatsManager::class.java)
         check(manager != null && manager === context.getSystemService(Context.NETWORK_STATS_SERVICE),
             "stock network stats manager is registered and cached")

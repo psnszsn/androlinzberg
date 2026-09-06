@@ -25,6 +25,10 @@ public class ConnectivityManager {
     public static final int TYPE_TEST = 18;
     /** AOSP ConnectivityManager.NETID_UNSET; the hosted process has no selected Android netId. */
     public static final int NETID_UNSET = 0;
+    // Pinned policy-service result constants.
+    public static final int RESTRICT_BACKGROUND_STATUS_DISABLED = 1;
+    public static final int RESTRICT_BACKGROUND_STATUS_WHITELISTED = 2;
+    public static final int RESTRICT_BACKGROUND_STATUS_ENABLED = 3;
     public static final int REQUEST_ID_UNSET = 0;
     public ConnectivityManager() { sInstance = this; }
     /** Pinned Network.openConnection helper; the hosted network has no configured proxy. */
