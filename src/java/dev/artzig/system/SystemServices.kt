@@ -292,7 +292,8 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.INCIDENT_SERVICE, HostedIncidentManagerService())
         android.os.ServiceManager.addService(Context.INCIDENT_COMPANION_SERVICE, HostedIncidentCompanionService())
         android.os.ServiceManager.addService(Context.DEVICE_IDLE_CONTROLLER, HostedDeviceIdleController())
-        // Phase 3: media sessions and media metrics (the audio service stays pending, see docs/stubs.md).
+        // Audio capability/session policy and media services; rendering stays in the native backend.
+        android.os.ServiceManager.addService(Context.AUDIO_SERVICE, HostedAudioService(android.os.PermissionEnforcer.fromContext(context)))
         val mediaSessions = HostedMediaSessionService()
         mediaSessions.packageService = packageManager
         android.os.ServiceManager.addService(Context.MEDIA_SESSION_SERVICE, mediaSessions)

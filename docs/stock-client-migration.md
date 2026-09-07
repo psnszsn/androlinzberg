@@ -27,6 +27,23 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- Spatializer and LoudnessCodecController now compile verbatim with their stock
+  callback helpers. Hosted audio Binder policy follows AOSP's absent-spatializer
+  behavior, including permissions, listener registration and effect-parameter errors.
+  Loudness sessions track codecs and send the stock initial update; parameters remain
+  empty because no hosted AudioPolicy device loudness model is available. This adds
+  no spatial rendering or decoder loudness processing. The existing MediaCodec adapter
+  now keeps independent compressed-input and decoded-output format snapshots, including
+  buffer ownership and rejection of format queries before configuration or after stop.
+  Stock loudness code can consequently identify and register AAC codecs instead of
+  seeing the decoded PCM format. Module tests cover listener errors, codec registration,
+  duplicate/rejected operations, deferred callbacks, session restart and format snapshots.
+  JVM/system, native/Binder and build checks pass. All 11 APK tests pass (39 steps,
+  zero structured runtime issues). The inventory is 33 stubs: 20 pending and 13 survivors.
+  Three Java files were added to the rebuilt, repinned AOSP archive; all four newly
+  selected sources are byte-verified. ART is unchanged. AudioManager and MediaCodec
+  remain adaptations, and the existing PipeWire/FFmpeg backends are unchanged.
+
 - ActivityThread now compiles verbatim. The 1,757-line adaptation and hosted
   IApplicationThread implementation are deleted. Bootstrap, package announcement,
   teardown and desktop presentation live in dev.artzig; the stock thread owns

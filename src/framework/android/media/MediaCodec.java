@@ -40,6 +40,7 @@ public final class MediaCodec {
     private final long[] mPts = new long[1];
     private final long[] mFrameHandle = new long[1];
     private MediaFormat mOutputFormat;
+    private final dev.artzig.HostedCodecFormats mFormats = new dev.artzig.HostedCodecFormats();
     private boolean mFormatReported;
     private int mPendingSlot = -1; // decoded frame waiting for FORMAT_CHANGED to be consumed
     private int mPendingBytes;
@@ -131,6 +132,7 @@ public final class MediaCodec {
     }
 
     public void configure(MediaFormat format, Surface surface, MediaCrypto crypto, int flags) {
+        java.util.Objects.requireNonNull(format);
         if ((flags & CONFIGURE_FLAG_ENCODE) != 0) throw new CodecException("encoders not supported");
         String mime = format != null ? format.getString(MediaFormat.KEY_MIME, "") : "";
         mVideo = mime.startsWith("video/");
@@ -178,6 +180,7 @@ public final class MediaCodec {
                     rate > 0 ? rate : 44100, ch > 0 ? ch : 2);
             mOutputFormat.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT);
         }
+        mFormats.configured(format, mOutputFormat);
     }
 
     private static void setVideoFormatKeys(MediaFormat f, int w, int h) {
@@ -211,6 +214,7 @@ public final class MediaCodec {
     }
 
     public void stop() {
+        mFormats.clear();
         stopAsyncPump();
         releaseHeldFrames();
     }
@@ -237,7 +241,7 @@ public final class MediaCodec {
                 int idx = dequeueOutputBuffer(info, 0);
                 if (!isCurrentPump(pump)) return;
                 if (idx == INFO_OUTPUT_FORMAT_CHANGED) {
-                    mCallback.onOutputFormatChanged(this, mOutputFormat);
+                    mCallback.onOutputFormatChanged(this, getOutputFormat());
                 } else if (idx >= 0) {
                     mCallback.onOutputBufferAvailable(this, idx, info);
                     if ((info.flags & BUFFER_FLAG_END_OF_STREAM) != 0) break;
@@ -286,6 +290,7 @@ public final class MediaCodec {
     }
 
     public void release() {
+        mFormats.clear();
         stopAsyncPump();
         releaseHeldFrames();
         synchronized (mNativeLock) {
@@ -410,6 +415,7 @@ public final class MediaCodec {
             }
         }
         if (formatChanged) {
+            mFormats.outputChanged(mOutputFormat);
             mFormatReported = true;
             mPendingSlot = slot;
             mPendingBytes = mMeta[0];
@@ -442,8 +448,8 @@ public final class MediaCodec {
         releaseOutputBuffer(index, true);
     }
 
-    public MediaFormat getOutputFormat() { return mOutputFormat; }
-    public MediaFormat getInputFormat() { return mOutputFormat; }
+    public MediaFormat getOutputFormat() { return mFormats.outputFormat(); }
+    public MediaFormat getInputFormat() { return mFormats.inputFormat(); }
 
     public interface OnFrameRenderedListener {
         void onFrameRendered(MediaCodec codec, long presentationTimeUs, long nanoTime);

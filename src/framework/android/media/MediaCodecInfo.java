@@ -130,6 +130,8 @@ public final class MediaCodecInfo {
         public static final int AACObjectLC = 2;
         public static final int AACObjectHE = 5;
         public static final int AACObjectHE_PS = 29;
+        // Pinned CodecProfileLevel identifier; this does not advertise decoder support.
+        public static final int AACObjectXHE        = 42;
         public static final int AVCProfileBaseline = 0x01;
         public static final int AVCProfileMain = 0x02;
         public static final int AVCProfileHigh = 0x08;

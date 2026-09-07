@@ -293,6 +293,7 @@ internal object FrameworkModuleSmoke {
         testHostedTaskReuse()
         com.android.server.uri.StockUriPermissionSmoke.withService {
             testHostedActivityTaskServiceTransactions()
+            StockAudioPolicyClientsSmoke.run()
             testHostedAudioCapabilities()
             testAsyncMediaCodecFlushRestartsOnePump()
             testMediaMetricsContracts()

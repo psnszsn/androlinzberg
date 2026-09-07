@@ -2657,6 +2657,10 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/AudioDeviceCallback.java");
     try c.file("$FB/media/java/android/media/AudioRouting.java");
     try c.file("$FB/media/java/android/media/AudioFocusRequest.java");
+    try c.file("$FB/media/java/android/media/Spatializer.java");
+    try c.file("$FB/media/java/android/media/LoudnessCodecController.java");
+    try c.file("$FB/media/java/android/media/LoudnessCodecDispatcher.java");
+    try c.file("$FB/media/java/android/media/CallbackUtil.java");
     try c.file("$FB/media/java/android/media/MediaRoute2Info.java");
     try c.file("$FB/media/java/android/media/MediaRouter2Utils.java");
     try c.file("$CJ/android/permission/PermissionGroupUsage.java");

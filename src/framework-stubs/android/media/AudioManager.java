@@ -23,7 +23,7 @@ public class AudioManager {
     public static final int PLAYBACK_OFFLOAD_SUPPORTED = 1;
     public static final int PLAYBACK_OFFLOAD_GAPLESS_SUPPORTED = 2;
 
-    public Spatializer getSpatializer() { return new Spatializer(); }
+    public Spatializer getSpatializer() { return new Spatializer(this); }
     private static int sNextAudioSession = 1000;
     public int generateAudioSessionId() { synchronized (AudioManager.class) { return sNextAudioSession++; } }
     public static final int AUDIOFOCUS_GAIN = 1;
