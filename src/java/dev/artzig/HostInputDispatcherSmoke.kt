@@ -298,7 +298,7 @@ object HostInputDispatcherSmoke {
                     }
                 }
                 override fun dispatch(event: InputEvent, repeatable: Boolean, owner: dev.artzig.window.TaskGeometry.Task?) = dispatcher.dispatchDesktopEvent(event, repeatable)
-                override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) { }
+                override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: android.view.KeyCharacterMap) { }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
                     dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
             })

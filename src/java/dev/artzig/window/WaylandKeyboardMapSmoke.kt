@@ -15,6 +15,7 @@ object WaylandKeyboardMapSmoke {
         for (state in 0 until WaylandKeyboardMap.STATE_COUNT) {
             val upper = (state and 1 != 0) xor (state and 2 != 0)
             characters[30 * 64 + state] = if (state and 4 != 0) 'ä'.code else if (upper) 'Q'.code else 'q'.code
+            characters[16 * 64 + state] = 'w'.code
             characters[86 * 64 + state] = '<'.code
             characters[43 * 64 + state] = '\\'.code
             characters[40 * 64 + state] = 0x0301 // Stock combining-accent/dead-key convention.
@@ -36,6 +37,9 @@ object WaylandKeyboardMapSmoke {
         check(WaylandKeyboardMap.keyCode(125, 0xffeb) == KeyEvent.KEYCODE_META_LEFT)
         check(runCatching { WaylandKeyboardMap.compile(characters, IntArray(1)) }.exceptionOrNull() is IllegalArgumentException)
         val map = WaylandKeyboardMap.compile(characters, symbols)
+        val keyboardMap = WaylandKeyboardMap.compile(characters, symbols, 1)
+        check(checkNotNull(map.getEvents(charArrayOf('q'))).all { it.deviceId == -1 })
+        check(checkNotNull(keyboardMap.getEvents(charArrayOf('q'))).all { it.deviceId == 1 })
         val supported = WaylandKeyboardMap.supportedKeyCodes(characters, symbols)
         check(KeyEvent.KEYCODE_CTRL_LEFT in supported && KeyEvent.KEYCODE_CAPS_LOCK !in supported)
         check(KeyEvent.KEYCODE_DEL in supported && KeyEvent.KEYCODE_UNKNOWN !in supported)
@@ -75,8 +79,8 @@ object WaylandKeyboardMapSmoke {
         service.registerInputDevicesChangedListener(listener)
         check(runCatching { service.registerInputDevicesChangedListener(listener) }.exceptionOrNull() is SecurityException)
         check(runCatching { service.registerInputDevicesChangedListener(null) }.exceptionOrNull() is NullPointerException)
-        service.publishKeyboardMap(map, supported)
-        service.publishKeyboardMap(map, supported)
+        service.publishKeyboardMap(map, supported, keyboardMap)
+        service.publishKeyboardMap(map, supported, keyboardMap)
         val queriedKeys = intArrayOf(KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_CAPS_LOCK, Int.MAX_VALUE)
         val exists = BooleanArray(5) { true }
         check(service.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
@@ -104,7 +108,13 @@ object WaylandKeyboardMapSmoke {
             }
         }
         service.publishSeatCapabilities(1, 15)
-        check(service.inputDeviceIds.contentEquals(intArrayOf(-1, 0, 2)))
+        check(service.inputDeviceIds.contentEquals(intArrayOf(-1, 0, 1, 2)))
+        val keyboard = checkNotNull(service.getInputDevice(1))
+        check(!keyboard.isVirtual && keyboard.isExternal)
+        check(keyboard.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC)
+        check(checkNotNull(keyboard.keyCharacterMap.getEvents(charArrayOf('q'))).all { it.deviceId == 1 })
+        check(service.hasKeys(1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
+        check(exists.contentEquals(booleanArrayOf(true, true, false, false, true)))
         val pointer = checkNotNull(service.getInputDevice(0))
         check(!service.hasKeys(0, android.view.InputDevice.SOURCE_MOUSE, queriedKeys, exists))
         check(pointer.supportsSource(android.view.InputDevice.SOURCE_MOUSE))
@@ -113,10 +123,10 @@ object WaylandKeyboardMapSmoke {
         check(checkNotNull(service.getInputDevice(2)).supportsSource(android.view.InputDevice.SOURCE_TOUCHSCREEN))
         check(service.getInputDevice(99) == null)
         awaitDeviceNotice(2)
-        check(changes.last().filterIndexed { index, _ -> index % 2 == 0 } == listOf(-1, 0, 2))
+        check(changes.last().filterIndexed { index, _ -> index % 2 == 0 } == listOf(-1, 0, 1, 2))
         service.publishSeatCapabilities(2, 2)
         check(service.getInputDevice(0) == null && service.getInputDevice(2) == null)
-        check(service.inputDeviceIds.contentEquals(intArrayOf(-1)))
+        check(service.inputDeviceIds.contentEquals(intArrayOf(-1, 1)))
         awaitDeviceNotice(3)
         service.publishSeatCapabilities(3, 3)
         val reappeared = checkNotNull(service.getInputDevice(0))
@@ -127,6 +137,15 @@ object WaylandKeyboardMapSmoke {
         check(runCatching { service.publishSeatCapabilities(3, 7) }.exceptionOrNull() is IllegalArgumentException)
         check(runCatching { service.publishSeatCapabilities(4, 16) }.exceptionOrNull() is IllegalArgumentException)
         awaitDeviceNotice(4)
+        service.publishKeyboardMap(map, supported.filter { it != KeyEvent.KEYCODE_Q }.toIntArray(), keyboardMap)
+        check(checkNotNull(service.getInputDevice(1)).keyboardType == android.view.InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC)
+        check(keyboard.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC) // Immutable old snapshot.
+        awaitDeviceNotice(5)
+        service.publishSeatCapabilities(4, 0)
+        check(service.inputDeviceIds.contentEquals(intArrayOf(-1)))
+        check(!service.hasKeys(1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
+        check(service.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD, queriedKeys, exists))
+        awaitDeviceNotice(6)
         check(runCatching { WaylandKeyboardMap.compile(IntArray(1)) }.exceptionOrNull() is IllegalArgumentException)
         characters[30 * 64] = 0x1f600
         check(runCatching { WaylandKeyboardMap.compile(characters) }.exceptionOrNull() is IllegalArgumentException)

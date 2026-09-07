@@ -22,7 +22,7 @@ import android.view.KeyCharacterMap
  * device queries the framework makes (`InputDevice.getDevice`,
  * `KeyCharacterMap.load`, `VelocityTracker`). The host exposes one virtual
  * fallback keyboard whose character map follows the Wayland seat, plus its
- * currently available pointer/touch devices. Unserved methods fail through the shared unsupported Binder
+ * currently available logical keyboard/pointer/touch devices. Unserved methods fail through the shared unsupported Binder
  * delegate.
  */
 internal class HostedInputManagerService(private val handler: Handler = Handler(Looper.getMainLooper()),
@@ -40,7 +40,10 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
     private var notificationPending = false
     private var keyboardMap = HostedInputDispatcher.createHostKeyCharacterMap()
     private var keyboardKeys: Set<Int> = emptySet()
+    private var seatKeyboardMap = HostedInputDispatcher.createHostKeyCharacterMap(
+        HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID, "type FULL\n")
     private var virtualKeyboard = keyboard(keyboardMap)
+    private var keyboardDevice: InputDevice? = null
     private var pointerDevice: InputDevice? = null
     private var touchDevice: InputDevice? = null
     private var seatGeneration = 0
@@ -69,12 +72,21 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
         .setKeyCharacterMap(KeyCharacterMap.obtainEmptyMap(id))
         .setAssociatedDisplayId(android.view.Display.DEFAULT_DISPLAY).build()
 
-    private fun currentDevices(): List<InputDevice> = listOfNotNull(virtualKeyboard, pointerDevice, touchDevice)
+    private fun currentDevices(): List<InputDevice> = listOfNotNull(virtualKeyboard, pointerDevice, keyboardDevice, touchDevice)
 
     private fun advanceGeneration() {
         check(generation < Int.MAX_VALUE) { "Input device generation exhausted" }
         generation++
         virtualKeyboard = keyboard(keyboardMap)
+        keyboardDevice = if (seatCapabilities and 2 == 0) null else InputDevice.Builder()
+            .setId(HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID).setGeneration(generation)
+            .setName("artzig Wayland keyboard").setDescriptor("artzig-wayland-keyboard")
+            .setExternal(true).setAssociatedDisplayId(android.view.Display.DEFAULT_DISPLAY)
+            .setSources(InputDevice.SOURCE_KEYBOARD)
+            // Pinned EventHub.openDeviceLocked classifies ALPHAKEY from Q support.
+            .setKeyboardType(if (android.view.KeyEvent.KEYCODE_Q in keyboardKeys)
+                InputDevice.KEYBOARD_TYPE_ALPHABETIC else InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC)
+            .setKeyCharacterMap(seatKeyboardMap).build()
         pointerDevice = if (seatCapabilities and 1 == 0) null else pointingDevice(0, "pointer",
             InputDevice.SOURCE_MOUSE or if (seatCapabilities and 8 != 0) InputDevice.SOURCE_MOUSE_RELATIVE else 0)
         touchDevice = if (seatCapabilities and 4 == 0) null else pointingDevice(2, "touch", InputDevice.SOURCE_TOUCHSCREEN)
@@ -99,9 +111,10 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
      * handler outside the device lock. InputManagerGlobal drops its cached map.
      * InputReader is absent; the compositor supplies this device's layout.
      */
-    fun publishKeyboardMap(map: KeyCharacterMap, supportedKeyCodes: IntArray = IntArray(0)) = synchronized(deviceLock) {
+    fun publishKeyboardMap(map: KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: KeyCharacterMap) = synchronized(deviceLock) {
         require(supportedKeyCodes.size <= 768 && supportedKeyCodes.all { it in 1..android.view.KeyEvent.getMaxKeyCode() })
         keyboardMap = map
+        seatKeyboardMap = keyboard
         keyboardKeys = supportedKeyCodes.toSet()
         advanceGeneration()
     }
@@ -151,7 +164,8 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
         require(keyExists.size >= keyCodes.size) { "keyExists must be at least as large as keyCodes" }
         for (i in keyCodes.indices) keyExists[i] = false
         return synchronized(deviceLock) {
-            if (deviceId >= 0 || InputDevice.SOURCE_KEYBOARD and sourceMask and InputDevice.SOURCE_CLASS_MASK.inv() == 0) {
+            if ((deviceId >= 0 && (deviceId != HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID || keyboardDevice == null)) ||
+                InputDevice.SOURCE_KEYBOARD and sourceMask and InputDevice.SOURCE_CLASS_MASK.inv() == 0) {
                 false
             } else {
                 for (i in keyCodes.indices) keyExists[i] = keyCodes[i] in keyboardKeys

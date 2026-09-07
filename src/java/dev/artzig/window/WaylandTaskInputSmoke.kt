@@ -17,13 +17,16 @@ object WaylandTaskInputSmoke {
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun keyboardFocus(task: TaskGeometry.Task?) { keyboardActive = task != null }
             override fun focusTask(taskId: Int) { focus.add(taskId); order.add("focus:$taskId") }
-            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) { layouts++ }
+            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: android.view.KeyCharacterMap) { layouts++ }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
                 repeats.add(Triple(timeoutMillis, delayMillis, enabled))
             }
             override fun dispatch(event: InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?) {
                 check(event.displayId == 0)
-                if (event is KeyEvent) checkNotNull(owner) { "Key lost its originating task" }
+                if (event is KeyEvent) {
+                    checkNotNull(owner) { "Key lost its originating task" }
+                    check(event.deviceId == if (event.isFromSource(android.view.InputDevice.SOURCE_KEYBOARD)) 1 else 0)
+                }
                 events.add(event.copy())
                 order.add(when (event) {
                     is KeyEvent -> "key:${event.action}:${event.keyCode}:${event.isCanceled}"
@@ -185,6 +188,9 @@ object WaylandTaskInputSmoke {
             replacement.key(58, true)
             check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 1)
             check(seat.scanCodeState(-1, keyboardSource, 58) == 1)
+            check(seat.scanCodeState(1, keyboardSource, 58) == 1)
+            check(seat.keyCodeState(1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 1)
+            check(seat.keyCodeState(2, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
             check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CAPS_LOCK) == -1)
             check(seat.keyCodeState(0, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
             check(seat.keyCodeState(-1, android.view.InputDevice.SOURCE_MOUSE, KeyEvent.KEYCODE_CTRL_LEFT) == -1)

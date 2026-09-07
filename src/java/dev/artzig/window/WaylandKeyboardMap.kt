@@ -52,7 +52,8 @@ internal object WaylandKeyboardMap {
         else -> if (scan == 86) KeyEvent.KEYCODE_RO else HostedInputDispatcher.androidKeyCodeForScanCode(scan)
     }
 
-    fun compile(characters: IntArray, symbols: IntArray = IntArray(SCAN_COUNT)): KeyCharacterMap {
+    fun compile(characters: IntArray, symbols: IntArray = IntArray(SCAN_COUNT),
+        deviceId: Int = KeyCharacterMap.VIRTUAL_KEYBOARD): KeyCharacterMap {
         require(symbols.size == SCAN_COUNT && symbols.all { it >= 0 }) { "Invalid XKB symbol matrix" }
         require(characters.size == SCAN_COUNT * STATE_COUNT) { "Invalid XKB character matrix" }
         require(characters.all { it == 0 || it in 1..0xffff && it !in 0xd800..0xdfff }) {
@@ -108,7 +109,7 @@ internal object WaylandKeyboardMap {
                 append("}\n")
             }
         }
-        return HostedInputDispatcher.createHostKeyCharacterMap(contents)
+        return HostedInputDispatcher.createHostKeyCharacterMap(deviceId, contents)
     }
 
     /** Only positions present in the XKB layout are advertised. Modifier and

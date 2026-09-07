@@ -31,6 +31,10 @@ object StockColdLaunchSmoke {
             val input = android.hardware.input.IInputManager.Stub.asInterface(
                 android.os.ServiceManager.getService(Context.INPUT_SERVICE))
             val keyboard = checkNotNull(input.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))
+            val seatKeyboard = checkNotNull(input.getInputDevice(1))
+            check(!seatKeyboard.isVirtual && seatKeyboard.isExternal)
+            check(seatKeyboard.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_ALPHABETIC)
+            check(checkNotNull(seatKeyboard.keyCharacterMap.getEvents(charArrayOf('a'))).all { it.deviceId == 1 })
             check(keyboard.generation > 0)
             check(keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, 0) == 'a'.code)
             check(keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A,
@@ -39,6 +43,12 @@ object StockColdLaunchSmoke {
             check(input.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD,
                 intArrayOf(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.KEYCODE_DEL), supported))
             check(supported.all { it })
+            check(input.hasKeys(1, android.view.InputDevice.SOURCE_KEYBOARD,
+                intArrayOf(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.KEYCODE_DEL), supported))
+            check(supported.all { it })
+            check(ActivityManager.getService().configuration.keyboard == android.content.res.Configuration.KEYBOARD_QWERTY) {
+                "WM did not publish the seat keyboard configuration before APK startup"
+            }
             println("Stock Wayland keyboard: layout and keys available before APK installation")
         }
         check(checkNotNull(HostedServiceClient.installerOrNull()).installPackage(args.single(), null) == pkg)

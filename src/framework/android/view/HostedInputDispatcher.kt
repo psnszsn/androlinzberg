@@ -13,6 +13,7 @@ import dev.artzig.HostedWindowStack
  * the host has no InputChannel, InputEventReceiver, or window-session input registration.
  */
 object HostedInputDispatcher {
+    const val HOST_KEYBOARD_DEVICE_ID = 1
     /**
      * AOSP ViewRootImpl.enqueueInputEvent/doProcessInputEvents ordering and ownership.
      * The host has no InputChannel receiver; delivery uses the existing post-IME root seam.
@@ -110,6 +111,11 @@ object HostedInputDispatcher {
     @JvmStatic
     fun createHostKeyCharacterMap(contents: String): KeyCharacterMap =
         nativeLoadKeyCharacterMap(KeyCharacterMap.VIRTUAL_KEYBOARD, contents)
+
+    /** Logical wl_seat keyboard identity, distinct from the virtual fallback. */
+    @JvmStatic
+    fun createHostKeyCharacterMap(deviceId: Int, contents: String): KeyCharacterMap =
+        nativeLoadKeyCharacterMap(deviceId, contents)
 
     @JvmStatic
     private external fun nativeLoadKeyCharacterMap(

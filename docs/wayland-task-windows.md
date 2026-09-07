@@ -22,6 +22,35 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Logical seat keyboard checkpoint (2026-09-07)
+
+A keyboard-capable Wayland seat now publishes Android device 1, with an external
+keyboard descriptor, display-0 association and a device-1 character map. Device
+-1 remains the fallback. Keyboard edges/cancellation use device 1; mouse
+back/forward keys use pointer device 0. Capability changes replace immutable
+device snapshots and remove device 1 when the keyboard capability disappears.
+The alphabetic classification follows pinned EventHub's Q-key capability check;
+WMS now observes the keyboard in its stock configuration computation.
+
+Module 212 passes map-generated event IDs, source/device key queries, immutable
+snapshots, alphabetic/non-alphabetic layouts and keyboard removal/fallback tests.
+Stock gates 214 pass Cage/labwc cold launch and the 13-step desktop interaction
+sequence, with WM reporting QWERTY before APK installation. Artifacts:
+`/tmp/wayland-keyboard-inventory-success-214/`; logs:
+`/tmp/wayland-keyboard-inventory-{212,stock-214}.log`.
+
+The cold-launch query exposed missing AMS.getConfiguration delegation. It now
+calls the pinned ATMS implementation for the calling process; the legacy host
+returns a copy of the last sent process configuration (or its global fallback),
+with userSetLocale cleared. Regression 215 passes full JVM/native and all 15 APK
+integration tests (49 steps, zero runtime issues), including copy isolation and
+preservation of a calling process's grammatical-gender override. Log:
+`/tmp/wayland-keyboard-inventory-regressions-215.log`.
+
+The compositor exposes an aggregate seat, not physical USB/Bluetooth inventory.
+This does not complete extended scan-code/media mappings, stylus support or the
+remaining M8–M11 work.
+
 ## Task-scoped keyboard focus checkpoint (2026-09-07)
 
 The hosted seat now supplies the actual WM Task Binder identity to the pinned

@@ -167,6 +167,12 @@ internal class HostedActivityTaskManagerService(
     private val tasks = LinkedHashMap<Int, TaskRecord>()
     private val listeners = RemoteCallbackList<ITaskStackListener>()
     private val globalConfiguration = Configuration(context.resources.configuration)
+    /** ATMS.getConfiguration's default-display fallback for the legacy host.
+     * AMS retains the last sent configuration for an attached calling process. */
+    internal fun currentConfiguration(): Configuration = synchronized(lock) {
+        Configuration(globalConfiguration).apply { userSetLocale = false }
+    }
+
     private var configurationSeq = maxOf(globalConfiguration.seq, 1)
     private val activityClientController = HostedActivityClientController()
 

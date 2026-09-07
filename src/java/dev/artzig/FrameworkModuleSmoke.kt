@@ -2962,6 +2962,14 @@ internal object FrameworkModuleSmoke {
         check(activityTaskManager === ActivityTaskManager.getInstance())
         val activityTaskService = ActivityTaskManager.getService()
         check(activityTaskService != null)
+        val configurationCopy = ActivityManager.getService().configuration
+        val originalConfiguration = Configuration(configurationCopy)
+        check(!configurationCopy.userSetLocale)
+        configurationCopy.fontScale += 1f
+        configurationCopy.userSetLocale = true
+        check(ActivityManager.getService().configuration == originalConfiguration) {
+            "ActivityManager.getConfiguration exposed mutable service state"
+        }
         check(activityTaskService.activityClientController != null)
         check(activityTaskService.getTasks(4, false, true, Display.DEFAULT_DISPLAY).isEmpty())
         check(activityTaskService.getRecentTasks(4, 0, UserHandle.USER_SYSTEM).list.isEmpty())
@@ -3124,6 +3132,9 @@ internal object FrameworkModuleSmoke {
                 Configuration.GRAMMATICAL_GENDER_FEMININE,
             )
             check(grammaticalGenderBecomes(Configuration.GRAMMATICAL_GENDER_FEMININE))
+            check(ActivityManager.getService().configuration.grammaticalGender == Configuration.GRAMMATICAL_GENDER_FEMININE) {
+                "ActivityManager.getConfiguration lost the calling process's override"
+            }
             check(runCatching {
                 grammaticalInflectionManager.setRequestedApplicationGrammaticalGender(Int.MIN_VALUE)
             }.exceptionOrNull() is IllegalArgumentException)

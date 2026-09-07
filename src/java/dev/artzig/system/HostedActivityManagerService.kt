@@ -66,6 +66,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         var exitDescription: String? = null
         var waitingToKillForTask = false
         var windowProcess: com.android.server.wm.WindowProcessController? = null
+        // Legacy process configuration most recently sent through bind/deltas.
+        // Stock mode obtains the authoritative snapshot from WPC through ATMS.
+        var sentConfiguration: Configuration? = null
         var pendingUiClean = false
         var runningRemoteAnimation = false
         var foregroundActivities = false
@@ -320,6 +323,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     }
 
     private fun sendConfigurationDelta(record: ProcessRecord, delta: Configuration) {
+        synchronized(lock) { record.sentConfiguration?.updateFrom(delta) }
         try {
             val transaction = android.app.servertransaction.ClientTransaction(record.thread)
             transaction.addTransactionItem(android.app.servertransaction.ConfigurationChangeItem(delta, android.content.Context.DEVICE_ID_DEFAULT))
@@ -871,6 +875,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             announcement.configuration ?: checkNotNull(context).resources.configuration)
         val compatibility = preBind?.compatibilityInfo ?: android.content.res.CompatibilityInfo(appInfo,
             configuration.screenLayout, configuration.smallestScreenWidthDp, false)
+        record.sentConfiguration = Configuration(configuration)
         platformCompat?.resetReporting(appInfo)
         record.thread.bindApplication(
             record.processName, appInfo, null, null, false,
@@ -1051,6 +1056,22 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
         if (accepted) attached?.let(action)
         return accepted
+    }
+
+    /** Pinned AMS.getConfiguration delegates to ATMS.getConfiguration, which
+     * copies the calling process's configuration under its WM lock and clears
+     * userSetLocale. AMS/ProcessList are hosted; stock ATMS owns this state. */
+    override fun getConfiguration(): Configuration {
+        val tasks = synchronized(lock) { stockTasks }
+        if (tasks != null) return tasks.configuration
+        val pid = Binder.getCallingPid()
+        if (pid >= 0 && pid != android.os.Process.myPid()) {
+            val sent = synchronized(lock) {
+                processes.values.firstOrNull { it.pid == pid }?.sentConfiguration?.let(::Configuration)
+            }
+            if (sent != null) return sent.apply { userSetLocale = false }
+        }
+        return activityTaskManager?.currentConfiguration() ?: Configuration()
     }
 
     internal fun updateGlobalConfiguration(values: Configuration) {

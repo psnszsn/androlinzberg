@@ -14,7 +14,7 @@ internal object SessionTaskShell {
         override fun close() = cleanup()
     }
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,
-        publishKeyboard: (android.view.KeyCharacterMap, IntArray) -> Unit,
+        publishKeyboard: (android.view.KeyCharacterMap, IntArray, android.view.KeyCharacterMap) -> Unit,
         publishCapabilities: (Int, Int) -> Unit,
         resolveTask: (Int) -> android.os.IBinder?,
         taskForToken: (android.os.IBinder) -> Int?): Controller {
@@ -31,7 +31,7 @@ internal object SessionTaskShell {
                 dispatcher.setHostedKeyboardFocus(keyboardToken)
             }
             override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
-            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) = publishKeyboard(map, supportedKeyCodes)
+            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: android.view.KeyCharacterMap) = publishKeyboard(map, supportedKeyCodes, keyboard)
             override fun dispatch(event: android.view.InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?) {
                 if (event is android.view.KeyEvent) {
                     // A late old-window cancellation must not acquire the new
