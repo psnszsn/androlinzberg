@@ -214,6 +214,7 @@ internal object FrameworkModuleSmoke {
         dev.artzig.window.HostedLogicalDisplaySmoke.run()
         dev.artzig.window.WaylandTaskInputSmoke.run()
         dev.artzig.testing.SessionJournalSmoke.run()
+        dev.artzig.testing.SessionObservationSmoke.run()
         dev.artzig.window.WaylandPointerCaptureSmoke.run()
         dev.artzig.window.WaylandKeyboardMapSmoke.run()
         testStockSurfaceSynchronization()

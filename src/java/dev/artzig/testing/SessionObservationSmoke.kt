@@ -1,0 +1,100 @@
+package dev.artzig.testing
+
+import android.os.Bundle
+import org.json.JSONArray
+import org.json.JSONObject
+
+object SessionObservationSmoke {
+    private data class Peer(val pid: Int, var generation: Long, val task: Int?,
+        var revision: Long = 1, var selected: Boolean = false, var failed: Boolean = false)
+
+    fun run() {
+        val peers = linkedMapOf(10 to Peer(10, 1, 100), 20 to Peer(20, 2, 200), 30 to Peer(30, 3, null))
+        val calls = ArrayList<List<Long>>()
+        val registry = object : IInspectionRegistry.Default() {
+            override fun listProcesses() = Bundle().apply {
+                putParcelableArrayList("processes", ArrayList(peers.values.map { peer -> Bundle().apply {
+                    putInt("pid", peer.pid); putInt("uid", 10000 + peer.pid)
+                    putLong("generation", peer.generation); putString("name", "peer-${peer.pid}")
+                } }))
+            }
+            override fun observe(pid: Int, generation: Long, afterRevision: Long, afterLog: Long, afterIssue: Long): Bundle {
+                val peer = checkNotNull(peers[pid])
+                check(peer.generation == generation)
+                if (peer.failed) error("Application observation timed out")
+                val windows = JSONArray()
+                val nodes = JSONArray()
+                val tasks = Bundle()
+                if (peer.task != null) {
+                    tasks.putInt("1", peer.task)
+                    windows.put(JSONObject().put("id", 1).put("z", 0).put("active", pid == 20))
+                    nodes.put(JSONObject().put("id", "n:1:7:-1").put("parent", "w:1").put("window_id", 1)
+                        .put("view_id", 7).put("virtual_id", -1).put("text", "same label")
+                        .put("selected", peer.selected).put("children", JSONArray().put("n:1:8:-1")))
+                    nodes.put(JSONObject().put("id", "n:1:8:-1").put("parent", "n:1:7:-1").put("window_id", 1)
+                        .put("view_id", 8).put("virtual_id", -1).put("children", JSONArray()))
+                }
+                return Bundle().apply {
+                    putString("snapshot", JSONObject().put("revision", peer.revision).put("windows", windows)
+                        .put("nodes", nodes).put("truncated", false).toString())
+                    putBundle("window_tasks", tasks)
+                    putBoolean("idle", peer.task != null)
+                    putString("accessibility", JSONObject().put("revision", peer.revision)
+                        .put("events_dropped_through", 0).put("events", JSONArray().apply {
+                            if (peer.revision > afterRevision) put(JSONObject().put("revision", peer.revision).put("reason", "tree-changed"))
+                        }).toString())
+                    putString("runtime", JSONObject().put("log_cursor", 0).put("issue_cursor", 0).toString())
+                }
+            }
+            override fun perform(pid: Int, generation: Long, revision: Long, windowId: Long,
+                viewId: Int, virtualId: Int, action: Int, text: String?): Boolean {
+                val peer = checkNotNull(peers[pid])
+                check(peer.generation == generation && peer.revision == revision)
+                calls += listOf(pid.toLong(), generation, windowId, viewId.toLong())
+                peer.selected = true
+                peer.revision++
+                return true
+            }
+        }
+        val observation = SessionObservation(registry)
+        observation.refresh()
+        check(observation.idle()) { "A service process without windows prevented UI idle" }
+        fun tree() = JSONObject(observation.snapshot())
+        fun window(pid: Int): Long {
+            val windows = tree().getJSONArray("windows")
+            return (0 until windows.length()).map { windows.getJSONObject(it) }
+                .single { it.getInt("pid") == pid }.getLong("id")
+        }
+        val first = window(10)
+        val second = window(20)
+        check(first != second)
+        val nodes = tree().getJSONArray("nodes")
+        check(nodes.getJSONObject(0).getString("id") == "n:$first:7:-1")
+        check(nodes.getJSONObject(0).getJSONArray("children").getString(0) == "n:$first:8:-1")
+        check(nodes.getJSONObject(1).getString("parent") == "n:$first:7:-1")
+        check(nodes.getJSONObject(2).getInt("task_id") == 200)
+        val stable = observation.revision()
+        observation.refresh()
+        check(observation.revision() == stable)
+        peers.getValue(20).revision++ // An app mutation must reject the saved global revision.
+        check(!observation.perform(stable, second, 7, -1, 4, null) && calls.isEmpty())
+        check(observation.perform(observation.revision(), second, 7, -1, 4, null))
+        check(calls.single() == listOf(20L, 2L, 1L, 7L))
+        check(tree().getJSONArray("nodes").getJSONObject(2).getBoolean("selected"))
+        peers.getValue(20).failed = true
+        observation.refresh()
+        check(!observation.idle() && tree().getJSONArray("unavailable_processes").length() == 1)
+        check(!observation.perform(observation.revision(), second, 7, -1, 4, null))
+        peers.getValue(20).failed = false
+        observation.refresh()
+        check(window(20) == second) { "A temporary observation failure changed a live window's identity" }
+        peers[20] = Peer(20, 4, 300)
+        observation.refresh()
+        check(window(20) != second && window(10) == first)
+        check(!observation.perform(observation.revision(), second, 7, -1, 4, null))
+        peers.remove(10)
+        observation.refresh()
+        check(tree().getJSONArray("windows").length() == 1)
+        check(!observation.perform(observation.revision(), first, 7, -1, 4, null))
+    }
+}

@@ -133,6 +133,15 @@ object StockColdLaunchSmoke {
             lastSequence = sequence
         }
         check(sessionAfter.getJSONArray("issues").length() == 0) { sessionAfter.toString() }
+        val sessionObservation = dev.artzig.testing.SessionObservation(registry)
+        sessionObservation.refresh()
+        val mergedTree = org.json.JSONObject(sessionObservation.snapshot())
+        val mergedNodes = mergedTree.getJSONArray("nodes")
+        val mergedText = (0 until mergedNodes.length()).map { mergedNodes.getJSONObject(it) }
+            .single { it.optString("text") == "Cold process activity" && it.getInt("pid") == pid }
+        check(mergedText.getInt("task_id") == taskId)
+        check(mergedText.getLong("process_generation") == generation)
+        check(mergedText.getString("id").startsWith("n:${mergedText.getLong("window_id")}:") )
         println("Stock process inspection: authenticated identity, WMS task mapping, remote action, stale generations/revisions and issue cursors verified")
     }
 
