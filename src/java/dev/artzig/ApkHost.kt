@@ -758,12 +758,10 @@ public final class ApkHost {
                 e.root.`prepareWindowTraversal$artzig`(e.lp, width, height)
             }
             val tracePrepared: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            android.view.Choreographer
-                .getInstance()
-                .`doFrame$artzig`(System.nanoTime())
+            HostedDisplayEvents.dispatchFrame(System.nanoTime())
             val traceChoreographer: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            // The traversal barrier is now released. Synchronous View.post callbacks observe
-            // geometry from this frame and may schedule another traversal for the next frame.
+            // Dispatching vsync runs stock Choreographer and releases traversal barriers.
+            // Synchronous View.post callbacks then observe this frame's geometry.
             drainLooper()
             if (TRACE_SLOW_FRAMES) {
                 val traceDone: Long = SystemClock.uptimeMillis()
@@ -935,7 +933,7 @@ public final class ApkHost {
         }
 
         @JvmStatic public fun needsFrame(): Boolean =
-            android.view.Choreographer.getInstance().`hasDueCallbacks$artzig`()
+            dev.artzig.HostedDisplayEvents.hasPendingFrame()
 
         @JvmStatic private fun drainLooper() { pumpMainLooper() }
 

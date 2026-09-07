@@ -253,6 +253,7 @@ internal object FrameworkModuleSmoke {
         testConfigurationContexts()
         testMessageQueueSyncBarrier()
         testMessageQueueHostPumpSemantics()
+        StockDisplayEventsSmoke.run()
         testChoreographerPhaseOrder()
         testAccessibilityInspectorContracts()
         testAccessibilityVirtualNodes()
@@ -4665,7 +4666,7 @@ internal object FrameworkModuleSmoke {
             // Mirror the hosted frame lifecycle. AOSP's traversal sync barrier keeps the
             // synchronous View.post callback queued until CALLBACK_TRAVERSAL updates bounds.
             drainMainQueue()
-            Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+            dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
             drainMainQueue()
             root.doTraversal()
 
@@ -4792,7 +4793,8 @@ internal object FrameworkModuleSmoke {
         check(wakeMessages <= 1) {
             "Choreographer produced $wakeMessages host wakes for one callback deadline"
         }
-        choreographer.`doFrame$artzig`(System.nanoTime())
+        HostedDisplayEvents.dispatchFrame(System.nanoTime())
+        drainMainQueue()
         check(floodCallbacks == 100) {
             "coalescing host wakes lost frame callbacks: $floodCallbacks"
         }
@@ -4800,10 +4802,12 @@ internal object FrameworkModuleSmoke {
         val observed = mutableListOf<String>()
         choreographer.postCallback(Choreographer.CALLBACK_COMMIT, { observed += "commit" }, null)
         choreographer.postCallback(Choreographer.CALLBACK_TRAVERSAL, { observed += "traversal" }, null)
+        choreographer.postCallback(Choreographer.CALLBACK_INSETS_ANIMATION, { observed += "insets" }, null)
         choreographer.postCallback(Choreographer.CALLBACK_INPUT, { observed += "input" }, null)
         choreographer.postCallback(Choreographer.CALLBACK_ANIMATION, { observed += "animation" }, null)
-        choreographer.`doFrame$artzig`(System.nanoTime())
-        check(observed == listOf("input", "animation", "traversal", "commit")) {
+        HostedDisplayEvents.dispatchFrame(System.nanoTime())
+        drainMainQueue()
+        check(observed == listOf("input", "animation", "insets", "traversal", "commit")) {
             "Choreographer callback phase order: $observed"
         }
     }
@@ -4868,7 +4872,7 @@ internal object FrameworkModuleSmoke {
 
     private fun runHostedFrame() {
         drainMainQueue()
-        Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+        dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
         drainMainQueue()
     }
 
@@ -4877,7 +4881,7 @@ internal object FrameworkModuleSmoke {
         // Keep driving the headless compositor until all currently due frame work is done.
         repeat(16) {
             runHostedFrame()
-            if (!Choreographer.getInstance().`hasDueCallbacks$artzig`()) return
+            if (!dev.artzig.HostedDisplayEvents.hasPendingFrame()) return
         }
         error("Activity frame callbacks did not settle")
     }
@@ -4982,7 +4986,7 @@ internal object FrameworkModuleSmoke {
             root.setView(button, 200, 200)
             ArtzigAccessibilityBridge.setActivityRoot(root)
             check(!ArtzigAccessibilityBridge.isIdle())
-            Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+            dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
             drainMainQueue()
             root.doTraversal()
             drainMainQueue()

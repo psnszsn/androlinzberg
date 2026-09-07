@@ -5,7 +5,6 @@ import android.graphics.Color
 import android.os.Binder
 import android.os.Looper
 import android.util.Log
-import android.view.Choreographer
 import android.view.View
 import android.view.ViewRootImpl
 import android.view.WindowManager
@@ -73,12 +72,15 @@ object FrameCommitProbe {
                 events += "second"
             }
         }
+        pumpMainLooper()
+        HostedDisplayEvents.dispatchFrame(System.nanoTime())
+        pumpMainLooper()
         HostedRenderer.getInstance().render(root.doTraversal(), width, height, bufferWidth, bufferHeight, root)
         if (complete) check(events == listOf("first", "second", "fromDraw")) { events }
     }
 
     @JvmStatic fun pumpMainLooper(): Long = ViewHost.pumpMainLooper()
-    @JvmStatic fun needsFrame(): Boolean = Choreographer.getInstance().`hasDueCallbacks$artzig`()
+    @JvmStatic fun needsFrame(): Boolean = dev.artzig.HostedDisplayEvents.hasPendingFrame()
     @JvmStatic fun shutdown() {
         check(complete && draws >= 3) { "Frame callbacks did not complete: $events, draws=$draws" }
         root.destroy()

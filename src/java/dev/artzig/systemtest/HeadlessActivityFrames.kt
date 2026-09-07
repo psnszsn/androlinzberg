@@ -2,7 +2,6 @@ package dev.artzig.systemtest
 
 import android.os.Handler
 import android.os.Looper
-import android.view.Choreographer
 
 /** Compositor clock for Binder-only activity fixtures. Stock roots install traversal
  * barriers, so frames must continue even while another process is being queried or
@@ -17,7 +16,7 @@ internal object HeadlessActivityFrames {
         val handler = Handler.createAsync(Looper.getMainLooper())
         handler.post(object : Runnable {
             override fun run() {
-                Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+                dev.artzig.HostedDisplayEvents.dispatchFrame(System.nanoTime())
                 handler.postDelayed(this, 16)
             }
         })

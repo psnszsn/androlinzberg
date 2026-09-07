@@ -215,6 +215,8 @@ public final class ViewHost {
             }
             // drain main-looper messages posted by views (clicks, invalidations)
             drainLooper()
+            HostedDisplayEvents.dispatchFrame(System.nanoTime())
+            drainLooper()
             dev.artzig.HostedRenderer
                 .getInstance()
                 .render(sRoot.doTraversal(), bufferWidth, bufferHeight, sRoot)
@@ -258,7 +260,7 @@ public final class ViewHost {
         }
 
         @JvmStatic public fun needsFrame(): Boolean =
-            android.view.Choreographer.getInstance().`hasDueCallbacks$artzig`()
+            dev.artzig.HostedDisplayEvents.hasPendingFrame()
 
         @JvmStatic private fun drainLooper() { pumpMainLooper() }
 
