@@ -68,6 +68,10 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
         synchronized(lock) { executor.execute { activityUsage.foregroundCpu(packageName, uid, duration) } }
     }
 
+    fun updateProcessCpu(processName: String, uid: Int, userMs: Long, systemMs: Long) {
+        synchronized(lock) { executor.execute { activityUsage.processCpu(processName, uid, userMs, systemMs) } }
+    }
+
     private fun isOnBattery(value: Snapshot): Boolean = value.plugged == 0 &&
         value.status != BatteryManager.BATTERY_STATUS_UNKNOWN
 
@@ -125,7 +129,8 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
                 activityUsage.snapshot()
             }.get(2, TimeUnit.SECONDS)
             writer.println("Hosted session activity durations while on battery (milliseconds):")
-            for (value in values) writer.println("uid=${value.uid} foreground=${value.foregroundMs} cpu=${value.foregroundCpuMs}")
+            for (value in values) writer.println("uid=${value.uid} foreground=${value.foregroundMs} " +
+                "cpu=${value.foregroundCpuMs} processes=${value.processCpuMs}")
         }
     }
 

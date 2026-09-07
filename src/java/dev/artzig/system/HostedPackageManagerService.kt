@@ -51,6 +51,7 @@ import java.io.File
  * [PackageManagerServiceBase].
  */
 class HostedPackageManagerService(desktopWindows: Boolean = false,
+    private val reservePackageUid: ((String) -> Int)? = null,
     private val packageBroadcast: (Intent, Int) -> Unit = { intent, user ->
         (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context)
             .sendBroadcastAsUser(intent, UserHandle.of(user))
@@ -140,7 +141,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
 
     /** PMS system-image scan: only boot code selects these packaged, signed APKs.
      * Privileged package status does not assign the system UID; the broker assigns
-     * each package its own UID when its process attaches. */
+     * each package its own UID at installation. */
     internal fun installSystemPackage(apkPath: String): String {
         check(Binder.getCallingUid() == Process.SYSTEM_UID || Binder.getCallingUid() == Process.ROOT_UID)
         return installPackageInternal(apkPath, null, true)
@@ -148,7 +149,9 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
 
     private fun installPackageInternal(apkPath: String, nativeLibraryDir: String?, system: Boolean): String {
         val callingUid = Binder.getCallingUid()
-        val file = File(apkPath)
+        // The launcher resolves its APK path before exec. Retain the same
+        // canonical file identity when an installer supplied a relative path.
+        val file = File(apkPath).canonicalFile
         require(file.isFile) { "no APK at $apkPath" }
         // Parse outside the lock (I/O + signature verification).
         val parsed = PackageParser2(null, null, null, parserCallback).use { parser ->
@@ -183,17 +186,26 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
         val pkg = parsed.hideAsFinal()
         createDataDirectories(pkg as PackageImpl, system)
         val app = callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID
+        // PMS allocates the appId at install, before ATMS resolves its first
+        // process. The broker supplies the host equivalent of Settings appIds.
+        val installedUid = reservePackageUid?.invoke(pkg.packageName)
+        if (installedUid != null) {
+            check(installedUid in Process.FIRST_APPLICATION_UID..Process.LAST_APPLICATION_UID)
+            if (app && installedUid != callingUid) throw SecurityException(
+                "uid $callingUid cannot install ${pkg.packageName} with uid $installedUid")
+        }
+        val boundUid = installedUid ?: callingUid.takeIf { app }
         var alreadyInstalled = false
         var newlyBound = false
         synchronized(lock) {
             val existing = packages[pkg.packageName]
             if (existing != null) {
-                if (existing.pathString != apkPath) {
+                if (existing.pathString != file.path) {
                     throw SecurityException(pkg.packageName + " is already installed from " + existing.pathString)
                 }
                 alreadyInstalled = true
-                newlyBound = app && existing.appId == -1
-                if (app) bindPackageUidLocked(pkg.packageName, callingUid)
+                newlyBound = boundUid != null && existing.appId == -1
+                if (boundUid != null) bindPackageUidLocked(pkg.packageName, boundUid)
             } else {
                 // Reject a second package before registering anything for this UID.
                 if (app) {
@@ -201,9 +213,9 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
                     if (owned != null) throw SecurityException(
                         "uid " + callingUid + " already owns " + owned.packageName + " and may not install " + pkg.packageName)
                 }
-                installLocked(pkg, apkPath, system = system)
-                if (app) bindPackageUidLocked(pkg.packageName, callingUid)
-                newlyBound = app
+                installLocked(pkg, file.path, system = system)
+                if (boundUid != null) bindPackageUidLocked(pkg.packageName, boundUid)
+                newlyBound = boundUid != null
             }
         }
         invalidateClientCaches()

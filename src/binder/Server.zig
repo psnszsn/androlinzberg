@@ -68,6 +68,8 @@ pub const Message = struct {
         /// `SystemProperties.addChangeCallback` (the `SYSPROPS_TRANSACTION`
         /// analogue).
         property_changed,
+        /// Body is a PackageUidResult; answers `reserve_package_uid`.
+        package_uid_result,
         _,
     };
 
@@ -83,6 +85,14 @@ pub const Message = struct {
             system = 1,
             _,
         };
+    };
+
+    pub const PackageUidResult = extern struct {
+        status: Status,
+        /// Zero unless status is ok.
+        uid: u32 = 0,
+
+        pub const Status = enum(u32) { ok, denied, exhausted, _ };
     };
 
     /// Trailing:
@@ -165,6 +175,12 @@ pub fn serveWelcome(s: *const Server, welcome: OutMessage.Welcome) Writer.Error!
 pub fn serveProtocolError(s: *const Server, reason: []const u8) Writer.Error!void {
     try s.serveMessageHeader(.{ .tag = .protocol_error, .bytes_len = @intCast(reason.len) });
     try s.out.writeAll(reason);
+    try s.out.flush();
+}
+
+pub fn servePackageUidResult(s: *const Server, request_id: u64, result: OutMessage.PackageUidResult) Writer.Error!void {
+    try s.serveMessageHeader(.{ .tag = .package_uid_result, .bytes_len = @sizeOf(OutMessage.PackageUidResult), .request_id = request_id });
+    try s.out.writeStruct(result, .little);
     try s.out.flush();
 }
 

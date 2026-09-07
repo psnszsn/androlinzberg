@@ -29,6 +29,7 @@ public final class ApkHost {
          * alive; that must never cause ActivityThread.bindApplication to run
          * again on the next frame. */
         private var sProcessInitialized: Boolean = false
+        private var sPackageIdentity: String? = null
         private lateinit var sActivity: Activity
         private var sActivityActive: Boolean = false
         private class BackRoute(
@@ -373,20 +374,12 @@ public final class ApkHost {
             sHeight = height
             sScale120 = scale120
             if (Looper.myLooper() == null) Looper.prepareMainLooper()
+            val pkg = prepareProcessIdentity()
             val tFonts: Long = SystemClock.uptimeMillis()
             android.graphics.Typeface.loadPreinstalledSystemFontMap()
             Log.i(TAG, "system font map loaded in " + (SystemClock.uptimeMillis() - tFonts) + " ms")
             val frameworkRes: String = System.getenv("ARTZIG_FRAMEWORK_RES")
             val apkPath: String = System.getenv("ARTZIG_APK")
-            AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
-
-            // Identity first: the pre-bootstrap package name comes from a
-            // lightweight ApkLite parse (AOSP shape); the broker assigns this
-            // process its Android uid, and Process.myUid() must not be
-            // observed before that. The full manifest parse happens only in
-            // the system process (installPackage).
-            val pkg: String = parseApkLitePackageName(apkPath)
-            dev.artzig.BinderSession.setIdentity(pkg, false)
             android.os.Process.setArgV0(pkg)
             installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
@@ -445,6 +438,22 @@ public final class ApkHost {
             if (mainActivity == null) throw IllegalStateException("manifest has no launcher activity")
             launchMainActivity(mainActivity)
             Log.i(TAG, "activity up")
+        }
+
+        /** Called by the launcher before renderer/display clients can connect to
+         * Binder. ApkLite supplies the package identity; PMS still owns full parsing. */
+        @JvmStatic
+        fun prepareProcessIdentity(): String {
+            sPackageIdentity?.let { return it }
+            val pkg = parseApkLitePackageName(checkNotNull(System.getenv("ARTZIG_APK")))
+            BinderSession.setIdentity(pkg, false)
+            // AOSP ApkLiteParseUtils reads ApkAssets directly. System assets
+            // initialize overlay configuration, which can query Process.myUid;
+            // the hosted process must already have its Binder identity then.
+            AssetManager.createSystemAssetsInZygoteLocked(false,
+                checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
+            sPackageIdentity = pkg
+            return pkg
         }
 
         /** The pre-bootstrap package name, read with the AOSP lightweight
@@ -516,9 +525,7 @@ public final class ApkHost {
             dev.artzig.BinderSession.setExitOnDisconnect()
             val frameworkRes: String = System.getenv("ARTZIG_FRAMEWORK_RES")
             val apkPath: String = System.getenv("ARTZIG_APK")
-            AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
-            val pkg: String = parseApkLitePackageName(apkPath)
-            dev.artzig.BinderSession.setIdentity(pkg, false)
+            val pkg = prepareProcessIdentity()
             val processName = System.getenv("AZK_APP_PROCESS_NAME") ?: pkg
             android.os.Process.setArgV0(processName)
             installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
@@ -534,480 +541,4 @@ public final class ApkHost {
             // discovery is scoped to that name and UID during bindApplication.
             // AOSP ordering: attach first, then bindApplication (providers
             // installed + published before Application.onCreate).
-            sContext = dev.artzig.HostedServiceClient.attachApplication(pkg, System.getenv("AZK_APP_PROCESS_NAME") ?: appInfo.processName ?: pkg)
-            sClassLoader = loadedApkClassLoader(appInfo)
-            Log.i(TAG, "headless app process up: " + pkg)
-        }
-
-        private fun launchMainActivity(className: String) {
-            val intent = android.content.Intent(android.content.Intent.ACTION_MAIN)
-                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                .setComponent(android.content.ComponentName(sContext.packageName, className))
-            sContext.startActivity(intent)
-            // Bootstrap precedes the host event loop. Let the stock launch transaction
-            // run before returning the initialized application to the compositor.
-            val deadline = android.os.SystemClock.uptimeMillis() + 5_000
-            val queue = Looper.myQueue()
-            while (!sActivityActive && android.os.SystemClock.uptimeMillis() < deadline) {
-                val message = queue.`pollDueMessage$artzig`()
-                if (message == null) android.os.SystemClock.sleep(1)
-                else try { message.target.dispatchMessage(message) }
-                finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
-            }
-            check(sActivityActive) { "activity launch transaction timed out: $intent" }
-        }
-
-        @JvmStatic private fun installActivityHost() {
-            dev.artzig.HostedActivityProcess.configureActivityHost(
-                object : dev.artzig.HostedActivityProcess.HostAdapter {
-                    public override fun showActivity(activity: Activity) {
-                        sActivity = activity
-                        sActivityActive = true
-                        show(activity)
-                    }
-
-                    public override fun clearActivityWindows() {
-                        sActivityActive = false
-                        sSyntheticBackRoute = null
-                        sPhysicalBackRoute = null
-                        dev.artzig.HostedWindowStack.setActivityRoot(null)
-                        sRootActive = false
-                        ArtzigAccessibilityBridge.setActivityRoot(null)
-                    }
-
-                    public override fun resizeActivityRoot(
-                        activity: Activity,
-                        width: Int,
-                        height: Int,
-                    ) {
-                        if (activity === sActivity && sRootActive) sRoot.setSize(width, height)
-                    }
-
-                },
-            )
-        }
-
-        @JvmStatic private fun show(a: Activity) {
-            sRoot = checkNotNull(a.window.decorView.viewRootImpl)
-            sRoot.setSize(sWidth, sHeight)
-            HostedWindowStack.setActivityRoot(sRoot)
-            sRootActive = true
-            ArtzigAccessibilityBridge.setActivityRoot(sRoot)
-            android.view.HostedInputDispatcher.reset()
-        }
-
-/** Test-control JNI surface. The host inspector observes Android accessibility nodes. */
-        @JvmStatic public fun accessibilitySnapshot(): String = ArtzigAccessibilityBridge.snapshot()
-
-        @JvmStatic public fun notificationsSnapshot(): String = NotificationObservation.snapshot()
-
-        @JvmStatic public fun accessibilityDiagnostics(afterRevision: Long): String =
-            ArtzigAccessibilityBridge.diagnostics(
-                afterRevision,
-            )
-
-        @JvmStatic public fun testDiagnostics(
-            afterLogSequence: Long,
-            afterIssueSequence: Long,
-        ): String = dev.artzig.ArtzigTestDiagnostics.snapshot(afterLogSequence, afterIssueSequence)
-
-        @JvmStatic public fun diagnosticLogSequence(): Long = dev.artzig.ArtzigTestDiagnostics.logSequence()
-
-        @JvmStatic public fun diagnosticIssueSequence(): Long = dev.artzig.ArtzigTestDiagnostics.issueSequence()
-
-        @JvmStatic public fun accessibilityRevision(): Long = ArtzigAccessibilityBridge.revision()
-
-        @JvmStatic public fun accessibilityIdle(): Boolean = ArtzigAccessibilityBridge.isIdle()
-
-        @JvmStatic public fun accessibilityPerform(
-            expectedRevision: Long,
-            windowId: Long,
-            viewId: Int,
-            virtualId: Int,
-            action: Int,
-            text: String?,
-        ): Boolean =
-            ArtzigAccessibilityBridge.perform(
-                expectedRevision,
-                windowId,
-                viewId,
-                virtualId,
-                action,
-                text,
-            )
-
-/** Deliver component teardown and release host rendering before Wayland
-         * disconnects and the host process exits. */
-        @JvmStatic public fun shutdown() {
-            Log.i(TAG, "shutdown")
-
-            // Services first: they may own decoder/audio workers and native layers.
-            HostedActivityProcess.shutdownServices()
-            drainLooper()
-            Log.i(TAG, "services stopped")
-
-            try {
-                dev.artzig.HostedActivityProcess.shutdownActivitiesInProcess()
-            } catch (t: Throwable) {
-                Log.w(TAG, "activity shutdown failed", t)
-            }
-            Log.i(TAG, "activities destroyed")
-
-            drainLooper()
-            dev.artzig.HostedWindowStack.clear()
-            if (sRootActive) sRoot.destroy()
-            sRootActive = false
-            ArtzigAccessibilityBridge.setActivityRoot(null)
-            Log.i(TAG, "views detached")
-            try {
-                dev.artzig.HostedRenderer.destroyInstance()
-            } catch (t: Throwable) {
-                Log.w(TAG, "renderer shutdown failed", t)
-            }
-            Log.i(TAG, "renderer destroyed")
-            sComposite.discardDisplayList()
-
-            try {
-                HostedActivityProcess.shutdownApplication()
-            } catch (t: Throwable) {
-                Log.w(TAG, "application shutdown failed", t)
-            }
-            sActivityActive = false
-            sSyntheticBackRoute = null
-            sPhysicalBackRoute = null
-            sProcessInitialized = false
-            android.view.HostedInputDispatcher.reset()
-            sAppFullscreenRequested = false
-            sHostFullscreenSuppressed = false
-            Log.i(TAG, "shutdown complete")
-        }
-
-        private val sComposite: RenderNode = RenderNode("artzig-window-composite")
-
-        @JvmStatic private fun appRequestsFullscreen(): Boolean {
-            if (!sActivityActive) return false
-            sAppFullscreenRequested =
-                android.view.HostedWindowPresentation.requestsFullscreen(sActivity.getWindow(), sAppFullscreenRequested)
-            return sAppFullscreenRequested
-        }
-
-/** Whether Android has entered its fullscreen/immersive presentation.
-         * Orientation locks are deliberately independent of presentation state. */
-        @JvmStatic public fun wantsFullscreen(): Boolean {
-            val requested: Boolean = appRequestsFullscreen()
-            if (!requested) sHostFullscreenSuppressed = false
-            return requested && !sHostFullscreenSuppressed
-        }
-
-        @JvmStatic private fun wantsLandscapeConfiguration(
-            width: Int,
-            height: Int,
-        ): Boolean {
-            val orientation: Int =
-                if (!sActivityActive) {
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                } else {
-                    sActivity.getRequestedOrientation()
-                }
-            return android.content.res.HostedConfigurationController
-                .resolveLandscape(orientation, width, height)
-        }
-
-/** Prevent an app's unchanged immersive flags from immediately undoing a
-         * compositor-driven fullscreen exit. Never alter application orientation. */
-        @JvmStatic public fun onHostFullscreenChanged(fullscreen: Boolean) {
-            if (fullscreen) {
-                sHostFullscreenSuppressed = false
-            } else if (appRequestsFullscreen()) {
-                sHostFullscreenSuppressed = true
-            }
-        }
-
-        @Throws(Exception::class)
-        @JvmStatic
-        public fun drawHardware(
-            logicalWidth: Int,
-            logicalHeight: Int,
-            bufferWidth: Int,
-            bufferHeight: Int,
-            scale120: Int,
-        ) {
-            val width: Int = bufferWidth
-            val height: Int = bufferHeight
-            if (!sProcessInitialized) init(width, height, scale120)
-            val desiredOrientation: Int =
-                if (wantsLandscapeConfiguration(width, height)) {
-                    Configuration.ORIENTATION_LANDSCAPE
-                } else {
-                    Configuration.ORIENTATION_PORTRAIT
-                }
-            // Requested orientation is Android application state, not Wayland
-            // presentation state. Deliver it immediately so applications can react
-            // (and, if appropriate, request fullscreen themselves) without waiting
-            // for a compositor resize that depends on that reaction.
-            val orientationChangeReady: Boolean =
-                sContext.getResources().getConfiguration().orientation != desiredOrientation
-            if (width != sWidth || height != sHeight || scale120 != sScale120 ||
-                orientationChangeReady
-            ) {
-                resize(width, height, scale120)
-            }
-            val traceStart: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            drainLooper()
-            val traceBeforeDrain: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            val wins: MutableList<dev.artzig.HostedWindowStack.Entry> =
-                dev.artzig.HostedWindowStack.entries()
-            for (e: dev.artzig.HostedWindowStack.Entry in wins) {
-                e.root.`prepareWindowTraversal$artzig`(e.lp, width, height)
-            }
-            val tracePrepared: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            // Stock DisplayEventReceiver dispatches traversal from the native Looper.
-            // The host frame presents the latest completed Android frame.
-            sRenderedFrameTime = android.view.Choreographer.getInstance().lastFrameTimeNanos
-            val traceChoreographer: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
-            // Dispatching vsync runs stock Choreographer and releases traversal barriers.
-            // Synchronous View.post callbacks then observe this frame's geometry.
-            drainLooper()
-            if (TRACE_SLOW_FRAMES) {
-                val traceDone: Long = SystemClock.uptimeMillis()
-                if (traceDone - traceStart > 16L) {
-                    Log.d(
-                        "ApkHostFrame",
-                        "slow main frame=" + (traceDone - traceStart) +
-                            "ms pre-queue=" + (traceBeforeDrain - traceStart) +
-                            " prepare=" + (tracePrepared - traceBeforeDrain) +
-                            " choreographer=" + (traceChoreographer - tracePrepared) +
-                            " post-queue=" + (traceDone - traceChoreographer),
-                    )
-                }
-            }
-            val base: RenderNode? = if (sRootActive) sRoot.`getRenderNode$artzig`() else null
-            if (wins.isEmpty()) {
-                if (base == null) {
-                    sComposite.setPosition(0, 0, width, height)
-                    val emptyCanvas: RecordingCanvas = sComposite.beginRecording(width, height)
-                    try {
-                        emptyCanvas.drawColor(0xff000000.toInt())
-                    } finally {
-                        sComposite.endRecording()
-                    }
-                    dev.artzig.HostedRenderer
-                        .getInstance()
-                        .render(sComposite, width, height)
-                    return
-                }
-                dev.artzig.HostedRenderer
-                    .getInstance()
-                    .render(base, width, height, sRoot)
-                return
-            }
-            sComposite.setPosition(0, 0, width, height)
-            val c: RecordingCanvas = sComposite.beginRecording(width, height)
-            val drawnRoots = ArrayList<android.view.ViewRootImpl>()
-            try {
-                c.drawColor(0xff000000.toInt())
-                if (base != null) {
-                    c.drawRenderNode(base)
-                    drawnRoots += sRoot
-                }
-                for (e: dev.artzig.HostedWindowStack.Entry in wins) {
-                    try {
-                        val wb: RenderNode? = e.root.`getRenderNode$artzig`()
-                        if (wb == null) continue
-                        val windowWidth: Int = e.root.getWidth()
-                        val windowHeight: Int = e.root.getHeight()
-                        if ((e.lp.flags and android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0) {
-                            val dim: Float = if (e.lp.dimAmount > 0) e.lp.dimAmount else 0.6f
-                            c.drawColor(((dim * 255).toInt() shl 24))
-                        }
-                        val gravity: Int = if (e.lp.gravity == 0) android.view.Gravity.CENTER else e.lp.gravity
-                        val hg: Int = gravity and android.view.Gravity.HORIZONTAL_GRAVITY_MASK
-                        val vg: Int = gravity and android.view.Gravity.VERTICAL_GRAVITY_MASK
-                        var wx: Int =
-                            if (hg == android.view.Gravity.CENTER_HORIZONTAL) {
-                                (width - windowWidth) / 2 + e.lp.x
-                            } else if (hg == android.view.Gravity.RIGHT) {
-                                width - windowWidth - e.lp.x
-                            } else {
-                                e.lp.x
-                            }
-                        var wy: Int =
-                            if (vg == android.view.Gravity.CENTER_VERTICAL) {
-                                (height - windowHeight) / 2 + e.lp.y
-                            } else if (vg == android.view.Gravity.BOTTOM) {
-                                height - windowHeight - e.lp.y
-                            } else {
-                                e.lp.y
-                            }
-                        wx = Math.max(0, Math.min(wx, width - windowWidth))
-                        wy = Math.max(0, Math.min(wy, height - windowHeight))
-                        e.frame.set(wx, wy, wx + windowWidth, wy + windowHeight)
-                        val save: Int = c.save()
-                        c.translate(wx.toFloat(), wy.toFloat())
-                        c.drawRenderNode(wb)
-                        drawnRoots += e.root
-                        c.restoreToCount(save)
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "overlay draw failed: " + e.view.javaClass.name, t)
-                    }
-                }
-            } finally {
-                sComposite.endRecording()
-            }
-            dev.artzig.HostedRenderer
-                .getInstance()
-                .render(sComposite, width, height, *drawnRoots.toTypedArray())
-        }
-
-/** Window resized: update metrics/config and relayout. */
-        @JvmStatic
-        private fun resize(
-            width: Int,
-            height: Int,
-            scale120: Int,
-        ) {
-            sWidth = width
-            sHeight = height
-            sScale120 = scale120
-            try {
-                val res: Resources = sContext.getResources()
-                val oldConfig: Configuration = Configuration(res.getConfiguration())
-                val requestedOrientation: Int =
-                    if (sActivityActive) {
-                        sActivity.getRequestedOrientation()
-                    } else {
-                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                    }
-                val windowConfig: android.content.res.HostedWindowConfiguration =
-                    android.content.res.HostedConfigurationController
-                        .calculate(oldConfig, requestedOrientation, width, height, scale120)
-                android.view.ArtzigDisplay.configure(
-                    windowConfig.displayWidth,
-                    windowConfig.displayHeight,
-                    windowConfig.densityDpi,
-                )
-                val config: Configuration = windowConfig.configuration
-                // AOSP ActivityThread.handleConfigurationChanged: ResourcesManager applies the
-                // configuration to every Resources; the metrics come from the display service.
-                android.app.ResourcesManager.getInstance().applyConfigurationToResources(config, null)
-                HostContexts.dispatchWindowConfiguration(config)
-                dev.artzig.HostedActivityProcess.applyConfigurationInProcess(config, windowConfig.changes, width, height)
-            } catch (t: Throwable) {
-                Log.w(TAG, "resize failed", t)
-            }
-            Log.i(TAG, "resized to " + width + "x" + height)
-        }
-
-        @JvmStatic
-        public fun pumpMainLooper(): Long {
-            val looper: Looper? = Looper.myLooper()
-            if (looper == null) return -1
-            val queue = looper.getQueue()
-            var guard: Int = 0
-            while (guard++ < 500) {
-                val msg: android.os.Message? = queue.`pollDueMessage$artzig`()
-                if (msg == null) break
-                try {
-                    try {
-                        msg.getTarget().dispatchMessage(msg)
-                    } catch (t: Throwable) {
-                        // This loop intentionally survives app callbacks. Do not use Log's
-                        // Throwable overload here: custom Throwable printers can expand into
-                        // tens of megabytes and hide the original failure behind another OOM.
-                        val targetName: String = msg.getTarget().javaClass.name
-                        Log.e(
-                            TAG,
-                            "message dispatch failed on " + targetName + "\n" +
-                                `formatThrowableForHost$artzig`(t),
-                        )
-                    }
-                } catch (loggingFailure: Throwable) {
-                    // Keep the recovery path allocation-light even under severe heap pressure.
-                    System.err.print("E/ApkHost: message dispatch and diagnostic failed: ")
-                    System.err.println(loggingFailure.javaClass.name)
-                } finally {
-                    android.os.MessageQueue.`recycleDispatched$artzig`(msg)
-                }
-            }
-            if (guard > 500 && queue.`nextPollDelayMillis$artzig`() == 0L) {
-                queue.`wakeHost$artzig`()
-                return 0
-            }
-            queue.`runIdleHandlers$artzig`()
-            return queue.`nextPollDelayMillis$artzig`()
-        }
-
-        @JvmStatic public fun needsFrame(): Boolean =
-            android.view.Choreographer.getInstance().lastFrameTimeNanos > sRenderedFrameTime
-
-        @JvmStatic private fun drainLooper() { pumpMainLooper() }
-
-        private const val HOST_THROWABLE_CHAR_LIMIT: Int = 64 * 1024
-        private const val HOST_THROWABLE_FRAME_LIMIT: Int = 64
-        private const val HOST_THROWABLE_CAUSE_LIMIT: Int = 16
-
-        /** Bounded diagnostic for the host's catch-and-continue looper seam. */
-        @JvmStatic
-        public fun `formatThrowableForHost$artzig`(throwable: Throwable): String {
-            val out: StringBuilder = StringBuilder(4096)
-            val seen: java.util.IdentityHashMap<Throwable, Boolean> =
-                java.util.IdentityHashMap()
-            var current: Throwable? = throwable
-            var causeCount: Int = 0
-            while (current != null && causeCount++ < HOST_THROWABLE_CAUSE_LIMIT) {
-                if (seen.put(current, true) != null) {
-                    appendHostDiagnostic(out, "[circular cause: ")
-                    appendHostDiagnostic(out, current.javaClass.name)
-                    appendHostDiagnostic(out, "]\n")
-                    break
-                }
-                if (causeCount > 1) appendHostDiagnostic(out, "Caused by: ")
-                appendHostDiagnostic(out, current.javaClass.name)
-                appendHostDiagnostic(out, " [message omitted by bounded host logger]\n")
-
-                val frames: Array<StackTraceElement> = current.stackTrace
-                val frameCount: Int = Math.min(frames.size, HOST_THROWABLE_FRAME_LIMIT)
-                var index: Int = 0
-                while (index < frameCount && out.length < HOST_THROWABLE_CHAR_LIMIT) {
-                    val frame: StackTraceElement = frames[index++]
-                    appendHostDiagnostic(out, "\tat ")
-                    appendHostDiagnostic(out, frame.className)
-                    appendHostDiagnostic(out, ".")
-                    appendHostDiagnostic(out, frame.methodName)
-                    appendHostDiagnostic(out, "(")
-                    if (frame.isNativeMethod) {
-                        appendHostDiagnostic(out, "Native Method")
-                    } else {
-                        appendHostDiagnostic(out, frame.fileName ?: "Unknown Source")
-                        if (frame.lineNumber >= 0) {
-                            appendHostDiagnostic(out, ":")
-                            appendHostDiagnostic(out, frame.lineNumber.toString())
-                        }
-                    }
-                    appendHostDiagnostic(out, ")\n")
-                }
-                if (frames.size > frameCount) {
-                    appendHostDiagnostic(out, "\t... ")
-                    appendHostDiagnostic(out, (frames.size - frameCount).toString())
-                    appendHostDiagnostic(out, " more frames\n")
-                }
-                current = current.cause
-            }
-            if (current != null || out.length >= HOST_THROWABLE_CHAR_LIMIT) {
-                appendHostDiagnostic(out, "[throwable diagnostic truncated]\n")
-            }
-            return out.toString()
-        }
-
-        @JvmStatic
-        private fun appendHostDiagnostic(
-            out: StringBuilder,
-            text: CharSequence,
-        ) {
-            val remaining: Int = HOST_THROWABLE_CHAR_LIMIT - out.length
-            if (remaining <= 0) return
-            out.append(text, 0, Math.min(remaining, text.length))
-        }
-    }
-}
+            sContext = dev.artzig.HostedServiceClient.attachApplication(pkg, processName)

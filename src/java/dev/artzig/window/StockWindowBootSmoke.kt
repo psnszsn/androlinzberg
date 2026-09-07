@@ -41,6 +41,15 @@ object StockWindowBootSmoke {
             320, 240, 120, 0)
         val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
         val packageName = installer.installPackage(args.single(), null)
+        check(packages.getApplicationInfo(packageName, 0L, 0)!!.uid == android.os.Process.myUid())
+        check(runCatching { dev.artzig.BinderSession.reservePackageUid(packageName) }
+            .exceptionOrNull() is SecurityException)
+        dev.artzig.BinderSession.setIdentity(packageName, false) // Same connected identity is safe.
+        check(runCatching { dev.artzig.BinderSession.setIdentity("fixture.different", false) }
+            .exceptionOrNull() is IllegalStateException)
+        check(runCatching { dev.artzig.BinderSession.setIdentity("android", true) }
+            .exceptionOrNull() is IllegalStateException)
+        check(dev.artzig.BinderSession.assignedUid() == packages.getApplicationInfo(packageName, 0L, 0)!!.uid)
         val application = dev.artzig.HostedServiceClient.attachApplication(packageName)
         check(application.packageName == packageName)
         check(application.checkSelfPermission(android.Manifest.permission.SYSTEM_ALERT_WINDOW) ==
@@ -79,7 +88,84 @@ object StockWindowBootSmoke {
         check(memory.processState == android.app.ActivityManager.PROCESS_STATE_TOP)
         println("Stock ATMS resumed application task: ${resumed!!.taskId}")
         verifyClientWindow(session, resumed!!)
+        verifyColdActivity(application)
         println("Stock WMS/ATMS boot: display=${info.displayId} physical=${initial.x}x${initial.y}")
+    }
+
+    private fun verifyColdActivity(application: android.app.Application) {
+        val packageName = application.packageName
+        val processName = "$packageName:cold"
+        val manager = application.getSystemService(android.app.ActivityManager::class.java)
+        fun process() = manager.runningAppProcesses.orEmpty().singleOrNull { it.processName == processName }
+        check(process() == null) { "Cold activity process was already attached" }
+        application.startActivity(android.content.Intent().setClassName(packageName,
+            "$packageName.ColdProcessActivity").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        val deadline = android.os.SystemClock.uptimeMillis() + 15_000
+        while (process() == null && android.os.SystemClock.uptimeMillis() < deadline) {
+            drainDueMessages()
+            android.os.SystemClock.sleep(5)
+        }
+        val running = checkNotNull(process()) { "ATMS did not start the cold activity process" }
+        check(running.pid != android.os.Process.myPid() && running.uid == android.os.Process.myUid())
+        val uri = android.net.Uri.parse("content://$packageName.cold")
+        var snapshot: android.os.Bundle? = null
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            drainDueMessages()
+            snapshot = application.contentResolver.call(uri, "snapshot", null, null)
+            if (snapshot?.getStringArrayList("events")?.contains("resume") == true) break
+            android.os.SystemClock.sleep(5)
+        }
+        val state = checkNotNull(snapshot)
+        check(state.getInt("pid") == running.pid && state.getInt("uid") == running.uid)
+        check(state.getString("process") == processName)
+        check(state.getStringArrayList("events") == arrayListOf("provider", "create", "start", "resume")) {
+            "Cold process lifecycle: ${state.getStringArrayList("events")}" }
+        println("Stock ATMS cold activity: $processName pid=${running.pid}, provider/create/start/resume verified")
+        verifySecondaryComponents(application, running.pid)
+    }
+
+    private fun verifySecondaryComponents(application: android.app.Application, activityPid: Int) {
+        val pkg = application.packageName
+        var serviceState: android.os.Bundle? = null
+        val receiver = android.os.Messenger(android.os.Handler(android.os.Looper.getMainLooper()) {
+            serviceState = it.data
+            true
+        })
+        val connection = object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
+                android.os.Messenger(binder).send(android.os.Message.obtain().apply { replyTo = receiver })
+            }
+            override fun onServiceDisconnected(name: android.content.ComponentName) { }
+        }
+        check(application.bindService(android.content.Intent().setClassName(pkg, "$pkg.ColdProcessService"),
+            connection, Context.BIND_AUTO_CREATE))
+        try {
+            val deadline = android.os.SystemClock.uptimeMillis() + 5000
+            while (serviceState == null && android.os.SystemClock.uptimeMillis() < deadline) {
+                drainDueMessages()
+                android.os.SystemClock.sleep(5)
+            }
+            val state = checkNotNull(serviceState) { "Secondary-process service did not respond" }
+            check(state.getInt("pid") == activityPid && state.getString("process") == "$pkg:cold")
+            check(state.getStringArrayList("events")!!.takeLast(2) == listOf("service-create", "service-bind"))
+        } finally { application.unbindService(connection) }
+        val manager = application.getSystemService(android.app.ActivityManager::class.java)
+        check(manager.runningAppProcesses.orEmpty().none { it.processName == "$pkg:provider" })
+        val provider = checkNotNull(application.contentResolver.call(
+            android.net.Uri.parse("content://$pkg.provider"), "snapshot", null, null))
+        check(provider.getString("process") == "$pkg:provider")
+        check(provider.getInt("pid") != activityPid && provider.getInt("pid") != android.os.Process.myPid())
+        check(provider.getInt("uid") == android.os.Process.myUid())
+        check(provider.getStringArrayList("events") == arrayListOf("provider"))
+        println("Secondary component routing: service reused activity process; provider started its own process")
+    }
+
+    private fun drainDueMessages() {
+        while (true) {
+            val message = android.os.Looper.myQueue().`pollDueMessage$artzig`() ?: return
+            try { message.target.dispatchMessage(message) }
+            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
+        }
     }
 
     /** Exercise the actual session contract before switching the ViewRootImpl client.

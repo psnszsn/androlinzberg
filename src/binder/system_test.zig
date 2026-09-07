@@ -18,6 +18,10 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
+    if (args.len >= 3 and std.mem.eql(u8, args[1], "--service-exec"))
+        return std.process.replace(io, .{ .argv = args[2..] });
+    if (args.len == 6 and std.mem.eql(u8, args[1], "--cold-window"))
+        return coldWindow(init, args);
     if (args.len < 9) {
         std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk> <surfaceflinger>\n", .{});
         return error.InvalidArguments;
@@ -183,6 +187,38 @@ pub fn main(init: std.process.Init) !void {
     failed = !expectExit(io, &broker, "broker") or failed;
     if (failed) return error.SystemTestFailed;
     std.debug.print("system-test: all processes exited cleanly\n", .{});
+}
+
+/// Use the production session supervisor, including its stdout drain and app
+/// launcher metadata. Only this test's system client receives the system cookie.
+fn coldWindow(init: std.process.Init, args: []const []const u8) !void {
+    const io = init.io;
+    const gpa = init.gpa;
+    const session_module = @import("session.zig");
+    var session = try session_module.Session.start(gpa, io, .{
+        .launcher_exe = args[2],
+        .broker_exe = args[3],
+        .surfaceflinger_exe = args[4],
+        .environ = init.minimal.environ,
+    });
+    defer session.stop();
+    try session.awaitSystemReady();
+    var env = try init.minimal.environ.createMap(gpa);
+    defer env.deinit();
+    try env.put(session_module.socket_env, session.socket_path);
+    try env.put(session_module.cookie_env, session.cookie);
+    try env.put(session_module.system_cookie_env, session.system_cookie);
+    try env.put(session_module.prop_area_env, session.prop_area_path);
+    try env.put("AZK_TEST_CLASS", "dev.artzig.window.StockColdLaunchSmoke");
+    var client = try std.process.spawn(io, .{
+        .argv = &.{ args[2], "--javatest", args[5] },
+        .environ_map = &env,
+        .stdin = .ignore,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    defer client.kill(io);
+    if (!expectExit(io, &client, "stock cold launch")) return error.ColdLaunchFailed;
 }
 
 fn awaitReady(io: Io, child: *std.process.Child, name: []const u8) !void {

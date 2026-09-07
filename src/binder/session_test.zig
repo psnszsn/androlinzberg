@@ -57,11 +57,17 @@ pub fn main(init: std.process.Init) !void {
             .shutdown_timeout = .{ .nanoseconds = 100 * std.time.ns_per_ms },
         })) |value| {
             var session = value;
+            defer session.stop();
+            const joined = try @import("session.zig").SessionInfo.read(arena, io, session.dir);
+            try std.testing.expectEqualStrings(session.socket_path, joined.socket);
+            try std.testing.expectEqualStrings(session.prop_area_path, joined.prop_area);
+            try std.testing.expectEqualStrings(session.cookie, joined.cookie);
+            if (std.mem.eql(u8, case.mode, "normal"))
+                try std.testing.expectEqualStrings(exe, joined.launcher);
             session.awaitSystemReady() catch |err| {
                 failure = err;
             };
             if (failure == null) try session.awaitSystemReady();
-            session.stop();
         } else |err| failure = err;
         try std.testing.expectEqual(case.failure, failure);
         try std.testing.expectEqual(std.heap.Check.ok, debug.deinit());

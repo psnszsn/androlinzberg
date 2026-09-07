@@ -177,7 +177,8 @@ internal object SystemServices {
         // starts the package manager before the activity manager). The
         // platform package "android" is framework-res.apk parsed by the real
         // AOSP parser — its manifest is the session's permission source.
-        val packageManager = HostedPackageManagerService(desktopWindows = stockWindows != null)
+        val packageManager = HostedPackageManagerService(desktopWindows = stockWindows != null,
+            reservePackageUid = dev.artzig.BinderSession::reservePackageUid)
         packageManager.installPlatform(
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
         )
@@ -441,7 +442,7 @@ internal object SystemServices {
     private fun sessionProcessLauncher(): HostedActivityManagerService.ProcessLauncher? {
         val sessionDir = System.getenv("AZK_BINDER_SESSION_DIR") ?: return null
         val launcher = System.getenv("AZK_LAUNCHER_EXE") ?: return null
-        return HostedActivityManagerService.ProcessLauncher { packageName, apkPath, processName, onExit ->
+        return HostedActivityManagerService.ProcessLauncher { packageName, processName, apkPath ->
             try {
                 val builder = ProcessBuilder(launcher, "--join", sessionDir, "--app-process", apkPath)
                     .redirectOutput(ProcessBuilder.Redirect.INHERIT)
@@ -450,29 +451,5 @@ internal object SystemServices {
                 // system cookie an APK could reconnect as uid 1000 and claim
                 // the system service names.
                 builder.environment().remove("AZK_BINDER_SYSTEM_COOKIE")
-                builder.environment().remove("ARTZIG_SYSTEM_DATA_DIR")
-                // Native initialization may connect to Binder before Java bootstrap.
-                // Establish the package identity before exec, and keep the manifest
-                // process name separate from the package's shared Android UID.
                 builder.environment()["AZK_BINDER_PACKAGE"] = packageName
                 builder.environment()["AZK_APP_PROCESS_NAME"] = processName
-                // Android native seccomp policies do not allow glibc's optional
-                // rseq registration on pthread creation. Disable that optimization
-                // before exec rather than changing the application's syscall filter.
-                val tunables = builder.environment()["GLIBC_TUNABLES"].orEmpty().split(':')
-                    .filter { it.isNotEmpty() && !it.startsWith("glibc.pthread.rseq=") }
-                builder.environment()["GLIBC_TUNABLES"] = (tunables + "glibc.pthread.rseq=0").joinToString(":")
-                val child = builder.start()
-                spawnedProcesses.add(child)
-                Thread({
-                    try { Log.i(TAG, "process $processName exited with status ${child.waitFor()}") } finally { onExit() }
-                }, "app-exit-$processName").apply { isDaemon = true; start() }
-                Log.i(TAG, "spawning process for " + packageName)
-                true
-            } catch (t: Throwable) {
-                Log.w(TAG, "cannot spawn process for " + packageName, t)
-                false
-            }
-        }
-    }
-}

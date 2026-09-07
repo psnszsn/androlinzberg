@@ -18,4 +18,8 @@ object BinderSession {
 
     /** The Android uid the broker assigned this process (Process.myUid). */
     @JvmStatic external fun assignedUid(): Int
+
+    /** System-only install boundary: allocate the identity before starting an app.
+     * The broker returns the same uid when that package connects later. */
+    @JvmStatic external fun reservePackageUid(packageName: String): Int
 }

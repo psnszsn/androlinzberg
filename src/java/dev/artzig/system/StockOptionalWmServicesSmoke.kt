@@ -234,14 +234,19 @@ object StockOptionalWmServicesSmoke {
         time = 200
         usage.activity(10001, false)
         usage.foregroundCpu("fixture", 10001, 7)
+        usage.processCpu("fixture", 10001, 4, 2)
+        usage.processCpu("fixture:cold", 10001, 3, 1)
         time = 250
         usage.powerChanged(false)
         time = 300
         usage.activity(10001, false)
         usage.activity(10001, false) // An unmatched pause must not make nesting negative.
         usage.foregroundCpu("fixture", 10001, 9)
+        usage.processCpu("fixture", 10001, 100, 100) // Plugged-in CPU is excluded.
         val first = usage.snapshot().single()
         check(first.foregroundMs == 150L && first.foregroundCpuMs == mapOf("fixture" to 7L))
+        check(first.processCpuMs == mapOf("fixture" to HostedActivityBatteryUsage.CpuTime(4, 2),
+            "fixture:cold" to HostedActivityBatteryUsage.CpuTime(3, 1)))
         time = 400
         usage.activity(10001, true)
         time = 500
@@ -349,6 +354,7 @@ object StockOptionalWmServicesSmoke {
             check(snapshot.packageNames == listOf("android"))
             internal.getPackageList(null).use { check(it.packageNames.toSet() == setOf("android", name)) }
             check(packages.installPackage(apk) == name)
+            check(packages.installPackage(java.io.File(apk).canonicalPath) == name)
             check(events.size == 1)
             packages.setApplicationEnabledSetting(name, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 android.content.pm.PackageManager.DONT_KILL_APP, 0, name)

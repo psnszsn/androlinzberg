@@ -26,6 +26,11 @@ class HostActivityManagerInternalAccess internal constructor(
     fun unregisterProcessObserver(observer: android.app.IProcessObserver) =
         activities.unregisterProcessObserver(observer)
 
+    fun startProcess(processName: String, info: android.content.pm.ApplicationInfo,
+        knownToBeDead: Boolean, isTop: Boolean, hostingType: String,
+        hostingName: android.content.ComponentName) =
+        activities.startActivityProcess(processName, info, knownToBeDead, isTop, hostingType, hostingName)
+
     fun setBooting(value: Boolean) { activities.booting = value }
     fun isBooting(): Boolean = activities.booting
     fun setBooted(value: Boolean) { activities.booted = value }
@@ -98,6 +103,7 @@ class HostActivityManagerInternalAccess internal constructor(
         checkNotNull(activities.batteryService).updateActivityUsage(activity, uid, resumed)
     fun updateForegroundTimeIfOnBattery(packageName: String, uid: Int, cpuTimeDiff: Long) =
         checkNotNull(activities.batteryService).updateForegroundTimeIfOnBattery(packageName, uid, cpuTimeDiff)
+    fun updateCpuStats() = activities.updateCpuStats()
 
     @Volatile private var voiceProvider: ActivityManagerInternal.VoiceInteractionManagerProvider? = null
     fun setVoiceInteractionManagerProvider(provider: ActivityManagerInternal.VoiceInteractionManagerProvider?) {

@@ -43,6 +43,52 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Cold process and camera-client rebase work (2026-09-07)
+
+Rebased onto main ed49081, retaining its stock virtual-device and camera client
+closure and hosted virtual-device service. Package 67 combines those imports
+with the graphics/WM closure: `N-V-__8AAHDlxk20lzaYWXDpnS9Mk8vY-sv4zbevEpP3CCc_`,
+archive SHA-256 `2c58a4b7c838651930f217976f717d0ada5993ac51aea704556af01faa94d8ad`.
+The merged generator lists retain both branches and drop duplicate device-state
+entries. The stub audit now has 23 stubs, 14 pending and 9 survivors.
+
+Regression 53 passes both stock launch gates, module, session and graph checks. Regression 48 exposed
+anonymous test-driver identities; the drivers now connect using their fixture
+package. Regression 49 passes module, broker and graph checks, but switching
+activities reaches the previously unsupported AM updateCpuStats callback. A system-only broker
+request reserves a package UID from the same table as process hello. Package
+installation publishes that identity before ATMS resolves its first activity.
+AM's startProcess boundary invokes the host launcher with the requested process
+name; attachment announcements are keyed by UID and PID. Broker tests cover
+reservation/hello identity, reconnects, denied allocation, malformed requests
+and exhaustion. The stock-window gate now launches an absent secondary process
+and observes provider/create/start/resume callbacks through a public-API APK
+provider. A second gate installs the package in a fresh session before any app
+peer exists, then requests its first launch from a trusted system test client.
+Service and provider resolution now selects the manifest process instead of
+whichever sibling attached first. CPU sampling uses stock ProcessCpuTracker
+with asynchronous five-second throttling and session UID battery accounting.
+Regression 50 reaches process creation and exposes a launcher join bug: parsed
+JSON strings borrowed a temporary stack buffer, corrupting the child property
+path. SessionInfo now reads complete metadata into caller-owned arena storage
+and copies parsed strings. The fresh-session test driver also implements the
+production supervisor exec trampoline. Regression 51 gets the child through native startup and reaches APK installation;
+a relative/absolute path mismatch rejects the same APK. Install paths now use
+canonical file identity, covered by a reinstall/observer regression. Session
+supervision regression 52 passes all startup, deadline and descriptor gates.
+Regression 53 verifies an install-time UID before the first app peer exists,
+ATMS-driven creation and provider/create/start/resume callbacks. It also
+verifies a secondary activity process, service reuse of that process and a
+separate provider-only process. Full regression 54 passes the stock, JVM,
+system, broker, session and graph gates, but 13 APK tests fail during launch:
+the GUI resource bootstrap connects anonymously before setting package identity.
+Regression 56 confirms the early assignedUid call and verifies that changing an
+already connected identity is now rejected. The bootstrap now parses ApkLite and
+sets identity before initializing system assets. Targeted launch regression 57 and
+full regression 58 pass: 15 APK tests, 45 steps, no structured runtime issues,
+plus both stock launch gates, JVM, system, broker, session and graph checks.
+Startup failure recovery and complete process supervision remain outstanding.
+
 ## Real WMS client and TextureView checkpoint (2026-09-07)
 
 Regression 41 passes the real WMS session gate: the fixture resumes in task 2,

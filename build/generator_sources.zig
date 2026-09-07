@@ -1572,6 +1572,23 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/exportimport/IImportStatusCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/exportimport/IQueryDocumentProvidersCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/HealthFitness/framework/java/android/health/connect/exportimport/IScheduledExportStatusCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/prediction/IPredictionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/prediction/IPredictionManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/resolver/IResolverRankerResult.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/resolver/IResolverRankerService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/displayhash/IDisplayHashingService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/projection/IMediaProjectionManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/projection/IMediaProjectionWatcherCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/projection/ReviewGrantedConsentResult.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/gui/android/gui/BorderSettings.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/gui/android/gui/DropInputMode.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/gui/android/gui/StalledTransactionInfo.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/gui/android/gui/TrustedOverlay.aidl" },
+    .{ .source = .aosp, .path = "frameworks/native/libs/gui/android/gui/TouchOcclusionMode.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/Mode.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/power/aidl/android/hardware/power/Boost.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/rotationresolver/IRotationResolverCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/service/rotationresolver/IRotationResolverService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/IAuditLogEventsCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/IDevicePolicyManager.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/StartInstallingUpdateCallback.aidl" },
@@ -1713,7 +1730,6 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IUserRestrictionsListener.aidl" },
     .{ .source = .aosp, .path = "frameworks/native/libs/input/android/os/IInputConstants.aidl" },
     .{ .source = .aosp, .path = "frameworks/native/libs/input/android/os/InputEventInjectionSync.aidl" },
-    .{ .source = .aosp, .path = "frameworks/native/libs/gui/android/gui/TouchOcclusionMode.aidl" },
     .{ .source = .aosp, .path = "frameworks/native/libs/input/android/os/PointerIconType.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IMessenger.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IRemoteCallback.aidl" },
@@ -2281,8 +2297,10 @@ pub const logtags = [_]Logtags{
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/EventLogTags.logtags" }, .output = "android/app/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/services/core/java/com/android/server/EventLogTags.logtags" }, .output = "com/android/server/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/jank/EventLogTags.logtags" }, .output = "com/android/internal/jank/EventLogTags.java" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/com/android/internal/app/EventLogTags.logtags" }, .output = "com/android/internal/app/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/admin/SecurityLogTags.logtags" }, .output = "android/app/admin/SecurityLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/view/EventLogTags.logtags" }, .output = "android/view/EventLogTags.java" },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/base/services/core/java/com/android/server/wm/EventLogTags.logtags" }, .output = "com/android/server/wm/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/services/core/java/com/android/server/am/EventLogTags.logtags" }, .output = "com/android/server/am/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/EventLogTags.logtags" }, .output = "android/os/EventLogTags.java" },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/EventLogTags.logtags" }, .output = "android/content/EventLogTags.java" },
@@ -2334,7 +2352,6 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.service.chooser", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/chooser/flags.aconfig"} },
     .{ .package = "com.android.wm.shell", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/libs/WindowManager/Shell/aconfig/multitasking.aconfig", "frameworks/base/libs/WindowManager/Shell/aconfig/automotive.aconfig" } },
     .{ .package = "com.android.server.am", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/services/core/java/com/android/server/am/flags.aconfig", "frameworks/base/services/core/java/com/android/server/am/broadcasts_flags.aconfig" } },
-    .{ .package = "android.hardware.devicestate.feature.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/hardware/devicestate/feature/flags.aconfig"} },
     .{ .package = "android.view.contentprotection.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/contentprotection/flags/content_protection_flags.aconfig"} },
     .{ .package = "android.app.ondeviceintelligence.flags", .container = "system", .source = .aosp, .declarations = &.{"packages/modules/NeuralNetworks/flags/ondevice_intelligence.aconfig"} },
     .{ .package = "android.provider.flags", .container = "com.android.configinfrastructure", .source = .aosp, .declarations = &.{"packages/modules/ConfigInfrastructure/framework/flags.aconfig"} },
@@ -2347,7 +2364,10 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.app.appfunctions.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/appfunctions/flags/flags.aconfig"} },
     .{ .package = "android.app.assist.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/assist/flags.aconfig"} },
     .{ .package = "android.app.jank", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/jank/flags.aconfig"} },
-    .{ .package = "android.content.pm", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/flags.aconfig"} },
+    // ContentProvider.attachInfo creates AppOpsManager before SettingsProvider
+    // is attached. Keep the optional SDK-feature cache disabled at build time
+    // so PackageManager construction does not read DeviceConfig recursively.
+    .{ .package = "android.content.pm", .fixed_disabled_flags = &.{"cache_sdk_system_features"}, .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/flags.aconfig"} },
     // The pinned BP2A manifest requires runtime feature-flag filtering (AAPT retains its gates).
     .{ .package = "android.content.res", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/res/flags.aconfig"}, .values = &.{"build/release/aconfig/bp2a/android.content.res/manifest_flagging_flag_values.textproto"} },
     .{ .package = "android.content.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/flags/flags.aconfig"} },
@@ -2365,7 +2385,11 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.view.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/view/flags/refresh_rate_flags.aconfig", "frameworks/base/core/java/android/view/flags/scroll_capture.aconfig", "frameworks/base/core/java/android/view/flags/scroll_feedback_flags.aconfig", "frameworks/base/core/java/android/view/flags/view_flags.aconfig", "frameworks/base/core/java/android/view/flags/view_tree_observer_flags.aconfig", "frameworks/base/core/java/android/view/flags/window_insets.aconfig" } },
     .{ .package = "android.view.inputmethod", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/view/inputmethod/flags.aconfig"} },
     .{ .package = "android.widget.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/widget/flags/differential_motion_fling_flags.aconfig", "frameworks/base/core/java/android/widget/flags/flags.aconfig", "frameworks/base/core/java/android/widget/flags/notification_widget_flags.aconfig" } },
-    .{ .package = "android.xr", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/content/pm/xr.aconfig"} },
+    // AppOpsManager initializes during the first BinderProxy transaction, before
+    // an Application or SettingsProvider exists. XR manifest support is fixed
+    // off on this host; generate the pinned default as a read-only flag so it
+    // can be queried at that point without a DeviceConfig bootstrap cycle.
+    .{ .package = "android.xr", .container = "system", .source = .aosp, .default_permission = .read_only, .declarations = &.{"frameworks/base/core/java/android/content/pm/xr.aconfig"} },
     .{ .package = "com.android.graphics.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/graphics/java/android/framework_graphics.aconfig"} },
     // Host graphics uses a fixed build-time ANGLE feature set in both Java and C++.
     .{ .package = "com.android.graphics.graphicsenv.flags", .cpp_header = true, .mode = .force_read_only, .container = "system", .source = .aosp, .declarations = &.{"frameworks/native/libs/graphicsenv/graphicsenv_flags.aconfig"} },
@@ -2427,6 +2451,7 @@ pub const sysprop = [_]Sysprop{
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/WatchdogProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/BluetoothProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/VndkProperties.sysprop" } },
+    .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/native/services/surfaceflinger/sysprop/SurfaceFlingerProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/LocalizationProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/CryptoProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/HdmiProperties.sysprop" } },
@@ -2511,9 +2536,13 @@ pub const proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/patternmatcher.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/batterystats.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/server/intentresolver.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/server/windowmanagerservice.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/os/cpu_usage.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/internal/protolog.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/displaycutout.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/displayinfo.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/display.proto" },
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/surfacecontrol.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/imefocuscontroller.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/imeinsetssourceconsumer.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/view/inputmethod/editorinfo.proto" },
@@ -2769,6 +2798,7 @@ pub const proto_outputs = [_][]const u8{
     "android/view/DisplayInfoProto.java",
     "android/view/DisplayProto.java",
     "android/view/ViewProtoEnums.java",
+    "android/view/SurfaceControlProto.java",
     "android/view/ImeFocusControllerProto.java",
     "android/view/ImeInsetsSourceConsumerProto.java",
     "android/view/InsetsAnimationControlImplProto.java",
@@ -3201,6 +3231,8 @@ pub const perfetto_proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/track_event/track_event.proto" },
     .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/track_event/debug_annotation.proto" },
 
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/config/android/windowmanager_config.proto" },
+    .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/android/shell_transition.proto" },
     .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/config/data_source_config.proto" },
     .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/config/android/protolog_config.proto" },
     .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/common/protolog_common.proto" },
@@ -3212,9 +3244,11 @@ pub const perfetto_proto_inputs = [_]SourcePath{
     .{ .source = .aosp, .path = "external/perfetto/protos/perfetto/trace/android/winscope_extensions_impl.proto" },
 };
 
-pub const perfetto_proto_include_filter = "include_filter:perfetto.protos.EventName,perfetto.protos.EventCategory,perfetto.protos.DebugAnnotationName,perfetto.protos.TraceConfig,perfetto.protos.TrackEventConfig,perfetto.protos.Trace,perfetto.protos.TrackEvent,perfetto.protos.DebugAnnotation,perfetto.protos.TracePacket,perfetto.protos.ProtoLogMessage,perfetto.protos.ProtoLogViewerConfig,perfetto.protos.ProtoLogGroup,perfetto.protos.ProtoLogConfig,perfetto.protos.DataSourceConfig,perfetto.protos.InternedString,perfetto.protos.InternedData,perfetto.protos.ProtoLogLevel,perfetto.protos.WinscopeExtensionsImpl,perfetto.protos.InputMethodClientsTraceProto,perfetto.protos.InputMethodManagerServiceTraceProto,perfetto.protos.InputMethodServiceTraceProto";
+pub const perfetto_proto_include_filter = "include_filter:perfetto.protos.WindowManagerConfig,perfetto.protos.ShellTransition,perfetto.protos.EventName,perfetto.protos.EventCategory,perfetto.protos.DebugAnnotationName,perfetto.protos.TraceConfig,perfetto.protos.TrackEventConfig,perfetto.protos.Trace,perfetto.protos.TrackEvent,perfetto.protos.DebugAnnotation,perfetto.protos.TracePacket,perfetto.protos.ProtoLogMessage,perfetto.protos.ProtoLogViewerConfig,perfetto.protos.ProtoLogGroup,perfetto.protos.ProtoLogConfig,perfetto.protos.DataSourceConfig,perfetto.protos.InternedString,perfetto.protos.InternedData,perfetto.protos.ProtoLogLevel,perfetto.protos.WinscopeExtensionsImpl,perfetto.protos.InputMethodClientsTraceProto,perfetto.protos.InputMethodManagerServiceTraceProto,perfetto.protos.InputMethodServiceTraceProto";
 
 pub const perfetto_proto_outputs = [_][]const u8{
+    "android/internal/perfetto/protos/WindowmanagerConfig.java",
+    "android/internal/perfetto/protos/ShellTransitionOuterClass.java",
     "android/internal/perfetto/protos/TraceConfigOuterClass.java",
     "android/internal/perfetto/protos/TrackEventConfigOuterClass.java",
     "android/internal/perfetto/protos/TraceOuterClass.java",

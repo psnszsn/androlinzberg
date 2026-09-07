@@ -604,7 +604,7 @@ const AIBinder_DeathRecipient = struct {
 
 // ------------------------------------------------------------------- Runtime
 
-const PendingKind = enum { reply, service };
+const PendingKind = enum { reply, service, package_uid };
 
 const PendingCall = struct {
     mu: Io.Mutex = .init,
@@ -620,6 +620,7 @@ const PendingCall = struct {
     svc_status: Server.Message.ServiceResult.Status = .ok,
     svc_ref: ObjectRef = ObjectRef.null_ref,
     svc_names: []u8 = &.{},
+    package_uid: Server.Message.PackageUidResult = .{ .status = .denied },
     // nested transactions the broker routed to the thread parked here:
     nested: std.ArrayListUnmanaged(*Incoming) = .empty,
 };
@@ -659,6 +660,8 @@ const Runtime = struct {
     peer_id: u32 = 0,
     pid: i32 = 0,
     uid: u32 = 0,
+    package: []const u8 = "",
+    is_system: bool = false,
     write_mu: Io.Mutex = .init,
     mu: Io.Mutex = .init,
     next_request_id: std.atomic.Value(u64) = .init(1),
@@ -802,6 +805,9 @@ const Runtime = struct {
         r.peer_id = welcome.peer_id;
         r.pid = welcome.pid;
         r.uid = welcome.uid;
+        r.is_system = welcome.role == .system;
+        r.package = try alloc.dupe(u8, package);
+        errdefer alloc.free(r.package);
 
         const thread = try std.Thread.spawn(.{}, readLoop, .{r});
         thread.detach();
@@ -937,6 +943,23 @@ const Runtime = struct {
                     c.svc_status = sr.status;
                     c.svc_ref = sr.object;
                     c.svc_names = alloc.dupe(u8, names) catch @panic("oom");
+                    c.done = true;
+                    c.cv.signal(g_io);
+                    c.mu.unlock(g_io);
+                }
+            },
+            .package_uid_result => {
+                if (body.len != @sizeOf(Server.Message.PackageUidResult)) return false;
+                var reader: Io.Reader = .fixed(body);
+                const result = reader.takeStruct(Server.Message.PackageUidResult, .little) catch return false;
+                r.mu.lockUncancelable(g_io);
+                const call = r.pending.fetchRemove(header.request_id);
+                r.mu.unlock(g_io);
+                if (call) |kv| {
+                    const c = kv.value;
+                    c.mu.lockUncancelable(g_io);
+                    c.failed = c.kind != .package_uid;
+                    c.package_uid = result;
                     c.done = true;
                     c.cv.signal(g_io);
                     c.mu.unlock(g_io);
@@ -1583,7 +1606,7 @@ const Runtime = struct {
     fn serviceRequest(r: *Runtime, tag: Client.Message.Tag, body_extra: []const u8) *PendingCall {
         const request_id = r.next_request_id.fetchAdd(1, .monotonic);
         const call = alloc.create(PendingCall) catch @panic("oom");
-        call.* = .{ .kind = .service };
+        call.* = .{ .kind = if (tag == .reserve_package_uid) .package_uid else .service };
         if (r.disconnected.load(.monotonic)) {
             call.failed = true;
             call.done = true;
@@ -4038,16 +4061,28 @@ fn smpGetNativeServiceManager(env: JNIEnvPtr, this: jni.jobject) callconv(.c) jn
 
 fn bsSetIdentity(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring, is_system: jni.jboolean) callconv(.c) void {
     _ = cls;
-    if (g_identity_pkg) |old| alloc.free(old);
-    g_identity_pkg = null;
-    if (pkg != null) {
-        const chars = env.*.*.GetStringUTFChars.?(env, pkg, null);
-        if (chars) |c| {
-            defer env.*.*.ReleaseStringUTFChars.?(env, pkg, c);
-            g_identity_pkg = alloc.dupe(u8, std.mem.span(c)) catch null;
-        }
+    const chars = if (pkg != null) env.*.*.GetStringUTFChars.?(env, pkg, null) else null;
+    const value = chars orelse {
+        if (pkg == null) throwException(env, "java/lang/IllegalArgumentException", "package name is required");
+        return;
+    };
+    defer env.*.*.ReleaseStringUTFChars.?(env, pkg, value);
+    const package = std.mem.span(value);
+    const system = is_system != jni.JNI_FALSE;
+    Runtime.connect_mu.lockUncancelable(g_io);
+    defer Runtime.connect_mu.unlock(g_io);
+    if (Runtime.instance) |r| {
+        if (r.is_system != system or (!system and !std.mem.eql(u8, r.package, package)))
+            throwException(env, "java/lang/IllegalStateException", "Binder identity must be set before the first connection");
+        return;
     }
-    g_identity_is_system = is_system != jni.JNI_FALSE;
+    const owned = alloc.dupe(u8, package) catch {
+        throwException(env, "java/lang/OutOfMemoryError", "cannot store Binder identity");
+        return;
+    };
+    if (g_identity_pkg) |old| alloc.free(old);
+    g_identity_pkg = owned;
+    g_identity_is_system = system;
     g_has_identity_override = true;
 }
 fn bsSetExitOnDisconnect(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) void {
@@ -4067,6 +4102,38 @@ fn bsAssignedUid(env: JNIEnvPtr, cls: jni.jclass) callconv(.c) jni.jint {
     // broker-backed process's uid is broker-assigned) and return the uid.
     if (getenv("AZK_BINDER_SOCKET") == null) return -1;
     return @intCast(Runtime.get().uid);
+}
+
+fn bsReservePackageUid(env: JNIEnvPtr, cls: jni.jclass, pkg: jni.jstring) callconv(.c) jni.jint {
+    _ = cls;
+    if (pkg == null) {
+        throwException(env, "java/lang/IllegalArgumentException", "package name is required");
+        return -1;
+    }
+    const chars = env.*.*.GetStringUTFChars.?(env, pkg, null) orelse return -1;
+    defer env.*.*.ReleaseStringUTFChars.?(env, pkg, chars);
+    const package = std.mem.span(chars);
+    if (package.len == 0 or package.len > Client.limits.max_name_len) {
+        throwException(env, "java/lang/IllegalArgumentException", "invalid package name length");
+        return -1;
+    }
+    const call = Runtime.get().serviceRequest(.reserve_package_uid, package);
+    defer {
+        if (call.svc_names.len > 0) alloc.free(call.svc_names);
+        call.nested.deinit(alloc);
+        alloc.destroy(call);
+    }
+    if (call.failed) {
+        throwRuntime(env, "broker disconnected while reserving package uid");
+        return -1;
+    }
+    switch (call.package_uid.status) {
+        .ok => return @intCast(call.package_uid.uid),
+        .denied => throwException(env, "java/lang/SecurityException", "only the system process may reserve a package uid"),
+        .exhausted => throwException(env, "java/lang/IllegalStateException", "application uid range exhausted"),
+        else => throwRuntime(env, "invalid package uid response"),
+    }
+    return -1;
 }
 
 // ----- registration --------------------------------------------------------
@@ -4240,6 +4307,7 @@ pub fn registerBinderFrameworkNatives(env_opaque: ?*anyopaque) c_int {
         jm("setIdentity", "(Ljava/lang/String;Z)V", &bsSetIdentity),
         jm("setExitOnDisconnect", "()V", &bsSetExitOnDisconnect),
         jm("assignedUid", "()I", &bsAssignedUid),
+        jm("reservePackageUid", "(Ljava/lang/String;)I", &bsReservePackageUid),
     };
     if (env.*.*.RegisterNatives.?(env, bs_cls, &bs_methods, bs_methods.len) != 0) return -1;
 

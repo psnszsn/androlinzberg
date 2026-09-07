@@ -151,6 +151,9 @@ pub const Message = struct {
         /// Body is a `SetProperty`. Answered with a `service_result`
         /// (`ok`/`denied`); on `ok` the property area is already updated.
         set_property,
+        /// Body is a package name. Trusted system peers reserve its uid before
+        /// launching a process; answered with `package_uid_result`.
+        reserve_package_uid,
         _,
     };
 
@@ -387,6 +390,12 @@ pub fn serveSetProperty(c: *const Client, request_id: u64, name: []const u8, val
     }, .little);
     try c.out.writeAll(name);
     try c.out.writeAll(value);
+    try c.out.flush();
+}
+
+pub fn serveReservePackageUid(c: *const Client, request_id: u64, package: []const u8) Writer.Error!void {
+    try c.serveMessageHeader(.{ .tag = .reserve_package_uid, .bytes_len = @intCast(package.len), .request_id = request_id });
+    try c.out.writeAll(package);
     try c.out.flush();
 }
 

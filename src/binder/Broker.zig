@@ -533,6 +533,7 @@ fn serveLoop(peer: *Peer) ServeError!void {
             .lookup_service => try handleLookup(peer, header, body),
             .list_services => try handleList(peer, header),
             .set_property => try handleSetProperty(peer, header, body),
+            .reserve_package_uid => try handleReservePackageUid(peer, header, body),
             _ => return protocolError(peer, "unknown message tag"),
         }
     }
@@ -567,15 +568,8 @@ fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) Ser
     } else if (std.mem.eql(u8, cookie, b.cookie)) {
         if (package.len == 0) return protocolError(peer, "app peer without a package name");
         peer.role = .app;
-        if (b.packages.get(package)) |uid| {
-            peer.android_uid = uid;
-        } else {
-            const owned = try gpa.dupe(u8, package);
-            errdefer gpa.free(owned);
-            try b.packages.put(gpa, owned, b.next_app_uid);
-            peer.android_uid = b.next_app_uid;
-            b.next_app_uid += 1;
-        }
+        peer.android_uid = try assignPackageUidLocked(b, package) orelse
+            return protocolError(peer, "application uid range exhausted");
         peer.package = try gpa.dupe(u8, package);
     } else {
         return protocolError(peer, "bad launch cookie");
@@ -587,6 +581,35 @@ fn handleHello(peer: *Peer, header: Client.Message.Header, body: []const u8) Ser
         .uid = peer.android_uid,
         .role = peer.role,
     }}));
+}
+
+/// Shares hello's allocation table with install-time reservation. Uids never
+/// change or get reused in a session. Android's regular application range is
+/// Process.FIRST_APPLICATION_UID..LAST_APPLICATION_UID (10000..19999).
+fn assignPackageUidLocked(b: *Broker, package: []const u8) error{OutOfMemory}!?u32 {
+    if (b.packages.get(package)) |uid| return uid;
+    if (b.next_app_uid < 10000 or b.next_app_uid > 19999) return null;
+    const owned = try b.gpa.dupe(u8, package);
+    errdefer b.gpa.free(owned);
+    const uid = b.next_app_uid;
+    try b.packages.put(b.gpa, owned, uid);
+    b.next_app_uid += 1;
+    return uid;
+}
+
+fn handleReservePackageUid(peer: *Peer, header: Client.Message.Header, package: []const u8) ServeError!void {
+    if (package.len == 0 or package.len > limits.max_name_len or std.mem.indexOfScalar(u8, package, 0) != null)
+        return protocolError(peer, "malformed reserve_package_uid");
+    const b = peer.broker;
+    b.mutex.lockUncancelable(b.io);
+    defer b.mutex.unlock(b.io);
+    const result: Server.Message.PackageUidResult = if (peer.role != .system)
+        .{ .status = .denied }
+    else if (try assignPackageUidLocked(b, package)) |uid|
+        .{ .status = .ok, .uid = uid }
+    else
+        .{ .status = .exhausted };
+    peer.enqueue(try b.encode(Server.servePackageUidResult, .{ header.request_id, result }));
 }
 
 /// Registry policy: the system process may claim any name; an app may only

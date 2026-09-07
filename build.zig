@@ -1120,12 +1120,27 @@ pub fn build(b: *std.Build) void {
     stock_window_boot.addArg("--javatest");
     stock_window_boot.addFileArg(window_fixture.apk);
     stock_window_boot.setEnvironment("AZK_TEST_CLASS", "dev.artzig.window.StockWindowBootSmoke");
+    stock_window_boot.setEnvironment("AZK_BINDER_PACKAGE", "dev.artzig.fixtures.windows");
     stock_window_boot.setEnvironment("AZK_WINDOW_BACKEND", "stock");
     stock_window_boot.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     stock_window_boot.run.setName("verify stock WMS and ATMS session startup");
     stock_window_boot.run.has_side_effects = true;
     b.step("stock-window-boot-test", "Boot stock window/task services and query their shared display")
         .dependOn(&stock_window_boot.run.step);
+    const stock_cold_launch = @import("build/command.zig").create(b);
+    setApplicationEnvironment(stock_cold_launch, application_tree);
+    stock_cold_launch.addFileArg(system_test_driver.getEmittedBin());
+    stock_cold_launch.addArg("--cold-window");
+    stock_cold_launch.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    stock_cold_launch.addFileArg(application_tree.path(b, "bin/azk-binder-broker"));
+    stock_cold_launch.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
+    stock_cold_launch.addFileArg(window_fixture.apk);
+    stock_cold_launch.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+    stock_cold_launch.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    stock_cold_launch.run.has_side_effects = true;
+    stock_cold_launch.run.setName("verify install-time uid and stock ATMS first-process launch");
+    b.step("stock-cold-launch-test", "Install an APK and launch its first process through stock ATMS")
+        .dependOn(&stock_cold_launch.run.step);
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1134,6 +1149,7 @@ pub fn build(b: *std.Build) void {
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkModuleSmoke",
     );
+    framework_module_smoke.setEnvironment("AZK_BINDER_PACKAGE", "org.example.permissions");
     // Fixture APKs (installed server-side by the permission-grant test).
     framework_module_smoke.addFileArg(java.fixtures.permissions);
     framework_module_smoke.addFileArg(java.fixtures.example);
@@ -1174,6 +1190,7 @@ pub fn build(b: *std.Build) void {
         "AZK_TEST_CLASS",
         "dev.artzig.FrameworkCompatSmoke",
     );
+    framework_compat_smoke.setEnvironment("AZK_BINDER_PACKAGE", "org.example");
     // Absolute fixture paths on argv (the smoke must not depend on the CWD):
     // the androidfw parser fixture, then the generated package fixture.
     framework_compat_smoke.addFileArg(

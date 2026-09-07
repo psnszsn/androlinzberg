@@ -531,6 +531,76 @@ test "per-package uids, system role, and registry policy" {
     }
 }
 
+test "install reserves the same uid as process hello, with system-only allocation" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+    var sys: Peer = undefined;
+    try sys.connectAs(io, h.path, system_cookie, "");
+    defer sys.close();
+    try sys.expectWelcome();
+
+    try expectPackageUid(&sys, 1, "com.example.cold", .ok, 10001);
+    try expectPackageUid(&sys, 2, "com.example.cold", .ok, 10001);
+    var app: Peer = undefined;
+    try app.connectAs(io, h.path, cookie, "com.example.cold");
+    defer app.close();
+    try app.expectWelcome();
+    try testing.expectEqual(@as(u32, 10001), app.welcome.uid);
+    try expectPackageUid(&app, 3, "com.example.denied", .denied, 0);
+    // A denied request consumes no uid and cannot query another package's uid.
+    try expectPackageUid(&app, 4, "com.example.cold", .denied, 0);
+    try expectPackageUid(&sys, 5, "com.example.next", .ok, 10002);
+    app.close();
+    try expectPackageUid(&sys, 6, "com.example.cold", .ok, 10001);
+    try app.connectAs(io, h.path, cookie, "com.example.cold");
+    try app.expectWelcome();
+    try testing.expectEqual(@as(u32, 10001), app.welcome.uid);
+
+    h.broker.mutex.lockUncancelable(io);
+    h.broker.next_app_uid = 19999;
+    h.broker.mutex.unlock(io);
+    try expectPackageUid(&sys, 7, "com.example.last", .ok, 19999);
+    try expectPackageUid(&sys, 8, "com.example.exhausted", .exhausted, 0);
+    try expectPackageUid(&sys, 9, "com.example.cold", .ok, 10001);
+    var exhausted: Peer = undefined;
+    try exhausted.connectAs(io, h.path, cookie, "com.example.exhausted");
+    defer exhausted.close();
+    const msg = try exhausted.next();
+    defer gpa.free(msg.fds);
+    try testing.expectEqual(Server.Message.Tag.protocol_error, msg.header.tag);
+}
+
+fn expectPackageUid(peer: *Peer, request: u64, package: []const u8, status: Server.Message.PackageUidResult.Status, uid: u32) !void {
+    try peer.client.serveReservePackageUid(request, package);
+    const msg = try peer.next();
+    defer testing.allocator.free(msg.fds);
+    try testing.expectEqual(Server.Message.Tag.package_uid_result, msg.header.tag);
+    try testing.expectEqual(request, msg.header.request_id);
+    const result = try fixedStruct(Server.Message.PackageUidResult, msg.body);
+    try testing.expectEqual(status, result.status);
+    try testing.expectEqual(uid, result.uid);
+}
+
+test "malformed package uid reservations close the peer" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const h = try Harness.start(gpa, io);
+    defer h.stop(gpa, io);
+    const oversized: [Client.limits.max_name_len + 1]u8 = @splat('a');
+    for ([_][]const u8{ "", "com.example\x00bad", &oversized }) |package| {
+        var sys: Peer = undefined;
+        try sys.connectAs(io, h.path, system_cookie, "");
+        defer sys.close();
+        try sys.expectWelcome();
+        try sys.client.serveReservePackageUid(1, package);
+        const msg = try sys.next();
+        defer gpa.free(msg.fds);
+        try testing.expectEqual(Server.Message.Tag.protocol_error, msg.header.tag);
+    }
+}
+
 test "session-wide properties: policy, area contents, change push" {
     const io = testing.io;
     const gpa = testing.allocator;

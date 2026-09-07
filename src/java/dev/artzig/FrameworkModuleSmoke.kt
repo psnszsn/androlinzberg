@@ -3500,7 +3500,7 @@ internal object FrameworkModuleSmoke {
         // Failed process bring-up removes its provisional activity/task record immediately.
         val beforeFailedLaunch = service.getTasks(10, false, true, Display.DEFAULT_DISPLAY).size
         var headlessLauncherCalls = 0
-        activityManager.processLauncher = HostedActivityManagerService.ProcessLauncher { _, _, _, _ ->
+        activityManager.processLauncher = HostedActivityManagerService.ProcessLauncher { _, _, _ ->
             headlessLauncherCalls++
             true
         }

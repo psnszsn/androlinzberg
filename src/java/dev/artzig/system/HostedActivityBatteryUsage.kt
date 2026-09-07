@@ -7,11 +7,14 @@ package dev.artzig.system
  * it does not estimate energy or implement the Android battery-history database. */
 internal class HostedActivityBatteryUsage(private var onBattery: Boolean,
     private val now: () -> Long = android.os.SystemClock::elapsedRealtime) {
-    data class Snapshot(val uid: Int, val foregroundMs: Long, val foregroundCpuMs: Map<String, Long>)
+    data class CpuTime(val userMs: Long, val systemMs: Long)
+    data class Snapshot(val uid: Int, val foregroundMs: Long, val foregroundCpuMs: Map<String, Long>,
+        val processCpuMs: Map<String, CpuTime>)
     private class State {
         var nesting = 0
         var foregroundMs = 0L
         val cpu = HashMap<String, Long>()
+        val processCpu = HashMap<String, CpuTime>()
     }
     private val states = HashMap<Int, State>()
     private var updatedAt = now()
@@ -41,9 +44,18 @@ internal class HostedActivityBatteryUsage(private var onBattery: Boolean,
         state.cpu[packageName] = (state.cpu[packageName] ?: 0L) + duration
     }
 
+    /** BatteryStatsImpl.Uid.Proc.addCpuTimeLocked uses its on-battery counters. */
+    @Synchronized fun processCpu(processName: String, uid: Int, userMs: Long, systemMs: Long) {
+        require(userMs >= 0 && systemMs >= 0)
+        if (!onBattery) return
+        val state = states.getOrPut(uid) { State() }
+        val old = state.processCpu[processName] ?: CpuTime(0, 0)
+        state.processCpu[processName] = CpuTime(old.userMs + userMs, old.systemMs + systemMs)
+    }
+
     @Synchronized fun snapshot(): List<Snapshot> {
         account(now())
-        return states.map { (uid, state) -> Snapshot(uid, state.foregroundMs, state.cpu.toMap()) }
+        return states.map { (uid, state) -> Snapshot(uid, state.foregroundMs, state.cpu.toMap(), state.processCpu.toMap()) }
             .sortedBy { it.uid }
     }
 }

@@ -29,6 +29,17 @@ pub const SessionInfo = struct {
     launcher: []const u8,
     pid: i32,
     prop_area: []const u8,
+
+    /// Returned strings belong to the caller's arena, never a temporary JSON
+    /// input buffer. Joined processes retain these paths through native startup.
+    pub fn read(arena: std.mem.Allocator, io: Io, dir: []const u8) !SessionInfo {
+        const path = try std.fs.path.join(arena, &.{ dir, session_file });
+        const contents = try Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(4096));
+        return std.json.parseFromSliceLeaky(SessionInfo, arena, contents, .{
+            .ignore_unknown_fields = true,
+            .allocate = .alloc_always,
+        });
+    }
 };
 
 pub const Session = struct {
