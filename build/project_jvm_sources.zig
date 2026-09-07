@@ -18,7 +18,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/view/TextureView.java",
     "src/framework-stubs/android/webkit/CookieManager.kt",
     "src/framework-stubs/android/webkit/HostedWebViewProvider.kt",
-    "src/framework-stubs/android/webkit/WebChromeClient.kt",
     "src/framework-stubs/android/webkit/WebSettings.kt",
     "src/framework-stubs/android/webkit/WebView.java",
     "src/framework-stubs/com/android/internal/accessibility/AccessibilityShortcutController.java",

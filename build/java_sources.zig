@@ -1521,6 +1521,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/webkit/HttpAuthHandler.java");
     try c.file("$CJ/android/webkit/JavascriptInterface.java");
     try c.file("$CJ/android/webkit/JsResult.java");
+    try c.file("$CJ/android/webkit/JsPromptResult.java");
+    try c.file("$CJ/android/webkit/PermissionRequest.java");
+    try c.file("$CJ/android/webkit/WebChromeClient.java");
     try c.file("$CJ/android/webkit/SafeBrowsingResponse.java");
     try c.file("$CJ/android/webkit/SslErrorHandler.java");
     try c.file("$CJ/android/webkit/ValueCallback.java");

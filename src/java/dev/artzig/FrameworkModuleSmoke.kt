@@ -4097,6 +4097,47 @@ internal object FrameworkModuleSmoke {
     }
 
     private fun testWebViewCallbackContracts() {
+        // Stock WebChromeClient supplies default denial/cancellation and legacy
+        // callback forwarding, which the former narrow stub did not expose.
+        val chrome = android.webkit.WebChromeClient()
+        var denied = 0
+        val permissionRequest = object : android.webkit.PermissionRequest() {
+            override fun getOrigin(): Uri = Uri.parse("https://video.example")
+            override fun getResources(): Array<String> = arrayOf(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+            override fun grant(resources: Array<String>) { error("Default client granted web permission") }
+            override fun deny() { denied++ }
+        }
+        chrome.onPermissionRequest(permissionRequest)
+        check(denied == 1)
+        chrome.onPermissionRequestCanceled(permissionRequest)
+        check(denied == 1)
+        var quota = -1L
+        chrome.onExceededDatabaseQuota("https://video.example", "db", 17, 99, 200) { quota = it }
+        check(quota == 17L)
+        chrome.onReachedMaxAppCacheSize(99, 23) { quota = it }
+        check(quota == 23L)
+        var selected = 0
+        chrome.openFileChooser({ value -> check(value == null); selected++ }, "image/*", "camera")
+        check(selected == 1)
+        var legacyConsole: String? = null
+        val legacy = object : android.webkit.WebChromeClient() {
+            override fun onConsoleMessage(message: String, lineNumber: Int, sourceID: String) {
+                legacyConsole = "$message:$lineNumber:$sourceID"
+            }
+        }
+        check(!legacy.onConsoleMessage(android.webkit.ConsoleMessage("message", "script.js", 42,
+            android.webkit.ConsoleMessage.MessageLevel.LOG)))
+        check(legacyConsole == "message:42:script.js")
+        var completed: android.webkit.JsResult? = null
+        val prompt = android.webkit.JsPromptResult { completed = it }
+        check(!chrome.onJsPrompt(null, "https://video.example", "Name", "default", prompt))
+        check(completed == null) // The provider must show its default dialog.
+        prompt.confirm("answer")
+        check(completed === prompt && prompt.result && prompt.stringResult == "answer")
+        val cancelled = android.webkit.JsPromptResult { completed = it }
+        cancelled.cancel()
+        check(completed === cancelled && !cancelled.result && cancelled.stringResult == null)
+
         val cookies = android.webkit.CookieManager.getInstance()
         cookies.removeAllCookies(null)
         var cookieAccepted: Boolean? = null

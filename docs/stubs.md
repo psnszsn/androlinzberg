@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 13 (budget 13). Survivors: 9. Total: 22.
+Pending: 12 (budget 12). Survivors: 9. Total: 21.
 
 ## Survivors
 
@@ -68,7 +68,6 @@ Pending: 13 (budget 13). Survivors: 9. Total: 22.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/webkit/CookieManager.kt` | replaceable | frameworks/base/core/java/android/webkit/CookieManager.java (1 to add) |
-| `android/webkit/WebChromeClient.kt` | replaceable | frameworks/base/core/java/android/webkit/WebChromeClient.java (3 to add) |
 | `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (1 to add); android.webkit.WebSettings: existing host class android.webkit.WebView instantiates abstract class android.webkit.WebSettings (via WebSettings) |
 
 ## Hubs

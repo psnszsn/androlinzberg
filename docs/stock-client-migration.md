@@ -27,6 +27,18 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- WebChromeClient now compiles verbatim with JsPromptResult and PermissionRequest;
+  the narrow callback stub is deleted. The complete AOSP callback surface supplies
+  default web-permission denial, quota responses, legacy file-chooser cancellation,
+  forwarding to the deprecated console callback, and JavaScript prompt results.
+  ART tests exercise these observable callback contracts alongside the existing
+  hosted WebView tests. JVM/system, native/Binder and build checks pass; all 11 APK
+  tests pass (37 steps, zero structured runtime issues). All three sources already
+  match the pinned AOSP archive, so both tarballs are unchanged. The inventory is
+  21 stubs (12 pending, 9 survivors). WebView, WebSettings, cookie storage and the
+  actual embedded Chromium provider remain unfinished.
+
+
 - PermissionManagerService now supplies AOSP's Binder facade, attribution registry
   and permission checker. Its four-source closure includes the original one-time
   permission helper and PermissionThread. A small server startup patch selects the
