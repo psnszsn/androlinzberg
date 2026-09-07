@@ -17,6 +17,31 @@ SPEC.loader.exec_module(aosp_closure)
 
 
 class SourceIndexTest(unittest.TestCase):
+    def test_source_packages_can_differ_within_one_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sources = {
+                "utils/Helper.java": "package example.utils; class Helper {}",
+                "utils/Context.java": "package example; class Context {}",
+                "utils/Api.aidl": "package wire; interface Api {}",
+                "utils/Client.kt": "package client\nclass Client",
+            }
+            for name, declaration in sources.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(declaration)
+            cache = root / "index.json"
+            for index in (aosp_closure.SourceIndex(root, cache),
+                          aosp_closure.SourceIndex(root, cache)):
+                for fqn, kind, path in (
+                    ("example.utils.Helper", "java", "utils/Helper.java"),
+                    ("example.Context", "java", "utils/Context.java"),
+                    ("wire.Api", "aidl", "utils/Api.aidl"),
+                    ("client.Client", "kt", "utils/Client.kt"),
+                ):
+                    self.assertEqual({kind: [path]}, index.lookup(fqn))
+                self.assertEqual({}, index.lookup("example.utils.Context"))
+
     def test_proto_multiple_files_and_default_outer_name_collision(self) -> None:
         declaration = '''syntax = "proto2";
 package wire;

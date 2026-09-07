@@ -156,7 +156,7 @@ KNOWN_GENERATED = {
     "com.android.modules.expresslog.StatsExpressLog": "stats-log expresslog module (build/generators.zig)",
 }
 
-INDEX_VERSION = 12
+INDEX_VERSION = 13
 
 
 def strip_code(text: str) -> str:
@@ -317,18 +317,15 @@ class SourceIndex:
                         self.aconfig.setdefault(m.group(1), []).append(os.path.join(rel_dir, f))
             if not sources:
                 continue
-            # All sources of one directory share a package; read one declaration.
-            pkg = None
-            for f in sorted(sources):
-                m = PACKAGE_RE.search(read(Path(dirpath, f)))
-                if m:
-                    pkg = m.group(1)
-                    break
-            if pkg is None:
-                continue
+            # AOSP sometimes puts a source in a directory with another package
+            # (for example IPsec's utils/IkeContext.java). The declaration owns
+            # the Java name; directory neighbours cannot supply it.
             for f in sources:
+                package = PACKAGE_RE.search(read(Path(dirpath, f)))
+                if package is None:
+                    continue
                 name, ext = os.path.splitext(f)
-                by_fqn[f"{pkg}.{name}"][ext[1:]].append(os.path.join(rel_dir, f))
+                by_fqn[f"{package.group(1)}.{name}"][ext[1:]].append(os.path.join(rel_dir, f))
         self.by_fqn = {k: dict(v) for k, v in by_fqn.items()}
 
     def lookup(self, fqn: str) -> dict[str, list[str]]:
