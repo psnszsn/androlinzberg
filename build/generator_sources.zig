@@ -2755,6 +2755,7 @@ test "generator declarations map typed inputs to unique Java outputs" {
 pub const binder_graphics_aidl = "frameworks/native/libs/gui/aidl/android/gui/IFpsListener.aidl";
 
 pub const stats_log = .{
+    .{ .module = "ike", .package = "com.android.internal.net.ipsec.ike.utils", .class = "IkeMetricsInterface" },
     .{ .module = "framework", .package = "com.android.internal.util", .class = "FrameworkStatsLog" },
     .{ .module = "statsd", .package = "com.android.internal.statsd", .class = "StatsdStatsLog" },
     .{ .module = "telephony", .package = "com.android.internal.telephony", .class = "TelephonyStatsLog" },

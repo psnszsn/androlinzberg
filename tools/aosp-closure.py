@@ -133,6 +133,7 @@ STAGED_AIDL = {
 ACONFIG_CLASSES = {"Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl"}
 
 KNOWN_GENERATED = {
+    "com.android.internal.net.ipsec.ike.utils.IkeMetricsInterface": "stats-log ike module (build/generator_sources.zig)",
     "org.chromium.base.ApplicationState": "pinned Cronet generator (build/generator_sources.zig)",
     "org.chromium.base.task.TaskRunnerType": "pinned Cronet generator (build/generator_sources.zig)",
     "org.chromium.base.task.TaskTraits": "pinned Cronet generator (build/generator_sources.zig)",

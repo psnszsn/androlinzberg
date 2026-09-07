@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 15 (budget 15). Survivors: 10. Total: 25.
+Pending: 15 (budget 15). Survivors: 9. Total: 24.
 
 ## Survivors
 
@@ -19,7 +19,6 @@ Pending: 15 (budget 15). Survivors: 10. Total: 25.
 | `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | generated callback requires the legacy libhwbinder runtime | no-aosp-source |
 | `android/media/MediaMetadataRetriever.java` | JNI natives (libmedia_jni) | blocked |
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
-| `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | blocked |
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | blocked |
 | `android/view/SurfaceControl.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/view/SurfaceSession.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
