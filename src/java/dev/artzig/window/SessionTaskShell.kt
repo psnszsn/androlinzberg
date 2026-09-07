@@ -32,13 +32,13 @@ internal object SessionTaskShell {
             }
             override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
             override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: android.view.KeyCharacterMap) = publishKeyboard(map, supportedKeyCodes, keyboard)
-            override fun dispatch(event: android.view.InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?) {
+            override fun dispatch(event: android.view.InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?, layoutFlags: Int) {
                 if (event is android.view.KeyEvent) {
                     // A late old-window cancellation must not acquire the new
                     // task's authority. Native code retains the focus epoch
                     // across policy delays, queued delivery and key repeats.
                     if (owner == null || owner != keyboardTask || keyboardToken == null) return
-                    dispatcher.dispatchDesktopEvent(event, repeatable, keyboardToken)
+                    dispatcher.dispatchDesktopEvent(event, repeatable, keyboardToken, layoutFlags)
                 } else dispatcher.dispatchDesktopEvent(event, repeatable)
             }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =

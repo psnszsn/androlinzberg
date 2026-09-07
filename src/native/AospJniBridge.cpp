@@ -64,6 +64,8 @@ namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
 #include <Bitmap.h>
 #include <jni/Bitmap.h>
 #include <input/KeyCharacterMap.h>
+#include <input/KeyLayoutMap.h>
+#include <input/Input.h>
 #include <SkGraphics.h>
 #include <jni.h>
 #include <nativehelper/JNIHelp.h>
@@ -526,14 +528,47 @@ static jobject azk_HostedInputDispatcher_nativeLoadKeyCharacterMap(
             env, device_id, std::make_unique<android::KeyCharacterMap>(**result));
 }
 
+// EventHub normally selects Generic.kl. The compositor replaces discovery;
+// retain the pinned parser and layout policy flags for the complete evdev range.
+static jintArray azk_HostedInputDispatcher_nativeLoadKeyLayout(
+        JNIEnv* env, jclass, jstring contents_object) {
+    if (contents_object == nullptr) {
+        jniThrowNullPointerException(env, "key layout contents");
+        return nullptr;
+    }
+    const char* contents = env->GetStringUTFChars(contents_object, nullptr);
+    if (contents == nullptr) return nullptr;
+    const auto layout = android::KeyLayoutMap::loadContents("Generic.kl", contents);
+    env->ReleaseStringUTFChars(contents_object, contents);
+    if (!layout.ok()) {
+        jniThrowException(env, "java/lang/IllegalStateException", layout.error().message().c_str());
+        return nullptr;
+    }
+    constexpr int count = 768;
+    jint values[count * 2]{};
+    for (int scan = 0; scan < count; ++scan) {
+        int32_t code = AKEYCODE_UNKNOWN;
+        uint32_t flags = 0;
+        if ((*layout)->mapKey(scan, 0, &code, &flags) == android::OK) {
+            values[scan * 2] = code;
+            values[scan * 2 + 1] = static_cast<jint>(flags);
+        }
+    }
+    const auto result = env->NewIntArray(count * 2);
+    if (result != nullptr) env->SetIntArrayRegion(result, 0, count * 2, values);
+    return result;
+}
+
 static int azk_register_android_view_HostedInputDispatcher(JNIEnv* env) {
     jclass dispatcher_class = env->FindClass("android/view/HostedInputDispatcher");
     if (dispatcher_class == nullptr) return -1;
     const JNINativeMethod methods[] = {
             {"nativeLoadKeyCharacterMap", "(ILjava/lang/String;)Landroid/view/KeyCharacterMap;",
              reinterpret_cast<void*>(azk_HostedInputDispatcher_nativeLoadKeyCharacterMap)},
+            {"nativeLoadKeyLayout", "(Ljava/lang/String;)[I",
+             reinterpret_cast<void*>(azk_HostedInputDispatcher_nativeLoadKeyLayout)},
     };
-    return env->RegisterNatives(dispatcher_class, methods, 1);
+    return env->RegisterNatives(dispatcher_class, methods, 2);
 }
 
 // Minimal android::AndroidRuntime backing for core/jni code (getJNIEnv in

@@ -13,6 +13,7 @@ object WaylandTaskInputSmoke {
         val repeats = mutableListOf<Triple<Int, Int, Boolean>>()
         var keyboardActive = false
         var layouts = 0
+        var lastLayoutFlags = 0
         var time = 100L
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun keyboardFocus(task: TaskGeometry.Task?) { keyboardActive = task != null }
@@ -21,7 +22,8 @@ object WaylandTaskInputSmoke {
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
                 repeats.add(Triple(timeoutMillis, delayMillis, enabled))
             }
-            override fun dispatch(event: InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?) {
+            override fun dispatch(event: InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?, layoutFlags: Int) {
+                lastLayoutFlags = layoutFlags
                 check(event.displayId == 0)
                 if (event is KeyEvent) {
                     checkNotNull(owner) { "Key lost its originating task" }
@@ -258,6 +260,22 @@ object WaylandTaskInputSmoke {
                 clear()
                 pending.key(30, false)
                 check(events.isEmpty() && seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == 0)
+                pending.key(466, true, false)
+                check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_F1 && lastLayoutFlags == 4)
+                pending.keyboardFocus(false)
+                check((events.last() as KeyEvent).isCanceled && lastLayoutFlags == 4)
+                pending.keyboardFocus(true)
+                clear()
+                val highSymbols = IntArray(WaylandKeyboardMap.SCAN_COUNT).apply { this[466] = 0xff1b }
+                seat.keyboardLayout(3, IntArray(WaylandKeyboardMap.SCAN_COUNT * 64), highSymbols)
+                pending.key(466, true, false)
+                check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_ESCAPE && lastLayoutFlags == 0)
+                pending.key(466, false, false)
+                clear()
+                pending.key(464, true, false)
+                seat.modifiers(0) // XKB has no standard Fn modifier bit.
+                pending.key(30, true, false)
+                check((events.last() as KeyEvent).isFunctionPressed)
             } finally { pending.close() }
             check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == -1)
         } finally { first.close(); second.close(); clear() }

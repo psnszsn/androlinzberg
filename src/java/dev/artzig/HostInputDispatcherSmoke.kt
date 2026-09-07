@@ -43,6 +43,8 @@ object HostInputDispatcherSmoke {
             override fun notifyFocusChanged(oldToken: IBinder?, newToken: IBinder?) { observed.add("policy:focus") }
             override fun interceptKeyBeforeQueueing(event: KeyEvent, policyFlags: Int): Int {
                 observed.add("queue:${event.action}")
+                if (event.scanCode == 466 && event.keyCode == KeyEvent.KEYCODE_F1)
+                    check(policyFlags and 4 != 0) { "Generic.kl FUNCTION flag lost before policy" }
                 if (event.action == KeyEvent.ACTION_DOWN) {
                     try { dispatcher.close(); unexpected.add("Reentrant dispatcher close succeeded") }
                     catch (_: IllegalStateException) { observed.add("close:reentrant-rejected") }
@@ -147,6 +149,7 @@ object HostInputDispatcherSmoke {
                         is KeyEvent -> {
                             observed.add("key:$index:${event.action}:${event.keyCode}")
                             observed.add("repeat:$index:${event.keyCode}:${event.repeatCount}:${event.isCanceled}")
+                            observed.add("meta:$index:${event.action}:${event.keyCode}:${event.metaState}:${event.deviceId}")
                         }
                         is MotionEvent -> {
                             observed.add("motion:$index:${event.actionMasked}:${event.x.toInt()}:${event.y.toInt()}")
@@ -297,7 +300,7 @@ object HostInputDispatcherSmoke {
                         it.setFocusedWindow(checkNotNull(channels[index].token), "JavaInput$index", 0).apply()
                     }
                 }
-                override fun dispatch(event: InputEvent, repeatable: Boolean, owner: dev.artzig.window.TaskGeometry.Task?) = dispatcher.dispatchDesktopEvent(event, repeatable)
+                override fun dispatch(event: InputEvent, repeatable: Boolean, owner: dev.artzig.window.TaskGeometry.Task?, layoutFlags: Int) = dispatcher.dispatchDesktopEvent(event, repeatable, layoutFlags = layoutFlags)
                 override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: android.view.KeyCharacterMap) { }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
                     dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
@@ -340,6 +343,14 @@ object HostInputDispatcherSmoke {
                 dispatcher.requestPointerCapture(checkNotNull(channels[0].token), false)
                 await("task seat native capture release") { "capture:0:false" in observed }
                 seat.repeatConfiguration(0, 10)
+                leftSeat.key(466, true, false)
+                await("Generic.kl FUNCTION policy through JNI") {
+                    "meta:0:0:${KeyEvent.KEYCODE_F1}:${KeyEvent.META_FUNCTION_ON}:1" in observed
+                }
+                leftSeat.key(466, false, false)
+                await("Generic.kl FUNCTION policy retained on release") {
+                    "meta:0:1:${KeyEvent.KEYCODE_F1}:${KeyEvent.META_FUNCTION_ON}:1" in observed
+                }
                 observed.clear()
                 leftSeat.key(30, true)
                 await("task seat key delivery") { "key:0:0:${KeyEvent.KEYCODE_A}" in observed }

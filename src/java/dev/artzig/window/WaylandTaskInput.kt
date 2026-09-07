@@ -23,11 +23,11 @@ internal class WaylandTaskInput(private val android: Android,
         fun focusTask(taskId: Int)
         fun keyboardFocus(task: TaskGeometry.Task?)
         /** Borrowed for this call; retain a copy if dispatch is asynchronous. */
-        fun dispatch(event: InputEvent, repeatable: Boolean = true, owner: TaskGeometry.Task? = null)
+        fun dispatch(event: InputEvent, repeatable: Boolean = true, owner: TaskGeometry.Task? = null, layoutFlags: Int = 0)
         fun keyboardLayout(map: KeyCharacterMap, supportedKeyCodes: IntArray, keyboard: KeyCharacterMap)
         fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean)
     }
-    private data class Pressed(val owner: Window, val code: Int, val time: Long)
+    private data class Pressed(val owner: Window, val code: Int, val time: Long, val layoutFlags: Int)
     private data class Contact(val owner: Window, val id: Int, var x: Float, var y: Float,
         var major: Float, var minor: Float, var orientation: Float)
     private val windows = mutableMapOf<Int, Window>()
@@ -302,7 +302,7 @@ internal class WaylandTaskInput(private val android: Android,
                 if (held == null && physicalKeys.containsKey(scanCode)) return
                 physicalKeys[scanCode] = code
                 if (held == null) {
-                    held = Pressed(this, code, clock())
+                    held = Pressed(this, code, clock(), HostedInputDispatcher.androidKeyFlagsForScanCode(scanCode, code))
                     keys[scanCode] = held
                     lockedMeta = lockedMeta xor when (code) {
                         KeyEvent.KEYCODE_CAPS_LOCK -> KeyEvent.META_CAPS_LOCK_ON
@@ -329,7 +329,7 @@ internal class WaylandTaskInput(private val android: Android,
             held ?: return // Update physical state without inventing a delivered key-up.
             dispatch(KeyEvent(held!!.time, clock(), if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP,
                 held.code, 0, metaState(), HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID, scanCode,
-                KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD), repeatable, task)
+                KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD), repeatable, task, held.layoutFlags)
         }
 
         internal fun releaseKeys() {
@@ -338,7 +338,7 @@ internal class WaylandTaskInput(private val android: Android,
                 keys.remove(scan)
                 dispatch(KeyEvent(held.time, clock(), KeyEvent.ACTION_UP, held.code, 0, metaState(),
                     HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID, scan, KeyEvent.FLAG_FROM_SYSTEM or KeyEvent.FLAG_CANCELED,
-                    InputDevice.SOURCE_KEYBOARD), owner = task)
+                    InputDevice.SOURCE_KEYBOARD), owner = task, layoutFlags = held.layoutFlags)
             }
         }
 
@@ -425,7 +425,7 @@ internal class WaylandTaskInput(private val android: Android,
     private fun metaState(): Int {
         var result = compositorMeta ?: lockedMeta
         for (code in physicalKeys.values) {
-            if (compositorMeta != null && result and modifierGroup(code) == 0) continue
+            if (code != KeyEvent.KEYCODE_FUNCTION && compositorMeta != null && result and modifierGroup(code) == 0) continue
             result = result or when (code) {
                 KeyEvent.KEYCODE_SHIFT_LEFT -> KeyEvent.META_SHIFT_LEFT_ON
                 KeyEvent.KEYCODE_SHIFT_RIGHT -> KeyEvent.META_SHIFT_RIGHT_ON
@@ -435,6 +435,7 @@ internal class WaylandTaskInput(private val android: Android,
                 KeyEvent.KEYCODE_ALT_RIGHT -> KeyEvent.META_ALT_RIGHT_ON
                 KeyEvent.KEYCODE_META_LEFT -> KeyEvent.META_META_LEFT_ON
                 KeyEvent.KEYCODE_META_RIGHT -> KeyEvent.META_META_RIGHT_ON
+                KeyEvent.KEYCODE_FUNCTION -> KeyEvent.META_FUNCTION_ON
                 else -> 0
             }
         }
@@ -447,12 +448,13 @@ internal class WaylandTaskInput(private val android: Android,
         KeyEvent.KEYCODE_ALT_LEFT -> KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
         KeyEvent.KEYCODE_ALT_RIGHT -> KeyEvent.META_ALT_ON or KeyEvent.META_ALT_RIGHT_ON
         KeyEvent.KEYCODE_META_LEFT, KeyEvent.KEYCODE_META_RIGHT -> KeyEvent.META_META_ON
+        KeyEvent.KEYCODE_FUNCTION -> KeyEvent.META_FUNCTION_ON
         else -> 0
     }
 
-    private fun dispatch(event: InputEvent, repeatable: Boolean = true, owner: TaskGeometry.Task? = null) {
+    private fun dispatch(event: InputEvent, repeatable: Boolean = true, owner: TaskGeometry.Task? = null, layoutFlags: Int = 0) {
         event.displayId = Display.DEFAULT_DISPLAY
-        try { android.dispatch(event, repeatable, owner) } finally { event.recycle() }
+        try { android.dispatch(event, repeatable, owner, layoutFlags) } finally { event.recycle() }
     }
 
     companion object {

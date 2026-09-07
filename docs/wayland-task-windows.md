@@ -22,6 +22,37 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Stock evdev layout checkpoint (2026-09-07)
+
+The manually maintained scan-code switch is replaced by pinned Generic.kl and
+KeyLayoutMap::loadContents/mapKey. The resource is packaged in both JVM and ART
+jars. Wayland snapshots now cover all 768 supported evdev scan positions; the
+private initial snapshot version is 2. Its roughly 195 KiB payload remains below
+the transport's 1 MiB Parcel limit. XKB remaps still take precedence, including
+the ISO extra character key's separate Android identity.
+
+Layout flags survive key-down, release and cancellation into InputDispatcher's
+normal policy path. Generic.kl FUNCTION keys receive native function metadata;
+explicit XKB remaps clear the previous mapping's flags. Physical Fn state remains
+visible across compositor modifier snapshots. This also corrects scan 120 from
+the old APP_SWITCH mapping to the pinned RECENT_APPS mapping.
+
+Gate 216 passes framework-module, native and JNI compilation. Gate 217 passes
+the last-scan-position XKB test, Cage/labwc task gates, the desktop's 13 clean
+steps, and JNI policy/receiver checks for FUNCTION on both down and release.
+Module checks include voice-assist/macro mappings, unmapped scans, high-scan
+capabilities, remaps and cancellation. Artifacts:
+`/tmp/wayland-stock-key-layout-success-217/`; logs:
+`/tmp/wayland-stock-key-layout-216.log` and
+`/tmp/wayland-stock-key-layout-stock-217.log`.
+
+Package 74 has 55,587 sources, 215 symlinks and 79 patches. Its SHA-256 is
+`806d5f0cd1a9c4fee8af28b2a225d29677df5778fa713066ae3afbfb2f3ed148`.
+Regression 218 passes full JVM/native, all 15 APK integration tests (49 steps,
+zero runtime issues), all seven Surface/Wayland scenarios and build/source audits.
+Log: `/tmp/wayland-stock-key-layout-regressions-218.log`. Stylus, remaining
+visibility/capture cases and M9–M11 remain incomplete.
+
 ## Logical seat keyboard checkpoint (2026-09-07)
 
 A keyboard-capable Wayland seat now publishes Android device 1, with an external

@@ -11,6 +11,16 @@ import dev.artzig.system.HostedInputManagerService
 
 object WaylandKeyboardMapSmoke {
     fun run() {
+        val layout = android.view.HostedInputDispatcher
+        check(layout.androidKeyCodeForScanCode(120) == KeyEvent.KEYCODE_RECENT_APPS)
+        check(layout.androidKeyCodeForScanCode(164) == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+        check(layout.androidKeyCodeForScanCode(582) == KeyEvent.KEYCODE_VOICE_ASSIST)
+        check(layout.androidKeyCodeForScanCode(659) == KeyEvent.KEYCODE_MACRO_4)
+        check(layout.androidKeyCodeForScanCode(466) == KeyEvent.KEYCODE_F1)
+        check(layout.androidKeyFlagsForScanCode(466, KeyEvent.KEYCODE_F1) == 4)
+        check(layout.androidKeyFlagsForScanCode(466, KeyEvent.KEYCODE_ESCAPE) == 0)
+        check(layout.androidKeyCodeForScanCode(-1) == KeyEvent.KEYCODE_UNKNOWN)
+        check(layout.androidKeyCodeForScanCode(768) == KeyEvent.KEYCODE_UNKNOWN)
         val characters = IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT)
         for (state in 0 until WaylandKeyboardMap.STATE_COUNT) {
             val upper = (state and 1 != 0) xor (state and 2 != 0)
@@ -26,6 +36,7 @@ object WaylandKeyboardMapSmoke {
             characters[15 * 64 + state] = 9
         }
         val symbols = IntArray(WaylandKeyboardMap.SCAN_COUNT)
+        symbols[582] = 0x1008ff69 // XF86VoiceCommand establishes high-scan capability.
         symbols[58] = 0xffe3 // Caps remapped to Control_L.
         check(WaylandKeyboardMap.keyCode(58, symbols[58]) == KeyEvent.KEYCODE_CTRL_LEFT)
         check(WaylandKeyboardMap.keyCode(58, 0xff1b) == KeyEvent.KEYCODE_ESCAPE)
@@ -42,6 +53,8 @@ object WaylandKeyboardMapSmoke {
         check(checkNotNull(keyboardMap.getEvents(charArrayOf('q'))).all { it.deviceId == 1 })
         val supported = WaylandKeyboardMap.supportedKeyCodes(characters, symbols)
         check(KeyEvent.KEYCODE_CTRL_LEFT in supported && KeyEvent.KEYCODE_CAPS_LOCK !in supported)
+        check(KeyEvent.KEYCODE_VOICE_ASSIST in supported)
+        check(582 in WaylandKeyboardMap.supportedScanCodes(characters, symbols))
         check(KeyEvent.KEYCODE_DEL in supported && KeyEvent.KEYCODE_UNKNOWN !in supported)
         check(map.get(KeyEvent.KEYCODE_DEL, 0) == 0)
         check(map.get(KeyEvent.KEYCODE_FORWARD_DEL, 0) == 0)

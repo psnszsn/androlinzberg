@@ -9047,3 +9047,6 @@ F aosp frameworks/base/core/java/android/view/AccessibilityInteractionController
 F aosp frameworks/base/core/java/android/view/SurfaceView.java
 F aosp frameworks/base/core/java/android/view/TextureView.java
 F aosp frameworks/base/core/java/android/view/ViewRootImpl.java
+
+# Stock evdev layout for the Wayland keyboard mapper.
+F aosp frameworks/base/data/keyboards/Generic.kl

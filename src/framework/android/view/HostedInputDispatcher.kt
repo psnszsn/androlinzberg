@@ -14,6 +14,7 @@ import dev.artzig.HostedWindowStack
  */
 object HostedInputDispatcher {
     const val HOST_KEYBOARD_DEVICE_ID = 1
+    const val HOST_SCAN_COUNT = 768
     /**
      * AOSP ViewRootImpl.enqueueInputEvent/doProcessInputEvents ordering and ownership.
      * The host has no InputChannel receiver; delivery uses the existing post-IME root seam.
@@ -166,29 +167,6 @@ object HostedInputDispatcher {
     private var capturedRoot: ViewRootImpl? = null
     private var pointerCaptureActual = false
     private var lockedMetaState = 0
-    private val digitKeyCodes = intArrayOf(
-        KeyEvent.KEYCODE_1, KeyEvent.KEYCODE_2, KeyEvent.KEYCODE_3,
-        KeyEvent.KEYCODE_4, KeyEvent.KEYCODE_5, KeyEvent.KEYCODE_6,
-        KeyEvent.KEYCODE_7, KeyEvent.KEYCODE_8, KeyEvent.KEYCODE_9,
-        KeyEvent.KEYCODE_0,
-    )
-    private val qwertyKeyCodes = intArrayOf(
-        KeyEvent.KEYCODE_Q, KeyEvent.KEYCODE_W, KeyEvent.KEYCODE_E,
-        KeyEvent.KEYCODE_R, KeyEvent.KEYCODE_T, KeyEvent.KEYCODE_Y,
-        KeyEvent.KEYCODE_U, KeyEvent.KEYCODE_I, KeyEvent.KEYCODE_O,
-        KeyEvent.KEYCODE_P,
-    )
-    private val homeRowKeyCodes = intArrayOf(
-        KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_S, KeyEvent.KEYCODE_D,
-        KeyEvent.KEYCODE_F, KeyEvent.KEYCODE_G, KeyEvent.KEYCODE_H,
-        KeyEvent.KEYCODE_J, KeyEvent.KEYCODE_K, KeyEvent.KEYCODE_L,
-    )
-    private val bottomRowKeyCodes = intArrayOf(
-        KeyEvent.KEYCODE_Z, KeyEvent.KEYCODE_X, KeyEvent.KEYCODE_C,
-        KeyEvent.KEYCODE_V, KeyEvent.KEYCODE_B, KeyEvent.KEYCODE_N,
-        KeyEvent.KEYCODE_M,
-    )
-
     @JvmStatic
     fun dispatchMouse(
         activityRoot: ViewRootImpl?,
@@ -427,7 +405,7 @@ object HostedInputDispatcher {
             action,
             keyCode,
             repeatCount,
-            currentMetaState(),
+            currentMetaState() or keyLayoutMetaState(scanCode, keyCode),
             scanCode,
             if (action == KeyEvent.ACTION_DOWN) unicode else 0,
         )
@@ -467,7 +445,7 @@ object HostedInputDispatcher {
                 KeyEvent.ACTION_UP,
                 pressed.keyCode,
                 0,
-                currentMetaState(),
+                currentMetaState() or keyLayoutMetaState(scanCode, pressed.keyCode),
                 scanCode,
                 0,
                 KeyEvent.FLAG_CANCELED,
@@ -966,6 +944,7 @@ object HostedInputDispatcher {
                 KeyEvent.KEYCODE_CTRL_RIGHT -> KeyEvent.META_CTRL_RIGHT_ON
                 KeyEvent.KEYCODE_META_LEFT -> KeyEvent.META_META_LEFT_ON
                 KeyEvent.KEYCODE_META_RIGHT -> KeyEvent.META_META_RIGHT_ON
+                KeyEvent.KEYCODE_FUNCTION -> KeyEvent.META_FUNCTION_ON
                 else -> 0
             }
         }
@@ -979,94 +958,29 @@ object HostedInputDispatcher {
         else -> 0
     }
 
-    /**
-     * Linux evdev to Android keycode mapping from the vendored AOSP Generic.kl. The key layout
-     * parser normally runs under EventHub, which is unavailable without Android's input daemon.
-     */
-    internal fun androidKeyCodeForScanCode(scanCode: Int): Int = when (scanCode) {
-        1 -> KeyEvent.KEYCODE_ESCAPE
-        in 2..11 -> digitKeyCodes[scanCode - 2]
-        12 -> KeyEvent.KEYCODE_MINUS
-        13 -> KeyEvent.KEYCODE_EQUALS
-        14 -> KeyEvent.KEYCODE_DEL
-        15 -> KeyEvent.KEYCODE_TAB
-        in 16..25 -> qwertyKeyCodes[scanCode - 16]
-        26 -> KeyEvent.KEYCODE_LEFT_BRACKET
-        27 -> KeyEvent.KEYCODE_RIGHT_BRACKET
-        28 -> KeyEvent.KEYCODE_ENTER
-        29 -> KeyEvent.KEYCODE_CTRL_LEFT
-        in 30..38 -> homeRowKeyCodes[scanCode - 30]
-        39 -> KeyEvent.KEYCODE_SEMICOLON
-        40 -> KeyEvent.KEYCODE_APOSTROPHE
-        41 -> KeyEvent.KEYCODE_GRAVE
-        42 -> KeyEvent.KEYCODE_SHIFT_LEFT
-        43, 86 -> KeyEvent.KEYCODE_BACKSLASH
-        in 44..50 -> bottomRowKeyCodes[scanCode - 44]
-        51 -> KeyEvent.KEYCODE_COMMA
-        52 -> KeyEvent.KEYCODE_PERIOD
-        53 -> KeyEvent.KEYCODE_SLASH
-        54 -> KeyEvent.KEYCODE_SHIFT_RIGHT
-        55 -> KeyEvent.KEYCODE_NUMPAD_MULTIPLY
-        56 -> KeyEvent.KEYCODE_ALT_LEFT
-        57 -> KeyEvent.KEYCODE_SPACE
-        58 -> KeyEvent.KEYCODE_CAPS_LOCK
-        in 59..68 -> KeyEvent.KEYCODE_F1 + scanCode - 59
-        69 -> KeyEvent.KEYCODE_NUM_LOCK
-        70 -> KeyEvent.KEYCODE_SCROLL_LOCK
-        71 -> KeyEvent.KEYCODE_NUMPAD_7
-        72 -> KeyEvent.KEYCODE_NUMPAD_8
-        73 -> KeyEvent.KEYCODE_NUMPAD_9
-        74 -> KeyEvent.KEYCODE_NUMPAD_SUBTRACT
-        75 -> KeyEvent.KEYCODE_NUMPAD_4
-        76 -> KeyEvent.KEYCODE_NUMPAD_5
-        77 -> KeyEvent.KEYCODE_NUMPAD_6
-        78 -> KeyEvent.KEYCODE_NUMPAD_ADD
-        79 -> KeyEvent.KEYCODE_NUMPAD_1
-        80 -> KeyEvent.KEYCODE_NUMPAD_2
-        81 -> KeyEvent.KEYCODE_NUMPAD_3
-        82 -> KeyEvent.KEYCODE_NUMPAD_0
-        83 -> KeyEvent.KEYCODE_NUMPAD_DOT
-        87 -> KeyEvent.KEYCODE_F11
-        88 -> KeyEvent.KEYCODE_F12
-        95, 121 -> KeyEvent.KEYCODE_NUMPAD_COMMA
-        96 -> KeyEvent.KEYCODE_NUMPAD_ENTER
-        97 -> KeyEvent.KEYCODE_CTRL_RIGHT
-        98 -> KeyEvent.KEYCODE_NUMPAD_DIVIDE
-        99 -> KeyEvent.KEYCODE_SYSRQ
-        100 -> KeyEvent.KEYCODE_ALT_RIGHT
-        102 -> KeyEvent.KEYCODE_MOVE_HOME
-        103 -> KeyEvent.KEYCODE_DPAD_UP
-        104 -> KeyEvent.KEYCODE_PAGE_UP
-        105 -> KeyEvent.KEYCODE_DPAD_LEFT
-        106 -> KeyEvent.KEYCODE_DPAD_RIGHT
-        107 -> KeyEvent.KEYCODE_MOVE_END
-        108 -> KeyEvent.KEYCODE_DPAD_DOWN
-        109 -> KeyEvent.KEYCODE_PAGE_DOWN
-        110 -> KeyEvent.KEYCODE_INSERT
-        111 -> KeyEvent.KEYCODE_FORWARD_DEL
-        113 -> KeyEvent.KEYCODE_VOLUME_MUTE
-        114 -> KeyEvent.KEYCODE_VOLUME_DOWN
-        115 -> KeyEvent.KEYCODE_VOLUME_UP
-        116 -> KeyEvent.KEYCODE_POWER
-        117 -> KeyEvent.KEYCODE_NUMPAD_EQUALS
-        119 -> KeyEvent.KEYCODE_BREAK
-        120 -> KeyEvent.KEYCODE_APP_SWITCH
-        125 -> KeyEvent.KEYCODE_META_LEFT
-        126 -> KeyEvent.KEYCODE_META_RIGHT
-        127, 139 -> KeyEvent.KEYCODE_MENU
-        128, 166 -> KeyEvent.KEYCODE_MEDIA_STOP
-        158 -> KeyEvent.KEYCODE_BACK
-        159 -> KeyEvent.KEYCODE_FORWARD
-        163 -> KeyEvent.KEYCODE_MEDIA_NEXT
-        164 -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
-        165 -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
-        168 -> KeyEvent.KEYCODE_MEDIA_REWIND
-        172 -> KeyEvent.KEYCODE_HOME
-        200, 207 -> KeyEvent.KEYCODE_MEDIA_PLAY
-        201 -> KeyEvent.KEYCODE_MEDIA_PAUSE
-        208 -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
-        else -> KeyEvent.KEYCODE_UNKNOWN
+    /** EventHub loads Generic.kl through KeyLayoutMap. Retain its parser,
+     * usage/key syntax and flags; XKB remaps are overlaid by WaylandKeyboardMap. */
+    private val genericKeyLayout: IntArray by lazy {
+        val contents = checkNotNull(HostedInputDispatcher::class.java.getResourceAsStream(
+            "/dev/artzig/input/Generic.kl")) { "Missing pinned Generic.kl" }
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
+        nativeLoadKeyLayout(contents).also { check(it.size == HOST_SCAN_COUNT * 2) }
     }
+
+    internal fun androidKeyCodeForScanCode(scanCode: Int): Int =
+        if (scanCode in 0 until HOST_SCAN_COUNT) genericKeyLayout[scanCode * 2] else KeyEvent.KEYCODE_UNKNOWN
+
+    /** EventHub clears layout flags when an explicit KCM remap wins. */
+    internal fun androidKeyFlagsForScanCode(scanCode: Int, keyCode: Int): Int =
+        if (scanCode in 0 until HOST_SCAN_COUNT && keyCode == androidKeyCodeForScanCode(scanCode))
+            genericKeyLayout[scanCode * 2 + 1] else 0
+
+    // InputDispatcher.notifyKey applies POLICY_FLAG_FUNCTION (Input.h, 0x4).
+    // The legacy post-IME path has no dispatcher, so preserve its resulting meta.
+    private fun keyLayoutMetaState(scanCode: Int, keyCode: Int): Int =
+        if (androidKeyFlagsForScanCode(scanCode, keyCode) and 4 != 0) KeyEvent.META_FUNCTION_ON else 0
+
+    @JvmStatic private external fun nativeLoadKeyLayout(contents: String): IntArray
 
     private const val TOUCH_DOWN = 0
     private const val TOUCH_UP = 1

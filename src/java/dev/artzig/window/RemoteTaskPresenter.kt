@@ -18,7 +18,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         check(Looper.myLooper() === handler.looper)
         val state = remote.connectSeat(callback)
         val characterCount = WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT
-        check(state.size == 8 + characterCount + WaylandKeyboardMap.SCAN_COUNT && state[0] == 1)
+        check(state.size == 8 + characterCount + WaylandKeyboardMap.SCAN_COUNT && state[0] == 2)
         check(state[1] > 0 && state[2] and 15 == state[2] && state[3] >= 0 && state[4] >= 0 && state[5] >= 0)
         // Seed clients synchronously before organizer registration can create an
         // APK window. Later global callbacks retain the same seat chronology.

@@ -10,7 +10,7 @@ import android.view.KeyEvent
  * Rows are evdev scan codes; columns are Shift, Caps, Level3, Num, Ctrl, Alt bits.
  */
 internal object WaylandKeyboardMap {
-    const val SCAN_COUNT = 256
+    const val SCAN_COUNT = HostedInputDispatcher.HOST_SCAN_COUNT
     const val STATE_COUNT = 64
     private val modifiers = arrayOf("shift", "capslock", "ralt", "numlock", "ctrl", "lalt")
 

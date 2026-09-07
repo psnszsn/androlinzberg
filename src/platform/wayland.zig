@@ -201,6 +201,8 @@ fn monotonicNs(io: std.Io) u64 {
     return @intCast(std.Io.Clock.awake.now(io).nanoseconds);
 }
 
+pub const keyboard_scan_count = 768;
+
 /// A queued layout retains the exact keymap/group that preceded its key
 /// events, even if another keymap arrives before the presenter drains the seat.
 pub const KeyboardLayout = struct {
@@ -210,16 +212,16 @@ pub const KeyboardLayout = struct {
 
     /// Base XKB symbols describe non-character remaps such as Caps-as-Control.
     /// Character keys still use the KCM matrix, independently of physical layout.
-    pub fn symbols(self: KeyboardLayout) ![256]i32 {
+    pub fn symbols(self: KeyboardLayout) ![keyboard_scan_count]i32 {
         const state = xkb.xkb_state_new(self.keymap) orelse return error.KeyboardStateAllocationFailed;
         defer xkb.xkb_state_unref(state);
         _ = xkb.xkb_state_update_mask(state, 0, 0, 0, 0, 0, self.group);
-        var result: [256]i32 = undefined;
+        var result: [keyboard_scan_count]i32 = undefined;
         for (&result, 0..) |*symbol, scan| symbol.* = @intCast(xkb.xkb_state_key_get_one_sym(state, @intCast(scan + 8)));
         return result;
     }
 
-    pub fn characters(self: KeyboardLayout) ![256 * 64]i32 {
+    pub fn characters(self: KeyboardLayout) ![keyboard_scan_count * 64]i32 {
         const state = xkb.xkb_state_new(self.keymap) orelse return error.KeyboardStateAllocationFailed;
         defer xkb.xkb_state_unref(state);
         const names = [_][*:0]const u8{ "Shift", "Lock", "Mod5", "Mod2", "Control", "Mod1" };
@@ -228,14 +230,14 @@ pub const KeyboardLayout = struct {
             const index = xkb.xkb_keymap_mod_get_index(self.keymap, name);
             masks[i] = if (index < 32) @as(u32, 1) << @intCast(index) else 0;
         }
-        var result: [256 * 64]i32 = undefined;
+        var result: [keyboard_scan_count * 64]i32 = undefined;
         for (0..64) |combination| {
             var mask: u32 = 0;
             for (masks, 0..) |bit, i| if (combination & (@as(usize, 1) << @intCast(i)) != 0) {
                 mask |= bit;
             };
             _ = xkb.xkb_state_update_mask(state, mask, 0, 0, 0, 0, self.group);
-            for (0..256) |scan| {
+            for (0..keyboard_scan_count) |scan| {
                 const key: u32 = @intCast(scan + 8);
                 const unicode = xkb.xkb_state_key_get_utf32(state, key);
                 result[scan * 64 + combination] = @intCast(if (unicode != 0) unicode else deadAccent(xkb.xkb_state_key_get_one_sym(state, key)));
@@ -728,19 +730,19 @@ pub const Session = struct {
         } });
     }
 
-    pub fn seatSnapshot(self: *Session) ![8 + 256 * 64 + 256]i32 {
+    pub fn seatSnapshot(self: *Session) ![8 + keyboard_scan_count * 64 + keyboard_scan_count]i32 {
         // Binding a seat can enqueue get_keyboard while the first roundtrip is
         // dispatching capabilities. The second receives its keymap/repeat info.
         if (self.display.roundtrip() != .SUCCESS or self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        var result: [8 + 256 * 64 + 256]i32 = @splat(0);
+        var result: [8 + keyboard_scan_count * 64 + keyboard_scan_count]i32 = @splat(0);
         const meta = self.keyboardModifiers();
-        result[0..8].* = .{ 1, self.seat_generation, self.seat_capabilities, self.keyboard_layout_generation, @max(0, self.keyboard_repeat_rate), @max(0, self.keyboard_repeat_delay_ms), meta[0], meta[1] };
+        result[0..8].* = .{ 2, self.seat_generation, self.seat_capabilities, self.keyboard_layout_generation, @max(0, self.keyboard_repeat_rate), @max(0, self.keyboard_repeat_delay_ms), meta[0], meta[1] };
         if (self.xkb_keymap) |map| {
             const layout: KeyboardLayout = .{ .keymap = map, .generation = self.keyboard_layout_generation, .group = self.keyboard_group };
             const characters = try layout.characters();
             const symbols = try layout.symbols();
-            @memcpy(result[8 .. 8 + 256 * 64], &characters);
-            @memcpy(result[8 + 256 * 64 ..], &symbols);
+            @memcpy(result[8 .. 8 + keyboard_scan_count * 64], &characters);
+            @memcpy(result[8 + keyboard_scan_count * 64 ..], &symbols);
         }
         return result;
     }
@@ -2534,6 +2536,27 @@ test "XKB modifier remaps retain non-character key identity" {
     const characters = try layout.characters();
     try std.testing.expectEqual(@as(i32, 'a'), characters[30 * 64]);
     try std.testing.expectEqual(@as(i32, 1), characters[30 * 64 + 16]); // Control-A.
+}
+
+test "XKB snapshots include the last supported evdev scan position" {
+    const context = xkb.xkb_context_new(0) orelse return error.KeyboardContextAllocationFailed;
+    defer xkb.xkb_context_unref(context);
+    const source =
+        \\xkb_keymap {
+        \\  xkb_keycodes { minimum = 8; maximum = 775; <HIGH> = 775; };
+        \\  xkb_types { include "complete" };
+        \\  xkb_compatibility { include "complete" };
+        \\  xkb_symbols { key <HIGH> { [ a, A ] }; };
+        \\};
+    ;
+    const keymap = xkb.xkb_keymap_new_from_string(context, source, 1, 0) orelse return error.KeyboardMapFailed;
+    defer xkb.xkb_keymap_unref(keymap);
+    const layout: KeyboardLayout = .{ .keymap = keymap, .group = 0, .generation = 1 };
+    const symbols = try layout.symbols();
+    const characters = try layout.characters();
+    try std.testing.expectEqual(@as(i32, 'a'), symbols[767]);
+    try std.testing.expectEqual(@as(i32, 'a'), characters[767 * 64]);
+    try std.testing.expectEqual(@as(i32, 'A'), characters[767 * 64 + 1]);
 }
 
 test "keyboard enter snapshots held keys and bounds unknown scan codes" {

@@ -405,6 +405,10 @@ pub fn build(b: *std.Build, o: Options) Result {
     javac.run.step.dependOn(o.source_audit);
     javac.run.setName("compile framework Java");
 
+    const input_resources = b.addWriteFiles();
+    _ = input_resources.addCopyFile(aosp.path("frameworks/base/data/keyboards/Generic.kl"), "dev/artzig/input/Generic.kl");
+    const input_resources_dir = input_resources.getDirectory();
+
     // 5. Package each compiler's directory directly, with no intermediate
     // class-tree copies. The r8 CLI takes jars rather than directories.
     const jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
@@ -436,6 +440,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addArg("-C");
     jar.addDirectoryArg(o.generated.jvm.resources);
     jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(input_resources_dir);
+    jar.addArg(".");
 
     const merge_compat = command.create(b);
     merge_compat.addArg("python3");
@@ -457,13 +464,16 @@ pub fn build(b: *std.Build, o: Options) Result {
     d8.addFileArg(classes_jar);
 
     // D8 discards Java resources. Package its dex output together with the
-    // stock MIME data so Class.getResourceAsStream works on the runtime jar.
+    // stock MIME/key-layout data so Class.getResourceAsStream works on the runtime jar.
     const runtime_jar = b.addSystemCommand(&.{ "jar", "--create", "--file" });
     const classpath_jar = runtime_jar.addOutputFileArg("framework.jar");
     runtime_jar.addArgs(&.{ "--no-compress", "-C" });
     runtime_jar.addDirectoryArg(framework_dex);
     runtime_jar.addArgs(&.{ ".", "-C" });
     runtime_jar.addDirectoryArg(o.generated.jvm.resources);
+    runtime_jar.addArg(".");
+    runtime_jar.addArg("-C");
+    runtime_jar.addDirectoryArg(input_resources_dir);
     runtime_jar.addArg(".");
 
     // HostedApkClassLoader keeps framework classes parent-first but lets an
