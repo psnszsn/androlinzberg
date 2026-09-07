@@ -22,7 +22,8 @@ internal class WaylandTaskInput(private val android: Android,
     interface Android {
         fun focusTask(taskId: Int)
         /** Borrowed for this call; retain a copy if dispatch is asynchronous. */
-        fun dispatch(event: InputEvent)
+        fun dispatch(event: InputEvent, repeatable: Boolean = true)
+        fun keyboardLayout(map: KeyCharacterMap)
         fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean)
     }
     private data class Pressed(val owner: Window, val code: Int, val time: Long)
@@ -33,8 +34,24 @@ internal class WaylandTaskInput(private val android: Android,
     private val contacts = linkedMapOf<Int, Contact>()
     private var focus: Window? = null
     private var lockedMeta = 0
+    private var compositorMeta: Int? = null
+
+    /** Compositor snapshots include modifiers held before keyboard enter. */
+    fun modifiers(value: Int) {
+        compositorMeta = KeyEvent.normalizeMetaState(value)
+        lockedMeta = value and (KeyEvent.META_CAPS_LOCK_ON or KeyEvent.META_NUM_LOCK_ON or KeyEvent.META_SCROLL_LOCK_ON)
+    }
     private var touchDownTime = 0L
     private var repeat: Pair<Int, Int>? = null
+    private var layoutGeneration = 0
+
+    fun keyboardLayout(generation: Int, characters: IntArray) {
+        if (generation <= layoutGeneration) return
+        val map = WaylandKeyboardMap.compile(characters)
+        focus?.releaseKeys()
+        android.keyboardLayout(map)
+        layoutGeneration = generation
+    }
 
     fun repeatConfiguration(rate: Int, delayMillis: Int) {
         require(rate >= 0 && delayMillis >= 0)
@@ -163,7 +180,7 @@ internal class WaylandTaskInput(private val android: Android,
 
         private fun buttonKey(code: Int, down: Boolean) = dispatch(KeyEvent(pointerDownTime, clock(),
             if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, code, 0, metaState(),
-            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_MOUSE))
+            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_MOUSE), false)
 
         fun cancelPointer() {
             if (buttons and DOWN_BUTTONS != 0) mouse(MotionEvent.ACTION_CANCEL)
@@ -175,12 +192,13 @@ internal class WaylandTaskInput(private val android: Android,
             buttons = 0; hovering = false
         }
 
-        fun key(scanCode: Int, down: Boolean) {
+        fun key(scanCode: Int, down: Boolean, repeatable: Boolean = true) {
             if (!live() || focus !== this || bounds == null || scanCode !in 0..767) return
             var held = keys[scanCode]
             if (down) {
                 if (held == null) {
-                    val code = HostedInputDispatcher.androidKeyCodeForScanCode(scanCode)
+                    val code = if (layoutGeneration != 0) WaylandKeyboardMap.keyCode(scanCode) else
+                        HostedInputDispatcher.androidKeyCodeForScanCode(scanCode)
                     held = Pressed(this, code, clock())
                     keys[scanCode] = held
                     lockedMeta = lockedMeta xor when (code) {
@@ -194,9 +212,18 @@ internal class WaylandTaskInput(private val android: Android,
                 held ?: return // A key held before focus was not pressed in this task.
                 keys.remove(scanCode)
             }
+            // wl_keyboard sends a key edge before the following modifiers
+            // snapshot. Reflect this edge now; the next snapshot is authoritative.
+            compositorMeta?.let { current ->
+                val bit = modifierGroup(held!!.code)
+                val active = keys.values.any { modifierGroup(it.code) == bit }
+                compositorMeta = if (bit != 0) {
+                    if (active) current or bit else current and bit.inv()
+                } else (current and LOCKS.inv()) or lockedMeta
+            }
             dispatch(KeyEvent(held!!.time, clock(), if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP,
                 held.code, 0, metaState(), KeyCharacterMap.VIRTUAL_KEYBOARD, scanCode,
-                KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD))
+                KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD), repeatable)
         }
 
         internal fun releaseKeys() {
@@ -281,24 +308,36 @@ internal class WaylandTaskInput(private val android: Android,
     }
 
     private fun metaState(): Int {
-        var result = lockedMeta
-        for (held in keys.values) result = result or when (held.code) {
-            KeyEvent.KEYCODE_SHIFT_LEFT -> KeyEvent.META_SHIFT_LEFT_ON
-            KeyEvent.KEYCODE_SHIFT_RIGHT -> KeyEvent.META_SHIFT_RIGHT_ON
-            KeyEvent.KEYCODE_CTRL_LEFT -> KeyEvent.META_CTRL_LEFT_ON
-            KeyEvent.KEYCODE_CTRL_RIGHT -> KeyEvent.META_CTRL_RIGHT_ON
-            KeyEvent.KEYCODE_ALT_LEFT -> KeyEvent.META_ALT_LEFT_ON
-            KeyEvent.KEYCODE_ALT_RIGHT -> KeyEvent.META_ALT_RIGHT_ON
-            KeyEvent.KEYCODE_META_LEFT -> KeyEvent.META_META_LEFT_ON
-            KeyEvent.KEYCODE_META_RIGHT -> KeyEvent.META_META_RIGHT_ON
-            else -> 0
+        var result = compositorMeta ?: lockedMeta
+        for (held in keys.values) {
+            if (compositorMeta != null && result and modifierGroup(held.code) == 0) continue
+            result = result or when (held.code) {
+                KeyEvent.KEYCODE_SHIFT_LEFT -> KeyEvent.META_SHIFT_LEFT_ON
+                KeyEvent.KEYCODE_SHIFT_RIGHT -> KeyEvent.META_SHIFT_RIGHT_ON
+                KeyEvent.KEYCODE_CTRL_LEFT -> KeyEvent.META_CTRL_LEFT_ON
+                KeyEvent.KEYCODE_CTRL_RIGHT -> KeyEvent.META_CTRL_RIGHT_ON
+                KeyEvent.KEYCODE_ALT_LEFT -> KeyEvent.META_ALT_LEFT_ON
+                KeyEvent.KEYCODE_ALT_RIGHT -> KeyEvent.META_ALT_RIGHT_ON
+                KeyEvent.KEYCODE_META_LEFT -> KeyEvent.META_META_LEFT_ON
+                KeyEvent.KEYCODE_META_RIGHT -> KeyEvent.META_META_RIGHT_ON
+                else -> 0
+            }
         }
         return KeyEvent.normalizeMetaState(result)
     }
 
-    private fun dispatch(event: InputEvent) {
+    private fun modifierGroup(code: Int): Int = when (code) {
+        KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> KeyEvent.META_SHIFT_ON
+        KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT -> KeyEvent.META_CTRL_ON
+        KeyEvent.KEYCODE_ALT_LEFT -> KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
+        KeyEvent.KEYCODE_ALT_RIGHT -> KeyEvent.META_ALT_ON or KeyEvent.META_ALT_RIGHT_ON
+        KeyEvent.KEYCODE_META_LEFT, KeyEvent.KEYCODE_META_RIGHT -> KeyEvent.META_META_ON
+        else -> 0
+    }
+
+    private fun dispatch(event: InputEvent, repeatable: Boolean = true) {
         event.displayId = Display.DEFAULT_DISPLAY
-        try { android.dispatch(event) } finally { event.recycle() }
+        try { android.dispatch(event, repeatable) } finally { event.recycle() }
     }
 
     companion object {
@@ -307,6 +346,7 @@ internal class WaylandTaskInput(private val android: Android,
         const val POINTER_LEAVE = 2
         const val POINTER_BUTTON = 3
         const val POINTER_CANCEL = 4
+        private const val LOCKS = KeyEvent.META_CAPS_LOCK_ON or KeyEvent.META_NUM_LOCK_ON or KeyEvent.META_SCROLL_LOCK_ON
         private const val DOWN_BUTTONS = MotionEvent.BUTTON_PRIMARY or MotionEvent.BUTTON_SECONDARY or MotionEvent.BUTTON_TERTIARY
     }
 }

@@ -16,6 +16,16 @@ fn watchStdin(stop: *Stop) void {
     stop.stopped.store(true, .release);
 }
 pub fn main(init: std.process.Init) !void {
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--keyboard-seat")) {
+        const session = try Queue.Session.init(init.gpa, init.io);
+        defer session.deinit();
+        try session.prepareTestKeyboard();
+        try Io.File.stdout().writeStreamingAll(init.io, "ready\n");
+        var buffer: [1]u8 = undefined;
+        while (try Io.File.stdin().readStreaming(init.io, &.{&buffer}) != 0) {}
+        return;
+    }
     try run(init);
     if (azk_graphics_live_buffers() != 0) return error.LeakedGraphicsBuffer;
     try Io.File.stdout().writeStreamingAll(init.io, "released all buffers\n");

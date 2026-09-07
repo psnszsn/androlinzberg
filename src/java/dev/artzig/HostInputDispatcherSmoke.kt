@@ -272,8 +272,9 @@ object HostInputDispatcherSmoke {
                         it.setFocusedWindow(checkNotNull(channels[index].token), "JavaInput$index", 0).apply()
                     }
                 }
-                override fun dispatch(event: InputEvent) = dispatcher.dispatchDesktopEvent(event)
-                override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
+                override fun dispatch(event: InputEvent, repeatable: Boolean) = dispatcher.dispatchDesktopEvent(event, repeatable)
+                override fun keyboardLayout(map: android.view.KeyCharacterMap) { }
+            override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
                     dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
             })
             val leftSeat = seat.open(dev.artzig.window.TaskGeometry.Task(1, 1))
@@ -310,6 +311,13 @@ object HostInputDispatcherSmoke {
                 check(observed.count { it == "key:0:0:${KeyEvent.KEYCODE_A}" } == 1)
                 leftSeat.key(30, false)
                 seat.repeatConfiguration(50, 20)
+                observed.clear()
+                leftSeat.key(30, true, false)
+                await("non-repeating XKB key delivery") { "key:0:0:${KeyEvent.KEYCODE_A}" in observed }
+                val noRepeatUntil = SystemClock.uptimeMillis() + 100
+                await("per-key XKB repeat exclusion") { SystemClock.uptimeMillis() >= noRepeatUntil }
+                check(observed.count { it == "key:0:0:${KeyEvent.KEYCODE_A}" } == 1)
+                leftSeat.key(30, false)
                 observed.clear()
                 leftSeat.key(30, true)
                 await("stock repeat timer and count") { "repeat:0:${KeyEvent.KEYCODE_A}:1:false" in observed }

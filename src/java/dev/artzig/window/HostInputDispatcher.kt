@@ -75,7 +75,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         return nativeInjectInputEvent(handle, event, targetUid, syncMode, timeoutMillis, policyFlags)
     }
     /** Device events run through stock input filtering, unlike injected events. */
-    fun notifyInputEvent(event: InputEvent) = nativeNotifyInputEvent(handle, event)
+    fun notifyInputEvent(event: InputEvent, repeatable: Boolean = true) = nativeNotifyInputEvent(handle, event, repeatable)
     /** Publish inputflinger and subscribe to stock SF window metadata before SF bootFinished. */
     fun connectSurfaceFlinger() = nativeConnectSurfaceFlinger(handle)
     override fun close() = nativeClose(handle)
@@ -102,7 +102,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         @JvmStatic private external fun nativeNotifyPointerCaptureChanged(handle: Long, windowToken: IBinder?, sequence: Int)
         @JvmStatic private external fun nativeSetDisplayEligibilityForPointerCapture(handle: Long, displayId: Int, eligible: Boolean)
         @JvmStatic private external fun nativeInjectInputEvent(handle: Long, event: InputEvent, targetUid: Int, syncMode: Int, timeoutMillis: Int, policyFlags: Int): Int
-        @JvmStatic private external fun nativeNotifyInputEvent(handle: Long, event: InputEvent)
+        @JvmStatic private external fun nativeNotifyInputEvent(handle: Long, event: InputEvent, repeatable: Boolean)
         @JvmStatic private external fun nativeConnectSurfaceFlinger(handle: Long)
     }
 }

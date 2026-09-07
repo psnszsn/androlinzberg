@@ -11,13 +11,15 @@ object WaylandTaskInputSmoke {
         val order = mutableListOf<String>()
         val focus = mutableListOf<Int>()
         val repeats = mutableListOf<Triple<Int, Int, Boolean>>()
+        var layouts = 0
         var time = 100L
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun focusTask(taskId: Int) { focus.add(taskId); order.add("focus:$taskId") }
+            override fun keyboardLayout(map: android.view.KeyCharacterMap) { layouts++ }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
                 repeats.add(Triple(timeoutMillis, delayMillis, enabled))
             }
-            override fun dispatch(event: InputEvent) {
+            override fun dispatch(event: InputEvent, repeatable: Boolean) {
                 check(event.displayId == 0)
                 events.add(event.copy())
                 order.add(when (event) {
@@ -118,6 +120,24 @@ object WaylandTaskInputSmoke {
             seat.repeatConfiguration(0, 400)
             check(events.filterIsInstance<KeyEvent>().single().isCanceled)
             check(repeats.last() == Triple(400, 1, false))
+            clear()
+            seat.modifiers(KeyEvent.META_SHIFT_ON or KeyEvent.META_CAPS_LOCK_ON)
+            replacement.key(48, true) // Shift/Caps were held before this task entered.
+            check((events.single() as KeyEvent).isShiftPressed && (events.single() as KeyEvent).isCapsLockOn)
+            clear()
+            replacement.scroll(2f, 3f, 0f, 1f)
+            check((events.single() as MotionEvent).metaState and KeyEvent.META_SHIFT_ON != 0)
+            clear()
+            seat.keyboardLayout(1, IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT))
+            check(events.filterIsInstance<KeyEvent>().single().isCanceled)
+            check(layouts == 1)
+            seat.keyboardLayout(1, IntArray(0)); seat.keyboardLayout(0, IntArray(0))
+            check(layouts == 1) // Duplicate/stale snapshots neither parse nor cancel again.
+            clear()
+            seat.modifiers(0)
+            replacement.key(86, true)
+            check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_RO)
+            check(!(events.single() as KeyEvent).isShiftPressed)
             replacement.close()
         } finally { first.close(); second.close(); clear() }
         println("Wayland task input: projection, button ordering, focus, key cancellation, touch IDs and stale generations passed")

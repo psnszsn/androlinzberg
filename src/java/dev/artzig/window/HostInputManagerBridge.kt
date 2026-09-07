@@ -122,7 +122,7 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     fun pilferPointers(token: IBinder) = dispatcher.pilferPointers(token)
 
     /** For the trusted compositor transport; Binder injection is permission checked separately. */
-    fun dispatchDesktopEvent(event: InputEvent) = dispatcher.notifyInputEvent(event)
+    fun dispatchDesktopEvent(event: InputEvent, repeatable: Boolean = true) = dispatcher.notifyInputEvent(event, repeatable)
 
     fun setInputFilter(value: IInputFilter?) = synchronized(filterLock) {
         check(!closed) { "Input manager is closed" }

@@ -5,14 +5,16 @@ import android.os.ServiceManager
 
 /** The system process owns one organizer independently of APK launchers. */
 internal object SessionTaskShell {
-    fun start(handler: Handler, dispatcher: HostInputManagerBridge): AutoCloseable {
+    fun start(handler: Handler, dispatcher: HostInputManagerBridge,
+        publishKeyboard: (android.view.KeyCharacterMap) -> Unit): AutoCloseable {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
             "Session presenter did not register before system startup"
         }
         val remote = IWaylandTaskPresenter.Stub.asInterface(binder)
         val input = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
-            override fun dispatch(event: android.view.InputEvent) = dispatcher.dispatchDesktopEvent(event)
+            override fun keyboardLayout(map: android.view.KeyCharacterMap) = publishKeyboard(map)
+            override fun dispatch(event: android.view.InputEvent, repeatable: Boolean) = dispatcher.dispatchDesktopEvent(event, repeatable)
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
                 dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
         })

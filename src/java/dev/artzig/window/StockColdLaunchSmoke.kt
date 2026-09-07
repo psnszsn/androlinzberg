@@ -100,6 +100,15 @@ object StockColdLaunchSmoke {
         // The Cage runner inspects actual compositor pixels before releasing
         // this gate. The driver owns no organizer or presentation surface.
         pixels("TASK_WINDOW_READY", task.taskId)
+        val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
+            android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
+        await("Compositor character map was not published to stock input clients") {
+            val keyboard = inputDevices.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD)
+            keyboard != null && keyboard.generation > 0 &&
+                keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, 0) == 'a'.code &&
+                keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.META_SHIFT_ON) == 'A'.code
+        }
+        println("Stock Wayland keyboard: compositor layout published through InputDevice")
         val firstBounds = android.graphics.Rect(applicationTasks().single().configuration.windowConfiguration.bounds)
         check(tasks.startActivity(null, "android", null,
             Intent().setClassName(packageName, "$packageName.ColdProcessActivity")

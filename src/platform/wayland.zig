@@ -66,10 +66,13 @@ const xkb = struct {
     pub extern fn xkb_context_new(flags: c_int) ?*Context;
     pub extern fn xkb_context_unref(ctx: ?*Context) void;
     pub extern fn xkb_keymap_new_from_string(ctx: *Context, str: [*:0]const u8, format: c_int, flags: c_int) ?*Keymap;
+    pub extern fn xkb_keymap_ref(keymap: *Keymap) *Keymap;
+    pub extern fn xkb_keymap_mod_get_index(keymap: *Keymap, name: [*:0]const u8) u32;
     pub extern fn xkb_keymap_unref(keymap: ?*Keymap) void;
     pub extern fn xkb_state_new(keymap: *Keymap) ?*State;
     pub extern fn xkb_state_unref(state: ?*State) void;
     pub extern fn xkb_state_update_mask(state: *State, depressed: u32, latched: u32, locked: u32, layout_depressed: u32, layout_latched: u32, layout_locked: u32) c_int;
+    pub extern fn xkb_state_mod_name_is_active(state: *State, name: [*:0]const u8, component: c_int) c_int;
     pub extern fn xkb_state_key_get_utf32(state: *State, key: u32) u32;
     pub extern fn xkb_state_key_get_one_sym(state: *State, key: u32) u32;
     pub extern fn xkb_keymap_key_repeats(keymap: *Keymap, key: u32) c_int;
@@ -198,6 +201,51 @@ fn monotonicNs(io: std.Io) u64 {
     return @intCast(std.Io.Clock.awake.now(io).nanoseconds);
 }
 
+/// A queued layout retains the exact keymap/group that preceded its key
+/// events, even if another keymap arrives before the presenter drains the seat.
+pub const KeyboardLayout = struct {
+    keymap: *xkb.Keymap,
+    group: u32,
+    generation: i32,
+
+    pub fn characters(self: KeyboardLayout) ![256 * 64]i32 {
+        const state = xkb.xkb_state_new(self.keymap) orelse return error.KeyboardStateAllocationFailed;
+        defer xkb.xkb_state_unref(state);
+        const names = [_][*:0]const u8{ "Shift", "Lock", "Mod5", "Mod2", "Control", "Mod1" };
+        var masks: [names.len]u32 = undefined;
+        for (names, 0..) |name, i| {
+            const index = xkb.xkb_keymap_mod_get_index(self.keymap, name);
+            masks[i] = if (index < 32) @as(u32, 1) << @intCast(index) else 0;
+        }
+        var result: [256 * 64]i32 = undefined;
+        for (0..64) |combination| {
+            var mask: u32 = 0;
+            for (masks, 0..) |bit, i| if (combination & (@as(usize, 1) << @intCast(i)) != 0) { mask |= bit; };
+            _ = xkb.xkb_state_update_mask(state, mask, 0, 0, 0, 0, self.group);
+            for (0..256) |scan| {
+                const key: u32 = @intCast(scan + 8);
+                const unicode = xkb.xkb_state_key_get_utf32(state, key);
+                result[scan * 64 + combination] = @intCast(if (unicode != 0) unicode else
+                    deadAccent(xkb.xkb_state_key_get_one_sym(state, key)));
+            }
+        }
+        return result;
+    }
+
+    fn deadAccent(symbol: u32) u32 {
+        // XKB_KEY_dead_grave..dead_belowcomma, from pinned xkbcommon-keysyms.h.
+        const accents = [_]u32{ 0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x0306, 0x0307,
+            0x0308, 0x030a, 0x030b, 0x030c, 0x0327, 0x0328, 0x0345, 0x3099, 0x309a,
+            0x0323, 0x0309, 0x031b, 0x0335, 0x0313, 0x0314, 0x030f, 0x0325, 0x0331,
+            0x032d, 0x0330, 0x032e, 0x0324, 0x0311, 0x0326 };
+        if (symbol >= 0xfe50 and symbol <= 0xfe6e) return accents[symbol - 0xfe50];
+        return switch (symbol) {
+            0xfe90 => 0x0332, 0xfe91 => 0x030d, 0xfe92 => 0x0329, 0xfe93 => 0x0338,
+            else => 0,
+        };
+    }
+};
+
 pub const Event = union(enum) {
     close,
     configure: struct { width: i32, height: i32 },
@@ -210,8 +258,10 @@ pub const Event = union(enum) {
     pointer_cancel,
     pointer_relative: struct { dx: f64, dy: f64 },
     pointer_capture_changed: bool,
-    key: struct { keycode: u32, pressed: bool, unicode: u32, keysym: u32 },
+    key: struct { keycode: u32, pressed: bool, unicode: u32, keysym: u32, repeatable: bool = true },
     keyboard_focus: bool,
+    keyboard_layout: KeyboardLayout,
+    keyboard_modifiers: u32,
     keyboard_repeat_configuration: struct { rate: i32, delay_ms: i32 },
     keyboard_reset,
     touch: struct {
@@ -225,6 +275,57 @@ pub const Event = union(enum) {
     },
     touch_cancel,
     frame_done: struct { time_ms: u32 },
+};
+
+/// Bounded session chronology: draining per-window queues would reorder a
+/// keyboard leave/enter/key sequence whenever the new task has an earlier slot.
+pub const OrderedEvents = struct {
+    pub const Item = struct { window: *Window, event: Event };
+    const limit = 4096;
+    pending: std.ArrayList(Item) = .empty,
+    delivered: std.ArrayList(Item) = .empty,
+    failed: bool = false,
+
+    fn push(self: *OrderedEvents, gpa: std.mem.Allocator, window: *Window, event: Event) void {
+        if (self.failed or self.pending.items.len == limit) {
+            self.failed = true;
+            release(event);
+            return;
+        }
+        self.pending.append(gpa, .{ .window = window, .event = event }) catch {
+            release(event);
+            self.failed = true;
+        };
+    }
+
+    fn removeWindow(self: *OrderedEvents, window: *Window) void {
+        inline for (.{ &self.pending, &self.delivered }) |items| {
+            var index: usize = 0;
+            while (index < items.items.len) {
+                if (items.items[index].window == window) {
+                    release(items.orderedRemove(index).event);
+                } else index += 1;
+            }
+        }
+    }
+
+    fn release(event: Event) void {
+        if (event == .keyboard_layout) xkb.xkb_keymap_unref(event.keyboard_layout.keymap);
+    }
+
+    pub fn take(self: *OrderedEvents) []const Item {
+        for (self.delivered.items) |item| release(item.event);
+        self.delivered.clearRetainingCapacity();
+        std.mem.swap(std.ArrayList(Item), &self.pending, &self.delivered);
+        return self.delivered.items;
+    }
+
+    fn deinit(self: *OrderedEvents, gpa: std.mem.Allocator) void {
+        for (self.pending.items) |item| release(item.event);
+        for (self.delivered.items) |item| release(item.event);
+        self.pending.deinit(gpa);
+        self.delivered.deinit(gpa);
+    }
 };
 
 pub const WakeSources = struct {
@@ -365,9 +466,12 @@ pub const Session = struct {
     xkb_context: ?*xkb.Context = null,
     xkb_keymap: ?*xkb.Keymap = null,
     xkb_state: ?*xkb.State = null,
+    keyboard_group: u32 = 0,
+    keyboard_layout_generation: i32 = 0,
     keyboard_repeat_rate: i32 = 0,
     keyboard_repeat_delay_ms: i32 = 0,
     generate_key_repeats: bool = true,
+    ordered_events: ?OrderedEvents = null,
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Session {
         const self = try gpa.create(Session);
@@ -401,6 +505,10 @@ pub const Session = struct {
         @memset(ready, false);
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         var timeout = timeout_ms;
+        if (self.ordered_events) |*events| {
+            if (events.failed) return error.SeatEventQueueOverflow;
+            if (events.pending.items.len != 0) timeout = 0;
+        }
         for (self.windows.items) |window| {
             _ = window.emitKeyRepeatIfDue();
             if (window.events.items.len != 0) timeout = 0;
@@ -477,6 +585,7 @@ pub const Session = struct {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         }
         for (self.windows.items) |window| _ = window.emitKeyRepeatIfDue();
+        if (self.ordered_events) |*events| if (events.failed) return error.SeatEventQueueOverflow;
     }
 
     fn surfaceWindow(self: *Session, surface: ?*wl.Surface) ?*Window {
@@ -489,6 +598,7 @@ pub const Session = struct {
     }
 
     fn removeWindow(self: *Session, window: *Window) void {
+        if (self.ordered_events) |*events| events.removeWindow(window);
         if (self.pointer_focus == window) self.pointer_focus = null;
         if (self.keyboard_focus == window) self.keyboard_focus = null;
         for (self.windows.items, 0..) |candidate, index| {
@@ -527,10 +637,17 @@ pub const Session = struct {
                 xkb.xkb_keymap_unref(self.xkb_keymap);
                 self.xkb_keymap = keymap;
                 self.xkb_state = xkb.xkb_state_new(keymap);
+                self.keyboard_group = 0;
+                self.layoutChanged();
             },
             .modifiers => |m| {
+                if (self.keyboard_group != m.group) {
+                    self.keyboard_group = m.group;
+                    self.layoutChanged();
+                }
                 if (self.xkb_state) |st| {
                     _ = xkb.xkb_state_update_mask(st, m.mods_depressed, m.mods_latched, m.mods_locked, 0, 0, m.group);
+                    for (self.windows.items) |window| self.queueModifiers(window);
                 }
             },
             .enter => |entered| {
@@ -555,6 +672,63 @@ pub const Session = struct {
             },
             else => if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window),
         }
+    }
+
+    fn queueModifiers(self: *Session, window: *Window) void {
+        if (self.ordered_events == null) return;
+        const state = self.xkb_state orelse return;
+        // Match the modifier basis used by KeyboardLayout.characters. Android
+        // right Alt represents XKB Level3; ordinary Alt is the left-Alt basis.
+        const names = .{ "Shift", "Lock", "Mod5", "Mod2", "Control", "Mod1", "Mod4" };
+        const bits = [_]u32{ 0x1, 0x100000, 0x22, 0x200000, 0x1000, 0x12, 0x10000 };
+        var meta: u32 = 0;
+        inline for (names, bits) |name, bit| {
+            if (xkb.xkb_state_mod_name_is_active(state, name, 1 << 3) > 0) meta |= bit;
+        }
+        window.push(.{ .keyboard_modifiers = meta });
+    }
+
+    /// Register a persistent keyboard for the existing headless harness. This
+    /// creates a device/keymap only; UI actions still use the test-control API.
+    pub fn prepareTestKeyboard(self: *Session) !void {
+        _ = try self.ensureVirtualKeyboard();
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+    }
+
+    fn ensureVirtualKeyboard(self: *Session) !*zwp.VirtualKeyboardV1 {
+        if (self.virtual_keyboard) |keyboard| return keyboard;
+        const manager = self.virtual_keyboard_manager orelse return error.VirtualKeyboardUnavailable;
+        const seat = self.seat orelse return error.VirtualKeyboardUnavailable;
+        const keyboard = try manager.createVirtualKeyboard(seat);
+        errdefer keyboard.destroy();
+        const keymap_fd = try createMemoryFile("azk-test-keymap");
+        const keymap_file = std.Io.File{
+            .handle = keymap_fd,
+            .flags = .{ .nonblocking = false },
+        };
+        defer keymap_file.close(self.io);
+        keymap_file.writeStreamingAll(self.io, test_keymap) catch return error.KeymapWriteFailed;
+        keyboard.keymap(.xkb_v1, keymap_fd, @intCast(test_keymap.len));
+        self.virtual_keyboard = keyboard;
+        return keyboard;
+    }
+
+    fn layoutChanged(self: *Session) void {
+        self.keyboard_layout_generation = std.math.add(i32, self.keyboard_layout_generation, 1) catch {
+            if (self.ordered_events) |*events| events.failed = true;
+            return;
+        };
+        for (self.windows.items) |window| self.queueLayout(window);
+    }
+
+    fn queueLayout(self: *Session, window: *Window) void {
+        if (self.ordered_events == null) return;
+        const map = self.xkb_keymap orelse return;
+        window.push(.{ .keyboard_layout = .{
+            .keymap = xkb.xkb_keymap_ref(map),
+            .group = self.keyboard_group,
+            .generation = self.keyboard_layout_generation,
+        } });
     }
 
     fn touchListener(touch: *wl.Touch, event: wl.Touch.Event, self: *Session) void {
@@ -640,6 +814,7 @@ pub const Session = struct {
         self.registry.destroy();
         self.dmabuf_formats.deinit(self.gpa);
         self.windows.deinit(self.gpa);
+        if (self.ordered_events) |*events| events.deinit(self.gpa);
     }
 
     fn requireGlobals(self: *const Session) void {
@@ -893,6 +1068,8 @@ pub const Window = struct {
         try session.windows.append(gpa, self);
         errdefer session.removeWindow(self);
         errdefer self.events.deinit(gpa);
+        session.queueLayout(self);
+        session.queueModifiers(self);
         self.push(.{ .keyboard_repeat_configuration = .{
             .rate = @max(0, session.keyboard_repeat_rate),
             .delay_ms = @max(0, session.keyboard_repeat_delay_ms),
@@ -1119,18 +1296,17 @@ pub const Window = struct {
                     unicode = xkb.xkb_state_key_get_utf32(st, k.key + 8);
                     keysym = xkb.xkb_state_key_get_one_sym(st, k.key + 8);
                 }
+                const repeatable = if (self.session.xkb_keymap) |keymap|
+                    xkb.xkb_keymap_key_repeats(keymap, k.key + 8) != 0 else false;
                 self.push(.{ .key = .{
+                    .repeatable = repeatable,
                     .keycode = k.key,
                     .pressed = k.state == .pressed,
                     .unicode = unicode,
                     .keysym = keysym,
                 } });
                 if (k.state == .pressed) {
-                    const repeats = if (self.session.xkb_keymap) |keymap|
-                        xkb.xkb_keymap_key_repeats(keymap, k.key + 8) != 0
-                    else
-                        false;
-                    if (repeats and self.session.generate_key_repeats and self.session.keyboard_repeat_rate > 0) {
+                    if (repeatable and self.session.generate_key_repeats and self.session.keyboard_repeat_rate > 0) {
                         const period_ns = @divTrunc(@as(u64, std.time.ns_per_s), @as(u64, @intCast(self.session.keyboard_repeat_rate)));
                         self.key_repeat = .{
                             .keycode = k.key,
@@ -1327,6 +1503,10 @@ pub const Window = struct {
     }
 
     fn push(self: *Window, e: Event) void {
+        if (self.session.ordered_events) |*events| {
+            events.push(self.gpa, self, e);
+            return;
+        }
         self.events.append(self.gpa, e) catch {};
     }
 
@@ -1576,7 +1756,7 @@ pub const Window = struct {
     /// requests wl_pointer/wl_keyboard; the second installs those objects.
     pub fn prepareTestInput(self: *Window) !void {
         _ = try self.ensureVirtualPointer();
-        _ = try self.ensureVirtualKeyboard();
+        _ = try self.session.ensureVirtualKeyboard();
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
         if (self.session.pointer == null or self.session.keyboard == null) return error.SeatCapabilitiesUnavailable;
@@ -1632,7 +1812,7 @@ pub const Window = struct {
     /// intentionally accepts printable ASCII plus newline/tab/backspace;
     /// semantic set_text remains available for arbitrary Unicode input.
     pub fn testType(self: *Window, text: []const u8) !void {
-        const keyboard = try self.ensureVirtualKeyboard();
+        const keyboard = try self.session.ensureVirtualKeyboard();
         for (text) |byte| {
             const key = asciiKey(byte) orelse return error.UnsupportedText;
             self.sendVirtualKey(keyboard, key.code, key.shift);
@@ -1642,7 +1822,7 @@ pub const Window = struct {
 
     pub fn testKey(self: *Window, name: []const u8) !void {
         const code = namedKey(name) orelse return error.UnsupportedKey;
-        const keyboard = try self.ensureVirtualKeyboard();
+        const keyboard = try self.session.ensureVirtualKeyboard();
         self.sendVirtualKey(keyboard, code, false);
         if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
@@ -1655,24 +1835,6 @@ pub const Window = struct {
         else
             try manager.createVirtualPointer(self.session.seat);
         return self.session.virtual_pointer.?;
-    }
-
-    fn ensureVirtualKeyboard(self: *Window) !*zwp.VirtualKeyboardV1 {
-        if (self.session.virtual_keyboard) |keyboard| return keyboard;
-        const manager = self.session.virtual_keyboard_manager orelse return error.VirtualKeyboardUnavailable;
-        const seat = self.session.seat orelse return error.VirtualKeyboardUnavailable;
-        const keyboard = try manager.createVirtualKeyboard(seat);
-        errdefer keyboard.destroy();
-        const keymap_fd = try createMemoryFile("azk-test-keymap");
-        const keymap_file = std.Io.File{
-            .handle = keymap_fd,
-            .flags = .{ .nonblocking = false },
-        };
-        defer keymap_file.close(self.io);
-        keymap_file.writeStreamingAll(self.io, test_keymap) catch return error.KeymapWriteFailed;
-        keyboard.keymap(.xkb_v1, keymap_fd, @intCast(test_keymap.len));
-        self.session.virtual_keyboard = keyboard;
-        return keyboard;
     }
 
     fn sendVirtualKey(self: *Window, keyboard: *zwp.VirtualKeyboardV1, code: u32, shift: bool) void {
@@ -2065,4 +2227,58 @@ test "control client polls writable only while output is pending" {
     try std.testing.expect(idle & std.posix.POLL.OUT == 0);
     try std.testing.expect(pending & std.posix.POLL.OUT != 0);
     try std.testing.expect(pending & std.posix.POLL.IN != 0);
+}
+
+
+test "session input preserves cross-window order, removal and bounded admission" {
+    var events: OrderedEvents = .{};
+    defer events.deinit(std.testing.allocator);
+    var first: Window = undefined;
+    var second: Window = undefined;
+    events.push(std.testing.allocator, &second, .keyboard_reset);
+    events.push(std.testing.allocator, &first, .{ .keyboard_focus = true });
+    events.push(std.testing.allocator, &first, .{ .key = .{ .keycode = 30, .pressed = true, .unicode = 97, .keysym = 97 } });
+    const delivered = events.take();
+    try std.testing.expectEqual(@as(usize, 3), delivered.len);
+    try std.testing.expect(delivered[0].window == &second and delivered[0].event == .keyboard_reset);
+    try std.testing.expect(delivered[1].window == &first and delivered[1].event == .keyboard_focus);
+    try std.testing.expect(delivered[2].event == .key);
+    events.push(std.testing.allocator, &second, .close);
+    events.push(std.testing.allocator, &first, .close);
+    events.removeWindow(&second);
+    try std.testing.expectEqual(@as(usize, 1), events.take().len);
+    for (0..OrderedEvents.limit) |_| events.push(std.testing.allocator, &first, .keyboard_reset);
+    try std.testing.expect(!events.failed);
+    events.push(std.testing.allocator, &first, .keyboard_reset);
+    try std.testing.expect(events.failed);
+    try std.testing.expectEqual(OrderedEvents.limit, events.pending.items.len);
+}
+
+test "queued XKB layouts retain groups and produce Android character states" {
+    const context = xkb.xkb_context_new(0) orelse return error.KeyboardContextAllocationFailed;
+    defer xkb.xkb_context_unref(context);
+    const source = try std.mem.replaceOwned(u8, std.testing.allocator, test_keymap, "pc+us", "pc+us(intl)+de:2");
+    defer std.testing.allocator.free(source);
+    const map = xkb.xkb_keymap_new_from_string(context, @ptrCast(source.ptr), 1, 0) orelse return error.KeyboardMapParseFailed;
+    var events: OrderedEvents = .{};
+    defer events.deinit(std.testing.allocator);
+    var window: Window = undefined;
+    events.push(std.testing.allocator, &window, .{ .keyboard_layout = .{
+        .keymap = xkb.xkb_keymap_ref(map), .group = 0, .generation = 1,
+    } });
+    events.push(std.testing.allocator, &window, .{ .keyboard_layout = .{
+        .keymap = xkb.xkb_keymap_ref(map), .group = 1, .generation = 2,
+    } });
+    xkb.xkb_keymap_unref(map); // Queue retains both immutable snapshots.
+    const snapshots = events.take();
+    const us = try snapshots[0].event.keyboard_layout.characters();
+    const de = try snapshots[1].event.keyboard_layout.characters();
+    try std.testing.expectEqual(@as(i32, 'a'), us[30 * 64]);
+    try std.testing.expectEqual(@as(i32, 'A'), us[30 * 64 + 1]);
+    try std.testing.expectEqual(@as(i32, 'A'), us[30 * 64 + 2]);
+    try std.testing.expectEqual(@as(i32, 'a'), us[30 * 64 + 3]);
+    try std.testing.expectEqual(@as(i32, 0x0301), us[40 * 64]);
+    try std.testing.expectEqual(@as(i32, 'y'), us[21 * 64]);
+    try std.testing.expectEqual(@as(i32, 'z'), de[21 * 64]);
+    try std.testing.expectEqual(@as(i32, 0x20ac), de[18 * 64 + 4]); // AltGr+E.
 }

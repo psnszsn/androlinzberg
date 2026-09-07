@@ -1,10 +1,10 @@
 # Stock graphics and Wayland task windows: implementation plan
 
-Status: M3/M4 graphics gates, M5 native/Java input boundaries, supervised SF
-startup, stock Java SurfaceControl/Choreographer and Surface/HWUI queue gates pass.
-Stock WMS/ATMS boots, resumes a task, accepts a real client window and commits
-a HWUI/BLAST frame through finishDrawing. Cold process launch, the complete stock
-window-client cutover and full task windows remain in progress through M11.
+Status: stock WMS/ATMS cold and warm launch, HWUI/BLAST rendering, two-task
+Cage/labwc presentation, native input-channel routing and compositor keyboard-map
+publication pass. Stock window clients are selectable for development. The
+production launcher cutover, complete desktop input, configuration/output policy
+and desktop interoperability remain in progress through M11.
 Code baseline: `2a2d199`, the
 hosted libbinder facade merged into main. This document expands the original
 “Wayland task windows with synthetic Android coordinates” proposal into a
@@ -82,6 +82,50 @@ placed it correctly; the gate now snapshots its rendered bounds before testing
 activity grouping. This checkpoint does not complete task restoration,
 decoration fallback, input, output/configuration policy, desktop bridges or the
 default launcher migration.
+
+## Keyboard layout and seat chronology checkpoint (2026-09-07)
+
+Regression 129 passes native tests, the Java InputDispatcher channel gate, and
+both stock APK compositor gates. A separate process reads the compositor's
+published keyboard map through stock `IInputManager`/`InputDevice`, including
+base and shifted characters. The headless harness registers a persistent virtual
+keyboard without sending UI actions; without that device, Cage and labwc have
+no keyboard capability and supply no keymap (the stronger gate caught this in
+127). This uses the existing surface test executable and `tools/shot.sh`.
+
+XKB layout snapshots retain their exact keymap and group until queued events
+have been consumed. The host compiles a bounded character matrix into the pinned
+AOSP KeyCharacterMap parser, including modifier combinations and combining dead
+accents. Input-device publication preserves immutable old snapshots and notifies
+id/generation changes outside the device lock, following InputManagerService.
+Tests cover US/German groups, AltGr, Caps+Shift, ISO's extra character key,
+parceling and invalid character matrices. Supplementary characters require the
+IME bridge; they are rejected at this KCM boundary instead of being truncated.
+
+A bounded session queue preserves event chronology across windows. One Binder
+callback object carries task IDs and generations, preserving that chronology
+through Binder's per-target oneway queues. Closed/stale task generations are
+ignored. Compositor modifier snapshots include keys held before keyboard enter.
+Stock InputDispatcher owns repeat timing and count; Wayland supplies rate/delay
+and per-key repeat eligibility. The channel gate verifies both zero-rate and
+per-key exclusions, then verifies the enabled repeat stream and focus cleanup.
+Log: `/tmp/wayland-keyboard-seat-129.log`.
+
+Regression 130 passes default framework/module/native checks, but the APK suite
+caught a screenshot assertion that included independently fading feed thumbnails
+behind NewPipe's desktop drawer. The observed drawer was stationary and both
+steps had empty issue lists. The test now checks unchanged accessibility panel
+bounds and the same pixel thresholds within that panel. The focused regression
+131 passes; regression 132 passes all 15 APK tests (48 steps, 0 runtime
+issues). The failed artifacts remain at
+`/tmp/wayland-keyboard-regression-130-drawer-failure/`; compositor checkpoint
+artifacts remain at `/tmp/wayland-keyboard-seat-129-{cage,labwc}/`. The grouped
+labwc screenshot was visually inspected.
+
+This checkpoint does not complete M8. Physical Wayland input through APK semantic
+steps, remapped modifier-key semantics, pointer capture/relative input, device
+capabilities and the remaining desktop/lifecycle work still need implementation
+and verification. Default launcher cutover and M9–M11 remain in progress.
 
 ## Stock task seat checkpoint (2026-09-07)
 

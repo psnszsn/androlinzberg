@@ -106,6 +106,11 @@ object HostedInputDispatcher {
     fun createHostKeyCharacterMap(): KeyCharacterMap =
         nativeLoadKeyCharacterMap(KeyCharacterMap.VIRTUAL_KEYBOARD, "type FULL\n")
 
+    /** EventHub's map loader for the session's XKB-derived layout snapshot. */
+    @JvmStatic
+    fun createHostKeyCharacterMap(contents: String): KeyCharacterMap =
+        nativeLoadKeyCharacterMap(KeyCharacterMap.VIRTUAL_KEYBOARD, contents)
+
     @JvmStatic
     private external fun nativeLoadKeyCharacterMap(
         deviceId: Int,

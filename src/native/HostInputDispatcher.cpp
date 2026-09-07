@@ -559,7 +559,7 @@ static jint inject(JNIEnv *env, jclass, jlong handle, jobject event, jint uid,
 // separate injection API intentionally bypasses filtering and is used when an
 // InputFilter sends its result back. Preserve batched samples and transform
 // Java coordinates into the display space, as stock injection does.
-static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event) {
+static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event, jboolean repeatable) {
   auto owner = get(env, handle);
   if (!owner)
     return;
@@ -569,7 +569,7 @@ static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event) {
     // Wayland's zero repeat rate must also work when the pinned aconfig default
     // disables the optional Android user-setting branch in notifyKey.
     const uint32_t policyFlags = POLICY_FLAG_TRUSTED |
-        (owner->keyRepeatEnabled.load() ? 0 : POLICY_FLAG_DISABLE_KEY_REPEAT);
+        (owner->keyRepeatEnabled.load() && repeatable ? 0 : POLICY_FLAG_DISABLE_KEY_REPEAT);
     owner->dispatcher.notifyKey(NotifyKeyArgs{
         key.getId(), key.getEventTime(), readTime, key.getDeviceId(),
         key.getSource(), key.getDisplayId(), policyFlags,
@@ -733,7 +733,7 @@ int registerNatives(JNIEnv *env) {
        reinterpret_cast<void *>(eligibility)},
       {"nativeInjectInputEvent", "(JLandroid/view/InputEvent;IIII)I",
        reinterpret_cast<void *>(inject)},
-      {"nativeNotifyInputEvent", "(JLandroid/view/InputEvent;)V",
+      {"nativeNotifyInputEvent", "(JLandroid/view/InputEvent;Z)V",
        reinterpret_cast<void *>(notifyEvent)},
       {"nativeConnectSurfaceFlinger", "(J)V",
        reinterpret_cast<void *>(connect)},

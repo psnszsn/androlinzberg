@@ -1165,11 +1165,14 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.setEnvironment("AZK_TASK_WINDOWS", "1");
         stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
         stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", compositor);
+        stock_task_wayland.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
         if (std.mem.eql(u8, compositor, "labwc"))
             stock_task_wayland.setEnvironment("SHOT_LABWC_CONFIG", b.pathResolve(&.{"testdata/wayland/task-desktop.xml"}));
         stock_task_wayland.addFileArg(b.path("tools/shot.sh"));
         stock_task_wayland.addArgs(&.{ b.pathResolve(&.{ task_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
         stock_task_wayland.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
+        stock_task_wayland.addArg("--seat");
+        stock_task_wayland.addFileArg(surface_server.getEmittedBin());
         stock_task_wayland.addArgs(&.{ "--output", task_artifacts, "--" });
         stock_task_wayland.addFileArg(system_test_driver.getEmittedBin());
         stock_task_wayland.addArg("--cold-window");

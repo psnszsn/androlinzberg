@@ -5,6 +5,7 @@ const Io = std.Io;
 const wayland = @import("wayland.zig");
 pub const Window = wayland.Window;
 pub const Session = wayland.Session;
+pub const KeyboardLayout = wayland.KeyboardLayout;
 const c = struct {
     const AzkSurfaceQueue = opaque {};
     const AzkSurfaceFrame = opaque {};
