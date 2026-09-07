@@ -57,6 +57,18 @@ packager.SOURCE_MANIFEST = HERE / "androlinzberg-files.txt"
 packager.PACKAGE_NAME = "androlinzberg"
 packager.PATCH_SERIES = framework_patches + (
     (
+        "packages/providers/DownloadProvider",
+        patch_root / "packages/providers/DownloadProvider/0001-classify-hosted-external-volume-paths.patch",
+    ),
+    (
+        "packages/providers/DownloadProvider",
+        patch_root / "packages/providers/DownloadProvider/0002-skip-scanning-unindexed-private-download-deletions.patch",
+    ),
+    (
+        "packages/providers/DownloadProvider",
+        patch_root / "packages/providers/DownloadProvider/0003-retain-download-inode-for-close-size-accounting.patch",
+    ),
+    (
         "system/libbase",
         patch_root / "system" / "libbase" / "0001-host-prop_info_cmp-operator-must-be-const-libc-std-s.patch",
     ),

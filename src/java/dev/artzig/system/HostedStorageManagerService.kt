@@ -136,16 +136,21 @@ class HostedStorageManagerService @JvmOverloads constructor(
         }
     }
 
+    /** StorageManagerService.fixupAppDir resolves the path's package, without checking
+     * caller ownership. Providers repair completed downloads on behalf of other apps.
+     * Invalid/unknown paths are logged and ignored, as in the pinned service. */
     override fun fixupAppDir(path: String?) {
-        val directory = requireHostedPath(requireNotNull(path) { "path" })
-        if (Binder.getCallingUid() != Process.SYSTEM_UID && Binder.getCallingUid() != 0) {
-            val packages = callingPackages()
-            if (packages.none { isAppExternalPath(it, directory) }) {
-                throw SecurityException("path is not owned by the calling uid: $directory")
-            }
+        val file = File(path ?: throw NullPointerException("path"))
+        val directory = try { file.canonicalFile } catch (e: IOException) {
+            android.util.Log.e("HostedStorageManager", "Failed to resolve app directory: $file", e)
+            return
         }
-        // Host processes share the session uid and create files directly; there
-        // is no sdcardfs/FUSE ownership layer to repair.
+        val packageName = if (file.isAbsolute) appExternalPackage(directory) else null
+        if (packageName == null || packageService.getPackageUid(packageName, 0L, UserHandle.USER_SYSTEM) < 0) {
+            android.util.Log.e("HostedStorageManager", "Invalid or unknown application directory: $directory")
+            return
+        }
+        // Host processes share the session uid; no sdcardfs/FUSE ownership repair is needed.
     }
 
     override fun getExternalStorageMountMode(uid: Int, packageName: String?): Int =
@@ -215,10 +220,14 @@ class HostedStorageManagerService @JvmOverloads constructor(
         return directory
     }
 
-    private fun isAppExternalPath(packageName: String, path: File): Boolean {
-        val androidRoot = File(canonicalExternalRoot, "Android")
-        return contains(File(androidRoot, "data/$packageName").canonicalFile, path) ||
-            contains(File(androidRoot, "obb/$packageName").canonicalFile, path)
+    private fun isAppExternalPath(packageName: String, path: File): Boolean = appExternalPackage(path) == packageName
+
+    private fun appExternalPackage(path: File): String? {
+        if (!contains(canonicalExternalRoot, path)) return null
+        val parts = path.relativeTo(canonicalExternalRoot).path.split(File.separatorChar)
+        if (parts.size < 3 || !parts[0].equals("Android", true) ||
+            listOf("data", "media", "obb", "sandbox").none { it.equals(parts[1], true) }) return null
+        return parts[2].takeIf { it.isNotEmpty() }
     }
 
     private fun requireHostedPath(path: String): File {

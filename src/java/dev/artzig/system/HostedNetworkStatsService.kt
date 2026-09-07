@@ -1,5 +1,9 @@
 package dev.artzig.system
 
+import android.content.Context
+import android.net.NetworkStats
+import android.os.Binder
+import android.os.SystemClock
 import android.net.INetworkStatsService
 import android.net.netstats.StatsResult
 import android.net.netstats.TrafficStatsRateLimitCacheConfig
@@ -41,12 +45,48 @@ object LinuxNetworkCounters : HostedNetworkCounters {
  * Follows NetworkStatsService.get{Iface,Total,Uid}Stats: unavailable observations
  * return null, which stock TrafficStats maps to UNSUPPORTED. Android BPF maps and
  * UID attribution are absent; Linux supplies counters for this network namespace.
- * Historical queries and provider accounting remain explicit unsupported operations.
+ * Operation reports are stored for the session; snapshots contain those reports only,
+ * with no attributed byte/packet observations. Historical queries remain unsupported.
  */
 class HostedNetworkStatsService(
     private val counters: HostedNetworkCounters = LinuxNetworkCounters,
+    private val context: Context? = null,
 ) : INetworkStatsService.Stub(), INetworkStatsService by unsupported<INetworkStatsService>() {
     override fun asBinder(): android.os.IBinder = this
+
+    private val operations = NetworkStats(0, 0)
+
+    /** NetworkStatsService.incrementOperationCount: validate before recording both
+     * the tagged count and its TAG_NONE aggregate. No Android UID foreground
+     * counter sets or BPF traffic maps exist here, so reports use SET_DEFAULT. */
+    override fun incrementOperationCount(uid: Int, tag: Int, operationCount: Int) {
+        if (Binder.getCallingUid() != uid) {
+            val owner = context ?: throw SecurityException("UPDATE_DEVICE_STATS required")
+            owner.enforceCallingOrSelfPermission(android.Manifest.permission.UPDATE_DEVICE_STATS, "NetworkStats")
+        }
+        require(operationCount >= 0) { "operation count can only be incremented" }
+        require(tag != NetworkStats.TAG_NONE) { "operation count must have specific tag" }
+        synchronized(operations) {
+            for (entryTag in intArrayOf(tag, NetworkStats.TAG_NONE)) {
+                operations.combineValues(NetworkStats.IFACE_ALL, uid, NetworkStats.SET_DEFAULT,
+                    entryTag, 0L, 0L, 0L, 0L, operationCount.toLong())
+            }
+        }
+    }
+
+    /** The stock snapshot API restricts observations to the calling UID. This
+     * host can supply reported operations, while UID byte/packet counters remain
+     * unavailable through TrafficStats.getUidStats (UNSUPPORTED). */
+    override fun getDataLayerSnapshotForUid(uid: Int): NetworkStats {
+        val now = SystemClock.elapsedRealtime()
+        if (Binder.getCallingUid() != uid) return NetworkStats(now, 0)
+        return synchronized(operations) {
+            operations.clone().apply {
+                filter(uid, NetworkStats.INTERFACES_ALL, NetworkStats.TAG_ALL)
+                elapsedRealtime = now
+            }
+        }
+    }
 
     override fun getIfaceStats(iface: String?): StatsResult? {
         java.util.Objects.requireNonNull(iface)

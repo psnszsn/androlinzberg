@@ -34,6 +34,20 @@ internal object StockNetworkStatsSmoke {
         TrafficStats.setServiceForTest(service)
         try {
             TrafficStats.reinitRateLimitCacheForTest()
+            val uid = android.os.Process.myUid()
+            TrafficStats.incrementOperationCount(0x1234, 2)
+            TrafficStats.incrementOperationCount(0x1234, 3)
+            TrafficStats.incrementOperationCount(0x5678, 1)
+            val reported = service.getDataLayerSnapshotForUid(uid)
+            fun count(tag: Int): Long = (0 until reported.size()).map { reported.getValues(it, null) }
+                .single { it.tag == tag }.operations
+            check(count(0x1234) == 5L && count(0x5678) == 1L && count(0) == 6L)
+            check(runCatching { TrafficStats.incrementOperationCount(0, 1) }.exceptionOrNull() is IllegalArgumentException)
+            check(runCatching { TrafficStats.incrementOperationCount(0x1234, -1) }.exceptionOrNull() is IllegalArgumentException)
+            check(runCatching { service.incrementOperationCount(uid + 1, 0x1234, 1) }.exceptionOrNull() is SecurityException)
+            check(service.getDataLayerSnapshotForUid(uid + 1).size() == 0)
+            reported.clear()
+            check(service.getDataLayerSnapshotForUid(uid).size() == 3)
             check(TrafficStats.getTotalRxBytes() == 800L && TrafficStats.getTotalTxBytes() == 1100L)
             check(TrafficStats.getTotalRxPackets() == 13L && TrafficStats.getTotalTxPackets() == 16L)
             check(TrafficStats.getRxBytes("eth0") == 700L && TrafficStats.getTxPackets("lo") == 3L)

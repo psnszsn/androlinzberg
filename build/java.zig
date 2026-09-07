@@ -26,6 +26,7 @@ pub const Result = struct {
     resources: @import("generators.zig").FrameworkResources,
     fixtures: @import("generators.zig").FixtureApks,
     java_step: *std.Build.Step,
+    download_provider: LazyPath,
 };
 
 fn extractJarPackage(
@@ -552,6 +553,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     const kotlin_shadow_fixture = fixture_d8.addOutputFileArg("kotlin-shadow.jar");
     fixture_d8.addFileArg(fixture_classes_jar);
 
+    const download_provider = @import("download_provider.zig").build(b, aosp, classes_jar, sysmod_dir, core_plus, res_apk);
+
     const java_step = b.step("java", "Build the framework jar (kotlinc + javac + d8), framework-res.apk and generated Java");
     inline for (.{ classpath_jar, app_context_jar, framework_odex, framework_vdex, res_apk, compat_config }) |path| {
         path.addStepDependencies(java_step);
@@ -566,5 +569,6 @@ pub fn build(b: *std.Build, o: Options) Result {
         .resources = o.generated.resources,
         .fixtures = o.generated.fixtures,
         .java_step = java_step,
+        .download_provider = download_provider,
     };
 }

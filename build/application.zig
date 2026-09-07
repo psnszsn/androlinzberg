@@ -19,6 +19,7 @@ pub const Options = struct {
     framework_odex: LazyPath,
     framework_vdex: LazyPath,
     framework_resources: LazyPath,
+    download_provider: LazyPath,
 };
 
 pub const NamedLibrary = struct {
@@ -59,6 +60,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.framework_odex, "framework/oat/x86_64/framework.odex");
     _ = tree.addCopyFile(options.framework_vdex, "framework/oat/x86_64/framework.vdex");
     _ = tree.addCopyFile(options.framework_resources, "res/framework-res.apk");
+    _ = tree.addCopyFile(options.download_provider, "apps/DownloadProvider.apk");
     _ = tree.addCopyFile(b.path("tools/dexopt-apk.sh"), "share/androlinzberg/dexopt-apk.sh");
     _ = tree.addCopyFile(b.path("src/bionic_translation.cfg"), "share/bionic_translation/cfg.d/bionic_translation.cfg");
     return tree.getDirectory();

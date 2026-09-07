@@ -179,6 +179,11 @@ internal object SystemServices {
         packageManager.installPlatform(
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
         )
+        // Pinned PMS scans system-image APKs before publishing packages. The host
+        // application bundle places them next to res/, with ordinary package UIDs.
+        val imageApps = java.io.File(java.io.File(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))).parentFile.parentFile, "apps")
+        imageApps.listFiles()?.filter { it.isFile && it.extension == "apk" }
+            ?.sortedBy { it.name }?.forEach { packageManager.installSystemPackage(it.canonicalPath) }
         android.os.ServiceManager.addService("package", packageManager)
         LocalServices.addService(
             com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java,
@@ -281,7 +286,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService(android.os.BatteryStats.SERVICE_NAME, battery.batteryStats)
         android.os.ServiceManager.addService(Context.CONNECTIVITY_SERVICE, HostedConnectivityService(context, packageManager))
         jobs.startNetworkTracking(checkNotNull(context.getSystemService(android.net.ConnectivityManager::class.java)))
-        android.os.ServiceManager.addService(Context.NETWORK_STATS_SERVICE, HostedNetworkStatsService())
+        android.os.ServiceManager.addService(Context.NETWORK_STATS_SERVICE, HostedNetworkStatsService(context = context))
         android.os.ServiceManager.addService(Context.NETWORK_POLICY_SERVICE, HostedNetworkPolicyService(context))
         val usageStats = HostedUsageStatsService()
         usageStats.packageService = packageManager

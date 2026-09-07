@@ -28,10 +28,14 @@ fn props() ?*const prop_area.Reader {
     }
     if (g_props_state.cmpxchgStrong(0, 1, .acq_rel, .acquire) == null) {
         const path = ndk.getenv("AZK_PROP_AREA") orelse {
+            std.Io.File.stderr().writeStreamingAll(ndk.frameworkIo(), "azk: SystemProperties has no AZK_PROP_AREA\n") catch {};
             g_props_state.store(3, .release);
             return null;
         };
-        g_props = prop_area.Reader.open(ndk.frameworkIo(), path) catch {
+        g_props = prop_area.Reader.open(ndk.frameworkIo(), path) catch |err| {
+            var buffer: [1024]u8 = undefined;
+            const message = std.fmt.bufPrint(&buffer, "azk: SystemProperties cannot map {s}: {t}\n", .{ path, err }) catch "azk: SystemProperties cannot map its property area\n";
+            std.Io.File.stderr().writeStreamingAll(ndk.frameworkIo(), message) catch {};
             g_props_state.store(3, .release);
             return null;
         };

@@ -114,7 +114,18 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
      * package authentication is the standing follow-up). A system caller may
      * install any number (respawn, platform).
      */
-    fun installPackage(apkPath: String, nativeLibraryDir: String? = null): String {
+    fun installPackage(apkPath: String, nativeLibraryDir: String? = null): String =
+        installPackageInternal(apkPath, nativeLibraryDir, false)
+
+    /** PMS system-image scan: only boot code selects these packaged, signed APKs.
+     * Privileged package status does not assign the system UID; the broker assigns
+     * each package its own UID when its process attaches. */
+    internal fun installSystemPackage(apkPath: String): String {
+        check(Binder.getCallingUid() == Process.SYSTEM_UID || Binder.getCallingUid() == Process.ROOT_UID)
+        return installPackageInternal(apkPath, null, true)
+    }
+
+    private fun installPackageInternal(apkPath: String, nativeLibraryDir: String?, system: Boolean): String {
         val callingUid = Binder.getCallingUid()
         val file = File(apkPath)
         require(file.isFile) { "no APK at $apkPath" }
@@ -129,6 +140,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
             throw SecurityException("cannot verify " + apkPath + ": " + signing.errorMessage)
         }
         parsed.setSigningDetails(signing.result)
+        if (system) parsed.setSystem(true).setPrivileged(true)
         // Host seam (source note: installd creates the app data directories at
         // install; ContextImpl only creates subdirectories underneath). The
         // framework rides the app classpath here rather than the boot
@@ -138,14 +150,14 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         if (parsed.classLoaderName == null) {
             (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setClassLoaderName("dev.artzig.HostedApkClassLoader")
         }
-        // Host seam (source note: PackageManagerService.setNativeLibraryPaths
-        // derives nativeLibraryDir from the code path; here the installing
-        // process already extracted lib/<abi> to the launcher's directory).
-        if (nativeLibraryDir != null) {
-            (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setNativeLibraryDir(nativeLibraryDir)
-        }
+        // PackageAbiHelperImpl derives a non-null library search directory even
+        // for an APK without JNI libraries. App installs supply the launcher's
+        // extraction directory; image APKs use the bundle's per-package location.
+        // LoadedApk passes this entry to DexPathList.addNativePath.
+        (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setNativeLibraryDir(
+            nativeLibraryDir ?: File(file.parentFile, "lib/${parsed.packageName}").absolutePath)
         val pkg = parsed.hideAsFinal()
-        createDataDirectories(pkg.packageName)
+        createDataDirectories(pkg as PackageImpl, system)
         val app = callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID
         var alreadyInstalled = false
         var newlyBound = false
@@ -165,7 +177,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
                     if (owned != null) throw SecurityException(
                         "uid " + callingUid + " already owns " + owned.packageName + " and may not install " + pkg.packageName)
                 }
-                installLocked(pkg, apkPath, system = false)
+                installLocked(pkg, apkPath, system = system)
                 if (app) bindPackageUidLocked(pkg.packageName, callingUid)
                 newlyBound = app
             }
@@ -231,14 +243,30 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         HostedPermissionController.PACKAGE
     }
 
-    /** installd's job: the CE/DE package directories (Environment layout) exist after install. */
-    private fun createDataDirectories(packageName: String) {
-        val userId = android.os.UserHandle.USER_SYSTEM
-        for (dir in listOf(
-            android.os.Environment.getDataUserCePackageDirectory(null, userId, packageName),
-            android.os.Environment.getDataUserDePackageDirectory(null, userId, packageName),
-        )) {
-            if (!dir.isDirectory && !dir.mkdirs()) Log.w(TAG, "cannot create " + dir)
+    /** PackageImpl.assignDerivedFields2 supplies the prefixes used by every
+     * PackageInfoUtils application/component query. System APK databases contain
+     * session-assigned UIDs, so their data must have the same lifetime as those
+     * identities. Set the parsed package's two derived prefixes at this host
+     * install seam; ordinary app data keeps Environment's persistent layout.
+     * AOSP installd and durable package UID allocation are absent here. */
+    private fun createDataDirectories(pkg: PackageImpl, system: Boolean) {
+        if (system) {
+            val root = File(checkNotNull(System.getenv("AZK_BINDER_SESSION_DIR")) {
+                "System APK installation requires a Binder session"
+            }, "service-app-data")
+            for ((fieldName, directory) in listOf(
+                "mBaseAppDataCredentialProtectedDirForSystemUser" to "user",
+                "mBaseAppDataDeviceProtectedDirForSystemUser" to "user_de",
+            )) {
+                val prefix = File(root, "$directory/0").absolutePath + File.separator
+                PackageImpl::class.java.getDeclaredField(fieldName).apply { isAccessible = true }
+                    .set(pkg, prefix)
+            }
+        }
+        for (prefix in listOf(pkg.baseAppDataCredentialProtectedDirForSystemUser,
+            pkg.baseAppDataDeviceProtectedDirForSystemUser)) {
+            val dir = File(prefix, pkg.packageName)
+            check(dir.isDirectory || dir.mkdirs() || dir.isDirectory) { "cannot create $dir" }
         }
     }
 

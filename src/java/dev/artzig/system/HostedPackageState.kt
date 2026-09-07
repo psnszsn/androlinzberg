@@ -33,7 +33,7 @@ import java.util.UUID
 class HostedPackageState(
     private val pkg: AndroidPackageInternal,
     private val apkPath: String,
-    /** True only for framework-res.apk installed as package "android". */
+    /** True for framework-res.apk and bundled system APKs. */
     private val system: Boolean,
     /** Manifest-requested permission names. */
     @JvmField val requestedPermissions: Set<String>,
@@ -45,7 +45,7 @@ class HostedPackageState(
      * package attaches; -1 (never granted an appId) before that. The single
      * hosted user is user 0, so uid == appId.
      */
-    @Volatile @JvmField var appId: Int = if (system) android.os.Process.SYSTEM_UID else -1
+    @Volatile @JvmField var appId: Int = if (system && pkg.packageName == "android") android.os.Process.SYSTEM_UID else -1
 
     private val domainSetId = UUID.randomUUID()
     private val setting = PackageSetting(pkg.packageName, null, File(apkPath), 0, 0, domainSetId)

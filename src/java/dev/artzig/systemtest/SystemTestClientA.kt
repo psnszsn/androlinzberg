@@ -141,6 +141,18 @@ internal object SystemTestClientA {
         val manager = context.getSystemService(android.app.usage.NetworkStatsManager::class.java)
         check(manager != null && manager === context.getSystemService(Context.NETWORK_STATS_SERVICE),
             "stock network stats manager is registered and cached")
+        val stats = android.net.INetworkStatsService.Stub.asInterface(
+            android.os.ServiceManager.getService(Context.NETWORK_STATS_SERVICE))
+        android.net.TrafficStats.incrementOperationCount(0x1234, 2)
+        android.net.TrafficStats.incrementOperationCount(0x1234, 3)
+        val reported = stats.getDataLayerSnapshotForUid(Process.myUid())
+        check((0 until reported.size()).map { reported.getValues(it, null) }
+            .single { it.tag == 0x1234 }.operations == 5L,
+            "tagged operations accumulate across the stats Binder interface")
+        check(runCatching { stats.incrementOperationCount(Process.myUid() + 1, 0x1234, 1) }
+            .exceptionOrNull() is SecurityException, "foreign operation reports require UPDATE_DEVICE_STATS")
+        check(stats.getDataLayerSnapshotForUid(Process.myUid() + 1).size() == 0,
+            "operation snapshots do not disclose another UID")
         val rxBefore = android.net.TrafficStats.getRxBytes("lo")
         val txBefore = android.net.TrafficStats.getTxBytes("lo")
         check(rxBefore >= 0 && txBefore >= 0, "loopback counters are available through netstats Binder")
@@ -759,6 +771,12 @@ internal object SystemTestClientA {
         // (JobSchedulerService validation, JobServiceContext execution in this process).
         val scheduler = checkNotNull(context.getSystemService(android.app.job.JobScheduler::class.java))
         val jobComponent = ComponentName("dev.artzig.test.a", AJobService::class.java.name)
+        check(
+            runCatching { scheduler.scheduleAsPackage(
+                android.app.job.JobInfo.Builder(91, jobComponent).setMinimumLatency(60_000).build(),
+                "dev.artzig.test.b", 0, "permission-check") }.exceptionOrNull() is SecurityException,
+            "attributed jobs require UPDATE_DEVICE_STATS",
+        )
         check(
             runCatching {
                 scheduler.schedule(

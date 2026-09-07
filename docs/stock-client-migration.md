@@ -28,6 +28,34 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- DownloadManager now compiles verbatim and uses the original DownloadProvider
+  in a separately built, host-signed system APK. The batch adds 19 provider Java
+  classes, their resources, generated flags and supporting annotations; the
+  682-line hosted DownloadManager is deleted. Boot scans bundled system APKs,
+  and the stock activity-thread provider path starts the provider under its
+  manifest process name and a separate broker UID. System APK data is scoped to
+  the Binder session because those UIDs are session-assigned: download history
+  and cached files do not persist across sessions. App-private external files
+  can persist; the former client's binary download records are not imported.
+  Hosted storage classifies the external volume using Android path conventions,
+  skips media scans for unindexed private deletions, and retains an inode reference
+  for asynchronous close-size accounting across a completed-file rename.
+  Public downloads, media indexing and the complete documents-provider experience
+  still require MediaProvider; this is not full download-platform parity.
+  JobScheduler now accepts UPDATE_DEVICE_STATS-authorized proxy jobs while keeping
+  service ownership separate from source attribution. NetworkStats records tagged
+  operation reports with permission checks; UID byte accounting remains unavailable.
+  Headless APK startup also fixes borrowed session-JSON strings and initializes
+  the native-library search path for APKs without bundled JNI libraries.
+  Tests cover real local HTTP transfers, stable size after rename, URI and query
+  behavior, destination collisions, deletion, revoked grants and HTTP errors.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass (39 steps,
+  zero structured runtime issues). AOSP is rebuilt and repinned; all 115 added
+  file inputs are byte-verified against the checkout and three provider patches.
+  ART is unchanged and verified. Inventory remains 19 stubs (11 pending, 8
+  survivors): DownloadManager was an adaptation outside that inventory.
+
+
 - Hosted connectivity now validates Internet access with HTTP/HTTPS probes instead
   of treating a Linux route as proof. Original NetworkStack captive-portal result
   and probe-spec classes, validation metrics and their Java/AIDL closure compile

@@ -63,6 +63,23 @@ internal object StorageManagerSystemSmoke {
         storage.mkdirs(appDirectory)
         check(appDirectory.isDirectory) { "StorageManager.mkdirs creates an app-owned external directory" }
 
+        // StorageManagerService recognizes all app directory families. Creation
+        // enforces caller ownership; fixup resolves the owner named in the path.
+        for (family in listOf("media", "obb", "sandbox")) {
+            val managed = File(expectedRoot, "Android/$family/${context.packageName}/storage-smoke")
+            storage.mkdirs(managed)
+            check(managed.isDirectory)
+            storage.fixupAppDir(managed)
+            check(managed.delete())
+        }
+        val foreignRepair = File(expectedRoot, "Android/data/android/files/storage-repair-smoke")
+        check(!foreignRepair.exists())
+        storage.fixupAppDir(foreignRepair)
+        check(!foreignRepair.exists()) { "ownership repair does not create directories" }
+        val invalidRepair = File(context.cacheDir, "storage-invalid-repair")
+        storage.fixupAppDir(invalidRepair)
+        check(!invalidRepair.exists()) { "invalid fixup paths are ignored" }
+
         val outside = File(expectedRoot, "Android/data/not.${context.packageName}/files/rejected")
         check(runCatching { storage.mkdirs(outside) }.exceptionOrNull() is SecurityException) {
             "StorageManager.mkdirs rejects another package's external directory"

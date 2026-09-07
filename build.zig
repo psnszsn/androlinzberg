@@ -634,6 +634,7 @@ pub fn build(b: *std.Build) void {
         .framework_odex = java.framework_odex,
         .framework_vdex = java.framework_vdex,
         .framework_resources = java.resources.apk,
+        .download_provider = java.download_provider,
     });
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{
         .source_dir = application_tree,

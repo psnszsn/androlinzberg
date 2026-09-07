@@ -1,0 +1,26 @@
+--- a/src/com/android/providers/downloads/Helpers.java
++++ b/src/com/android/providers/downloads/Helpers.java
+@@ -536,3 +536,3 @@
+     public static boolean isFileInExternalAndroidDirs(String filePath) {
+-        return PATTERN_ANDROID_DIRS.matcher(filePath).matches();
++        return PATTERN_ANDROID_DIRS.matcher(dev.artzig.system.HostedDownloadStorage.forClassification(filePath)).matches();
+     }
+@@ -586,3 +586,3 @@
+         try {
+-            return PATTERN_ANDROID_PRIVATE_DIRS.matcher(file.getCanonicalPath()).matches();
++            return PATTERN_ANDROID_PRIVATE_DIRS.matcher(dev.artzig.system.HostedDownloadStorage.forClassification(file.getCanonicalPath())).matches();
+         } catch (IOException e) {
+@@ -663,3 +663,3 @@
+         }
+-        final Matcher matcher = PATTERN_PUBLIC_DIRS.matcher(filePath);
++        final Matcher matcher = PATTERN_PUBLIC_DIRS.matcher(dev.artzig.system.HostedDownloadStorage.forClassification(filePath));
+         if (matcher.matches()) {
+@@ -728,3 +728,3 @@
+         if (data == null) return null;
+-        final Matcher matcher = PATTERN_VOLUME_NAME.matcher(data);
++        final Matcher matcher = PATTERN_VOLUME_NAME.matcher(dev.artzig.system.HostedDownloadStorage.forClassification(data));
+         if (matcher.find()) {
+@@ -747,2 +747,3 @@
+         if (data == null) return null;
++        data = dev.artzig.system.HostedDownloadStorage.forClassification(data);
+         final Matcher matcher = PATTERN_RELATIVE_PATH.matcher(data);

@@ -292,7 +292,9 @@ fn joinSession(init: std.process.Init, dir: []const u8) !binder_session.SessionI
     defer file.close(init.io);
     var buffer: [4096]u8 = undefined;
     const n = try file.readStreaming(init.io, &.{&buffer});
-    const parsed = try std.json.parseFromSliceLeaky(binder_session.SessionInfo, arena, buffer[0..n], .{ .ignore_unknown_fields = true });
+    // SessionInfo outlives this stack buffer. Copy every string into the arena
+    // before subsequent setenv calls use the socket, cookie and property paths.
+    const parsed = try std.json.parseFromSliceLeaky(binder_session.SessionInfo, arena, buffer[0..n], .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
     return parsed;
 }
 

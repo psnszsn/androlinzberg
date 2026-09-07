@@ -607,6 +607,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/os/anr/AnrLatencyTracker.java");
 
     try c.file("$CJ/android/app/ActivityManager.java");
+    try c.file("$CJ/android/app/DownloadManager.java");
+    try c.file("$A/external/guava/guava/src/com/google/common/annotations/GwtCompatible.java");
+    try c.file("$A/external/guava/guava/src/com/google/common/annotations/VisibleForTesting.java");
     try c.file("$CJ/android/app/AppCompatCallbacks.java");
     try c.file("$CJ/com/android/internal/os/SafeZipPathValidatorCallback.java");
     try c.file("$CJ/android/app/HomeVisibilityListener.java");

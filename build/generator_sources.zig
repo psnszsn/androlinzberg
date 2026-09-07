@@ -1632,6 +1632,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "com.android.providers.downloads.flags", .container = "system", .source = .aosp, .declarations = &.{"packages/providers/DownloadProvider/flags/download_manager_flags.aconfig"} },
     .{ .package = "com.android.providers.media.flags", .container = "com.android.mediaprovider", .source = .aosp, .declarations = &.{"packages/providers/MediaProvider/mediaprovider_flags.aconfig"} },
     .{ .package = "android.net.http", .container = "com.android.tethering", .source = .aosp, .declarations = &.{"external/cronet/android/flags/preload_httpengine.aconfig"} },
     .{ .package = "android.hardware.devicestate.feature.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/hardware/devicestate/feature/flags.aconfig"} },

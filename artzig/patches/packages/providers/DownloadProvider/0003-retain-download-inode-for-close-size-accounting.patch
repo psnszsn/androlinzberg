@@ -1,0 +1,19 @@
+--- a/src/com/android/providers/downloads/DownloadProvider.java
++++ b/src/com/android/providers/downloads/DownloadProvider.java
+@@ -1812,12 +1812,12 @@
+         } else {
+             try {
+                 // When finished writing, update size and timestamp
+-                return ParcelFileDescriptor.open(file, pfdMode, Helpers.getAsyncHandler(),
+-                        new OnCloseListener() {
++                return dev.artzig.system.HostedDownloadStorage.openFile(
++                        file, pfdMode, Helpers.getAsyncHandler(), new java.util.function.LongConsumer() {
+                     @Override
+-                    public void onClose(IOException e) {
++                    public void accept(long size) {
+                         final ContentValues values = new ContentValues();
+-                        values.put(Downloads.Impl.COLUMN_TOTAL_BYTES, file.length());
++                        values.put(Downloads.Impl.COLUMN_TOTAL_BYTES, size);
+                         values.put(Downloads.Impl.COLUMN_LAST_MODIFICATION,
+                                 mSystemFacade.currentTimeMillis());
+                         update(uri, values, null, null);

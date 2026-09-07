@@ -67,6 +67,8 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         val numFailures: Int,
         val earliestRunTimeElapsed: Long,
         val latestRunTimeElapsed: Long,
+        val sourcePackageName: String = packageName,
+        val sourceUid: Int = uid,
     ) {
         val key = JobKey(uid, namespace, job.id)
         val pendingWork = ArrayDeque<JobWorkItem>()
@@ -212,7 +214,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
             ?: job.service.packageName
 
     /** JobStatus.createFromJobInfo: the run-time window of a freshly scheduled job. */
-    private fun newStatus(job: JobInfo, namespace: String?, uid: Int, packageName: String, nowElapsed: Long): JobStatus {
+    private fun newStatus(job: JobInfo, namespace: String?, uid: Int, packageName: String, nowElapsed: Long, sourcePackageName: String, sourceUid: Int): JobStatus {
         val earliest: Long
         val latest: Long
         if (job.isPeriodic) {
@@ -222,10 +224,17 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
             earliest = if (job.minLatencyMillis > 0) nowElapsed + job.minLatencyMillis else NO_EARLIEST_RUNTIME
             latest = if (job.maxExecutionDelayMillis > 0) nowElapsed + job.maxExecutionDelayMillis else NO_LATEST_RUNTIME
         }
-        return JobStatus(job, namespace, uid, packageName, 0, earliest, latest)
+        // JobStatus.createFromJobInfo assigns network constraints to the source
+        // UID, while JobServiceContext delivers the network to the service UID.
+        val attributedJob = job.requiredNetwork?.let { request ->
+            JobInfo.Builder(job).setRequiredNetwork(NetworkRequest.Builder(request)
+                .setUids(setOf(android.util.Range(sourceUid, sourceUid))).build())
+                .build(false, false, false, false)
+        } ?: job
+        return JobStatus(attributedJob, namespace, uid, packageName, 0, earliest, latest, sourcePackageName, sourceUid)
     }
 
-    private fun scheduleInternal(namespace: String?, job: JobInfo, work: JobWorkItem?, uid: Int, packageName: String): Int {
+    private fun scheduleInternal(namespace: String?, job: JobInfo, work: JobWorkItem?, uid: Int, packageName: String, sourcePackageName: String = packageName, sourceUid: Int = uid): Int {
         val nowElapsed = SystemClock.elapsedRealtime()
         var stop: (() -> Unit)? = null
         synchronized(lock) {
@@ -242,7 +251,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
                 if (existing.running == null) scheduleTimerLocked(existing, nowElapsed)
                 return JobScheduler.RESULT_SUCCESS
             }
-            val status = newStatus(job, namespace, uid, packageName, nowElapsed)
+            val status = newStatus(job, namespace, uid, packageName, nowElapsed, sourcePackageName, sourceUid)
             if (work != null) status.enqueueWorkLocked(work)
             if (existing != null) {
                 // cancelJobImplLocked(toCancel, incomingJob): the replacement takes the
@@ -276,13 +285,21 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
     }
 
     override fun scheduleAsPackage(namespace: String?, job: JobInfo?, packageName: String?, userId: Int, tag: String?): Int {
-        requireNotNull(job) { "job is null" }
-        if (Binder.getCallingUid() != Process.SYSTEM_UID) {
-            throw SecurityException("Caller uid ${Binder.getCallingUid()} not permitted to schedule jobs for other apps")
+        if (packageName == null) throw NullPointerException("Must specify a package for scheduleAsPackage()")
+        val uid = Binder.getCallingUid()
+        if (packageService?.checkUidPermission(android.Manifest.permission.UPDATE_DEVICE_STATS, uid) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Caller uid $uid not permitted to schedule jobs for other apps")
         }
-        val uid = packageService?.getPackageUidInternal(packageName ?: job.service.packageName) ?: Process.SYSTEM_UID
+        requireNotNull(job) { "job is null" }
+        // JobSchedulerService validates the caller's service and retains the caller
+        // as job owner. JobStatus resolves the requested package only for attribution;
+        // network delivery and cancellation still use the service owner's identity.
         enforceValidJobRequest(uid, job)
-        return scheduleInternal(namespace, job, null, uid, packageName ?: job.service.packageName)
+        val owner = callingPackageFor(uid, job)
+        val sourceUid = if (userId == android.os.UserHandle.USER_SYSTEM)
+            packageService?.getPackageUidInternal(packageName) ?: -1 else -1
+        return scheduleInternal(namespace, job, null, uid, owner,
+            if (sourceUid >= 0) packageName else owner, if (sourceUid >= 0) sourceUid else uid)
     }
 
     /** Arms (or re-arms) the timer that starts the job once its window opens. Requires `lock`. */
@@ -444,7 +461,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
             else -> initial * (1L shl Math.min(attempts - 1, 30))
         }
         delay = Math.min(delay, JobInfo.MAX_BACKOFF_DELAY_MILLIS)
-        return JobStatus(status.job, status.namespace, status.uid, status.packageName, attempts, nowElapsed + delay, NO_LATEST_RUNTIME)
+        return JobStatus(status.job, status.namespace, status.uid, status.packageName, attempts, nowElapsed + delay, NO_LATEST_RUNTIME, status.sourcePackageName, status.sourceUid)
     }
 
     /** JobSchedulerService.getRescheduleJobForPeriodic: the next period's flex window. */
@@ -453,7 +470,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         val flex = status.job.flexMillis
         var newLatest = status.latestRunTimeElapsed + period
         if (newLatest < nowElapsed) newLatest = nowElapsed + period
-        return JobStatus(status.job, status.namespace, status.uid, status.packageName, 0, newLatest - flex, newLatest)
+        return JobStatus(status.job, status.namespace, status.uid, status.packageName, 0, newLatest - flex, newLatest, status.sourcePackageName, status.sourceUid)
     }
 
     // ------------------------------------------------------------ execution (JobServiceContext)

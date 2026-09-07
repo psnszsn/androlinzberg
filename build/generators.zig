@@ -736,7 +736,7 @@ fn xsdJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
     return files.toOwnedSlice(b.allocator) catch @panic("OOM");
 }
 
-fn signApk(
+pub fn signApk(
     b: *std.Build,
     aosp: *std.Build.Dependency,
     unsigned: LazyPath,

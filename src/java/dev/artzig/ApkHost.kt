@@ -432,7 +432,7 @@ public final class ApkHost {
 
             // AOSP ordering: attachApplication, then bindApplication (LoadedApk,
             // Application.attach, providers installed + published, onCreate).
-            val app = dev.artzig.HostedServiceClient.attachApplication(pkg)
+            val app = dev.artzig.HostedServiceClient.attachApplication(pkg, appInfo.processName ?: pkg)
             sContext = app
             sClassLoader = loadedApkClassLoader(appInfo)
             Log.i(TAG, "APK dexopt status: " + apkDexoptStatus())
@@ -528,9 +528,11 @@ public final class ApkHost {
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
             }
+            // ProcessList uses the manifest application process name. Provider
+            // discovery is scoped to that name and UID during bindApplication.
             // AOSP ordering: attach first, then bindApplication (providers
             // installed + published before Application.onCreate).
-            sContext = dev.artzig.HostedServiceClient.attachApplication(pkg)
+            sContext = dev.artzig.HostedServiceClient.attachApplication(pkg, appInfo.processName ?: pkg)
             sClassLoader = loadedApkClassLoader(appInfo)
             Log.i(TAG, "headless app process up: " + pkg)
         }
