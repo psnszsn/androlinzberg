@@ -36,7 +36,6 @@ import android.app.ResultInfo
 import android.app.TaskInfo
 import android.app.TaskStackListener
 import android.app.UiModeManager
-import android.app.UnsupportedApplicationThread
 import android.app.servertransaction.ActivityConfigurationChangeItem
 import android.app.servertransaction.ActivityResultItem
 import android.app.servertransaction.ActivityRelaunchItem
@@ -104,6 +103,8 @@ import android.os.UserHandle
 import android.provider.Downloads
 import android.util.SuperNotCalledException
 import android.security.net.config.NetworkSecurityConfig
+import android.security.net.config.SystemCertificateSource
+import android.security.net.config.CertificatesEntryRef
 import android.security.net.config.NetworkSecurityConfigProvider
 import android.security.net.config.Pin
 import android.security.net.config.PinSet
@@ -196,6 +197,7 @@ internal object FrameworkModuleSmoke {
     @JvmStatic
     fun main(args: Array<String>) {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
+        HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         permissionsFixtureApk = args.firstOrNull()
         testPackageNames()
         testStockModuleClientContracts()
@@ -810,7 +812,7 @@ internal object FrameworkModuleSmoke {
 
     private fun testWindowConfigurationCallbacks() {
         val base = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 100, 100, 120, 0)
-        val configurationContext = base.createConfigurationContext(Configuration(base.resources.configuration))
+        val configurationContext = base.createConfigurationContext(Configuration())
         val context = object : ContextWrapper(configurationContext) {
             override fun getApplicationInfo(): ApplicationInfo = ApplicationInfo(super.getApplicationInfo()).apply {
                 flags = flags or ApplicationInfo.FLAG_SUPPORTS_RTL
@@ -901,6 +903,12 @@ internal object FrameworkModuleSmoke {
         } finally { parcel.recycle() }
         check(runCatching { android.companion.AssociationRequest.Builder().setSelfManaged(true).build() }
             .exceptionOrNull() is IllegalStateException)
+        val transport = java.util.concurrent.FutureTask { testLocalSocketTransport() }
+        Thread(transport, "companion-local-socket-smoke").start()
+        transport.get(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    private fun testLocalSocketTransport() {
         val name = "artzig-local-socket-${android.os.Process.myPid()}-${System.nanoTime()}"
         android.net.LocalServerSocket(name).use { server ->
             android.net.LocalSocket().use { client ->
@@ -1900,9 +1908,9 @@ internal object FrameworkModuleSmoke {
         instrumentation.removeMonitor(monitor)
         val result = Instrumentation.ActivityResult(Activity.RESULT_OK, Intent("result"))
         val blocked = instrumentation.addMonitor(InstrumentedActivity::class.java.name, result, true)
-        val thread = ActivityThread.currentActivityThread().applicationThread
-        check(instrumentation.execStartActivity(context, thread, token, activity, intent, 7, null) === result)
-        check(instrumentation.execStartActivity(context, thread, token, activity, intent, -1, null) == null)
+        val thread: android.app.IApplicationThread = ActivityThread.currentActivityThread().applicationThread
+        check(instrumentation.execStartActivity(context, thread.asBinder(), token, activity, intent, 7, null) === result)
+        check(instrumentation.execStartActivity(context, thread.asBinder(), token, activity, intent, -1, null) == null)
         check(blocked.hits == 2)
         check(intent.getParcelableExtra(Intent.EXTRA_REFERRER, Uri::class.java) == Uri.parse("android-app://fixture"))
         instrumentation.removeMonitor(blocked)
@@ -2401,6 +2409,31 @@ internal object FrameworkModuleSmoke {
         check(runCatching { Pin.getDigestLength("MD5") }.exceptionOrNull() is
             IllegalArgumentException)
 
+        // Compare stock directory lookup against the existing Conscrypt host-bundle parser.
+        // This catches missing files, PEM labels and subject-hash collision suffixes without
+        // depending on any external HTTPS endpoint or hard-coded distribution certificate.
+        val referenceFactory = javax.net.ssl.TrustManagerFactory.getInstance("PKIX", "HarmonyJSSE")
+        referenceFactory.init(null as java.security.KeyStore?)
+        val reference = (referenceFactory.trustManagers.single() as X509TrustManager).acceptedIssuers.toSet()
+        check(reference.isNotEmpty())
+        val systemSource = SystemCertificateSource.getInstance()
+        check(systemSource.certificates == reference) { "Stock system CA source differs from host trust bundle" }
+        for (certificate in reference) {
+            check(systemSource.findBySubjectAndPublicKey(certificate) != null) {
+                "Stock subject-hash lookup failed for ${certificate.subjectX500Principal}"
+            }
+        }
+        val trusted = NetworkSecurityConfig.Builder().addCertificatesEntryRef(
+            CertificatesEntryRef(systemSource, false, false),
+        ).build()
+        check(trusted.trustManager.acceptedIssuers.toSet() == reference)
+        // A domain configuration with no anchors must not silently inherit the host bundle.
+        val isolated = NetworkSecurityConfig.Builder().build()
+        check(isolated.trustManager.acceptedIssuers.isEmpty())
+        check(runCatching {
+            isolated.trustManager.checkServerTrusted(arrayOf(reference.first()), "RSA", "example.com")
+        }.exceptionOrNull() is java.security.cert.CertificateException)
+
         val provider = NetworkSecurityConfigProvider()
         check(provider.name == "AndroidNSSP")
         check(provider["Alg.Alias.TrustManagerFactory.X509"] == "PKIX")
@@ -2445,14 +2478,14 @@ internal object FrameworkModuleSmoke {
         // Server-side install of the fixture APK: WAKE_LOCK (normal) is
         // granted at install, CAMERA (dangerous) is not.
         val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
-        val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
         check(installer.installPackage(fixture, null) == "org.example.permissions")
 
         val wakeLock = "android.permission.WAKE_LOCK"
         val camera = "android.permission.CAMERA"
         // AOSP checks the calling uid's grants: this process is bound to the
         // fixture package, so its package context answers for it.
-        android.app.HostedServiceClient.attachApplication("org.example.permissions")
+        dev.artzig.HostedServiceClient.attachApplication("org.example.permissions")
         val base = packageIdentityContext(
             HostContexts.systemContext(frameworkResources, 200, 200, 120, 0),
             "org.example.permissions",
@@ -2826,9 +2859,9 @@ internal object FrameworkModuleSmoke {
         // Bind this JVM to the installed fixture before exercising clients that authenticate the
         // context package against the Binder caller UID (clipboard, PendingIntent, and peers).
         val fixture = checkNotNull(permissionsFixtureApk) { "permission fixture APK argument missing" }
-        val fixtureInstaller = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        val fixtureInstaller = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
         check(fixtureInstaller.installPackage(fixture, null) == "org.example.permissions")
-        android.app.HostedServiceClient.attachApplication("org.example.permissions")
+        dev.artzig.HostedServiceClient.attachApplication("org.example.permissions")
         val appContext = packageIdentityContext(context, "org.example.permissions")
 
         checkNotNull(appContext.getSystemService(android.content.ClipboardManager::class.java))
@@ -2978,6 +3011,8 @@ internal object FrameworkModuleSmoke {
             DownloadManager.Request(Uri.parse("file:///tmp/not-a-network-download"))
         }.exceptionOrNull() is IllegalArgumentException)
 
+        check(android.security.NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted("127.0.0.1"))
+        check(!android.security.NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted("example.com"))
         val payload = "hosted DownloadManager smoke".toByteArray()
         val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         val responder = Thread({
@@ -3283,8 +3318,8 @@ internal object FrameworkModuleSmoke {
         check(threadTwo.transactions.last().transactionItems.single() is DestroyActivityItem)
         controller.activityDestroyed(secondToken)
 
-        // Pending activity results have no ComponentCaller attribution and wait while stopped.
-        controller.activityStopped(firstToken, null, null, null)
+        // Pending activity results have no ComponentCaller attribution and wait while paused.
+        controller.activityPaused(firstToken)
         threadOne.transactions.clear()
         val resultSender = checkNotNull(activityManager.getIntentSenderWithFeature(
             ActivityManager.INTENT_SENDER_ACTIVITY_RESULT,
@@ -3312,6 +3347,15 @@ internal object FrameworkModuleSmoke {
         @Suppress("UNCHECKED_CAST")
         val pendingResults = resultField.get(pendingResultItem) as List<ResultInfo>
         check(pendingResults.single().mCallerToken == null)
+        // A stop report posted before the resume must not hide the resumed receiver from
+        // result dispatch. This is the server-side half of ActivityThread's delayed stop IPC.
+        controller.activityStopped(firstToken, null, null, null)
+        check(activityManager.sendIntentSender(
+            null, resultSender, null, Activity.RESULT_FIRST_USER, null, null, null, null, null,
+        ) == ActivityManager.START_SUCCESS)
+        check(threadOne.removeFirstTransaction().transactionItems.single() is ActivityResultItem) {
+            "late stop acknowledgement stranded a resumed activity result"
+        }
 
         threadOne.transactions.clear()
         val initialOrientation = context.resources.configuration.orientation
@@ -3361,6 +3405,24 @@ internal object FrameworkModuleSmoke {
         check(relaunch.transactionItems.any { it is ResumeActivityItem })
         controller.activityRelaunched(thirdToken)
         controller.activityResumed(thirdToken, false)
+
+        // Resource-size reports suppress relaunches within a qualifier bucket but retain
+        // them when a declared width boundary is crossed, even without configChanges flags.
+        val width = context.resources.configuration.screenWidthDp.coerceAtLeast(1)
+        controller.reportSizeConfigurations(firstToken, android.window.SizeConfigurationBuckets(emptyArray()))
+        controller.reportSizeConfigurations(thirdToken, android.window.SizeConfigurationBuckets(
+            arrayOf(Configuration().apply { screenWidthDp = width + 100 }),
+        ))
+        threadTwo.transactions.clear()
+        check(service.updateConfigurationFromHost(Configuration().apply { screenWidthDp = width + 1 }))
+        check(threadTwo.transactions.any { tx -> tx.transactionItems.any { it is ActivityConfigurationChangeItem } })
+        check(threadTwo.transactions.none { tx -> tx.transactionItems.any { it is ActivityRelaunchItem } })
+        threadTwo.transactions.clear()
+        check(service.updateConfigurationFromHost(Configuration().apply { screenWidthDp = width + 100 }))
+        check(threadTwo.transactions.any { tx -> tx.transactionItems.any { it is ActivityRelaunchItem } })
+        controller.activityRelaunched(thirdToken)
+        controller.activityResumed(thirdToken, false)
+        controller.reportSizeConfigurations(Binder(), null) // A late report for a removed token.
 
         // Death of the focused process exposes and resumes the stopped task below it.
         threadOne.transactions.clear()
@@ -4743,6 +4805,16 @@ internal object FrameworkModuleSmoke {
         drainMainQueue()
     }
 
+    private fun settleActivityFrames() {
+        // A newly resumed root can enqueue another traversal while the previous frame drains.
+        // Keep driving the headless compositor until all currently due frame work is done.
+        repeat(16) {
+            runHostedFrame()
+            if (!Choreographer.getInstance().`hasDueCallbacks$artzig`()) return
+        }
+        error("Activity frame callbacks did not settle")
+    }
+
     private fun drainMainQueue() {
         drainMainQueueCounting()
     }
@@ -5123,7 +5195,7 @@ internal object FrameworkModuleSmoke {
         check(!thread.isHandleSplashScreenExit(token))
         splash.setOnExitAnimationListener { }
         val record = ActivityThread.ActivityClientRecord().apply {
-            this.activity = activity
+            this.fixtureActivity = activity
             this.token = token
             setState(android.app.servertransaction.ActivityLifecycleItem.ON_CREATE)
         }
@@ -6415,7 +6487,7 @@ internal object FrameworkModuleSmoke {
         } finally {
             activeManager?.dispatchDestroy(true)
             expectedLocalActivityParent = null
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
         }
     }
 
@@ -6448,17 +6520,17 @@ internal object FrameworkModuleSmoke {
                 check(activity.canStartActivityForResult())
                 activity.startActivityForResult(Intent().setComponent(ComponentName("org.example", target)), 31)
                 check(activityResultEvents.isEmpty()) { "monitor result was delivered inside startActivityForResult" }
-                drainMainQueue()
+                runHostedFrame()
                 check(activityResultEvents == listOf("pause",
                     "result:monitor:31:${Activity.RESULT_OK}:queued", "resume")) {
                     "monitor result transaction ordering: $activityResultEvents"
                 }
                 check(record.lifecycleState == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
-                check(result.preparedForProcess && result.fromProtectedComponent)
+                check(result.preparedForProcess && result.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
                 check(result.extras?.classLoader === activity.classLoader)
                 activityResultEvents.clear()
                 activity.startActivityForResult(Intent().setComponent(ComponentName("org.example", target)), -1)
-                drainMainQueue()
+                runHostedFrame()
                 check(activityResultEvents.isEmpty()) { "negative request code received a monitor result" }
                 check(monitor.hits == 2)
             } finally {
@@ -6481,6 +6553,18 @@ internal object FrameworkModuleSmoke {
             exported = false
             applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
         }
+        // AOSP avoids protected-component inspection unless unsafe-intent detection is
+        // enabled. Exercise both policy states, then verify delivery uses the active policy.
+        val originalVmPolicy = android.os.StrictMode.getVmPolicy()
+        try {
+            android.os.StrictMode.setVmPolicy(android.os.StrictMode.VmPolicy.LAX)
+            check(!ActivityThread.isProtectedComponent(info))
+            android.os.StrictMode.setVmPolicy(android.os.StrictMode.VmPolicy.Builder(originalVmPolicy)
+                .detectUnsafeIntentLaunch().penaltyLog().build())
+            check(ActivityThread.isProtectedComponent(info))
+        } finally {
+            android.os.StrictMode.setVmPolicy(originalVmPolicy)
+        }
         val activity = ResultDeliveryActivity()
         activity.attach(context, info)
         activity.performCreate(null)
@@ -6490,9 +6574,9 @@ internal object FrameworkModuleSmoke {
 
         val record = ActivityThread.ActivityClientRecord().apply {
             token = Binder()
-            intent = Intent().setComponent(ComponentName("org.example", activityName))
-            activityInfo = info
-            this.activity = activity
+            fixtureIntent = Intent().setComponent(ComponentName("org.example", activityName))
+            fixtureActivityInfo = info
+            this.fixtureActivity = activity
             setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
         }
         val first = RecordingProcessIntent("first").apply {
@@ -6518,8 +6602,8 @@ internal object FrameworkModuleSmoke {
             "resume",
         )) { "resumed Activity result ordering: $activityResultEvents" }
         check(record.lifecycleState == android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
-        check(first.preparedForProcess && first.fromProtectedComponent)
-        check(second.preparedForProcess && second.fromProtectedComponent)
+        check(first.preparedForProcess && first.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
+        check(second.preparedForProcess && second.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
         check(first.extras?.classLoader === activity.classLoader)
         check(second.extras?.classLoader === activity.classLoader)
 
@@ -6538,7 +6622,7 @@ internal object FrameworkModuleSmoke {
             "result:paused:13:${Activity.RESULT_OK}:three",
         )) { "paused Activity result ordering: $activityResultEvents" }
         check(record.lifecycleState == android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE)
-        check(paused.preparedForProcess && paused.fromProtectedComponent)
+        check(paused.preparedForProcess && paused.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
         check(paused.extras?.classLoader === activity.classLoader)
 
         activity.performStop()
@@ -6553,9 +6637,9 @@ internal object FrameworkModuleSmoke {
         callerAware.performPause()
         val callerRecord = ActivityThread.ActivityClientRecord().apply {
             token = Binder()
-            intent = Intent().setComponent(ComponentName("org.example", activityName))
-            activityInfo = info
-            this.activity = callerAware
+            fixtureIntent = Intent().setComponent(ComponentName("org.example", activityName))
+            fixtureActivityInfo = info
+            this.fixtureActivity = callerAware
             setState(android.app.servertransaction.ActivityLifecycleItem.ON_PAUSE)
         }
 
@@ -6622,9 +6706,9 @@ internal object FrameworkModuleSmoke {
         missingSuper.performResume()
         val missingSuperRecord = ActivityThread.ActivityClientRecord().apply {
             token = Binder()
-            intent = Intent().setComponent(ComponentName("org.example", activityName))
-            activityInfo = info
-            this.activity = missingSuper
+            fixtureIntent = Intent().setComponent(ComponentName("org.example", activityName))
+            fixtureActivityInfo = info
+            this.fixtureActivity = missingSuper
             setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
         }
         val missingSuperFailure = runCatching {
@@ -6681,7 +6765,7 @@ internal object FrameworkModuleSmoke {
             applicationInfo.targetSdkVersion = android.os.Build.VERSION.SDK_INT
         }
         val presented = mutableListOf<Activity>()
-        val adapter = object : ActivityThread.HostAdapter {
+        val adapter = object : HostedActivityProcess.HostAdapter {
             override fun showActivity(activity: Activity) {
                 transactionCompletionEvents += "present"
                 presented += activity
@@ -6691,7 +6775,7 @@ internal object FrameworkModuleSmoke {
             }
             override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) = Unit
         }
-        ActivityThread.configureActivityHost(adapter)
+        HostedActivityProcess.configureActivityHost(adapter)
 
         val thread = ActivityThread.currentActivityThread()
         val token = Binder()
@@ -6718,10 +6802,10 @@ internal object FrameworkModuleSmoke {
                     // ActivityThread's persistable lifecycle without altering that AOSP class.
                     val record = ActivityThread.ActivityClientRecord().also {
                         it.token = token
-                        it.intent = Intent().setComponent(ComponentName("org.example", activityName))
-                        it.activityInfo = info
-                        it.persistentState = stoppedState
-                        it.overrideConfig = Configuration()
+                        it.fixtureIntent = Intent().setComponent(ComponentName("org.example", activityName))
+                        it.fixtureActivityInfo = info
+                        it.fixturePersistentState = stoppedState
+                        it.fixtureOverrideConfig = Configuration()
                     }
                     val pending = PendingTransactionActions()
                     thread.handleLaunchActivity(record, pending, Context.DEVICE_ID_DEFAULT, null)
@@ -6758,27 +6842,28 @@ internal object FrameworkModuleSmoke {
                     )
                     addTransactionItem(ResumeActivityItem(token, false, false))
                 })
+                runHostedFrame()
                 check(transactionCompletionEvents == listOf(
                     "create",
                     "start",
                     "post-create",
                     "resume",
-                    "present",
                     "report:resumed",
+                    "present",
                 )) {
                     "transaction launch was presented before resume: $transactionCompletionEvents"
                 }
-                check(presented.single() === thread.getActivityClient(token)?.activity)
-                check(thread.getActivityClient(token)?.state == null)
-                check(thread.getActivityClient(token)?.persistentState == null)
+                check(presented.single() === thread.getActivityClient(token)?.fixtureActivity)
+                check(thread.getActivityClient(token)?.fixtureState == null)
+                check(thread.getActivityClient(token)?.fixturePersistentState == null)
 
                 thread.executeTransaction(ClientTransaction().apply {
                     addTransactionItem(StopActivityItem(token))
                 })
-                check(transactionCompletionEvents.last() == "clear") {
+                runHostedFrame()
+                check("clear" in transactionCompletionEvents) {
                     "final stop did not clear after state save: $transactionCompletionEvents"
                 }
-                drainMainQueue()
                 check(transactionCompletionEvents.takeLast(6) == listOf(
                     "pause",
                     "description",
@@ -6830,7 +6915,7 @@ internal object FrameworkModuleSmoke {
                     )
                 }
             }
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
         }
     }
 
@@ -6850,7 +6935,7 @@ internal object FrameworkModuleSmoke {
             configChanges = 0
         }
         val missingSuperInfo = activityInfo(missingSuperName)
-        ActivityThread.configureActivityHost(LocalActivityHostAdapter())
+        HostedActivityProcess.configureActivityHost(LocalActivityHostAdapter())
 
         val thread = ActivityThread.currentActivityThread()
         val windowInfoEvents = mutableListOf<Pair<android.os.IBinder, ActivityWindowInfo>>()
@@ -6863,10 +6948,9 @@ internal object FrameworkModuleSmoke {
         var record: ActivityThread.ActivityClientRecord? = null
         var missingSuperRecord: ActivityThread.ActivityClientRecord? = null
         var configurationActivity: ConfigurationDispatchActivity? = null
-        val application = checkNotNull(ActivityThread.currentApplication())
+        var application: android.app.Application? = null
         val applicationCallback = configurationLifecycleCallback("application-callback")
         val activityCallback = configurationLifecycleCallback("activity-callback")
-        application.registerActivityLifecycleCallbacks(applicationCallback)
         configurationContextOverride = if (withContextOverride) Configuration().apply {
             fontScale = 1.75f
         } else null
@@ -6884,6 +6968,10 @@ internal object FrameworkModuleSmoke {
                 null,
             ) as ConfigurationDispatchActivity
             configurationActivity = activity
+            // LoadedApk owns one Application per package; these synthetic activities belong
+            // to org.example, which is distinct from the initially bound permissions fixture.
+            application = activity.application
+            activity.application.registerActivityLifecycleCallbacks(applicationCallback)
             activity.registerActivityLifecycleCallbacks(activityCallback)
             record = checkNotNull(thread.getActivityClient(token))
             thread.handleStartActivity(
@@ -6894,17 +6982,21 @@ internal object FrameworkModuleSmoke {
             thread.handleResumeActivity(record, true, false, false, "configuration-smoke")
             check(activity.isResumed)
             if (withContextOverride) {
-                record.activityInfo.configChanges = ActivityInfo.CONFIG_FONT_SCALE
-                val hostConfig = Configuration(activity.resources.configuration).apply {
-                    fontScale = 2f
+                record.fixtureActivityInfo.configChanges = ActivityInfo.CONFIG_FONT_SCALE
+                val hostConfig = Configuration(thread.configuration).apply {
+                    fontScale = if (fontScale == 2f) 2.25f else 2f
+                    // Desktop display updates are unsequenced, like HostContexts.configureDisplay.
+                    seq = 0
                 }
-                check(!ActivityThread.applyConfigurationInProcess(hostConfig,
+                val hostFontScale = hostConfig.fontScale
+                check(!HostedActivityProcess.applyConfigurationInProcess(hostConfig,
                     ActivityInfo.CONFIG_FONT_SCALE, 320, 240))
                 check(activity.callbackConfiguration?.fontScale == 1.75f &&
                     activity.resourcesMatchedDuringCallback) {
-                    "host resize lost the app context override or delivered mismatched resources"
+                    "host resize lost the app context override or delivered mismatched resources: " +
+                        "callback=${activity.callbackConfiguration}, resources=${activity.resources.configuration}"
                 }
-                check(hostConfig.fontScale == 2f)
+                check(hostConfig.fontScale == hostFontScale)
             }
             val lifecycleState = record.lifecycleState
             val initialOrientation = activity.resources.configuration.orientation
@@ -6949,7 +7041,7 @@ internal object FrameworkModuleSmoke {
             }
             check(activity.callbackConfiguration?.orientation == targetOrientation)
             check(activity.callbackConfiguration?.fontScale == if (withContextOverride) 1.75f else 1.5f)
-            check(record.overrideConfig.fontScale == 1.5f) {
+            check(record.fixtureOverrideConfig.fontScale == 1.5f) {
                 "app context override mutated the server configuration"
             }
             check(newer.fontScale == 1.5f && older.fontScale == 1.25f)
@@ -7010,21 +7102,6 @@ internal object FrameworkModuleSmoke {
                 token to changedWindowInfo,
             ))
 
-            val unavailableDisplayFailure = runCatching {
-                thread.handleActivityConfigurationChanged(
-                    record,
-                    Configuration(newer).apply { seq = 104 },
-                    7,
-                    olderWindowInfo,
-                )
-            }.exceptionOrNull()
-            check(unavailableDisplayFailure is UnsupportedOperationException) {
-                "non-default display update should fail at the hosted display boundary: " +
-                    unavailableDisplayFailure
-            }
-            check(record.activityWindowInfo == changedWindowInfo)
-            check(record.lifecycleState == lifecycleState)
-
             // Once seq=103 is installed, an older non-move update is dropped with all its state.
             thread.handleActivityConfigurationChanged(
                 record,
@@ -7039,6 +7116,20 @@ internal object FrameworkModuleSmoke {
             ))
             check(record.activityWindowInfo == changedWindowInfo)
             check(windowInfoEvents.size == 2)
+
+            // Stock ContextImpl falls back to the default display when a reported display
+            // disappears before the client processes the move. The move still updates metadata.
+            thread.handleActivityConfigurationChanged(
+                record,
+                Configuration(newer).apply { seq = 104 },
+                7,
+                olderWindowInfo,
+            )
+            check(activity.movedDisplayId == 7)
+            check(activity.displayId == Display.DEFAULT_DISPLAY)
+            check(record.activityWindowInfo == olderWindowInfo)
+            check(windowInfoEvents.last() == token to olderWindowInfo)
+            check(record.lifecycleState == lifecycleState)
 
             val missingToken = Binder()
             val missingSuper = thread.startActivityNow(
@@ -7097,7 +7188,7 @@ internal object FrameworkModuleSmoke {
         } finally {
             configurationContextOverride = null
             configurationActivity?.unregisterActivityLifecycleCallbacks(activityCallback)
-            application.unregisterActivityLifecycleCallbacks(applicationCallback)
+            application?.unregisterActivityLifecycleCallbacks(applicationCallback)
             ClientTransactionListenerController.getInstance()
                 .unregisterActivityWindowInfoChangedListener(windowInfoListener)
             withRecordingActivityClientController {
@@ -7108,7 +7199,7 @@ internal object FrameworkModuleSmoke {
                     thread.handleDestroyActivity(it, true, false, "configuration-smoke-cleanup")
                 }
             }
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
         }
     }
 
@@ -7125,7 +7216,7 @@ internal object FrameworkModuleSmoke {
             exported = false
             applicationInfo.targetSdkVersion = android.os.Build.VERSION_CODES.VANILLA_ICE_CREAM
         }
-        ActivityThread.configureActivityHost(LocalActivityHostAdapter())
+        HostedActivityProcess.configureActivityHost(LocalActivityHostAdapter())
 
         val thread = ActivityThread.currentActivityThread()
         val token = Binder()
@@ -7224,7 +7315,7 @@ internal object FrameworkModuleSmoke {
                 })
             }
             record = checkNotNull(thread.getActivityClient(token))
-            val oldActivity = record.activity as RelaunchActivity
+            val oldActivity = record.fixtureActivity as RelaunchActivity
             check(oldActivity.resources.configuration.orientation == baseOrientation)
             check(processConfigSeqs == listOf(1001, 1002)) {
                 "LaunchActivityItem preExecute config was not consumed before launch: " +
@@ -7241,7 +7332,7 @@ internal object FrameworkModuleSmoke {
             check(withContentUriPermissionApis(false) {
                 thread.performResumeActivity(record, false, "relaunch-smoke-launch")
             })
-            check(launchIntent.preparedForProcess && launchIntent.fromProtectedComponent)
+            check(launchIntent.preparedForProcess && launchIntent.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
             check(activityRelaunchEvents == listOf(
                 "1:create:fresh:no-retained:launch",
                 "1:start",
@@ -7324,16 +7415,16 @@ internal object FrameworkModuleSmoke {
                 }
             }
 
-            val replacement = record.activity as RelaunchActivity
+            val replacement = record.fixtureActivity as RelaunchActivity
             check(replacement !== oldActivity)
             check(thread.getActivityClient(token) === record)
             check(record.lifecycleState ==
                 android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
             check(replacement.window !== oldWindow) {
-                "preserveWindow crossed the hosted WindowManager fence"
+                "relaunch did not create a new Activity window object"
             }
-            check(record.overrideConfig.fontScale == 1.5f)
-            check(record.lastNonConfigurationInstances == null)
+            check(record.fixtureOverrideConfig.fontScale == 1.5f)
+            check(record.fixtureLastNonConfigurationInstances == null)
             check(record.activityWindowInfo == newerWindowInfo)
             check(record.activityWindowInfo !== newerWindowInfo)
             check(windowInfoEvents == listOf(token to newerWindowInfo)) {
@@ -7342,8 +7433,8 @@ internal object FrameworkModuleSmoke {
             newerWindowInfo.set(false, Rect(), Rect())
             check(record.activityWindowInfo?.isEmbedded == true)
             check(windowInfoEvents.single().second.isEmbedded)
-            check(firstIntent.preparedForProcess && firstIntent.fromProtectedComponent)
-            check(secondIntent.preparedForProcess && secondIntent.fromProtectedComponent)
+            check(firstIntent.preparedForProcess && firstIntent.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
+            check(secondIntent.preparedForProcess && secondIntent.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
             check(runCatching { replacement.currentCaller }.exceptionOrNull()
                 is IllegalStateException)
             check(replacement.observedReferrer == "android-app://second-referrer")
@@ -7391,6 +7482,9 @@ internal object FrameworkModuleSmoke {
                 standaloneCallerToken,
             )
             val replacementWindow = replacement.window
+            // The stock process transport publishes pending global configuration before
+            // executing the activity relaunch; a createdConfig is not that process update.
+            thread.updatePendingConfiguration(standaloneGlobal)
             activityRelaunchEvents.clear()
             val standaloneReports = withContentUriPermissionApis(true) {
                 withRecordingActivityClientController {
@@ -7410,18 +7504,18 @@ internal object FrameworkModuleSmoke {
                     })
                 }
             }
-            val standaloneReplacement = record.activity as RelaunchActivity
+            val standaloneReplacement = record.fixtureActivity as RelaunchActivity
             check(standaloneReplacement !== replacement)
             check(standaloneReplacement.window !== replacementWindow)
             check(standaloneReplacement.resources.configuration.orientation == currentOrientation) {
-                "standalone relaunch did not install its createdConfig before launch"
+                "relaunch did not consume pending process configuration before launch"
             }
             check(ActivityThread.currentApplication()?.resources?.configuration?.orientation ==
                 currentOrientation) {
-                "standalone relaunch did not install createdConfig for the Application"
+                "relaunch did not install pending process configuration for the Application"
             }
-            check(record.overrideConfig.fontScale == 1.75f)
-            check(record.lastNonConfigurationInstances == null)
+            check(record.fixtureOverrideConfig.fontScale == 1.75f)
+            check(record.fixtureLastNonConfigurationInstances == null)
             check(record.activityWindowInfo == standaloneWindowInfo)
             check(windowInfoEvents == listOf(
                 token to ActivityWindowInfo(windowInfoEvents.first().second),
@@ -7431,7 +7525,7 @@ internal object FrameworkModuleSmoke {
                 android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
             check(standaloneReports == listOf("relaunched", "resumed"))
             check(standaloneIntent.preparedForProcess &&
-                standaloneIntent.fromProtectedComponent)
+                standaloneIntent.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
             check(standaloneReplacement.observedNewIntentCaller ==
                 ComponentCaller(token, standaloneCallerToken))
             check(standaloneReplacement.currentCallerMatchedCallback)
@@ -7476,7 +7570,7 @@ internal object FrameworkModuleSmoke {
                     addTransactionItem(ResumeActivityItem(token, false, false))
                 })
             }
-            val staleReplacement = record.activity as RelaunchActivity
+            val staleReplacement = record.fixtureActivity as RelaunchActivity
             check(staleReplacement.resources.configuration.orientation == currentOrientation) {
                 "older createdConfig regressed Activity resources"
             }
@@ -7484,7 +7578,7 @@ internal object FrameworkModuleSmoke {
                 currentOrientation) {
                 "older createdConfig regressed Application resources"
             }
-            check(record.lastNonConfigurationInstances == null)
+            check(record.fixtureLastNonConfigurationInstances == null)
             check(windowInfoEvents.size == 2) {
                 "unchanged relaunch window info was notified again: $windowInfoEvents"
             }
@@ -7590,8 +7684,8 @@ internal object FrameworkModuleSmoke {
                 })
             }
             check(sequenceOnlyReports == listOf("relaunched", "resumed"))
-            check(record.activity.intent === retainedCustomIntent)
-            check(record.activity.componentName == record.intent.component)
+            check(checkNotNull(record.fixtureActivity).intent === retainedCustomIntent)
+            check(checkNotNull(record.fixtureActivity).componentName == record.fixtureIntent.component)
             check(activityRelaunchEvents == listOf(
                 "4:pause:$currentOrientation",
                 "4:stop:true:0",
@@ -7605,9 +7699,9 @@ internal object FrameworkModuleSmoke {
                 "5:state-not-saved",
                 "5:resume",
             )) { "sequence-only pending relaunch mismatch: $activityRelaunchEvents" }
-            check(record.lastNonConfigurationInstances == null)
+            check(record.fixtureLastNonConfigurationInstances == null)
 
-            record.activityInfo.applicationInfo.targetSdkVersion =
+            record.fixtureActivityInfo.applicationInfo.targetSdkVersion =
                 android.os.Build.VERSION_CODES.O
             activityRelaunchEvents.clear()
             val oreoReports = withRecordingActivityClientController {
@@ -7640,7 +7734,7 @@ internal object FrameworkModuleSmoke {
                 "6:state-not-saved",
                 "6:resume",
             )) { "target-O relaunch save ordering mismatch: $activityRelaunchEvents" }
-            check(record.lastNonConfigurationInstances == null)
+            check(record.fixtureLastNonConfigurationInstances == null)
             val staleChangedSequence = Configuration(sameContentNewSequence).apply {
                 orientation = targetOrientation
                 seq = 1250
@@ -7666,7 +7760,7 @@ internal object FrameworkModuleSmoke {
                     thread.handleDestroyActivity(it, true, false, "relaunch-smoke-cleanup")
                 }
             }
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
         }
     }
 
@@ -7711,6 +7805,9 @@ internal object FrameworkModuleSmoke {
                     check(args?.get(0) is IBinder && args.get(1) is ActivityManager.TaskDescription)
                     null
                 }
+                "getDisplayId" -> Display.DEFAULT_DISPLAY
+                "willActivityBeVisible" -> true // The fixture has one foreground task.
+                "reportSizeConfigurations" -> null // Qualifier policy has a separate service test.
                 "asBinder" -> Binder()
                 "toString" -> "FrameworkModuleSmokeActivityClientController"
                 "hashCode" -> System.identityHashCode(proxy)
@@ -7797,21 +7894,23 @@ internal object FrameworkModuleSmoke {
 
             localActivityEvents.clear()
             child.startActivityForResult(resultIntent, 73)
-            drainMainQueue()
-            check(ActivityThread.currentActivity() is ActivityGroupResultActivity)
-            check(activityGroupEvents == listOf("group:pause", "group:stop", "group:save"))
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() is ActivityGroupResultActivity)
+            check(activityGroupEvents == listOf("group:pause", "group:stop", "group:save")) {
+                "ActivityGroup background callbacks: $activityGroupEvents"
+            }
             check(localActivityEvents == listOf("group-child:pause", "group-child:stop")) {
                 "modern ActivityGroup background order: $localActivityEvents"
             }
 
-            val result = ActivityThread.currentActivity() as ActivityGroupResultActivity
+            val result = HostedActivityProcess.currentActivity() as ActivityGroupResultActivity
             result.setResult(
                 Activity.RESULT_OK,
                 Intent().putExtra("group-result", "delivered"),
             )
             result.finish()
-            drainMainQueue()
-            check(ActivityThread.currentActivity() === group)
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() === group)
             check(child.resultRequestCode == 73)
             check(child.resultCode == Activity.RESULT_OK)
             check(child.resultMarker == "delivered")
@@ -7833,12 +7932,12 @@ internal object FrameworkModuleSmoke {
 
             val sender = fixture.activitySender(resultIntent)
             child.startIntentSenderForResult(sender, 74, null, 0, 0, 0)
-            drainMainQueue()
-            val senderResult = ActivityThread.currentActivity() as ActivityGroupResultActivity
+            settleActivityFrames()
+            val senderResult = HostedActivityProcess.currentActivity() as ActivityGroupResultActivity
             senderResult.setResult(Activity.RESULT_OK, Intent().putExtra("group-result", "sender"))
             senderResult.finish()
-            drainMainQueue()
-            check(ActivityThread.currentActivity() === group)
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() === group)
             check(child.resultRequestCode == 74 && child.resultMarker == "sender")
 
             // LocalActivityManager.saveInstanceState only saves a stopped child
@@ -7849,14 +7948,14 @@ internal object FrameworkModuleSmoke {
             localActivityEvents.clear()
             activityGroupEvents.clear()
             group.recreate()
-            drainMainQueue()
-            check(ActivityThread.currentActivity() === group) {
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() === group) {
                 "public recreate must ignore an in-process Binder activity token"
             }
             check(activityGroupEvents.isEmpty())
             check(runCatching { child.recreate() }.exceptionOrNull() is IllegalStateException)
             fixture.relaunch(group)
-            val restoredGroup = ActivityThread.currentActivity() as RecordingActivityGroup
+            val restoredGroup = HostedActivityProcess.currentActivity() as RecordingActivityGroup
             expectedLocalActivityParent = restoredGroup
             check(restoredGroup !== group)
             check(restoredGroup.currentActivity == null)
@@ -7900,9 +7999,9 @@ internal object FrameworkModuleSmoke {
             }
             val groupRecord = ActivityThread.ActivityClientRecord().apply {
                 token = Binder()
-                intent = Intent().setComponent(ComponentName("org.example", groupName))
-                activityInfo = groupInfo
-                activity = restoredGroup
+                fixtureIntent = Intent().setComponent(ComponentName("org.example", groupName))
+                fixtureActivityInfo = groupInfo
+                fixtureActivity = restoredGroup
                 setState(android.app.servertransaction.ActivityLifecycleItem.ON_RESUME)
             }
             withContentUriPermissionApis(true) {
@@ -7923,14 +8022,14 @@ internal object FrameworkModuleSmoke {
                 "group-child:result",
                 "group-child:resume",
             )) { "ActivityGroup transaction result ordering: $localActivityEvents" }
-            check(groupResult.preparedForProcess && groupResult.fromProtectedComponent)
+            check(groupResult.preparedForProcess && groupResult.fromProtectedComponent == android.os.StrictMode.vmUnsafeIntentLaunchEnabled())
             check(groupResult.extras?.classLoader === restoredGroup.classLoader)
             check(adapter.presentedActivities.none { it is ActivityGroupChildActivity }) {
                 "ActivityGroup child escaped into the desktop presentation stack"
             }
         } finally {
             expectedLocalActivityParent = null
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
         }
     }
 
@@ -7986,9 +8085,9 @@ internal object FrameworkModuleSmoke {
                 first.startIntentSenderForResult(canceledSender, 51, null, 0, 0, 0)
             }.exceptionOrNull()
             check(canceled is android.content.IntentSender.SendIntentException)
-            check(ActivityThread.currentActivity() === first && events.size == 4)
+            check(HostedActivityProcess.currentActivity() === first && events.size == 4)
             first.startIntentSenderForResult(fixture.activitySender(senderIntent), -1, null, 0, 0, 0)
-            drainMainQueue()
+            settleActivityFrames()
             check(events.takeLast(7) == listOf(
                 "first:pause",
                 "second:create",
@@ -8002,16 +8101,16 @@ internal object FrameworkModuleSmoke {
                 "application theme fallback must be applied before onCreate"
             }
 
-            checkNotNull(ActivityThread.currentActivity()).finish()
-            drainMainQueue()
-            check(ActivityThread.currentActivity() === first)
+            checkNotNull(HostedActivityProcess.currentActivity()).finish()
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() === first)
             check(events.takeLast(6) == listOf(
                 "second:pause",
                 "first:start",
                 "first:resume",
-                "show:first",
                 "second:stop",
                 "second:destroy",
+                "show:first",
             )) { "finish ordering: $events" }
 
             val shareTarget = Intent(Intent.ACTION_SEND)
@@ -8020,8 +8119,8 @@ internal object FrameworkModuleSmoke {
             val chooser = Intent.createChooser(shareTarget, "Share")
             adapter.implicitActivity = ComponentName("org.example", secondName)
             first.startActivity(chooser)
-            drainMainQueue()
-            val resolvedShare = checkNotNull(ActivityThread.currentActivity())
+            settleActivityFrames()
+            val resolvedShare = checkNotNull(HostedActivityProcess.currentActivity())
             check(resolvedShare is SecondActivity)
             check(resolvedShare.intent.action == Intent.ACTION_CHOOSER)
             check(resolvedShare.intent.component == adapter.implicitActivity)
@@ -8033,8 +8132,8 @@ internal object FrameworkModuleSmoke {
                 "resolver must observe the original implicit intent"
             }
             resolvedShare.finish()
-            drainMainQueue()
-            check(ActivityThread.currentActivity() === first)
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() === first)
             adapter.implicitActivity = null
 
             // Stock process callbacks require an actual public configuration change;
@@ -8048,7 +8147,7 @@ internal object FrameworkModuleSmoke {
             check(firstInfo.getRealConfigChanged() and ActivityInfo.CONFIG_SCREEN_SIZE != 0) {
                 "pre-HONEYCOMB_MR2 ActivityInfo omitted the implicit screen-size change"
             }
-            ActivityThread.applyConfigurationInProcess(
+            HostedActivityProcess.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_SCREEN_SIZE,
                 600,
@@ -8069,7 +8168,7 @@ internal object FrameworkModuleSmoke {
             handledConfiguration.orientation = if (handledConfiguration.orientation ==
                 Configuration.ORIENTATION_LANDSCAPE) Configuration.ORIENTATION_PORTRAIT
                 else Configuration.ORIENTATION_LANDSCAPE
-            ActivityThread.applyConfigurationInProcess(
+            HostedActivityProcess.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_ORIENTATION,
                 900,
@@ -8083,7 +8182,7 @@ internal object FrameworkModuleSmoke {
                 "Application configuration callback did not precede Activity teardown: " +
                     relaunchEvents
             }
-            check(ActivityThread.currentActivity() !== first)
+            check(HostedActivityProcess.currentActivity() !== first)
             check(events.contains("first:save"))
             check(events.takeLast(5) == listOf(
                 "first:create:saved",
@@ -8092,7 +8191,7 @@ internal object FrameworkModuleSmoke {
                 "first:resume",
                 "show:first",
             )) { "relaunch restore ordering: $events" }
-            check(ActivityThread.currentActivity()?.requestedOrientation ==
+            check(HostedActivityProcess.currentActivity()?.requestedOrientation ==
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
                 "configuration relaunch lost the activity's requested orientation"
             }
@@ -8102,28 +8201,28 @@ internal object FrameworkModuleSmoke {
             )) { "configuration relaunch did not expose its change mask during teardown" }
 
             changingConfigurationEvents.clear()
-            fixture.relaunch(checkNotNull(ActivityThread.currentActivity()))
+            fixture.relaunch(checkNotNull(HostedActivityProcess.currentActivity()))
             check(changingConfigurationEvents == listOf(
                 "first:stop:0",
                 "first:destroy:0",
             )) { "explicit Activity.recreate inherited a configuration-change mask" }
 
             events.clear()
-            checkNotNull(ActivityThread.currentActivity()).finish()
-            drainMainQueue()
-            check(ActivityThread.currentActivity() == null)
+            checkNotNull(HostedActivityProcess.currentActivity()).finish()
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() == null)
             check(events == listOf(
                 "first:pause",
                 "first:stop",
-                "clear",
                 "first:destroy",
+                "clear",
             )) { "last Activity finish ordering: $events" }
 
             events.clear()
             handledConfiguration.orientation = if (handledConfiguration.orientation ==
                 Configuration.ORIENTATION_LANDSCAPE) Configuration.ORIENTATION_PORTRAIT
                 else Configuration.ORIENTATION_LANDSCAPE
-            check(!ActivityThread.applyConfigurationInProcess(
+            check(!HostedActivityProcess.applyConfigurationInProcess(
                 handledConfiguration,
                 ActivityInfo.CONFIG_ORIENTATION,
                 640,
@@ -8136,7 +8235,7 @@ internal object FrameworkModuleSmoke {
             fixture.launch(missingConfigurationSuperName)
             handledConfiguration.screenWidthDp += 10
             val hostedMissingSuperFailure = runCatching {
-                ActivityThread.applyConfigurationInProcess(
+                HostedActivityProcess.applyConfigurationInProcess(
                     handledConfiguration,
                     ActivityInfo.CONFIG_SCREEN_SIZE,
                     600,
@@ -8148,7 +8247,7 @@ internal object FrameworkModuleSmoke {
                     hostedMissingSuperFailure
             }
         } finally {
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
             application.unregisterComponentCallbacks(applicationConfigurationCallback)
         }
     }
@@ -8255,19 +8354,19 @@ internal object FrameworkModuleSmoke {
             check(retained.createCount == 1)
 
             retained.requestPermissions(arrayOf(android.Manifest.permission.INTERNET), 73)
-            drainMainQueue()
+            settleActivityFrames()
             check(retained.permissionRequestCode == 73)
             check(retained.permissionNames.contentEquals(arrayOf(android.Manifest.permission.INTERNET)))
             // org.example does not declare INTERNET; the controller must preserve denial.
             check(retained.permissionResults.contentEquals(intArrayOf(PackageManager.PERMISSION_DENIED)))
 
-            ActivityThread.applyConfigurationInProcess(
+            HostedActivityProcess.applyConfigurationInProcess(
                 Configuration().apply { setToDefaults() },
                 ActivityInfo.CONFIG_ORIENTATION,
                 900,
                 600,
             )
-            val replacement = ActivityThread.currentActivity() as HostedLegacyFragmentActivity
+            val replacement = HostedActivityProcess.currentActivity() as HostedLegacyFragmentActivity
             check(replacement !== first)
             check(replacement.fragment === retained) {
                 "configuration recreation did not retain the legacy Fragment instance"
@@ -8283,32 +8382,32 @@ internal object FrameworkModuleSmoke {
                 Intent().setComponent(ComponentName("org.example", resultName)),
                 91,
             )
-            drainMainQueue()
-            val resultActivity = ActivityThread.currentActivity() as LegacyResultActivity
+            settleActivityFrames()
+            val resultActivity = HostedActivityProcess.currentActivity() as LegacyResultActivity
             resultActivity.setResult(
                 Activity.RESULT_OK,
                 Intent().putExtra("legacy-result", "delivered"),
             )
-            ActivityThread.applyConfigurationInProcess(
+            HostedActivityProcess.applyConfigurationInProcess(
                 Configuration().apply { setToDefaults() },
                 ActivityInfo.CONFIG_ORIENTATION,
                 640,
                 480,
             )
-            val recreatedResultActivity = ActivityThread.currentActivity() as LegacyResultActivity
+            val recreatedResultActivity = HostedActivityProcess.currentActivity() as LegacyResultActivity
             check(recreatedResultActivity !== resultActivity)
             // Result values belong to the Activity instance; the application
             // supplies them again after recreation. ATMS retains the recipient.
             recreatedResultActivity.setResult(Activity.RESULT_OK,
                 Intent().putExtra("legacy-result", "delivered"))
             recreatedResultActivity.finish()
-            drainMainQueue()
-            check(ActivityThread.currentActivity() === replacement)
+            settleActivityFrames()
+            check(HostedActivityProcess.currentActivity() === replacement)
             check(retained.activityResultRequestCode == 91)
             check(retained.activityResultCode == Activity.RESULT_OK)
             check(retained.activityResultData == "delivered")
         } finally {
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
         }
     }
 
@@ -8321,7 +8420,7 @@ internal object FrameworkModuleSmoke {
         screenOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
-    private class RecordingHostAdapter : ActivityThread.HostAdapter {
+    private class RecordingHostAdapter : HostedActivityProcess.HostAdapter {
         var implicitActivity: ComponentName? = null
         var lastImplicitIntent: Intent? = null
 
@@ -8345,7 +8444,7 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    private class LocalActivityHostAdapter : ActivityThread.HostAdapter {
+    private class LocalActivityHostAdapter : HostedActivityProcess.HostAdapter {
         val presentedActivities = mutableListOf<Activity>()
 
 
@@ -8360,7 +8459,7 @@ internal object FrameworkModuleSmoke {
 
     }
 
-    private class LegacyFragmentHostAdapter : ActivityThread.HostAdapter {
+    private class LegacyFragmentHostAdapter : HostedActivityProcess.HostAdapter {
         override fun showActivity(activity: Activity) {}
         override fun clearActivityWindows() {}
         override fun resizeActivityRoot(activity: Activity, width: Int, height: Int) {}
@@ -8723,6 +8822,12 @@ internal object FrameworkModuleSmoke {
     }
 
     class RelaunchActivity : Activity() {
+        // Synthetic activities share one LoadedApk; expose the per-case application
+        // metadata used by stock ActivityClientRecord.isPreP during the relaunch.
+        override fun getApplicationInfo(): ApplicationInfo = ApplicationInfo(super.getApplicationInfo()).apply {
+            targetSdkVersion = activityInfo?.applicationInfo?.targetSdkVersion ?: targetSdkVersion
+        }
+
         private var generation = 0
         var observedNewIntentCaller: ComponentCaller? = null
             private set
@@ -8827,6 +8932,14 @@ internal object FrameworkModuleSmoke {
 
     private var configurationContextOverride: Configuration? = null
     class ConfigurationDispatchActivity : Activity() {
+        var movedDisplayId = Display.INVALID_DISPLAY
+            private set
+
+        override fun onMovedToDisplay(displayId: Int, configuration: Configuration) {
+            movedDisplayId = displayId
+            super.onMovedToDisplay(displayId, configuration)
+        }
+
         override fun attachBaseContext(base: Context) {
             configurationContextOverride?.let(::applyOverrideConfiguration)
             super.attachBaseContext(base)
@@ -9049,7 +9162,14 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    class LocalFirstActivity : LocalRecordingActivity("first")
+    class LocalFirstActivity : LocalRecordingActivity("first") {
+        // These synthetic children share the fixture's LoadedApk. Give the legacy child
+        // its own application metadata so stock ActivityThread tests the pre-Honeycomb
+        // branch through Activity.getApplicationInfo(), as a separately installed APK would.
+        override fun getApplicationInfo(): ApplicationInfo = ApplicationInfo(super.getApplicationInfo()).apply {
+            targetSdkVersion = android.os.Build.VERSION_CODES.GINGERBREAD_MR1
+        }
+    }
     class LocalSecondActivity : LocalRecordingActivity("second")
 
     open class RecordingActivity(private val activityLabel: String) : Activity() {
@@ -9110,7 +9230,13 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    class FirstActivity : RecordingActivity("first")
+    class FirstActivity : RecordingActivity("first") {
+        // Synthetic activities share one LoadedApk, while this fixture exercises older target
+        // SDK lifecycle rules. Expose its declared metadata through the stock Context API.
+        override fun getApplicationInfo(): ApplicationInfo = ApplicationInfo(super.getApplicationInfo()).apply {
+            targetSdkVersion = activityInfo?.applicationInfo?.targetSdkVersion ?: targetSdkVersion
+        }
+    }
     class SecondActivity : RecordingActivity("second")
     class HostedMissingSuperConfigurationActivity : RecordingActivity("missing-config") {
         override fun onConfigurationChanged(newConfig: Configuration) {

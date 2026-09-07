@@ -212,6 +212,18 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         )
     }
 
+    /** Pinned PMS.getRequiredSdkSandboxPackageName resolves the system service component.
+     * A full Android image requires exactly one; the hosted image has no SDK sandbox module.
+     * Report its absence here so stock activity-intent classification does not invent an
+     * installed sandbox package. Starting a sandbox still requires that unavailable module. */
+    override fun getSdkSandboxPackageName(): String? {
+        val matches = queryServicesInternal(Intent("com.android.sdksandbox.SdkSandboxService"), null,
+            PackageManager.MATCH_SYSTEM_ONLY.toLong() or PackageManager.MATCH_DIRECT_BOOT_AWARE.toLong() or
+                PackageManager.MATCH_DIRECT_BOOT_UNAWARE.toLong(), android.os.UserHandle.USER_SYSTEM)
+        check(matches.size <= 1) { "More than one system SDK sandbox service: $matches" }
+        return matches.singleOrNull()?.serviceInfo?.packageName
+    }
+
     override fun getPermissionControllerPackageName(): String = synchronized(lock) {
         check(packages.containsKey(HostedPermissionController.PACKAGE)) {
             "PermissionController is not found"

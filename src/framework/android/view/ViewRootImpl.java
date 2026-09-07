@@ -1312,6 +1312,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         checkThread();
         if (mStopped == stopped || mView == null) return;
         mStopped = stopped;
+        dev.artzig.HostedActivityProcess.schedulePresentationUpdate();
         if (stopped) {
             unscheduleTraversals();
             mView.destroyHardwareResources();

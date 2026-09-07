@@ -62,7 +62,8 @@ internal object ActivityRecreationSystemSmoke {
     val events = ArrayList<String>()
 
     fun publish() {
-        val handler = Handler(Looper.getMainLooper())
+        HeadlessActivityFrames.start()
+        val handler = Handler.createAsync(Looper.getMainLooper())
         ServiceManager.addService(NAME, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
                 data.enforceInterface(NAME)

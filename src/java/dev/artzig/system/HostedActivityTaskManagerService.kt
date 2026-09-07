@@ -58,7 +58,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * `ActivityClientController`, and `TaskChangeNotificationController`. The server-side WM
  * container graph cannot be reused without system_server/WindowManagerService, so the host keeps
  * only the observable task/activity records and emits the same ClientTransaction items. Actual
- * windows remain owned by ActivityThread's HostAdapter fence.
+ * windows are presented through HostedActivityProcess's adapter.
  */
 internal class HostedActivityTaskManagerService(
     private val context: Context,
@@ -74,6 +74,7 @@ internal class HostedActivityTaskManagerService(
         const val STATE_RESUMED = 1
         const val STATE_PAUSED = 2
         const val STATE_STOPPED = 3
+        const val STATE_STOPPING = 4
         const val DONT_FINISH_TASK_WITH_ACTIVITY = Activity.DONT_FINISH_TASK_WITH_ACTIVITY
         const val FINISH_TASK_WITH_ROOT_ACTIVITY = Activity.FINISH_TASK_WITH_ROOT_ACTIVITY
         const val FINISH_TASK_WITH_ACTIVITY = Activity.FINISH_TASK_WITH_ACTIVITY
@@ -137,6 +138,7 @@ internal class HostedActivityTaskManagerService(
         var launchScheduled = false
         var cancelIfStale = true
         var uriPermissions: UriPermissionOwner? = null
+        var sizeConfigurations: android.window.SizeConfigurationBuckets? = null
     }
 
     private data class CallerIdentity(
@@ -151,6 +153,7 @@ internal class HostedActivityTaskManagerService(
         val record: ActivityRecord,
         val handled: Boolean,
         val stateBeforeRelaunch: Int,
+        val changes: Int,
     )
 
     private val lock = Any()
@@ -206,7 +209,7 @@ internal class HostedActivityTaskManagerService(
             if (focusedDied) {
                 reveal = focusedActivityLocked()?.takeIf {
                     it.process != null &&
-                        (it.state == STATE_PAUSED || it.state == STATE_STOPPED)
+                        (it.state == STATE_PAUSED || it.state == STATE_STOPPED || it.state == STATE_STOPPING)
                 }
             }
         }
@@ -949,9 +952,16 @@ internal class HostedActivityTaskManagerService(
     }
 
     private fun scheduleBackground(record: ActivityRecord) {
-        val process = record.process ?: return
-        if (record.finishing || record.state == STATE_STOPPED) return
-        schedule(process, StopActivityItem(record.token))
+        synchronized(lock) {
+            if (record.finishing || record.state == STATE_STOPPED || record.state == STATE_STOPPING ||
+                activities[record.token] !== record || focusedActivityLocked() === record
+            ) return
+            val process = record.process ?: return
+            record.state = STATE_STOPPING
+            // As in ActivityRecord.stopIfPossible, enqueue while holding the task lock.
+            // A new foreground selection must not send its Resume before this Stop.
+            schedule(process, StopActivityItem(record.token))
+        }
     }
 
     private fun scheduleResume(record: ActivityRecord): Boolean {
@@ -973,7 +983,9 @@ internal class HostedActivityTaskManagerService(
             transaction.addTransactionItem(ActivityResultItem(record.token, results))
         }
         if (newIntents.isNotEmpty()) {
-            transaction.addTransactionItem(NewIntentItem(record.token, newIntents, false))
+            // TaskFragment.resumeTopActivity marks pending intents for resume so the stock
+            // executor first moves even an already resumed client through ON_PAUSE.
+            transaction.addTransactionItem(NewIntentItem(record.token, newIntents, true))
         }
         transaction.addTransactionItem(ResumeActivityItem(record.token, false, false))
         schedule(process, transaction)
@@ -1389,7 +1401,8 @@ internal class HostedActivityTaskManagerService(
         var changes = 0
         var current = Configuration()
         val dispatches = synchronized(lock) {
-            val next = Configuration(globalConfiguration)
+            val previous = Configuration(globalConfiguration)
+            val next = Configuration(previous)
             changes = next.updateFrom(value)
             if (changes == 0) return@synchronized emptyList()
             configurationSeq = maxOf(configurationSeq + 1, 1)
@@ -1397,7 +1410,12 @@ internal class HostedActivityTaskManagerService(
             globalConfiguration.setTo(next)
             current = Configuration(next)
             activities.values.filter { !it.finishing }.map { record ->
-                val handled = record.info.realConfigChanged and changes == changes
+                // ActivityRecord.ensureActivityConfiguration ignores size differences that
+                // do not cross an application resource qualifier boundary.
+                val activityChanges = android.window.SizeConfigurationBuckets.filterDiff(
+                    changes, previous, next, record.sizeConfigurations,
+                )
+                val handled = record.info.realConfigChanged and activityChanges == activityChanges
                 val priorState = record.state
                 if (!handled) {
                     // ActivityRecord.startRelaunching: server-owned relaunches retain the prior
@@ -1405,14 +1423,14 @@ internal class HostedActivityTaskManagerService(
                     record.stateBeforeRelaunch = priorState
                     record.state = STATE_INITIALIZING
                 }
-                ConfigurationDispatch(record, handled, priorState)
+                ConfigurationDispatch(record, handled, priorState, activityChanges)
             }
         }
         if (changes == 0) return false
         // The process-wide item updates process/Application Resources. Transaction-launched
         // activities also need their token-scoped callback or relaunch transaction explicitly.
         ams.updateGlobalConfiguration(current)
-        for ((record, handled, priorState) in dispatches) {
+        for ((record, handled, priorState, activityChanges) in dispatches) {
             val process = record.process ?: continue
             if (handled) {
                 schedule(
@@ -1430,7 +1448,7 @@ internal class HostedActivityTaskManagerService(
                         record.token,
                         null,
                         null,
-                        changes,
+                        activityChanges,
                         MergedConfiguration(current, Configuration()),
                         false,
                         ActivityWindowInfo(),
@@ -1556,6 +1574,17 @@ internal class HostedActivityTaskManagerService(
         IActivityClientController by unsupported<IActivityClientController>() {
         override fun asBinder(): IBinder = this
 
+        // ActivityClientController.reportSizeConfigurations stores the stock client's resource
+        // buckets on its task record; a report arriving after removal is ignored.
+        override fun reportSizeConfigurations(
+            token: IBinder?,
+            sizeConfigurations: android.window.SizeConfigurationBuckets?,
+        ) {
+            synchronized(lock) {
+                activityForTokenLocked(token)?.sizeConfigurations = sizeConfigurations
+            }
+        }
+
         override fun activityResumed(token: IBinder?, handleSplashScreenExit: Boolean) {
             var previous: ActivityRecord? = null
             val destroy = ArrayList<ActivityRecord>()
@@ -1641,10 +1670,16 @@ internal class HostedActivityTaskManagerService(
         ) {
             synchronized(lock) {
                 val record = activityForTokenLocked(token) ?: return
+                // ActivityRecord.activityStopped ignores acknowledgements after a newer
+                // resume. Otherwise a delayed stop report can overwrite
+                // the resumed state and strand the next activity result in the server queue.
+                if (record.state != STATE_STOPPING) return
                 record.state = STATE_STOPPED
-                record.savedState = state?.let(::Bundle)
-                record.persistentState = persistentState?.let(::PersistableBundle)
-                record.description = description
+                if (state != null) {
+                    record.savedState = Bundle(state)
+                    record.description = description
+                }
+                if (persistentState != null) record.persistentState = PersistableBundle(persistentState)
             }
         }
 

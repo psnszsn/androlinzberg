@@ -18,6 +18,7 @@ pub const jint = jni.jint;
 pub const Error = error{
     RuntimeTreeNotFound,
     HostCaBundleNotFound,
+    SystemRootCreationFailed,
     LibartLoadFailed,
     SymbolNotFound,
     VmCreationFailed,
@@ -223,6 +224,9 @@ pub const Options = struct {
     /// Root of the runtime tree (dir containing bin/, lib64/, apex/). If null,
     /// `locateTree` is used.
     root: ?[]const u8 = null,
+    /// Private writable ANDROID_ROOT layout for Android framework system CA files.
+    /// The framework bootstrap must populate etc/security/cacerts before app binding.
+    system_root_overlay: bool = false,
     /// Optional libart.so overlay. Other runtime libraries and data continue
     /// to resolve from `root`.
     libart_path: ?[]const u8 = null,
@@ -231,7 +235,8 @@ pub const Options = struct {
     /// ANDROID_DATA: where dalvik-cache/ lives. Default: $XDG_CACHE_HOME/artzig.
     data_dir: ?[]const u8 = null,
     /// Host PEM CA bundle. If null, environment overrides and standard Linux
-    /// locations are searched. The file is read directly and is never copied.
+    /// locations are searched. Conscrypt reads it directly; a framework system
+    /// overlay materializes the certificates in Android's hashed directory layout.
     ca_bundle: ?[]const u8 = null,
     /// -Djava.class.path
     classpath: []const []const u8 = &.{},
@@ -253,6 +258,8 @@ pub const Runtime = struct {
     lib: std.DynLib,
     root: []const u8,
     arena: std.heap.ArenaAllocator,
+    io: std.Io,
+    system_root_overlay: ?[]const u8,
 
     const CreateFn = *const fn (**JavaVM, *?*anyopaque, *anyopaque) callconv(.c) jint;
 
@@ -265,8 +272,13 @@ pub const Runtime = struct {
         const data_dir = opts.data_dir orelse try defaultDataDir(a, environ);
         const ca_bundle = try locateCaBundle(a, io, environ, opts.ca_bundle);
 
-        // Environment ART's path resolution relies on (see libartbase/base/file_utils.cc).
-        try setenv(a, "ANDROID_ROOT", root);
+        const system_root_overlay = if (opts.system_root_overlay)
+            @import("system_root.zig").create(a, io, root, data_dir) catch return Error.SystemRootCreationFailed
+        else
+            null;
+        errdefer if (system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(io, path) catch {};
+        // Android framework reads the system partition separately from ART's library paths.
+        try setenv(a, "ANDROID_ROOT", system_root_overlay orelse root);
         try setenv(a, "ANDROID_ART_ROOT", try std.fs.path.join(a, &.{ root, "apex/com.android.art" }));
         try setenv(a, "ANDROID_I18N_ROOT", try std.fs.path.join(a, &.{ root, "com.android.i18n" }));
         try setenv(a, "ANDROID_TZDATA_ROOT", try std.fs.path.join(a, &.{ root, "com.android.tzdata" }));
@@ -275,6 +287,10 @@ pub const Runtime = struct {
         std.Io.Dir.cwd().createDirPath(io, cache) catch {};
 
         var options: std.ArrayList([*:0]const u8) = .empty;
+        if (system_root_overlay != null) {
+            try options.append(a, "-Dartzig.system.root.overlay=true");
+            try options.append(a, "-Dsystem.certs.enabled=true");
+        }
         var bcp: std.ArrayList(u8) = .empty;
         var bcpl: std.ArrayList(u8) = .empty;
         for (boot_jars, 0..) |j, i| {
@@ -344,6 +360,8 @@ pub const Runtime = struct {
             .lib = lib,
             .root = root,
             .arena = arena,
+            .io = io,
+            .system_root_overlay = system_root_overlay,
         };
     }
 
@@ -351,6 +369,7 @@ pub const Runtime = struct {
         _ = self.vm.*.*.DetachCurrentThread.?(self.vm);
         _ = self.vm.*.*.DestroyJavaVM.?(self.vm);
         self.lib.close();
+        if (self.system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(self.io, path) catch {};
         self.arena.deinit();
     }
 
@@ -359,6 +378,7 @@ pub const Runtime = struct {
     /// threads alive, so DestroyJavaVM would wait forever; the OS tears down
     /// ART and its dlopen handle immediately after main returns.
     pub fn releaseProcessState(self: *Runtime) void {
+        if (self.system_root_overlay) |path| std.Io.Dir.cwd().deleteTree(self.io, path) catch {};
         self.arena.deinit();
     }
 

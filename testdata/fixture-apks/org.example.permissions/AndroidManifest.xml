@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <application android:hasCode="false" android:label="org example permissions">
+    <application android:networkSecurityConfig="@xml/network_security_config" android:hasCode="false" android:label="org example permissions">
         <service android:name="android.inputmethodservice.InputMethodService"
             android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true">
             <intent-filter>

@@ -25,7 +25,7 @@ import com.android.window.flags.Flags
  */
 internal class HostedWindowManagerService(
     private val surfaceSyncGroups: com.android.server.wm.HostedSurfaceSyncGroups? = null,
-) : IWindowManager.Stub(),
+) : IWindowManager.Stub(HostedBootstrapPermissionEnforcer()),
     IWindowManager by unsupported<IWindowManager>() {
     companion object {
         const val SURFACE_SYNC_SERVICE = "hosted_window_sync"

@@ -21,6 +21,7 @@ object RuntimeBootstrap {
             entry = Entry(arguments[0], arguments.copyOfRange(1, arguments.size), Thread.currentThread())
         }
         try {
+            HostedSystemCertificates.install()
             // app_process's non-zygote tool path keeps the existing standard
             // streams. The host logger owns their native descriptor lifetime.
             RuntimeInit.main(emptyArray())

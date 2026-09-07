@@ -21,7 +21,7 @@ import android.view.KeyCharacterMap
  * delegate.
  */
 internal class HostedInputManagerService :
-    IInputManager.Stub(),
+    IInputManager.Stub(HostedBootstrapPermissionEnforcer()),
     IInputManager by unsupported<IInputManager>() {
     // Interface delegation must not shadow the Binder identity.
     override fun asBinder(): android.os.IBinder = this

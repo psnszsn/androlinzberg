@@ -23,6 +23,7 @@ import android.view.ArtzigDisplay
  */
 object HostContexts {
     private var processServiceCacheInitialized = false
+    private var systemInfoInstalled = false
     private var windowService: dev.artzig.system.HostedWindowManagerService? = null
 
     /** The process's system context over the given window geometry (theme applied when not 0). */
@@ -35,18 +36,25 @@ object HostContexts {
         return context
     }
 
-    /** ActivityThread.systemMain() + installSystemApplicationInfo + the display service; idempotent. */
+    /** Prepare assets, module initializers and local display services before thread attachment. */
     @JvmStatic
-    fun bootstrap(frameworkRes: String): ActivityThread {
+    fun prepareApplicationEnvironment(frameworkRes: String) {
+        // UI hosts enter through JNI init rather than RuntimeBootstrap.main.
+        HostedSystemCertificates.install()
         AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
         // ZygoteInit preloads the system font map before any process draws text.
         android.graphics.Typeface.loadPreinstalledSystemFontMap()
+        // AMS supplies a full boot configuration on Android, including the system locales.
+        // The desktop inherits its initial locale from the host VM instead of Android settings.
+        val resources = ResourcesManager.getInstance()
+        val initial = Configuration(resources.configuration)
+        if (initial.locales.isEmpty) {
+            initial.setLocales(android.os.LocaleList.getDefault())
+            resources.applyConfigurationToResources(initial, null)
+        }
         synchronized(this) {
             if (!processServiceCacheInitialized) {
-                // AOSP ActivityThread initialization supplies the StatsD module's service access.
-                if (android.os.StatsFrameworkInitializer.getStatsServiceManager() == null) {
-                    android.os.StatsFrameworkInitializer.setStatsServiceManager(android.os.StatsServiceManager())
-                }
+                ActivityThread.initializeMainlineModules()
                 // AOSP ActivityThread.ApplicationThread.bindApplication seeds
                 // process-specific Binder references through this stock API.
                 android.os.ServiceManager.initServiceCache(
@@ -59,7 +67,15 @@ object HostContexts {
                 processServiceCacheInitialized = true
             }
         }
-        val thread = ActivityThread.systemMain()
+    }
+
+    @JvmStatic
+    fun bootstrap(frameworkRes: String): ActivityThread {
+        prepareApplicationEnvironment(frameworkRes)
+        val thread = ActivityThread.currentActivityThread() ?: ActivityThread.systemMain()
+        HostedActivityProcess.initializeMainHandler(thread)
+        if (systemInfoInstalled) return thread
+
         val info = ApplicationInfo()
         info.packageName = "android"
         info.processName = "system"
@@ -74,9 +90,8 @@ object HostContexts {
         info.credentialProtectedDataDir = info.dataDir
         info.deviceProtectedDataDir = info.dataDir
         thread.installSystemApplicationInfo(info, ClassLoader.getSystemClassLoader())
-        // AOSP ActivityThread.attach(system=true) creates the system Application before
-        // SystemServer starts services. DeviceConfig's Settings-backed store relies on it.
-        thread.`bindSystemApplication$artzig`()
+        systemInfoInstalled = true
+        thread.handleConfigurationChanged(Configuration(ResourcesManager.getInstance().configuration), Context.DEVICE_ID_DEFAULT)
         return thread
     }
 
@@ -95,6 +110,7 @@ object HostContexts {
         ArtzigDisplay.configure(width, height, densityDpi)
         val config = Configuration()
         config.setToDefaults()
+        config.setLocales(android.os.LocaleList.getDefault())
         config.densityDpi = densityDpi
         config.screenWidthDp = (width / density).toInt()
         config.screenHeightDp = (height / density).toInt()

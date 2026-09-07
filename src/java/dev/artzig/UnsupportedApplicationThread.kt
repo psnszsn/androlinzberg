@@ -1,6 +1,8 @@
 @file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
 
-package android.app
+package dev.artzig
+
+import android.app.*
 
 /** Every IApplicationThread method throws UnsupportedOperationException; the
  * hosted application thread overrides the subset used by the current activity

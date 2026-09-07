@@ -1791,12 +1791,12 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/content/PermissionChecker.java");
     try c.file("$CJ/android/permission/PermissionCheckerManager.java");
     // Real IActivityManager/IApplicationThread contract (generated AIDL) and its
-    // closure: ClientTransactionHandler + servertransaction (the hosted ActivityThread
-    // implements the handler), the AMS-facing parcelables, VoiceInteractor.
+    // closure: stock ActivityThread/ClientTransactionHandler + servertransaction,
+    // the AMS-facing parcelables, VoiceInteractor.
     try c.file("$CJ/android/app/ActivityClient.java");
     try c.file("$CJ/android/app/ServiceStartArgs.java");
     // Real LoadedApk/ResourcesManager/Instrumentation (+ ApplicationLoaders, AppComponentFactory);
-    // the hosted ActivityThread carries the members they use.
+    // stock ActivityThread owns their process and component lifecycle.
     try c.file("$FB/opengl/java/android/opengl/EGL14.java");
     try c.file("$FB/opengl/java/android/opengl/EGL15.java");
     try c.file("$FB/opengl/java/android/opengl/EGLExt.java");
@@ -1840,6 +1840,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/GraphicsEnvironment.java");
     try c.file("$CJ/com/android/internal/util/TypedProperties.java");
     try c.file("$CJ/android/app/Activity.java");
+    try c.file("$CJ/android/app/ActivityThread.java");
     try c.file("$CJ/android/app/Instrumentation.java");
     // Stock Activity support closure; Activity itself still awaits the voice/window boundary.
     try c.file("$CJ/android/app/DirectAction.java");

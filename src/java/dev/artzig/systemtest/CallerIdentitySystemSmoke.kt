@@ -1,6 +1,6 @@
 package dev.artzig.systemtest
 
-import android.app.HostedServiceClient
+import dev.artzig.HostedServiceClient
 import android.content.pm.PackageManager
 import android.os.Looper
 import dev.artzig.HostContexts

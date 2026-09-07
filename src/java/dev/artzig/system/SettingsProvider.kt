@@ -160,7 +160,7 @@ class SettingsProvider : ContentProvider() {
         val permission =
             if (table == "system") "android.permission.WRITE_SETTINGS"
             else "android.permission.WRITE_SECURE_SETTINGS"
-        if (android.app.HostedServiceClient.checkUidPermission(permission, uid) !=
+        if (dev.artzig.HostedServiceClient.checkUidPermission(permission, uid) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
             throw SecurityException("uid " + uid + " needs " + permission + " to write " + table + " settings")

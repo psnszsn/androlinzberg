@@ -22,7 +22,17 @@ import dev.artzig.system.HostedPackageManagerService
 
 /** Manifest-backed process fixture. The production task manager and stock transactions own
  * lifecycle decisions; only component metadata and service lookup are replaced for the test. */
-internal class StockActivityFixture(apk: String, private val pump: () -> Unit) : AutoCloseable {
+internal class StockActivityFixture(apk: String, private val drain: () -> Unit) : AutoCloseable {
+    private fun pump() {
+        repeat(16) {
+            drain()
+            android.view.Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
+            drain()
+            if (!android.view.Choreographer.getInstance().`hasDueCallbacks$artzig`()) return
+        }
+        error("Activity fixture frame callbacks did not settle")
+    }
+
     private val context = HostContexts.systemContext(
         checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)
     private val packages = HostedPackageManagerService().apply {
@@ -34,7 +44,7 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
     private var activityInfos: Map<String, ActivityInfo> = emptyMap()
     private var resolver: (Intent) -> ComponentName? = { it.component }
     private val tokens = LinkedHashSet<IBinder>()
-    private val applicationThread = ActivityThread.currentActivityThread().applicationThread
+    private val applicationThread: IApplicationThread = ActivityThread.currentActivityThread().applicationThread
     private val transport = object : IApplicationThread by applicationThread {
         override fun bindApplication(
             packageName: String?, info: android.content.pm.ApplicationInfo?,
@@ -74,6 +84,9 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
     private val originalPackages = ActivityThread.getPackageManager()
     private val fixturePackages = object : IPackageManager by originalPackages {
         override fun getPermissionControllerPackageName(): String = packages.permissionControllerPackageName
+        override fun getPackageInfo(name: String?, flags: Long, userId: Int): android.content.pm.PackageInfo? =
+            if (name == PACKAGE) packages.getPackageInfo(name, flags, userId)
+            else originalPackages.getPackageInfo(name, flags, userId)
         override fun checkPermission(permission: String?, name: String?, userId: Int): Int =
             if (name == PACKAGE) packages.checkPermission(permission, name, userId)
             else originalPackages.checkPermission(permission, name, userId)
@@ -117,7 +130,7 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
         ActivityClient.setActivityClientController(tasks.activityClientController)
     }
 
-    fun configure(adapter: ActivityThread.HostAdapter, infos: Map<String, ActivityInfo>,
+    fun configure(adapter: HostedActivityProcess.HostAdapter, infos: Map<String, ActivityInfo>,
         resolver: (Intent) -> ComponentName? = { it.component }) {
         this.resolver = resolver
         activityInfos = infos.mapValues { (_, source) -> ActivityInfo(source).apply {
@@ -133,7 +146,7 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
                 deviceProtectedDataDir = this@StockActivityFixture.applicationInfo.deviceProtectedDataDir
             }
         } }
-        ActivityThread.configureActivityHost(adapter)
+        HostedActivityProcess.configureActivityHost(adapter)
     }
 
     fun launch(name: String): Activity {
@@ -142,7 +155,7 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
             null, null, -1, 0, null, null)
         android.app.Instrumentation.checkStartActivityResult(result, intent)
         pump()
-        return checkNotNull(ActivityThread.currentActivity()).also { check(it.javaClass.name == name) }
+        return checkNotNull(HostedActivityProcess.currentActivity()).also { check(it.javaClass.name == name) }
     }
 
     fun activitySender(intent: Intent, canceled: Boolean = false): android.content.IntentSender {
@@ -163,7 +176,7 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
         tasks.activityClientController.activityLocalRelaunch(record.token)
         transaction.addTransactionItem(android.app.servertransaction.ActivityRelaunchItem(
             record.token, null, null, 0,
-            android.util.MergedConfiguration(context.resources.configuration, record.overrideConfig),
+            android.util.MergedConfiguration(context.resources.configuration, record.fixtureOverrideConfig),
             false, record.activityWindowInfo))
         transaction.addTransactionItem(android.app.servertransaction.TransactionExecutorHelper
             .getLifecycleRequestForCurrentState(record))
@@ -177,7 +190,7 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
                 tasks.activityClientController.finishActivity(token, Activity.RESULT_CANCELED, null, 0)
             }
             pump()
-            ActivityThread.shutdownActivitiesInProcess()
+            HostedActivityProcess.shutdownActivitiesInProcess()
         } finally {
             tasks.onProcessDied(transport.asBinder())
             instanceField.set(taskSingleton, originalTasks)
@@ -237,3 +250,29 @@ internal fun Activity.performRestoreInstanceState(state: android.os.Bundle) = fi
 internal fun Activity.performPostCreate(state: android.os.Bundle?) {
     ActivityThread.currentActivityThread().instrumentation.callActivityOnPostCreate(this, state)
 }
+
+// Test-only record setup/observations. Stock ActivityThread keeps these fields package-private;
+// fixture access must not change their visibility in the framework.
+private fun ActivityThread.ActivityClientRecord.fixtureField(name: String) =
+    ActivityThread.ActivityClientRecord::class.java.getDeclaredField(name).apply { isAccessible = true }
+internal var ActivityThread.ActivityClientRecord.fixtureActivity: Activity?
+    get() = fixtureField("activity").get(this) as Activity?
+    set(value) { fixtureField("activity").set(this, value) }
+internal var ActivityThread.ActivityClientRecord.fixtureIntent: Intent
+    get() = fixtureField("intent").get(this) as Intent
+    set(value) { fixtureField("intent").set(this, value) }
+internal var ActivityThread.ActivityClientRecord.fixtureActivityInfo: ActivityInfo
+    get() = fixtureField("activityInfo").get(this) as ActivityInfo
+    set(value) { fixtureField("activityInfo").set(this, value) }
+internal var ActivityThread.ActivityClientRecord.fixtureState: android.os.Bundle?
+    get() = fixtureField("state").get(this) as android.os.Bundle?
+    set(value) { fixtureField("state").set(this, value) }
+internal var ActivityThread.ActivityClientRecord.fixturePersistentState: android.os.PersistableBundle?
+    get() = fixtureField("persistentState").get(this) as android.os.PersistableBundle?
+    set(value) { fixtureField("persistentState").set(this, value) }
+internal var ActivityThread.ActivityClientRecord.fixtureOverrideConfig: android.content.res.Configuration
+    get() = fixtureField("overrideConfig").get(this) as android.content.res.Configuration
+    set(value) { fixtureField("overrideConfig").set(this, value) }
+internal var ActivityThread.ActivityClientRecord.fixtureLastNonConfigurationInstances: Any?
+    get() = fixtureField("lastNonConfigurationInstances").get(this) as Any?
+    set(value) { fixtureField("lastNonConfigurationInstances").set(this, value) }

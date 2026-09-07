@@ -3,7 +3,7 @@ package dev.artzig.systemtest
 import android.app.ActivityManager
 import android.app.ActivityThread
 import android.app.ApplicationExitInfo
-import android.app.HostedServiceClient
+import dev.artzig.HostedServiceClient
 import android.os.DropBoxManager
 import android.os.Looper
 import android.os.Process

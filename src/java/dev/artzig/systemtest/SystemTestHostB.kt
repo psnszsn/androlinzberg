@@ -24,16 +24,17 @@ internal object SystemTestHostB {
         val frameworkRes = checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))
         // Own package identity (the clipboard's AppOps checkPackage verifies
         // the calling package against this process's uid).
-        dev.artzig.HostContexts.systemContext(frameworkRes, 640, 480, 120, 0)
+        dev.artzig.HostContexts.prepareApplicationEnvironment(frameworkRes)
+        dev.artzig.HostContexts.configureDisplay(640, 480, 120)
         // Install this package's fixture APK: the session's package manager
         // parses the real manifest (client A asserts the parsed values).
         val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_B")) { "AZK_FIXTURE_APK_B is not set" }
-        val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
         check(installer.installPackage(fixture, null) == "dev.artzig.test.b")
         // The stock bindApplication message installs and publishes the parsed
         // providers before Application.onCreate.
         val context: android.content.Context =
-            android.app.HostedServiceClient.attachApplication("dev.artzig.test.b")
+            dev.artzig.HostedServiceClient.attachApplication("dev.artzig.test.b")
         check(ApplicationBindingEvents.events == listOf("application:attach",
             "provider:SecretProvider", "provider:TestProvider", "application:create")) {
             "application/provider startup order: ${ApplicationBindingEvents.events}"

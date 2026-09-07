@@ -39,6 +39,10 @@ internal class HostedInputMethodManagerService(private val context: android.cont
     /** No IME process exists to receive or report visibility transitions. */
     override fun getImeTrackerService(): IImeTracker? = null
 
+    // InputMethodManagerService exposes the system process tracing state to client tracers.
+    override fun isImeTraceEnabled(): Boolean =
+        com.android.internal.inputmethod.ImeTracing.getInstance().isEnabled
+
     override fun getInputMethodList(userId: Int, directBootAwareness: Int): InputMethodInfoSafeList =
         InputMethodInfoSafeList.empty()
 

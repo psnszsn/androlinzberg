@@ -182,10 +182,6 @@ public final class SystemServiceRegistry {
         // "iphonesubinfo", "carrier_config", "telephony.registry", "telecom" and "imms" through
         // ServiceManager; the hosted services answer as a device without a radio.
         // AOSP ActivityThread.initializeMainlineModules and service wrappers.
-        android.bluetooth.BluetoothFrameworkInitializer.setBluetoothServiceManager(
-                new android.os.BluetoothServiceManager());
-        android.bluetooth.BluetoothFrameworkInitializer.setBinderCallsStatsInitializer(
-                context -> com.android.internal.os.BinderCallsStats.startForBluetooth(context));
         android.bluetooth.BluetoothFrameworkInitializer.registerServiceWrappers();
         registerService(Context.COMPANION_DEVICE_SERVICE,
                 android.companion.CompanionDeviceManager.class,
@@ -200,7 +196,6 @@ public final class SystemServiceRegistry {
                 }
                 return new android.companion.CompanionDeviceManager(service, ctx.getOuterContext());
             }});
-        android.telephony.TelephonyFrameworkInitializer.setTelephonyServiceManager(new android.os.TelephonyServiceManager());
         android.telephony.TelephonyFrameworkInitializer.registerServiceWrappers();
         registerService(Context.TELEPHONY_REGISTRY_SERVICE, android.telephony.TelephonyRegistryManager.class,
                 new CachedServiceFetcher<android.telephony.TelephonyRegistryManager>() {
@@ -386,7 +381,6 @@ public final class SystemServiceRegistry {
         // over the hosted ISessionManager, MediaMetricsManager over the hosted IMediaMetricsManager.
         // AOSP: the media framework initializer registers MediaSessionManager and owns the
         // MediaServiceManager the manager resolves its binder through.
-        android.media.MediaFrameworkPlatformInitializer.setMediaServiceManager(new android.media.MediaServiceManager());
         android.media.MediaFrameworkPlatformInitializer.registerServiceWrappers();
         registerService(Context.MEDIA_METRICS_SERVICE, android.media.metrics.MediaMetricsManager.class,
                 new CachedServiceFetcher<android.media.metrics.MediaMetricsManager>() {

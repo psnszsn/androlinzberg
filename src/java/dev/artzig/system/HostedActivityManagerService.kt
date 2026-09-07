@@ -94,7 +94,20 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val holder: ContentProviderHolder,
         /** Null for providers the system process installed in-process. */
         val app: ProcessRecord?,
-    )
+    ) { var dead = false }
+
+    // ContentProviderConnection's client reference counts and opaque Binder identity.
+    // OOM/zygote policy remains outside this host service; death uses the existing
+    // broker-backed process cleanup path.
+    private class ProviderConnection(
+        val provider: ContentProviderRecord,
+        val client: IBinder?,
+        val clientUid: Int,
+        val clientPid: Int,
+    ) : Binder() {
+        var stableCount = 0
+        var unstableCount = 0
+    }
 
     private class ProviderWaiter(val packageName: String) {
         val latch = java.util.concurrent.CountDownLatch(1)
@@ -323,6 +336,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** Published content providers, one record per declared authority
      * (source note: ActivityManagerService.mProviderMap). */
     private val providersByAuthority = LinkedHashMap<String, ContentProviderRecord>()
+    private val providerConnections = ArrayList<ProviderConnection>()
     /** getContentProvider calls blocked until the owning package publishes. */
     private val providerWaiters = LinkedHashMap<String, MutableList<ProviderWaiter>>()
     @Volatile var processLauncher: ProcessLauncher? = null
@@ -499,6 +513,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
             // Provider records the dead process published, and waiters that
             // were counting on that package publishing.
+            providersByAuthority.values.filter { it.app === record }.forEach { it.dead = true }
+            providerConnections.filter { it.provider.app === record }.forEach { it.provider.dead = true }
+            providerConnections.removeAll { it.client == record.binder || it.provider.app === record }
             providersByAuthority.entries.removeAll { it.value.app === record }
             for (waiters in providerWaiters.values) {
                 val failed = waiters.filter { it.packageName == record.packageName }
@@ -1106,8 +1123,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
     fun addSystemProvider(holder: ContentProviderHolder) {
         val released = ArrayList<ProviderWaiter>()
         synchronized(lock) {
+            val record = ContentProviderRecord(holder, null)
             for (authority in holder.info.authority?.split(";") ?: return) {
-                providersByAuthority[authority] = ContentProviderRecord(holder, null)
+                providersByAuthority[authority] = record
                 providerWaiters.remove(authority)?.let { released.addAll(it) }
             }
         }
@@ -1155,7 +1173,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         synchronized(lock) {
             providersByAuthority[authority]?.let {
                 checkProviderAccess(it.holder.info, callingUid)
-                return it.holder
+                return acquireProviderLocked(it, caller, stable)
             }
             val info = packageService?.resolveContentProvider(authority, 0L, 0) ?: return null
             checkProviderAccess(info, callingUid)
@@ -1174,7 +1192,67 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (!published) Log.w(TAG, "timed out waiting for provider " + authority)
             val record = providersByAuthority[authority] ?: return null
             checkProviderAccess(record.holder.info, callingUid)
-            return record.holder
+            return acquireProviderLocked(record, caller, stable)
+        }
+    }
+
+    /** ContentProviderRecord.newHolder + ContentProviderHelper.incProviderCountLocked.
+     * Publication's local noReleaseNeeded flag must not escape to an ordinary remote client. */
+    private fun acquireProviderLocked(record: ContentProviderRecord, caller: IApplicationThread?, stable: Boolean): ContentProviderHolder {
+        val holder = ContentProviderHolder(record.holder.info)
+        holder.provider = record.holder.provider
+        holder.noReleaseNeeded = record.app == null || record.app.uid == android.os.Process.SYSTEM_UID
+        if (!holder.noReleaseNeeded) {
+            val uid = Binder.getCallingUid()
+            val pid = Binder.getCallingPid()
+            val client = caller?.asBinder()
+            val connection = providerConnections.firstOrNull {
+                it.provider === record && it.client == client && it.clientUid == uid && it.clientPid == pid
+            } ?: ProviderConnection(record, client, uid, pid).also(providerConnections::add)
+            if (stable) connection.stableCount++ else connection.unstableCount++
+            holder.connection = connection
+        }
+        return holder
+    }
+
+    private fun providerConnection(connection: IBinder?): ProviderConnection {
+        if (connection == null) throw NullPointerException("connection is null")
+        return connection as? ProviderConnection
+            ?: throw IllegalArgumentException("$connection not a ContentProviderConnection")
+    }
+
+    override fun refContentProvider(connection: IBinder?, stableDelta: Int, unstableDelta: Int): Boolean = synchronized(lock) {
+        val record = providerConnection(connection)
+        val stable = record.stableCount + stableDelta
+        val unstable = record.unstableCount + unstableDelta
+        check(stable >= 0) { "stableCount < 0: $stable" }
+        check(unstable >= 0) { "unstableCount < 0: $unstable" }
+        check(stable + unstable > 0) { "ref counts can't go to zero here: stable=$stable unstable=$unstable" }
+        record.stableCount = stable
+        record.unstableCount = unstable
+        !record.provider.dead
+    }
+
+    override fun removeContentProvider(connection: IBinder?, stable: Boolean) {
+        synchronized(lock) {
+            val record = providerConnection(connection)
+            if (stable) record.stableCount-- else record.unstableCount--
+            if (record.stableCount + record.unstableCount == 0) providerConnections.remove(record)
+        }
+    }
+
+    // ContentProviderHelper.unstableProviderDied: ignore an already cleaned-up provider or a
+    // false death report. Confirmed early death enters the same path as the broker notification.
+    override fun unstableProviderDied(connection: IBinder?) {
+        val record = providerConnection(connection).provider
+        val provider = synchronized(lock) { if (record.dead) null else record.holder.provider } ?: return
+        if (provider.asBinder().pingBinder()) return
+        val process = synchronized(lock) {
+            if (record.dead || record.holder.provider !== provider) null else record.app
+        }
+        if (process != null) {
+            val identity = Binder.clearCallingIdentity()
+            try { handleProcessDied(process) } finally { Binder.restoreCallingIdentity(identity) }
         }
     }
 
@@ -1201,8 +1279,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
                     Log.w(TAG, "uid " + callingUid + " may not publish providers of " + holder.info.packageName)
                     continue
                 }
+                val record = ContentProviderRecord(holder, app)
                 for (authority in holder.info.authority?.split(";") ?: continue) {
-                    providersByAuthority[authority] = ContentProviderRecord(holder, app)
+                    providersByAuthority[authority] = record
                     providerWaiters.remove(authority)?.let { released.addAll(it) }
                 }
             }
@@ -1434,8 +1513,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
     }
     override fun getForegroundServiceType(className: ComponentName?, token: IBinder?): Int = 0
-    override fun refContentProvider(connection: IBinder?, stableDelta: Int, unstableDelta: Int): Boolean = true
-    override fun removeContentProvider(connection: IBinder?, stable: Boolean) {}
     override fun killApplication(pkg: String?, appId: Int, userId: Int, reason: String?, exitInfoReason: Int) {}
     override fun noteWakeupAlarm(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, sourcePkg: String?, tag: String?) {}
     /** AOSP AMS pins the render thread to the app's scheduling group; no scheduler on this host. */
@@ -1496,10 +1573,14 @@ class HostedActivityManagerService(private val context: android.content.Context?
         try {
             val holder = getContentProvider(null, "android", uri.authority, userId, true)
                 ?: return android.content.pm.PackageManager.PERMISSION_DENIED
-            val packageName = packageService?.getPackagesForUid(Binder.getCallingUid())?.firstOrNull()
-                ?: return android.content.pm.PackageManager.PERMISSION_DENIED
-            return holder.provider.checkUriPermission(android.content.AttributionSource(callingUid, packageName, null),
-                uri, callingUid, modeFlags)
+            try {
+                val packageName = packageService?.getPackagesForUid(Binder.getCallingUid())?.firstOrNull()
+                    ?: return android.content.pm.PackageManager.PERMISSION_DENIED
+                return holder.provider.checkUriPermission(android.content.AttributionSource(callingUid, packageName, null),
+                    uri, callingUid, modeFlags)
+            } finally {
+                if (!holder.noReleaseNeeded) removeContentProvider(holder.connection, true)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Unable to check provider URI permission for $uri", e)
             return android.content.pm.PackageManager.PERMISSION_DENIED

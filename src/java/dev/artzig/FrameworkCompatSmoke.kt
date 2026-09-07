@@ -280,11 +280,12 @@ public final class FrameworkCompatSmoke {
             // the broker/PackageManager identity explicitly before static clients such as
             // Environment ask StorageManager for this UID's volumes.
             val fixtureApk: String = requireNotNull(args.getOrNull(1)) { "fixture APK argument missing" }
-            val installer = requireNotNull(android.app.HostedServiceClient.installerOrNull())
+            val installer = requireNotNull(dev.artzig.HostedServiceClient.installerOrNull())
             require(installer.installPackage(fixtureApk, null) == "org.example", "fixture install")
             // Exercise LoadedApk construction before binding creates the Application.
+            HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
             testLoadedApk()
-            val application = android.app.HostedServiceClient.attachApplication("org.example")
+            val application = dev.artzig.HostedServiceClient.attachApplication("org.example")
             require(application is SmokeApplication && application.created,
                 "bindApplication calls onCreate on the existing LoadedApk Application")
             require(android.app.ActivityThread.currentActivityThread().getPackageInfo(
@@ -651,9 +652,12 @@ public final class FrameworkCompatSmoke {
             while (System.nanoTime() < spinUntil) spin += spin xor 1
             val cpu1 = android.os.SystemClock.currentThreadTimeMillis()
             require(cpu1 >= cpu0 && cpu1 < android.os.SystemClock.uptimeMillis(), "SystemClock.currentThreadTimeMillis is thread CPU time, not wall time (" + spin + ")")
-            // Real StrictMode: LAX by default, policy round trips, no service-backed penalty throws.
-            require(android.os.StrictMode.getThreadPolicy().toString() == android.os.StrictMode.ThreadPolicy.LAX.toString(), "StrictMode thread policy LAX by default")
-            require(android.os.StrictMode.getVmPolicy().toString() == android.os.StrictMode.VmPolicy.LAX.toString(), "StrictMode vm policy LAX by default")
+            // Stock handleBindApplication installs target-SDK defaults before onCreate.
+            require(runCatching { dalvik.system.BlockGuard.getThreadPolicy().onNetwork() }
+                .exceptionOrNull() is android.os.NetworkOnMainThreadException,
+                "bindApplication prohibits network on the main thread")
+            require(android.os.StrictMode.vmFileUriExposureEnabled(),
+                "bindApplication enables the modern file URI exposure policy")
             val oldThread = android.os.StrictMode.getThreadPolicy()
             android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder().detectAll().penaltyLog().build())
             android.os.StrictMode.noteSlowCall("azk-smoke")

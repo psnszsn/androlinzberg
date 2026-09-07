@@ -45,17 +45,18 @@ internal object SystemTestClientA {
         // This process's context carries its own package identity: services
         // like the clipboard verify the calling package against the uid
         // (AppOpsService.checkPackage), so "android" would be a spoofed claim.
-        dev.artzig.HostContexts.systemContext(frameworkRes, 640, 480, 120, 0)
+        dev.artzig.HostContexts.prepareApplicationEnvironment(frameworkRes)
+        dev.artzig.HostContexts.configureDisplay(640, 480, 120)
         // Server-side install of this package's fixture APK, then attach and
         // bind (AOSP handleBindApplication: the process context is the
         // package's Application). The fixture requests WRITE_SECURE_SETTINGS;
         // the signature match with framework-res.apk (both signed by the
         // azk-platform test key) grants it at install.
         val fixture = checkNotNull(System.getenv("AZK_FIXTURE_APK_A")) { "AZK_FIXTURE_APK_A is not set" }
-        val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
         check(installer.installPackage(fixture, null) == "dev.artzig.test.a")
         val context: android.content.Context =
-            android.app.HostedServiceClient.attachApplication("dev.artzig.test.a")
+            dev.artzig.HostedServiceClient.attachApplication("dev.artzig.test.a")
         check(ApplicationBindingEvents.events == listOf("application:attach",
             "provider:SecretProvider", "application:create"))
         ActivityUriGrantSystemSmoke.publish(context)
@@ -1150,7 +1151,8 @@ internal object SystemTestClientA {
         check(dropped != null && dropped.tag == "azk-test" && dropped.getText(64) == "hello dropbox", "dropbox entry round trip")
         dropped?.close()
         val errorManager = android.app.ActivityManager.getService()
-        val applicationToken = android.app.ActivityThread.currentActivityThread().applicationThread.asBinder()
+        val applicationThread: android.app.IApplicationThread = android.app.ActivityThread.currentActivityThread().applicationThread
+        val applicationToken = applicationThread.asBinder()
         check(com.android.internal.os.RuntimeInit.getApplicationObject() == applicationToken,
             "RuntimeInit owns the attached application token")
         val reportMark = System.currentTimeMillis() - 1
@@ -1246,6 +1248,23 @@ internal object SystemTestClientA {
         // --- cross-process content provider (real CursorWindow transport).
         val providerUri = android.net.Uri.parse("content://dev.artzig.test.b.provider/rows")
         val resolver = context.contentResolver
+        val providerManager = android.app.ActivityManager.getService()
+        val providerHolder = checkNotNull(providerManager.getContentProvider(
+            dev.artzig.HostedServiceClient.applicationThread(), context.packageName,
+            providerUri.authority, 0, false,
+        ))
+        val providerConnection = checkNotNull(providerHolder.connection)
+        check(!providerHolder.noReleaseNeeded, "remote provider acquisition needs a release")
+        try {
+            providerManager.unstableProviderDied(providerConnection)
+            check(providerHolder.provider.asBinder().pingBinder(), "false provider-death report preserves a live host")
+            check(providerManager.refContentProvider(providerConnection, 1, -1), "upgrade unstable provider reference")
+            check(runCatching { providerManager.refContentProvider(providerConnection, -2, 0) }
+                .exceptionOrNull() is IllegalStateException, "negative stable references rejected")
+            check(runCatching { providerManager.refContentProvider(providerConnection, -1, 0) }
+                .exceptionOrNull() is IllegalStateException, "refContentProvider cannot drop the last reference")
+            check(providerManager.refContentProvider(providerConnection, -1, 1), "downgrade stable provider reference")
+        } finally { providerManager.removeContentProvider(providerConnection, false) }
         val cursor = resolver.query(providerUri, null, null, null, null)
         check(cursor != null, "cross-process provider query returned a cursor")
         val names = ArrayList<String>()

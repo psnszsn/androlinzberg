@@ -138,28 +138,25 @@ public final class ViewHost {
                 scale120,
                 android.R.style.Theme_DeviceDefault_NoActionBar,
             )
-            // AOSP ActivityThread.attach(system) installs the process Application
-            // before any Activity creates or lays out views. The demo host has
-            // no manifest/providers, but framework code still relies on
-            // currentApplication() for process configuration.
-            android.app.ActivityThread.currentActivityThread().`bindSystemApplication$artzig`()
             val thread = android.app.ActivityThread.currentActivityThread()
-            val record = android.app.ActivityThread.ActivityClientRecord().apply {
-                token = android.os.Binder()
-                intent = android.content.Intent().setComponent(android.content.ComponentName(
-                    sContext.packageName, DemoActivity::class.java.name))
-                activityInfo = android.content.pm.ActivityInfo().apply {
-                    packageName = sContext.packageName
-                    name = DemoActivity::class.java.name
-                    applicationInfo = sContext.applicationInfo
-                    theme = android.R.style.Theme_DeviceDefault_NoActionBar
-                }
+            val launchIntent = android.content.Intent().setComponent(android.content.ComponentName(
+                sContext.packageName, DemoActivity::class.java.name))
+            val info = android.content.pm.ActivityInfo().apply {
+                packageName = sContext.packageName
+                name = DemoActivity::class.java.name
+                applicationInfo = sContext.applicationInfo
+                theme = android.R.style.Theme_DeviceDefault_NoActionBar
             }
+            val record = android.app.ActivityThread.ActivityClientRecord(android.os.Binder(), launchIntent,
+                0, info, android.content.res.Configuration(), null, null, null, null, null, null,
+                null, false, null, thread, null, null, false, null, null, android.window.ActivityWindowInfo())
             val pending = android.app.servertransaction.PendingTransactionActions()
             sActivity = checkNotNull(thread.handleLaunchActivity(record, pending, 0, null))
             thread.handleStartActivity(record, pending, null)
             thread.handleResumeActivity(record, true, false, false, "demo launch")
-            sRoot = HostedWindowRoots.attachActivity(sActivity, width, height)
+            sRoot = checkNotNull(sActivity.window.decorView.viewRootImpl)
+            sRoot.setSize(width, height)
+            HostedWindowStack.setActivityRoot(sRoot)
             ArtzigAccessibilityBridge.setActivityRoot(sRoot)
         }
 

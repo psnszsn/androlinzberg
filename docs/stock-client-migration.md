@@ -25,7 +25,30 @@ EGL was not excluded from the follow-up. The audit ratchet, AOSP closure check,
 reproducible packaging, and module and full APK regression requirements remain
 in force.
 
-Follow-up changes in the current tree:
+Follow-up milestones (newest first; earlier entries describe their state at that point):
+
+- ActivityThread now compiles verbatim. The 1,757-line adaptation and hosted
+  IApplicationThread implementation are deleted. Bootstrap, package announcement,
+  teardown and desktop presentation live in dev.artzig; the stock thread owns
+  application binding, providers, services and activity transactions. Window
+  membership and stop state drive presentation through the existing backend.
+  The host registers the two ActivityThread JNI operations below the Java client.
+  This completes the Activity/ActivityThread/Instrumentation/Dialog source swap;
+  ViewRootImpl and the remaining service-backed client stacks are still pending.
+  Stock application binding now applies target-SDK StrictMode and app network
+  security policy. A private system-root layout exposes the selected Linux CA
+  bundle to stock SystemCertificateSource, retaining application trust-anchor
+  selection, certificate removal and chain verification. Hosted services now
+  track provider connection references/death, filter size changes through reported
+  resource qualifiers and ignore late stop acknowledgements after resume.
+  JVM and cross-process system suites pass, including configuration overrides,
+  coalesced relaunches, saved-state ordering, ActivityGroup and retained fragments.
+  All 11 APK tests pass (38 steps, zero structured runtime issues); phone and desktop
+  drawer screenshots were inspected. Native/Binder and build audits pass. The audit
+  remains 35 stubs (22 pending, 13 survivors): ActivityThread was outside that count.
+  Both tarball checksums still match the previous verified milestone, and the
+  packaged ActivityThread is byte-identical to the pinned checkout. No archive
+  inputs changed and no Wayland, PipeWire or FFmpeg backend work was added.
 
 - Application attachment now waits for the stock finishAttachApplication handshake
   before releasing activity/service work. The service checks caller identity and start
@@ -1092,14 +1115,12 @@ Follow-up changes in the current tree:
   files match the checkout. The inventory is 61 stubs: 30 pending, 31 survivors.
 
 `Dialog` was already compiled verbatim from the pinned AOSP source before this
-follow-up; its packaged source hash matches the checkout. The remaining activity
-core (`Activity` and `ActivityThread`) and service-backed
-stacks are still unfinished.
-The initial activity-family closure against the follow-up build reported 495 sources,
-273 AIDL interfaces, and 229 blockers or missing members. These are closure-tool
-findings, not 229 independently verified runtime gaps. They include window
-lifecycle and splash-screen operations, runtime diagnostics, and application
-shared-memory support; they must be resolved before replacing the core.
+follow-up. Activity, ActivityThread and Instrumentation now also compile verbatim,
+as recorded in the milestones above. Window/client adaptations and the remaining
+service-backed stacks still prevent full stock-client completion.
+The initial activity-family closure reported 495 sources, 273 AIDL interfaces,
+and 229 blockers or missing members. That is a historical dependency report,
+not the current gap count or 229 independently verified runtime failures.
 
 ## Original fence (superseded by the follow-up scope)
 

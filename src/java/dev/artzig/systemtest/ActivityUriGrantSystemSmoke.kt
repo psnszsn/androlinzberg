@@ -48,6 +48,7 @@ open class UriGrantActivity : Activity() {
     }
 
     override fun onNewIntent(intent: Intent) {
+        check(!observation.getBoolean("resumed")) { "new intent delivered while resumed" }
         super.onNewIntent(intent)
         recordCallback("new-intent")
         verifyUris(intent)
@@ -130,8 +131,9 @@ internal object ActivityUriGrantSystemSmoke {
     private var originalCallerFlags: Any? = null
 
     fun publish(context: Context) {
+        HeadlessActivityFrames.start()
         val name = context.packageName + ".activity-uri-grants"
-        val handler = Handler(Looper.getMainLooper())
+        val handler = Handler.createAsync(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
                 if (code !in START..FINISH_AFFINITY) return false
@@ -300,7 +302,7 @@ internal object ActivityUriGrantSystemSmoke {
             if (condition(state)) return state
             Thread.sleep(10)
         } while (System.nanoTime() < deadline)
-        error("activity $pkg/$id did not reach expected state: $state")
+        error("activity $pkg/$id did not reach expected state: $state callbacks=${state.getStringArrayList("callbacks")}")
     }
     private fun activityIntent(pkg: String, id: Int) = Intent().setComponent(
         ComponentName(pkg, if (pkg == A) AUriGrantActivity::class.java.name
@@ -427,7 +429,9 @@ internal object ActivityUriGrantSystemSmoke {
         start(-1, activityIntent(A, 83).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         val delivered = awaitState(A, 81) { it.getBoolean("resumed") && it.getInt("newIntents") == 1 }
         check(delivered.getInt("creates") == 1 && !call(A, STATUS, args(83)).getBoolean("live"))
-        check(checkNotNull(delivered.getStringArrayList("callbacks")).takeLast(2) == listOf("new-intent", "resume"))
+        check(checkNotNull(delivered.getStringArrayList("callbacks")).takeLast(2) == listOf("new-intent", "resume")) {
+            "new-intent/resume ordering: ${delivered.getStringArrayList("callbacks")}"
+        }
         call(A, FINISH, args(80).apply { putBoolean("removeTask", true) })
         awaitState(A, 80) { !it.getBoolean("live") }
         awaitState(A, 81) { !it.getBoolean("live") }

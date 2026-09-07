@@ -48,7 +48,7 @@ object HostedWindowStack {
     }
 
     @JvmStatic
-    fun setActivityRoot(root: ViewRootImpl) {
+    fun setActivityRoot(root: ViewRootImpl?) {
         observe()
         synchronized(lock) { activityRoot = root }
     }
@@ -66,7 +66,7 @@ object HostedWindowStack {
     fun entries(): MutableList<Entry> {
         observe()
         return synchronized(lock) {
-            ArrayList(windows.filter { it.root !== activityRoot }.onEach {
+            ArrayList(windows.filter { it.root !== activityRoot && !it.root.`isWindowStopped$artzig`() && it.view.visibility == View.VISIBLE }.onEach {
                 // Global listeners report membership changes; layout updates replace this object.
                 it.lp = it.view.layoutParams as WindowManager.LayoutParams
             })

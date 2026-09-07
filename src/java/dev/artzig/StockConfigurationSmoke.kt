@@ -36,7 +36,7 @@ internal object StockConfigurationSmoke {
         val thread = ActivityThread.currentActivityThread()
         val application = checkNotNull(ActivityThread.currentApplication())
         val original = Configuration(application.resources.configuration)
-        val appThread = thread.applicationThread
+        val appThread: android.app.IApplicationThread = thread.applicationThread
         val token = Binder()
         val callback = object : ComponentCallbacks2 {
             override fun onConfigurationChanged(config: Configuration) {
@@ -58,7 +58,7 @@ internal object StockConfigurationSmoke {
             pump()
             check(StockConfigurationService.created)
             val first = Configuration(original).apply {
-                seq = 0
+                seq = maxOf(1, thread.configuration.seq + 1)
                 fontScale += 0.25f
                 orientation = if (original.orientation == Configuration.ORIENTATION_LANDSCAPE)
                     Configuration.ORIENTATION_PORTRAIT else Configuration.ORIENTATION_LANDSCAPE
@@ -69,10 +69,9 @@ internal object StockConfigurationSmoke {
             check(LocaleList.getDefault().get(0) == Locale.US)
             thread.handleConfigurationChanged(Configuration(first), Context.DEVICE_ID_DEFAULT)
             check(events.size == 2)
-            // Pending delivery is exercised with unconditional sequence zero here, so the
-            // test cannot outrun a later hosted service's independent sequence counter.
-            // Activity relaunch regressions cover positive sequence and stale-update policy.
-            val next = Configuration(first).apply { fontScale += 0.25f }
+            // Sequence zero is unconditional, so it cannot represent a stale delivery.
+            // Use increasing nonzero sequences to prove a pending newer value wins.
+            val next = Configuration(first).apply { seq += 1; fontScale += 0.25f }
             thread.updatePendingConfiguration(next)
             thread.handleConfigurationChanged(first, Context.DEVICE_ID_DEFAULT)
             check(events == listOf("application:${first.fontScale}", "service:${first.fontScale}",

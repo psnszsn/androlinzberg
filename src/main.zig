@@ -375,6 +375,7 @@ fn bootHeadless(init: std.process.Init) !Headless {
     // without the bionic loader there is no <root>/lib64 fallback.
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .system_root_overlay = true,
         .library_path = &.{runtime_overlay_dir},
         .use_bionic_loader = false,
         .check_jni = init.minimal.environ.getPosix("AZK_CHECK_JNI") != null,
@@ -420,6 +421,7 @@ fn bootHeadlessApk(init: std.process.Init, apk_abs: []const u8) !Headless {
     configureFonts(init);
     var rt = try art.Runtime.create(init.gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .system_root_overlay = true,
         .library_path = &.{runtime_overlay_dir},
         .root = runtime_root,
         .libart_path = libart_overlay,
@@ -520,6 +522,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
             &.{};
     const rt_v = try art.Runtime.create(gpa, init.io, init.minimal.environ, .{
         .classpath = &.{framework_jar},
+        .system_root_overlay = true,
         .library_path = &.{runtime_overlay_dir},
         .root = runtime_root,
         .libart_path = libart_overlay,

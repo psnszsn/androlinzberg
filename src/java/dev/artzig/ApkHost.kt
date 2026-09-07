@@ -400,16 +400,6 @@ public final class ApkHost {
                     Integer.toHexString(appThemeRes),
             )
 
-            // --- classloader over the apk (+ bundled native libs): the real
-            // LoadedApk builds it (ApplicationLoaders -> ClassLoaderFactory ->
-            // HostedApkClassLoader) from sourceDir and nativeLibraryDir.
-            val cl: HostedApkClassLoader = loadedApkClassLoader(appInfo)
-            sClassLoader = cl
-            // The real AOSP Parcel has no default-classloader hook; Parcelables
-            // are read with an explicit loader (Bundle.setClassLoader) at the
-            // call sites. sClassLoader holds the APK loader for that routing.
-            Log.i(TAG, "APK dexopt status: " + apkDexoptStatus())
-
             // A resizable Activity starts with the current window bounds; a fixed
             // manifest orientation constrains those bounds before onCreate.
             val initialOrientation: Int =
@@ -425,7 +415,7 @@ public final class ApkHost {
                     .resolveLandscape(initialOrientation, width, height)
             val displayWidth: Int = if (initialLandscape) Math.max(width, height) else Math.min(width, height)
             val displayHeight: Int = if (initialLandscape) Math.min(width, height) else Math.max(width, height)
-            HostContexts.bootstrap(frameworkRes)
+            HostContexts.prepareApplicationEnvironment(frameworkRes)
             applyWindowConfiguration(displayWidth, displayHeight, scale120)
             if (Thread.getDefaultUncaughtExceptionHandler() == null) {
                 Thread.setDefaultUncaughtExceptionHandler({ thread, throwable ->
@@ -442,8 +432,10 @@ public final class ApkHost {
 
             // AOSP ordering: attachApplication, then bindApplication (LoadedApk,
             // Application.attach, providers installed + published, onCreate).
-            val app = android.app.HostedServiceClient.attachApplication(pkg)
+            val app = dev.artzig.HostedServiceClient.attachApplication(pkg)
             sContext = app
+            sClassLoader = loadedApkClassLoader(appInfo)
+            Log.i(TAG, "APK dexopt status: " + apkDexoptStatus())
             installActivityHost()
             sProcessInitialized = true
 
@@ -478,7 +470,7 @@ public final class ApkHost {
          * happens only in the system process). */
         @JvmStatic
         private fun installOwnPackage(apkPath: String, pkg: String, nativeLibraryDir: String) {
-            val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull()) {
+            val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull()) {
                 "no hosted installer in this session"
             }
             val installed = installer.installPackage(apkPath, nativeLibraryDir)
@@ -531,19 +523,15 @@ public final class ApkHost {
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =
                 checkNotNull(pm.getApplicationInfo(pkg, 0L, 0)) { "no ApplicationInfo for " + pkg }
-            val cl: HostedApkClassLoader = loadedApkClassLoader(appInfo)
-            sClassLoader = cl
-            // The real AOSP Parcel has no default-classloader hook; Parcelables
-            // are read with an explicit loader (Bundle.setClassLoader) at the
-            // call sites. sClassLoader holds the APK loader for that routing.
-            HostContexts.bootstrap(frameworkRes)
+            HostContexts.prepareApplicationEnvironment(frameworkRes)
             applyWindowConfiguration(640, 480, 120)
             if (java.security.Security.getProvider("AndroidKeyStore") == null) {
                 java.security.Security.insertProviderAt(ArtzigKeyStoreProvider(), 1)
             }
             // AOSP ordering: attach first, then bindApplication (providers
             // installed + published before Application.onCreate).
-            sContext = android.app.HostedServiceClient.attachApplication(pkg)
+            sContext = dev.artzig.HostedServiceClient.attachApplication(pkg)
+            sClassLoader = loadedApkClassLoader(appInfo)
             Log.i(TAG, "headless app process up: " + pkg)
         }
 
@@ -567,8 +555,8 @@ public final class ApkHost {
         }
 
         @JvmStatic private fun installActivityHost() {
-            android.app.ActivityThread.configureActivityHost(
-                object : android.app.ActivityThread.HostAdapter {
+            dev.artzig.HostedActivityProcess.configureActivityHost(
+                object : dev.artzig.HostedActivityProcess.HostAdapter {
                     public override fun showActivity(activity: Activity) {
                         sActivity = activity
                         sActivityActive = true
@@ -579,8 +567,7 @@ public final class ApkHost {
                         sActivityActive = false
                         sSyntheticBackRoute = null
                         sPhysicalBackRoute = null
-                        dev.artzig.HostedWindowStack.clear()
-                        if (sRootActive) sRoot.destroy()
+                        dev.artzig.HostedWindowStack.setActivityRoot(null)
                         sRootActive = false
                         ArtzigAccessibilityBridge.setActivityRoot(null)
                     }
@@ -598,8 +585,9 @@ public final class ApkHost {
         }
 
         @JvmStatic private fun show(a: Activity) {
-            if (sRootActive) sRoot.destroy()
-            sRoot = HostedWindowRoots.attachActivity(a, sWidth, sHeight)
+            sRoot = checkNotNull(a.window.decorView.viewRootImpl)
+            sRoot.setSize(sWidth, sHeight)
+            HostedWindowStack.setActivityRoot(sRoot)
             sRootActive = true
             ArtzigAccessibilityBridge.setActivityRoot(sRoot)
             android.view.HostedInputDispatcher.reset()
@@ -651,11 +639,12 @@ public final class ApkHost {
             Log.i(TAG, "shutdown")
 
             // Services first: they may own decoder/audio workers and native layers.
-            android.app.ActivityThread.currentActivityThread().`shutdownServices$artzig`()
+            HostedActivityProcess.shutdownServices()
+            drainLooper()
             Log.i(TAG, "services stopped")
 
             try {
-                android.app.ActivityThread.shutdownActivitiesInProcess()
+                dev.artzig.HostedActivityProcess.shutdownActivitiesInProcess()
             } catch (t: Throwable) {
                 Log.w(TAG, "activity shutdown failed", t)
             }
@@ -676,7 +665,7 @@ public final class ApkHost {
             sComposite.discardDisplayList()
 
             try {
-                android.app.ActivityThread.currentActivityThread().`shutdownApplication$artzig`()
+                HostedActivityProcess.shutdownApplication()
             } catch (t: Throwable) {
                 Log.w(TAG, "application shutdown failed", t)
             }
@@ -899,7 +888,7 @@ public final class ApkHost {
                 // configuration to every Resources; the metrics come from the display service.
                 android.app.ResourcesManager.getInstance().applyConfigurationToResources(config, null)
                 HostContexts.dispatchWindowConfiguration(config)
-                android.app.ActivityThread.applyConfigurationInProcess(config, windowConfig.changes, width, height)
+                dev.artzig.HostedActivityProcess.applyConfigurationInProcess(config, windowConfig.changes, width, height)
             } catch (t: Throwable) {
                 Log.w(TAG, "resize failed", t)
             }

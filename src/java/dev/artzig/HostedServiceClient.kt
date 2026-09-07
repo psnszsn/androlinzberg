@@ -1,4 +1,6 @@
-package android.app
+package dev.artzig
+
+import android.app.*
 
 import android.content.Context
 import android.content.Intent
@@ -7,24 +9,18 @@ import android.os.ServiceManager
 import android.util.Log
 import dev.artzig.system.IHostedInstaller
 
-/**
- * This process's client side of the session's activity manager: the real
- * `IActivityManager` proxy, the process's `IApplicationThread`, the host
- * bootstrap (installer, attach), and the per-authority provider connections
- * the hosted ActivityThread.acquireProvider family rides on. Components,
- * receivers and broadcasts go through the real ContextImpl directly.
- */
+/** Host package announcement and binding bootstrap around stock IApplicationThread.
+ * Providers, components and lifecycle dispatch belong to the unchanged ActivityThread. */
 object HostedServiceClient {
     private const val TAG = "HostedServiceClient"
 
-    private val thread = HostedApplicationThread()
     @Volatile private var activityManager: IActivityManager? = null
     @Volatile private var installer: IHostedInstaller? = null
     @Volatile private var attached = false
 
     /** This process's IApplicationThread (AOSP ActivityThread.getApplicationThread). */
     @JvmStatic
-    fun applicationThread(): IApplicationThread = thread
+    fun applicationThread(): IApplicationThread = ActivityThread.currentActivityThread().applicationThread
 
     @JvmStatic
     fun activityManagerOrNull(): IActivityManager? {
@@ -64,14 +60,20 @@ object HostedServiceClient {
             "application attachment must run on the main looper"
         }
         if (attached) return checkNotNull(ActivityThread.currentApplication())
-        // ActivityThread.attach installs the token before contacting AMS so
-        // RuntimeInit can attribute even a failure during application binding.
-        com.android.internal.os.RuntimeInit.setApplicationObject(thread.asBinder())
+        HostContexts.prepareApplicationEnvironment(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         val am = checkNotNull(activityManagerOrNull()) { "activity manager unavailable" }
         try {
             checkNotNull(installerOrNull()).bindProcessPackage(packageName, processName,
                 android.content.res.Configuration(ResourcesManager.getInstance().configuration))
-            am.attachApplication(thread, 0)
+            if (ActivityThread.currentActivityThread() == null) {
+                HostedActivityProcess.attachApplication()
+            } else {
+                // In-process tools may already have an initialized system thread. Register
+                // its stock transport without attaching the thread a second time.
+                val thread = applicationThread()
+                com.android.internal.os.RuntimeInit.setApplicationObject(thread.asBinder())
+                am.attachApplication(thread, 0)
+            }
             attached = true
         } catch (e: RemoteException) {
             throw e.rethrowFromSystemServer()
@@ -84,7 +86,8 @@ object HostedServiceClient {
             android.os.SystemClock.uptimeMillis() < deadline) {
             val message = queue.`pollDueMessage$artzig`()
             if (message == null) android.os.SystemClock.sleep(1)
-            else message.target.dispatchMessage(message)
+            else try { message.target.dispatchMessage(message) }
+            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
         }
         check(ActivityThread.currentPackageName() == packageName) { "application binding timed out: $packageName" }
         return checkNotNull(ActivityThread.currentApplication())
@@ -100,58 +103,4 @@ object HostedServiceClient {
         android.content.pm.PackageManager.PERMISSION_DENIED
     }
 
-    private val providerLock = Any()
-    private val providerCache = HashMap<String, android.content.IContentProvider>()
-
-    /** AOSP ActivityThread.acquireExistingProvider: only what this process already holds. */
-    @JvmStatic
-    fun existingContentProvider(authority: String): android.content.IContentProvider? {
-        ActivityThread.currentActivityThread().localProvider(authority)?.let { return it.getIContentProvider() }
-        synchronized(providerLock) { return providerCache[authority] }
-    }
-
-    /** AOSP ActivityThread.handleUnstableProviderDied: drop the dead connection so
-     * the next acquire goes back to the activity manager. */
-    @JvmStatic
-    fun forgetContentProvider(binder: android.os.IBinder) {
-        synchronized(providerLock) {
-            providerCache.entries.removeIf { it.value.asBinder() == binder }
-        }
-    }
-
-    /**
-     * Authority -> provider connection (source note: ActivityThread.acquireProvider):
-     * this process's own installed providers first, then the per-process cache,
-     * then the activity manager (which spawns the owning package on demand).
-     * Death evicts the cache entry so a re-acquire respawns.
-     */
-    @JvmStatic
-    fun acquireContentProvider(context: Context, authority: String): android.content.IContentProvider? {
-        ActivityThread.currentActivityThread().localProvider(authority)?.let { return it.getIContentProvider() }
-        synchronized(providerLock) { providerCache[authority]?.let { return it } }
-        val am = activityManagerOrNull() ?: return null
-        val holder = try {
-            am.getContentProvider(thread, context.packageName, authority, 0, true)
-        } catch (e: RemoteException) {
-            Log.w(TAG, "getContentProvider failed for " + authority, e)
-            null
-        } ?: return null
-        // The holder carries the real provider transport (ContentProviderNative
-        // hands back the local Transport when the binder lives in this process).
-        val proxy = holder.provider ?: return null
-        val binder = proxy.asBinder()
-        synchronized(providerLock) {
-            providerCache[authority]?.let { return it }
-            providerCache[authority] = proxy
-        }
-        try {
-            binder.linkToDeath(
-                { synchronized(providerLock) { providerCache.remove(authority) } },
-                0,
-            )
-        } catch (e: RemoteException) {
-            synchronized(providerLock) { providerCache.remove(authority) }
-        }
-        return proxy
-    }
 }

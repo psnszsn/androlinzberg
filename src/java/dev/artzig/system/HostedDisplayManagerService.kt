@@ -24,7 +24,7 @@ import android.view.DisplayInfo
  * delegate.
  */
 internal class HostedDisplayManagerService :
-    IDisplayManager.Stub(),
+    IDisplayManager.Stub(HostedBootstrapPermissionEnforcer()),
     IDisplayManager by unsupported<IDisplayManager>() {
     // Interface delegation must not shadow the Binder identity.
     override fun asBinder(): android.os.IBinder = this

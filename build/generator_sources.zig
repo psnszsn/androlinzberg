@@ -18,7 +18,10 @@ pub const incremental_sysprop = .{
     .source = "IncrementalProperties.sysprop.cpp",
 };
 pub const Logtags = struct { input: SourcePath, output: []const u8 };
-pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8, values: []const []const u8 = &.{}, cpp_header: bool = false, default_permission: enum { read_write, read_only } = .read_write, mode: enum { production, force_read_only } = .production };
+// Pinned bp2a inherits bp1a RELEASE_ACONFIG_FLAG_DEFAULT_PERMISSION=READ_ONLY.
+// Explicit release values can still grant READ_WRITE; do not invent runtime DeviceConfig
+// dependencies for flags the platform generates as read-only before Application creation.
+pub const Aconfig = struct { package: []const u8, container: []const u8, source: Source, declarations: []const []const u8, values: []const []const u8 = &.{}, cpp_header: bool = false, default_permission: enum { read_write, read_only } = .read_only, mode: enum { production, force_read_only } = .production };
 pub const Sysprop = struct { scope: []const u8, input: SourcePath };
 pub const HidlLanguage = enum { java, java_constants };
 pub const Hidl = struct {
