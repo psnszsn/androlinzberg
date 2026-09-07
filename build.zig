@@ -686,6 +686,23 @@ pub fn build(b: *std.Build) void {
     const run_process_memory_tests = b.addRunArtifact(process_memory_tests);
     b.step("process-memory-test", "Test Android process-memory accounting").dependOn(&run_process_memory_tests.step);
     const native_test_step = b.step("native-test", "Build Zig JNI adapters and run native unit tests");
+    const media_format_tests = b.addExecutable(.{
+        .name = "azk-media-format-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/native/media_format.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    const media_format_test_run = @import("build/command.zig").create(b);
+    setApplicationEnvironment(media_format_test_run, application_tree);
+    media_format_test_run.addFileArg(media_format_tests.getEmittedBin());
+    media_format_test_run.addFileArg(application_tree.path(b, "lib/libandroid_platform.so"));
+    media_format_test_run.run.setName("test stock media NDK format ABI");
+    b.step("media-format-test", "Test stock media NDK typed metadata and ownership").dependOn(&media_format_test_run.run.step);
+    native_test_step.dependOn(&media_format_test_run.run.step);
+
     const egl_backend_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/binder/egl_backend.zig"),
         .target = target,

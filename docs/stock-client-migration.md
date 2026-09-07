@@ -27,6 +27,20 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- The native platform now compiles AOSP's AMediaFormat implementation, its private
+  message bridge, and ten foundation sources verbatim. Native callers get the original
+  typed scalar/string/buffer/rectangle storage, copying, ownership and formatting rules.
+  A dedicated C ABI test covers value round trips, null/missing-key behavior, copied
+  input buffers and strings, retained copies after clear, and exported key constants;
+  it also runs under native-test. JVM/system, native/Binder and build checks pass;
+  all 11 APK tests pass (37 steps, zero structured runtime issues). AOSP is rebuilt
+  and repinned; all 43 selected inputs are byte-verified against the checkout. ART
+  is unchanged. The inventory remains 20 stubs (11 pending, 9 survivors). This supplies
+  native format values needed by the Chromium media bridge; it does not yet supply
+  libmediandk codec operations, AAudio or the embedded Chromium provider. The existing
+  Wayland, PipeWire and FFmpeg backends are unchanged.
+
+
 - SystemServerInitThreadPool's empty shutdown stub is replaced by the pinned
   implementation. Hosted system startup starts the pool; stock SystemServiceManager
   shuts it down at boot completion. Task submission, pending-work tracking, shutdown

@@ -439,3 +439,17 @@ pub const fmtlib_srcs = [_][]const u8{
     "src/format.cc",
     "src/os.cc",
 };
+
+// libmediandk_format and the host-supported foundation objects it uses.
+pub const media_format_foundation_srcs = [_][]const u8{
+    "AAtomizer.cpp",
+    "ABuffer.cpp",
+    "ADebug.cpp",
+    "AHandler.cpp",
+    "ALooper.cpp",
+    "ALooperRoster.cpp",
+    "AMessage.cpp",
+    "AString.cpp",
+    "AStringUtils.cpp",
+    "hexdump.cpp",
+};

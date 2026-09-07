@@ -259,9 +259,12 @@ pub fn build(b: *std.Build, o: Options) Result {
         zygote_headers.getDirectory(),
     }, &.{
         "-D__printflike(a,b)=__attribute__((format(printf,a,b)))",
-        "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-D__INTRODUCED_IN(x)=",
+        "-D__BIONIC_AVAILABILITY_GUARD(x)=1",
+        "-D__INTRODUCED_IN(x)=",
         "-D__unused=__attribute__((__unused__))",
-        "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections",
+        "-fvisibility=hidden",
+        "-ffunction-sections",
+        "-fdata-sections",
     });
     g.add(o.aosp.path(b, "system/libhidl/base"), &.{ "HidlSupport.cpp", "HidlInternal.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_MediaHTTPConnection.cpp"}, &.{ o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
@@ -319,6 +322,16 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(b.path(""), &our_srcs, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_PublicFormatUtils.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
+
+    const media_format_includes = &.{
+        o.aosp.path(b, "frameworks/av/media/module/foundation/include"),
+        o.aosp.path(b, "frameworks/av/media/module/foundation/include/media/stagefright/foundation"),
+        o.aosp.path(b, "frameworks/av/include"),
+        o.aosp.path(b, "frameworks/av/media/ndk/include"),
+    };
+    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &gen.media_format_foundation_srcs, media_format_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/ndk"), &.{"NdkMediaFormat.cpp"}, media_format_includes, &.{"-DEXPORT=__attribute__((visibility(\"default\")))"});
+    g.add(o.aosp.path(b, "frameworks/av/media/libmedia"), &.{"NdkMediaFormatPriv.cpp"}, media_format_includes, &.{});
 
     // Zig's bundled LLD rejects valid weak-hidden libc++ COMDAT relocations in
     // Skia before resolving them locally. Keep Zig's compiler and libc++, but
