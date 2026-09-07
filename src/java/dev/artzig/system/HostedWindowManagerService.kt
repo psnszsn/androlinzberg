@@ -163,6 +163,14 @@ internal class HostedWindowManagerService(
         android.view.IWindowSession by unsupported<android.view.IWindowSession>() {
         override fun asBinder(): IBinder = this
 
+        override fun finishDrawing(window: android.view.IWindow,
+            postDrawTransaction: android.view.SurfaceControl.Transaction?, seqId: Int) {
+            // Pinned WindowManagerService.finishDrawingWindow sanitizes the
+            // transaction, then ignores a client with no registered WindowState.
+            // Hosted roots currently have no server WindowStates.
+            postDrawTransaction?.sanitize(Binder.getCallingPid(), Binder.getCallingUid())
+        }
+
         override fun notifyImeWindowVisibilityChangedFromClient(
             window: android.view.IWindow, visible: Boolean, statsToken: android.view.inputmethod.ImeTracker.Token,
         ) {

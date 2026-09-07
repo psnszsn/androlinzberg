@@ -220,7 +220,7 @@ public final class ViewHost {
             drainLooper()
             dev.artzig.HostedRenderer
                 .getInstance()
-                .render(sRoot.doTraversal(), bufferWidth, bufferHeight)
+                .render(sRoot.doTraversal(), bufferWidth, bufferHeight, sRoot)
         }
 
         @JvmStatic

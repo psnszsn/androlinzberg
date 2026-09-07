@@ -806,14 +806,18 @@ public final class ApkHost {
                 }
                 dev.artzig.HostedRenderer
                     .getInstance()
-                    .render(base, width, height)
+                    .render(base, width, height, sRoot)
                 return
             }
             sComposite.setPosition(0, 0, width, height)
             val c: RecordingCanvas = sComposite.beginRecording(width, height)
+            val drawnRoots = ArrayList<android.view.ViewRootImpl>()
             try {
                 c.drawColor(0xff000000.toInt())
-                if (base != null) c.drawRenderNode(base)
+                if (base != null) {
+                    c.drawRenderNode(base)
+                    drawnRoots += sRoot
+                }
                 for (e: dev.artzig.HostedWindowStack.Entry in wins) {
                     try {
                         val wb: RenderNode? = e.root.`getRenderNode$artzig`()
@@ -849,6 +853,7 @@ public final class ApkHost {
                         val save: Int = c.save()
                         c.translate(wx.toFloat(), wy.toFloat())
                         c.drawRenderNode(wb)
+                        drawnRoots += e.root
                         c.restoreToCount(save)
                     } catch (t: Throwable) {
                         Log.w(TAG, "overlay draw failed: " + e.view.javaClass.name, t)
@@ -859,7 +864,7 @@ public final class ApkHost {
             }
             dev.artzig.HostedRenderer
                 .getInstance()
-                .render(sComposite, width, height)
+                .render(sComposite, width, height, *drawnRoots.toTypedArray())
         }
 
 /** Window resized: update metrics/config and relayout. */

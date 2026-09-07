@@ -12,6 +12,22 @@ class HostedRenderer private constructor(context: Context) {
     private var width = 0
     private var height = 0
     private val scaledRoot = RenderNode("artzig-scaled-root")
+    private data class FrameCallbacks(val root: android.view.ViewRootImpl,
+        val handler: android.os.Handler, val callbacks: List<Runnable>)
+    private val pendingFrameCallbacks = ArrayList<FrameCallbacks>()
+
+    /** AOSP VRI captures each root's callbacks before drawing. Desktop roots
+     * share one renderer, so retain all their batches for the composite frame. */
+    @Synchronized
+    fun queueFrameCommitCallbacks(root: android.view.ViewRootImpl, handler: android.os.Handler,
+        callbacks: List<Runnable>) {
+        if (callbacks.isNotEmpty()) pendingFrameCallbacks += FrameCallbacks(root, handler, callbacks.toList())
+    }
+
+    @Synchronized
+    fun discardFrameCommitCallbacks(root: android.view.ViewRootImpl) {
+        pendingFrameCallbacks.removeAll { it.root === root }
+    }
 
     init {
         renderer.setLightSourceGeometry(0f, 0f, 600f, 800f)
@@ -19,7 +35,8 @@ class HostedRenderer private constructor(context: Context) {
     }
 
     @Synchronized
-    fun render(content: RenderNode?, logicalWidth: Int, logicalHeight: Int, bufferWidth: Int, bufferHeight: Int) {
+    fun render(content: RenderNode?, logicalWidth: Int, logicalHeight: Int, bufferWidth: Int, bufferHeight: Int,
+        vararg roots: android.view.ViewRootImpl) {
         require(logicalWidth > 0 && logicalHeight > 0) { "invalid logical target ${logicalWidth}x$logicalHeight" }
         require(bufferWidth > 0 && bufferHeight > 0) { "invalid Wayland buffer ${bufferWidth}x$bufferHeight" }
         var target = content
@@ -32,11 +49,12 @@ class HostedRenderer private constructor(context: Context) {
             } finally { scaledRoot.endRecording() }
             target = scaledRoot
         }
-        render(target, bufferWidth, bufferHeight)
+        render(target, bufferWidth, bufferHeight, *roots)
     }
 
     @Synchronized
-    fun render(content: RenderNode?, bufferWidth: Int, bufferHeight: Int) {
+    fun render(content: RenderNode?, bufferWidth: Int, bufferHeight: Int,
+        vararg roots: android.view.ViewRootImpl) {
         require(bufferWidth > 0 && bufferHeight > 0) { "invalid render target ${bufferWidth}x$bufferHeight" }
         if (width != bufferWidth || height != bufferHeight) {
             width = bufferWidth
@@ -45,9 +63,22 @@ class HostedRenderer private constructor(context: Context) {
         }
         renderer.setContentRoot(content)
         renderer.forceDrawNextFrame()
+        // A traversal can precede presentation or belong to a background root.
+        // Only consume callbacks for roots actually included in this composite.
+        val callbacks = if (content == null) emptyList() else pendingFrameCallbacks.filter { batch ->
+            roots.any { it === batch.root }
+        }
+        pendingFrameCallbacks.removeAll(callbacks.toSet())
         val result = renderer.createRenderRequest()
             .setVsyncTime(System.nanoTime())
-            .setFrameCommitCallback(DIRECT_EXECUTOR, ::nNotifyHostFrameCommitted)
+            .setFrameCommitCallback(DIRECT_EXECUTOR) {
+                // Pinned ViewRootImpl.addFrameCommitCallbackIfNeeded posts the
+                // captured batch back to its UI Handler, including failed draws.
+                for (batch in callbacks) batch.handler.postAtFrontOfQueue {
+                    for (callback in batch.callbacks) callback.run()
+                }
+                nNotifyHostFrameCommitted()
+            }
             .setWaitForPresent(false)
             .syncAndDraw()
         if (result and HardwareRenderer.SYNC_FRAME_DROPPED != 0) nNotifyHostFrameCommitted()
@@ -58,6 +89,7 @@ class HostedRenderer private constructor(context: Context) {
 
     @Synchronized
     private fun destroy() {
+        pendingFrameCallbacks.clear()
         nDestroyHostSurface()
         renderer.destroy()
     }
@@ -76,6 +108,11 @@ class HostedRenderer private constructor(context: Context) {
                 ?: android.app.ActivityThread.currentActivityThread()?.systemContext
                 ?: HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 1, 1, 120, 0))
                 .also { instance = it }
+        }
+
+        @JvmStatic @Synchronized
+        fun forgetRootCallbacks(root: android.view.ViewRootImpl) {
+            instance?.discardFrameCommitCallbacks(root)
         }
 
         @JvmStatic @Synchronized

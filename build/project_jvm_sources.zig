@@ -144,6 +144,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/systemtest/ActivityRecreationSystemSmoke.kt",
     "src/java/dev/artzig/GraphicsSmoke.kt",
     "src/java/dev/artzig/HardwareBitmapProbe.kt",
+    "src/java/dev/artzig/FrameCommitProbe.kt",
     "src/java/dev/artzig/HostContexts.kt",
     "src/java/dev/artzig/HostedApkClassLoader.kt",
     "src/java/dev/artzig/HostedDesktopIntents.kt",

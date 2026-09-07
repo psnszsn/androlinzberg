@@ -26,6 +26,11 @@ object HostedWindowRoots {
         "android.view.ViewRootImpl", member,
         "Windowless input and buffer-transaction reporting require an embedded-surface backend")
 
+    @JvmStatic
+    fun unsupportedSurfaceTakeover(): RuntimeException = ArtzigTestDiagnostics.unsupported(
+        "android.view.ViewRootImpl", "notifyChildRebuilt",
+        "RootViewSurfaceTaker requires a SurfaceHolder/InputQueue producer that is not hosted")
+
     /** AOSP SurfaceView.setChildSurfacePackage reparents a remote SurfaceControl hierarchy. */
     @JvmStatic
     fun attachEmbeddedSurface(surfacePackage: android.view.SurfaceControlViewHost.SurfacePackage): Unit =

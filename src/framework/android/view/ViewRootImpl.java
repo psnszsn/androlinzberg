@@ -212,10 +212,57 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
                 "setBackKeyCallbackForWindowlessWindow");
     }
 
+    private boolean mReportNextDraw;
+    private String mLastReportNextDrawReason;
+
     public void setReportNextDraw(boolean syncBuffer, String reason) {
-        // AOSP reports through Session.finishDrawing and optionally transfers
-        // the BLAST buffer transaction. Neither is supplied by a hosted root.
-        throw dev.artzig.HostedWindowRoots.unsupportedWindowlessOperation("setReportNextDraw");
+        if (syncBuffer) {
+            // The existing presentation path has no BLAST buffer transaction.
+            throw dev.artzig.HostedWindowRoots.unsupportedWindowlessOperation("setReportNextDraw");
+        }
+        mReportNextDraw = true;
+        mLastReportNextDrawReason = reason;
+        invalidate();
+    }
+
+    /** Pinned notifyChildRebuilt, for a preserved root after activity relaunch.
+     * Surface/InputQueue takeovers need producers absent from this host root. */
+    public void notifyChildRebuilt() {
+        checkThread();
+        if (mView instanceof com.android.internal.view.RootViewSurfaceTaker) {
+            com.android.internal.view.RootViewSurfaceTaker taker =
+                    (com.android.internal.view.RootViewSurfaceTaker) mView;
+            if (taker.willYouTakeTheSurface() != null || taker.willYouTakeTheInputQueue() != null) {
+                throw dev.artzig.HostedWindowRoots.unsupportedSurfaceTakeover();
+            }
+        }
+        updateLastConfigurationFromResources(mContext.getResources().getConfiguration());
+        setReportNextDraw(false, "rebuilt");
+        if (mStopped) setWindowStopped(false);
+    }
+
+    // AOSP captures callbacks before onDraw; registration during onDraw is for
+    // the following frame. HostedRenderer submits a composite for all roots.
+    private void captureFrameCommitCallbacks() {
+        ArrayList<Runnable> callbacks = mAttachInfo.mTreeObserver.captureFrameCommitCallbacks();
+        if (mReportNextDraw) {
+            if (callbacks == null) callbacks = new ArrayList<>();
+            final IWindow window = mWindow;
+            final IWindowSession session = mWindowSession;
+            callbacks.add(() -> {
+                try {
+                    session.finishDrawing(window, null, 0);
+                } catch (RemoteException e) {
+                    Log.e(TAG, "Unable to report draw finished", e);
+                }
+            });
+            mReportNextDraw = false;
+            mLastReportNextDrawReason = null;
+        }
+        if (callbacks != null && !callbacks.isEmpty()) {
+            dev.artzig.HostedRenderer.getInstance(mContext)
+                    .queueFrameCommitCallbacks(this, mHandler, callbacks);
+        }
     }
 
     public void setView(View view, WindowManager.LayoutParams attrs, View panelParentView,
@@ -1156,6 +1203,9 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         checkThread();
         if (mRemoved) return;
         mRemoved = true;
+        if (mAttachInfo != null) {
+            dev.artzig.HostedRenderer.forgetRootCallbacks(this);
+        }
         if (mSyntheticJoystick != null) mSyntheticJoystick.cancel();
         if (mInputEventQueue != null) mInputEventQueue.clear();
         unscheduleTraversals();
@@ -1196,6 +1246,8 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         writer.println(innerPrefix + "mAdded=" + mAdded);
         writer.println(innerPrefix + "mRemoved=" + mRemoved);
         writer.println(innerPrefix + "mStopped=" + mStopped);
+        writer.println(innerPrefix + "mReportNextDraw=" + mReportNextDraw
+                + " reason=" + mLastReportNextDrawReason);
         writer.println(innerPrefix + "mPausedForTransition=" + mPausedForTransition);
         writer.println(innerPrefix + "mTraversalScheduled=" + mTraversalScheduled);
         if (mAttachInfo != null) {
@@ -1423,14 +1475,19 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         android.content.res.Configuration config = mView.getResources().getConfiguration();
         if (newDisplayId != Display.INVALID_DISPLAY) onMovedToDisplay(newDisplayId, config);
         if (mLastConfigurationFromResources.diff(config) != 0) {
-            int oldDirection = mLastConfigurationFromResources.getLayoutDirection();
-            mLastConfigurationFromResources.setTo(config);
-            if (oldDirection != config.getLayoutDirection()
-                    && mViewLayoutDirectionInitial == View.LAYOUT_DIRECTION_INHERIT) {
-                mView.setLayoutDirection(config.getLayoutDirection());
-            }
+            updateLastConfigurationFromResources(config);
             mView.dispatchConfigurationChanged(config);
             requestLayout();
+        }
+    }
+
+    // Pinned ViewRootImpl.updateLastConfigurationFromResources.
+    private void updateLastConfigurationFromResources(Configuration config) {
+        int oldDirection = mLastConfigurationFromResources.getLayoutDirection();
+        mLastConfigurationFromResources.setTo(config);
+        if (oldDirection != config.getLayoutDirection() && mView != null
+                && mViewLayoutDirectionInitial == View.LAYOUT_DIRECTION_INHERIT) {
+            mView.setLayoutDirection(config.getLayoutDirection());
         }
     }
 
@@ -1599,6 +1656,7 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
         // view display lists, then keep a stable root node which references the
         // decor's RenderNode. Replaying mView.draw() here forced dispatchDraw()
         // across the complete hierarchy on every animation frame.
+        captureFrameCommitCallbacks();
         // AOSP ViewRootImpl.draw(): observers run before recording display lists.
         for (int i = 0; i < mSurfaceChangedCallbacks.size(); i++) {
             mSurfaceChangedCallbacks.get(i).vriDrawStarted(false);

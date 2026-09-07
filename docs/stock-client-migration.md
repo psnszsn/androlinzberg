@@ -27,6 +27,19 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Preserved-window rebuilds now update the root's resource/layout-direction cache,
+  resume a stopped root and report its next submitted frame. ViewTreeObserver frame
+  callbacks are captured before drawing, retained per root and delivered on its UI
+  Handler only when that root is included in the desktop composite. Callbacks from
+  an unsubmitted root stay pending and are canceled on root destruction. The hosted
+  window session follows AOSP's no-WindowState completion behavior; BLAST transaction
+  synchronization and SurfaceHolder/InputQueue takeovers remain unavailable.
+  The Cage probe verifies callback thread/order, registration during onDraw, excluded
+  roots, stopped-root rebuilding and the final blue frame. JVM/system suites,
+  native/Binder/build checks and all 11 APK tests pass (37 steps, zero runtime issues).
+  Neither tarball needs rebuilding. Stock ActivityThread now passes the standalone
+  Java compile probe; selecting it still requires its JNI and hosted-caller migration.
+
 - SplashScreenView, SurfaceControlViewHost and WindowlessWindowManager now compile
   verbatim. The former empty splash placeholder now uses stock material building,
   icon/branding bitmap Parcel transport, copy policy and removal/resource cleanup.
