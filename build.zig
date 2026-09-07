@@ -1142,6 +1142,7 @@ pub fn build(b: *std.Build) void {
     stock_window_boot.setEnvironment("AZK_TEST_CLASS", "dev.artzig.window.StockWindowBootSmoke");
     stock_window_boot.setEnvironment("AZK_BINDER_PACKAGE", "dev.artzig.fixtures.windows");
     stock_window_boot.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+    stock_window_boot.setEnvironment("AZK_TEST_INSPECTION", "1");
     stock_window_boot.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     stock_window_boot.run.setName("verify stock WMS and ATMS session startup");
     stock_window_boot.run.has_side_effects = true;
@@ -1156,6 +1157,7 @@ pub fn build(b: *std.Build) void {
     stock_cold_launch.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
     stock_cold_launch.addFileArg(window_fixture.apk);
     stock_cold_launch.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+    stock_cold_launch.setEnvironment("AZK_TEST_INSPECTION", "1");
     stock_cold_launch.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     stock_cold_launch.run.has_side_effects = true;
     stock_cold_launch.run.setName("verify install-time uid and stock ATMS first-process launch");
@@ -1166,6 +1168,7 @@ pub fn build(b: *std.Build) void {
         const stock_task_wayland = @import("build/command.zig").create(b);
         setApplicationEnvironment(stock_task_wayland, application_tree);
         stock_task_wayland.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+        stock_task_wayland.setEnvironment("AZK_TEST_INSPECTION", "1");
         stock_task_wayland.setEnvironment("AZK_TASK_WINDOWS", "1");
         stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
         stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", compositor);

@@ -51,6 +51,13 @@ object StockWindowBootSmoke {
             .exceptionOrNull() is IllegalStateException)
         check(dev.artzig.BinderSession.assignedUid() == packages.getApplicationInfo(packageName, 0L, 0)!!.uid)
         val application = dev.artzig.HostedServiceClient.attachApplication(packageName)
+        if (dev.artzig.testing.ProcessInspection.enabled) {
+            val registry = dev.artzig.testing.IInspectionRegistry.Stub.asInterface(
+                ServiceManager.getService(dev.artzig.testing.ProcessInspection.SERVICE))
+            check(runCatching { registry.listProcesses() }.exceptionOrNull() is SecurityException)
+            check(runCatching { registry.observe(android.os.Process.myPid(), 1, 0, 0, 0) }
+                .exceptionOrNull() is SecurityException)
+        }
         check(application.packageName == packageName)
         check(application.checkSelfPermission(android.Manifest.permission.SYSTEM_ALERT_WINDOW) ==
             android.content.pm.PackageManager.PERMISSION_DENIED)

@@ -12,6 +12,7 @@ object HostedRootFrames {
         // the decor. View.getViewRootImpl is still null in that interval.
         WindowManagerGlobal.getInstance().windowViews.mapNotNull { it.parent as? ViewRootImpl }
     @JvmStatic fun frame(root: ViewRootImpl) = android.graphics.Rect(root.mWinFrame)
+    @JvmStatic fun windowToken(root: ViewRootImpl): android.os.IBinder = root.mWindow.asBinder()
     @JvmStatic fun <T> inspectAccessibility(root: ViewRootImpl, block: () -> T): T {
         // AccessibilityInteractionController scopes these flags to each query.
         val info = root.mAttachInfo

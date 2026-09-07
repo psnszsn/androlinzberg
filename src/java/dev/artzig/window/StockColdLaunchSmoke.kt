@@ -63,11 +63,77 @@ object StockColdLaunchSmoke {
             check(frameCommitted) { "Stock ViewRootImpl never committed an APK frame" }
             if (System.getenv("AZK_TASK_WINDOWS") == "1") verifyWaylandTask(pkg, running.pid, manager)
             else {
+                if (dev.artzig.testing.ProcessInspection.enabled) verifyInspection(running.pid, info.uid, pkg)
                 verifyComposedTask(pkg)
                 StockTaskShellSmoke.run(pkg)
             }
         }
         println("Stock first-process launch: installed uid=${info.uid}, attached pid=${running.pid}, resumed activity")
+    }
+
+    private fun inspectionProcesses(registry: dev.artzig.testing.IInspectionRegistry): List<android.os.Bundle> =
+        registry.listProcesses().getParcelableArrayList("processes", android.os.Bundle::class.java).orEmpty()
+
+    private fun verifyInspection(pid: Int, uid: Int, packageName: String) {
+        val registry = dev.artzig.testing.IInspectionRegistry.Stub.asInterface(
+            android.os.ServiceManager.getService(dev.artzig.testing.ProcessInspection.SERVICE))
+        val sessionBefore = org.json.JSONObject(registry.diagnostics(0, 0))
+        val process = inspectionProcesses(registry).single { it.getInt("pid") == pid }
+        check(process.getInt("uid") == uid && process.getString("package") == packageName)
+        val generation = process.getLong("generation")
+        check(generation > 0)
+        check(runCatching { registry.observe(pid, generation + 1, 0, 0, 0) }.exceptionOrNull() is IllegalStateException)
+        var before = registry.observe(pid, generation, 0, 0, 0)
+        var tree = org.json.JSONObject(checkNotNull(before.getString("snapshot")))
+        fun target(tree: org.json.JSONObject): org.json.JSONObject {
+            val nodes = tree.getJSONArray("nodes")
+            return (0 until nodes.length()).map { nodes.getJSONObject(it) }
+                .single { it.optString("text") == "Cold process activity" }
+        }
+        var text = target(tree)
+        var windowId = text.getLong("window_id")
+        val taskId = checkNotNull(before.getBundle("window_tasks")).getInt(windowId.toString(), -1)
+        check(taskId > 0 && ActivityTaskManager.getService()
+            .getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY).any {
+                it.taskId == taskId && it.baseActivity?.packageName == packageName
+            })
+        check(!before.containsKey("window_tokens")) { "Raw app window tokens escaped the system inspection boundary" }
+        check(!text.getBoolean("selected"))
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (!registry.perform(pid, generation, tree.getLong("revision"), windowId,
+            text.getInt("view_id"), text.getInt("virtual_id"),
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_SELECT, null)) {
+            check(SystemClock.uptimeMillis() < deadline) { "Inspection tree never stabilized for the remote action" }
+            SystemClock.sleep(5)
+            before = registry.observe(pid, generation, 0, 0, 0)
+            tree = org.json.JSONObject(checkNotNull(before.getString("snapshot")))
+            text = target(tree)
+            windowId = text.getLong("window_id")
+        }
+        check(!registry.perform(pid, generation, tree.getLong("revision"), windowId,
+            text.getInt("view_id"), text.getInt("virtual_id"),
+            android.view.accessibility.AccessibilityNodeInfo.ACTION_CLEAR_SELECTION, null))
+        val runtime = org.json.JSONObject(checkNotNull(before.getString("runtime")))
+        val after = registry.observe(pid, generation, tree.getLong("revision"),
+            runtime.getLong("log_cursor"), runtime.getLong("issue_cursor"))
+        val afterNodes = org.json.JSONObject(checkNotNull(after.getString("snapshot"))).getJSONArray("nodes")
+        check((0 until afterNodes.length()).map { afterNodes.getJSONObject(it) }
+            .single { it.getString("id") == text.getString("id") }.getBoolean("selected"))
+        check(org.json.JSONObject(checkNotNull(after.getString("runtime"))).getJSONArray("issues").length() == 0)
+        val sessionAfter = org.json.JSONObject(registry.diagnostics(
+            sessionBefore.getLong("log_cursor"), sessionBefore.getLong("issue_cursor")))
+        val sessionLogs = sessionAfter.getJSONArray("logs")
+        check((0 until sessionLogs.length()).any {
+            sessionLogs.getJSONObject(it).getJSONObject("process").getInt("pid") == pid
+        }) { "The session journal lost the app's source identity" }
+        var lastSequence = sessionBefore.getLong("log_cursor")
+        for (index in 0 until sessionLogs.length()) {
+            val sequence = sessionLogs.getJSONObject(index).getLong("seq")
+            check(sequence > lastSequence)
+            lastSequence = sequence
+        }
+        check(sessionAfter.getJSONArray("issues").length() == 0) { sessionAfter.toString() }
+        println("Stock process inspection: authenticated identity, WMS task mapping, remote action, stale generations/revisions and issue cursors verified")
     }
 
     private fun verifyWaylandTask(packageName: String, pid: Int, manager: ActivityManager) {
@@ -100,6 +166,8 @@ object StockColdLaunchSmoke {
         // The Cage runner inspects actual compositor pixels before releasing
         // this gate. The driver owns no organizer or presentation surface.
         pixels("TASK_WINDOW_READY", task.taskId)
+        if (dev.artzig.testing.ProcessInspection.enabled) verifyInspection(pid,
+            manager.runningAppProcesses.orEmpty().single { it.pid == pid }.uid, packageName)
         val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
             android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
         await("Compositor character map was not published to stock input clients") {
@@ -168,6 +236,13 @@ object StockColdLaunchSmoke {
             SystemClock.sleep(5)
         }
         check(manager.runningAppProcesses.orEmpty().none { it.pid == pid }) { "Removed task's empty process remained alive" }
+        if (dev.artzig.testing.ProcessInspection.enabled) {
+            val registry = dev.artzig.testing.IInspectionRegistry.Stub.asInterface(
+                android.os.ServiceManager.getService(dev.artzig.testing.ProcessInspection.SERVICE))
+            while (inspectionProcesses(registry).any { it.getInt("pid") == pid } &&
+                SystemClock.uptimeMillis() < deadline) SystemClock.sleep(5)
+            check(inspectionProcesses(registry).none { it.getInt("pid") == pid })
+        }
         val exit = manager.getHistoricalProcessExitReasons(packageName, pid, 1).single()
         check(exit.reason == android.app.ApplicationExitInfo.REASON_USER_REQUESTED &&
             exit.subReason == android.app.ApplicationExitInfo.SUBREASON_REMOVE_TASK) { "Task removal exit reason: $exit" }

@@ -8,6 +8,14 @@ import android.os.IBinder
  * The caller must release this lock before communicating with the presenter.
  */
 object HostedTaskInputTargets {
+    fun windowTask(windows: WindowManagerService, token: IBinder, uid: Int, pid: Int): Int? =
+        synchronized(windows.mGlobalLock) {
+            val target = windows.getInputTargetFromWindowTokenLocked(token)
+                ?: return@synchronized null
+            if (target.uid != uid || target.pid != pid) return@synchronized null
+            target.windowState?.task?.mTaskId
+        }
+
     fun taskId(windows: WindowManagerService, token: IBinder): Int? =
         synchronized(windows.mGlobalLock) {
             windows.getInputTargetFromToken(token)?.windowState?.task?.mTaskId

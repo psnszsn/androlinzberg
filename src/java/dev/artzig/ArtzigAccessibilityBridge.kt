@@ -85,6 +85,21 @@ object ArtzigAccessibilityBridge {
 
     @JvmStatic @Synchronized fun snapshot(): String = observeTree().put("revision", currentRevision).toString()
 
+    /** Binder tokens accompany the process-local tree only to the trusted system
+     * registry, which asks WMS for task membership before returning observations. */
+    @JvmStatic @Synchronized fun processObservation(): Bundle {
+        val tree = snapshot()
+        val tokens = Bundle()
+        for (window in collectWindows()) {
+            tokens.putBinder(window.id.toString(), android.view.HostedRootFrames.windowToken(window.root))
+        }
+        return Bundle().apply {
+            putString("snapshot", tree)
+            putBundle("window_tokens", tokens)
+            putBoolean("idle", isIdle())
+        }
+    }
+
     @JvmStatic @Synchronized fun diagnostics(afterRevision: Long): String {
         observeTree()
         val journal = JSONArray()

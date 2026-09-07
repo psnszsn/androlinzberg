@@ -5,6 +5,7 @@ object HostedRootFrames {
     @JvmField val stockClients = false
     @JvmStatic fun managedRoots(): List<ViewRootImpl> = emptyList()
     @JvmStatic fun frame(root: ViewRootImpl) = android.graphics.Rect(0, 0, root.width, root.height)
+    @JvmStatic fun windowToken(root: ViewRootImpl): android.os.IBinder = root.mWindow.asBinder()
     @JvmStatic fun <T> inspectAccessibility(root: ViewRootImpl, block: () -> T): T {
         val info = root.mAttachInfo ?: return block()
         val previous = info.mAccessibilityFetchFlags

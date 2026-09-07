@@ -226,6 +226,12 @@ internal object SystemServices {
             android.os.ServiceManager.addService(Context.ACTIVITY_TASK_SERVICE, activityTaskManager)
         }
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
+        if (dev.artzig.testing.ProcessInspection.enabled) {
+            android.os.ServiceManager.addService(dev.artzig.testing.ProcessInspection.SERVICE,
+                HostedInspectionRegistry(activityManager) { token, uid, pid ->
+                    stockWindows?.taskForObservedWindow(token, uid, pid)
+                })
+        }
         val activityManagerAccess = HostActivityManagerInternalAccess(activityManager, packageManager, userLifecycle)
         val activityManagerInternal = Class.forName("android.app.HostedActivityManagerInternal")
             .getConstructor(HostActivityManagerInternalAccess::class.java)

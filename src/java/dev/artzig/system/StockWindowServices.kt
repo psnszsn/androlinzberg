@@ -109,6 +109,8 @@ internal class StockWindowServices private constructor() {
     }
 
     fun close() { shell?.close(); shell = null }
+    fun taskForObservedWindow(token: android.os.IBinder, uid: Int, pid: Int): Int? =
+        com.android.server.wm.HostedTaskInputTargets.windowTask(windows, token, uid, pid)
 
     fun verifyStartup() {
         val diagnostics = org.json.JSONObject(dev.artzig.ArtzigTestDiagnostics.snapshot(Long.MAX_VALUE, 0L))

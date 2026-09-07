@@ -75,6 +75,7 @@ object HostedServiceClient {
                 am.attachApplication(thread, 0)
             }
             attached = true
+            dev.artzig.testing.ProcessInspection.register(applicationThread())
         } catch (e: RemoteException) {
             throw e.rethrowFromSystemServer()
         }

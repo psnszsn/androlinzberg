@@ -105,6 +105,27 @@ Default launcher selection remains legacy. Task-window test-control and initial
 fullscreen/frame-limit options reject explicitly until their adapters are wired;
 ordinary joined-launch authorization still needs its regression gate.
 
+Regressions 160–164 add system-authorized process inspection. Applications
+register their real IApplicationThread before bindApplication callbacks; AMS and
+Binder validate UID/PID, and death removes the exact registration generation.
+Queries/actions run on the app main thread with a bounded wait and cancel queued
+work on timeout. WMS validates window-token ownership and supplies task IDs,
+including embedded targets, before tokens are removed from public observations.
+The session journal merges app/system cursors, retains source identity after
+death, bounds retained records and reports lost source history explicitly.
+
+Stock gates verify remote actions, stale revisions/generations, app-denied
+inspection, task mapping and removal. The initial Cage test crossed an initial
+resize and correctly rejected its stale action; regression 161 moves the action
+past initial presentation and refreshes explicit rejections. Regression 163
+passes the full JVM and 15-APK suites (45 steps, no issues), including journal
+merge/overflow/atomic-page checks. Regression 164 passes stock boot, cold launch,
+both task compositor gates and desktop launcher. Logs:
+`/tmp/wayland-process-inspection-{160,161,162,163,164}.log`.
+Cross-process observation is available over Binder; session-wide window IDs,
+Varlink aggregation, compositor input selection and native-process journal
+coverage remain in progress.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application
