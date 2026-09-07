@@ -69,43 +69,51 @@ class HostedInspectionRegistry(
 
     override fun listProcesses(): Bundle {
         enforceSystem()
+        val entries = synchronized(lock) { processes.values.toList() }
         return Bundle().apply {
-            putParcelableArrayList("processes", synchronized(lock) {
-                ArrayList(processes.values.map(::metadata))
-            })
+            putParcelableArrayList("processes", ArrayList(entries.map(::metadata)))
         }
     }
 
     override fun observe(pid: Int, generation: Long, afterRevision: Long, afterLog: Long, afterIssue: Long): Bundle {
         val entry = entry(pid, generation)
-        val observation = try { entry.endpoint.observe(afterRevision, afterLog, afterIssue) }
-        catch (failure: Exception) {
+        try {
+            // Pinned ActivityThread.handleBindApplication calls AMS.finishAttachApplication
+            // after Application.onCreate. Before that acknowledgement, collect the
+            // thread-safe journal without queueing a UI request behind application startup.
+            val ready = checkCurrent(entry).ready
+            val observation = if (ready) entry.endpoint.observe(afterRevision, afterLog, afterIssue)
+                else Bundle().apply {
+                    putString("runtime", entry.endpoint.runtimeDiagnostics(afterLog, afterIssue))
+                }
+            observation.putBoolean("starting", !ready)
+            // WMS owns task attribution, including embedded input targets.
+            val tokens = observation.getBundle("window_tokens") ?: Bundle()
+            val tasks = Bundle()
+            for (window in tokens.keySet()) {
+                tokens.getBinder(window)?.let { token ->
+                    windowTask(token, entry.process.uid, entry.process.pid)?.let { tasks.putInt(window, it) }
+                }
+            }
+            observation.remove("window_tokens")
+            observation.putBundle("window_tasks", tasks)
+            observation.putBundle("process", metadata(entry))
+            synchronized(journal) {
+                checkCurrent(entry)
+                journal.ingest(source(entry), JSONObject(checkNotNull(observation.getString("runtime"))))
+            }
+            return observation
+        } catch (failure: Exception) {
             synchronized(journal) { journal.failure(source(entry), "observe", failure.toString()) }
             throw failure
         }
-        // Return Android task IDs only for windows WMS associates with this
-        // exact process. An app cannot relabel another process's window token.
-        val tokens = observation.getBundle("window_tokens") ?: Bundle()
-        val tasks = Bundle()
-        for (window in tokens.keySet()) {
-            tokens.getBinder(window)?.let { token ->
-                windowTask(token, entry.process.uid, entry.process.pid)?.let { tasks.putInt(window, it) }
-            }
-        }
-        observation.remove("window_tokens")
-        observation.putBundle("window_tasks", tasks)
-        observation.putBundle("process", metadata(entry))
-        synchronized(journal) {
-            checkCurrent(entry)
-            journal.ingest(source(entry), JSONObject(checkNotNull(observation.getString("runtime"))))
-        }
-        return observation
     }
 
     override fun perform(pid: Int, generation: Long, revision: Long, windowId: Long,
         viewId: Int, virtualId: Int, action: Int, text: String?): Boolean {
         val entry = entry(pid, generation)
         try {
+            if (!checkCurrent(entry).ready) return false
             return entry.endpoint.perform(revision, windowId, viewId, virtualId, action, text)
                 .also { checkCurrent(entry) }
         } catch (failure: Exception) {
@@ -127,6 +135,7 @@ class HostedInspectionRegistry(
         putInt("pid", entry.process.pid); putInt("uid", entry.process.uid)
         putLong("generation", entry.generation)
         putString("package", entry.process.packageName); putString("name", entry.process.processName)
+        putBoolean("ready", activityManager.attachedProcess(entry.process.thread)?.ready == true)
     }
 
     private fun entry(pid: Int, generation: Long): Entry {
@@ -137,7 +146,7 @@ class HostedInspectionRegistry(
         return entry
     }
 
-    private fun checkCurrent(entry: Entry) {
+    private fun checkCurrent(entry: Entry): HostedActivityManagerService.AttachedProcess {
         check(synchronized(lock) { processes[entry.process.pid] === entry }) {
             "Inspection process died during the request"
         }
@@ -145,6 +154,7 @@ class HostedInspectionRegistry(
         check(current != null && current.pid == entry.process.pid && current.uid == entry.process.uid) {
             "Inspection application is no longer attached"
         }
+        return current
     }
 
     private fun enforceSystem() {

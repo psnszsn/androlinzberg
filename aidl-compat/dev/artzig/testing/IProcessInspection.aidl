@@ -5,4 +5,6 @@ import android.os.Bundle;
 interface IProcessInspection {
     Bundle observe(long afterRevision, long afterLog, long afterIssue);
     boolean perform(long revision, long windowId, int viewId, int virtualId, int action, @nullable String text);
+    /** Thread-safe journal access while Application.onCreate still owns main. */
+    String runtimeDiagnostics(long afterLog, long afterIssue);
 }

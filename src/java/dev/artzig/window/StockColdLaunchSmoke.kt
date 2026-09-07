@@ -32,6 +32,12 @@ object StockColdLaunchSmoke {
         check(info.uid in Process.FIRST_APPLICATION_UID..Process.LAST_APPLICATION_UID)
         check(BinderSession.reservePackageUid(pkg) == info.uid)
         check(manager.runningAppProcesses.orEmpty().none { it.uid == info.uid })
+        val startupGate = if (dev.artzig.testing.ProcessInspection.enabled) {
+            java.io.File(context.createPackageContext(pkg, 0).filesDir, "inspection-startup-gate").apply {
+                check(parentFile!!.isDirectory || parentFile!!.mkdirs())
+                check(createNewFile())
+            }
+        } else null
         val result = ActivityTaskManager.getService().startActivity(null, "android", null,
             Intent().setClassName(pkg, "$pkg.ColdProcessActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             null, null, null, -1, 0, null, null)
@@ -45,6 +51,8 @@ object StockColdLaunchSmoke {
         }
         val running = checkNotNull(process) { "ATMS did not create the first application process" }
         check(running.uid == info.uid && running.pid != Process.myPid())
+        if (startupGate != null) try { verifyStartingInspection(running.pid, deadline) }
+        finally { check(startupGate.delete()) }
         var events: ArrayList<String>? = null
         var frameCommitted = false
         while (SystemClock.uptimeMillis() < deadline) {
@@ -74,12 +82,39 @@ object StockColdLaunchSmoke {
     private fun inspectionProcesses(registry: dev.artzig.testing.IInspectionRegistry): List<android.os.Bundle> =
         registry.listProcesses().getParcelableArrayList("processes", android.os.Bundle::class.java).orEmpty()
 
+    private fun verifyStartingInspection(pid: Int, deadline: Long) {
+        val registry = dev.artzig.testing.IInspectionRegistry.Stub.asInterface(
+            android.os.ServiceManager.getService(dev.artzig.testing.ProcessInspection.SERVICE))
+        var process: android.os.Bundle? = null
+        while (SystemClock.uptimeMillis() < deadline) {
+            process = inspectionProcesses(registry).singleOrNull { it.getInt("pid") == pid }
+            if (process != null) break
+            SystemClock.sleep(5)
+        }
+        val pending = checkNotNull(process) { "Starting app did not register inspection" }
+        check(!pending.getBoolean("ready"))
+        val before = org.json.JSONObject(registry.diagnostics(0, 0))
+        val started = SystemClock.uptimeMillis()
+        val observation = registry.observe(pid, pending.getLong("generation"), 0, 0, 0)
+        check(observation.getBoolean("starting") && !observation.containsKey("snapshot"))
+        check(SystemClock.uptimeMillis() - started < 3_000) { "Starting inspection waited behind app main" }
+        check(!registry.perform(pid, pending.getLong("generation"), 0, 1, 1, -1, 4, null))
+        val model = dev.artzig.testing.SessionObservation(registry)
+        model.refresh()
+        check(!model.idle())
+        val tree = org.json.JSONObject(model.snapshot())
+        check(tree.getJSONArray("starting_processes").length() > 0)
+        check(tree.getJSONArray("unavailable_processes").length() == 0)
+        val after = org.json.JSONObject(registry.diagnostics(before.getLong("log_cursor"), before.getLong("issue_cursor")))
+        check(after.getJSONArray("issues").length() == 0) { "App startup was recorded as an inspection failure: $after" }
+    }
+
     private fun verifyInspection(pid: Int, uid: Int, packageName: String) {
         val registry = dev.artzig.testing.IInspectionRegistry.Stub.asInterface(
             android.os.ServiceManager.getService(dev.artzig.testing.ProcessInspection.SERVICE))
         val sessionBefore = org.json.JSONObject(registry.diagnostics(0, 0))
         val process = inspectionProcesses(registry).single { it.getInt("pid") == pid }
-        check(process.getInt("uid") == uid && process.getString("package") == packageName)
+        check(process.getInt("uid") == uid && process.getString("package") == packageName && process.getBoolean("ready"))
         val generation = process.getLong("generation")
         check(generation > 0)
         check(runCatching { registry.observe(pid, generation + 1, 0, 0, 0) }.exceptionOrNull() is IllegalStateException)

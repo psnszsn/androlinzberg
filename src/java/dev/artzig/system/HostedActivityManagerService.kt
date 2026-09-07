@@ -980,11 +980,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val uid: Int,
         val packageName: String,
         val processName: String,
+        val ready: Boolean,
     )
 
     internal fun attachedProcess(thread: IApplicationThread?): AttachedProcess? = synchronized(lock) {
         val record = thread?.asBinder()?.let(processes::get) ?: return@synchronized null
-        AttachedProcess(record.thread, record.pid, record.uid, record.packageName, record.processName)
+        AttachedProcess(record.thread, record.pid, record.uid, record.packageName, record.processName, record.ready)
     }
 
     internal fun attachedProcessForPackage(
@@ -995,7 +996,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             it.ready && it.packageName == packageName && (processName == null || it.processName == processName)
         }
             ?: return@synchronized null
-        AttachedProcess(record.thread, record.pid, record.uid, record.packageName, record.processName)
+        AttachedProcess(record.thread, record.pid, record.uid, record.packageName, record.processName, record.ready)
     }
 
     /**
@@ -1016,7 +1017,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
             if (record?.ready == true) {
                 attached = AttachedProcess(
-                    record.thread, record.pid, record.uid, record.packageName, record.processName,
+                    record.thread, record.pid, record.uid, record.packageName, record.processName, record.ready,
                 )
                 true
             } else if (!spawnIfMissing && record == null) {

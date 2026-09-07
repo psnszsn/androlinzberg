@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 object SessionObservationSmoke {
     private data class Peer(val pid: Int, var generation: Long, val task: Int?,
-        var revision: Long = 1, var selected: Boolean = false, var failed: Boolean = false)
+        var revision: Long = 1, var selected: Boolean = false, var failed: Boolean = false, var starting: Boolean = false)
 
     fun run() {
         val peers = linkedMapOf(10 to Peer(10, 1, 100), 20 to Peer(20, 2, 200), 30 to Peer(30, 3, null))
@@ -22,6 +22,10 @@ object SessionObservationSmoke {
                 val peer = checkNotNull(peers[pid])
                 check(peer.generation == generation)
                 if (peer.failed) error("Application observation timed out")
+                if (peer.starting) return Bundle().apply {
+                    putBoolean("starting", true)
+                    putString("runtime", JSONObject().put("log_cursor", 0).put("issue_cursor", 0).toString())
+                }
                 val windows = JSONArray()
                 val nodes = JSONArray()
                 val tasks = Bundle()
@@ -57,6 +61,16 @@ object SessionObservationSmoke {
             }
         }
         val observation = SessionObservation(registry)
+        peers.getValue(20).starting = true
+        observation.refresh()
+        check(!observation.idle())
+        val startup = JSONObject(observation.snapshot())
+        check(startup.getJSONArray("starting_processes").length() == 1)
+        check(startup.getJSONArray("unavailable_processes").length() == 0)
+        val startupRevision = observation.revision()
+        observation.refresh()
+        check(observation.revision() == startupRevision)
+        peers.getValue(20).starting = false
         observation.refresh()
         check(observation.idle()) { "A service process without windows prevented UI idle" }
         fun tree() = JSONObject(observation.snapshot())

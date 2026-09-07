@@ -14,6 +14,7 @@ class SessionObservation(private val registry: IInspectionRegistry) {
         var observation: Bundle? = null
         var tree: JSONObject? = null
         var failure: String? = null
+        var starting = false
         var logCursor = 0L
         var issueCursor = 0L
     }
@@ -37,6 +38,17 @@ class SessionObservation(private val registry: IInspectionRegistry) {
             val peer = peers.getOrPut(key) { event("process-added", key); Peer(metadata) }
             try {
                 val observation = registry.observe(key.pid, key.generation, peer.revision, peer.logCursor, peer.issueCursor)
+                val runtime = JSONObject(checkNotNull(observation.getString("runtime")))
+                peer.logCursor = runtime.getLong("log_cursor")
+                peer.issueCursor = runtime.getLong("issue_cursor")
+                if (observation.getBoolean("starting")) {
+                    if (!peer.starting) event("process-starting", key)
+                    peer.starting = true
+                    peer.failure = null
+                    peer.observation = observation
+                    peer.tree = null
+                    continue
+                }
                 val observedTree = JSONObject(checkNotNull(observation.getString("snapshot")))
                 val observedRevision = observedTree.getLong("revision")
                 check(observedRevision >= peer.revision) { "Process tree revision rewound" }
@@ -48,15 +60,15 @@ class SessionObservation(private val registry: IInspectionRegistry) {
                     if (change.getLong("revision") > peer.revision) event(change.getString("reason"), key, change.getLong("revision"))
                 }
                 if (peer.failure != null) event("process-observation-restored", key)
-                val runtime = JSONObject(checkNotNull(observation.getString("runtime")))
+                if (peer.starting) event("process-ready", key)
+                peer.starting = false
                 peer.revision = observedRevision
-                peer.logCursor = runtime.getLong("log_cursor")
-                peer.issueCursor = runtime.getLong("issue_cursor")
                 peer.observation = observation
                 peer.tree = observedTree
                 peer.failure = null
             } catch (failure: Exception) {
                 if (peer.failure != failure.toString()) event("process-unavailable", key)
+                peer.starting = false
                 peer.failure = failure.toString()
                 peer.observation = null
                 peer.tree = null
@@ -73,12 +85,15 @@ class SessionObservation(private val registry: IInspectionRegistry) {
         val windows = JSONArray()
         val nodes = JSONArray()
         val unavailable = JSONArray()
+        val starting = JSONArray()
         val seenWindows = HashSet<WindowKey>()
         var truncated = false
         for ((key, peer) in peers) {
             val local = peer.tree
             if (local == null) {
-                unavailable.put(JSONObject().put("pid", key.pid).put("generation", key.generation).put("error", peer.failure))
+                val state = JSONObject().put("pid", key.pid).put("generation", key.generation)
+                if (peer.starting) starting.put(state)
+                else unavailable.put(state.put("error", peer.failure))
                 continue
             }
             truncated = truncated || local.getBoolean("truncated")
@@ -119,7 +134,7 @@ class SessionObservation(private val registry: IInspectionRegistry) {
         }
         windowIds.keys.removeAll { it !in seenWindows && peers[it.process]?.failure == null }
         val next = JSONObject().put("windows", windows).put("nodes", nodes).put("truncated", truncated)
-            .put("unavailable_processes", unavailable)
+            .put("unavailable_processes", unavailable).put("starting_processes", starting)
         val nextSignature = next.toString()
         if (signature != nextSignature) { signature = nextSignature; event("tree-changed") }
         tree = next
@@ -128,7 +143,7 @@ class SessionObservation(private val registry: IInspectionRegistry) {
     fun snapshot(): String = JSONObject(tree.toString()).put("revision", revision).toString()
     fun revision(): Long = revision
     fun idle(): Boolean = peers.isNotEmpty() && tree.getJSONArray("windows").length() > 0 &&
-        peers.values.all { it.failure == null &&
+        peers.values.all { !it.starting && it.failure == null &&
             (it.tree?.getJSONArray("windows")?.length() == 0 || it.observation?.getBoolean("idle") == true) }
 
     fun diagnostics(afterRevision: Long): String = JSONObject().put("revision", revision).put("idle", idle())
@@ -143,7 +158,7 @@ class SessionObservation(private val registry: IInspectionRegistry) {
         if (expectedRevision != revision) return false
         val window = windowIds.entries.singleOrNull { it.value == windowId }?.key ?: return false
         val peer = peers[window.process] ?: return false
-        if (peer.observation == null) return false
+        if (peer.observation == null || peer.starting) return false
         val applied = registry.perform(window.process.pid, window.process.generation, peer.revision,
             window.localId, viewId, virtualId, action, text)
         refresh()

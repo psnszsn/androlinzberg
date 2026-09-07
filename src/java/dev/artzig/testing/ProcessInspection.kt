@@ -27,6 +27,11 @@ object ProcessInspection {
         check(Looper.myLooper() == Looper.getMainLooper())
         val handler = Handler.createAsync(Looper.getMainLooper())
         val endpoint = object : IProcessInspection.Stub() {
+            override fun runtimeDiagnostics(afterLog: Long, afterIssue: Long): String {
+                enforceSystem()
+                return ArtzigTestDiagnostics.snapshot(afterLog, afterIssue)
+            }
+
             override fun observe(afterRevision: Long, afterLog: Long, afterIssue: Long): Bundle {
                 enforceSystem()
                 return onMain(handler) {
