@@ -43,7 +43,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
     "src/framework-stubs/android/media/ToneGenerator.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",
-    "src/framework-stubs/android/view/TextureView.java",
     "src/framework-stubs/com/android/server/pm/Computer.java",
     "src/framework-stubs/com/android/server/pm/PackageArchiver.java",
     "src/framework-stubs/com/android/server/pm/PackageManagerService.java",

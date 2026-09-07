@@ -72,6 +72,7 @@ open class WindowFixtureActivity : Activity() {
                 })
             }, LinearLayout.LayoutParams(240, 120))
         }
+        button("Show TextureView") { startActivity(Intent(this, TextureFixtureActivity::class.java)) }
         setContentView(content)
     }
 

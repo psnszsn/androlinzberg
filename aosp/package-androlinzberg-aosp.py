@@ -80,6 +80,7 @@ framework_patches = tuple(
         (55, "-WM-release-FPS-callbacks-on-transport-failure.patch"),
         (56, "-DeviceStatePolicy-use-desktop-posture-provider.patch"),
         (57, "-Tunnel-listener-release-on-compositor-disconnect.patch"),
+        (58, "-HWUI-record-hosted-texture-layers.patch"),
     )
 )
 

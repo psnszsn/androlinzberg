@@ -78,6 +78,70 @@ object StockWindowBootSmoke {
         android.app.ActivityManager.getMyMemoryState(memory)
         check(memory.processState == android.app.ActivityManager.PROCESS_STATE_TOP)
         println("Stock ATMS resumed application task: ${resumed!!.taskId}")
+        verifyClientWindow(session, resumed!!)
         println("Stock WMS/ATMS boot: display=${info.displayId} physical=${initial.x}x${initial.y}")
+    }
+
+    /** Exercise the actual session contract before switching the ViewRootImpl client.
+     * The test window has no view hierarchy; BLAST owns its submitted frame. */
+    private fun verifyClientWindow(session: android.view.IWindowSession, activity: android.app.Activity) {
+        val window = object : android.view.IWindow.Stub(),
+            android.view.IWindow by android.view.IWindow.Default() {
+            override fun asBinder(): android.os.IBinder = this
+            override fun insetsControlChanged(state: android.view.InsetsState,
+                controls: android.view.InsetsSourceControl.Array) { controls.release() }
+        }
+        val params = android.view.WindowManager.LayoutParams().apply {
+            type = android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION
+            token = activity.activityToken
+            packageName = activity.packageName
+            title = "Stock session buffer gate"
+            width = 320
+            height = 240
+            format = android.graphics.PixelFormat.RGBA_8888
+        }
+        val channel = android.view.InputChannel()
+        val controls = android.view.InsetsSourceControl.Array()
+        val result = android.view.WindowRelayoutResult()
+        var added = false
+        var blast: android.graphics.BLASTBufferQueue? = null
+        var surface: android.view.Surface? = null
+        try {
+            val add = session.addToDisplayAsUser(window, params, android.view.View.VISIBLE,
+                Display.DEFAULT_DISPLAY, activity.userId, android.view.WindowInsets.Type.defaultVisible(),
+                channel, android.view.InsetsState(), controls, android.graphics.Rect(), floatArrayOf(1f))
+            check(add >= android.view.WindowManagerGlobal.ADD_OKAY) { "WMS rejected window: $add" }
+            added = true
+            checkNotNull(channel.token) { "WMS did not create an input channel" }
+            session.relayout(window, params, 320, 240, android.view.View.VISIBLE, 0, 0, -1, result)
+            check(!result.frames.frame.isEmpty) { "WMS returned an empty window frame" }
+            check(result.surfaceControl.isValid) { "WMS returned no application surface" }
+            val queue = android.graphics.BLASTBufferQueue("stock-session-gate", true).also { blast = it }
+            queue.update(result.surfaceControl, result.frames.frame.width(), result.frames.frame.height(),
+                params.format)
+            val producer = queue.createSurfaceWithHandle().also { surface = it }
+            val committed = java.util.concurrent.CountDownLatch(1)
+            check(queue.syncNextTransaction { transaction ->
+                transaction.addTransactionCommittedListener(java.util.concurrent.Executor { it.run() }) {
+                    committed.countDown()
+                }
+                session.finishDrawing(window, transaction, result.syncSeqId)
+                transaction.close()
+            })
+            val canvas = producer.lockHardwareCanvas()
+            canvas.drawColor(android.graphics.Color.BLUE)
+            producer.unlockCanvasAndPost(canvas)
+            check(committed.await(5, java.util.concurrent.TimeUnit.SECONDS)) { "WMS draw did not commit" }
+            check(queue.lastAcquiredFrameNum > 0)
+            println("Stock WMS application window: ${result.frames.frame}, input channel and BLAST draw committed")
+        } finally {
+            if (added) session.remove(window.asBinder())
+            surface?.release()
+            blast?.destroy()
+            result.surfaceControl.release()
+            result.activeControls.release()
+            controls.release()
+            channel.dispose()
+        }
     }
 }

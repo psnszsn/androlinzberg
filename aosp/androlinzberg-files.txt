@@ -9041,3 +9041,9 @@ F aosp frameworks/base/services/usage/java/com/android/server/usage/IntervalStat
 F aosp frameworks/base/services/usage/java/com/android/server/usage/PackagesTokenData.java
 F aosp frameworks/base/core/jni/android_window_WindowInfosListener.cpp
 F aosp frameworks/base/core/jni/android_window_InputTransferToken.cpp
+
+# Stock window client closure for the WMS client cutover.
+F aosp frameworks/base/core/java/android/view/AccessibilityInteractionController.java
+F aosp frameworks/base/core/java/android/view/SurfaceView.java
+F aosp frameworks/base/core/java/android/view/TextureView.java
+F aosp frameworks/base/core/java/android/view/ViewRootImpl.java

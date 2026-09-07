@@ -20,7 +20,6 @@ Pending: 6 (budget 6). Survivors: 5. Total: 11.
 | `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | no-aosp-source |
 | `android/os/VintfObject.java` | JNI natives (libvintf) | blocked |
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | replaceable |
-| `android/view/TextureView.java` | window seam (HWUI layer natives; players use SurfaceView) | blocked |
 
 ## Pending replacement
 

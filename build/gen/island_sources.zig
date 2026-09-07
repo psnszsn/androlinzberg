@@ -102,6 +102,7 @@ pub const jni_srcs = [_][]const u8{
     "jni/android_graphics_drawable_AnimatedVectorDrawable.cpp",
     "jni/android_graphics_drawable_VectorDrawable.cpp",
     "jni/android_graphics_HardwareRenderer.cpp",
+    "jni/android_graphics_TextureLayer.cpp",
     "jni/android_graphics_HardwareBufferRenderer.cpp",
     "jni/android_graphics_HardwareRendererObserver.cpp",
     "jni/android_graphics_Matrix.cpp",
@@ -519,6 +520,7 @@ pub const surface_jni_srcs = [_][]const u8{
 // Stock Java Surface/SurfaceTexture and BLAST object ownership over libgui.
 pub const texture_jni_srcs = [_][]const u8{
     "android_graphics_SurfaceTexture.cpp",
+    "android_view_TextureView.cpp",
     "android_view_Surface.cpp",
     "android_graphics_BLASTBufferQueue.cpp",
     "platform/host/native_window_jni.cpp",

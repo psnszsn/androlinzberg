@@ -248,6 +248,8 @@ extern int register_android_opengl_classes(JNIEnv*);
 extern int register_android_view_SurfaceSession(JNIEnv*);
 extern int register_android_view_SurfaceControl(JNIEnv*);
 extern int register_android_graphics_SurfaceTexture(JNIEnv*);
+extern int register_android_view_TextureView(JNIEnv*);
+extern int register_android_graphics_TextureLayer(JNIEnv*);
 extern int register_android_view_Surface(JNIEnv*);
 extern int register_android_graphics_BLASTBufferQueue(JNIEnv*);
 extern int register_android_view_DisplayEventReceiver(JNIEnv*);
@@ -701,6 +703,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_view_SurfaceSession),
             E(android::register_android_view_SurfaceControl),
             E(android::register_android_graphics_SurfaceTexture),
+            E(android::register_android_view_TextureView),
+            E(android::register_android_graphics_TextureLayer),
             E(android::register_android_view_Surface),
             E(android::register_android_graphics_BLASTBufferQueue),
             E(register_android_hardware_display_DisplayManagerGlobal),

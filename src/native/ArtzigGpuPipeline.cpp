@@ -27,6 +27,7 @@
 #include <wayland-egl.h>
 
 #include "DamageAccumulator.h"
+#include "DeferredLayerUpdater.h"
 #include "DeviceInfo.h"
 #include "LightingInfo.h"
 #include "Properties.h"
@@ -231,6 +232,13 @@ sk_sp<GrDirectContext> ArtzigGpuPipeline::ensureThreadContext(renderthread::Rend
   if (!offscreen) offscreen = std::make_unique<ArtzigGpuPipeline>(thread);
   if (!offscreen->ensureGrContext()) return nullptr;
   return offscreen->mContext;
+}
+
+DeferredLayerUpdater* ArtzigGpuPipeline::createTextureLayer() {
+  // SkiaOpenGLPipeline creates the stock updater after requiring RenderThread's
+  // GL context. This pipeline owns the equivalent shared host EGL/Ganesh context.
+  if (!ensureGrContext()) return nullptr;
+  return new DeferredLayerUpdater(mRenderThread.renderState());
 }
 
 void ArtzigGpuPipeline::clearSurface() {

@@ -460,6 +460,12 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
 
     @Volatile var externalSourcesPolicy: android.content.pm.PackageManagerInternal.ExternalSourcesPolicy? = null
 
+    /** SuspendPackageHelper.isPackageSuspended: local WM lookup returns false
+     * for an absent package. Package visibility follows this registry's existing policy. */
+    fun isPackageSuspended(packageName: String, userId: Int): Boolean = synchronized(lock) {
+        packages[packageName]?.getUserStateOrDefault(userId)?.isSuspended == true
+    }
+
     // -------------------------------------------------- internal (in-process)
 
     fun getApkPathInternal(packageName: String): String? =

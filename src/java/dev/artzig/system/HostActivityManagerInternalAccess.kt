@@ -87,6 +87,13 @@ class HostActivityManagerInternalAccess internal constructor(
     // process reaper is absent; host Linux retains its existing memory policy.
     fun trimApplications() = activities.updateWindowProcessStates()
 
+    fun scheduleAppGcs() {
+        // AppProfiler.scheduleAppGcsLPf only schedules entries already queued by
+        // doLowMemReportIfNeededLocked; it does not enqueue a GC on window changes.
+        // This host has no Android low-memory process reaper or pending profiler
+        // GC requests, so it follows the empty-queue branch. ART owns normal GC.
+    }
+
     fun updateBatteryStats(activity: android.content.ComponentName, uid: Int, userId: Int, resumed: Boolean) =
         checkNotNull(activities.batteryService).updateActivityUsage(activity, uid, resumed)
     fun updateForegroundTimeIfOnBattery(packageName: String, uid: Int, cpuTimeDiff: Long) =

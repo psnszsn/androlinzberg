@@ -47,7 +47,7 @@ public:
        std::mutex &profilerLock) override;
   bool swapBuffers(const renderthread::Frame &, IRenderPipeline::DrawResult &,
                    const SkRect &, FrameInfo *, bool *requireSwap) override;
-  DeferredLayerUpdater *createTextureLayer() override { return nullptr; }
+  DeferredLayerUpdater *createTextureLayer() override;
   bool setSurface(ANativeWindow *surface,
                   renderthread::SwapBehavior swapBehavior) override;
   bool setHostSurface(void *nativeDisplay, void *nativeSurface, int32_t width,

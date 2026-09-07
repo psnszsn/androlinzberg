@@ -19,6 +19,8 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
         val name = method.simpleName.toString()
         val params = method.parameters.map { processingEnv.typeUtils.erasure(it.asType()).toString() }
         return when {
+            name == "isPackageSuspended" && params == listOf("java.lang.String", "int") ->
+                "return packages.isPackageSuspended(p0, p1);"
             name == "notifyComponentUsed" && params == listOf("java.lang.String", "int", "java.lang.String", "java.lang.String") ->
                 "packages.notifyComponentUsed(p0, p1, p2, p3);"
             name == "isInstantAppInstallerComponent" && params == listOf("android.content.ComponentName") ->

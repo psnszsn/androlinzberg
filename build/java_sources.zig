@@ -1404,7 +1404,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/core/java/com/android/internal/os/ZygoteInit.java");
     try c.file("$FB/core/java/com/android/internal/os/ZygoteSecurityException.java");
     try c.file("$FB/core/java/com/android/internal/os/ZygoteServer.java");
-    try c.add("$FB/core/java/android/view", .{ .max_depth = 1, .not_names = &.{ "ViewRootImpl.java", "WindowManagerGlobal.java", "WindowManagerImpl.java", "ThreadedRenderer.java", "SurfaceControlViewHost.java", "SurfaceView.java", "TextureView.java", "WindowlessWindowManager.java", "WindowlessWindowLayout.java", "AccessibilityInteractionController.java" } });
+    try c.add("$FB/core/java/android/view", .{ .max_depth = 1, .not_names = &.{ "ViewRootImpl.java", "WindowManagerGlobal.java", "WindowManagerImpl.java", "ThreadedRenderer.java", "SurfaceControlViewHost.java", "SurfaceView.java", "WindowlessWindowManager.java", "WindowlessWindowLayout.java", "AccessibilityInteractionController.java" } });
     try c.add("$FB/core/java/android/view/accessibility", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/autofill", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/contentcapture", .{ .max_depth = 1 });

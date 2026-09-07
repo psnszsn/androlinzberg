@@ -11,6 +11,7 @@ pub fn build(b: *std.Build, aosp: *std.Build.Dependency, framework: @import("jav
     kotlinc.addArg("-d");
     const classes = kotlinc.addOutputFileArg("window-fixture-classes.jar");
     kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/WindowFixtureActivity.kt"));
+    kotlinc.addFileArg(b.path("src/java/dev/artzig/fixtures/windows/TextureFixtureActivity.kt"));
     const d8 = b.addSystemCommand(&.{ "java", "-Xmx512M", "-cp" });
     d8.addFileArg(aosp.path("prebuilts/r8/r8.jar"));
     d8.addArgs(&.{ "com.android.tools.r8.D8", "--min-api", "35", "--lib" });

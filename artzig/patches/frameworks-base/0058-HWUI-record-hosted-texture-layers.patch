@@ -1,0 +1,28 @@
+From: Androlinzberg host integration
+Subject: [PATCH] HWUI: record stock texture layers on the hosted GPU pipeline
+
+The host has a real Ganesh pipeline and DeferredLayerUpdater. Retain stock
+LayerDrawable recording instead of taking Layoutlib's layer-free build path.
+Functor paths keep their existing platform guard.
+
+diff --git a/libs/hwui/pipeline/skia/SkiaRecordingCanvas.cpp b/libs/hwui/pipeline/skia/SkiaRecordingCanvas.cpp
+--- a/libs/hwui/pipeline/skia/SkiaRecordingCanvas.cpp
++++ b/libs/hwui/pipeline/skia/SkiaRecordingCanvas.cpp
+@@ -30,7 +30,7 @@
+ #include <SkSamplingOptions.h>
+ #include <SkTypes.h>
+ #include "CanvasTransform.h"
+-#ifdef __ANDROID__ // Layoutlib does not support Layers
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GRAPHICS) // GPU layers are hosted
+ #include "Layer.h"
+ #include "LayerDrawable.h"
+ #endif
+@@ -151,7 +151,7 @@
+ }
+ 
+ void SkiaRecordingCanvas::drawLayer(uirenderer::DeferredLayerUpdater* layerUpdater) {
+-#ifdef __ANDROID__ // Layoutlib does not support Layers
++#if defined(__ANDROID__) || defined(ARTZIG_HOST_GRAPHICS) // GPU layers are hosted
+     if (layerUpdater != nullptr) {
+         // Create a ref-counted drawable, which is kept alive by sk_sp in SkLiteDL.
+         sk_sp<SkDrawable> drawable(new LayerDrawable(layerUpdater));

@@ -2,8 +2,9 @@
 
 Status: M3/M4 graphics gates, M5 native/Java input boundaries, supervised SF
 startup, stock Java SurfaceControl/Choreographer and Surface/HWUI queue gates pass.
-Stock WMS/ATMS boots through display enablement and the session readiness marker.
-Application process/window attachment and full task windows remain in progress through M11.
+Stock WMS/ATMS boots, resumes a task, accepts a real client window and commits
+a HWUI/BLAST frame through finishDrawing. Cold process launch, the complete stock
+window-client cutover and full task windows remain in progress through M11.
 Code baseline: `2a2d199`, the
 hosted libbinder facade merged into main. This document expands the original
 “Wayland task windows with synthetic Android coordinates” proposal into a
@@ -41,6 +42,60 @@ This work deliberately replaces the window/graphics portions of the fence in
 `stock-client-migration.md` as their replacement milestones pass. The fence
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
+
+## Real WMS client and TextureView checkpoint (2026-09-07)
+
+Regression 41 passes the real WMS session gate: the fixture resumes in task 2,
+adds a 320x240 application window with its activity token, obtains an input
+channel and surface, and commits a HWUI frame through BLAST and WMS
+finishDrawing. Module, buffer/JNI and the targeted TextureView APK checks pass.
+The gate remains a direct session client, not a stock ViewRootImpl APK window.
+Cold process launch is still missing ActivityManagerInternal.startProcess and
+pre-launch package UID assignment; do not mark the full M5 process scope done.
+
+Stock TextureView now replaces the stub and uses stock TextureView/TextureLayer
+JNI. The host Ganesh pipeline creates a stock DeferredLayerUpdater. The fixture
+verifies CPU-produced pixels through HWUI readback, resize callback ordering,
+and surface release after detach. The audit has 27 stubs, 17 pending and 10
+survivors (TextureView was a survivor, so the pending budget stays at 17).
+
+Regression 42 passes JVM, system, stock-window and graph checks but fails two
+of 15 APK tests. The new compositor screenshot check exposes Layoutlib's
+non-Android drawLayer guard: readback succeeds while recording omits the texture
+layer. Patch 0058 enables stock layer recording for ARTZIG_HOST_GRAPHICS.
+Regression 44 passes the stock-window, module, buffer/JNI, graph and targeted
+TextureView APK gates. Both cyan and resized magenta pixels appear in compositor
+screenshots; all three diagnostic steps are clean. Package 66 is pinned as
+`N-V-__8AADZTuU1bOnEYBc5YCngEzOlMlcN8uM01bZdn18Zf`, archive SHA-256
+`9cff110e2584452eaa36d3c085687afb7483c980eb7e63042cc22a54501ff8e2`. The live NewPipe fullscreen test captured
+a mostly black stream frame; isolated regression 43 passes unchanged with seven
+clean steps and a visible full-width video frame. Both regression-42 failures
+are retained under `/tmp/wayland-regression42-artifacts/`. No structured runtime
+issues were recorded in those failed captures. Full regression 47 now passes
+stock-window, JVM, system, graph and all 15 APK tests (47 diagnostic steps,
+zero runtime issues and no failure artifacts), including both visual checks.
+
+## Media rebase and window-client source checkpoint (2026-09-07)
+
+Rebased onto main 931c8c9, retaining its stock spatializer, loudness and media
+routing clients and hosted services. Package 65 combines those imports with the
+existing graphics closure and the four previously unvendored window-client
+sources. It is pinned as `N-V-__8AAABTuU061pcDkSxp2uwVtikveeGZ7CF-WO6BJUNb`,
+archive SHA-256 `a7fa2a3f652097756bb90a18ff0dd07ac80451e5a2936b1ad789e9313143eb7d`.
+The regenerated stub audit has 28 stubs: 17 pending and 11 survivors.
+
+An isolated javac check compiles stock ViewRootImpl, SurfaceView, TextureView,
+AccessibilityInteractionController and PhoneFallbackEventHandler together
+against a live framework build (`/tmp/wayland-client-compile-main9.log`).
+TextureView also compiles alone against the current root
+(`/tmp/wayland-texture-compile-main9.log`), allowing its independent replacement.
+These are source checks, not proof of runtime client/service compatibility.
+Regression 39 passes module, system, full APK and graph checks (14 APK tests,
+44 steps, zero runtime issues). Its stronger stock-window gate reaches real
+window registration and fails at PackageManagerInternal.isPackageSuspended.
+The local query now reads stock package user state; regressions 41 and 44
+validate it through real WMS window registration. The TextureView replacement
+and its public-API APK fixture are validated in the newer checkpoint above.
 
 ## Stock task launch checkpoint (2026-09-07)
 
