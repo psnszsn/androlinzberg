@@ -234,6 +234,12 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$A/packages/modules/Wifi/framework/java/android/net/wifi/p2p/WifiP2pUsdBasedLocalServiceAdvertisementConfig.java");
     try c.file("$A/packages/modules/Wifi/framework/java/android/net/wifi/p2p/WifiP2pUsdBasedServiceDiscoveryConfig.java");
     try c.file("$A/packages/modules/Wifi/framework/java/android/net/wifi/p2p/WifiP2pWfdInfo.java");
+    try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/nsd/AdvertisingRequest.java");
+    try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/nsd/DiscoveryRequest.java");
+    try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/nsd/NsdManager.java");
+    try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/nsd/NsdServiceInfo.java");
+    try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/nsd/OffloadEngine.java");
+    try c.file("$A/packages/modules/Connectivity/framework-t/src/android/net/nsd/OffloadServiceInfo.java");
     try c.file("$A/packages/modules/Wifi/framework/java/android/net/wifi/p2p/nsd/WifiP2pDnsSdServiceInfo.java");
     try c.file("$A/packages/modules/Wifi/framework/java/android/net/wifi/p2p/nsd/WifiP2pDnsSdServiceResponse.java");
     try c.file("$A/packages/modules/Wifi/framework/java/android/net/wifi/p2p/nsd/WifiP2pServiceInfo.java");

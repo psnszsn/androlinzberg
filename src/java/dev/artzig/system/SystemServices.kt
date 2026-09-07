@@ -167,6 +167,7 @@ internal object SystemServices {
         // Identity/policy services on the real AIDL surfaces, session-global
         // (any process may ask about users or app-ops).
         android.os.ServiceManager.addService(Context.USER_SERVICE, HostedUserManagerService())
+        android.os.ServiceManager.addService(Context.NSD_SERVICE, HostedNsdService(context))
         val appOps = HostedAppOpsService()
         android.os.ServiceManager.addService("appops", appOps)
 

@@ -27,6 +27,25 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- NsdManager and NsdServiceInfo now compile verbatim with four supporting NSD
+  API sources and four generated Binder interfaces. The host DNS-SD backend is
+  moved from `android.net.nsd` to `dev.artzig`; HostedNsdService owns subscriptions,
+  serialized callbacks and Binder-death cleanup. Stock NsdManager owns listener
+  identity, executors, cancellation and stale-event handling. The Avahi parser
+  now preserves decimal-escaped UTF-8 names, quoted/binary TXT values and independent
+  IPv4/IPv6 records. ART tests cover those records, parcel round trips, validation,
+  discovery/update/lost ordering, resolution cancellation, close failures, listener
+  reuse, and client-death cleanup. The test APK declares INTERNET for the stock
+  service's permission check. JVM/system, native/Binder and build checks pass;
+  all 11 APK tests pass (39 steps, zero structured runtime issues). All ten source
+  inputs already match the current AOSP archive; both archives are unchanged.
+  Production discovery requires avahi-browse and its daemon. The existing backend
+  has no advertiser or offload engine, and interface-scoped queries explicitly
+  report the missing Avahi D-Bus connection. These capabilities are not claimed
+  complete. The inventory remains 24 stubs (15 pending, 9 survivors); these clients
+  were adaptations outside that inventory.
+
+
 - Choreographer now compiles verbatim from AOSP; the hosted replacement and its
   `$artzig` frame hooks are removed. DisplayEventReceiver's four JNI methods use
   an owned display-event connection below the stock Java classes. Pipe readiness

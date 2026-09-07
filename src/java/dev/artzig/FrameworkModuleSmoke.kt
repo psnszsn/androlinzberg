@@ -114,8 +114,6 @@ import android.service.textclassifier.TextClassifierService
 import android.service.voice.VisualQueryDetectedResult
 import android.net.Uri
 import android.net.http.X509TrustManagerExtensions
-import android.net.nsd.HostedNsdBackends
-import android.net.nsd.InMemoryHostedNsdBackend
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.opengl.GLSurfaceView
@@ -4504,87 +4502,7 @@ internal object FrameworkModuleSmoke {
         check(android.media.metrics.LogSessionId.LOG_SESSION_ID_NONE.stringId.isEmpty())
     }
 
-    private fun testNetworkServiceDiscovery() {
-        val backend = InMemoryHostedNsdBackend()
-        HostedNsdBackends.installForTests(backend)
-        try {
-            val context = HostContexts.systemContext(
-                System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-                200,
-                200,
-                120,
-                0,
-            )
-            val manager = checkNotNull(context.getSystemService(NsdManager::class.java))
-            check(manager === context.getSystemService(Context.NSD_SERVICE))
-
-            val service = NsdServiceInfo().apply {
-                setServiceName("Living Room")
-                setServiceType("_fcast._tcp")
-                setHostAddresses(listOf(InetAddress.getByName("127.0.0.1")))
-                setPort(46899)
-                setAttribute("id", "framework-smoke")
-            }
-            backend.publish(service)
-
-            val callbacks = mutableListOf<String>()
-            var found: NsdServiceInfo? = null
-            val listener = object : NsdManager.DiscoveryListener {
-                override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                    error("discovery failed: $serviceType/$errorCode")
-                }
-                override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                    error("stop failed: $serviceType/$errorCode")
-                }
-                override fun onDiscoveryStarted(serviceType: String) {
-                    callbacks += "started:$serviceType"
-                }
-                override fun onDiscoveryStopped(serviceType: String) {
-                    callbacks += "stopped:$serviceType"
-                }
-                override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                    found = serviceInfo
-                    callbacks += "found:${serviceInfo.getServiceName()}"
-                }
-                override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-                    callbacks += "lost:${serviceInfo.getServiceName()}"
-                }
-            }
-            manager.discoverServices("_fcast._tcp", NsdManager.PROTOCOL_DNS_SD, listener)
-            drainMainQueue()
-            check(callbacks == listOf("started:_fcast._tcp", "found:Living Room")) {
-                "NSD discovery callback ordering: $callbacks"
-            }
-            val discovered = checkNotNull(found)
-            check(discovered.getHostAddresses().single().hostAddress == "127.0.0.1")
-            check(discovered.getPort() == 46899)
-            check(String(checkNotNull(discovered.getAttributes()["id"])) == "framework-smoke")
-
-            val serviceInfoCallbacks = mutableListOf<String>()
-            val serviceInfoCallback = object : NsdManager.ServiceInfoCallback {
-                override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) {
-                    error("service info registration failed: $errorCode")
-                }
-                override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
-                    serviceInfoCallbacks += "updated:${serviceInfo.getPort()}"
-                }
-                override fun onServiceLost() { serviceInfoCallbacks += "lost" }
-                override fun onServiceInfoCallbackUnregistered() {
-                    serviceInfoCallbacks += "unregistered"
-                }
-            }
-            val directExecutor = java.util.concurrent.Executor(Runnable::run)
-            manager.registerServiceInfoCallback(discovered, directExecutor, serviceInfoCallback)
-            manager.unregisterServiceInfoCallback(serviceInfoCallback)
-            check(serviceInfoCallbacks == listOf("updated:46899", "unregistered"))
-
-            manager.stopServiceDiscovery(listener)
-            drainMainQueue()
-            check(callbacks.last() == "stopped:_fcast._tcp")
-        } finally {
-            HostedNsdBackends.installForTests(null)
-        }
-    }
+    private fun testNetworkServiceDiscovery() { StockNsdSmoke.run() }
 
     private fun testSurfaceViewLifecycle() {
         ArtzigVideoLayer.setNativeCallsEnabledForTests(false)

@@ -408,8 +408,10 @@ public final class SystemServiceRegistry {
                                 android.os.ServiceManager.getServiceOrThrow(
                                         Context.GRAMMATICAL_INFLECTION_SERVICE)));
             }});
+        // ConnectivityFrameworkInitializerTiramisu.registerServiceWrappers: original Binder client.
         registerService(Context.NSD_SERVICE, android.net.nsd.NsdManager.class, new CachedServiceFetcher<android.net.nsd.NsdManager>() {
-            @Override public android.net.nsd.NsdManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.nsd.NsdManager(ctx); }});
+            @Override public android.net.nsd.NsdManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.net.nsd.NsdManager(ctx.getOuterContext(), android.net.nsd.INsdManager.Stub.asInterface(
+                    ServiceManager.getServiceOrThrow(Context.NSD_SERVICE))); }});
         registerService(Context.BATTERY_SERVICE, android.os.BatteryManager.class,
                 new CachedServiceFetcher<android.os.BatteryManager>() {
             @Override public android.os.BatteryManager createService(ContextImpl ctx) throws ServiceNotFoundException {
