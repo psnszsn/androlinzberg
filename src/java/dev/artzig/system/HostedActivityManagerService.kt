@@ -62,6 +62,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
     ) : IBinder.DeathRecipient {
         val packageDependencies = HashSet<String>()
         var ready = false
+        // Legacy attachment currently reports TOP; the stock process listener will
+        // update this same authority as activity/service state changes.
+        var reportedProcState = android.app.ActivityManager.PROCESS_STATE_TOP
         val binder: IBinder = thread.asBinder()
         var exitReason = android.app.ApplicationExitInfo.REASON_UNKNOWN
         var exitDescription: String? = null
@@ -136,6 +139,29 @@ class HostedActivityManagerService(private val context: android.content.Context?
     )
 
     private val lock = Any()
+    private var bootAnimationFinished = false
+    private var bootCompletionRequested = false
+    private var bootCompletion: (() -> Unit)? = null
+
+    /** AMS.finishBooting / bootAnimationComplete defer final boot work until WMS enables the display.
+     * SystemServices supplies the host phase transition; consume it once and invoke outside the lock.
+     */
+    internal fun finishBooting(complete: () -> Unit) {
+        val action = synchronized(lock) {
+            if (bootCompletionRequested) return
+            bootCompletionRequested = true
+            if (bootAnimationFinished) complete else { bootCompletion = complete; null }
+        }
+        action?.invoke()
+    }
+
+    override fun bootAnimationComplete() {
+        val action = synchronized(lock) {
+            bootAnimationFinished = true
+            bootCompletion.also { bootCompletion = null }
+        }
+        action?.invoke()
+    }
     internal fun windowServiceLock(): Any = lock
     private val processes = LinkedHashMap<IBinder, ProcessRecord>()
 
@@ -434,6 +460,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             controller.setPid(record.pid)
             controller.setCurrentProcState(android.app.ActivityManager.PROCESS_STATE_PERSISTENT)
             controller.setReportedProcState(android.app.ActivityManager.PROCESS_STATE_PERSISTENT)
+            record.reportedProcState = android.app.ActivityManager.PROCESS_STATE_PERSISTENT
             controller.setThread(record.thread)
             local.onProcessMapped(record.pid, controller)
             record.windowProcess = controller
@@ -1227,6 +1254,33 @@ class HostedActivityManagerService(private val context: android.content.Context?
         broadcasts.broadcastIntent(intent, null, 0, null, false, true, "android", android.os.Process.SYSTEM_UID)
     }
 
+    /** AMS.LocalService.broadcastGlobalConfigurationChanged, in its configuration/locale/split order.
+     * This queue delivers unordered registered broadcasts immediately and does not freeze/cache apps:
+     * there are no pending delivery groups to replace or inactive processes to defer. The host also
+     * has no device-idle allowlist controller. Manifest receivers remain outside this queue's scope.
+     */
+    internal fun broadcastGlobalConfigurationChanged(changes: Int, initLocale: Boolean, processesReady: Boolean) {
+        fun send(action: String, flags: Int, permission: String? = null) {
+            broadcasts.broadcastIntent(Intent(action).addFlags(flags), null, 0, permission,
+                false, false, "android", android.os.Process.SYSTEM_UID)
+        }
+        send(Intent.ACTION_CONFIGURATION_CHANGED, Intent.FLAG_RECEIVER_REGISTERED_ONLY or
+            Intent.FLAG_RECEIVER_REPLACE_PENDING or Intent.FLAG_RECEIVER_FOREGROUND or
+            Intent.FLAG_RECEIVER_VISIBLE_TO_INSTANT_APPS)
+        if (changes and android.content.pm.ActivityInfo.CONFIG_LOCALE != 0) {
+            var flags = Intent.FLAG_RECEIVER_OFFLOAD_FOREGROUND or Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND or
+                Intent.FLAG_RECEIVER_VISIBLE_TO_INSTANT_APPS
+            if (initLocale || !processesReady) flags = flags or Intent.FLAG_RECEIVER_REGISTERED_ONLY
+            send(Intent.ACTION_LOCALE_CHANGED, flags)
+        }
+        if (!initLocale && changes and (android.content.pm.ActivityInfo.CONFIG_LOCALE or
+            android.content.pm.ActivityInfo.CONFIG_DENSITY) != 0) {
+            send(Intent.ACTION_SPLIT_CONFIGURATION_CHANGED,
+                Intent.FLAG_RECEIVER_REPLACE_PENDING or Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND,
+                android.Manifest.permission.INSTALL_PACKAGES)
+        }
+    }
+
     /** A service PendingIntent starts the service as its creator. */
     internal fun startServiceFromPendingIntent(packageName: String?, uid: Int, intent: Intent) {
         val post = synchronized(lock) { doStartLocked(uid, intent, packageName) }
@@ -1500,8 +1554,41 @@ class HostedActivityManagerService(private val context: android.content.Context?
     override fun isUserAMonkey(): Boolean = false // No Monkey or activity-controller mode.
 
     internal fun uidProcessState(uid: Int): Int = synchronized(lock) {
-        if (processes.values.any { it.uid == uid }) android.app.ActivityManager.PROCESS_STATE_TOP
-        else android.app.ActivityManager.PROCESS_STATE_NONEXISTENT
+        processes.values.filter { it.uid == uid }.minOfOrNull { it.reportedProcState }
+            ?: android.app.ActivityManager.PROCESS_STATE_NONEXISTENT
+    }
+
+    /** ProcessList.killAllBackgroundProcessesExceptLSP eligibility over the session process registry.
+     * The host requests exit through the owned application Binder, avoiding a recycled Linux PID.
+     * Unresponsive-client forced termination belongs to the session supervisor's recovery path.
+     */
+    internal fun killAllBackgroundProcessesExcept(minTargetSdk: Int, maxProcState: Int) {
+        enforceCallingPermission(android.Manifest.permission.KILL_ALL_BACKGROUND_PROCESSES,
+            "killAllBackgroundProcessesExcept")
+        val identity = Binder.clearCallingIdentity()
+        try {
+            val candidates = synchronized(lock) {
+                processes.values.filter { record ->
+                    val info = checkNotNull(packageService?.getApplicationInfo(record.packageName, 0L,
+                        UserHandle.getUserId(record.uid)))
+                    (minTargetSdk < 0 || info.targetSdkVersion < minTargetSdk) &&
+                        (maxProcState < 0 || record.reportedProcState > maxProcState)
+                }
+            }
+            for (record in candidates) {
+                val stop = synchronized(lock) {
+                    if (processes[record.binder] !== record || record.pid == android.os.Process.myPid()) false
+                    else {
+                        record.exitReason = android.app.ApplicationExitInfo.REASON_OTHER
+                        record.exitDescription = "kill all background except"
+                        true
+                    }
+                }
+                if (!stop) continue
+                try { record.thread.scheduleExit() } catch (_: RemoteException) { }
+                handleProcessDied(record)
+            }
+        } finally { Binder.restoreCallingIdentity(identity) }
     }
 
     override fun getUidProcessState(uid: Int, callingPackage: String?): Int {
@@ -1523,8 +1610,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
             // ProcessList.fillInProcMemInfoLOSP: only memory-state fields are written.
             outState.pid = process.pid
             outState.uid = process.uid
-            outState.processState = android.app.ActivityManager.PROCESS_STATE_TOP
-            outState.importance = android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+            outState.processState = process.reportedProcState
+            outState.importance = android.app.ActivityManager.RunningAppProcessInfo.procStateToImportance(process.reportedProcState)
             outState.lru = 0
             outState.lastTrimLevel = 0
             outState.importanceReasonCode = android.app.ActivityManager.RunningAppProcessInfo.REASON_UNKNOWN
@@ -1542,7 +1629,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
             processes.values.map { p ->
                 android.app.ActivityManager.RunningAppProcessInfo().apply {
                     processName = p.processName; pid = p.pid; uid = p.uid
-                    importance = android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                    processState = p.reportedProcState
+                    importance = android.app.ActivityManager.RunningAppProcessInfo.procStateToImportance(p.reportedProcState)
                 }
             }.toMutableList<android.app.ActivityManager.RunningAppProcessInfo?>()
         }

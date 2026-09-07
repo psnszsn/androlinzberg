@@ -132,7 +132,7 @@ internal object SystemServices {
     private val spawnedProcesses = java.util.concurrent.CopyOnWriteArrayList<Process>()
 
     @JvmStatic
-    fun start(context: Context, stockWindows: StockWindowServices? = null) {
+    fun start(context: Context, stockWindows: StockWindowServices?, onBootComplete: () -> Unit) {
         com.android.server.HostedBootTasks.start()
         // Auto-spawned service hosts must not outlive the session. Each host
         // also exits on broker disconnect (HostedBinderRuntime), but destroy
@@ -358,10 +358,10 @@ internal object SystemServices {
         // launcher apps, app widgets) for a device with no launcher, lock screen or providers.
         val hostedPermissions = HostedPermissions(packageManager)
         android.os.ServiceManager.addService(Context.UI_MODE_SERVICE, HostedUiModeManagerService(context, activityManager, hostedPermissions))
-        android.os.ServiceManager.addService(
-            Context.GRAMMATICAL_INFLECTION_SERVICE,
-            HostedGrammaticalInflectionService(activityManager, hostedPermissions),
-        )
+        val grammaticalInflection = HostedGrammaticalInflectionService(activityManager, hostedPermissions)
+        android.os.ServiceManager.addService(Context.GRAMMATICAL_INFLECTION_SERVICE, grammaticalInflection)
+        LocalServices.addService(com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal::class.java,
+            grammaticalInflection.localService)
         android.os.ServiceManager.addService(Context.TRUST_SERVICE, HostedTrustManagerService(hostedPermissions))
         android.os.ServiceManager.addService("lock_settings", HostedLockSettingsService(hostedPermissions))
         android.os.ServiceManager.addService(Context.SEARCH_SERVICE, HostedSearchManagerService(context, packageManager))
@@ -399,14 +399,20 @@ internal object SystemServices {
             override fun unlocking(userId: Int) { manager.onUserUnlocking(userId) }
             override fun unlocked(userId: Int) { manager.onUserUnlocked(userId) }
         })
-        manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
-        stockWindows?.bootCompleted()
-        // BatteryService publishes its sticky broadcast once the broadcast queue is up.
-        battery.start()
-        // Session-wide marker: app processes (system-test) observe a property
-        // set by the system process through the shared area.
-        android.os.SystemProperties.set("sys.azk.boot_completed", "1")
-        Log.i(TAG, "system services started for " + context.packageName)
+        val completionHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        activityManager.finishBooting {
+            check(completionHandler.post {
+                manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
+                // BatteryService publishes its sticky broadcast once the broadcast queue is up.
+                battery.start()
+                stockWindows?.verifyStartup()
+                android.os.SystemProperties.set("sys.azk.boot_completed", "1")
+                Log.i(TAG, "system services started for " + context.packageName)
+                onBootComplete()
+            })
+        }
+        if (stockWindows != null) stockWindows.bootCompleted()
+        else activityManager.bootAnimationComplete() // Legacy presentation has no boot animation.
     }
 
     /**

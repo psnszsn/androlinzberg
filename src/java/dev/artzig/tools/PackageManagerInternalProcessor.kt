@@ -19,6 +19,9 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
         val name = method.simpleName.toString()
         val params = method.parameters.map { processingEnv.typeUtils.erasure(it.asType()).toString() }
         return when {
+            name == "resolveIntent" && params == listOf("android.content.Intent", "java.lang.String", "long",
+                "long", "int", "boolean", "int", "int") ->
+                "return packages.resolveIntentInternal(p0, p1, p2, p3, p4, p5, p6, p7);"
             name == "getPackageList" && params == listOf("android.content.pm.PackageManagerInternal.PackageListObserver") ->
                 "return packages.getPackageList(p0);"
             name == "removePackageListObserver" && params == listOf("android.content.pm.PackageManagerInternal.PackageListObserver") ->

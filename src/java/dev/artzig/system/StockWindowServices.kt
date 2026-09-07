@@ -90,6 +90,12 @@ internal class StockWindowServices private constructor() {
 
     fun bootCompleted() { windows.enableScreenAfterBoot() }
 
+    fun verifyStartup() {
+        val diagnostics = org.json.JSONObject(dev.artzig.ArtzigTestDiagnostics.snapshot(Long.MAX_VALUE, 0L))
+        val issues = diagnostics.getJSONArray("issues")
+        check(issues.length() == 0) { "Stock window service startup reported runtime issues: $issues" }
+    }
+
     /**
      * The initial Android virtual keyboard. Wayland seat capabilities and events
      * will replace this bootstrap source when the session presenter connects.

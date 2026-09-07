@@ -38,7 +38,10 @@ internal object SystemServer {
         // client exempts the system server from the @Readable restriction.
         android.provider.Settings.setInSystemServer()
         stockWindows?.attachContext(context)
-        SystemServices.start(context, stockWindows)
+        SystemServices.start(context, stockWindows) {
+            System.out.println("ready")
+            System.out.flush()
+        }
 
         // The launcher holds the other end of stdin; EOF means the session is over.
         thread(name = "SystemServer-stdin", isDaemon = true) {
@@ -48,8 +51,6 @@ internal object SystemServer {
             }
             Runtime.getRuntime().exit(0)
         }
-        System.out.println("ready")
-        System.out.flush()
         Looper.loop()
     }
 }

@@ -547,10 +547,13 @@ fn aconfigJava(
             cache.addArg("--values");
             cache.addFileArg(sourcePath(b, aosp, .{ .source = entry.source, .path = value }));
         }
-        if (entry.fixed_disabled_flags.len != 0) {
+        if (entry.fixed_disabled_flags.len != 0 or entry.fixed_enabled_flags.len != 0) {
             var values: []const u8 = "";
             for (entry.fixed_disabled_flags) |name| {
                 values = b.fmt("{s}flag_value {{ package: \"{s}\" name: \"{s}\" state: DISABLED permission: READ_ONLY }}\n", .{ values, entry.package, name });
+            }
+            for (entry.fixed_enabled_flags) |name| {
+                values = b.fmt("{s}flag_value {{ package: \"{s}\" name: \"{s}\" state: ENABLED permission: READ_ONLY }}\n", .{ values, entry.package, name });
             }
             const inputs = b.addWriteFiles();
             cache.addArg("--values");

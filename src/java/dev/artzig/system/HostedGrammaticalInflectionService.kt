@@ -28,6 +28,46 @@ class HostedGrammaticalInflectionService(
     private val lock = Any()
     private val systemGenders = HashMap<Int, Int>()
 
+    /** GrammaticalInflectionService.GrammaticalInflectionManagerInternalImpl. */
+    val localService = object : com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal() {
+        override fun getSystemGrammaticalGender(userId: Int): Int =
+            if (Flags.systemTermsOfAddressEnabled()) systemGender(userId)
+            else Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED
+
+        override fun getGrammaticalGenderFromDeveloperSettings(): Int = android.os.SystemProperties.getInt(
+            "persist.sys.grammatical_gender", Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
+
+        override fun mergedFinalSystemGrammaticalGender(): Int {
+            val configured = getSystemGrammaticalGender(android.os.UserHandle.USER_SYSTEM)
+            val merged = if (configured == Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
+                grammaticalGenderFromDeveloperSettings else configured
+            return if (merged == Configuration.GRAMMATICAL_GENDER_UNDEFINED)
+                Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED else merged
+        }
+
+        override fun canGetSystemGrammaticalGender(uid: Int): Boolean =
+            uid == Process.SYSTEM_UID || (Flags.systemTermsOfAddressEnabled() &&
+                permissions.has(Manifest.permission.READ_SYSTEM_GRAMMATICAL_GENDER, uid))
+
+        override fun getBackupPayload(userId: Int): ByteArray? {
+            enforceChangeConfiguration()
+            throw unavailableBackup("getBackupPayload")
+        }
+        override fun getSystemBackupPayload(userId: Int): ByteArray? {
+            enforceChangeConfiguration()
+            throw unavailableBackup("getSystemBackupPayload")
+        }
+        override fun stageAndApplyRestoredPayload(payload: ByteArray, userId: Int) {
+            throw unavailableBackup("stageAndApplyRestoredPayload")
+        }
+        override fun applyRestoredSystemPayload(payload: ByteArray, userId: Int) {
+            throw unavailableBackup("applyRestoredSystemPayload")
+        }
+    }
+
+    private fun unavailableBackup(member: String) = dev.artzig.ArtzigTestDiagnostics.unsupported(
+        "GrammaticalInflectionManagerInternal", member, "Cross-session configuration backup is not hosted")
+
     override fun setRequestedApplicationGrammaticalGender(
         appPackageName: String?,
         userId: Int,

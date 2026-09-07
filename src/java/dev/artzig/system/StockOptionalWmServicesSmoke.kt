@@ -23,6 +23,18 @@ object StockOptionalWmServicesSmoke {
     }
 
     fun run(context: Context, apk: String) {
+        verifyConfigurationBroadcasts()
+        for (animationFirst in listOf(false, true)) {
+            val activityManager = HostedActivityManagerService()
+            var completions = 0
+            if (animationFirst) activityManager.bootAnimationComplete()
+            activityManager.finishBooting { completions++ }
+            check(completions == if (animationFirst) 1 else 0)
+            activityManager.bootAnimationComplete()
+            activityManager.bootAnimationComplete()
+            activityManager.finishBooting { error("Boot phases must not be repeated") }
+            check(completions == 1)
+        }
         val arguments = Bundle().apply { putString("fixture", "retained") }
         val token = Binder()
         check(!HostedAssistSessions(null).showFromActivity(arguments, "fixture-attribution", token))
@@ -38,9 +50,25 @@ object StockOptionalWmServicesSmoke {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val packageName = verifyPackageObservers(packages, apk)
+        val deniedCleanup = HostedActivityManagerService(context).apply { packageService = packages }
+        check(runCatching { deniedCleanup.killAllBackgroundProcessesExcept(-1, -1) }.exceptionOrNull()
+            is SecurityException)
         val uid = packages.getPackageUid(packageName, 0L, 0)
         check(uid >= android.os.Process.FIRST_APPLICATION_UID)
         val state = packages.getPackageStateInternal(packageName) as HostedPackageState
+        val grammar = HostedGrammaticalInflectionService(HostedActivityManagerService(context),
+            HostedPermissions(packages)).localService
+        check(grammar.getSystemGrammaticalGender(0) == android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
+        check(grammar.getSystemGrammaticalGender(10) == android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
+        val developerGender = android.os.SystemProperties.getInt("persist.sys.grammatical_gender", 0)
+        check(grammar.grammaticalGenderFromDeveloperSettings == developerGender)
+        check(grammar.mergedFinalSystemGrammaticalGender() ==
+            if (developerGender == android.content.res.Configuration.GRAMMATICAL_GENDER_UNDEFINED) 0 else developerGender)
+        check(grammar.canGetSystemGrammaticalGender(android.os.Process.SYSTEM_UID))
+        check(!grammar.canGetSystemGrammaticalGender(uid))
+        unsupported("GrammaticalInflectionManagerInternal", "stageAndApplyRestoredPayload") {
+            grammar.stageAndApplyRestoredPayload(byteArrayOf(), 0)
+        }
         val component = ComponentName(packageName, "$packageName.ArchivedActivity")
         val intent = Intent(Intent.ACTION_MAIN).setComponent(component)
         fun result(value: Intent = intent, userId: Int = 0) =
@@ -93,6 +121,14 @@ object StockOptionalWmServicesSmoke {
         try {
             check(snapshot.packageNames == listOf("android"))
             val name = packages.installPackage(apk)
+            val explicit = Intent().setComponent(HostedPermissionController.component)
+            check(internal.resolveIntent(explicit, null, 0L, 0L, 0, true,
+                android.os.Binder.getCallingUid(), android.os.Process.myPid())?.activityInfo?.name ==
+                HostedPermissionController.component.className)
+            check(internal.resolveIntent(Intent("fixture.absent.action"), null, 0L, 0L, 0, true,
+                android.os.Process.SYSTEM_UID, android.os.Process.myPid()) == null)
+            check(internal.resolveIntent(explicit, null, 0L, 0L, 10, true,
+                android.os.Process.SYSTEM_UID, android.os.Process.myPid()) == null)
             check(events == listOf("added:$name"))
             check(snapshot.packageNames == listOf("android"))
             internal.getPackageList(null).use { check(it.packageNames.toSet() == setOf("android", name)) }
@@ -112,5 +148,39 @@ object StockOptionalWmServicesSmoke {
             com.android.server.LocalServices.removeServiceForTest(serviceClass)
             if (previous != null) com.android.server.LocalServices.addService(serviceClass, previous)
         }
+    }
+
+    private fun verifyConfigurationBroadcasts() {
+        val activities = HostedActivityManagerService()
+        val received = ArrayList<Intent>()
+        val receiver = object : android.content.IIntentReceiver.Stub() {
+            override fun performReceive(intent: Intent, resultCode: Int, data: String?, extras: Bundle?,
+                ordered: Boolean, sticky: Boolean, sendingUser: Int) {
+                check(!ordered && !sticky && sendingUser == 0)
+                received.add(Intent(intent))
+            }
+        }
+        val filter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_CONFIGURATION_CHANGED)
+            addAction(Intent.ACTION_LOCALE_CHANGED)
+            addAction(Intent.ACTION_SPLIT_CONFIGURATION_CHANGED)
+        }
+        activities.registerReceiverWithFeature(null, "fixture", null, null, receiver, filter, null, 0,
+            Context.RECEIVER_NOT_EXPORTED)
+        try {
+            activities.broadcastGlobalConfigurationChanged(android.content.pm.ActivityInfo.CONFIG_ORIENTATION, false, true)
+            check(received.map { it.action } == listOf(Intent.ACTION_CONFIGURATION_CHANGED))
+            check(received.single().flags == (Intent.FLAG_RECEIVER_REGISTERED_ONLY or
+                Intent.FLAG_RECEIVER_REPLACE_PENDING or Intent.FLAG_RECEIVER_FOREGROUND or
+                Intent.FLAG_RECEIVER_VISIBLE_TO_INSTANT_APPS))
+            for ((initLocale, ready) in listOf(true to true, false to false, false to true)) {
+                received.clear()
+                activities.broadcastGlobalConfigurationChanged(android.content.pm.ActivityInfo.CONFIG_LOCALE,
+                    initLocale, ready)
+                // The fixture lacks INSTALL_PACKAGES, so the split broadcast must not reach it.
+                check(received.map { it.action } == listOf(Intent.ACTION_CONFIGURATION_CHANGED, Intent.ACTION_LOCALE_CHANGED))
+                check((received.last().flags and Intent.FLAG_RECEIVER_REGISTERED_ONLY != 0) == (initLocale || !ready))
+            }
+        } finally { activities.unregisterReceiver(receiver) }
     }
 }

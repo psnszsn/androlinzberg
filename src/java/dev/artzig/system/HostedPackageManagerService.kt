@@ -789,6 +789,36 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
         return queryActivitiesInternal(intent, resolvedType, flags, userId).firstOrNull()
     }
 
+    /** ResolveIntentHelper.resolveIntentInternal / chooseBestActivity over the hosted registry.
+     * PMS's preferred-activity database and resolver UI are absent; an ambiguous choice that
+     * requires that UI fails explicitly. Stock SaferIntentUtils retains start-time filtering.
+     */
+    fun resolveIntentInternal(intent: Intent, resolvedType: String?, flags: Long, privateFlags: Long,
+        userId: Int, resolveForStart: Boolean, filterCallingUid: Int, callingPid: Int): ResolveInfo? {
+        if (userId != UserHandle.USER_SYSTEM) return null
+        val target = if (intent.component == null) intent.selector ?: intent else intent
+        val candidates = queryActivitiesInternal(target, resolvedType, flags, userId).toMutableList()
+        if (resolveForStart) {
+            com.android.server.pm.SaferIntentUtils.filterNonExportedComponents(
+                com.android.server.pm.SaferIntentUtils.IntentArgs(target, resolvedType, false, true,
+                    filterCallingUid, callingPid), candidates)
+        }
+        val first = candidates.firstOrNull() ?: return null
+        if (candidates.size > 1) {
+            val second = candidates[1]
+            if (first.priority == second.priority && first.preferredOrder == second.preferredOrder &&
+                first.isDefault == second.isDefault) {
+                if (privateFlags and android.content.pm.PackageManagerInternal.RESOLVE_NON_RESOLVER_ONLY.toLong() != 0L)
+                    return null
+                throw dev.artzig.ArtzigTestDiagnostics.unsupported("PackageManagerInternal", "resolveIntent",
+                    "Multiple equally preferred activities require the Android resolver UI")
+            }
+        }
+        if (privateFlags and android.content.pm.PackageManagerInternal.RESOLVE_NON_BROWSER_ONLY.toLong() != 0L &&
+            first.handleAllWebDataURI) return null
+        return first
+    }
+
     override fun resolveService(
         intent: Intent?,
         resolvedType: String?,

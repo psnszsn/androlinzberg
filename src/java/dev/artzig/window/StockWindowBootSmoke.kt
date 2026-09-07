@@ -29,6 +29,13 @@ object StockWindowBootSmoke {
         check(!packages.hasSystemFeature(android.content.pm.PackageManager.FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS, 0))
         checkNotNull(ServiceManager.getService(Context.ACTIVITY_TASK_SERVICE))
         checkNotNull(ServiceManager.getService(Context.DEVICE_STATE_SERVICE))
+        val unknownProcess = runCatching {
+            windows.openSession(object : android.view.IWindowSessionCallback.Stub() {
+                override fun onAnimatorScaleChanged(scale: Float) { }
+            })
+        }.exceptionOrNull()
+        check(unknownProcess is IllegalStateException && unknownProcess.message!!.contains("Unknown pid="))
+        check(windows.asBinder().pingBinder())
         println("Stock WMS/ATMS boot: display=${info.displayId} physical=${initial.x}x${initial.y}")
     }
 }

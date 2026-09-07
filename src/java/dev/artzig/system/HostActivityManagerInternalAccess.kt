@@ -31,6 +31,17 @@ class HostActivityManagerInternalAccess internal constructor(
     fun isPendingTopUid(uid: Int): Boolean = false
     fun isTempAllowlistedForFgsWhileInUse(uid: Int): Boolean = false
     fun getInstrumentationSourceUid(uid: Int): Int = Process.INVALID_UID
+    fun broadcastGlobalConfigurationChanged(changes: Int, initLocale: Boolean) =
+        activities.broadcastGlobalConfigurationChanged(changes, initLocale, ready.get())
+    fun killAllBackgroundProcessesExcept(minTargetSdk: Int, maxProcState: Int) =
+        activities.killAllBackgroundProcessesExcept(minTargetSdk, maxProcState)
+    fun updateOomLevelsForDisplay(displayId: Int) {
+        // AMS delegates this advisory notification to ProcessList.applyDisplaySize:
+        // it tunes Android LMKD targets, cached-process restore thresholds and init's
+        // global kernel watermark property. This host has no LMKD/cached-process
+        // reclamation controller; desktop Linux retains its existing memory policy.
+        // No hosted process or allocator consumes those Android-only thresholds.
+    }
     fun getCurrentUserId(): Int = UserHandle.USER_SYSTEM
     fun getCurrentAndTargetUserIds(): android.util.Pair<Int, Int> =
         android.util.Pair(UserHandle.USER_SYSTEM, UserHandle.USER_NULL)

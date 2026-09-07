@@ -1,8 +1,9 @@
 # Stock graphics and Wayland task windows: implementation plan
 
 Status: M3/M4 graphics gates, M5 native/Java input boundaries, supervised SF
-startup, stock Java SurfaceControl/Choreographer and Surface/HWUI queue gates pass. Stock WMS/ATMS
-boot and full task windows remain in progress/planned through M11.
+startup, stock Java SurfaceControl/Choreographer and Surface/HWUI queue gates pass.
+Stock WMS/ATMS boots through display enablement and the session readiness marker.
+Application process/window attachment and full task windows remain in progress through M11.
 Code baseline: `2a2d199`, the
 hosted libbinder facade merged into main. This document expands the original
 “Wayland task windows with synthetic Android coordinates” proposal into a
@@ -40,6 +41,53 @@ This work deliberately replaces the window/graphics portions of the fence in
 `stock-client-migration.md` as their replacement milestones pass. The fence
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
+
+## Stock service boot checkpoint (2026-09-07)
+
+The opt-in stock-window boot gate passes (`/tmp/wayland-stock-window-boot-16.log`),
+along with module, system and graph checks. WMS enables the primary 1280x720
+display and invokes SurfaceFlinger bootFinished; the client queries the actual
+window/display services after the final boot phase. Session readiness is now
+published only after the WMS boot-animation-complete callback releases the
+pending boot work. The callback and final phase are consumed once.
+
+This checkpoint includes main `411405b`'s application-binding completion
+handshake. Process-start notifications remain at attachment; queued component
+work waits for Application.onCreate completion. The grammatical-inflection
+Binder service now supplies its stock local interface, including developer
+override fallback. ATMS configuration broadcasts use the existing queue with
+configuration/locale ordering and split-notification permission filtering.
+PackageManager's local activity lookup now uses stock start-time exported
+filtering and private resolution flags; ambiguous resolver-UI requests remain
+explicitly unsupported. No Android home package is installed in this session.
+
+The desktop keeps Linux memory policy, without Android LMKD target or global
+watermark tuning. Density cleanup selects session process records by target SDK
+and reported state and requests exit through their Binder connection. Application
+state still uses the legacy TOP default until stock WPC activity/service callbacks
+are connected; unresponsive-process forced termination remains part of recovery.
+These are remaining process-integration tasks, not completed M5/M11 behavior.
+
+The full JVM/system/APK regression after the application-binding rebase and boot
+callback changes passed except for the then-pending stock startup gate
+(`/tmp/wayland-stock-window-boot-12.log`): 14 APK tests, 44 steps, no structured
+runtime issues. Startup still reported lost early System UI context callbacks;
+the pinned fixed-read-only `track_system_ui_context_before_wms` bugfix is now
+enabled through the generator. The complete stock boot/JVM/system/APK/graph and
+build-tools regression passes (`/tmp/wayland-stock-window-boot-17.log`): 14 APK
+tests, 44 steps and no structured runtime issues. The stronger stock startup
+gate, module, system and graph checks also pass in
+`/tmp/wayland-stock-window-boot-18.log`. Startup now rejects any structured
+issues recorded by the server before readiness. The stock boot process no longer
+loses its early UI context token, and WMS rejects an unregistered client PID
+without killing the service. The legacy module's intentional unattached-token
+fixture still produces its existing warning.
+
+A live-build source inventory for stock ActivityThread and ViewRootImpl reports
+four source classes, the ART flags generator and ActivityThread JNI. Existing
+host replacements count as present in that inventory, so it does not establish
+client cutover readiness (`/tmp/wayland-main7-window-clients-closure.log`). M5
+still needs real application windows/task lifecycle tests; M6–M11 are unfinished.
 
 ## Main framework integration and stock boot checkpoint (2026-09-07)
 
