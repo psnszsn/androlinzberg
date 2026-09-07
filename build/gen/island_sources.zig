@@ -221,6 +221,7 @@ pub const ziparchive_srcs = [_][]const u8{
 };
 
 pub const core_jni_srcs = [_][]const u8{
+    "android_hardware_camera2_CameraMetadata.cpp",
     "android_util_jar_StrictJarFile.cpp",
     "android_util_MemoryIntArray.cpp",
     "android_hardware_UsbDevice.cpp",

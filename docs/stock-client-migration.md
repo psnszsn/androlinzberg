@@ -27,6 +27,20 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- CameraMetadataNative now uses the original camera metadata JNI, C storage library,
+  CameraMetadata and VendorTagDescriptor implementations. Camera2 values support stock
+  type validation, deep copies, merge/move/swap, characteristics and Parcel round trips,
+  including descriptor-backed large payloads. A small native service adapter follows the
+  original vendor descriptor/cache discovery over the shared Java/NDK Binder, retaining
+  stock errors and cache selection without importing the native camera capture stack.
+  ART tests exercise typed values, malformed input, ownership, 128 KiB parcels and an
+  in-memory vendor service. JVM/system, native/Binder and build checks pass; all 11 APK
+  tests pass (41 steps, zero structured runtime issues). AOSP is repackaged and repinned,
+  with all ten added inputs and patched JNI byte-verified; ART is unchanged. Camera
+  capture and ImageReader/ImageWriter buffer queues remain unwired. The inventory remains
+  26 stubs (15 pending, 11 survivors), and the broader migration remains unfinished.
+
+
 - The hosted C++ Parcel now reuses AOSP's blob lifecycle and wire-format implementation,
   backed by the original ashmem-host implementation shared with HWUI. It supports the
   16 KiB inline threshold, descriptor-backed immutable/mutable blobs, descriptor policy

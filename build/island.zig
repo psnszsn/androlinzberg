@@ -138,6 +138,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     common_includes.appendSlice(b.allocator, o.aidl_header_roots) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aconfig_header_roots) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &.{
+        o.aosp.path(b, "frameworks/av/camera/include"),
+        o.aosp.path(b, "system/media/camera/include"),
+        o.aosp.path(b, "system/media/private/camera/include"),
         o.incremental_sysprop_headers,
         o.aosp.path(b, "system/incremental_delivery/incfs/include"),
         o.aosp.path(b, "system/incremental_delivery/incfs/kernel-headers"),
@@ -245,6 +248,9 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "packages/modules/Connectivity/bpf/headers/include"),
         // KernelUtils uses bionic's unused annotation; the host libc has no spelling for it.
     }, &.{"-D__unused=__attribute__((__unused__))"});
+    // Android's host-capable camera metadata library and C++ value containers.
+    g.add(o.aosp.path(b, "frameworks/av/camera"), &.{ "CameraMetadata.cpp", "VendorTagDescriptor.cpp" }, &.{}, &.{});
+    g.add(o.aosp.path(b, "system/media/camera/src"), &.{"camera_metadata.c"}, &.{}, &.{});
     g.add(o.aosp.path(b, "system/core/libusbhost"), &.{ "usbhost.c", "usbhost_jni.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
     for (gen.libcutils_srcs) |file| {

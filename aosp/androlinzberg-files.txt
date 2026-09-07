@@ -6306,3 +6306,15 @@ F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/Par
 F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/ParcelableException.java
 F aosp packages/providers/MediaProvider/mediaprovider_flags.aconfig
 F aosp prebuilts/sdk/current/public/framework.aidl
+
+# Stock native camera metadata storage and vendor descriptors.
+F aosp frameworks/av/camera/CameraMetadata.cpp
+F aosp frameworks/av/camera/VendorTagDescriptor.cpp
+F aosp frameworks/av/camera/include/camera/CameraMetadata.h
+F aosp frameworks/av/camera/include/camera/VendorTagDescriptor.h
+F aosp system/media/camera/src/camera_metadata.c
+F aosp system/media/camera/src/camera_metadata_tag_info.c
+F aosp system/media/camera/include/system/camera_metadata.h
+F aosp system/media/camera/include/system/camera_metadata_tags.h
+F aosp system/media/camera/include/system/camera_vendor_tags.h
+F aosp system/media/private/camera/include/camera_metadata_hidden.h

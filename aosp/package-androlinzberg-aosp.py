@@ -47,6 +47,7 @@ framework_patches = tuple(
         (30, "-OverlayProperties-marshal-LUT-sampling-keys.patch"),
         (31, "-HWUI-reject-pixel-copy-without-native-window.patch"),
         (32, "-legacy-GLES-retain-JNI-array-bases-and-typed-buffer-bounds.patch"),
+        (33, "-camera-metadata-use-hosted-vendor-service-boundary.patch"),
     )
 )
 
