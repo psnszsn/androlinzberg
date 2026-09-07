@@ -27,6 +27,29 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- AppOpsService now compiles verbatim with its 42-source Java closure, two generated
+  sensor-privacy Binder interfaces and sensor-privacy proto constants. The previous
+  HostedAppOpsService is deleted. Stock code owns package/UID mode precedence, access
+  accounting and history, nested start/finish lifetimes, mode/active/noted callbacks,
+  user restrictions and usage-specific audio restrictions. Package UID binding now
+  notifies AppOps, and PackageManagerLocal supplies isolated snapshots with the stock
+  close/lifetime contract. SensorPrivacyManager is stock; its hosted policy service
+  enforces permissions and applies microphone/camera restrictions through AppOps.
+  The existing Environment host patch separates session-local system policy paths
+  from persistent app data; launcher and system-test startup share that configuration.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass (37 steps,
+  zero structured runtime issues), including the app-data path regression. Tests also
+  cover mode persistence, callbacks, nested accounting, restrictions, privacy permission
+  and null-argument ordering, and package snapshot isolation. AOSP is rebuilt and
+  repinned; all 45 added archive inputs and six system-directory redirects are verified.
+  ART is unchanged. The inventory remains 22 stubs (13 pending, 9 survivors).
+  This does not complete the permission stack: the hosted permission checker still
+  lacks AppOps data-delivery integration, and permission policy mutations remain.
+  Process foreground state still uses the hosted AMS attach/death model; sensor privacy
+  has no hardware toggle or SystemUI reminder. Remaining clients and a real Chromium
+  provider are still unfinished.
+
+
 - AppOpsManager, PermissionManager and SystemServerClassLoaderFactory now compile
   verbatim with 48 supporting Java sources, five generated AIDL types,
   print proto constants and both WebView flag declarations. Their service registrations

@@ -8,8 +8,8 @@ import android.permission.IPermissionChecker
  * The session's `permission_checker` service (source note:
  * `com.android.server.pm.permission.PermissionCheckerService`, reduced): a
  * permission is granted when the requesting uid of the attribution chain holds
- * it in the hosted package manager. App-ops are not an enforcement layer on
- * this host, so data-delivery bookkeeping and op checks always allow.
+ * it in the hosted package manager. Integration with the stock AppOps service's
+ * data-delivery bookkeeping and op checks remains pending.
  */
 class HostedPermissionCheckerService(private val packages: HostedPackageManagerService) : IPermissionChecker.Stub() {
     override fun checkPermission(

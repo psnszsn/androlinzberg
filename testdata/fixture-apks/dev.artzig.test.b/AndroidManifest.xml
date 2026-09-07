@@ -8,6 +8,10 @@
     android:versionCode="7"
     android:versionName="7.0">
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <!-- Platform-signed AppOps regression controller. Peer A remains unprivileged. -->
+    <uses-permission android:name="android.permission.MANAGE_APP_OPS_MODES" />
+    <uses-permission android:name="android.permission.GET_APP_OPS_STATS" />
+    <uses-permission android:name="android.permission.MANAGE_APP_OPS_RESTRICTIONS" />
     <application android:name="dev.artzig.systemtest.ProviderBindingApplication" android:hasCode="false" android:label="azk test b">
         <activity android:name="dev.artzig.systemtest.BUriGrantActivity" android:exported="true" />
         <activity android:name="dev.artzig.systemtest.BMainActivity" android:exported="true">

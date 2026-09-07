@@ -147,34 +147,34 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         val pkg = parsed.hideAsFinal()
         createDataDirectories(pkg.packageName)
         val app = callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID
+        var alreadyInstalled = false
+        var newlyBound = false
         synchronized(lock) {
-            packages[pkg.packageName]?.let { existing ->
+            val existing = packages[pkg.packageName]
+            if (existing != null) {
                 if (existing.pathString != apkPath) {
-                    throw SecurityException(
-                        pkg.packageName + " is already installed from " + existing.pathString,
-                    )
+                    throw SecurityException(pkg.packageName + " is already installed from " + existing.pathString)
                 }
+                alreadyInstalled = true
+                newlyBound = app && existing.appId == -1
                 if (app) bindPackageUidLocked(pkg.packageName, callingUid)
-                return pkg.packageName
-            }
-            // An app peer may not install a package while it already owns a
-            // different one; bind before registering so a rejected install
-            // leaves no record.
-            if (app) {
-                val owned = packagesByUid[callingUid]
-                if (owned != null) {
-                    throw SecurityException(
-                        "uid " + callingUid + " already owns " + owned.packageName +
-                            " and may not install " + pkg.packageName,
-                    )
+            } else {
+                // Reject a second package before registering anything for this UID.
+                if (app) {
+                    val owned = packagesByUid[callingUid]
+                    if (owned != null) throw SecurityException(
+                        "uid " + callingUid + " already owns " + owned.packageName + " and may not install " + pkg.packageName)
                 }
+                installLocked(pkg, apkPath, system = false)
+                if (app) bindPackageUidLocked(pkg.packageName, callingUid)
+                newlyBound = app
             }
-            installLocked(pkg, apkPath, system = false)
-            if (app) bindPackageUidLocked(pkg.packageName, callingUid)
         }
         invalidateClientCaches()
-        Log.i(TAG, "installed " + pkg.packageName + " from " + apkPath)
         val uid = synchronized(lock) { packages.getValue(pkg.packageName).appId }
+        if (newlyBound) notifyPackageUidBound(pkg.packageName, uid)
+        if (alreadyInstalled) return pkg.packageName
+        Log.i(TAG, "installed " + pkg.packageName + " from " + apkPath)
         packageMonitors.notifyPackageAddedForNewUsers(pkg.packageName, uid, intArrayOf(0),
             intArrayOf(), false, 0, null, com.android.internal.os.BackgroundThread.getHandler())
         return pkg.packageName
@@ -334,8 +334,20 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
      */
     fun bindPackageUid(packageName: String, uid: Int) {
         if (uid == Process.SYSTEM_UID) return
-        synchronized(lock) { bindPackageUidLocked(packageName, uid) }
+        val newlyBound = synchronized(lock) {
+            val fresh = packages[packageName]?.appId == -1
+            bindPackageUidLocked(packageName, uid)
+            fresh
+        }
         invalidateClientCaches()
+        if (newlyBound) notifyPackageUidBound(packageName, uid)
+    }
+
+    /** PMS notifies AppOps once a scanned package has a real UID, outside the PM lock. */
+    private fun notifyPackageUidBound(packageName: String, uid: Int) {
+        com.android.server.LocalServices.getService(android.app.AppOpsManagerInternal::class.java)
+            ?.onPackageAdded(packageName, uid)
+        for (observer in packageObservers) observer.onPackageAdded(packageName, uid)
     }
 
     /** Requires `lock`; caller invalidates caches once outside it. */
@@ -369,6 +381,39 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
 
     override fun getPackageStateInternal(packageName: String): PackageStateInternal? =
         synchronized(lock) { packages[packageName] }
+
+    /** Capture the mutable hosted registry fields under its lock. Parsed manifest
+     * collections are frozen after install; only UID/platform-signing facts change. */
+    internal fun packageStateSnapshot(): Map<String, com.android.server.pm.pkg.PackageState> = synchronized(lock) {
+        java.util.Collections.unmodifiableMap(packages.mapValues { (_, state) ->
+            val uid = state.appId
+            val user = state.userState.snapshot()
+            val manifestUid = state.pkg.uid
+            val signedWithPlatform = state.pkg.isSignedWithPlatformKey
+            val manifest = object : AndroidPackage by state.pkg {
+                override fun getUid(): Int = manifestUid
+                override fun isSignedWithPlatformKey(): Boolean = signedWithPlatform
+            }
+            object : com.android.server.pm.pkg.PackageState by state {
+                override fun getAppId(): Int = uid
+                override fun getAndroidPackage(): AndroidPackage = manifest
+                override fun getStateForUser(handle: android.os.UserHandle): com.android.server.pm.pkg.PackageUserState =
+                    if (handle.identifier == 0) user else com.android.server.pm.pkg.PackageUserState.DEFAULT
+            }
+        })
+    }
+
+    private val packageObservers = java.util.concurrent.CopyOnWriteArrayList<android.content.pm.PackageManagerInternal.PackageListObserver>()
+    fun getPackageListInternal(observer: android.content.pm.PackageManagerInternal.PackageListObserver?): com.android.server.pm.PackageList {
+        val result = synchronized(lock) { com.android.server.pm.PackageList(packages.keys.toList(), observer) }
+        if (observer != null) packageObservers.add(result)
+        return result
+    }
+    fun removePackageListObserverInternal(observer: android.content.pm.PackageManagerInternal.PackageListObserver) {
+        packageObservers.remove(observer)
+    }
+
+    @Volatile var externalSourcesPolicy: android.content.pm.PackageManagerInternal.ExternalSourcesPolicy? = null
 
     // -------------------------------------------------- internal (in-process)
 

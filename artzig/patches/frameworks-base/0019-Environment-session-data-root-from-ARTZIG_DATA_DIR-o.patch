@@ -9,10 +9,14 @@ shared between sessions), so the launcher-exported ARTZIG_DATA_DIR takes
 precedence for the Android data directory. SQLiteGlobal's stock page-size
 probe names the device's /data partition literally; point that probe at the
 same session data root because the host has no /data mount.
+
+System services additionally receive ARTZIG_SYSTEM_DATA_DIR for system policy
+storage. Broker-assigned UIDs are session-local, so AppOps history must not be
+shared between sessions. Application data paths retain ARTZIG_DATA_DIR.
 ---
  core/java/android/database/sqlite/SQLiteGlobal.java | 9 ++++++---
- core/java/android/os/Environment.java               | 6 +++++-
- 2 files changed, 11 insertions(+), 4 deletions(-)
+ core/java/android/os/Environment.java               | 20 +++++++++++++-------
+ 2 files changed, 19 insertions(+), 10 deletions(-)
 
 diff --git a/core/java/android/database/sqlite/SQLiteGlobal.java b/core/java/android/database/sqlite/SQLiteGlobal.java
 index 9aa9f1ac1..ab9ba5eed 100644
@@ -43,7 +47,7 @@ diff --git a/core/java/android/os/Environment.java b/core/java/android/os/Enviro
 index 69540c42a..1ad2d0672 100644
 --- a/core/java/android/os/Environment.java
 +++ b/core/java/android/os/Environment.java
-@@ -98,7 +98,11 @@ public class Environment {
+@@ -98,7 +98,13 @@ public class Environment {
      public static final String DIRECTORY_ANDROID = DIR_ANDROID;
  
      private static final File DIR_ANDROID_ROOT = getDirectory(ENV_ANDROID_ROOT, "/system");
@@ -54,7 +58,39 @@ index 69540c42a..1ad2d0672 100644
 +    private static final String DIR_ANDROID_DATA_PATH =
 +            getDirectoryPath("ARTZIG_DATA_DIR", getDirectoryPath(ENV_ANDROID_DATA, "/data"));
      private static final File DIR_ANDROID_DATA = new File(DIR_ANDROID_DATA_PATH);
++    private static final File DIR_ANDROID_SYSTEM_DATA =
++            getDirectory("ARTZIG_SYSTEM_DATA_DIR", DIR_ANDROID_DATA_PATH);
      private static final File DIR_ANDROID_EXPAND = getDirectory(ENV_ANDROID_EXPAND, "/mnt/expand");
      private static final File DIR_ANDROID_STORAGE = getDirectory(ENV_ANDROID_STORAGE, "/storage");
+@@ -410,3 +410,3 @@
+     public static File getDataSystemDirectory() {
+-        return new File(getDataDirectory(), "system");
++        return new File(DIR_ANDROID_SYSTEM_DATA, "system");
+     }
+@@ -420,3 +420,3 @@
+     public static @NonNull File getDataSystemDeviceProtectedDirectory() {
+-        return buildPath(getDataDirectory(), "system_de");
++        return buildPath(DIR_ANDROID_SYSTEM_DATA, "system_de");
+     }
+@@ -428,3 +428,3 @@
+     public static @NonNull File getDataSystemDeDirectory() {
+-        return buildPath(getDataDirectory(), "system_de");
++        return buildPath(DIR_ANDROID_SYSTEM_DATA, "system_de");
+     }
+@@ -436,3 +436,3 @@
+     public static File getDataSystemCeDirectory() {
+-        return buildPath(getDataDirectory(), "system_ce");
++        return buildPath(DIR_ANDROID_SYSTEM_DATA, "system_ce");
+     }
+@@ -456,3 +456,3 @@
+     public static File getDataSystemCeDirectory(int userId) {
+-        return buildPath(getDataDirectory(), "system_ce", String.valueOf(userId));
++        return buildPath(DIR_ANDROID_SYSTEM_DATA, "system_ce", String.valueOf(userId));
+     }
+@@ -476,3 +476,3 @@
+     public static File getDataSystemDeDirectory(int userId) {
+-        return buildPath(getDataDirectory(), "system_de", String.valueOf(userId));
++        return buildPath(DIR_ANDROID_SYSTEM_DATA, "system_de", String.valueOf(userId));
+     }
 -- 
 2.55.0

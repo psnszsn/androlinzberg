@@ -18,6 +18,10 @@ class ActivityManagerInternalProcessor : LocalServiceAdapterProcessor() {
     override fun bodyFor(method: ExecutableElement): String {
         val params = method.parameters.map { processingEnv.typeUtils.erasure(it.asType()).toString() }
         return when {
+            // Hosted activity launches are synchronous; neither pending-top nor FGS
+            // while-in-use temporary allowlists exist. Process state is sent to AppOps.
+            method.simpleName.toString() in listOf("isPendingTopUid", "isTempAllowlistedForFgsWhileInUse") -> "return false;"
+            method.simpleName.toString() == "getInstrumentationSourceUid" -> "return android.os.Process.INVALID_UID;"
             method.simpleName.toString() == "isSystemReady" && params.isEmpty() ->
                 "return service.getSystemReady();"
             method.simpleName.toString() == "getUidProcessState" && params == listOf("int") ->

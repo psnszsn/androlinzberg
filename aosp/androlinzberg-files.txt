@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=120 F=2973 total=3093
+# Rules: D=128 F=6394 total=6522
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -6552,3 +6552,50 @@ F aosp frameworks/base/core/jni/com_android_internal_os_Zygote.h
 F aosp frameworks/base/services/core/java/com/android/server/webkit/flags.aconfig
 F aosp bionic/libc/async_safe/include/async_safe/log.h
 F aosp bionic/libc/include/sys/system_properties.h
+
+# Stock AppOps service and permission-mode storage closure.
+F aosp frameworks/base/core/java/android/app/AppOpsManagerInternal.java
+F aosp frameworks/base/core/java/android/app/admin/DevicePolicyCache.java
+F aosp frameworks/base/core/java/android/app/admin/DevicePolicyManagerInternal.java
+F aosp frameworks/base/core/java/android/app/admin/DeviceStateCache.java
+F aosp frameworks/base/core/java/android/hardware/ISensorPrivacyListener.aidl
+F aosp frameworks/base/core/java/android/hardware/ISensorPrivacyManager.aidl
+F aosp frameworks/base/core/java/android/hardware/SensorPrivacyManager.java
+F aosp frameworks/base/core/java/android/os/storage/ICeStorageLockEventListener.java
+F aosp frameworks/base/core/java/android/os/storage/StorageManagerInternal.java
+F aosp frameworks/base/core/java/android/permission/PermissionManagerInternal.java
+F aosp frameworks/base/core/java/android/service/voice/VoiceInteractionManagerInternal.java
+F aosp frameworks/base/core/java/com/android/internal/os/AtomicDirectory.java
+F aosp frameworks/base/core/proto/android/hardware/sensorprivacy.proto
+F aosp frameworks/base/location/java/android/location/LocationManagerInternal.java
+F aosp frameworks/base/location/java/android/location/util/identity/CallerIdentity.java
+F aosp frameworks/base/services/core/java/com/android/server/LocalManagerRegistry.java
+F aosp frameworks/base/services/core/java/com/android/server/LockGuard.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsCheckingServiceImpl.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsCheckingServiceInterface.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsCheckingServiceTracingDecorator.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsManagerLocal.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsRecentAccessPersistence.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsRestrictions.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsRestrictionsImpl.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsService.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsUidStateTracker.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AppOpsUidStateTrackerImpl.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AttributedOp.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/AudioRestrictionManager.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/DiscreteOpsDbHelper.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/DiscreteOpsMigrationHelper.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/DiscreteOpsRegistry.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/DiscreteOpsSqlRegistry.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/DiscreteOpsTable.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/DiscreteOpsXmlRegistry.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/HistoricalRegistryInterface.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/HistoricalRegistrySql.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/LegacyAppOpStateParser.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/LegacyHistoricalRegistry.java
+F aosp frameworks/base/services/core/java/com/android/server/appop/OnOpModeChangedListener.java
+F aosp frameworks/base/services/core/java/com/android/server/pm/PackageManagerLocal.java
+F aosp frameworks/base/services/core/java/com/android/server/pm/ProtectedPackages.java
+F aosp frameworks/base/services/core/java/com/android/server/pm/permission/PermissionManagerServiceInternal.java
+F aosp frameworks/base/services/core/java/com/android/server/policy/AppOpsPolicy.java
+F aosp frameworks/base/services/core/java/com/android/server/selinux/RateLimiter.java

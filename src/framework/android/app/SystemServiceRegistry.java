@@ -221,6 +221,14 @@ public final class SystemServiceRegistry {
                 IBinder binder = ServiceManager.getServiceOrThrow(Context.APP_OPS_SERVICE);
                 return new AppOpsManager(ctx, com.android.internal.app.IAppOpsService.Stub.asInterface(binder));
             }});
+        // AOSP SystemServiceRegistry sensor-privacy fetcher, backed by session policy.
+        registerService(Context.SENSOR_PRIVACY_SERVICE, android.hardware.SensorPrivacyManager.class,
+                new CachedServiceFetcher<android.hardware.SensorPrivacyManager>() {
+            @Override public android.hardware.SensorPrivacyManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                IBinder binder = ServiceManager.getServiceOrThrow(Context.SENSOR_PRIVACY_SERVICE);
+                return android.hardware.SensorPrivacyManager.getInstance(ctx,
+                        android.hardware.ISensorPrivacyManager.Stub.asInterface(binder));
+            }});
         registerService(Context.KEYGUARD_SERVICE, KeyguardManager.class, new CachedServiceFetcher<KeyguardManager>() {
             @Override public KeyguardManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new KeyguardManager(ctx); }});
         registerService(Context.TEXT_CLASSIFICATION_SERVICE, android.view.textclassifier.TextClassificationManager.class,

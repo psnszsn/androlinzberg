@@ -69,6 +69,7 @@ internal object SystemTestHostB {
         check(runCatching { fingerprints.sensorPropertiesInternal }.exceptionOrNull() is SecurityException) {
             "fingerprint sensor metadata must enforce the internal permission"
         }
+        StockAppOpsSystemSmoke.run(context)
         // A plain Binder service the cross-language native client (libbinder_ndk)
         // looks up and calls remotely; onTransact enforces the same interface
         // descriptor the native side's prepareTransaction writes as a token.

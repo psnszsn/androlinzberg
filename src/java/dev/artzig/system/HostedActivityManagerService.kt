@@ -343,6 +343,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** Foreground-service notifications are posted and cancelled through the hosted notification service. */
     @Volatile var notificationService: HostedNotificationManagerService? = null
     /** Process attach (foreground = true) and death, for the usage stats service (UsageStatsService's activity events). */
+    @Volatile var appOps: com.android.server.appop.AppOpsService? = null
     @Volatile var processObserver: ((packageName: String, uid: Int, foreground: Boolean) -> Unit)? = null
     /** The session's package manager; consulted for APK paths of packages with no running process. */
     @Volatile var packageService: HostedPackageManagerService? = null
@@ -444,6 +445,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
             record.packageName,
             record.processName,
         )
+        appOps?.updateUidProcState(record.uid, android.app.ActivityManager.PROCESS_STATE_TOP,
+            android.app.ActivityManager.PROCESS_CAPABILITY_ALL)
         if (record.uid != android.os.Process.SYSTEM_UID) processObserver?.invoke(record.packageName, record.uid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
@@ -531,6 +534,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
         Log.i(TAG, "process died: " + record.packageName + " pid=" + record.pid)
         activityTaskManager?.onProcessDied(record.binder)
+        val remainingState = uidProcessState(record.uid)
+        appOps?.updateUidProcState(record.uid, remainingState,
+            if (remainingState == android.app.ActivityManager.PROCESS_STATE_TOP)
+                android.app.ActivityManager.PROCESS_CAPABILITY_ALL else android.app.ActivityManager.PROCESS_CAPABILITY_NONE)
         processObserver?.invoke(record.packageName, record.uid, false)
     }
 

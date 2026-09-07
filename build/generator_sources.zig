@@ -379,6 +379,8 @@ pub const versioned_aidl = [_]VersionedAidl{
 pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/IncrementalFileSystemControlParcel.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/webkit/IWebViewUpdateService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/ISensorPrivacyListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/ISensorPrivacyManager.aidl" },
     .{ .source = .aosp, .path = "system/vold/binder/android/os/IVold.aidl" },
     .{ .source = .aosp, .path = "system/vold/binder/android/os/IVoldListener.aidl" },
     .{ .source = .aosp, .path = "system/vold/binder/android/os/IVoldMountCallback.aidl" },
@@ -1756,6 +1758,7 @@ pub const nano = [_]Nano{
 };
 
 pub const proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/hardware/sensorprivacy.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/print.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/nfc/aid_group.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/nfc/nfc_fservice_info.proto" },
@@ -1845,6 +1848,9 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/service/SensorPrivacyIndividualEnabledSensorProto.java",
+    "android/service/SensorPrivacySensorProto.java",
+    "android/service/SensorPrivacyToggleSourceProto.java",
     "android/service/print/PrintAttributesProto.java",
     "com/android/nfc/NfcServiceDumpProto.java",
     "com/android/nfc/DiscoveryParamsProto.java",

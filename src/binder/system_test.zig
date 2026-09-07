@@ -69,9 +69,12 @@ pub fn main(init: std.process.Init) !void {
     };
     try awaitReady(io, &broker, "broker");
 
+    var system_env = try env.clone(gpa);
+    defer system_env.deinit();
+    try @import("session.zig").configureSystemData(gpa, io, &system_env, dir);
     var system = try std.process.spawn(io, .{
         .argv = &.{ launcher, "--system-server" },
-        .environ_map = &env,
+        .environ_map = &system_env,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .inherit,

@@ -3212,6 +3212,7 @@ internal object FrameworkModuleSmoke {
             0,
         )
         android.app.PropertyInvalidatedCache.disableForTestMode()
+        StockPackageSnapshotsSmoke.run(checkNotNull(permissionsFixtureApk))
         val packages = HostedPackageManagerService().apply {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }

@@ -153,8 +153,7 @@ pub const Session = struct {
         try child_env.put(cookie_env, s.cookie);
         try child_env.put(system_cookie_env, s.system_cookie);
         try child_env.put(prop_area_env, s.prop_area_path);
-        // The system process's activity manager spawns app processes with these.
-        try child_env.put("AZK_BINDER_SESSION_DIR", s.dir);
+        try configureSystemData(s.gpa, io, &child_env, s.dir);
         try child_env.put("AZK_LAUNCHER_EXE", options.launcher_exe);
         s.system = try std.process.spawn(io, .{
             .argv = &.{ options.launcher_exe, "--system-server" },
@@ -269,4 +268,16 @@ fn drainPipe(io: Io, pipe: Io.File) void {
         if (n == 0) return;
         std.debug.print("{s}", .{buf[0..n]});
     }
+}
+
+/// Give a system process session-scoped Android policy storage while preserving
+/// application storage. Shared by the production launcher and multi-process harness.
+pub fn configureSystemData(gpa: std.mem.Allocator, io: Io, child_env: *std.process.Environ.Map, session_dir: []const u8) !void {
+    try child_env.put("AZK_BINDER_SESSION_DIR", session_dir);
+    // Environment redirects only system/system_ce/system_de here. Application
+    // paths and ART's separate ANDROID_DATA cache root retain their normal values.
+    const data_dir = try std.fs.path.join(gpa, &.{ session_dir, "android-data" });
+    defer gpa.free(data_dir);
+    try Io.Dir.createDirAbsolute(io, data_dir, @fromBackingInt(@intCast(0o700)));
+    try child_env.put("ARTZIG_SYSTEM_DATA_DIR", data_dir);
 }

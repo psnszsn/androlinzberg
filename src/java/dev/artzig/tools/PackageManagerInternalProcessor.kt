@@ -36,6 +36,14 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
             // All installed packages are already visible (filterAppAccess=false); an implicit
             // AppsFilter grant therefore changes no lookup result in the hosted package service.
             name == "grantImplicitAccess" -> "return;"
+            name == "getPackage" && params == listOf("java.lang.String") -> "return packages.getPackage(p0);"
+            name == "getPackageStateInternal" && params == listOf("java.lang.String") -> "return packages.getPackageStateInternal(p0);"
+            name == "isSystemPackage" -> "var state = packages.getPackageStateInternal(p0); return state != null && state.isSystem();"
+            name == "isPackageSuspended" -> "var state = packages.getPackageStateInternal(p0); return state != null && state.getUserStateOrDefault(p1).isSuspended();"
+            name == "getPackageList" -> "return packages.getPackageListInternal(p0);"
+            name == "removePackageListObserver" -> "packages.removePackageListObserverInternal(p0);"
+            name == "isInstantApp" -> "return false;" // No instant-app install path in this session.
+            name == "setExternalSourcesPolicy" -> "packages.setExternalSourcesPolicy(p0);"
             name == "snapshot" && params.isEmpty() -> "return packages;"
             name == "filterAppAccess" -> "return false;"
             name == "canQueryPackage" -> "return true;"

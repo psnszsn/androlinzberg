@@ -168,8 +168,6 @@ internal object SystemServices {
         // (any process may ask about users or app-ops).
         android.os.ServiceManager.addService(Context.USER_SERVICE, HostedUserManagerService())
         android.os.ServiceManager.addService(Context.NSD_SERVICE, HostedNsdService(context))
-        val appOps = HostedAppOpsService()
-        android.os.ServiceManager.addService("appops", appOps)
 
         val trace = TimingsTraceAndSlog()
         // Bootstrap services (source note: SystemServer.startBootstrapServices
@@ -202,9 +200,6 @@ internal object SystemServices {
         activityManager.platformCompat = platformCompat
         activityManager.processLauncher = sessionProcessLauncher()
         activityManager.packageService = packageManager
-        appOps.packageService = packageManager
-        android.os.ServiceManager.addService(Context.FINGERPRINT_SERVICE,
-            HostedFingerprintService(HostedPermissions(packageManager), appOps))
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
         android.os.ServiceManager.addService(Context.WIFI_SERVICE,
             HostedWifiService(HostedPermissions(packageManager)))
@@ -225,6 +220,15 @@ internal object SystemServices {
             .getConstructor(HostedActivityManagerInternalService::class.java)
             .newInstance(activityManagerInternalService) as android.app.ActivityManagerInternal
         LocalServices.addService(android.app.ActivityManagerInternal::class.java, activityManagerInternal)
+        com.android.server.LocalManagerRegistry.addManager(
+            com.android.server.pm.PackageManagerLocal::class.java,
+            HostedPackageManagerLocal(packageManager))
+        android.os.ServiceManager.addService(Context.SENSOR_PRIVACY_SERVICE,
+            HostedSensorPrivacyService(context))
+        val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
+        activityManager.appOps = appOps
+        android.os.ServiceManager.addService(Context.FINGERPRINT_SERVICE,
+            HostedFingerprintService(HostedPermissions(packageManager), appOps))
         // Observer registry and the settings provider, registered before any
         // service that reads settings during startup.
         android.os.ServiceManager.addService("content", HostedContentService())
@@ -350,6 +354,7 @@ internal object SystemServices {
         platformCompat.registerContentObserver()
         manager.preSystemReady()
         activityManagerInternalService.markSystemReady()
+        appOps.systemReady()
         manager.startBootPhase(trace, SystemService.PHASE_SYSTEM_SERVICES_READY)
         LocalServices.getService(com.android.server.uri.UriGrantsManagerInternal::class.java).onSystemReady()
         manager.startBootPhase(trace, SystemService.PHASE_ACTIVITY_MANAGER_READY)
@@ -381,6 +386,7 @@ internal object SystemServices {
                 // system cookie an APK could reconnect as uid 1000 and claim
                 // the system service names.
                 builder.environment().remove("AZK_BINDER_SYSTEM_COOKIE")
+                builder.environment().remove("ARTZIG_SYSTEM_DATA_DIR")
                 spawnedProcesses.add(builder.start())
                 Log.i(TAG, "spawning process for " + packageName)
                 true

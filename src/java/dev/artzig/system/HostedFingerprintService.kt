@@ -17,7 +17,7 @@ import android.os.UserHandle
  */
 class HostedFingerprintService(
     private val permissions: HostedPermissions,
-    private val appOps: HostedAppOpsService,
+    private val appOps: com.android.internal.app.IAppOpsService,
 ) : IFingerprintService.Stub(), IFingerprintService by unsupported<IFingerprintService>() {
     private fun internal() = permissions.enforce(USE_BIOMETRIC_INTERNAL, "fingerprint")
 
