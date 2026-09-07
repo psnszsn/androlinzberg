@@ -208,6 +208,17 @@ pub const KeyboardLayout = struct {
     group: u32,
     generation: i32,
 
+    /// Base XKB symbols describe non-character remaps such as Caps-as-Control.
+    /// Character keys still use the KCM matrix, independently of physical layout.
+    pub fn symbols(self: KeyboardLayout) ![256]i32 {
+        const state = xkb.xkb_state_new(self.keymap) orelse return error.KeyboardStateAllocationFailed;
+        defer xkb.xkb_state_unref(state);
+        _ = xkb.xkb_state_update_mask(state, 0, 0, 0, 0, 0, self.group);
+        var result: [256]i32 = undefined;
+        for (&result, 0..) |*symbol, scan| symbol.* = @intCast(xkb.xkb_state_key_get_one_sym(state, @intCast(scan + 8)));
+        return result;
+    }
+
     pub fn characters(self: KeyboardLayout) ![256 * 64]i32 {
         const state = xkb.xkb_state_new(self.keymap) orelse return error.KeyboardStateAllocationFailed;
         defer xkb.xkb_state_unref(state);
@@ -2335,4 +2346,21 @@ test "queued XKB layouts retain groups and produce Android character states" {
     try std.testing.expectEqual(@as(i32, 'y'), us[21 * 64]);
     try std.testing.expectEqual(@as(i32, 'z'), de[21 * 64]);
     try std.testing.expectEqual(@as(i32, 0x20ac), de[18 * 64 + 4]); // AltGr+E.
+}
+
+test "XKB modifier remaps retain non-character key identity" {
+    const context = xkb.xkb_context_new(0) orelse return error.KeyboardContextAllocationFailed;
+    defer xkb.xkb_context_unref(context);
+    const source = try std.mem.replaceOwned(u8, std.testing.allocator, test_keymap, "pc+us", "pc+us+ctrl(nocaps)");
+    defer std.testing.allocator.free(source);
+    const keymap = xkb.xkb_keymap_new_from_string(context, @ptrCast(source.ptr), 1, 0) orelse return error.KeyboardMapFailed;
+    defer xkb.xkb_keymap_unref(keymap);
+    const layout: KeyboardLayout = .{ .keymap = keymap, .group = 0, .generation = 1 };
+    const symbols = try layout.symbols();
+    try std.testing.expectEqual(@as(i32, 0xffe3), symbols[58]); // Caps now Control_L.
+    try std.testing.expectEqual(@as(i32, 0xffe3), symbols[29]); // Original Control_L remains.
+    try std.testing.expectEqual(@as(i32, 'a'), symbols[30]);
+    const characters = try layout.characters();
+    try std.testing.expectEqual(@as(i32, 'a'), characters[30 * 64]);
+    try std.testing.expectEqual(@as(i32, 1), characters[30 * 64 + 16]); // Control-A.
 }

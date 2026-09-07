@@ -67,8 +67,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             deliver(taskId, generation) { it.seat.relativePointer(dx, dy) }
         override fun modifiers(taskId: Int, generation: Long, metaState: Int) =
             deliver(taskId, generation) { input.modifiers(metaState) }
-        override fun keyboardLayout(taskId: Int, generation: Long, layoutGeneration: Int, characters: IntArray) =
-            deliver(taskId, generation) { input.keyboardLayout(layoutGeneration, characters) }
+        override fun keyboardLayout(taskId: Int, generation: Long, layoutGeneration: Int, characters: IntArray, symbols: IntArray) =
+            deliver(taskId, generation) { input.keyboardLayout(layoutGeneration, characters, symbols) }
     }
 
     override fun open(task: TaskGeometry.Task, appId: String, title: String,

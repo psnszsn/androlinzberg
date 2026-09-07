@@ -19,7 +19,15 @@ object WaylandKeyboardMapSmoke {
             characters[43 * 64 + state] = '\\'.code
             characters[40 * 64 + state] = 0x0301 // Stock combining-accent/dead-key convention.
         }
-        val map = WaylandKeyboardMap.compile(characters)
+        val symbols = IntArray(WaylandKeyboardMap.SCAN_COUNT)
+        symbols[58] = 0xffe3 // Caps remapped to Control_L.
+        check(WaylandKeyboardMap.keyCode(58, symbols[58]) == KeyEvent.KEYCODE_CTRL_LEFT)
+        check(WaylandKeyboardMap.keyCode(58, 0xff1b) == KeyEvent.KEYCODE_ESCAPE)
+        check(WaylandKeyboardMap.keyCode(30, 'q'.code) == KeyEvent.KEYCODE_A)
+        check(WaylandKeyboardMap.keyCode(100, 0xfe03) == KeyEvent.KEYCODE_ALT_RIGHT)
+        check(WaylandKeyboardMap.keyCode(125, 0xffeb) == KeyEvent.KEYCODE_META_LEFT)
+        check(runCatching { WaylandKeyboardMap.compile(characters, IntArray(1)) }.exceptionOrNull() is IllegalArgumentException)
+        val map = WaylandKeyboardMap.compile(characters, symbols)
         check(map.keyboardType == KeyCharacterMap.FULL)
         check(map.get(KeyEvent.KEYCODE_A, 0) == 'q'.code)
         check(map.get(KeyEvent.KEYCODE_A, KeyEvent.META_SHIFT_ON) == 'Q'.code)

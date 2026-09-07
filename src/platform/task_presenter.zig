@@ -274,6 +274,7 @@ const Text = struct {
 };
 fn sendLayout(entry: *Entry, layout: Queue.KeyboardLayout) !void {
     const characters = try layout.characters();
+    const symbols = try layout.symbols();
     var input: ?*Parcel = null;
     try ok(AIBinder_prepareTransaction(entry.events, &input));
     defer if (input) |parcel| AParcel_delete(parcel);
@@ -281,6 +282,7 @@ fn sendLayout(entry: *Entry, layout: Queue.KeyboardLayout) !void {
     try ok(AParcel_writeInt64(input.?, entry.key.generation));
     try ok(AParcel_writeInt32(input.?, layout.generation));
     try ok(AParcel_writeInt32Array(input.?, &characters, characters.len));
+    try ok(AParcel_writeInt32Array(input.?, &symbols, symbols.len));
     var output: ?*Parcel = null;
     defer if (output) |parcel| AParcel_delete(parcel);
     try ok(AIBinder_transact(entry.events, 10, &input, &output, 1));

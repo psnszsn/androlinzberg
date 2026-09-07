@@ -65,6 +65,14 @@ and 15 APK tests pass (45 steps, no issues), as do both stock compositor gates.
 Logs: `/tmp/wayland-desktop-focus-{145,146}.log`. Focus acknowledgement before
 cross-task key delivery remains a separate pending gate.
 
+Regressions 147–148 pass XKB non-character remapping through the layout callback:
+Caps-as-Control produces Control key events and does not toggle Caps Lock;
+multiple physical Control keys retain the modifier until both are released.
+The KCM carries the same scan-code overrides, while character positions retain
+their independent Unicode matrices. Native/module and all 15 APK tests pass,
+as do the stock input-channel and both compositor gates. Logs:
+`/tmp/wayland-remapped-keys-{147,148}.log`.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application

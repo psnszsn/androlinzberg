@@ -167,6 +167,21 @@ object WaylandTaskInputSmoke {
             replacement.key(86, true)
             check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_RO)
             check(!(events.single() as KeyEvent).isShiftPressed)
+            val symbols = IntArray(WaylandKeyboardMap.SCAN_COUNT).apply { this[58] = 0xffe3 }
+            seat.keyboardLayout(2, IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT), symbols)
+            check((events.last() as KeyEvent).isCanceled) // Old layout's held ISO key is released.
+            symbols[58] = 0xffe5 // Caller mutation cannot change the installed layout.
+            clear()
+            replacement.key(58, true)
+            replacement.key(30, true)
+            check((events[0] as KeyEvent).keyCode == KeyEvent.KEYCODE_CTRL_LEFT)
+            check((events[1] as KeyEvent).isCtrlPressed && !(events[1] as KeyEvent).isCapsLockOn)
+            clear()
+            replacement.key(29, true) // Both physical keys now mean Control_L.
+            replacement.key(58, false)
+            check((events.last() as KeyEvent).isCtrlPressed)
+            replacement.key(29, false)
+            check(!(events.last() as KeyEvent).isCtrlPressed)
             replacement.close()
             check(!keyboardActive)
         } finally { first.close(); second.close(); clear() }

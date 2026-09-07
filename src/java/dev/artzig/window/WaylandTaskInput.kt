@@ -45,12 +45,14 @@ internal class WaylandTaskInput(private val android: Android,
     private var touchDownTime = 0L
     private var repeat: Pair<Int, Int>? = null
     private var layoutGeneration = 0
+    private var layoutSymbols = IntArray(WaylandKeyboardMap.SCAN_COUNT)
 
-    fun keyboardLayout(generation: Int, characters: IntArray) {
+    fun keyboardLayout(generation: Int, characters: IntArray, symbols: IntArray = IntArray(WaylandKeyboardMap.SCAN_COUNT)) {
         if (generation <= layoutGeneration) return
-        val map = WaylandKeyboardMap.compile(characters)
+        val map = WaylandKeyboardMap.compile(characters, symbols)
         focus?.releaseKeys()
         android.keyboardLayout(map)
+        layoutSymbols = symbols.copyOf()
         layoutGeneration = generation
     }
 
@@ -247,7 +249,7 @@ internal class WaylandTaskInput(private val android: Android,
             var held = keys[scanCode]
             if (down) {
                 if (held == null) {
-                    val code = if (layoutGeneration != 0) WaylandKeyboardMap.keyCode(scanCode) else
+                    val code = if (layoutGeneration != 0) WaylandKeyboardMap.keyCode(scanCode, layoutSymbols.getOrElse(scanCode) { 0 }) else
                         HostedInputDispatcher.androidKeyCodeForScanCode(scanCode)
                     held = Pressed(this, code, clock())
                     keys[scanCode] = held

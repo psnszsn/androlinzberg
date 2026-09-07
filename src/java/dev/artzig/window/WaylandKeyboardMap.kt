@@ -14,19 +14,51 @@ internal object WaylandKeyboardMap {
     const val STATE_COUNT = 64
     private val modifiers = arrayOf("shift", "capslock", "ralt", "numlock", "ctrl", "lalt")
 
-    // Generic.kl aliases ISO's extra key to BACKSLASH. A device KCM may remap
-    // scan codes; keep this independent character position as Android's RO key.
-    fun keyCode(scan: Int): Int = if (scan == 86) KeyEvent.KEYCODE_RO else
-        HostedInputDispatcher.androidKeyCodeForScanCode(scan)
+    // xkbcommon-keysyms.h names are stable protocol symbols. Keep Android's
+    // Generic.kl positions for character keys; a compositor may explicitly
+    // remap a physical position to a modifier or editing/navigation key.
+    fun keyCode(scan: Int, symbol: Int = 0): Int = when (symbol) {
+        0xffe1 -> KeyEvent.KEYCODE_SHIFT_LEFT
+        0xffe2 -> KeyEvent.KEYCODE_SHIFT_RIGHT
+        0xffe3 -> KeyEvent.KEYCODE_CTRL_LEFT
+        0xffe4 -> KeyEvent.KEYCODE_CTRL_RIGHT
+        0xffe5, 0xffe6 -> KeyEvent.KEYCODE_CAPS_LOCK
+        0xffe7, 0xffeb, 0xffed -> KeyEvent.KEYCODE_META_LEFT
+        0xffe8, 0xffec, 0xffee -> KeyEvent.KEYCODE_META_RIGHT
+        0xffe9 -> KeyEvent.KEYCODE_ALT_LEFT
+        0xffea, 0xfe03, 0xff7e -> KeyEvent.KEYCODE_ALT_RIGHT
+        0xff7f -> KeyEvent.KEYCODE_NUM_LOCK
+        0xff14 -> KeyEvent.KEYCODE_SCROLL_LOCK
+        0xff1b -> KeyEvent.KEYCODE_ESCAPE
+        0xff08 -> KeyEvent.KEYCODE_DEL
+        0xff09, 0xfe20 -> KeyEvent.KEYCODE_TAB
+        0xff0d -> KeyEvent.KEYCODE_ENTER
+        0xffff -> KeyEvent.KEYCODE_FORWARD_DEL
+        0xff50 -> KeyEvent.KEYCODE_MOVE_HOME
+        0xff51 -> KeyEvent.KEYCODE_DPAD_LEFT
+        0xff52 -> KeyEvent.KEYCODE_DPAD_UP
+        0xff53 -> KeyEvent.KEYCODE_DPAD_RIGHT
+        0xff54 -> KeyEvent.KEYCODE_DPAD_DOWN
+        0xff55 -> KeyEvent.KEYCODE_PAGE_UP
+        0xff56 -> KeyEvent.KEYCODE_PAGE_DOWN
+        0xff57 -> KeyEvent.KEYCODE_MOVE_END
+        0xff63 -> KeyEvent.KEYCODE_INSERT
+        0xff67 -> KeyEvent.KEYCODE_MENU
+        in 0xffbe..0xffc9 -> KeyEvent.KEYCODE_F1 + symbol - 0xffbe
+        // Generic.kl aliases ISO's extra key to BACKSLASH. Keep the extra
+        // character position independent through a device KCM scan-code remap.
+        else -> if (scan == 86) KeyEvent.KEYCODE_RO else HostedInputDispatcher.androidKeyCodeForScanCode(scan)
+    }
 
-    fun compile(characters: IntArray): KeyCharacterMap {
+    fun compile(characters: IntArray, symbols: IntArray = IntArray(SCAN_COUNT)): KeyCharacterMap {
+        require(symbols.size == SCAN_COUNT && symbols.all { it >= 0 }) { "Invalid XKB symbol matrix" }
         require(characters.size == SCAN_COUNT * STATE_COUNT) { "Invalid XKB character matrix" }
         require(characters.all { it == 0 || it in 1..0xffff && it !in 0xd800..0xdfff }) {
             "A KeyCharacterMap character must be a BMP scalar; supplementary text requires the IME bridge"
         }
         val rows = linkedMapOf<Int, IntArray>()
         for (scan in 0 until SCAN_COUNT) {
-            val code = keyCode(scan)
+            val code = keyCode(scan, symbols[scan])
             if (code == KeyEvent.KEYCODE_UNKNOWN) continue
             val row = characters.copyOfRange(scan * STATE_COUNT, (scan + 1) * STATE_COUNT)
             if (row.all { it == 0 }) continue
@@ -37,7 +69,14 @@ internal object WaylandKeyboardMap {
             rows[code] = row
         }
         val contents = buildString {
-            append("type FULL\nmap key 86 RO\n")
+            append("type FULL\n")
+            for (scan in 0 until SCAN_COUNT) {
+                val code = keyCode(scan, symbols[scan])
+                if (code != HostedInputDispatcher.androidKeyCodeForScanCode(scan)) {
+                    append("map key ").append(scan).append(' ')
+                        .append(KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")).append('\n')
+                }
+            }
             for ((code, row) in rows) {
                 append("key ").append(KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")).append(" {\n")
                 val label = row[1].takeIf { it >= 32 } ?: row[0].takeIf { it >= 32 }
