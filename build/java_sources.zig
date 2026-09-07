@@ -1751,6 +1751,10 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/SharedMemory.java");
     try c.file("$CJ/android/os/MemoryFile.java");
     try c.file("$CJ/android/os/FileObserver.java");
+    try c.file("$CJ/android/provider/MetadataReader.java");
+    try c.file("$CJ/com/android/internal/content/FileSystemProvider.java");
+    try c.file("$FB/media/java/android/media/MediaFile.java");
+    try c.file("$FB/media/java/android/mtp/MtpConstants.java");
     try c.file("$FB/drm/java/android/drm/DrmConvertedStatus.java");
     try c.file("$FB/drm/java/android/drm/DrmErrorEvent.java");
     try c.file("$FB/drm/java/android/drm/DrmEvent.java");

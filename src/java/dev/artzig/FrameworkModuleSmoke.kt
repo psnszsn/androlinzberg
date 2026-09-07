@@ -223,6 +223,7 @@ internal object FrameworkModuleSmoke {
         StockMediaMetadataRetrieverSmoke.run()
         StockFileObserverSmoke.run()
         StockLegacyDrmSmoke.run()
+        StockDownloadFileSupportSmoke.run()
         StockMediaDrmSmoke.run()
         StockMediaHttpSmoke.run()
         StockHidlMemorySmoke.run()

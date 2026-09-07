@@ -27,6 +27,19 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- DownloadProvider's remaining filesystem support now compiles verbatim:
+  MediaFile, MtpConstants, MetadataReader and FileSystemProvider. Tests exercise
+  MIME/MTP mapping precedence, metadata support and stream ownership, document
+  identity and ancestry, queries and filtered search, directory metadata, and
+  descriptor reads/appends on a private temporary document root. JVM/system,
+  native/Binder and build checks pass; all 11 APK tests pass (39 steps, zero
+  structured runtime issues). AOSP is rebuilt and repinned; all four added
+  sources are byte-verified. ART is unchanged. The inventory remains 19 stubs
+  (11 pending, 8 survivors). These are supporting classes, not an installed
+  downloads/documents provider: job network delivery, provider packaging and
+  storage integration still precede replacing the hosted DownloadManager.
+
+
 - The legacy DRM client now compiles verbatim: 14 Java classes and 17 native
   sources, including the original JNI registrar and AOSP's absent-service
   `NoOpDrmManagerClientImpl`. Tests cover public argument validation, empty engine

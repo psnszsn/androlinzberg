@@ -6677,3 +6677,9 @@ F aosp frameworks/av/include/drm/drm_framework_common.h
 D aosp frameworks/av/drm/common/include
 D aosp frameworks/av/drm/libdrmframework/include
 F aosp frameworks/base/drm/jni/android_drm_DrmManagerClient.cpp
+
+# DownloadProvider filesystem and media classification closure.
+F aosp frameworks/base/core/java/android/provider/MetadataReader.java
+F aosp frameworks/base/core/java/com/android/internal/content/FileSystemProvider.java
+F aosp frameworks/base/media/java/android/media/MediaFile.java
+F aosp frameworks/base/media/java/android/mtp/MtpConstants.java
