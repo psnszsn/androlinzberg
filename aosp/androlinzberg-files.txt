@@ -6085,3 +6085,5 @@ F aosp external/cronet/stable/chrome/VERSION
 F aosp external/cronet/stable/components/cronet/android/proto/request_context_config.proto
 F aosp external/cronet/stable/components/cronet/android/proto/flags.proto
 F aosp external/cronet/stable/components/cronet/android/proto/base_feature_overrides.proto
+F aosp frameworks/base/core/java/android/os/VintfObject.java
+F aosp frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java

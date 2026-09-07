@@ -117,6 +117,8 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    try c.file("$CJ/android/os/VintfObject.java");
+    try c.file("$FB/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java");
     try c.file("$CJ/android/view/WindowManagerGlobal.java");
     try c.file("$CJ/android/view/WindowManagerImpl.java");
     try c.file("$CJ/android/os/StatsServiceManager.java");

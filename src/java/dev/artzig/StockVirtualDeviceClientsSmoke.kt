@@ -17,7 +17,7 @@ internal object StockVirtualDeviceClientsSmoke {
         check(failure is T) { "Expected ${T::class.java.simpleName}, got $failure" }
         return failure
     }
-    fun run() {
+    fun run(drainMainQueue: () -> Unit) {
         val context = checkNotNull(ActivityThread.currentApplication())
         val manager = checkNotNull(context.getSystemService(VirtualDeviceManager::class.java))
         check(manager.virtualDevices.isEmpty())
@@ -76,6 +76,7 @@ internal object StockVirtualDeviceClientsSmoke {
         check(CameraCharacteristics.LENS_FACING.name == "android.lens.facing")
         check(CameraCharacteristics.Key("android.lens.facing", Int::class.javaPrimitiveType!!) == CameraCharacteristics.LENS_FACING)
         check(CameraCharacteristics.Key("android.lens.facing", Int::class.javaObjectType) != CameraCharacteristics.LENS_FACING)
+        dev.artzig.system.StockVirtualDeviceAssociationsSmoke.run(context, drainMainQueue)
         println("stock virtual-device and camera clients: PASS")
     }
 }

@@ -7,7 +7,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockSplashScreenSmoke.kt",
 
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
-    "src/framework-stubs/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java",
     "src/framework-stubs/android/app/AppOpsManager.java",
     "src/framework-stubs/android/hardware/Camera.java",
     "src/framework-stubs/android/hardware/gnss/V2_1/IGnssMeasurementCallback.java",
@@ -16,7 +15,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/media/RingtoneManager.java",
     "src/framework-stubs/android/media/ToneGenerator.java",
     "src/framework-stubs/android/net/ipsec/ike/SaProposal.java",
-    "src/framework-stubs/android/os/VintfObject.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",
     "src/framework-stubs/android/view/SurfaceControl.java",
     "src/framework-stubs/android/view/SurfaceSession.java",
@@ -114,6 +112,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockAudioPolicyClientsSmoke.kt",
     "src/java/dev/artzig/StockMediaRouterSmoke.kt",
     "src/java/dev/artzig/StockVirtualDeviceClientsSmoke.kt",
+    "src/java/dev/artzig/system/StockVirtualDeviceAssociationsSmoke.kt",
     "src/java/dev/artzig/StockCronetConfigSmoke.kt",
     "src/java/dev/artzig/HostedCodecFormats.kt",
     "src/java/dev/artzig/HostedAudioArrayWrites.kt",

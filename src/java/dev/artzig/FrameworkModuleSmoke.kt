@@ -3,6 +3,7 @@
 package dev.artzig
 
 import com.android.settingslib.flags.Flags as SettingsLibFlags
+import com.android.server.companion.virtual.VirtualDeviceManagerInternal
 
 import com.android.internal.org.bouncycastle.cert.X509CertificateHolder
 import com.android.internal.org.bouncycastle.cms.CMSSignedData
@@ -296,7 +297,7 @@ internal object FrameworkModuleSmoke {
             testHostedActivityTaskServiceTransactions()
             StockAudioPolicyClientsSmoke.run()
             StockMediaRouterSmoke.run(::drainMainQueue)
-            StockVirtualDeviceClientsSmoke.run()
+            StockVirtualDeviceClientsSmoke.run(::drainMainQueue)
             testHostedAudioCapabilities()
             testAsyncMediaCodecFlushRestartsOnePump()
             testMediaMetricsContracts()
@@ -469,6 +470,14 @@ internal object FrameworkModuleSmoke {
         check(com.android.internal.pm.RoSystemFeatures.getReadOnlySystemEnabledFeatures().isEmpty())
         check(com.android.internal.pm.RoSystemFeatures.maybeHasFeature(
             android.content.pm.PackageManager.FEATURE_PC, 0) == null)
+        check(android.os.VintfObject.report().isEmpty())
+        check(android.os.VintfObject.getHalNamesAndVersions().isEmpty())
+        check(android.os.VintfObject.verifyBuildAtBoot() == -android.system.OsConstants.ENODEV)
+        check(android.os.VintfObject.getSepolicyVersion() == null)
+        check(android.os.VintfObject.getVndkSnapshots() == null)
+        check(android.os.VintfObject.getTargetFrameworkCompatibilityMatrixVersion() == null)
+        val missingMatrix = runCatching { android.os.VintfObject.getPlatformSepolicyVersion() }.exceptionOrNull()
+        check(missingMatrix is RuntimeException && missingMatrix.message == "Cannot get framework compatibility matrix")
         val uname = android.system.Os.uname()
         check(android.os.VintfRuntimeInfo.getOsName() == uname.sysname)
         check(android.os.VintfRuntimeInfo.getNodeName() == uname.nodename)
@@ -3137,6 +3146,50 @@ internal object FrameworkModuleSmoke {
         // LocalService queries return snapshots; a caller cannot publish state by retaining one.
         service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).add(42)
         check(service.getDeviceIdsForUid(android.os.Process.SYSTEM_UID).isEmpty())
+        check(service.getVirtualSensor(42, 1) == null)
+        check(service.getPreferredLocaleListForUid(android.os.Process.SYSTEM_UID) == null)
+        check(!service.isAppRunningOnAnyVirtualDevice(android.os.Process.SYSTEM_UID))
+        check(!service.isInputDeviceOwnedByVirtualDevice(42))
+        check(!service.isValidVirtualDeviceId(android.content.Context.DEVICE_ID_DEFAULT))
+        check(service.getDeviceIdForDisplayId(42) == android.content.Context.DEVICE_ID_DEFAULT)
+        check(service.getDimDurationMillisForDeviceId(42) == -1L)
+        check(service.getScreenOffTimeoutMillisForDeviceId(42) == -1L)
+        check(service.getPersistentIdForDevice(android.content.Context.DEVICE_ID_DEFAULT) ==
+            android.companion.virtual.VirtualDeviceManager.PERSISTENT_DEVICE_ID_DEFAULT)
+        check(service.getPersistentIdForDevice(42) == null && service.getVirtualDevice(42) == null)
+        val appListener = VirtualDeviceManagerInternal.AppsOnVirtualDeviceListener {
+            error("The unchanged empty UID set must not trigger a callback")
+        }
+        service.registerAppsOnVirtualDeviceListener(appListener)
+        service.onAppsOnVirtualDeviceChanged()
+        service.onAuthenticationPrompt(android.os.Process.SYSTEM_UID)
+        service.unregisterAppsOnVirtualDeviceListener(appListener)
+        val removals = ArrayList<String>()
+        val listener = java.util.function.Consumer<String> { id ->
+            check(android.os.Looper.myLooper() === android.os.Looper.getMainLooper())
+            removals.add(id)
+        }
+        service.registerPersistentDeviceIdRemovedListener(listener)
+        service.registerPersistentDeviceIdRemovedListener(listener)
+        service.onPersistentDeviceIdsRemoved(linkedSetOf("first", "second"))
+        service.unregisterPersistentDeviceIdRemovedListener(listener)
+        check(removals.isEmpty())
+        drainMainQueue()
+        check(removals == listOf("first", "first", "second", "second"))
+        service.onPersistentDeviceIdsRemoved(setOf("third"))
+        drainMainQueue()
+        check(removals.last() == "third" && removals.size == 5)
+        service.unregisterPersistentDeviceIdRemovedListener(listener)
+        service.onPersistentDeviceIdsRemoved(setOf("fourth"))
+        drainMainQueue()
+        check(removals.size == 5)
+        val nullParams = runCatching {
+            service.javaClass.getMethod("createVirtualDevice", android.companion.virtual.VirtualDeviceParams::class.java)
+                .invoke(service, *arrayOfNulls<Any>(1))
+        }.exceptionOrNull()
+        check(nullParams is java.lang.reflect.InvocationTargetException && nullParams.cause is NullPointerException)
+        val nameless = runCatching { service.createVirtualDevice(android.companion.virtual.VirtualDeviceParams.Builder().build()) }.exceptionOrNull()
+        check(nameless is NullPointerException && nameless.message == "virtual device name must not be null")
     }
 
     private fun testHostedActivityTaskServiceTransactions() {

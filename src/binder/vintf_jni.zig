@@ -187,4 +187,46 @@ pub fn register(env: Env) !void {
         method("getBootVbmetaAvbVersion", "()Ljava/lang/String;", &bootVbmetaAvb),
     };
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+    try registerObject(env);
+}
+
+// Pinned android_os_VintfObject.cpp and VintfObject::checkCompatibility.
+// The hosted system has no Android vendor/framework HAL manifests or matrices.
+// The original JNI additionally requires libvintf and UiAutomation's privileged
+// `vintf` shell commands. Preserve its missing-metadata results at this seam;
+// do not advertise a compatible vendor build or a fabricated policy version.
+fn missingManifestStrings(env: Env, _: jni.jclass) callconv(.c) jni.jobjectArray {
+    const string_class = env.*.*.FindClass.?(env, "java/lang/String") orelse return null;
+    defer env.*.*.DeleteLocalRef.?(env, string_class);
+    return env.*.*.NewObjectArray.?(env, 0, string_class, null);
+}
+
+fn missingManifestObject(_: Env, _: jni.jclass) callconv(.c) jni.jobject {
+    return null;
+}
+
+fn missingManifestCompatibility(_: Env, _: jni.jclass) callconv(.c) jni.jint {
+    return -19; // utils/Errors.h: NO_INIT (-ENODEV).
+}
+
+fn missingPlatformSepolicy(env: Env, _: jni.jclass) callconv(.c) jni.jstring {
+    const exception = env.*.*.FindClass.?(env, "java/lang/RuntimeException") orelse return null;
+    defer env.*.*.DeleteLocalRef.?(env, exception);
+    _ = env.*.*.ThrowNew.?(env, exception, "Cannot get framework compatibility matrix");
+    return null;
+}
+
+fn registerObject(env: Env) !void {
+    const cls = env.*.*.FindClass.?(env, "android/os/VintfObject") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, cls);
+    const methods = [_]jni.JNINativeMethod{
+        method("report", "()[Ljava/lang/String;", &missingManifestStrings),
+        method("verifyBuildAtBoot", "()I", &missingManifestCompatibility),
+        method("getHalNamesAndVersions", "()[Ljava/lang/String;", &missingManifestStrings),
+        method("getSepolicyVersion", "()Ljava/lang/String;", &missingManifestObject),
+        method("getPlatformSepolicyVersion", "()Ljava/lang/String;", &missingPlatformSepolicy),
+        method("getVndkSnapshots", "()Ljava/util/Map;", &missingManifestObject),
+        method("getTargetFrameworkCompatibilityMatrixVersion", "()Ljava/lang/Long;", &missingManifestObject),
+    };
+    if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
 }

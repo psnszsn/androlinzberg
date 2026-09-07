@@ -1,6 +1,9 @@
 package dev.artzig.system
 
 import android.companion.AssociationInfo
+import android.companion.CompanionDeviceManager
+import com.android.server.LocalServices
+import com.android.server.companion.virtual.VirtualDeviceManagerInternal
 import android.companion.AssociationRequest
 import android.companion.ICompanionDeviceManager
 import android.companion.virtual.*
@@ -13,7 +16,10 @@ import java.util.Objects
  * Keep normal default-device queries, listener ownership and CDM association validation behind
  * Binder. Creating a device requires a virtual display/input/camera backend; that boundary reports
  * an unsupported operation after the stock permission, association and attribution checks. */
-internal class HostedVirtualDeviceService(private val context: Context) :
+internal class HostedVirtualDeviceService(
+    private val context: Context,
+    private val localService: VirtualDeviceManagerInternal? = LocalServices.getService(VirtualDeviceManagerInternal::class.java),
+) :
     IVirtualDeviceManager.Stub(PermissionEnforcer.fromContext(context)) {
     private val listeners = RemoteCallbackList<IVirtualDeviceListener>()
     private val profiles = setOf(AssociationRequest.DEVICE_PROFILE_AUTOMOTIVE_PROJECTION,
@@ -27,9 +33,30 @@ internal class HostedVirtualDeviceService(private val context: Context) :
             return service.getAllAssociationsForUser(user)
         } finally { Binder.restoreCallingIdentity(identity) }
     }
-    private fun persistentAssociations(): Map<String, AssociationInfo> =
-        associations(UserHandle.USER_ALL).filter { it.deviceProfile in profiles && !it.isRevoked }
+    private val associationsLock = Any()
+    private var activeAssociations: Map<String, AssociationInfo> = emptyMap()
+
+    // VirtualDeviceManagerService.onStart/onCdmAssociationsChanged: publish the
+    // initial snapshot, then consume CDM's executor callbacks and notify removals.
+    init {
+        val manager = context.getSystemService(CompanionDeviceManager::class.java)
+        if (manager != null) {
+            onAssociationsChanged(manager.getAllAssociations(UserHandle.USER_ALL))
+            manager.addOnAssociationsChangedListener(context.mainExecutor, ::onAssociationsChanged, UserHandle.USER_ALL)
+        }
+    }
+    private fun onAssociationsChanged(values: List<AssociationInfo>) {
+        val next = values.filter { it.deviceProfile in profiles && !it.isRevoked }
             .associateBy { "companion:${it.id}" }
+        val removed = synchronized(associationsLock) {
+            val removed = activeAssociations.keys - next.keys
+            activeAssociations = next
+            removed
+        }
+        if (removed.isNotEmpty()) localService?.onPersistentDeviceIdsRemoved(removed)
+    }
+    private fun persistentAssociations(): Map<String, AssociationInfo> =
+        synchronized(associationsLock) { activeAssociations }
 
     override fun createVirtualDevice(token: IBinder?, attributionSource: AttributionSource?, associationId: Int,
         params: VirtualDeviceParams?, activityListener: IVirtualDeviceActivityListener?,

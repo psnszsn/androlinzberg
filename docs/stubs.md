@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 16 (budget 16). Survivors: 12. Total: 28.
+Pending: 15 (budget 15). Survivors: 11. Total: 26.
 
 ## Survivors
 
@@ -21,7 +21,6 @@ Pending: 16 (budget 16). Survivors: 12. Total: 28.
 | `android/media/MediaMetadataRetriever.java` | JNI natives (libmedia_jni) | blocked |
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
 | `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | blocked |
-| `android/os/VintfObject.java` | JNI natives (libvintf) | blocked |
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | blocked |
 | `android/view/SurfaceControl.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/view/SurfaceSession.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
@@ -77,12 +76,6 @@ Pending: 16 (budget 16). Survivors: 12. Total: 28.
 |---|---|---|
 | `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper |
 | `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
-
-### virtualdevice
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (1 to add), not vendored |
 
 ### webkit
 

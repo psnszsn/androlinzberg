@@ -28,6 +28,22 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- VintfObject and VirtualDeviceManagerInternal now compile verbatim. The VINTF native
+  boundary follows AOSP's missing-manifest/matrix path: compatibility returns NO_INIT,
+  metadata queries return null or empty arrays, and the platform-policy query throws
+  the stock missing-matrix error. It no longer falsely reports a compatible vendor build;
+  no vendor metadata parser or HAL compatibility engine is implemented. The hosted
+  virtual-device local service implements stock empty-device queries, immutable identity
+  snapshots, duplicate listener registration and asynchronous removal delivery. Its Binder
+  service now consumes stock CompanionDeviceManager association callbacks, updates display
+  names and removes revoked or ineligible persistent identities. Tests exercise the stock
+  CDM client with an in-memory association service, including callback ordering and repeated
+  updates. Virtual display/input creation remains explicitly unsupported. JVM/system,
+  native/Binder and build checks pass; all 11 APK tests pass (37 steps, zero structured
+  runtime issues). The inventory is 26 stubs (15 pending, 11 survivors). The rebuilt AOSP
+  archive is repinned and both added sources are byte-verified; ART remains unchanged.
+
+
 - Cronet's request configuration, HTTP flags and base-feature overrides now use
   11 original generated protobuf classes and AOSP's 91-source protobuf lite runtime.
   The build uses the pinned protoc lite backend. Protobuf compiles separately against
