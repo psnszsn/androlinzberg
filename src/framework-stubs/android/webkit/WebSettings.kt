@@ -4,6 +4,12 @@ import android.content.Context
 
 /** Stateful public WebSettings contract for the hosted WebView adapter. */
 open class WebSettings internal constructor(context: Context) {
+    // AOSP WebSettings.CacheMode's source-only contract, needed by the stock
+    // provider interfaces while the outer settings class remains hosted.
+    @android.annotation.IntDef(prefix = ["LOAD_"], value = [-1, 0, 1, 2, 3])
+    @Retention(AnnotationRetention.SOURCE)
+    annotation class CacheMode
+
     private var javaScriptEnabled = false
     private var javaScriptCanOpenWindowsAutomatically = false
     private var domStorageEnabled = false

@@ -1,44 +1,30 @@
 From 4edeed81939c4c1cc3ad1eae276cc8b3975ff81f Mon Sep 17 00:00:00 2001
 From: Vlad Panazan <git@praznet.com>
 Date: Tue, 1 Sep 2026 23:24:10 +0200
-Subject: [PATCH] Process: broker-assigned uid, no zygote on the host (artzig)
+Subject: [PATCH] Process: broker-assigned uid and hosted launch boundary
 
-Host adaptation: myUid() is the Android uid the session's Binder broker
-assigned (the Linux uid is the desktop user's), defaulting to the first app
-uid before the connection exists. There is no zygote: the launcher spawns
-hosted processes, so start()/startWebView() report UnsupportedOperationException
-instead of talking to ZygoteProcess/WebViewZygote. The sdksandbox @FlaggedApi
-annotation is dropped (its aconfig declarations are not vendored).
+Host adaptation: myUid() returns the Android uid assigned by the Binder broker.
+Keep the stock ZYGOTE_PROCESS client object for the stock WebView/zygote type
+closure. No zygote server is hosted: start()/startWebView() still report that
+launch boundary as unsupported. The sdksandbox annotation remains omitted
+until its aconfig declarations are selected.
 ---
- core/java/android/os/Process.java | 31 +++++++++++++------------------
- 1 file changed, 13 insertions(+), 18 deletions(-)
 
 diff --git a/core/java/android/os/Process.java b/core/java/android/os/Process.java
-index b68b9a7af..61fb564d5 100644
 --- a/core/java/android/os/Process.java
 +++ b/core/java/android/os/Process.java
-@@ -40,9 +40,7 @@ import android.system.Os;
+@@ -40,9 +40,7 @@
  import android.system.OsConstants;
  import android.system.StructPollfd;
  import android.util.Pair;
 -import android.webkit.WebViewZygote;
- 
+-
 -import com.android.sdksandbox.flags.Flags;
++
  
  import dalvik.system.VMDebug;
  import dalvik.system.VMRuntime;
-@@ -673,7 +671,9 @@ public class Process {
-      * State associated with the zygote process.
-      * @hide
-      */
--    public static final ZygoteProcess ZYGOTE_PROCESS = new ZygoteProcess();
-+    // Host adaptation (artzig): there is no zygote; the launcher spawns hosted
-+    // processes (--app-process) and the hosted activity manager asks it to.
-+    // start()/startWebView() below report that as unsupported.
- 
-     /**
-      * The process name set via {@link #setArgV0(String)}.
-@@ -752,12 +752,8 @@ public class Process {
+@@ -752,12 +750,8 @@
                                             boolean bindMountAppStorageDirs,
                                             boolean bindMountSystemOverrides,
                                             @Nullable String[] zygoteArgs) {
@@ -53,7 +39,7 @@ index b68b9a7af..61fb564d5 100644
      }
  
      /** @hide */
-@@ -777,13 +773,8 @@ public class Process {
+@@ -777,13 +771,8 @@
                                                    @Nullable String[] zygoteArgs) {
          // Webview zygote can't access app private data files, so doesn't need to know its data
          // info.
@@ -69,7 +55,7 @@ index b68b9a7af..61fb564d5 100644
      }
  
      /**
-@@ -888,7 +879,12 @@ public class Process {
+@@ -888,7 +877,12 @@
       */
      @RavenwoodKeep
      public static final int myUid() {
@@ -83,7 +69,7 @@ index b68b9a7af..61fb564d5 100644
      }
  
      /**
-@@ -1004,7 +1000,6 @@ public class Process {
+@@ -1004,7 +998,6 @@
       *
       * @throws IllegalArgumentException if input is not an app uid
       */
@@ -91,6 +77,3 @@ index b68b9a7af..61fb564d5 100644
      @RavenwoodKeep
      public static final int getSdkSandboxUidForAppUid(int uid) {
          if (!isApplicationUid(uid)) {
--- 
-2.55.0
-

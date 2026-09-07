@@ -377,6 +377,12 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/incremental/IncrementalFileSystemControlParcel.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/webkit/IWebViewUpdateService.aidl" },
+    .{ .source = .aosp, .path = "system/vold/binder/android/os/IVold.aidl" },
+    .{ .source = .aosp, .path = "system/vold/binder/android/os/IVoldListener.aidl" },
+    .{ .source = .aosp, .path = "system/vold/binder/android/os/IVoldMountCallback.aidl" },
+
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMediaHTTPConnection.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMediaHTTPService.aidl" },
     .{ .source = .aosp, .path = "packages/providers/MediaProvider/apex/framework/java/android/provider/IMPCancellationSignal.aidl" },
@@ -1712,7 +1718,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.hardware.usb.flags", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/hardware/usb/flags/system_sw_usb_flags.aconfig", "frameworks/base/core/java/android/hardware/usb/flags/usb_framework_flags.aconfig" } },
     .{ .package = "android.net.platform.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/net/flags.aconfig"} },
     .{ .package = "android.net.wifi.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/wifi/wifi.aconfig"} },
-    .{ .package = "android.webkit", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/webkit/flags.aconfig"} },
+    .{ .package = "android.webkit", .container = "system", .source = .aosp, .declarations = &.{ "frameworks/base/core/java/android/webkit/flags.aconfig", "frameworks/base/services/core/java/com/android/server/webkit/flags.aconfig" } },
     .{ .package = "android.appwidget.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/appwidget/flags.aconfig"} },
     .{ .package = "android.service.notification", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/notification/flags.aconfig"} },
     .{ .package = "android.app.job", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/apex/jobscheduler/framework/aconfig/job.aconfig"} },
@@ -1750,6 +1756,7 @@ pub const nano = [_]Nano{
 };
 
 pub const proto_inputs = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/core/proto/android/service/print.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/nfc/aid_group.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/nfc/nfc_fservice_info.proto" },
     .{ .source = .aosp, .path = "frameworks/base/core/proto/android/nfc/apdu_service_info.proto" },
@@ -1838,6 +1845,7 @@ pub const proto_inputs = [_]SourcePath{
 };
 
 pub const proto_outputs = [_][]const u8{
+    "android/service/print/PrintAttributesProto.java",
     "com/android/nfc/NfcServiceDumpProto.java",
     "com/android/nfc/DiscoveryParamsProto.java",
     "com/android/nfc/NfcDispatcherProto.java",

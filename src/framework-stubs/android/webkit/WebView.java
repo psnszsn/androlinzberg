@@ -1,8 +1,36 @@
+/*
+ * Copyright (C) 2006 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 /* artzig hosted WebView state/callback adapter. Chromium's WebView provider is not available;
  * public lifecycle and callback behavior follows AOSP WebView while document loading is reduced
  * to an in-process navigation seam. */
 package android.webkit;
 import android.content.Context;
+import android.annotation.Nullable;
+import android.annotation.SystemApi;
+import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.Picture;
+import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
+import android.os.Bundle;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+
 import android.net.Uri;
 import android.os.Looper;
 import android.util.AttributeSet;
@@ -159,5 +187,248 @@ public class WebView extends android.view.ViewGroup {
     public static void setSafeBrowsingWhitelist(List<String> hosts,
             ValueCallback<Boolean> callback) {
         if (callback != null) callback.onReceiveValue(Boolean.TRUE);
+    }
+    // Verbatim nested contracts from pinned AOSP WebView, required by the stock
+    // WebViewProvider interfaces in the AppOps/Zygote source closure. The outer
+    // WebView still uses the hosted provider until Android Chromium's native
+    // library and presentation dependencies are supplied.
+    public interface FindListener {
+        /**
+         * Notifies the listener about progress made by a find operation.
+         *
+         * @param activeMatchOrdinal the zero-based ordinal of the currently selected match
+         * @param numberOfMatches how many matches have been found
+         * @param isDoneCounting whether the find operation has actually completed. The listener
+         *                       may be notified multiple times while the
+         *                       operation is underway, and the numberOfMatches
+         *                       value should not be considered final unless
+         *                       isDoneCounting is {@code true}.
+         */
+        public void onFindResultReceived(int activeMatchOrdinal, int numberOfMatches,
+            boolean isDoneCounting);
+    }
+
+    @Deprecated
+    public interface PictureListener {
+        /**
+         * Used to provide notification that the WebView's picture has changed.
+         * See {@link WebView#capturePicture} for details of the picture.
+         *
+         * @param view the WebView that owns the picture
+         * @param picture the new picture. Applications targeting
+         *     {@link android.os.Build.VERSION_CODES#JELLY_BEAN_MR2} or above
+         *     will always receive a {@code null} Picture.
+         * @deprecated Deprecated due to internal changes.
+         */
+        @Deprecated
+        void onNewPicture(WebView view, @Nullable Picture picture);
+    }
+
+    public static class HitTestResult {
+        /**
+         * Default HitTestResult, where the target is unknown.
+         */
+        public static final int UNKNOWN_TYPE = 0;
+        /**
+         * @deprecated This type is no longer used.
+         */
+        @Deprecated
+        public static final int ANCHOR_TYPE = 1;
+        /**
+         * HitTestResult for hitting a phone number.
+         */
+        public static final int PHONE_TYPE = 2;
+        /**
+         * HitTestResult for hitting a map address.
+         */
+        public static final int GEO_TYPE = 3;
+        /**
+         * HitTestResult for hitting an email address.
+         */
+        public static final int EMAIL_TYPE = 4;
+        /**
+         * HitTestResult for hitting an HTML::img tag.
+         */
+        public static final int IMAGE_TYPE = 5;
+        /**
+         * @deprecated This type is no longer used.
+         */
+        @Deprecated
+        public static final int IMAGE_ANCHOR_TYPE = 6;
+        /**
+         * HitTestResult for hitting a HTML::a tag with src=http.
+         */
+        public static final int SRC_ANCHOR_TYPE = 7;
+        /**
+         * HitTestResult for hitting a HTML::a tag with src=http + HTML::img.
+         */
+        public static final int SRC_IMAGE_ANCHOR_TYPE = 8;
+        /**
+         * HitTestResult for hitting an edit text area.
+         */
+        public static final int EDIT_TEXT_TYPE = 9;
+
+        private int mType;
+        private String mExtra;
+
+        /**
+         * @hide Only for use by WebViewProvider implementations
+         */
+        @SystemApi
+        public HitTestResult() {
+            mType = UNKNOWN_TYPE;
+        }
+
+        /**
+         * @hide Only for use by WebViewProvider implementations
+         */
+        @SystemApi
+        public void setType(int type) {
+            mType = type;
+        }
+
+        /**
+         * @hide Only for use by WebViewProvider implementations
+         */
+        @SystemApi
+        public void setExtra(String extra) {
+            mExtra = extra;
+        }
+
+        /**
+         * Gets the type of the hit test result. See the XXX_TYPE constants
+         * defined in this class.
+         *
+         * @return the type of the hit test result
+         */
+        public int getType() {
+            return mType;
+        }
+
+        /**
+         * Gets additional type-dependant information about the result. See
+         * {@link WebView#getHitTestResult()} for details. May either be {@code null}
+         * or contain extra information about this result.
+         *
+         * @return additional type-dependant information about the result
+         */
+        @Nullable
+        public String getExtra() {
+            return mExtra;
+        }
+    }
+
+    public class PrivateAccess {
+        // ---- Access to super-class methods ----
+        public int super_getScrollBarStyle() {
+            return WebView.super.getScrollBarStyle();
+        }
+
+        public void super_scrollTo(int scrollX, int scrollY) {
+            WebView.super.scrollTo(scrollX, scrollY);
+        }
+
+        public void super_computeScroll() {
+            WebView.super.computeScroll();
+        }
+
+        public boolean super_onHoverEvent(MotionEvent event) {
+            return WebView.super.onHoverEvent(event);
+        }
+
+        public boolean super_performAccessibilityAction(int action, Bundle arguments) {
+            return WebView.super.performAccessibilityActionInternal(action, arguments);
+        }
+
+        public boolean super_performLongClick() {
+            return WebView.super.performLongClick();
+        }
+
+        public boolean super_setFrame(int left, int top, int right, int bottom) {
+            return WebView.super.setFrame(left, top, right, bottom);
+        }
+
+        public boolean super_dispatchKeyEvent(KeyEvent event) {
+            return WebView.super.dispatchKeyEvent(event);
+        }
+
+        public boolean super_onGenericMotionEvent(MotionEvent event) {
+            return WebView.super.onGenericMotionEvent(event);
+        }
+
+        public boolean super_requestFocus(int direction, Rect previouslyFocusedRect) {
+            return WebView.super.requestFocus(direction, previouslyFocusedRect);
+        }
+
+        public void super_setLayoutParams(ViewGroup.LayoutParams params) {
+            WebView.super.setLayoutParams(params);
+        }
+
+        public void super_startActivityForResult(Intent intent, int requestCode) {
+            WebView.super.startActivityForResult(intent, requestCode);
+        }
+
+        /**
+         * @see View#onApplyWindowInsets(WindowInsets)
+         */
+        @Nullable
+        public WindowInsets super_onApplyWindowInsets(@Nullable WindowInsets insets) {
+            return WebView.super.onApplyWindowInsets(insets);
+        }
+
+        // ---- Access to non-public methods ----
+        public void overScrollBy(int deltaX, int deltaY,
+                int scrollX, int scrollY,
+                int scrollRangeX, int scrollRangeY,
+                int maxOverScrollX, int maxOverScrollY,
+                boolean isTouchEvent) {
+            WebView.this.overScrollBy(deltaX, deltaY, scrollX, scrollY, scrollRangeX, scrollRangeY,
+                    maxOverScrollX, maxOverScrollY, isTouchEvent);
+        }
+
+        public void awakenScrollBars(int duration) {
+            WebView.this.awakenScrollBars(duration);
+        }
+
+        public void awakenScrollBars(int duration, boolean invalidate) {
+            WebView.this.awakenScrollBars(duration, invalidate);
+        }
+
+        public float getVerticalScrollFactor() {
+            return WebView.this.getVerticalScrollFactor();
+        }
+
+        public float getHorizontalScrollFactor() {
+            return WebView.this.getHorizontalScrollFactor();
+        }
+
+        public void setMeasuredDimension(int measuredWidth, int measuredHeight) {
+            WebView.this.setMeasuredDimension(measuredWidth, measuredHeight);
+        }
+
+        public void onScrollChanged(int l, int t, int oldl, int oldt) {
+            WebView.this.onScrollChanged(l, t, oldl, oldt);
+        }
+
+        public int getHorizontalScrollbarHeight() {
+            return WebView.this.getHorizontalScrollbarHeight();
+        }
+
+        public void super_onDrawVerticalScrollBar(Canvas canvas, Drawable scrollBar,
+                int l, int t, int r, int b) {
+            WebView.super.onDrawVerticalScrollBar(canvas, scrollBar, l, t, r, b);
+        }
+
+        // ---- Access to (non-public) fields ----
+        /** Raw setter for the scroll X value, without invoking onScrollChanged handlers etc. */
+        public void setScrollXRaw(int scrollX) {
+            WebView.this.mScrollX = scrollX;
+        }
+
+        /** Raw setter for the scroll Y value, without invoking onScrollChanged handlers etc. */
+        public void setScrollYRaw(int scrollY) {
+            WebView.this.mScrollY = scrollY;
+        }
+
     }
 }

@@ -216,8 +216,11 @@ public final class SystemServiceRegistry {
             @Override public android.content.ClipboardManager createService(ContextImpl ctx) throws ServiceNotFoundException {
                 return new android.content.ClipboardManager(ctx.getOuterContext(), new android.os.Handler(ctx.getMainLooper()));
             }});
-        registerService(Context.APP_OPS_SERVICE, AppOpsManager.class, new NewServiceFetcher<AppOpsManager>() {
-            @Override public AppOpsManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new AppOpsManager(); }});
+        registerService(Context.APP_OPS_SERVICE, AppOpsManager.class, new CachedServiceFetcher<AppOpsManager>() {
+            @Override public AppOpsManager createService(ContextImpl ctx) throws ServiceNotFoundException {
+                IBinder binder = ServiceManager.getServiceOrThrow(Context.APP_OPS_SERVICE);
+                return new AppOpsManager(ctx, com.android.internal.app.IAppOpsService.Stub.asInterface(binder));
+            }});
         registerService(Context.KEYGUARD_SERVICE, KeyguardManager.class, new CachedServiceFetcher<KeyguardManager>() {
             @Override public KeyguardManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new KeyguardManager(ctx); }});
         registerService(Context.TEXT_CLASSIFICATION_SERVICE, android.view.textclassifier.TextClassificationManager.class,
@@ -588,8 +591,8 @@ public final class SystemServiceRegistry {
                     throws ServiceNotFoundException {
                 return new android.os.PermissionEnforcer(ctx.getOuterContext());
             }});
-        registerService(Context.PERMISSION_SERVICE, android.permission.PermissionManager.class, new NewServiceFetcher<android.permission.PermissionManager>() {
-            @Override public android.permission.PermissionManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.permission.PermissionManager(); }});
+        registerService(Context.PERMISSION_SERVICE, android.permission.PermissionManager.class, new CachedServiceFetcher<android.permission.PermissionManager>() {
+            @Override public android.permission.PermissionManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.permission.PermissionManager(ctx.getOuterContext()); }});
         registerService(Context.NETWORK_SCORE_SERVICE, android.net.NetworkScoreManager.class,
                 new CachedServiceFetcher<android.net.NetworkScoreManager>() {
             @Override public android.net.NetworkScoreManager createService(ContextImpl ctx)

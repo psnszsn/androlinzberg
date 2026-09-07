@@ -750,6 +750,37 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
 
     // ------------------------------------------------------- permissions
 
+    /** PermissionService metadata projection over the installed parsed definitions.
+     * This host has one visible user and does not install instant applications. */
+    fun permissionInfo(name: String?, opPackageName: String?, flags: Int): PermissionInfo? =
+        synchronized(lock) {
+            val definition = permissionDefs[name] ?: return null
+            val info = PackageInfoUtils.generatePermissionInfo(definition.permission, flags.toLong())
+                ?: return null
+            info.flags = info.flags or PermissionInfo.FLAG_INSTALLED
+            val uid = Binder.getCallingUid()
+            val targetSdk = if (uid == Process.ROOT_UID || uid == Process.SYSTEM_UID || uid == Process.SHELL_UID)
+                android.os.Build.VERSION_CODES.CUR_DEVELOPMENT
+            else packages[opPackageName]?.pkg?.targetSdkVersion ?: android.os.Build.VERSION_CODES.CUR_DEVELOPMENT
+            if (targetSdk < android.os.Build.VERSION_CODES.O && info.protection != PermissionInfo.PROTECTION_SIGNATURE) {
+                info.protectionLevel = info.protection
+            }
+            info
+        }
+
+    fun allPermissionGroups(flags: Int): List<PermissionGroupInfo> = synchronized(lock) {
+        permissionGroups.values.mapNotNull { PackageInfoUtils.generatePermissionGroupInfo(it, flags.toLong()) }
+    }
+
+    fun permissionsByGroup(group: String?, flags: Int): List<PermissionInfo>? = synchronized(lock) {
+        if (group != null && !permissionGroups.containsKey(group)) return null
+        permissionDefs.values.filter { it.permission.group == group }.mapNotNull {
+            PackageInfoUtils.generatePermissionInfo(it.permission, flags.toLong())?.apply {
+                this.flags = this.flags or PermissionInfo.FLAG_INSTALLED
+            }
+        }
+    }
+
     override fun checkPermission(permName: String?, pkgName: String?, userId: Int): Int {
         if (permName == null || pkgName == null) return PackageManager.PERMISSION_DENIED
         if (pkgName == "android") return PackageManager.PERMISSION_GRANTED

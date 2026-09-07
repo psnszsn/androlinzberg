@@ -14,7 +14,7 @@
 # The archive generator must apply the selected frameworks-base,
 # incremental_delivery, minikin, and system/libbase patches before packaging,
 # then revert them.
-# Rules: D=120 F=2966 total=3086
+# Rules: D=120 F=2973 total=3093
 D aosp external/fmtlib
 D aosp system/tools/xsdc/src/main/java
 F aosp prebuilts/misc/common/commons-cli/commons-cli-1.2.jar
@@ -6545,3 +6545,10 @@ F aosp packages/modules/IPsec/src/java/com/android/internal/net/utils/IkeDeviceC
 F aosp packages/modules/IPsec/src/java/com/android/internal/net/utils/Log.java
 F aosp packages/modules/IPsec/src/java/com/android/internal/net/utils/SimpleStateMachine.java
 F aosp frameworks/base/core/java/android/view/Choreographer.java
+F aosp frameworks/base/core/java/android/permission/PermissionManager.java
+F aosp frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java
+F aosp frameworks/base/core/jni/com_android_internal_os_ZygoteCommandBuffer.cpp
+F aosp frameworks/base/core/jni/com_android_internal_os_Zygote.h
+F aosp frameworks/base/services/core/java/com/android/server/webkit/flags.aconfig
+F aosp bionic/libc/async_safe/include/async_safe/log.h
+F aosp bionic/libc/include/sys/system_properties.h

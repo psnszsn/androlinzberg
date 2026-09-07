@@ -1,3 +1,6 @@
+#include "com_android_internal_os_Zygote.h"
+#include <android-base/stringprintf.h>
+#include <nativehelper/ScopedUtfChars.h>
 #include "android_os_HidlMemory.h"
 #include "android_os_NativeHandle.h"
 // AOSP C++ ABI bridge: register the framework/HWUI JNI natives with ART,
@@ -142,6 +145,12 @@ extern int register_com_android_internal_os_ApplicationSharedMemory(JNIEnv*);
 extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv*);
 extern int register_android_os_SELinux(JNIEnv*);
 extern int register_android_os_NativeHandle(JNIEnv*);
+extern jlong com_android_internal_os_ZygoteCommandBuffer_getNativeBuffer(JNIEnv*, jclass, jint);
+extern void com_android_internal_os_ZygoteCommandBuffer_freeNativeBuffer(JNIEnv*, jclass, jlong);
+extern void com_android_internal_os_ZygoteCommandBuffer_insert(JNIEnv*, jclass, jlong, jstring);
+extern jstring com_android_internal_os_ZygoteCommandBuffer_nativeNextArg(JNIEnv*, jclass, jlong);
+extern void com_android_internal_os_ZygoteCommandBuffer_nativeReadFullyAndReset(JNIEnv*, jclass, jlong);
+extern jint com_android_internal_os_ZygoteCommandBuffer_nativeGetCount(JNIEnv*, jclass, jlong);
 extern int register_android_os_PerfettoTrace(JNIEnv*);
 extern void android_os_PerfettoTrace_register(bool);
 extern int register_android_os_PerfettoTrackEventExtra(JNIEnv*);
@@ -217,6 +226,70 @@ static int registerStockHidlMemorySmoke(JNIEnv* env) {
          reinterpret_cast<void*>(roundTripHidlMemory)},
     };
     return jniRegisterNativeMethods(env, "dev/artzig/StockHidlMemorySmoke", methods, 1);
+}
+
+// Reuse ZygoteCommandBuffer's original parser and allocation ownership. The full
+// Zygote.cpp requires Android process specialization, mounts and seccomp. Its
+// fatal-error formatter is reused verbatim here; process creation is a host seam.
+namespace android {
+using android::base::StringPrintf;
+[[noreturn]]
+void zygote::ZygoteFailure(JNIEnv* env,
+                           const char* process_name,
+                           jstring managed_process_name,
+                           const std::string& msg) {
+  std::unique_ptr<ScopedUtfChars> scoped_managed_process_name_ptr = nullptr;
+  if (managed_process_name != nullptr) {
+    scoped_managed_process_name_ptr.reset(new ScopedUtfChars(env, managed_process_name));
+    if (scoped_managed_process_name_ptr->c_str() != nullptr) {
+      process_name = scoped_managed_process_name_ptr->c_str();
+    }
+  }
+
+  const std::string& error_msg =
+      (process_name == nullptr || process_name[0] == '\0') ?
+      msg : StringPrintf("(%s) %s", process_name, msg.c_str());
+
+  env->FatalError(error_msg.c_str());
+  __builtin_unreachable();
+}
+
+}  // namespace android
+
+static jboolean unsupportedZygoteFork(JNIEnv* env, jclass, jlong, jint, jint, jint, jstring) {
+    ScopedLocalRef<jclass> diagnostics(env, env->FindClass("dev/artzig/ArtzigTestDiagnostics"));
+    if (diagnostics.get() == nullptr) return JNI_FALSE;
+    jmethodID unsupported = env->GetStaticMethodID(diagnostics.get(), "unsupported",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/UnsupportedOperationException;");
+    if (unsupported == nullptr) return JNI_FALSE;
+    ScopedLocalRef<jstring> owner(env, env->NewStringUTF("com.android.internal.os.ZygoteCommandBuffer"));
+    ScopedLocalRef<jstring> member(env, env->NewStringUTF("nativeForkRepeatedly"));
+    ScopedLocalRef<jstring> detail(env, env->NewStringUTF("Process creation requires a hosted zygote service"));
+    if (env->ExceptionCheck()) return JNI_FALSE;
+    jvalue args[] = {{.l = owner.get()}, {.l = member.get()}, {.l = detail.get()}};
+    ScopedLocalRef<jthrowable> failure(env, static_cast<jthrowable>(
+            env->CallStaticObjectMethodA(diagnostics.get(), unsupported, args)));
+    if (failure.get() != nullptr) env->Throw(failure.get());
+    return JNI_FALSE;
+}
+
+static int registerHostedZygoteCommandBuffer(JNIEnv* env) {
+    // Select the six original parser bindings directly. The original fork loop
+    // and its Android process/property dependencies are discarded by the linker.
+#define ZYGOTE_PARSER_METHOD(name, signature) \
+    {#name, signature, reinterpret_cast<void*>(android::com_android_internal_os_ZygoteCommandBuffer_##name)}
+    const JNINativeMethod methods[] = {
+        ZYGOTE_PARSER_METHOD(getNativeBuffer, "(I)J"),
+        ZYGOTE_PARSER_METHOD(freeNativeBuffer, "(J)V"),
+        ZYGOTE_PARSER_METHOD(insert, "(JLjava/lang/String;)V"),
+        ZYGOTE_PARSER_METHOD(nativeNextArg, "(J)Ljava/lang/String;"),
+        ZYGOTE_PARSER_METHOD(nativeReadFullyAndReset, "(J)V"),
+        ZYGOTE_PARSER_METHOD(nativeGetCount, "(J)I"),
+        {"nativeForkRepeatedly", "(JIIILjava/lang/String;)Z",
+         reinterpret_cast<void*>(unsupportedZygoteFork)},
+    };
+#undef ZYGOTE_PARSER_METHOD
+    return jniRegisterNativeMethods(env, "com/android/internal/os/ZygoteCommandBuffer", methods, 7);
 }
 
 static int azk_register_android_graphics_Bitmap(JNIEnv* env) {
@@ -316,6 +389,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_os_NativeHandle),
             E(android::register_android_os_HidlMemory),
             E(registerStockHidlMemorySmoke),
+            E(registerHostedZygoteCommandBuffer),
             E(registerPerfettoTrace),
             E(android::register_android_os_PerfettoTrackEventExtra),
             E(android::register_android_util_jar_StrictJarFile),

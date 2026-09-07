@@ -1260,6 +1260,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     registerSystemProperties(env) catch return -1;
     registerSharedMemory(env) catch return -1;
     registerNetworkUtils(env) catch return -1;
+    @import("network_utils_internal_jni.zig").register(env) catch return -1;
     registerProcess(env) catch return -1;
     registerTrace(env) catch return -1;
     registerPerfetto(env) catch return -1;

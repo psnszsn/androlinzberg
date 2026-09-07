@@ -223,6 +223,7 @@ internal object FrameworkModuleSmoke {
         StockMediaDrmSmoke.run()
         StockMediaHttpSmoke.run()
         StockHidlMemorySmoke.run()
+        StockZygoteCommandBufferSmoke.run()
         StockLegacyCameraSmoke.run()
         StockIpSecProposalSmoke.run()
         StockImageSmoke.run()
@@ -2555,6 +2556,7 @@ internal object FrameworkModuleSmoke {
         check(permissions.checkPermission("org.example.missing", wakeLock, defaultDevice, 0) == PackageManager.PERMISSION_DENIED)
         // WAKE_LOCK is not device-aware; AOSP reads its default-device grant.
         check(permissions.checkUidPermission(uid, wakeLock, 777) == PackageManager.PERMISSION_GRANTED)
+        StockPermissionClientsSmoke.run(base, fixture)
         val permissionState = android.permission.PermissionManager.PermissionState(true, 0x1234)
         val stateParcel = Parcel.obtain()
         try {

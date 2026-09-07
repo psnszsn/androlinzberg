@@ -68,7 +68,8 @@ class HostedAppOpsService : IAppOpsService.Stub() {
         if (callback == null) return
         synchronized(lock) { watchers.removeAll { it.second.asBinder() == callback.asBinder() } }
     }
-    override fun permissionToOpCode(permission: String?): Int = 0
+    override fun permissionToOpCode(permission: String?): Int =
+        if (permission == null) AppOpsManager.OP_NONE else AppOpsManager.permissionToOpCode(permission)
     override fun checkAudioOperation(code: Int, usage: Int, uid: Int, packageName: String?): Int = 0
     override fun shouldCollectNotes(opCode: Int): Boolean = false
     override fun setCameraAudioRestriction(mode: Int) {}
@@ -78,15 +79,22 @@ class HostedAppOpsService : IAppOpsService.Stub() {
     override fun startProxyOperation(clientId: android.os.IBinder?, code: Int, attributionSource: android.content.AttributionSource?, startIfModeDefault: Boolean, shouldCollectAsyncNotedOp: Boolean, message: String?, shouldCollectMessage: Boolean, skipProxyOperation: Boolean, proxyAttributionFlags: Int, proxiedAttributionFlags: Int, attributionChainId: Int): android.app.SyncNotedAppOp? = null
     override fun finishProxyOperation(clientId: android.os.IBinder?, code: Int, attributionSource: android.content.AttributionSource?, skipProxyOperation: Boolean) {}
     override fun checkPackage(uid: Int, packageName: String?): Int {
-        // Same rule as PackageManagerInternal.isSameApp: an unregistered uid
-        // cannot be verified; only a contradicted claim is rejected.
-        if (uid == android.os.Process.SYSTEM_UID || uid == android.os.Process.ROOT_UID) return android.app.AppOpsManager.MODE_ALLOWED
-        val packages = packageService?.getPackagesForUid(uid) ?: return android.app.AppOpsManager.MODE_ALLOWED
-        return if (packages.isEmpty() || packages.contains(packageName)) {
-            android.app.AppOpsManager.MODE_ALLOWED
-        } else {
-            android.app.AppOpsManager.MODE_ERRORED
+        // AppOpsService.checkPackage / resolveNonAppUid: an unknown package or
+        // UID is not an unverifiable success. This session exposes installed
+        // packages to its single user and has no instant-app visibility filter.
+        val name = java.util.Objects.requireNonNull(packageName)
+        val specialUid = when (name) {
+            "root" -> android.os.Process.ROOT_UID
+            "shell", "dumpstate" -> android.os.Process.SHELL_UID
+            "media" -> android.os.Process.MEDIA_UID
+            "audioserver" -> android.os.Process.AUDIOSERVER_UID
+            "cameraserver" -> android.os.Process.CAMERASERVER_UID
+            else -> android.os.Process.INVALID_UID
         }
+        val matches = (specialUid >= 0 && uid == specialUid) ||
+            (android.os.UserHandle.getUserId(uid) == android.os.UserHandle.USER_SYSTEM &&
+                uid >= 0 && packageService?.getPackageUid(name, 0L, 0) == uid)
+        return if (matches) AppOpsManager.MODE_ALLOWED else AppOpsManager.MODE_ERRORED
     }
     override fun collectRuntimeAppOpAccessMessage(): android.app.RuntimeAppOpAccessMessage? = null
     override fun reportRuntimeAppOpAccessMessageAndGetConfig(packageName: String?, appOp: android.app.SyncNotedAppOp?, message: String?): com.android.internal.app.MessageSamplingConfig? = null

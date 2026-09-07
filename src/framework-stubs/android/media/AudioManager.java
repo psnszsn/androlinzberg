@@ -80,6 +80,16 @@ public class AudioManager {
     public void setStreamVolume(int streamType, int index, int flags) {}
     public void adjustStreamVolume(int streamType, int direction, int flags) {}
     public boolean isStreamMute(int streamType) { return false; }
+    // Pinned AudioManager query; the service owns microphone policy and capability.
+    public boolean isMicrophoneMute() {
+        final IAudioService service = getService();
+        try {
+            return service.isMicrophoneMuted();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     public boolean isMusicActive() { return false; }
     public boolean isSpeakerphoneOn() { return true; }
     public boolean isBluetoothA2dpOn() { return false; }

@@ -248,6 +248,21 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "packages/modules/Connectivity/bpf/headers/include"),
         // KernelUtils uses bionic's unused annotation; the host libc has no spelling for it.
     }, &.{"-D__unused=__attribute__((__unused__))"});
+    const zygote_headers = b.addWriteFiles();
+    _ = zygote_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/sys/system_properties.h"), "sys/system_properties.h");
+    // Keep the stock parser and discard its unselected Android fork loop. Isolate
+    // the Bionic declarations and translate their annotations for host libc.
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_os_ZygoteCommandBuffer.cpp"}, &.{
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "bionic/libc/async_safe/include"),
+        zygote_headers.getDirectory(),
+    }, &.{
+        "-D__printflike(a,b)=__attribute__((format(printf,a,b)))",
+        "-D__BIONIC_AVAILABILITY_GUARD(x)=1", "-D__INTRODUCED_IN(x)=",
+        "-D__unused=__attribute__((__unused__))",
+        "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections",
+    });
     g.add(o.aosp.path(b, "system/libhidl/base"), &.{ "HidlSupport.cpp", "HidlInternal.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_MediaHTTPConnection.cpp"}, &.{ o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
     // Android's host-capable camera metadata library and C++ value containers.
@@ -309,7 +324,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Skia before resolving them locally. Keep Zig's compiler and libc++, but
     // delegate this one final ELF link to GNU bfd.
     const link = b.addSystemCommand(&.{
-        b.graph.zig_exe,                      "c++",                           "-fuse-ld=bfd", "-shared", "-Wl,-z,defs",
+        b.graph.zig_exe,                      "c++",                           "-fuse-ld=bfd", "-shared", "-Wl,-z,defs", "-Wl,--gc-sections",
         "-Wl,-soname,libandroid_platform.so", "-Wl,-rpath,$ORIGIN/../lib/art",
     });
     link.step.name = "link libandroid_platform.so";

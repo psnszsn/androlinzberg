@@ -27,6 +27,30 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- AppOpsManager, PermissionManager and SystemServerClassLoaderFactory now compile
+  verbatim with 48 supporting Java sources, five generated AIDL types,
+  print proto constants and both WebView flag declarations. Their service registrations
+  use the stock constructors and context caches. Permission metadata comes from the
+  installed parsed package definitions; attribution registration now verifies package/UID
+  ownership and registered chains, with weak token retention and value matching.
+  AppOps rejects unknown/spoofed package claims and uses the stock permission-to-op map.
+  The narrowed Process patch retains its original ZYGOTE_PROCESS client field.
+  WebView's supporting nested contracts and AudioManager's microphone query are copied
+  verbatim into their existing adaptations; their outer classes remain hosted.
+  NetworkUtilsInternal's three JNI methods validate borrowed sockets and preserve the
+  absent-fwmarkd result; process-wide socket/DNS denial reports the missing enforcement
+  hooks. Six original ZygoteCommandBuffer JNI functions supply parsing, modified UTF-8,
+  reset, EOF and descriptor ownership. Its fork entry reports the absent hosted zygote;
+  the unused original fork loop is discarded at link time. ART tests cover these
+  boundaries, metadata copying/errors, attribution forgery rejection and class-loader
+  caching/prefetch rules. JVM/system, native/Binder and build checks pass; all 11 APK
+  tests pass (37 steps, zero structured runtime issues). AOSP is rebuilt and repinned;
+  all seven new archive inputs and the Process patch are byte-verified. ART is unchanged.
+  The inventory is 22 stubs (13 pending, 9 survivors). This is a client import checkpoint:
+  broader AppOps accounting/restrictions, permission policy mutations, the remaining
+  Zygote/ZygoteInit and WebView-loader JNI, and a real Chromium provider remain unfinished.
+
+
 - NsdManager and NsdServiceInfo now compile verbatim with four supporting NSD
   API sources and four generated Binder interfaces. The host DNS-SD backend is
   moved from `android.net.nsd` to `dev.artzig`; HostedNsdService owns subscriptions,
