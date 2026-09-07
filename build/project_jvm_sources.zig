@@ -79,6 +79,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/ActivityOptionsSmoke.kt",
     "src/java/dev/artzig/window/TaskGeometry.kt",
     "src/java/dev/artzig/window/WaylandTaskShell.kt",
+    "src/java/dev/artzig/window/WaylandTaskInput.kt",
+    "src/java/dev/artzig/window/WaylandTaskInputSmoke.kt",
     "src/java/dev/artzig/window/StockTaskOrganizer.kt",
     "src/java/dev/artzig/window/RemoteTaskPresenter.kt",
     "src/java/dev/artzig/window/SessionTaskShell.kt",

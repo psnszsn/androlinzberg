@@ -212,6 +212,7 @@ internal object FrameworkModuleSmoke {
         testStockGraphicBuffers()
         testStockOverlayProperties()
         dev.artzig.window.HostedLogicalDisplaySmoke.run()
+        dev.artzig.window.WaylandTaskInputSmoke.run()
         testStockSurfaceSynchronization()
         testStockPixelCopy()
         testStockVerity()
