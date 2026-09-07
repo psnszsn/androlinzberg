@@ -298,15 +298,18 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.THERMAL_SERVICE, HostedThermalService())
         android.os.ServiceManager.addService(Context.VIBRATOR_MANAGER_SERVICE, HostedVibratorManagerService())
         val battery = HostedBatteryService(activityManager)
+        activityManager.batteryService = battery
         android.os.ServiceManager.addService("batteryproperties", battery.registrar)
         android.os.ServiceManager.addService(android.os.BatteryStats.SERVICE_NAME, battery.batteryStats)
         android.os.ServiceManager.addService(Context.CONNECTIVITY_SERVICE, HostedConnectivityService(context, packageManager))
         jobs.startNetworkTracking(checkNotNull(context.getSystemService(android.net.ConnectivityManager::class.java)))
         android.os.ServiceManager.addService(Context.NETWORK_STATS_SERVICE, HostedNetworkStatsService(context = context))
         android.os.ServiceManager.addService(Context.NETWORK_POLICY_SERVICE, HostedNetworkPolicyService(context))
-        val usageStats = HostedUsageStatsService()
+        val usageStats = HostedUsageStatsService(stockActivities = stockWindows != null)
         usageStats.packageService = packageManager
-        activityManager.processObserver = { packageName, _, foreground -> usageStats.reportProcessState(packageName, foreground) }
+        if (stockWindows == null) activityManager.processObserver = { packageName, _, foreground ->
+            usageStats.reportProcessState(packageName, foreground)
+        }
         android.os.ServiceManager.addService(Context.USAGE_STATS_SERVICE, usageStats)
         if (stockWindows != null) {
             val usageLocal = Class.forName("android.app.usage.HostedUsageStatsManagerInternal")

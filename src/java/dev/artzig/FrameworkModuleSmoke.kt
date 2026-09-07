@@ -1250,6 +1250,12 @@ internal object FrameworkModuleSmoke {
         local.setSystemReady()
         check(internal.isSystemReady)
         check(internal.getUidProcessState(12345) == ActivityManager.PROCESS_STATE_NONEXISTENT)
+        internal.addPendingTopUid(12345, 100, null)
+        check(internal.isPendingTopUid(12345))
+        check(internal.getUidProcessState(12345) == ActivityManager.PROCESS_STATE_TOP)
+        internal.deletePendingTopUid(12345, android.os.SystemClock.elapsedRealtime())
+        check(!internal.isPendingTopUid(12345))
+        check(internal.getUidProcessState(12345) == ActivityManager.PROCESS_STATE_NONEXISTENT)
         check(internal.getActivityInfoForUser(null, 0) == null)
         val original = android.content.pm.ActivityInfo().apply {
             name = "FixtureActivity"

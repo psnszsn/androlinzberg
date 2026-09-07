@@ -23,6 +23,21 @@ object StockOptionalWmServicesSmoke {
     }
 
     fun run(context: Context, apk: String) {
+        verifyBatteryUsage()
+        var clock = 100L
+        val pending = HostedPendingTopUids { clock }
+        pending.add(10001, 10)
+        clock = 200
+        pending.add(10001, 10)
+        pending.delete(10001, 99)
+        check(pending.contains(10001))
+        pending.delete(10001, 100)
+        check(!pending.contains(10001)) // Duplicate adds preserve the first timestamp.
+        pending.add(10001, 20)
+        pending.died(10001, 10)
+        check(pending.contains(10001))
+        pending.died(10001, 20)
+        check(!pending.contains(10001))
         verifyConfigurationBroadcasts()
         val appOps = HostedAppOpsService()
         for (op in listOf(android.app.AppOpsManager.OP_CAMERA, android.app.AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
@@ -51,7 +66,11 @@ object StockOptionalWmServicesSmoke {
         // As in the other in-process package fixtures, this anonymous test peer
         // does not own the system_server cache-property namespace.
         android.app.PropertyInvalidatedCache.disableForTestMode()
-        val packages = HostedPackageManagerService().apply {
+        val packageBroadcasts = java.util.Collections.synchronizedList(ArrayList<Intent>())
+        val packages = HostedPackageManagerService(packageBroadcast = { intent, user ->
+            check(user == 0)
+            packageBroadcasts.add(Intent(intent))
+        }).apply {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val packageName = verifyPackageObservers(packages, apk)
@@ -102,6 +121,28 @@ object StockOptionalWmServicesSmoke {
         check(uid >= android.os.Process.FIRST_APPLICATION_UID)
         verifyProviderReferenceRelease(packages, uid)
         val state = packages.getPackageStateInternal(packageName) as HostedPackageState
+        packages.setPackageStoppedState(packageName, true, 0)
+        state.userState.setNotLaunched(true)
+        check(packages.getApplicationInfo(packageName, 0L, 0)!!.flags and
+            android.content.pm.ApplicationInfo.FLAG_STOPPED != 0)
+        packages.notifyComponentUsed(packageName, 0, "fixture.caller", "resume")
+        check(!state.userState.isStopped && !state.userState.isNotLaunched)
+        packages.notifyComponentUsed(packageName, 0, "fixture.caller", "repeat")
+        packages.notifyComponentUsed("fixture.absent", 0, null, "absent")
+        check(runCatching { packages.setPackageStoppedState("android", true, 0) }.exceptionOrNull() is SecurityException)
+        packages.setPackageStoppedState(packageName, true, 10)
+        check(!state.userState.isStopped)
+        val broadcastsDone = java.util.concurrent.CountDownLatch(1)
+        com.android.internal.os.BackgroundThread.getHandler().post { broadcastsDone.countDown() }
+        check(broadcastsDone.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        check(packageBroadcasts.size == if (android.content.pm.Flags.stayStopped()) 1 else 0)
+        packageBroadcasts.firstOrNull()?.let {
+            check(it.action == Intent.ACTION_PACKAGE_UNSTOPPED)
+            check(it.data?.schemeSpecificPart == packageName)
+            check(it.getIntExtra(Intent.EXTRA_UID, -1) == uid)
+            check(it.getIntExtra(Intent.EXTRA_USER_HANDLE, -1) == 0)
+            check(it.flags and Intent.FLAG_RECEIVER_REGISTERED_ONLY != 0)
+        }
         val applicationProperty = checkNotNull(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName, null, 0))
         check(applicationProperty.isBoolean && applicationProperty.boolean)
         val serviceProperty = checkNotNull(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName,
@@ -180,6 +221,41 @@ object StockOptionalWmServicesSmoke {
         check(spoofPlatform is SecurityException && spoofPlatform.message == "Calling package name mismatch")
         val denied = runCatching { shortcut(uid, packageName) }.exceptionOrNull()
         check(denied is SecurityException && denied.message!!.contains("not the default launcher"))
+    }
+
+    private fun verifyBatteryUsage() {
+        var time = 0L
+        val usage = HostedActivityBatteryUsage(false) { time }
+        usage.activity(10001, true)
+        time = 100
+        usage.powerChanged(true)
+        time = 150
+        usage.activity(10001, true)
+        time = 200
+        usage.activity(10001, false)
+        usage.foregroundCpu("fixture", 10001, 7)
+        time = 250
+        usage.powerChanged(false)
+        time = 300
+        usage.activity(10001, false)
+        usage.activity(10001, false) // An unmatched pause must not make nesting negative.
+        usage.foregroundCpu("fixture", 10001, 9)
+        val first = usage.snapshot().single()
+        check(first.foregroundMs == 150L && first.foregroundCpuMs == mapOf("fixture" to 7L))
+        time = 400
+        usage.activity(10001, true)
+        time = 500
+        usage.powerChanged(true)
+        time = 520
+        usage.activity(10002, true)
+        time = 600
+        usage.activity(10001, false)
+        time = 650
+        usage.activity(10002, false)
+        val values = usage.snapshot().associateBy { it.uid }
+        check(values.getValue(10001).foregroundMs == 250L)
+        check(values.getValue(10002).foregroundMs == 130L)
+        check(first.foregroundMs == 150L) // Returned snapshots are independent.
     }
 
     private fun verifyProviderReferenceRelease(packages: HostedPackageManagerService, uid: Int) {

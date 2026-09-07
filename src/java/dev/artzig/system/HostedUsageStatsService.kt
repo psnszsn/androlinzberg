@@ -17,15 +17,37 @@ import android.os.UserHandle
  *
  * Source note: `com.android.server.usage.UsageStatsService` and `UserUsageStatsService`
  * (`queryUsageStats`, `queryEvents`, the standby bucket answers of a device with app
- * standby disabled). AOSP records events from the activity task manager; this host has no
+ * standby disabled). The stock window backend records actual ATMS activity events
+ * through stock IntervalStats. The legacy backend has no
  * activity lifecycle of its own, so the activity manager reports process attach and death
  * as the foreground span of a package: an attached hosted app is the foreground app
  * (`ACTIVITY_RESUMED`), its death ends the span (`ACTIVITY_STOPPED`). Usage stats are
  * aggregated from those spans over the queried interval. App standby is disabled: every
  * package is `STANDBY_BUCKET_ACTIVE`, nothing is inactive.
  */
-class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), android.app.usage.IUsageStatsManager by unsupported<android.app.usage.IUsageStatsManager>() {
+class HostedUsageStatsService(private val stockActivities: Boolean = false) : android.app.usage.IUsageStatsManager.Stub(), android.app.usage.IUsageStatsManager by unsupported<android.app.usage.IUsageStatsManager>() {
     override fun asBinder(): android.os.IBinder = this
+
+    private val activityUsage = com.android.server.usage.HostedActivityUsage()
+
+    // UsageStatsService.LocalService reportEvent overloads. ATMS supplies the
+    // activity token hash and task root; process attachment is not a resume.
+    fun reportEvent(component: android.content.ComponentName?, userId: Int, type: Int,
+        instanceId: Int, taskRoot: android.content.ComponentName?) {
+        if (component == null) {
+            android.util.Log.w("UsageStatsService", "Event reported without a component name")
+            return
+        }
+        activityUsage.report(component, userId, type, instanceId, taskRoot)
+    }
+
+    fun reportEvent(packageName: String?, userId: Int, type: Int) {
+        if (packageName == null) {
+            android.util.Log.w("UsageStatsService", "Event reported without a package name")
+            return
+        }
+        activityUsage.report(packageName, userId, type)
+    }
 
     private val configurationUsage = com.android.server.usage.HostedConfigurationUsage()
 
@@ -75,6 +97,7 @@ class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), and
         if (bucketType < UsageStatsManager.INTERVAL_DAILY || bucketType > UsageStatsManager.INTERVAL_BEST) {
             throw IllegalArgumentException("Bad interval type: $bucketType")
         }
+        if (stockActivities) return ParceledListSlice(activityUsage.query(userId, beginTime, endTime))
         val now = System.currentTimeMillis()
         val stats = LinkedHashMap<String, UsageStats>()
         synchronized(lock) {
@@ -153,9 +176,16 @@ class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), and
                 pool.add(event.mPackage)
             }
         }
+        for (event in activityUsage.events(userId, beginTime, endTime)) {
+            if (packageFilter == null || packageFilter == event.mPackage) {
+                list.add(event)
+                listOfNotNull(event.mPackage, event.mClass, event.mTaskRootPackage, event.mTaskRootClass)
+                    .forEach(pool::add)
+            }
+        }
         list.sortBy { it.mTimeStamp }
         // UsageEvents resolves pool indices with a binary search: the pool must be sorted.
-        return UsageEvents(list, pool.sorted().toTypedArray(), false)
+        return UsageEvents(list, pool.sorted().toTypedArray(), true)
     }
 
     override fun queryEvents(beginTime: Long, endTime: Long, callingPackage: String?): UsageEvents? {

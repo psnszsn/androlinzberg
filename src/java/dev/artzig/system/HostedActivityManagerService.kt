@@ -70,6 +70,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
         var exitReason = android.app.ApplicationExitInfo.REASON_UNKNOWN
         var exitDescription: String? = null
         var windowProcess: com.android.server.wm.WindowProcessController? = null
+        var pendingUiClean = false
+        var runningRemoteAnimation = false
+        var foregroundActivities = false
+        var foregroundServiceTypes = 0
+        var hasClientActivities = false
+        var importanceFollowUp: Runnable? = null
         override fun binderDied() = handleProcessDied(this)
     }
 
@@ -95,6 +101,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         /** ServiceRecord.foregroundId/isForeground: the posted foreground notification, 0 when none. */
         var foregroundId = 0
         var isForeground = false
+        var foregroundServiceType = 0
         val bindings = LinkedHashMap<FilterComparison, IntentBindRecord>()
         val connections = LinkedHashMap<IBinder, ConnectionRecord>()
     }
@@ -407,6 +414,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     }
 
     /** Foreground-service notifications are posted and cancelled through the hosted notification service. */
+    @Volatile internal var batteryService: HostedBatteryService? = null
     @Volatile var notificationService: HostedNotificationManagerService? = null
     /** Process attach (foreground = true) and death, for the usage stats service (UsageStatsService's activity events). */
     @Volatile var appOps: com.android.server.appop.AppOpsService? = null
@@ -441,6 +449,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
     private val stockTaskLocal: com.android.server.wm.ActivityTaskManagerInternal
         get() = checkNotNull(com.android.server.LocalServices.getService(
             com.android.server.wm.ActivityTaskManagerInternal::class.java))
+    internal val pendingTopUids = HostedPendingTopUids()
+    private val importanceHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
     private val cpuTracker by lazy { com.android.internal.os.ProcessCpuTracker(false) }
 
     /**
@@ -478,9 +488,53 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 synchronized(lock) { record.exitDescription = reason }
                 handleProcessDied(record)
             }
-            override fun setRunningRemoteAnimation(running: Boolean) {
+            override fun setPendingUiClean(pending: Boolean): Unit = synchronized(lock) {
+                record.pendingUiClean = pending
+                record.windowProcess?.setPendingUiClean(pending)
+            }
+            override fun setPendingUiCleanAndForceProcessStateUpTo(newState: Int) = synchronized(lock) {
+                if (record.removed) return@synchronized
+                setPendingUiClean(true)
+                if (record.reportedProcState > newState) publishProcessStateLocked(record, newState)
+            }
+            override fun updateServiceConnectionActivities() = synchronized(lock) {
+                updateServiceClientActivitiesLocked()
+            }
+            override fun updateProcessInfo(updateServices: Boolean, activityChange: Boolean, updateOomAdj: Boolean) = synchronized(lock) {
+                if (updateServices) updateServiceClientActivitiesLocked()
+                if (record.removed) return@synchronized
+                if (updateOomAdj) updateProcessImportanceLocked(record)
+            }
+            override fun onStartActivity(topProcessState: Int, setProfileProc: Boolean, packageName: String?, versionCode: Long) = synchronized(lock) {
+                if (record.removed) return@synchronized
+                if (setProfileProc) throw dev.artzig.ArtzigTestDiagnostics.unsupported(
+                    "WindowProcessListener", "onStartActivity", "Activity profiling is not hosted")
+                packageName?.let { record.windowProcess?.addPackage(it) }
+                updateProcessImportanceLocked(record)
+                setPendingUiCleanAndForceProcessStateUpTo(topProcessState)
+            }
+            override fun clearProfilerIfNeeded() {
+                // Profiling launches are rejected before installing any profiler state.
+                // AppProfiler.clearProfilerLPf has no descriptors or target to clear here.
+            }
+            override fun setRunningRemoteAnimation(running: Boolean): Unit = synchronized(lock) {
                 if (persistent) Log.wtf(TAG, "system can't run remote animation")
-                else unsupported<com.android.server.wm.WindowProcessListener>().setRunningRemoteAnimation(running)
+                else if (!record.removed && record.runningRemoteAnimation != running) {
+                    record.runningRemoteAnimation = running
+                    updateProcessImportanceLocked(record)
+                }
+            }
+            override fun dumpDebug(proto: android.util.proto.ProtoOutputStream, fieldId: Long) {
+                val token = proto.start(fieldId)
+                proto.write(com.android.server.am.ProcessRecordProto.PID, record.pid)
+                proto.write(com.android.server.am.ProcessRecordProto.PROCESS_NAME, record.processName)
+                proto.write(com.android.server.am.ProcessRecordProto.UID, record.uid)
+                if (UserHandle.getAppId(record.uid) >= android.os.Process.FIRST_APPLICATION_UID) {
+                    proto.write(com.android.server.am.ProcessRecordProto.USER_ID, UserHandle.getUserId(record.uid))
+                    proto.write(com.android.server.am.ProcessRecordProto.APP_ID, UserHandle.getAppId(record.uid))
+                }
+                proto.write(com.android.server.am.ProcessRecordProto.PERSISTENT, persistent)
+                proto.end(token)
             }
         }
         val controller = com.android.server.wm.WindowProcessController(tasks, info,
@@ -499,6 +553,102 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val uidState = uidProcesses.minOf { it.reportedProcState }
         if (uidProcesses.size == 1) stockTaskLocal.onUidActive(record.uid, uidState)
         else stockTaskLocal.onUidProcStateChanged(record.uid, uidState)
+    }
+
+    /** ProcessRecord's activity callbacks and OomAdjuster's activity-state order.
+     * WPC supplies the ranked activity flags. Android memory scoring, cgroups and
+     * LMKD are absent; Linux owns reclamation. Service binding priority inheritance
+     * remains separate from these window-driven states. */
+    private fun updateProcessImportanceLocked(record: ProcessRecord) {
+        val controller = record.windowProcess ?: return
+        if (record.removed) return
+        val started = android.os.SystemClock.elapsedRealtime()
+        record.importanceFollowUp?.let { importanceHandler.removeCallbacks(it) }
+        record.importanceFollowUp = null
+        val top = stockTaskLocal.topApp === controller
+        val flags = if (controller.hasActivities()) controller.activityStateFlags else 0
+        val visible = flags and com.android.server.wm.WindowProcessController.ACTIVITY_STATE_FLAG_IS_VISIBLE != 0
+        val paused = flags and com.android.server.wm.WindowProcessController.ACTIVITY_STATE_FLAG_IS_PAUSING_OR_PAUSED != 0
+        val stopping = flags and com.android.server.wm.WindowProcessController.ACTIVITY_STATE_FLAG_IS_STOPPING != 0
+        val foreground = top || visible || paused || stopping
+        var state = android.app.ActivityManager.PROCESS_STATE_CACHED_EMPTY
+        if (top || record.runningRemoteAnimation || visible || paused) state = stockTaskLocal.topProcessState
+        else if (stopping) {
+            if (flags and com.android.server.wm.WindowProcessController.ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING == 0)
+                state = android.app.ActivityManager.PROCESS_STATE_LAST_ACTIVITY
+        } else if (controller.hasActivities()) {
+            state = android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY
+            val stoppedAt = controller.perceptibleTaskStoppedTimeMillis
+            if (com.android.server.am.Flags.perceptibleTasks() && stoppedAt >= 0) {
+                val remaining = 5 * 60 * 1000L - (android.os.SystemClock.uptimeMillis() - stoppedAt)
+                state = if (remaining > 0) android.app.ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND
+                    else android.app.ActivityManager.PROCESS_STATE_LAST_ACTIVITY
+                if (remaining > 0) {
+                    val followUp = Runnable { synchronized(lock) { updateProcessImportanceLocked(record) } }
+                    record.importanceFollowUp = followUp
+                    importanceHandler.postDelayed(followUp, remaining)
+                }
+            }
+        }
+        val hostedServices = servicesByToken.values.filter { it.app === record }
+        val foregroundService = hostedServices.any { it.isForeground }
+        controller.setHasForegroundServices(foregroundService)
+        val serviceTypes = hostedServices.filter { it.isForeground }.fold(0) { mask, service ->
+            mask or service.foregroundServiceType
+        }
+        if (record.foregroundServiceTypes != serviceTypes) {
+            record.foregroundServiceTypes = serviceTypes
+            processObservers.servicesChanged(record.pid, record.uid, serviceTypes)
+        }
+        if (foregroundService) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE)
+        else if (hostedServices.any { it.startRequested }) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_SERVICE)
+        if (record.hasClientActivities) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY_CLIENT)
+        if (controller.hasRecentTasks()) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_CACHED_RECENT)
+        if (record.pid == android.os.Process.myPid() && record.uid == android.os.Process.SYSTEM_UID) state = android.app.ActivityManager.PROCESS_STATE_PERSISTENT
+        if (record.foregroundActivities != foreground) {
+            record.foregroundActivities = foreground
+            processObservers.activitiesChanged(record.pid, record.uid, foreground)
+        }
+        publishProcessStateLocked(record, state)
+        pendingTopUids.delete(record.uid, started)
+        if (!record.removed && record.pendingUiClean && state >= android.app.ActivityManager.PROCESS_STATE_IMPORTANT_BACKGROUND) {
+            try {
+                record.thread.scheduleTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+                record.pendingUiClean = false
+                controller.setPendingUiClean(false)
+            } catch (_: android.os.RemoteException) { handleProcessDied(record) }
+        }
+    }
+
+    private fun publishProcessStateLocked(record: ProcessRecord, state: Int) {
+        if (record.removed || record.reportedProcState == state) return
+        record.reportedProcState = state
+        record.windowProcess?.setCurrentProcState(state)
+        record.windowProcess?.setReportedProcState(state)
+        try { record.thread.setProcessState(state) }
+        catch (_: android.os.RemoteException) { handleProcessDied(record); return }
+        stockTaskLocal.onUidProcStateChanged(record.uid,
+            processes.values.filter { it.uid == record.uid }.minOf { it.reportedProcState })
+    }
+
+    /** ActiveServices.updateServiceConnectionActivitiesLocked: only a distinct
+     * live client with activities contributes to the hosting process's flag. */
+    private fun updateServiceClientActivitiesLocked() {
+        for (record in processes.values) {
+            val controller = record.windowProcess ?: continue
+            record.hasClientActivities = servicesByToken.values.any { service ->
+                service.app === record && service.connections.values.any {
+                    it.client !== record && !it.client.removed && it.client.windowProcess?.hasActivities() == true
+                }
+            }
+            controller.setHasClientActivities(record.hasClientActivities)
+        }
+    }
+
+    internal fun updateWindowProcessStates() = synchronized(lock) {
+        if (stockTasks == null) return@synchronized
+        updateServiceClientActivitiesLocked()
+        for (record in processes.values.toList()) updateProcessImportanceLocked(record)
     }
 
     // ------------------------------------------------------------- attach
@@ -669,6 +819,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         synchronized(lock) {
             if (processes[record.binder] !== record) return
             record.removed = true
+            pendingTopUids.died(record.uid, record.pid)
+            record.importanceFollowUp?.let { importanceHandler.removeCallbacks(it) }
+            record.importanceFollowUp = null
             processes.remove(record.binder)
             processHistory.died(record.binder, android.app.ApplicationExitInfo().apply {
                 pid = record.pid
@@ -727,6 +880,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 for (waiter in failed) waiter.latch.countDown()
             }
         }
+        updateWindowProcessStates()
         for ((connection, service) in notify) {
             try {
                 connection.conn.connected(service.name, null, true)
@@ -976,8 +1130,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val startId = ++record.lastStartId
         val create = !record.created
         record.created = true
+        updateWindowProcessStates()
         return PostStart({
-            if (create) process.thread.scheduleCreateService(record.token, entry, null, 0)
+            if (create) process.thread.scheduleCreateService(record.token, entry, null, process.reportedProcState)
             process.thread.scheduleServiceArgs(
                 record.token,
                 android.content.pm.ParceledListSlice(listOf(android.app.ServiceStartArgs(false, startId, 0, service))),
@@ -995,6 +1150,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val record = servicesByComponent[component] ?: return 0
             record.startRequested = false
             schedule = bringDownIfNeededLocked(record)
+            updateWindowProcessStates()
         }
         schedule?.invoke()
         return 1
@@ -1007,6 +1163,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (startId >= 0 && startId != record.lastStartId) return false
             record.startRequested = false
             schedule = bringDownIfNeededLocked(record)
+            updateWindowProcessStates()
         }
         schedule?.invoke()
         return true
@@ -1093,6 +1250,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE) != 0
         val create = autoCreate && !record.created
         if (create) record.created = true
+        updateWindowProcessStates()
         if (binding.received) {
             // Already published; deliver the retained binder (null -> onNullBinding)
             // and, if the service asked to rebind on the previous unbind, schedule it.
@@ -1100,7 +1258,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (binding.doRebind && !binding.requested && record.created) {
                 binding.requested = true
                 binding.doRebind = false
-                schedule = { process.thread.scheduleBindService(record.token, binding.intent, true, 0, 0) }
+                schedule = { process.thread.scheduleBindService(record.token, binding.intent, true, process.reportedProcState, 0) }
             }
             return PostBind(schedule, record.name, true, binding.binder, 1)
         }
@@ -1109,8 +1267,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val rebind = binding.doRebind
             binding.doRebind = false
             return PostBind({
-                if (create) process.thread.scheduleCreateService(record.token, entry, null, 0)
-                process.thread.scheduleBindService(record.token, binding.intent, rebind, 0, 0)
+                if (create) process.thread.scheduleCreateService(record.token, entry, null, process.reportedProcState)
+                process.thread.scheduleBindService(record.token, binding.intent, rebind, process.reportedProcState, 0)
             }, record.name, false, null, 1)
         }
         // Bound but the service is not up yet (no BIND_AUTO_CREATE): waits for creation.
@@ -1137,6 +1295,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val connectionRecord = record.connections[connection.asBinder()] ?: return false
             removeConnectionLocked(connectionRecord)
             schedule = bringDownIfNeededLocked(record)
+            updateWindowProcessStates()
         }
         schedule?.invoke()
         return true
@@ -1628,6 +1787,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     override fun isUserAMonkey(): Boolean = false // No Monkey or activity-controller mode.
 
     internal fun uidProcessState(uid: Int): Int = synchronized(lock) {
+        if (pendingTopUids.contains(uid)) return@synchronized android.app.ActivityManager.PROCESS_STATE_TOP
         processes.values.filter { it.uid == uid }.minOfOrNull { it.reportedProcState }
             ?: android.app.ActivityManager.PROCESS_STATE_NONEXISTENT
     }
@@ -1822,8 +1982,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
      * notification with FLAG_FOREGROUND_SERVICE (ServiceRecord.postNotification);
      * stopForeground removes it (STOP_FOREGROUND_REMOVE) or detaches it.
      */
-    override fun setServiceForeground(className: ComponentName?, token: IBinder?, id: Int, notification: android.app.Notification?, flags: Int, foregroundServiceType: Int) {
-        val record = synchronized(lock) { servicesByToken[token ?: return] } ?: return
+    override fun setServiceForeground(className: ComponentName?, token: IBinder?, id: Int, notification: android.app.Notification?, flags: Int, foregroundServiceType: Int): Unit = synchronized(lock) {
+        val record = servicesByToken[token ?: return@synchronized] ?: return@synchronized
         val pkg = record.name.packageName
         val uid = record.app?.uid ?: Binder.getCallingUid()
         if (id != 0) {
@@ -1834,9 +1994,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
             notification.flags = notification.flags or android.app.Notification.FLAG_FOREGROUND_SERVICE
             record.foregroundId = id
             record.isForeground = true
+            record.foregroundServiceType = if (foregroundServiceType == android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST)
+                record.entry.foregroundServiceType else foregroundServiceType
             notificationService?.postForegroundServiceNotification(pkg, uid, Binder.getCallingPid(), id, notification)
         } else if (record.isForeground) {
             record.isForeground = false
+            record.foregroundServiceType = 0
             if (flags and android.app.Service.STOP_FOREGROUND_REMOVE != 0) {
                 notificationService?.cancelForegroundServiceNotification(pkg, record.foregroundId)
             } else if (flags and android.app.Service.STOP_FOREGROUND_DETACH != 0) {
@@ -1844,8 +2007,11 @@ class HostedActivityManagerService(private val context: android.content.Context?
             }
             record.foregroundId = 0
         }
+        updateWindowProcessStates()
     }
-    override fun getForegroundServiceType(className: ComponentName?, token: IBinder?): Int = 0
+    override fun getForegroundServiceType(className: ComponentName?, token: IBinder?): Int = synchronized(lock) {
+        servicesByToken[token]?.takeIf { it.name == className }?.foregroundServiceType ?: 0
+    }
     override fun killApplication(pkg: String?, appId: Int, userId: Int, reason: String?, exitInfoReason: Int) {}
     override fun noteWakeupAlarm(sender: android.content.IIntentSender?, workSource: android.os.WorkSource?, sourceUid: Int, sourcePkg: String?, tag: String?) {}
     /** AOSP AMS pins the render thread to the app's scheduling group; no scheduler on this host. */

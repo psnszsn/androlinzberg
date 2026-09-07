@@ -75,6 +75,48 @@ class HostActivityManagerInternalAccess internal constructor(
         activities.checkProviderUriPermissionFromHost(uri, userId, callingUid, modeFlags)
 
     fun getUidProcessState(uid: Int): Int = activities.uidProcessState(uid)
+    fun addPendingTopUid(uid: Int, pid: Int, thread: android.app.IApplicationThread?) {
+        // Called under WM's lock: this registry has its own lock and never takes
+        // the AMS lock. The host has no freezer or network-rule waiting sequence.
+        activities.pendingTopUids.add(uid, pid)
+    }
+    fun deletePendingTopUid(uid: Int, nowElapsed: Long) = activities.pendingTopUids.delete(uid, nowElapsed)
+    fun isPendingTopUid(uid: Int): Boolean = activities.pendingTopUids.contains(uid)
+    fun updateOomAdj(reason: Int) = activities.updateWindowProcessStates()
+    // AMS.trimApplications also runs pending state/UI cleanup. Android's cached
+    // process reaper is absent; host Linux retains its existing memory policy.
+    fun trimApplications() = activities.updateWindowProcessStates()
+
+    fun updateBatteryStats(activity: android.content.ComponentName, uid: Int, userId: Int, resumed: Boolean) =
+        checkNotNull(activities.batteryService).updateActivityUsage(activity, uid, resumed)
+    fun updateForegroundTimeIfOnBattery(packageName: String, uid: Int, cpuTimeDiff: Long) =
+        checkNotNull(activities.batteryService).updateForegroundTimeIfOnBattery(packageName, uid, cpuTimeDiff)
+
+    @Volatile private var voiceProvider: ActivityManagerInternal.VoiceInteractionManagerProvider? = null
+    fun setVoiceInteractionManagerProvider(provider: ActivityManagerInternal.VoiceInteractionManagerProvider?) {
+        voiceProvider = provider
+    }
+
+    /** AMS.updateActivityUsageStats: preserve usage, content capture and voice
+     * notification ordering while those services use the session's local registry. */
+    fun updateActivityUsageStats(activity: android.content.ComponentName, userId: Int, event: Int,
+        appToken: android.os.IBinder, taskRoot: android.content.ComponentName?,
+        activityId: android.app.assist.ActivityId) {
+        val usage = com.android.server.LocalServices.getService(android.app.usage.UsageStatsManagerInternal::class.java)
+        usage?.reportEvent(activity, userId, event, appToken.hashCode(), taskRoot)
+        if (event == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED)
+            usage?.reportEvent(activity.packageName, userId, android.app.usage.UsageEvents.Event.APP_COMPONENT_USED)
+        if (event in setOf(android.app.usage.UsageEvents.Event.ACTIVITY_PAUSED,
+                android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED,
+                android.app.usage.UsageEvents.Event.ACTIVITY_STOPPED,
+                android.app.usage.UsageEvents.Event.ACTIVITY_DESTROYED)) {
+            com.android.server.LocalServices.getService(
+                com.android.server.contentcapture.ContentCaptureManagerInternal::class.java)
+                ?.notifyActivityEvent(userId, activity, event, activityId)
+        }
+        if (event == android.app.usage.UsageEvents.Event.ACTIVITY_DESTROYED)
+            voiceProvider?.notifyActivityDestroyed(appToken)
+    }
 
     /** AMS.getActivityInfoForUser: preserve the same-user identity, otherwise
      * copy the package values and let stock ApplicationInfo remap the user paths. */

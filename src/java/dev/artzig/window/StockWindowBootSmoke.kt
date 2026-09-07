@@ -55,6 +55,9 @@ object StockWindowBootSmoke {
             override fun onAnimatorScaleChanged(scale: Float) { }
         }))
         check(session.asBinder().pingBinder())
+        val memory = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(memory)
+        check(memory.processState == android.app.ActivityManager.PROCESS_STATE_CACHED_EMPTY)
         println("Stock WMS registered application session: $packageName")
         var resumed: android.app.Activity? = null
         dev.artzig.HostedActivityProcess.configureActivityHost(object : dev.artzig.HostedActivityProcess.HostAdapter {
@@ -72,6 +75,8 @@ object StockWindowBootSmoke {
         }
         checkNotNull(resumed) { "Stock ATMS did not resume the fixture activity" }
         check(resumed!!.taskId > 0)
+        android.app.ActivityManager.getMyMemoryState(memory)
+        check(memory.processState == android.app.ActivityManager.PROCESS_STATE_TOP)
         println("Stock ATMS resumed application task: ${resumed!!.taskId}")
         println("Stock WMS/ATMS boot: display=${info.displayId} physical=${initial.x}x${initial.y}")
     }

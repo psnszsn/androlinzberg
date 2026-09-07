@@ -46,8 +46,30 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
 
     private val lock = Any()
     private var snapshot: Snapshot = readSnapshot()
+    private val activityUsage = HostedActivityBatteryUsage(isOnBattery(snapshot))
     private var sequence = 0
     private val executor = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "BatteryService").apply { isDaemon = true } }
+
+    /** BatteryStatsService queues its timestamped activity timer update before
+     * publishing ACTIVITY_FOREGROUND_STATE_CHANGED. */
+    fun updateActivityUsage(activity: android.content.ComponentName, uid: Int, resumed: Boolean) {
+        synchronized(lock) {
+            val timestamp = android.os.SystemClock.elapsedRealtime()
+            executor.execute { activityUsage.activity(uid, resumed, timestamp) }
+        }
+        com.android.internal.util.FrameworkStatsLog.write(
+            com.android.internal.util.FrameworkStatsLog.ACTIVITY_FOREGROUND_STATE_CHANGED,
+            uid, activity.packageName, activity.shortClassName,
+            if (resumed) com.android.internal.util.FrameworkStatsLog.ACTIVITY_FOREGROUND_STATE_CHANGED__STATE__FOREGROUND
+            else com.android.internal.util.FrameworkStatsLog.ACTIVITY_FOREGROUND_STATE_CHANGED__STATE__BACKGROUND)
+    }
+
+    fun updateForegroundTimeIfOnBattery(packageName: String, uid: Int, duration: Long) {
+        synchronized(lock) { executor.execute { activityUsage.foregroundCpu(packageName, uid, duration) } }
+    }
+
+    private fun isOnBattery(value: Snapshot): Boolean = value.plugged == 0 &&
+        value.status != BatteryManager.BATTERY_STATUS_UNKNOWN
 
     val registrar: android.os.IBatteryPropertiesRegistrar.Stub = object :
         android.os.IBatteryPropertiesRegistrar.Stub(),
@@ -96,6 +118,15 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
             if (android.os.Binder.getCallingUid() != Process.SYSTEM_UID) throw SecurityException("setChargingStateUpdateDelayMillis requires android.permission.POWER_SAVER")
             return false
         }
+        override fun dump(fd: java.io.FileDescriptor, writer: java.io.PrintWriter, args: Array<out String>?) {
+            HostedPermissions(checkNotNull(activityManager.packageService))
+                .enforce(android.Manifest.permission.DUMP, "batterystats dump")
+            val values = executor.submit<List<HostedActivityBatteryUsage.Snapshot>> {
+                activityUsage.snapshot()
+            }.get(2, TimeUnit.SECONDS)
+            writer.println("Hosted session activity durations while on battery (milliseconds):")
+            for (value in values) writer.println("uid=${value.uid} foreground=${value.foregroundMs} cpu=${value.foregroundCpuMs}")
+        }
     }
 
     fun start() {
@@ -104,11 +135,15 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
     }
 
     private fun update() {
+        val timestamp = android.os.SystemClock.elapsedRealtime()
         val fresh = readSnapshot()
         val changed = synchronized(lock) {
             if (fresh == snapshot) false else { snapshot = fresh; true }
         }
-        if (changed) sendBatteryChangedIntent(fresh)
+        if (changed) {
+            activityUsage.powerChanged(isOnBattery(fresh), timestamp)
+            sendBatteryChangedIntent(fresh)
+        }
     }
 
     /** BatteryService.sendBatteryChangedIntentLocked. */

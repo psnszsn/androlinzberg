@@ -42,6 +42,25 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Stock task launch checkpoint (2026-09-07)
+
+Regression 38 passes stock-window boot, framework module, system, full APK and
+build graph checks (`/tmp/wayland-stock-window-boot-38.log`). Stock ATMS launches
+and resumes the fixture in task 2; the registered process transitions from
+CACHED_EMPTY to TOP. The APK suite passes 14 tests and 44 diagnostic steps with
+no runtime issues or failure artifacts. This verifies activity launch, not yet
+acceptance or presentation of a real WMS client window.
+
+Package component use now follows stopped-state clearing and notifications.
+Stock usage records own overlapping activity accounting. WPC callbacks publish
+process state, pending TOP state, service foreground types and UI-hidden trim
+notifications. Battery callbacks account nested foreground durations and CPU
+time while on battery through a host adapter, exposed in the battery Binder
+dump. Stock BatteryStatsImpl's closure requires power HAL/BPF infrastructure.
+Binding/provider priority inheritance, service execution accounting, Android
+memory reclamation policy and durable usage history are not implemented by
+these adapters. Linux continues to own host memory reclamation.
+
 ## Stock ActivityThread rebase checkpoint (2026-09-07)
 
 Rebased onto main's 3c58b02 stock ActivityThread commit. The obsolete hosted

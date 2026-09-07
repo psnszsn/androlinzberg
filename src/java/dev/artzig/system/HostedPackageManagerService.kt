@@ -50,7 +50,11 @@ import java.io.File
  * Anything not overridden here fails loudly through
  * [PackageManagerServiceBase].
  */
-class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageManagerServiceBase(), Computer {
+class HostedPackageManagerService(desktopWindows: Boolean = false,
+    private val packageBroadcast: (Intent, Int) -> Unit = { intent, user ->
+        (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context)
+            .sendBroadcastAsUser(intent, UserHandle.of(user))
+    }) : PackageManagerServiceBase(), Computer {
     /** PackageManagerInternalBase reads the configured name without resolving a service. */
     fun getSystemUiServiceComponent(): ComponentName? = ComponentName.unflattenFromString(
         (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context).resources.getString(
@@ -1168,6 +1172,75 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
     override fun notifyPackageUse(packageName: String?, reason: Int) {
         val now = System.currentTimeMillis()
         synchronized(lock) { packages[packageName]?.transientState?.setLastPackageUsageTimeInMills(reason, now) }
+    }
+
+    /** PMS.notifyComponentUsed / setPackageStoppedState. Session package user
+     * state replaces the restrictions file; stock monitor callbacks and broadcast
+     * ordering remain observable. No installer restore transaction exists here. */
+    fun notifyComponentUsed(packageName: String, userId: Int, recentCallingPackage: String?, debugInfo: String) {
+        synchronized(lock) {
+            val state = packages[packageName] ?: return
+            if (state.userState.isQuarantined) Log.i(TAG,
+                "Component is quarantined+suspended but being used: $packageName by $recentCallingPackage, debugInfo: $debugInfo")
+        }
+        setPackageStoppedState(packageName, false, userId)
+    }
+
+    override fun setPackageStoppedState(packageName: String?, stopped: Boolean, userId: Int) {
+        if (userId != UserHandle.USER_SYSTEM) return // PMS ignores nonexistent users.
+        val uid = Binder.getCallingUid()
+        if (uid != Process.SYSTEM_UID && uid != Process.ROOT_UID &&
+            checkUidPermission(android.Manifest.permission.CHANGE_COMPONENT_ENABLED_STATE, uid) != PackageManager.PERMISSION_GRANTED &&
+            getPackagesForUid(uid)?.contains(packageName) != true)
+            throw SecurityException("Caller $uid cannot change stopped state of $packageName")
+        if (UserHandle.getUserId(uid) != userId && uid != Process.SYSTEM_UID && uid != Process.ROOT_UID &&
+            checkUidPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, uid) != PackageManager.PERMISSION_GRANTED)
+            throw SecurityException("stop package requires full cross-user permission")
+        var changed = false
+        var wasStopped = false
+        var installer: String? = null
+        synchronized(lock) {
+            val state = packages[packageName]?.takeIf { it.userState.isInstalled }
+            if (state != null && state.userState.isStopped != stopped) {
+                changed = true
+                wasStopped = state.userState.isStopped
+                state.userState.setStopped(stopped)
+                if (state.userState.isNotLaunched) {
+                    state.userState.setNotLaunched(false)
+                    installer = getInstallerPackageName(packageName)
+                }
+            }
+        }
+        if (changed) invalidateClientCaches()
+        val handler = com.android.internal.os.BackgroundThread.getHandler()
+        installer?.let { target ->
+            handler.post { packageBroadcast(Intent(Intent.ACTION_PACKAGE_FIRST_LAUNCH,
+                android.net.Uri.fromParts("package", packageName, null)).setPackage(target)
+                .putExtra(Intent.EXTRA_USER_HANDLE, userId)
+                .addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT), userId) }
+        }
+        if (stopped) return
+        handler.post {
+            val hibernation = com.android.server.LocalServices.getService(
+                com.android.server.apphibernation.AppHibernationManagerInternal::class.java)
+            if (hibernation?.isHibernatingForUser(packageName, userId) == true) {
+                hibernation.setHibernatingForUser(packageName, userId, false)
+                hibernation.setHibernatingGlobally(packageName, false)
+            }
+        }
+        if (wasStopped && android.content.pm.Flags.stayStopped()) {
+            val extras = android.os.Bundle().apply {
+                putInt(Intent.EXTRA_UID, getPackageUid(packageName, 0L, userId))
+                putInt(Intent.EXTRA_USER_HANDLE, userId)
+                putLong(Intent.EXTRA_TIME, android.os.SystemClock.elapsedRealtime())
+            }
+            handler.post { packageBroadcast(Intent(Intent.ACTION_PACKAGE_UNSTOPPED,
+                android.net.Uri.fromParts("package", packageName, null))
+                .addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY or Intent.FLAG_RECEIVER_REGISTERED_ONLY_BEFORE_BOOT)
+                .putExtras(extras), userId) }
+            packageMonitors.notifyPackageMonitor(Intent.ACTION_PACKAGE_UNSTOPPED, packageName,
+                extras, intArrayOf(userId), null, null, handler, null)
+        }
     }
     override fun notifyDexLoad(
         loadingPackageName: String?,
