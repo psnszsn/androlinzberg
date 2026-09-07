@@ -6318,3 +6318,8 @@ F aosp system/media/camera/include/system/camera_metadata.h
 F aosp system/media/camera/include/system/camera_metadata_tags.h
 F aosp system/media/camera/include/system/camera_vendor_tags.h
 F aosp system/media/private/camera/include/camera_metadata_hidden.h
+
+# Stock codec catalogue and capability model.
+F aosp frameworks/base/media/java/android/media/MediaCodecInfo.java
+F aosp frameworks/base/media/java/android/media/MediaCodecList.java
+F aosp system/libsysprop/srcs/android/sysprop/MediaProperties.sysprop

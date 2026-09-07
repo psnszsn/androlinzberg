@@ -270,6 +270,7 @@ internal object FrameworkModuleSmoke {
         StockMediaStoreSmoke.run()
         StockServiceRegistrySmoke.run()
         StockCameraMetadataSmoke.run()
+        StockCodecCatalogSmoke.run()
         StockRendererSmoke.run()
         StockSplashScreenSmoke.run()
         StockConnectivitySmoke.run(checkNotNull(permissionsFixtureApk), ::drainMainQueue)

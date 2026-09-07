@@ -122,6 +122,8 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    try c.file("$FB/media/java/android/media/MediaCodecInfo.java");
+    try c.file("$FB/media/java/android/media/MediaCodecList.java");
     try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/CloudMediaProviderContract.java");
     try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/Column.java");
     try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/MediaStore.java");

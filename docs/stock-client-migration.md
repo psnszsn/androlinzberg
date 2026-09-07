@@ -27,6 +27,21 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- MediaCodecInfo and MediaCodecList now compile verbatim, replacing both hosted
+  adaptations. The existing eight-decoder catalogue, backend names and advertised
+  limits moved to a native boundary; AOSP owns capability parsing, profile/level limits,
+  feature checks, format selection and returned-array behavior. MediaProperties comes
+  from its original sysprop declaration, and the remaining MediaCodec adaptation uses
+  AOSP's verbatim GetFlag helpers and stock catalogue lookup. ART tests cover enumeration,
+  decoder identity, audio/video format rejection, profile/level and secure-playback requests,
+  array isolation and native argument failures. JVM/system, native/Binder and build checks
+  pass; all 11 APK tests pass (37 steps, zero structured runtime issues). AOSP is rebuilt
+  and repinned with all three added inputs byte-verified; ART is unchanged. The catalogue
+  retains the previous adapter's declarations, without native hardware discovery or new
+  decoder functionality. MediaCodec remains adapted, and the broader migration is unfinished.
+  The stub-directory inventory remains 26 (15 pending, 11 survivors).
+
+
 - CameraMetadataNative now uses the original camera metadata JNI, C storage library,
   CameraMetadata and VendorTagDescriptor implementations. Camera2 values support stock
   type validation, deep copies, merge/move/swap, characteristics and Parcel round trips,

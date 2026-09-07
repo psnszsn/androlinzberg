@@ -9,8 +9,27 @@ import android.view.Surface;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.function.Supplier;
 
 public final class MediaCodec {
+    // Verbatim pinned MediaCodec.GetFlag; shared by stock MediaCodecInfo.
+    // HACKY(b/325389296): aconfig flag accessors may not work in all contexts where MediaCodec API
+    // is used, so allow accessors to fail. In those contexts use a default value, normally false.
+
+    /* package private */
+    static boolean GetFlag(Supplier<Boolean> flagValueSupplier) {
+        return GetFlag(flagValueSupplier, false /* defaultValue */);
+    }
+
+    /* package private */
+    static boolean GetFlag(Supplier<Boolean> flagValueSupplier, boolean defaultValue) {
+        try {
+            return flagValueSupplier.get();
+        } catch (java.lang.RuntimeException e) {
+            return defaultValue;
+        }
+    }
+
     public static final int BUFFER_FLAG_KEY_FRAME = 1;
     public static final int BUFFER_FLAG_SYNC_FRAME = 1;
     public static final int BUFFER_FLAG_CODEC_CONFIG = 2;
@@ -120,13 +139,13 @@ public final class MediaCodec {
     }
 
     public static MediaCodec createByCodecName(String name) throws java.io.IOException {
-        String ff = MediaCodecList.ffmpegNameFor(name);
+        String ff = dev.artzig.HostedCodecCatalog.backendNameFor(name);
         if (ff == null) throw new java.io.IOException("unknown codec: " + name);
         return new MediaCodec(name, ff);
     }
 
     public static MediaCodec createDecoderByType(String mime) throws java.io.IOException {
-        String name = MediaCodecList.decoderNameForMime(mime);
+        String name = dev.artzig.HostedCodecCatalog.decoderNameForMime(mime);
         if (name == null) throw new java.io.IOException("no decoder for " + mime);
         return createByCodecName(name);
     }
@@ -302,7 +321,7 @@ public final class MediaCodec {
 
     public String getName() { return mName; }
     public String getCanonicalName() { return mName; }
-    public MediaCodecInfo getCodecInfo() { return MediaCodecList.infoFor(mName); }
+    public MediaCodecInfo getCodecInfo() { return MediaCodecList.getInfoFor(mName); }
 
     private void releaseHeldFrames() {
         for (int i = 0; i < mOutHardware.length; i++) {

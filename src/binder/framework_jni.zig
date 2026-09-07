@@ -1280,6 +1280,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("performance_hint_jni.zig").register(env) catch return -1;
     @import("traffic_stats_jni.zig").register(env) catch return -1;
     @import("media_crypto_jni.zig").register(env) catch return -1;
+    @import("media_codec_list_jni.zig").register(env) catch return -1;
     @import("activity_jni.zig").register(env) catch return -1;
     @import("audio_system_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("runtime_init_jni.zig").register(env) catch return -1;

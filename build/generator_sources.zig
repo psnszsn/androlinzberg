@@ -1721,6 +1721,7 @@ pub const aconfig = [_]Aconfig{
 };
 
 pub const sysprop = [_]Sysprop{
+    .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/MediaProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/BluetoothProperties.sysprop" } },
     .{ .scope = "public", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/VndkProperties.sysprop" } },
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "frameworks/base/core/sysprop/LocalizationProperties.sysprop" } },
