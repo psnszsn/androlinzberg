@@ -47,6 +47,7 @@ pub const Session = struct {
     gpa: std.mem.Allocator,
     child: std.process.Child,
     surfaceflinger: ?std.process.Child = null,
+    presenter: ?std.process.Child = null,
     system: ?std.process.Child = null,
     ready_timeout: Io.Duration = .{ .nanoseconds = 30 * std.time.ns_per_s },
     shutdown_timeout: Io.Duration = .{ .nanoseconds = 5 * std.time.ns_per_s },
@@ -66,6 +67,7 @@ pub const Session = struct {
         launcher_exe: []const u8,
         /// Omitted by transport-only fixtures; normal application sessions supply SF.
         surfaceflinger_exe: ?[]const u8 = null,
+        task_presenter_exe: ?[]const u8 = null,
         ready_timeout: Io.Duration = .{ .nanoseconds = 30 * std.time.ns_per_s },
         shutdown_timeout: Io.Duration = .{ .nanoseconds = 5 * std.time.ns_per_s },
         environ: std.process.Environ,
@@ -79,6 +81,7 @@ pub const Session = struct {
         errdefer session.stop();
         try session.writeInfo(options.launcher_exe);
         if (options.surfaceflinger_exe) |exe| try session.startSurfaceFlinger(options, exe);
+        if (options.task_presenter_exe) |exe| try session.startTaskPresenter(options, exe);
         try session.startSystemProcess(options);
         return session;
     }
@@ -181,6 +184,26 @@ pub const Session = struct {
         };
     }
 
+    fn startTaskPresenter(s: *Session, options: Options, exe: []const u8) !void {
+        var env = try options.environ.createMap(s.gpa);
+        defer env.deinit();
+        try env.put(socket_env, s.socket_path);
+        try env.put(cookie_env, s.cookie);
+        try env.put(system_cookie_env, s.system_cookie);
+        try env.put(prop_area_env, s.prop_area_path);
+        try env.put("AZK_BINDER_PACKAGE", "android:wayland");
+        s.presenter = try spawnService(s.gpa, s.io, .{
+            .argv = &.{exe},
+            .environ_map = &env,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .inherit,
+        });
+        awaitReady(s.io, s.presenter.?.stdout.?, s.ready_timeout) catch |err| {
+            return if (err == error.NotReady) error.TaskPresenterNotReady else err;
+        };
+    }
+
     /// Spawns `androlinzberg --system-server` with the system cookie; only
     /// the compositor and system process receive that cookie.
     fn startSystemProcess(s: *Session, options: Options) !void {
@@ -193,6 +216,7 @@ pub const Session = struct {
         try child_env.put(prop_area_env, s.prop_area_path);
         try configureSystemData(s.gpa, io, &child_env, s.dir);
         try child_env.put("AZK_LAUNCHER_EXE", options.launcher_exe);
+        if (options.task_presenter_exe != null) try child_env.put("AZK_TASK_WINDOWS", "1");
         s.system = try spawnService(s.gpa, io, .{
             .argv = &.{ options.launcher_exe, "--system-server" },
             .environ_map = &child_env,
@@ -218,6 +242,9 @@ pub const Session = struct {
         if (s.surfaceflinger) |sf| {
             if (sf.stdout) |stdout| try s.drain.concurrent(s.io, drainPipe, .{ s.io, stdout });
         }
+        if (s.presenter) |presenter| {
+            if (presenter.stdout) |stdout| try s.drain.concurrent(s.io, drainPipe, .{ s.io, stdout });
+        }
         s.system_ready = true;
     }
 
@@ -228,6 +255,8 @@ pub const Session = struct {
         s.drain.cancel(io);
         if (s.system) |*system| stopChild(io, system, s.shutdown_timeout);
         s.system = null;
+        if (s.presenter) |*presenter| stopChild(io, presenter, s.shutdown_timeout);
+        s.presenter = null;
         if (s.surfaceflinger) |*surfaceflinger| stopChild(io, surfaceflinger, s.shutdown_timeout);
         s.surfaceflinger = null;
         stopChild(io, &s.child, s.shutdown_timeout);

@@ -49,7 +49,10 @@ internal object SystemServer {
                 while (System.`in`.read() >= 0) { /* drain */ }
             } catch (ignored: java.io.IOException) {
             }
-            Runtime.getRuntime().exit(0)
+            check(android.os.Handler(Looper.getMainLooper()).post {
+                try { stockWindows?.close() }
+                finally { Runtime.getRuntime().exit(0) }
+            })
         }
         Looper.loop()
     }

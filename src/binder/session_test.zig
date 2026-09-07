@@ -28,6 +28,12 @@ pub fn main(init: std.process.Init) !void {
     try map.put("AZK_SESSION_FIXTURE_LOG", log);
     const cases = [_]struct { mode: []const u8, failure: ?anyerror, expected: []const u8 }{
         .{ .mode = "normal", .failure = null, .expected = "broker start\nsf start\nsystem start\nsystem stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "presenter-normal", .failure = null, .expected = "broker start\nsf start\npresenter start\nsystem start\nsystem stop\npresenter stop\nsf stop\nbroker stop\n" },
+        .{ .mode = "presenter-spawn", .failure = error.TaskPresenterNotReady, .expected = "broker start\nsf start\nsf stop\nbroker stop\n" },
+        .{ .mode = "presenter-eof", .failure = error.TaskPresenterNotReady, .expected = "broker start\nsf start\npresenter start\nsf stop\nbroker stop\n" },
+        .{ .mode = "presenter-bad-ready", .failure = error.TaskPresenterNotReady, .expected = "broker start\nsf start\npresenter start\nsf stop\nbroker stop\n" },
+        .{ .mode = "presenter-timeout", .failure = error.ServiceReadyTimeout, .expected = "broker start\nsf start\npresenter start\nsf stop\nbroker stop\n" },
+        .{ .mode = "presenter-shutdown-timeout", .failure = null, .expected = "broker start\nsf start\npresenter start\nsystem start\nsystem stop\npresenter stop\nsf stop\nbroker stop\n" },
         .{ .mode = "sf-spawn", .failure = error.SurfaceFlingerNotReady, .expected = "broker start\nbroker stop\n" },
         .{ .mode = "sf-eof", .failure = error.SurfaceFlingerNotReady, .expected = "broker start\nsf start\nbroker stop\n" },
         .{ .mode = "sf-bad-ready", .failure = error.SurfaceFlingerNotReady, .expected = "broker start\nsf start\nbroker stop\n" },
@@ -52,6 +58,7 @@ pub fn main(init: std.process.Init) !void {
                 "/azk-no-such-system-executable"
             else if (std.mem.eql(u8, case.mode, "system-exec-format")) invalid_exe else exe,
             .surfaceflinger_exe = if (std.mem.eql(u8, case.mode, "sf-spawn")) "/azk-no-such-compositor-executable" else exe,
+            .task_presenter_exe = if (std.mem.eql(u8, case.mode, "presenter-spawn")) "/azk-no-such-presenter-executable" else if (std.mem.startsWith(u8, case.mode, "presenter-")) exe else null,
             .environ = env,
             .ready_timeout = .{ .nanoseconds = 500 * std.time.ns_per_ms },
             .shutdown_timeout = .{ .nanoseconds = 100 * std.time.ns_per_ms },
@@ -114,10 +121,23 @@ fn event(init: std.process.Init, role: []const u8, state: []const u8) !void {
 }
 
 fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
-    const role: []const u8 = if (args.len < 2) "sf" else if (std.mem.eql(u8, args[1], "--socket")) "broker" else "system";
+    const role: []const u8 = if (args.len < 2)
+        (if (std.mem.eql(u8, init.minimal.environ.getPosix("AZK_BINDER_PACKAGE") orelse "", "android:wayland")) "presenter" else "sf")
+    else if (std.mem.eql(u8, args[1], "--socket")) "broker" else "system";
     const mode = init.minimal.environ.getPosix("AZK_SESSION_FIXTURE_MODE").?;
     try std.testing.expect(init.minimal.environ.getPosix("AZK_BINDER_SYSTEM_COOKIE") != null);
     try event(init, role, "start");
+    if (std.mem.eql(u8, role, "presenter")) {
+        if (std.mem.eql(u8, mode, "presenter-eof")) return;
+        if (std.mem.eql(u8, mode, "presenter-bad-ready")) {
+            try Io.File.stdout().writeStreamingAll(init.io, "ready-wrong\n");
+            return;
+        }
+        if (std.mem.eql(u8, mode, "presenter-timeout")) {
+            try Io.sleep(init.io, .{ .nanoseconds = 10 * std.time.ns_per_s }, .awake);
+            return;
+        }
+    }
     if (std.mem.eql(u8, role, "sf")) {
         if (std.mem.eql(u8, mode, "sf-eof")) return;
         if (std.mem.eql(u8, mode, "sf-bad-ready")) {
@@ -141,5 +161,7 @@ fn fixture(init: std.process.Init, args: []const [:0]const u8) !void {
     }
     try event(init, role, "stop");
     if (std.mem.eql(u8, role, "sf") and std.mem.eql(u8, mode, "sf-shutdown-timeout"))
+        try Io.sleep(init.io, .{ .nanoseconds = 10 * std.time.ns_per_s }, .awake);
+    if (std.mem.eql(u8, role, "presenter") and std.mem.eql(u8, mode, "presenter-shutdown-timeout"))
         try Io.sleep(init.io, .{ .nanoseconds = 10 * std.time.ns_per_s }, .awake);
 }

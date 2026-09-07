@@ -3213,6 +3213,7 @@ internal object FrameworkModuleSmoke {
         }
         val callerPackage = "org.example.permissions"
         check(packages.installPackage(checkNotNull(permissionsFixtureApk)) == callerPackage)
+        testTaskRemovalServices(context, packages, callerPackage)
         val activityManager = HostedActivityManagerService(context).apply { packageService = packages }
         val processOne = "android:hosted-task-one"
         val processTwo = "android:hosted-task-two"
@@ -8945,7 +8946,104 @@ internal object FrameworkModuleSmoke {
 
     class LocalParentActivity : Activity()
 
+    private fun testTaskRemovalServices(context: Context, packages: HostedPackageManagerService, pkg: String) {
+        val reports = HostedActivityManagerService()
+        for (system in listOf(false, true)) {
+            val completed = java.util.concurrent.CountDownLatch(1)
+            var failure: Throwable? = null
+            val worker = Thread {
+                try {
+                    check(!reports.handleApplicationWtf(null, "lock-order-fixture", system,
+                        android.app.ApplicationErrorReport.ParcelableCrashInfo(IllegalStateException("fixture")),
+                        if (system) -1 else android.os.Process.myPid()))
+                } catch (error: Throwable) { failure = error }
+                finally { completed.countDown() }
+            }
+            val returned = synchronized(reports.windowServiceLock()) {
+                worker.start()
+                completed.await(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            worker.join(5000)
+            check(!worker.isAlive && returned) { "System WTF took the AMS lock before posting" }
+            failure?.let { throw it }
+        }
+        drainMainQueue()
+        val am = HostedActivityManagerService(context).apply { packageService = packages }
+        val thread = CapturingApplicationThread()
+        val uid = Binder.getCallingUid()
+        packages.bindPackageUid(pkg, uid)
+        am.noteProcessPackage(uid, pkg, pkg)
+        am.attachApplication(thread, 0)
+        fun intent(name: String) = Intent().setClassName(pkg, "$pkg.$name")
+        val base = intent("TaskActivity").setAction("task-removed")
+        fun start(name: String) = checkNotNull(am.startService(thread, intent(name), null, false, pkg, null, 0))
+        // Removal queued between starts must keep the last start ID, including
+        // when the first start is waiting for Application.onCreate to finish.
+        start("TaskService")
+        am.cleanUpServices(0, base.component!!, base)
+        start("TaskService")
+        check(thread.serviceEvents.isEmpty())
+        am.finishAttachApplication(0, 0)
+        check(thread.serviceEvents == listOf("create:TaskService", "args:TaskService:false:1:null",
+            "args:TaskService:true:1:task-removed", "args:TaskService:false:2:null")) { thread.serviceEvents }
+        thread.serviceEvents.clear()
+        am.cleanUpServices(10, base.component!!, base)
+        am.cleanUpServices(0, ComponentName("unrelated", "Activity"), base)
+        check(thread.serviceEvents.isEmpty())
+        val connection = object : android.app.IServiceConnection.Stub() {
+            override fun connected(name: ComponentName?, service: android.os.IBinder?, dead: Boolean) { }
+        }
+        fun bind(name: String, callback: android.app.IServiceConnection) {
+            check(am.bindServiceInstance(thread, null, intent(name), null, callback,
+                Context.BIND_AUTO_CREATE.toLong(), null, pkg, 0) == 1)
+        }
+        bind("BoundTaskService", connection)
+        start("StopTaskService")
+        thread.serviceEvents.clear()
+        am.cleanUpServices(0, base.component!!, base)
+        check(thread.serviceEvents == listOf("args:TaskService:true:2:task-removed", "stop:StopTaskService")) {
+            thread.serviceEvents
+        }
+        // stopWithTask clears started ownership, while a live binding keeps the
+        // instance alive until the final unbind. Bound-only services get no args.
+        start("StopTaskService")
+        val stopConnection = object : android.app.IServiceConnection.Stub() {
+            override fun connected(name: ComponentName?, service: android.os.IBinder?, dead: Boolean) { }
+        }
+        bind("StopTaskService", stopConnection)
+        thread.serviceEvents.clear()
+        am.cleanUpServices(0, base.component!!, base)
+        check(thread.serviceEvents == listOf("args:TaskService:true:2:task-removed")) { thread.serviceEvents }
+        check(am.unbindService(stopConnection))
+        check(thread.serviceEvents.last() == "stop:StopTaskService")
+        check(am.unbindService(connection))
+        check(am.stopService(thread, intent("TaskService"), null, 0) == 1)
+        thread.serviceEvents.clear()
+        am.cleanUpServices(0, base.component!!, base)
+        check(thread.serviceEvents.isEmpty())
+    }
+
     private class CapturingApplicationThread : UnsupportedApplicationThread() {
+        val serviceEvents = mutableListOf<String>()
+        private val serviceNames = mutableMapOf<android.os.IBinder, String>()
+        override fun scheduleCreateService(token: android.os.IBinder?, info: android.content.pm.ServiceInfo?,
+            compatInfo: android.content.res.CompatibilityInfo?, processState: Int) {
+            val name = checkNotNull(info).name.substringAfterLast('.')
+            serviceNames[checkNotNull(token)] = name
+            serviceEvents.add("create:$name")
+        }
+        override fun scheduleServiceArgs(token: android.os.IBinder?, args: android.content.pm.ParceledListSlice<*>?) {
+            for (value in checkNotNull(args).list) {
+                val arg = value as android.app.ServiceStartArgs
+                serviceEvents.add("args:${serviceNames[token]}:${arg.taskRemoved}:${arg.startId}:${arg.args?.action}")
+            }
+        }
+        override fun scheduleStopService(token: android.os.IBinder?) {
+            serviceEvents.add("stop:${serviceNames.remove(token)}")
+        }
+        override fun scheduleBindService(token: android.os.IBinder?, intent: Intent?, rebind: Boolean,
+            processState: Int, bindSeq: Long) { }
+        override fun scheduleUnbindService(token: android.os.IBinder?, intent: Intent?) { }
         val transactions = mutableListOf<ClientTransaction>()
         var boundProcessName: String? = null
         var boundPackageName: String? = null

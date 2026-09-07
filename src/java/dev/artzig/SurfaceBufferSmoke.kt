@@ -14,6 +14,7 @@ import java.io.File
 object SurfaceBufferSmoke {
     @JvmStatic private external fun liveBuffers(): Long
     @JvmStatic private external fun nativeBinderUid(): Int
+    @JvmStatic private external fun foreignBinderThread(binder: android.os.IBinder): Boolean
     @JvmStatic private external fun createReader(): Long
     @JvmStatic private external fun textureName(reader: Long): Int
     @JvmStatic private external fun pixel(reader: Long): Int
@@ -48,6 +49,15 @@ object SurfaceBufferSmoke {
         if (taskOutputsOnly) BinderSession.setIdentity("dev.artzig.task-output", true)
         System.load(File(args[0]).absolutePath)
         check(nativeBinderUid() == android.os.Process.myUid()) { "Java and C++ must share one Binder identity" }
+        val callback = object : android.os.Binder() {
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                check(code == 34)
+                checkNotNull(reply).writeInt(data.readInt() + 1)
+                return true
+            }
+        }
+        check(foreignBinderThread(callback)) { "Binder retained an attachment on an external native thread" }
+
         if (Looper.myLooper() == null) Looper.prepareMainLooper()
         HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
         if (taskOutputsOnly) {

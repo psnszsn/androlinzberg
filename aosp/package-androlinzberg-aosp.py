@@ -82,6 +82,7 @@ framework_patches = tuple(
         (57, "-Tunnel-listener-release-on-compositor-disconnect.patch"),
         (58, "-HWUI-record-hosted-texture-layers.patch"),
         (59, "-HWUI-initialize-layer-geometry.patch"),
+        (60, "-HWUI-detach-host-worker-threads.patch"),
     )
 )
 

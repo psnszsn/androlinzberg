@@ -1065,6 +1065,11 @@ const Runtime = struct {
     /// oneway serial worker passes the target it holds a ref to, so a call
     /// queued before the object's export was released still reaches it.
     fn dispatchTo(r: *Runtime, target: ?*AIBinder, in: *Incoming) void {
+        // A nested synchronous call can dispatch on an external native caller
+        // (for example an HWUI worker), not only an AZKB-owned pool thread.
+        // Borrow its attachment or release the one acquired for this dispatch.
+        const detach = attachCallbackThread();
+        defer if (detach) detachCurrentThread();
         defer {
             in.parcel.destroy();
             alloc.destroy(in);
@@ -1500,6 +1505,8 @@ const Runtime = struct {
     /// so a JNI-bridge or unexported local binder is transactable even before
     /// (or without) the library ever connects.
     fn localTransact(target: *AIBinder, code: u32, in: *AParcel, out: ?*AParcel, flags: u32) i32 {
+        const detach = attachCallbackThread();
+        defer if (detach) detachCurrentThread();
         const class = target.class orelse return STATUS_UNEXPECTED_NULL;
         const on_transact = class.on_transact orelse return STATUS_UNEXPECTED_NULL;
         in.pos = 0;
@@ -1685,7 +1692,9 @@ export fn AStatus_delete(status: *AStatus) callconv(.c) void {
 
 // ----- AParcel
 
-export fn AParcel_delete(parcel: *AParcel) callconv(.c) void {
+export fn AParcel_delete(raw: ?*AParcel) callconv(.c) void {
+    // Pinned NDK parcel.cpp uses delete, including its null-pointer no-op.
+    const parcel = raw orelse return;
     if (parcel.java_owned) return; // the wrapper AOSP would free; the Java Parcel owns the data
     parcel.destroy();
 }
@@ -3931,6 +3940,8 @@ fn javaDeathDied(cookie: ?*anyopaque) callconv(.c) void {
     _ = clearException(env);
 }
 fn javaDeathUnlinked(cookie: ?*anyopaque) callconv(.c) void {
+    const detach = attachCallbackThread();
+    defer if (detach) detachCurrentThread();
     _ = g_debug_deaths.fetchSub(1, .monotonic);
     const env = jniEnv() orelse return;
     env.*.*.DeleteGlobalRef.?(env, @ptrCast(cookie));

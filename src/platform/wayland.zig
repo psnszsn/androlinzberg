@@ -388,7 +388,7 @@ pub const Session = struct {
     /// The caller must inspect every ready slot even when a Wayland event also
     /// arrives. Files are borrowed for this call; libwayland retains its socket.
     pub fn dispatch(self: *Session, wakes: []const std.Io.File, ready: []bool, timeout_ms: i32) !void {
-        if (wakes.len == 0 or wakes.len > 64 or ready.len != wakes.len) return error.InvalidWakeSources;
+        if (wakes.len == 0 or wakes.len > 65 or ready.len != wakes.len) return error.InvalidWakeSources;
         @memset(ready, false);
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         var timeout = timeout_ms;
@@ -417,7 +417,7 @@ pub const Session = struct {
             else => return error.FlushFailed,
         };
 
-        var storage: [65]std.Io.Operation.Storage = undefined;
+        var storage: [66]std.Io.Operation.Storage = undefined;
         var batch = std.Io.Batch.init(storage[0 .. wakes.len + 1]);
         defer batch.cancel(self.io);
         // The pinned std.Io.Threaded batches file operations behind readiness,
@@ -426,12 +426,13 @@ pub const Session = struct {
         // this Zig version leaves an immediately completed receive linked in
         // Batch.submitted, corrupting cancellation when bytes are already ready.
         const borrowed: std.Io.File = .{
-            .handle = self.display.getFd(), .flags = .{ .nonblocking = true },
+            .handle = self.display.getFd(),
+            .flags = .{ .nonblocking = true },
         };
         var empty: [0]u8 = .{};
         batch.addAt(0, .{ .file_read_streaming = .{ .file = borrowed, .data = &.{&empty} } });
-        var counters: [64]u64 = undefined;
-        var vectors: [64][1][]u8 = undefined;
+        var counters: [65]u64 = undefined;
+        var vectors: [65][1][]u8 = undefined;
         for (wakes, 0..) |file, index| {
             vectors[index][0] = std.mem.asBytes(&counters[index]);
             batch.addAt(@intCast(index + 1), .{ .file_read_streaming = .{

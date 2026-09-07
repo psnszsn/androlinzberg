@@ -287,6 +287,10 @@ fn ensureSession(init: std.process.Init, binder: *?binder_session.Session, join_
         .broker_exe = broker_exe,
         .launcher_exe = launcher_exe,
         .surfaceflinger_exe = try std.fs.path.join(arena, &.{ tree, "bin", "azk-surfaceflinger" }),
+        .task_presenter_exe = if (std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TASK_WINDOWS") orelse "", "1"))
+            try std.fs.path.join(arena, &.{ tree, "bin", "azk-task-presenter" })
+        else
+            null,
         .environ = init.minimal.environ,
     });
     _ = setenv(binder_session.socket_env, try arena.dupeSentinel(u8, binder.*.?.socket_path, 0), 1);

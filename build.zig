@@ -461,6 +461,21 @@ pub fn build(b: *std.Build) void {
     surface_server.root_module.linkLibrary(binder_ndk);
     surface_server.root_module.linkSystemLibrary("wayland-client", .{});
     surface_server.root_module.linkSystemLibrary("xkbcommon", .{});
+    const task_presenter = b.addExecutable(.{ .name = "azk-task-presenter", .root_module = b.createModule(.{
+        .root_source_file = b.path("src/platform/task_presenter.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+        .imports = &.{.{ .name = "surface_queue", .module = surface_queue_mod }},
+    }) });
+    task_presenter.root_module.linkLibrary(gui_host);
+    task_presenter.root_module.linkLibrary(binder_cpp);
+    task_presenter.root_module.linkLibrary(binder_ndk);
+    task_presenter.root_module.linkSystemLibrary("wayland-client", .{});
+    task_presenter.root_module.linkSystemLibrary("xkbcommon", .{});
+    const install_task_presenter = b.addInstallArtifact(task_presenter, .{});
+    b.step("task-presenter", "Build the session Wayland task presentation service").dependOn(&install_task_presenter.step);
     const surface_producer = b.addExecutable(.{ .name = "wayland-surface-producer", .root_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
@@ -867,6 +882,7 @@ pub fn build(b: *std.Build) void {
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
         .surfaceflinger = sf_service.getEmittedBin(),
+        .task_presenter = task_presenter.getEmittedBin(),
         .island = island.file,
         .idmap2 = idmap2.file,
         .stats_jni = stats_jni.getEmittedBin(),
@@ -1141,6 +1157,26 @@ pub fn build(b: *std.Build) void {
     stock_cold_launch.run.setName("verify install-time uid and stock ATMS first-process launch");
     b.step("stock-cold-launch-test", "Install an APK and launch its first process through stock ATMS")
         .dependOn(&stock_cold_launch.run.step);
+    const stock_task_wayland = @import("build/command.zig").create(b);
+    setApplicationEnvironment(stock_task_wayland, application_tree);
+    stock_task_wayland.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+    stock_task_wayland.setEnvironment("AZK_TASK_WINDOWS", "1");
+    stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
+    stock_task_wayland.addFileArg(b.path("tools/shot.sh"));
+    stock_task_wayland.addArgs(&.{ b.pathResolve(&.{"zig-out/test-results/stock-wayland-task/screenshot.png"}), "--runner", "--", "python3" });
+    stock_task_wayland.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
+    stock_task_wayland.addArgs(&.{ "--output", b.pathResolve(&.{"zig-out/test-results/stock-wayland-task"}), "--" });
+    stock_task_wayland.addFileArg(system_test_driver.getEmittedBin());
+    stock_task_wayland.addArg("--cold-window");
+    stock_task_wayland.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-binder-broker"));
+    stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
+    stock_task_wayland.addFileArg(window_fixture.apk);
+    stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-task-presenter"));
+    stock_task_wayland.run.has_side_effects = true;
+    stock_task_wayland.run.setName("verify stock APK task pixels through session Wayland presenter");
+    b.step("stock-task-wayland-test", "Present a stock APK task through the session-owned Wayland service")
+        .dependOn(&stock_task_wayland.run.step);
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

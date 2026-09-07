@@ -9,9 +9,11 @@ const c = struct {
     const AzkSurfaceQueue = opaque {};
     const AzkSurfaceFrame = opaque {};
     const AIBinder = opaque {};
+    const AParcel = opaque {};
     const AzkGraphicsBufferInfo = @import("graphics_types.zig").Info;
     extern "c" fn azk_surface_queue_create(u32, u32, *const fn (?*anyopaque) callconv(.c) void, ?*anyopaque) ?*AzkSurfaceQueue;
     extern "c" fn azk_surface_queue_producer(*AzkSurfaceQueue) ?*AIBinder;
+    extern "c" fn azk_surface_queue_write_surface(*AzkSurfaceQueue, *c.AParcel) i32;
     extern "c" fn azk_surface_queue_destroy(*AzkSurfaceQueue) void;
     extern "c" fn azk_surface_queue_acquire(*AzkSurfaceQueue, *?*AzkSurfaceFrame, *AzkGraphicsBufferInfo, *u64) i32;
     extern "c" fn azk_surface_frame_wait(*AzkSurfaceFrame, i32) i32;
@@ -71,6 +73,9 @@ pub fn deinit(self: *Self) void {
 
 pub fn producer(self: *Self) *c.AIBinder {
     return c.azk_surface_queue_producer(self.native).?;
+}
+pub fn writeSurface(self: *Self, parcel: *anyopaque) i32 {
+    return c.azk_surface_queue_write_surface(self.native, @ptrCast(parcel));
 }
 pub fn requestPresentation(self: *Self) void {
     self.signalOwner();

@@ -39,6 +39,7 @@ internal class StockWindowServices private constructor() {
     private lateinit var tasks: ActivityTaskManagerService
     private lateinit var windows: WindowManagerService
     private lateinit var input: HostInputManagerBridge
+    private var shell: AutoCloseable? = null
 
     fun attachContext(value: Context) { context.bind(value) }
 
@@ -88,7 +89,15 @@ internal class StockWindowServices private constructor() {
         tasks.retrieveSettings(context.contentResolver)
     }
 
-    fun bootCompleted() { windows.enableScreenAfterBoot() }
+    fun bootCompleted() {
+        windows.enableScreenAfterBoot()
+        if (System.getenv("AZK_TASK_WINDOWS") == "1") {
+            check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
+            shell = dev.artzig.window.SessionTaskShell.start(handler)
+        }
+    }
+
+    fun close() { shell?.close(); shell = null }
 
     fun verifyStartup() {
         val diagnostics = org.json.JSONObject(dev.artzig.ArtzigTestDiagnostics.snapshot(Long.MAX_VALUE, 0L))

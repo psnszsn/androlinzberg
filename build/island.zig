@@ -535,7 +535,7 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{"-DARTZIG_HOST_GRAPHICS"});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
@@ -562,7 +562,6 @@ pub fn build(b: *std.Build, o: Options) Result {
     const texture_inc = o.aosp.path(b, "frameworks/native/libs/nativedisplay/include");
     g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &gen.surface_texture_srcs, &.{ texture_inc, b.path("src/native/graphics/include") }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.texture_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc, texture_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/native/libs/nativewindow"), &.{"ANativeWindow.cpp"}, &.{}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
 

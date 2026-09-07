@@ -4,6 +4,8 @@
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
 #include <gui/BufferQueue.h>
+#include <gui/view/Surface.h>
+#include <binder/Parcel.h>
 #include <ui/GraphicBuffer.h>
 #include <memory>
 #include <mutex>
@@ -71,6 +73,14 @@ extern "C" AIBinder *azk_surface_queue_producer(AzkSurfaceQueue *queue) {
 }
 extern "C" void azk_surface_queue_destroy(AzkSurfaceQueue *queue) {
   delete queue;
+}
+extern "C" int32_t azk_surface_queue_write_surface(AzkSurfaceQueue *queue,
+                                                   AParcel *parcel) {
+  if (!queue || !parcel) return BAD_VALUE;
+  view::Surface surface;
+  surface.name = String16("Wayland task output");
+  surface.graphicBufferProducer = queue->producer;
+  return surface.writeToParcel(Parcel::forNative(parcel));
 }
 extern "C" int32_t azk_surface_queue_acquire(AzkSurfaceQueue *queue,
                                              AzkSurfaceFrame **out,

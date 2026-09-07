@@ -18,6 +18,9 @@
             android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false" />
         <property android:name="dev.artzig.fixture.property" android:value="true" />
         <property android:name="dev.artzig.fixture.integer" android:value="42" />
+        <service android:name="org.example.permissions.TaskService" android:exported="false" />
+        <service android:name="org.example.permissions.StopTaskService" android:stopWithTask="true" android:exported="false" />
+        <service android:name="org.example.permissions.BoundTaskService" android:exported="false" />
         <service android:name="android.inputmethodservice.InputMethodService"
             android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true">
             <property android:name="dev.artzig.fixture.property" android:value="false" />

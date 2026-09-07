@@ -20,7 +20,7 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
     if (args.len >= 3 and std.mem.eql(u8, args[1], "--service-exec"))
         return std.process.replace(io, .{ .argv = args[2..] });
-    if (args.len == 6 and std.mem.eql(u8, args[1], "--cold-window"))
+    if ((args.len == 6 or args.len == 7) and std.mem.eql(u8, args[1], "--cold-window"))
         return coldWindow(init, args);
     if (args.len < 9) {
         std.debug.print("usage: azk-system-test <androlinzberg> <azk-binder-broker> <test-a.apk> <test-b.apk> <ndk-system-client> <identity-a.apk> <identity-b.apk> <surfaceflinger>\n", .{});
@@ -199,6 +199,7 @@ fn coldWindow(init: std.process.Init, args: []const []const u8) !void {
         .launcher_exe = args[2],
         .broker_exe = args[3],
         .surfaceflinger_exe = args[4],
+        .task_presenter_exe = if (args.len == 7) args[6] else null,
         .environ = init.minimal.environ,
     });
     defer session.stop();
@@ -213,7 +214,7 @@ fn coldWindow(init: std.process.Init, args: []const []const u8) !void {
     var client = try std.process.spawn(io, .{
         .argv = &.{ args[2], "--javatest", args[5] },
         .environ_map = &env,
-        .stdin = .ignore,
+        .stdin = .inherit,
         .stdout = .inherit,
         .stderr = .inherit,
     });

@@ -110,7 +110,7 @@ pub const gui_sources = [_][]const u8{
     "BufferReleaseChannel.cpp",   "ScreenCaptureResults.cpp",               "BLASTBufferQueue.cpp",
     "Choreographer.cpp",          "DisplayEventDispatcher.cpp",             "DisplayEventReceiver.cpp",
     "BufferItemConsumer.cpp",     "ConsumerBase.cpp",                       "GLConsumer.cpp",
-    "DebugEGLImageTracker.cpp",   "SyncFeatures.cpp",                        "view/Surface.cpp",
+    "DebugEGLImageTracker.cpp",   "SyncFeatures.cpp",                       "view/Surface.cpp",
 };
 pub const ui_sources = [_][]const u8{
     "ColorSpace.cpp",    "DebugUtils.cpp",          "DependencyMonitor.cpp",
@@ -141,6 +141,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     const gui_mod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = true });
     configure(b, gui_mod, aosp, generated);
     gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui"), .files = &gui_sources, .flags = flags });
+    gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/ANativeWindow.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/SurfaceQueue.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "LibGuiProperties.sysprop.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "com_android_graphics_libgui_flags.cc"), .flags = flags });

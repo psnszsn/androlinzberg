@@ -62,7 +62,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         @Volatile var reportedProcState = android.app.ActivityManager.PROCESS_STATE_TOP
         val binder: IBinder = thread.asBinder()
         var exitReason = android.app.ApplicationExitInfo.REASON_UNKNOWN
+        var exitSubReason = android.app.ApplicationExitInfo.SUBREASON_UNKNOWN
         var exitDescription: String? = null
+        var waitingToKillForTask = false
         var windowProcess: com.android.server.wm.WindowProcessController? = null
         var pendingUiClean = false
         var runningRemoteAnimation = false
@@ -196,15 +198,19 @@ class HostedActivityManagerService(private val context: android.content.Context?
         crashInfo: android.app.ApplicationErrorReport.ParcelableCrashInfo?, immediateCallerPid: Int,
     ): Boolean {
         val info = crashInfo ?: throw NullPointerException("crashInfo")
-        val record = errorProcess(app)
         val uid = Binder.getCallingUid()
         val pid = Binder.getCallingPid()
         if (system || immediateCallerPid == android.os.Process.myPid()) {
+            // AMS.handleApplicationWtf defers even process lookup: callers can
+            // hold WM's global lock, while death cleanup holds AMS's lock and
+            // waits for WM. Taking AMS's lock before posting inverts that order.
             android.os.Handler(android.os.Looper.getMainLooper()).post {
+                val record = errorProcess(app, uid)
                 recordApplicationError("wtf", app, record, tag, info, uid, pid)
             }
             return false
         }
+        val record = errorProcess(app, uid)
         recordApplicationError("wtf", app, record, tag, info, uid, pid)
         val identity = Binder.clearCallingIdentity()
         val fatal = try {
@@ -221,9 +227,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
         return false
     }
 
-    private fun errorProcess(app: IBinder?): ProcessRecord? = synchronized(lock) {
+    private fun errorProcess(app: IBinder?, uid: Int = Binder.getCallingUid()): ProcessRecord? = synchronized(lock) {
         val record = processes[app] ?: return@synchronized null
-        val uid = Binder.getCallingUid()
         if (uid != record.uid && uid != android.os.Process.SYSTEM_UID && uid != android.os.Process.ROOT_UID) {
             throw SecurityException("Caller UID $uid cannot report errors for UID ${record.uid}")
         }
@@ -613,7 +618,11 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val started = android.os.SystemClock.elapsedRealtime()
         record.importanceFollowUp?.let { importanceHandler.removeCallbacks(it) }
         record.importanceFollowUp = null
-        val top = stockTaskLocal.topApp === controller
+        // ActivityTaskSupervisor.updateTopResumedActivityIfNeeded retains the
+        // previous top process while awaiting the next resumed activity. Android
+        // normally resumes HOME; the desktop host can instead have no task at
+        // all. A controller with no activities must not retain TOP indefinitely.
+        val top = stockTaskLocal.topApp === controller && controller.hasActivities()
         val flags = if (controller.hasActivities()) controller.activityStateFlags else 0
         val visible = flags and com.android.server.wm.WindowProcessController.ACTIVITY_STATE_FLAG_IS_VISIBLE != 0
         val paused = flags and com.android.server.wm.WindowProcessController.ACTIVITY_STATE_FLAG_IS_PAUSING_OR_PAUSED != 0
@@ -667,6 +676,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 controller.setPendingUiClean(false)
             } catch (_: android.os.RemoteException) { handleProcessDied(record) }
         }
+        killWaitingTaskProcessLocked(record)
     }
 
     private fun publishProcessStateLocked(record: ProcessRecord, state: Int) {
@@ -895,6 +905,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 packageList = arrayOf(record.packageName)
                 processName = record.processName
                 reason = record.exitReason
+                subReason = record.exitSubReason
                 description = record.exitDescription
                 timestamp = System.currentTimeMillis()
                 importance = android.app.ActivityManager.RunningAppProcessInfo.procStateToImportance(record.reportedProcState)
@@ -1231,6 +1242,52 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }, record.name, 1)
     }
 
+    /** ActiveServices.cleanUpServices: task removal stops FLAG_STOP_WITH_TASK
+     * services and delivers onTaskRemoved to other started services. ActiveServices
+     * depends on AMS's process graph; this host owns the equivalent records here.
+     * Pending starts retain their ordering across the hosted process-attach seam. */
+    fun cleanUpServices(userId: Int, component: ComponentName, baseIntent: Intent) {
+        val intent = Intent(baseIntent)
+        val callbacks = synchronized(lock) {
+            for ((key, work) in pendingByProcess) {
+                if (key.first != component.packageName) continue
+                work.add(PendingWork({
+                    val pending = synchronized(lock) {
+                        cleanUpServicesLocked(userId, component.packageName, intent, key.second)
+                    }
+                    pending.forEach { it() }
+                    updateWindowProcessStates()
+                }))
+            }
+            cleanUpServicesLocked(userId, component.packageName, intent)
+        }
+        callbacks.forEach { it() }
+        updateWindowProcessStates()
+    }
+
+    private fun cleanUpServicesLocked(userId: Int, packageName: String, baseIntent: Intent,
+        processName: String? = null): List<() -> Unit> {
+        val callbacks = ArrayList<() -> Unit>()
+        for (record in servicesByComponent.values.toList()) {
+            if (record.name.packageName != packageName || !record.startRequested ||
+                UserHandle.getUserId(record.entry.applicationInfo.uid) != userId ||
+                (processName != null && record.app?.processName != processName)) continue
+            if (record.entry.flags and android.content.pm.ServiceInfo.FLAG_STOP_WITH_TASK != 0) {
+                record.startRequested = false
+                bringDownIfNeededLocked(record)?.let(callbacks::add)
+            } else {
+                val app = record.app ?: continue
+                val args = android.content.pm.ParceledListSlice(listOf(
+                    android.app.ServiceStartArgs(true, record.lastStartId, 0, Intent(baseIntent))))
+                callbacks.add {
+                    try { app.thread.scheduleServiceArgs(record.token, args) }
+                    catch (_: RemoteException) { /* Dead peers are removed by Binder death. */ }
+                }
+            }
+        }
+        return callbacks
+    }
+
     override fun stopService(caller: IApplicationThread?, service: Intent?, resolvedType: String?, userId: Int): Int {
         service ?: return 0
         var schedule: (() -> Unit)? = null
@@ -1241,9 +1298,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val record = servicesByComponent[component] ?: return 0
             record.startRequested = false
             schedule = bringDownIfNeededLocked(record)
-            updateWindowProcessStates()
         }
         schedule?.invoke()
+        updateWindowProcessStates()
         return 1
     }
 
@@ -1254,9 +1311,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (startId >= 0 && startId != record.lastStartId) return false
             record.startRequested = false
             schedule = bringDownIfNeededLocked(record)
-            updateWindowProcessStates()
         }
         schedule?.invoke()
+        updateWindowProcessStates()
         return true
     }
 
@@ -1393,9 +1450,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
             val connectionRecord = record.connections[connection.asBinder()] ?: return false
             removeConnectionLocked(connectionRecord)
             schedule = bringDownIfNeededLocked(record)
-            updateWindowProcessStates()
         }
         schedule?.invoke()
+        updateWindowProcessStates()
         return true
     }
 
@@ -1889,6 +1946,33 @@ class HostedActivityManagerService(private val context: android.content.Context?
         if (pendingTopUids.contains(uid)) return@synchronized android.app.ActivityManager.PROCESS_STATE_TOP
         processes.values.filter { it.uid == uid }.minOfOrNull { it.reportedProcState }
             ?: android.app.ActivityManager.PROCESS_STATE_NONEXISTENT
+    }
+
+    /** AMS.LocalService.killProcessesForRemovedTask / OomAdjuster.applyOomAdjLSP.
+     * Stock ATMS chooses the candidate controllers. This host owns their process
+     * handles, so exit uses the existing generation-checked supervisor, not a
+     * raw Linux PID. Deferred candidates are reconsidered on service, receiver
+     * and window importance changes, as in AOSP's waitingToKill path. */
+    internal fun killProcessesForRemovedTask(controllers: ArrayList<Any>) = synchronized(lock) {
+        for (controller in controllers) {
+            val record = processes.values.firstOrNull { it.windowProcess === controller } ?: continue
+            if (record.pid == android.os.Process.myPid() || record.removed) continue
+            record.waitingToKillForTask = true
+            updateProcessImportanceLocked(record)
+        }
+    }
+
+    private fun killWaitingTaskProcessLocked(record: ProcessRecord) {
+        if (!record.waitingToKillForTask || record.removed ||
+            !android.app.ActivityManager.isProcStateBackground(record.reportedProcState) ||
+            servicesByToken.values.any { it.app === record && it.startRequested } ||
+            broadcasts.hasCurrentReceiver(record.binder)) return
+        record.waitingToKillForTask = false
+        record.exitReason = android.app.ApplicationExitInfo.REASON_USER_REQUESTED
+        record.exitSubReason = android.app.ApplicationExitInfo.SUBREASON_REMOVE_TASK
+        record.exitDescription = "remove task"
+        try { record.thread.scheduleExit() } catch (_: RemoteException) { }
+        handleProcessDied(record)
     }
 
     /** ProcessList.killAllBackgroundProcessesExceptLSP eligibility over the session process registry.

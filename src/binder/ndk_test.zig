@@ -36,7 +36,7 @@ extern fn AParcel_writeInt32(parcel: *AParcel, value: i32) callconv(.c) i32;
 extern fn AParcel_readInt32(parcel: *const AParcel, value: *i32) callconv(.c) i32;
 extern fn AParcel_writeString(parcel: *AParcel, string: ?[*]const u8, length: i32) callconv(.c) i32;
 extern fn AParcel_readString(parcel: *const AParcel, data: ?*anyopaque, allocator: *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool) callconv(.c) i32;
-extern fn AParcel_delete(parcel: *AParcel) callconv(.c) void;
+extern fn AParcel_delete(parcel: ?*AParcel) callconv(.c) void;
 extern fn AParcel_writeInt32Array(parcel: *AParcel, data: ?[*]const i32, length: i32) callconv(.c) i32;
 extern fn AParcel_readInt32Array(parcel: *const AParcel, arrayData: ?*anyopaque, allocator: *const fn (?*anyopaque, i32, ?*?[*]i32) callconv(.c) bool) callconv(.c) i32;
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
@@ -114,6 +114,7 @@ fn readAlloc(_: ?*anyopaque, length: i32, buffer: ?*?[*]u8) callconv(.c) bool {
 }
 
 pub fn main(init: std.process.Init) !void {
+    AParcel_delete(null); // NDK delete accepts a consumed/absent parcel.
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);

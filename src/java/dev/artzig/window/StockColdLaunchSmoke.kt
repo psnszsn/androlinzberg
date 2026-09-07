@@ -61,9 +61,39 @@ object StockColdLaunchSmoke {
         check(events == arrayListOf("provider", "create", "start", "resume")) { "Cold callbacks: $events" }
         if (android.view.HostedRootFrames.stockClients) {
             check(frameCommitted) { "Stock ViewRootImpl never committed an APK frame" }
-            verifyComposedTask(pkg)
+            if (System.getenv("AZK_TASK_WINDOWS") == "1") verifyWaylandTask(pkg, running.pid, manager)
+            else {
+                verifyComposedTask(pkg)
+                StockTaskShellSmoke.run(pkg)
+            }
         }
         println("Stock first-process launch: installed uid=${info.uid}, attached pid=${running.pid}, resumed activity")
+    }
+
+    private fun verifyWaylandTask(packageName: String, pid: Int, manager: ActivityManager) {
+        val tasks = ActivityTaskManager.getService()
+        val task = tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY)
+            .single { it.baseActivity?.packageName == packageName }
+        println("TASK_WINDOW_READY ${task.taskId}")
+        System.out.flush()
+        // The Cage runner inspects actual compositor pixels before releasing
+        // this gate. The driver owns no organizer or presentation surface.
+        check(System.`in`.read() >= 0) { "Wayland screenshot runner disconnected" }
+        check(tasks.removeTask(task.taskId))
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        while (SystemClock.uptimeMillis() < deadline &&
+            tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY).any { it.taskId == task.taskId }) {
+            SystemClock.sleep(5)
+        }
+        check(tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY).none { it.taskId == task.taskId })
+        while (SystemClock.uptimeMillis() < deadline && manager.runningAppProcesses.orEmpty().any { it.pid == pid }) {
+            SystemClock.sleep(5)
+        }
+        check(manager.runningAppProcesses.orEmpty().none { it.pid == pid }) { "Removed task's empty process remained alive" }
+        val exit = manager.getHistoricalProcessExitReasons(packageName, pid, 1).single()
+        check(exit.reason == android.app.ApplicationExitInfo.REASON_USER_REQUESTED &&
+            exit.subReason == android.app.ApplicationExitInfo.SUBREASON_REMOVE_TASK) { "Task removal exit reason: $exit" }
+        println("Stock Wayland task: session organizer, remote Surface and task removal passed")
     }
 
     /** Inspect the task leash that a desktop organizer will present. This

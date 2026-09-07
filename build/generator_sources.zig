@@ -1916,6 +1916,8 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/ITaskFragmentOrganizer.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/window/IWindowContainerToken.aidl" },
     .{ .source = .repo, .path = "aidl-compat/dev/artzig/system/IHostedInstaller.aidl" },
+    .{ .source = .repo, .path = "aidl-compat/dev/artzig/window/IWaylandTaskEvents.aidl" },
+    .{ .source = .repo, .path = "aidl-compat/dev/artzig/window/IWaylandTaskPresenter.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/IContentService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/content/ISyncStatusObserver.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/accounts/IAccountManager.aidl" },

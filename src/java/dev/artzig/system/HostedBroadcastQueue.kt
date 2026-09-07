@@ -65,12 +65,19 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
         var timeout: ScheduledFuture<*>? = null
     }
 
-    private val lock = Any()
+    // AOSP schedules registered receivers under AMS's lock. Share that lock so
+    // task-removal eligibility cannot race receiver selection or invert locks
+    // while deliver() reads the process state from AMS.
+    private val lock = ams.windowServiceLock()
     private val registrations = LinkedHashMap<IBinder, Registration>()
     /** action -> the most recent sticky Intent with that action. */
     private val stickies = LinkedHashMap<String, Intent>()
     private val ordered = ArrayDeque<BroadcastRecord>()
     private var current: BroadcastRecord? = null
+    fun hasCurrentReceiver(process: IBinder): Boolean = synchronized(lock) {
+        val record = current ?: return@synchronized false
+        record.receivers.getOrNull(record.index)?.callerBinder == process
+    }
     private val timer = ScheduledThreadPoolExecutor(1) { runnable ->
         Thread(runnable, "broadcast-timeout").apply { isDaemon = true }
     }
@@ -226,6 +233,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
             if (abort) record.index = record.receivers.size
             scheduleNextLocked()
         }
+        ams.updateWindowProcessStates()
     }
 
     private fun scheduleNextLocked() {
@@ -274,6 +282,7 @@ internal class HostedBroadcastQueue(private val ams: HostedActivityManagerServic
             record.timeout = null
             scheduleNextLocked()
         }
+        ams.updateWindowProcessStates()
     }
 
     /** BroadcastQueueImpl.scheduleReceiverWarmLocked/scheduleResultTo. */

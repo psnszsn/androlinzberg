@@ -1,4 +1,7 @@
 #include <jni.h>
+#include <android/binder_ibinder_jni.h>
+#include <android/binder_parcel.h>
+#include <thread>
 #include <cstring>
 #include "GpuBufferRenderer.h"
 #include <android/surface_texture.h>
@@ -98,6 +101,32 @@ Java_dev_artzig_SurfaceBufferSmoke_liveBuffers(JNIEnv *, jclass) {
 extern "C" JNIEXPORT jint JNICALL
 Java_dev_artzig_SurfaceBufferSmoke_nativeBinderUid(JNIEnv *, jclass) {
   return android::IPCThreadState::self()->getCallingUid();
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_dev_artzig_SurfaceBufferSmoke_foreignBinderThread(JNIEnv *env, jclass, jobject object) {
+  JavaVM *vm = nullptr;
+  assert(env->GetJavaVM(&vm) == JNI_OK);
+  AIBinder *binder = AIBinder_fromJavaBinder(env, object);
+  assert(binder);
+  bool detached = false;
+  std::thread caller([&] {
+    void *threadEnv = nullptr;
+    assert(vm->GetEnv(&threadEnv, JNI_VERSION_1_6) == JNI_EDETACHED);
+    AParcel *request = nullptr, *reply = nullptr;
+    assert(AIBinder_prepareTransaction(binder, &request) == STATUS_OK);
+    assert(AParcel_writeInt32(request, 41) == STATUS_OK);
+    assert(AIBinder_transact(binder, 34, &request, &reply, 0) == STATUS_OK);
+    int32_t result = 0;
+    assert(AParcel_readInt32(reply, &result) == STATUS_OK && result == 42);
+    AParcel_delete(reply);
+    detached = vm->GetEnv(&threadEnv, JNI_VERSION_1_6) == JNI_EDETACHED;
+    // Preserve a useful Java assertion if the scoped attachment regresses,
+    // rather than letting ART abort during this test thread's TLS teardown.
+    if (!detached) vm->DetachCurrentThread();
+  });
+  caller.join();
+  AIBinder_decStrong(binder);
+  return detached;
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_dev_artzig_SurfaceBufferSmoke_createReader(JNIEnv *, jclass) {

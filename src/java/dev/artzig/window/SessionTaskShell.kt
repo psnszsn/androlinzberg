@@ -1,0 +1,30 @@
+package dev.artzig.window
+
+import android.os.Handler
+import android.os.ServiceManager
+
+/** The system process owns one organizer independently of APK launchers. */
+internal object SessionTaskShell {
+    fun start(handler: Handler): AutoCloseable {
+        val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
+            "Session presenter did not register before system startup"
+        }
+        val remote = IWaylandTaskPresenter.Stub.asInterface(binder)
+        val shell = WaylandTaskShell(StockTaskOrganizer(handler), RemoteTaskPresenter(remote, handler))
+        val death = android.os.IBinder.DeathRecipient {
+            check(handler.post {
+                // Surface/Binder identities cannot be reused after presenter
+                // death. Terminate this session generation explicitly.
+                android.util.Log.e("WaylandTaskShell", "Session presenter died")
+                try { shell.close() } finally { Runtime.getRuntime().exit(1) }
+            })
+        }
+        binder.linkToDeath(death, 0)
+        try { shell.start() }
+        catch (failure: Throwable) { binder.unlinkToDeath(death, 0); throw failure }
+        return AutoCloseable {
+            binder.unlinkToDeath(death, 0)
+            shell.close()
+        }
+    }
+}

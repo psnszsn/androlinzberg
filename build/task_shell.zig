@@ -16,6 +16,8 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     compile.addFileArg(stdlib);
     compile.addFileArg(b.path("src/java/dev/artzig/window/TaskGeometry.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/window/TaskGeometrySmoke.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/window/WaylandTaskShell.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/window/WaylandTaskShellSmoke.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStarts.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStartsSmoke.kt"));
     compile.addArg("-d");
@@ -28,6 +30,13 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     run.run.setName("verify bounded task geometry and transaction reservations");
     b.step("task-geometry-test", "Verify task bounds, relocation, capacity and stale acknowledgements").dependOn(&run.run.step);
     parent.dependOn(&run.run.step);
+    const shell = command.create(b);
+    shell.addArgs(&.{ "java", "-cp" });
+    shell.addJoinedPaths(":", &.{ classes, stdlib });
+    shell.addArg("dev.artzig.window.WaylandTaskShellSmoke");
+    shell.run.setName("verify task window lifecycle and coordinated geometry");
+    b.step("task-shell-test", "Verify task window ownership, resize, close and stale callbacks").dependOn(&shell.run.step);
+    parent.dependOn(&shell.run.step);
     const processes = command.create(b);
     processes.addArgs(&.{ "java", "-cp" });
     processes.addJoinedPaths(":", &.{ classes, stdlib });

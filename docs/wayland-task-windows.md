@@ -43,6 +43,60 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Session task presenter checkpoint (2026-09-07)
+
+The system process now owns a TaskOrganizer independently of APK launchers.
+`WaylandTaskShell` serializes appearance, metadata, synchronized bounds changes
+and removal, reserves old bounds until commit, coalesces resize requests and
+rejects stale task generations. Its stock adapter positions organized task
+leashes explicitly: WMS deliberately leaves their positioning to the organizer.
+Private SF outputs retain the stock window/buffer-child hierarchy.
+
+`azk-task-presenter` owns one Wayland connection and up to 64 task windows.
+System-UID-only AIDL calls transport stock `android.view.Surface` objects over
+AZKB. A bounded request queue moves work from Binder workers to the protocol
+thread; each output uses the existing stock BufferItemConsumer/DMA-BUF path.
+Session supervision starts the presenter before system_server, handles readiness
+failure and shuts it down before SF. Organizer/presenter death ends the affected
+session generation. Development selection is `AZK_TASK_WINDOWS=1` together with
+stock window clients and `AZK_WINDOW_BACKEND=stock`; default cutover is pending.
+
+Task removal now implements the hosted equivalents of ActiveServices cleanup
+and AMS's process-removal callback. Started services receive `onTaskRemoved`,
+`stopWithTask` clears started ownership, and bound-only services remain bound.
+Process exit waits for background eligibility with no started service or active
+ordered receiver, and records Android's user-requested/remove-task exit reason.
+
+Regression 97 passes stock cold/warm launch, private task pixels and removal,
+and Surface/JNI checks. Foreign-thread Binder callbacks detach only attachments
+they own. Patch 0060 adds the corresponding lifetime to host HWUI workers;
+HWUI JNI now receives the host graphics build flag. Package 70 contains 55,363
+sources and 77 patches: `N-V-__8AAJPr6U31AAxA_2gERyr0S9Zlq4vJMy1iF3NNrxPD`,
+archive SHA-256 `7e4ce6421e9550b65747f443ac4ee179ebbe35918049a77b7d49c426b6f79767`.
+The NDK also preserves pinned `AParcel_delete(nullptr)` behavior, covered by
+regression 104. System WTF reporting defers process lookup along with the report,
+as AOSP requires to avoid taking AMS's lock while WMS holds its own lock. The
+empty-desktop policy stops retaining TOP importance after the last activity goes.
+Regression 99 passes Binder facade, policy and existing supervision checks;
+regression 102 adds presenter startup/shutdown failure and descriptor checks.
+
+Regression 108 passes `-Dstock-window-clients=true stock-task-wayland-test`:
+a cold stock APK produces the expected center and four corner colors in Cage
+at 1280x720, then Android task removal, the user-requested process exit record and zero live
+presenter graphics buffers all pass without fatal exceptions.
+The screenshot was visually inspected. Artifacts are retained under
+`zig-out/test-results/stock-wayland-task/`; the build log is
+`/tmp/wayland-stock-task-wayland-108.log`. This is one task, not the complete M7
+acceptance gate: synthetic display sizing, simultaneous tasks, stock input,
+desktop bridges and M11/default migration remain unfinished.
+
+Regression 109 passes the framework module contract checks and all five Cage
+Surface scenarios. Regression 110 passes the complete default JVM, system,
+Binder, native, supervision and graph checks plus 15 APK integration tests:
+50 diagnostic steps, all with empty runtime issue lists. Logs are
+`/tmp/wayland-task-regression-109.log` and
+`/tmp/wayland-full-task-regression-110.log`.
+
 ## Main rebase and shared dispatcher verification (2026-09-07)
 
 Rebased onto main `7e2ad4c`, incorporating stock MediaStore/HTTP clients,

@@ -87,10 +87,10 @@ const includes = [_][]const u8{
     "frameworks/native/services/surfaceflinger/TimeStats/timestatsatomsproto/include", "frameworks/native/services/surfaceflinger/TimeStats/timestatsproto/include",
     "frameworks/native/services/utils/include",                                        "frameworks/native/libs/input/include",
     "external/protobuf/src",                                                           "external/perfetto/include",
-                  "system/libfmq/include",
-    "hardware/interfaces/graphics/composer/2.1/utils/command-buffer/include",          "hardware/interfaces/graphics/composer/2.2/utils/command-buffer/include",
-    "hardware/interfaces/graphics/composer/2.3/utils/command-buffer/include",          "hardware/interfaces/graphics/composer/2.4/utils/command-buffer/include",
-    "hardware/interfaces/configstore/utils/include",                                   "system/core/libprocessgroup/include",
+    "system/libfmq/include",                                                           "hardware/interfaces/graphics/composer/2.1/utils/command-buffer/include",
+    "hardware/interfaces/graphics/composer/2.2/utils/command-buffer/include",          "hardware/interfaces/graphics/composer/2.3/utils/command-buffer/include",
+    "hardware/interfaces/graphics/composer/2.4/utils/command-buffer/include",          "hardware/interfaces/configstore/utils/include",
+    "system/core/libprocessgroup/include",
 };
 pub fn configure(b: *std.Build, mod: *std.Build.Module, aosp: std.Build.LazyPath, gui: Generated, renderengine: Generated, generated: Generated) void {
     re.configure(b, mod, aosp, gui, renderengine);
@@ -297,9 +297,6 @@ pub fn buildServiceCore(b: *std.Build, target: std.Build.ResolvedTarget, aosp: s
         "frameworks/native/libs/gui/CompositorTiming.cpp",
         "frameworks/native/libs/ui/DeviceProductInfo.cpp",
         "frameworks/native/libs/ui/DisplayIdentification.cpp",
-        // SF is a separate process. The application still uses hostgraphics'
-        // ANativeWindow until its stock window client cutover.
-        "frameworks/native/libs/nativewindow/ANativeWindow.cpp",
     }) |file| mod.addCSourceFile(.{ .file = aosp.path(b, file), .flags = flags });
     for (declarations.surfaceflinger_service_protos) |file|
         mod.addCSourceFile(.{ .file = generated.sources.path(b, b.fmt("{s}.pb.cc", .{file[0 .. file.len - ".proto".len]})), .flags = flags });

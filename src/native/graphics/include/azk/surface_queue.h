@@ -6,11 +6,15 @@ extern "C" {
 typedef struct AzkSurfaceQueue AzkSurfaceQueue;
 typedef struct AzkSurfaceFrame AzkSurfaceFrame;
 typedef struct AIBinder AIBinder;
+typedef struct AParcel AParcel;
 // A notification only: callback must enqueue work, never call into the queue.
 AzkSurfaceQueue *azk_surface_queue_create(uint32_t width, uint32_t height,
                                           void (*wake)(void *), void *context);
 // Returns one owned native Binder reference for the stock producer interface.
 AIBinder *azk_surface_queue_producer(AzkSurfaceQueue *);
+// Writes the pinned android.view.Surface payload (without nullable presence).
+// The caller owns the parcel; stock libgui exports the producer reference.
+int32_t azk_surface_queue_write_surface(AzkSurfaceQueue *, AParcel *);
 // Stops notifications and permanently abandons the producer before destroying
 // the owner. Outstanding frame objects retain their buffers independently.
 void azk_surface_queue_destroy(AzkSurfaceQueue *);
