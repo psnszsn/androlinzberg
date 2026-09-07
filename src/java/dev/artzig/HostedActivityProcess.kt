@@ -87,7 +87,7 @@ object HostedActivityProcess {
             val params = view.layoutParams as? WindowManager.LayoutParams
             val root = view.viewRootImpl
             if (params?.type != WindowManager.LayoutParams.TYPE_BASE_APPLICATION ||
-                root == null || root.`isWindowStopped$artzig`() || view.visibility != View.VISIBLE) null
+                root == null || android.view.HostedRootFrames.stopped(root) || view.visibility != View.VISIBLE) null
             else thread.getActivity(params.token)
         }
         if (activity === presented) return

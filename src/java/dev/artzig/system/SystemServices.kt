@@ -149,7 +149,7 @@ internal object SystemServices {
             HostedWindowManagerService(com.android.server.wm.HostedSurfaceSyncGroups()))
         android.os.ServiceManager.addService(
             Context.ACCESSIBILITY_SERVICE,
-            HostedAccessibilityManagerService(),
+            HostedAccessibilityManagerService(context),
         )
         val manager = SystemServiceManager(context)
         LocalServices.addService(SystemServiceManager::class.java, manager)

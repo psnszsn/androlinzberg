@@ -129,12 +129,12 @@ object ArtzigAccessibilityBridge {
         val active = HostedWindowStack.topFocusable()
         for (index in overlays.indices.reversed()) {
             val entry = overlays[index]
-            if (entry.root.`isWindowStopped$artzig`()) continue
+            if (android.view.HostedRootFrames.stopped(entry.root)) continue
             result += WindowRecord(windowId(entry.root), entry.root, Rect(entry.frame), index + 1,
                 entry === active, true)
         }
         activityRoot?.let { root ->
-            if (root.`isWindowStopped$artzig`()) return@let
+            if (android.view.HostedRootFrames.stopped(root)) return@let
             result += WindowRecord(windowId(root), root, Rect(0, 0, root.width.coerceAtLeast(0),
                 root.height.coerceAtLeast(0)), 0, active == null, false)
         }

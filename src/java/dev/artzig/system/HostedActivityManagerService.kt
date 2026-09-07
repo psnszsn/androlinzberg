@@ -69,6 +69,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         var foregroundActivities = false
         var foregroundServiceTypes = 0
         var hasClientActivities = false
+        var hasOverlayUi = false
         var importanceFollowUp: Runnable? = null
         override fun binderDied() = handleProcessDied(this)
     }
@@ -649,6 +650,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         }
         if (foregroundService) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE)
         else if (hostedServices.any { it.startRequested }) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_SERVICE)
+        if (record.hasOverlayUi) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND)
         if (record.hasClientActivities) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY_CLIENT)
         if (controller.hasRecentTasks()) state = minOf(state, android.app.ActivityManager.PROCESS_STATE_CACHED_RECENT)
         if (record.pid == android.os.Process.myPid() && record.uid == android.os.Process.SYSTEM_UID) state = android.app.ActivityManager.PROCESS_STATE_PERSISTENT
@@ -696,6 +698,16 @@ class HostedActivityManagerService(private val context: android.content.Context?
         if (stockTasks == null) return@synchronized
         updateServiceClientActivitiesLocked()
         for (record in processes.values.toList()) updateProcessImportanceLocked(record)
+    }
+
+    /** AMS.LocalService.setHasOverlayUi / ProcessStateRecord: a late window
+     * callback for a dead PID is ignored; changes update WPC and importance. */
+    internal fun setHasOverlayUi(pid: Int, hasOverlayUi: Boolean) = synchronized(lock) {
+        val record = processes.values.firstOrNull { it.pid == pid } ?: return@synchronized
+        if (record.hasOverlayUi == hasOverlayUi) return@synchronized
+        record.hasOverlayUi = hasOverlayUi
+        record.windowProcess?.setHasOverlayUi(hasOverlayUi)
+        updateProcessImportanceLocked(record)
     }
 
     // ------------------------------------------------------------- attach

@@ -66,7 +66,7 @@ object HostedWindowStack {
     fun entries(): MutableList<Entry> {
         observe()
         return synchronized(lock) {
-            ArrayList(windows.filter { it.root !== activityRoot && !it.root.`isWindowStopped$artzig`() && it.view.visibility == View.VISIBLE }.onEach {
+            ArrayList(windows.filter { it.root !== activityRoot && !android.view.HostedRootFrames.stopped(it.root) && it.view.visibility == View.VISIBLE }.onEach {
                 // Global listeners report membership changes; layout updates replace this object.
                 it.lp = it.view.layoutParams as WindowManager.LayoutParams
             })
@@ -75,13 +75,13 @@ object HostedWindowStack {
 
     @JvmStatic fun top(): Entry? = entries().lastOrNull()
     @JvmStatic fun topFocusable(): Entry? = entries().lastOrNull {
-        !it.root.`isWindowStopped$artzig`() && it.lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE == 0
+        !android.view.HostedRootFrames.stopped(it.root) && it.lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE == 0
     }
     @JvmStatic fun topTouchable(): Entry? = entries().lastOrNull {
-        !it.root.`isWindowStopped$artzig`() && it.lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0
+        !android.view.HostedRootFrames.stopped(it.root) && it.lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0
     }
     @JvmStatic fun isEmpty(): Boolean = entries().isEmpty()
-    @JvmStatic fun clear() { entries().forEach { it.root.destroy() } }
+    @JvmStatic fun clear() { entries().forEach { android.view.HostedRootFrames.remove(it.root) } }
     @JvmStatic fun setOnBack(decor: View, callback: Runnable?) {
         entries().firstOrNull { it.view === decor }?.onBack = callback
     }

@@ -88,6 +88,7 @@ class HostActivityManagerInternalAccess internal constructor(
     fun deletePendingTopUid(uid: Int, nowElapsed: Long) = activities.pendingTopUids.delete(uid, nowElapsed)
     fun isPendingTopUid(uid: Int): Boolean = activities.pendingTopUids.contains(uid)
     fun updateOomAdj(reason: Int) = activities.updateWindowProcessStates()
+    fun setHasOverlayUi(pid: Int, hasOverlayUi: Boolean) = activities.setHasOverlayUi(pid, hasOverlayUi)
     // AMS.trimApplications also runs pending state/UI cleanup. Android's cached
     // process reaper is absent; host Linux retains its existing memory policy.
     fun trimApplications() = activities.updateWindowProcessStates()

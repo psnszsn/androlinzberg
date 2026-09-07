@@ -588,7 +588,7 @@ public final class ApkHost {
                         width: Int,
                         height: Int,
                     ) {
-                        if (activity === sActivity && sRootActive) sRoot.setSize(width, height)
+                        if (activity === sActivity && sRootActive) android.view.HostedRootFrames.resize(sRoot, width, height)
                     }
 
                 },
@@ -597,7 +597,7 @@ public final class ApkHost {
 
         @JvmStatic private fun show(a: Activity) {
             sRoot = checkNotNull(a.window.decorView.viewRootImpl)
-            sRoot.setSize(sWidth, sHeight)
+            android.view.HostedRootFrames.resize(sRoot, sWidth, sHeight)
             HostedWindowStack.setActivityRoot(sRoot)
             sRootActive = true
             ArtzigAccessibilityBridge.setActivityRoot(sRoot)
@@ -663,7 +663,7 @@ public final class ApkHost {
 
             drainLooper()
             dev.artzig.HostedWindowStack.clear()
-            if (sRootActive) sRoot.destroy()
+            if (sRootActive) android.view.HostedRootFrames.remove(sRoot)
             sRootActive = false
             ArtzigAccessibilityBridge.setActivityRoot(null)
             Log.i(TAG, "views detached")
@@ -766,7 +766,7 @@ public final class ApkHost {
             val wins: MutableList<dev.artzig.HostedWindowStack.Entry> =
                 dev.artzig.HostedWindowStack.entries()
             for (e: dev.artzig.HostedWindowStack.Entry in wins) {
-                e.root.`prepareWindowTraversal$artzig`(e.lp, width, height)
+                android.view.HostedRootFrames.prepare(e.root, e.lp, width, height)
             }
             val tracePrepared: Long = if (TRACE_SLOW_FRAMES) SystemClock.uptimeMillis() else 0L
             // Stock DisplayEventReceiver dispatches traversal from the native Looper.
@@ -789,7 +789,7 @@ public final class ApkHost {
                     )
                 }
             }
-            val base: RenderNode? = if (sRootActive) sRoot.`getRenderNode$artzig`() else null
+            val base: RenderNode? = if (sRootActive) android.view.HostedRootFrames.recorded(sRoot) else null
             if (wins.isEmpty()) {
                 if (base == null) {
                     sComposite.setPosition(0, 0, width, height)
@@ -820,7 +820,7 @@ public final class ApkHost {
                 }
                 for (e: dev.artzig.HostedWindowStack.Entry in wins) {
                     try {
-                        val wb: RenderNode? = e.root.`getRenderNode$artzig`()
+                        val wb: RenderNode? = android.view.HostedRootFrames.recorded(e.root)
                         if (wb == null) continue
                         val windowWidth: Int = e.root.getWidth()
                         val windowHeight: Int = e.root.getHeight()

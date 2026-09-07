@@ -20,7 +20,7 @@ object HostedInputDispatcher {
      * and events enqueued from an input callback. Pending events are recycled on root detach.
      */
     class EventQueue(private val root: ViewRootImpl) {
-        private val handler = android.os.Handler.createAsync(root.handler.looper)
+        private val handler = android.os.Handler.createAsync(HostedRootInput.handler(root).looper)
         private class Pending(val event: InputEvent, val unhandled: Boolean, val receiver: InputEventReceiver?)
         private val events = java.util.ArrayDeque<Pending>()
         private var scheduled = false
@@ -37,14 +37,14 @@ object HostedInputDispatcher {
                 try {
                     if (root.view != null) {
                         if (pending.unhandled) {
-                            root.processUnhandledInputEvent(event)
+                            HostedRootInput.unhandled(root, event)
                         } else handled = when (event) {
-                            is KeyEvent -> root.dispatchKeyEvent(event)
+                            is KeyEvent -> HostedRootInput.deliver(root, event)
                             is MotionEvent -> {
                                 if (event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) {
-                                    root.dispatchPointerEvent(event)
+                                    HostedRootInput.deliver(root, event)
                                 } else if (root.hasPointerCapture()) {
-                                    root.dispatchCapturedPointerEvent(event)
+                                    HostedRootInput.deliver(root, event)
                                 } else {
                                     root.view?.dispatchGenericMotionEvent(event) ?: false
                                 }
@@ -420,7 +420,7 @@ object HostedInputDispatcher {
             scanCode,
             if (action == KeyEvent.ACTION_DOWN) unicode else 0,
         )
-        return root?.dispatchKeyEvent(event) ?: false
+        return root?.let { HostedRootInput.deliver(it, event) } ?: false
     }
 
     @JvmStatic
@@ -441,7 +441,7 @@ object HostedInputDispatcher {
             0,
             if (action == KeyEvent.ACTION_DOWN) unicode else 0,
         )
-        return selectKeyRoot(activityRoot)?.dispatchKeyEvent(event) ?: false
+        return selectKeyRoot(activityRoot)?.let { HostedRootInput.deliver(it, event) } ?: false
     }
 
     @JvmStatic
@@ -461,7 +461,7 @@ object HostedInputDispatcher {
                 0,
                 KeyEvent.FLAG_CANCELED,
             )
-            pressed.root?.dispatchKeyEvent(event)
+            pressed.root?.let { HostedRootInput.deliver(it, event) }
         }
     }
 
@@ -470,9 +470,9 @@ object HostedInputDispatcher {
         if (enabled) {
             requestedCaptureRoot = root
             if (pointerCaptureActual && capturedRoot !== root) {
-                capturedRoot?.handleHostedPointerCaptureChanged(false)
+                capturedRoot?.let { HostedRootInput.capture(it, false) }
                 capturedRoot = root
-                root.handleHostedPointerCaptureChanged(true)
+                HostedRootInput.capture(root, true)
             }
         } else if (requestedCaptureRoot === root) {
             requestedCaptureRoot = null
@@ -487,16 +487,16 @@ object HostedInputDispatcher {
         pointerCaptureActual = hasCapture
         val next = if (hasCapture) requestedCaptureRoot else null
         if (capturedRoot === next) return
-        capturedRoot?.handleHostedPointerCaptureChanged(false)
+        capturedRoot?.let { HostedRootInput.capture(it, false) }
         capturedRoot = next
-        capturedRoot?.handleHostedPointerCaptureChanged(true)
+        capturedRoot?.let { HostedRootInput.capture(it, true) }
     }
 
     @JvmStatic
     fun onRootDestroyed(root: ViewRootImpl) {
         if (requestedCaptureRoot === root) requestedCaptureRoot = null
         if (capturedRoot === root) {
-            root.handleHostedPointerCaptureChanged(false)
+            HostedRootInput.capture(root, false)
             capturedRoot = null
         }
         if (mouseGesture.target?.root === root) cancelMouse(root)
@@ -521,7 +521,7 @@ object HostedInputDispatcher {
             now, MotionEvent.ACTION_MOVE, dx, dy, buttonState, 0,
         )
         return try {
-            root.dispatchCapturedPointerEvent(event)
+            HostedRootInput.deliver(root, event)
         } finally {
             event.recycle()
         }
@@ -538,7 +538,7 @@ object HostedInputDispatcher {
             SystemClock.uptimeMillis(), action, 0f, 0f, buttonState, actionButton,
         )
         return try {
-            root.dispatchCapturedPointerEvent(event)
+            HostedRootInput.deliver(root, event)
         } finally {
             event.recycle()
         }
@@ -573,7 +573,7 @@ object HostedInputDispatcher {
         }
         dispatchHoverTo(target, targetAction, screenX, screenY)
         hoverTarget = target
-        return target.root?.resolvedPointerIconType ?: PointerIcon.TYPE_ARROW
+        return target.root?.let(HostedRootInput::cursorType) ?: PointerIcon.TYPE_ARROW
     }
 
     @JvmStatic
@@ -598,7 +598,7 @@ object HostedInputDispatcher {
             verticalScroll = vertical,
         )
         return try {
-            target.root?.dispatchPointerEvent(event) ?: false
+            target.root?.let { HostedRootInput.deliver(it, event) } ?: false
         } finally {
             event.recycle()
         }
@@ -609,7 +609,7 @@ object HostedInputDispatcher {
         cancelMouse(null)
         cancelTouch(null)
         resetKeyboard()
-        capturedRoot?.handleHostedPointerCaptureChanged(false)
+        capturedRoot?.let { HostedRootInput.capture(it, false) }
         capturedRoot = null
         pointerCaptureActual = false
         requestedCaptureRoot = null
@@ -650,7 +650,7 @@ object HostedInputDispatcher {
                     -watcher.frame.left.toFloat(),
                     -watcher.frame.top.toFloat(),
                 )
-                watcher.root.dispatchPointerEvent(outsideEvent)
+                HostedRootInput.deliver(watcher.root, outsideEvent)
             } finally {
                 outsideEvent.recycle()
             }
@@ -674,7 +674,7 @@ object HostedInputDispatcher {
             y = target.localY(screenY),
         )
         try {
-            target.root?.dispatchPointerEvent(event)
+            target.root?.let { HostedRootInput.deliver(it, event) }
         } finally {
             event.recycle()
         }
@@ -688,7 +688,7 @@ object HostedInputDispatcher {
             window?.let {
                 event.offsetLocation(-it.frame.left.toFloat(), -it.frame.top.toFloat())
             }
-            return root?.dispatchPointerEvent(event) ?: false
+            return root?.let { HostedRootInput.deliver(it, event) } ?: false
         }
 
         fun localX(screenX: Float): Float = screenX - (window?.frame?.left ?: 0)
@@ -924,30 +924,20 @@ object HostedInputDispatcher {
         }
     }
 
-    private class HostedKeyEvent(
-        downTime: Long,
-        eventTime: Long,
-        action: Int,
-        keyCode: Int,
-        repeatCount: Int,
-        metaState: Int,
-        scanCode: Int,
-        private val unicode: Int,
-        flags: Int = 0,
-    ) : KeyEvent(
-        downTime,
-        eventTime,
-        action,
-        keyCode,
-        repeatCount,
-        metaState,
-        KeyCharacterMap.VIRTUAL_KEYBOARD,
-        scanCode,
-        flags,
-        InputDevice.SOURCE_KEYBOARD,
-    ) {
+    private class HostedKeyEvent : KeyEvent {
+        private val unicode: Int
+        constructor(downTime: Long, eventTime: Long, action: Int, keyCode: Int,
+            repeatCount: Int, metaState: Int, scanCode: Int, unicode: Int, flags: Int = 0) :
+            super(downTime, eventTime, action, keyCode, repeatCount, metaState,
+                KeyCharacterMap.VIRTUAL_KEYBOARD, scanCode, flags, InputDevice.SOURCE_KEYBOARD) {
+            this.unicode = unicode
+        }
+        // KeyEvent's copy constructor preserves event ID, nanosecond timestamps,
+        // display, source and mutable flags; retain the host keymap's Unicode too.
+        private constructor(other: HostedKeyEvent) : super(other) { unicode = other.unicode }
         override fun getUnicodeChar(): Int = unicode
         override fun getUnicodeChar(metaState: Int): Int = unicode
+        override fun copy(): KeyEvent = HostedKeyEvent(this)
     }
 
     private fun currentMetaState(): Int {

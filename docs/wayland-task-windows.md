@@ -43,6 +43,37 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Stock window-client rendering checkpoint (2026-09-07)
+
+The `-Dstock-window-clients=true` source selection compiles pinned ViewRootImpl,
+SurfaceView, AccessibilityInteractionController and PhoneFallbackEventHandler.
+Host root frame/input adapters preserve the legacy selection during migration.
+Accessibility connection registration now owns unique IDs, death cleanup and
+WMS metadata; IME client registration and focus checks follow the pinned
+no-selected-IME path. Overlay UI updates feed process importance. Contract
+checks exercise registration, stale removal, duplicate IME clients and invalid
+window/display outcomes.
+
+Stock regression 80 launches the real fixture APK through stock ViewRootImpl,
+HWUI and BLAST, then captures its SF task leash. The center and four distinct
+corner colors pass, with the saved portrait image visually checked. This exposed
+an uninitialized `Layer.mWindowTransform` and crop in pinned HWUI's temporary
+readback layer: GPU bitmap copies rotated and stretched otherwise correct task
+pixels. Patch 0059 initializes the optional geometry; landscape and portrait
+hardware-bitmap roundtrips now pass. Package 68 is pinned as
+`N-V-__8AAIrlxk303Bz2Alp6lB1chU3Mx8ikwqhM3b2ye_Pe`, archive SHA-256
+`05e9227a4f5d8d04ded26bdb21fc558bde0c9b7e8eab5ebcb217cb272898af57`.
+Artifacts: `/tmp/wayland-stock-task-capture-80.log`,
+`/tmp/wayland-stock-task-80.png` and its `.sf.txt` dump.
+
+Full default-selection regression 84 passes both stock service launch gates,
+JVM, system, Binder broker, session and graph checks, plus all 15 APK integration
+tests (51 diagnostic steps, zero runtime issues or failure artifacts).
+The stock source selection is still developmental: three legacy root-private
+probe classes need migration, the production task presenter is not connected,
+and the legacy renderer remains the default. This checkpoint does not complete
+M6–M11 or claim a full APK-suite pass with stock window-client sources.
+
 ## Cold process and camera-client rebase work (2026-09-07)
 
 Rebased onto main ed49081, retaining its stock virtual-device and camera client

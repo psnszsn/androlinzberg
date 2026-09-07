@@ -48,6 +48,6 @@ object HostedWindowRoots {
         // Finish its previous registration before stock addView checks duplicates.
         if (view.parent is ViewRootImpl) global.removeView(view, true)
         global.addView(view, params, ArtzigDisplay.get(), parent, view.context.userId)
-        return checkNotNull(view.viewRootImpl).also { it.setSize(width, height) }
+        return checkNotNull(view.viewRootImpl).also { android.view.HostedRootFrames.resize(it, width, height) }
     }
 }

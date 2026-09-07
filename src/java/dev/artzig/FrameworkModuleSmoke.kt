@@ -1525,6 +1525,7 @@ internal object FrameworkModuleSmoke {
 
     private fun testStockPixelCopy() {
         HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
+        StockReadbackSmoke.verifyGeometry()
         val dest = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
         val invalid = android.view.Surface()
         // A real stock queue is valid but has no previously queued frame.

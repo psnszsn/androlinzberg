@@ -72,6 +72,7 @@ pub const Set = struct {
 };
 
 pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
+    const stock_window_clients = b.option(bool, "stock-window-clients", "Compile the stock ViewRootImpl and SurfaceView client path") orelse false;
     var framework = StaticCollector.init(b);
     const fb = SourceFiles.Root.dependency(b, aosp, "frameworks/base");
     const modules_utils = SourceFiles.Root.dependency(b, aosp, "frameworks/libs/modules-utils");
@@ -84,8 +85,33 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     framework.addRoot("SD", SourceFiles.Root.dependency(b, aosp, "packages/modules/StatsD"));
     framework.addRoot("TS", tagsoup);
     collectStatic(&framework) catch |err| std.debug.panic("unable to collect framework JVM sources: {t}", .{err});
+    if (stock_window_clients) {
+        for ([_][]const u8{
+            "core/java/android/view/ViewRootImpl.java",
+            "core/java/android/view/SurfaceView.java",
+            "core/java/android/view/AccessibilityInteractionController.java",
+            "core/java/com/android/internal/policy/PhoneFallbackEventHandler.java",
+        }) |path| framework.files.addFile(fb, path);
+    }
     const project_root = SourceFiles.Root.project(b, "");
-    for (project_sources.framework) |path| framework.files.addFile(project_root, path);
+    for (project_sources.framework) |path| {
+        if (stock_window_clients and (std.mem.eql(u8, path, "src/framework/android/view/ViewRootImpl.java") or
+            std.mem.eql(u8, path, "src/framework/android/view/SurfaceView.java") or
+            // These exercise the legacy offscreen root directly. They remain
+            // in the default build while the stock APK/session gates replace it.
+            std.mem.eql(u8, path, "src/java/dev/artzig/FrameworkModuleSmoke.kt") or
+            std.mem.eql(u8, path, "src/java/dev/artzig/FrameworkCompatSmoke.kt") or
+            std.mem.eql(u8, path, "src/java/dev/artzig/FrameCommitProbe.kt"))) continue;
+        framework.files.addFile(project_root, path);
+    }
+    framework.files.addFile(project_root, if (stock_window_clients)
+        "src/java/dev/artzig/window/StockRootFrames.kt"
+    else
+        "src/java/dev/artzig/window/LegacyRootFrames.kt");
+    framework.files.addFile(project_root, if (stock_window_clients)
+        "src/java/dev/artzig/window/StockRootInput.kt"
+    else
+        "src/java/dev/artzig/window/LegacyRootInput.kt");
 
     var annotations = SourceFiles.Collector.init(b);
     // AnnotationValidations holds class literals for these annotations, so they

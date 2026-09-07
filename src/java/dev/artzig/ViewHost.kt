@@ -156,7 +156,7 @@ public final class ViewHost {
             thread.handleStartActivity(record, pending, null)
             thread.handleResumeActivity(record, true, false, false, "demo launch")
             sRoot = checkNotNull(sActivity.window.decorView.viewRootImpl)
-            sRoot.setSize(width, height)
+            android.view.HostedRootFrames.resize(sRoot, width, height)
             HostedWindowStack.setActivityRoot(sRoot)
             ArtzigAccessibilityBridge.setActivityRoot(sRoot)
         }
@@ -219,7 +219,7 @@ public final class ViewHost {
             sRenderedFrameTime = android.view.Choreographer.getInstance().lastFrameTimeNanos
             dev.artzig.HostedRenderer
                 .getInstance()
-                .render(sRoot.doTraversal(), bufferWidth, bufferHeight, sRoot)
+                .render(android.view.HostedRootFrames.traverse(sRoot), bufferWidth, bufferHeight, sRoot)
         }
 
         @JvmStatic
@@ -234,7 +234,7 @@ public final class ViewHost {
             HostContexts.configureDisplay(width, height, scale120)
             val config: android.content.res.Configuration =
                 android.content.res.Configuration(sContext.getResources().getConfiguration())
-            sRoot.setSize(width, height)
+            android.view.HostedRootFrames.resize(sRoot, width, height)
             sActivity.onConfigurationChanged(config)
         }
 

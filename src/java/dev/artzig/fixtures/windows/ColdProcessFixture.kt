@@ -14,12 +14,14 @@ import android.widget.TextView
  * manifest-selected secondary process as the activity. */
 private object ColdLifecycle {
     private val events = ArrayList<String>()
+    @Volatile var frameCommitted = false
     @Synchronized fun record(event: String) { events.add(event) }
     @Synchronized fun snapshot() = Bundle().apply {
         putInt("pid", Process.myPid())
         putInt("uid", Process.myUid())
         putString("process", Application.getProcessName())
         putStringArrayList("events", ArrayList(events))
+        putBoolean("frameCommitted", frameCommitted)
     }
 }
 
@@ -27,7 +29,25 @@ class ColdProcessActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ColdLifecycle.record("create")
-        setContentView(TextView(this).apply { text = "Cold process activity" })
+        setContentView(object : TextView(this) {
+            private val marker = android.graphics.Paint()
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val side = minOf(width, height) / 8f
+                marker.color = android.graphics.Color.RED
+                canvas.drawRect(0f, 0f, side, side, marker)
+                marker.color = android.graphics.Color.GREEN
+                canvas.drawRect(width - side, 0f, width.toFloat(), side, marker)
+                marker.color = android.graphics.Color.BLUE
+                canvas.drawRect(0f, height - side, side, height.toFloat(), marker)
+                marker.color = android.graphics.Color.YELLOW
+                canvas.drawRect(width - side, height - side, width.toFloat(), height.toFloat(), marker)
+            }
+        }.apply {
+            text = "Cold process activity"
+            setBackgroundColor(android.graphics.Color.CYAN)
+        })
+        window.decorView.viewTreeObserver.registerFrameCommitCallback { ColdLifecycle.frameCommitted = true }
     }
     override fun onStart() { super.onStart(); ColdLifecycle.record("start") }
     override fun onResume() { super.onResume(); ColdLifecycle.record("resume") }

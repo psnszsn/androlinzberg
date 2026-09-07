@@ -24,6 +24,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/window/WindowBackend.kt",
     "src/java/dev/artzig/window/StockWindowBootSmoke.kt",
     "src/java/dev/artzig/window/StockColdLaunchSmoke.kt",
+    "src/java/dev/artzig/window/StockClientServiceSmoke.kt",
     "src/java/dev/artzig/window/StockTunnelModeSmoke.kt",
     "src/java/dev/artzig/window/StockWindowInfosSmoke.kt",
     "src/java/dev/artzig/window/StockInputTransferSmoke.kt",

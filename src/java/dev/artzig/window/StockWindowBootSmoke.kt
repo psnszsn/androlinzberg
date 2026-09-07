@@ -69,20 +69,32 @@ object StockWindowBootSmoke {
         check(memory.processState == android.app.ActivityManager.PROCESS_STATE_CACHED_EMPTY)
         println("Stock WMS registered application session: $packageName")
         var resumed: android.app.Activity? = null
-        dev.artzig.HostedActivityProcess.configureActivityHost(object : dev.artzig.HostedActivityProcess.HostAdapter {
-            override fun showActivity(activity: android.app.Activity) { resumed = activity }
-            override fun clearActivityWindows() { resumed = null }
-            override fun resizeActivityRoot(activity: android.app.Activity, width: Int, height: Int) { }
-        })
+        val frameCommitted = java.util.concurrent.atomic.AtomicBoolean(false)
+        val lifecycle = object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: android.app.Activity) {
+                resumed = activity
+                activity.window.decorView.viewTreeObserver.registerFrameCommitCallback { frameCommitted.set(true) }
+            }
+            override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) { }
+            override fun onActivityStarted(activity: android.app.Activity) { }
+            override fun onActivityPaused(activity: android.app.Activity) { }
+            override fun onActivityStopped(activity: android.app.Activity) { }
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, state: android.os.Bundle) { }
+            override fun onActivityDestroyed(activity: android.app.Activity) { }
+        }
+        application.registerActivityLifecycleCallbacks(lifecycle)
         application.startActivity(checkNotNull(application.packageManager.getLaunchIntentForPackage(packageName)))
         val deadline = android.os.SystemClock.uptimeMillis() + 10_000
-        while (resumed == null && android.os.SystemClock.uptimeMillis() < deadline) {
+        while ((resumed == null || (android.view.HostedRootFrames.stockClients && !frameCommitted.get())) &&
+            android.os.SystemClock.uptimeMillis() < deadline) {
             val message = android.os.Looper.myQueue().`pollDueMessage$artzig`()
             if (message == null) android.os.SystemClock.sleep(1)
             else try { message.target.dispatchMessage(message) }
             finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
         }
+        application.unregisterActivityLifecycleCallbacks(lifecycle)
         checkNotNull(resumed) { "Stock ATMS did not resume the fixture activity" }
+        if (android.view.HostedRootFrames.stockClients) check(frameCommitted.get()) { "Fixture window did not commit a frame" }
         check(resumed!!.taskId > 0)
         android.app.ActivityManager.getMyMemoryState(memory)
         check(memory.processState == android.app.ActivityManager.PROCESS_STATE_TOP)
@@ -113,12 +125,16 @@ object StockWindowBootSmoke {
         while (android.os.SystemClock.uptimeMillis() < deadline) {
             drainDueMessages()
             snapshot = application.contentResolver.call(uri, "snapshot", null, null)
-            if (snapshot?.getStringArrayList("events")?.contains("resume") == true) break
+            if (snapshot?.getStringArrayList("events")?.contains("resume") == true &&
+                (!android.view.HostedRootFrames.stockClients || snapshot.getBoolean("frameCommitted"))) break
             android.os.SystemClock.sleep(5)
         }
         val state = checkNotNull(snapshot)
         check(state.getInt("pid") == running.pid && state.getInt("uid") == running.uid)
         check(state.getString("process") == processName)
+        if (android.view.HostedRootFrames.stockClients) check(state.getBoolean("frameCommitted")) {
+            "Stock ViewRootImpl never committed an APK frame"
+        }
         check(state.getStringArrayList("events") == arrayListOf("provider", "create", "start", "resume")) {
             "Cold process lifecycle: ${state.getStringArrayList("events")}" }
         println("Stock ATMS cold activity: $processName pid=${running.pid}, provider/create/start/resume verified")

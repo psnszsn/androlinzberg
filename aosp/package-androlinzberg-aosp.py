@@ -81,6 +81,7 @@ framework_patches = tuple(
         (56, "-DeviceStatePolicy-use-desktop-posture-provider.patch"),
         (57, "-Tunnel-listener-release-on-compositor-disconnect.patch"),
         (58, "-HWUI-record-hosted-texture-layers.patch"),
+        (59, "-HWUI-initialize-layer-geometry.patch"),
     )
 )
 
