@@ -257,6 +257,20 @@ pub const KeyboardLayout = struct {
     }
 };
 
+pub const KeyboardFocus = struct {
+    active: bool,
+    held: [12]u64 = @splat(0),
+
+    fn entered(scans: []const u32) KeyboardFocus {
+        var result: KeyboardFocus = .{ .active = true };
+        for (scans) |scan| {
+            if (scan >= 768) continue;
+            result.held[scan / 64] |= @as(u64, 1) << @intCast(scan % 64);
+        }
+        return result;
+    }
+};
+
 pub const Event = union(enum) {
     close,
     configure: struct { width: i32, height: i32 },
@@ -270,9 +284,9 @@ pub const Event = union(enum) {
     pointer_relative: struct { dx: f64, dy: f64 },
     pointer_capture_changed: struct { enabled: bool, sequence: i32 },
     key: struct { keycode: u32, pressed: bool, unicode: u32, keysym: u32, repeatable: bool = true },
-    keyboard_focus: bool,
+    keyboard_focus: KeyboardFocus,
     keyboard_layout: KeyboardLayout,
-    keyboard_modifiers: u32,
+    keyboard_modifiers: struct { effective: u32, persistent: u32 },
     keyboard_repeat_configuration: struct { rate: i32, delay_ms: i32 },
     keyboard_reset,
     touch: struct {
@@ -664,7 +678,7 @@ pub const Session = struct {
             .enter => |entered| {
                 if (self.keyboard_focus) |old| old.push(.keyboard_reset);
                 self.keyboard_focus = self.surfaceWindow(entered.surface);
-                if (self.keyboard_focus) |window| window.push(.{ .keyboard_focus = true });
+                if (self.keyboard_focus) |window| window.push(.{ .keyboard_focus = KeyboardFocus.entered(entered.keys.*.slice(u32)) });
             },
             .leave => {
                 if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window);
@@ -693,10 +707,12 @@ pub const Session = struct {
         const names = .{ "Shift", "Lock", "Mod5", "Mod2", "Control", "Mod1", "Mod4" };
         const bits = [_]u32{ 0x1, 0x100000, 0x22, 0x200000, 0x1000, 0x12, 0x10000 };
         var meta: u32 = 0;
+        var persistent: u32 = 0;
         inline for (names, bits) |name, bit| {
             if (xkb.xkb_state_mod_name_is_active(state, name, 1 << 3) > 0) meta |= bit;
+            if (xkb.xkb_state_mod_name_is_active(state, name, (1 << 1) | (1 << 2)) > 0) persistent |= bit;
         }
-        window.push(.{ .keyboard_modifiers = meta });
+        window.push(.{ .keyboard_modifiers = .{ .effective = meta, .persistent = persistent } });
     }
 
     /// Register a persistent keyboard for the existing headless harness. This
@@ -2301,7 +2317,7 @@ test "session input preserves cross-window order, removal and bounded admission"
     var first: Window = undefined;
     var second: Window = undefined;
     events.push(std.testing.allocator, &second, .keyboard_reset);
-    events.push(std.testing.allocator, &first, .{ .keyboard_focus = true });
+    events.push(std.testing.allocator, &first, .{ .keyboard_focus = .{ .active = true } });
     events.push(std.testing.allocator, &first, .{ .key = .{ .keycode = 30, .pressed = true, .unicode = 97, .keysym = 97 } });
     const delivered = events.take();
     try std.testing.expectEqual(@as(usize, 3), delivered.len);
@@ -2363,4 +2379,37 @@ test "XKB modifier remaps retain non-character key identity" {
     const characters = try layout.characters();
     try std.testing.expectEqual(@as(i32, 'a'), characters[30 * 64]);
     try std.testing.expectEqual(@as(i32, 1), characters[30 * 64 + 16]); // Control-A.
+}
+
+test "keyboard enter snapshots held keys and bounds unknown scan codes" {
+    const focus = KeyboardFocus.entered(&.{ 29, 42, 54, 767, 42, 768, 0xffffffff });
+    try std.testing.expect(focus.active);
+    try std.testing.expectEqual((@as(u64, 1) << 29) | (@as(u64, 1) << 42) | (@as(u64, 1) << 54), focus.held[0]);
+    try std.testing.expectEqual(@as(u64, 1) << 63, focus.held[11]);
+}
+
+test "keyboard modifier snapshots distinguish held keys from persistent Shift" {
+    const context = xkb.xkb_context_new(0) orelse return error.KeyboardContextAllocationFailed;
+    defer xkb.xkb_context_unref(context);
+    const keymap = xkb.xkb_keymap_new_from_string(context, test_keymap, 1, 0) orelse return error.KeyboardMapFailed;
+    defer xkb.xkb_keymap_unref(keymap);
+    const state = xkb.xkb_state_new(keymap) orelse return error.KeyboardStateAllocationFailed;
+    defer xkb.xkb_state_unref(state);
+    const index = xkb.xkb_keymap_mod_get_index(keymap, "Shift");
+    try std.testing.expect(index < 32);
+    const shift = @as(u32, 1) << @intCast(index);
+    var session: Session = undefined;
+    session.ordered_events = .{};
+    session.xkb_state = state;
+    defer session.ordered_events.?.deinit(std.testing.allocator);
+    var window: Window = .{ .session = &session, .gpa = std.testing.allocator,
+        .io = undefined, .width = 100, .height = 100 };
+    for (0..3) |kind| {
+        _ = xkb.xkb_state_update_mask(state, if (kind == 0) shift else 0,
+            if (kind == 1) shift else 0, if (kind == 2) shift else 0, 0, 0, 0);
+        session.queueModifiers(&window);
+        const snapshot = session.ordered_events.?.take()[0].event.keyboard_modifiers;
+        try std.testing.expect(snapshot.effective & 1 != 0);
+        try std.testing.expectEqual(kind != 0, snapshot.persistent & 1 != 0);
+    }
 }

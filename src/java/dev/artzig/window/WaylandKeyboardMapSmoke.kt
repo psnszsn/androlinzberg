@@ -23,6 +23,9 @@ object WaylandKeyboardMapSmoke {
         symbols[58] = 0xffe3 // Caps remapped to Control_L.
         check(WaylandKeyboardMap.keyCode(58, symbols[58]) == KeyEvent.KEYCODE_CTRL_LEFT)
         check(WaylandKeyboardMap.keyCode(58, 0xff1b) == KeyEvent.KEYCODE_ESCAPE)
+        check(WaylandKeyboardMap.keyCode(58, 0xffe6) == KeyEvent.KEYCODE_SHIFT_LEFT)
+        check(WaylandKeyboardMap.keyCode(58, 0xffca) == KeyEvent.KEYCODE_F13)
+        check(WaylandKeyboardMap.keyCode(58, 0xffd5) == KeyEvent.KEYCODE_F24)
         check(WaylandKeyboardMap.keyCode(30, 'q'.code) == KeyEvent.KEYCODE_A)
         check(WaylandKeyboardMap.keyCode(100, 0xfe03) == KeyEvent.KEYCODE_ALT_RIGHT)
         check(WaylandKeyboardMap.keyCode(125, 0xffeb) == KeyEvent.KEYCODE_META_LEFT)

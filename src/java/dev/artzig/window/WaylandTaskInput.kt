@@ -32,13 +32,18 @@ internal class WaylandTaskInput(private val android: Android,
         var major: Float, var minor: Float, var orientation: Float)
     private val windows = mutableMapOf<Int, Window>()
     private val keys = linkedMapOf<Int, Pressed>()
+    // Physical state outlives a delivered stream's cancellation (layout/repeat
+    // updates), and includes keys pressed before this client's keyboard enter.
+    private val physicalKeys = linkedMapOf<Int, Int>()
+    private var persistentMeta = 0
     private val contacts = linkedMapOf<Int, Contact>()
     private var focus: Window? = null
     private var lockedMeta = 0
     private var compositorMeta: Int? = null
 
     /** Compositor snapshots include modifiers held before keyboard enter. */
-    fun modifiers(value: Int) {
+    fun modifiers(value: Int, persistent: Int = 0) {
+        persistentMeta = KeyEvent.normalizeMetaState(persistent)
         compositorMeta = KeyEvent.normalizeMetaState(value)
         lockedMeta = value and (KeyEvent.META_CAPS_LOCK_ON or KeyEvent.META_NUM_LOCK_ON or KeyEvent.META_SCROLL_LOCK_ON)
     }
@@ -54,6 +59,7 @@ internal class WaylandTaskInput(private val android: Android,
         android.keyboardLayout(map)
         layoutSymbols = symbols.copyOf()
         layoutGeneration = generation
+        for (scan in physicalKeys.keys.toList()) physicalKeys[scan] = keyCode(scan)
     }
 
     fun repeatConfiguration(rate: Int, delayMillis: Int) {
@@ -94,19 +100,23 @@ internal class WaylandTaskInput(private val android: Android,
             if (focus === this) android.focusTask(task.id)
         }
 
-        fun keyboardFocus(gained: Boolean) {
+        fun keyboardFocus(gained: Boolean, heldScanCodes: IntArray = IntArray(0)) {
             if (!live()) return
             if (gained) {
+                require(heldScanCodes.size <= 768 && heldScanCodes.all { it in 0..767 }) { "Invalid keyboard enter keys" }
                 if (focus !== this) {
                     focus?.releaseKeys()
                     focus = this
                 }
+                physicalKeys.clear()
+                for (scan in heldScanCodes) physicalKeys[scan] = keyCode(scan)
                 android.keyboardActive(true)
                 if (bounds != null) android.focusTask(task.id)
             } else {
                 releaseKeys()
                 if (focus === this) {
                     focus = null
+                    physicalKeys.clear()
                     android.keyboardActive(false)
                 }
             }
@@ -247,10 +257,11 @@ internal class WaylandTaskInput(private val android: Android,
         fun key(scanCode: Int, down: Boolean, repeatable: Boolean = true) {
             if (!live() || focus !== this || bounds == null || scanCode !in 0..767) return
             var held = keys[scanCode]
+            val code = held?.code ?: physicalKeys[scanCode] ?: keyCode(scanCode)
             if (down) {
+                if (held == null && physicalKeys.containsKey(scanCode)) return
+                physicalKeys[scanCode] = code
                 if (held == null) {
-                    val code = if (layoutGeneration != 0) WaylandKeyboardMap.keyCode(scanCode, layoutSymbols.getOrElse(scanCode) { 0 }) else
-                        HostedInputDispatcher.androidKeyCodeForScanCode(scanCode)
                     held = Pressed(this, code, clock())
                     keys[scanCode] = held
                     lockedMeta = lockedMeta xor when (code) {
@@ -261,18 +272,20 @@ internal class WaylandTaskInput(private val android: Android,
                     }
                 }
             } else {
-                held ?: return // A key held before focus was not pressed in this task.
+                physicalKeys.remove(scanCode)
                 keys.remove(scanCode)
             }
-            // wl_keyboard sends a key edge before the following modifiers
-            // snapshot. Reflect this edge now; the next snapshot is authoritative.
+            // wl_keyboard may omit a modifiers event if the effective mask
+            // stayed unchanged. Count all physical keys, including inherited
+            // ones, and retain compositor latched/locked modifiers on key-up.
             compositorMeta?.let { current ->
-                val bit = modifierGroup(held!!.code)
-                val active = keys.values.any { modifierGroup(it.code) == bit }
+                val bit = modifierGroup(code)
+                val active = physicalKeys.values.any { modifierGroup(it) == bit } || persistentMeta and bit != 0
                 compositorMeta = if (bit != 0) {
                     if (active) current or bit else current and bit.inv()
                 } else (current and LOCKS.inv()) or lockedMeta
             }
+            held ?: return // Update physical state without inventing a delivered key-up.
             dispatch(KeyEvent(held!!.time, clock(), if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP,
                 held.code, 0, metaState(), KeyCharacterMap.VIRTUAL_KEYBOARD, scanCode,
                 KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD), repeatable)
@@ -335,6 +348,7 @@ internal class WaylandTaskInput(private val android: Android,
             if (contacts.values.any { it.owner === this }) cancelTouch()
             if (focus === this) {
                 focus = null
+                physicalKeys.clear()
                 android.keyboardActive(false)
             }
             windows.remove(task.id)
@@ -362,11 +376,15 @@ internal class WaylandTaskInput(private val android: Android,
         })
     }
 
+    private fun keyCode(scan: Int): Int = if (layoutGeneration != 0)
+        WaylandKeyboardMap.keyCode(scan, layoutSymbols.getOrElse(scan) { 0 }) else
+        HostedInputDispatcher.androidKeyCodeForScanCode(scan)
+
     private fun metaState(): Int {
         var result = compositorMeta ?: lockedMeta
-        for (held in keys.values) {
-            if (compositorMeta != null && result and modifierGroup(held.code) == 0) continue
-            result = result or when (held.code) {
+        for (code in physicalKeys.values) {
+            if (compositorMeta != null && result and modifierGroup(code) == 0) continue
+            result = result or when (code) {
                 KeyEvent.KEYCODE_SHIFT_LEFT -> KeyEvent.META_SHIFT_LEFT_ON
                 KeyEvent.KEYCODE_SHIFT_RIGHT -> KeyEvent.META_SHIFT_RIGHT_ON
                 KeyEvent.KEYCODE_CTRL_LEFT -> KeyEvent.META_CTRL_LEFT_ON

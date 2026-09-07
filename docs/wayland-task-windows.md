@@ -73,6 +73,16 @@ their independent Unicode matrices. Native/module and all 15 APK tests pass,
 as do the stock input-channel and both compositor gates. Logs:
 `/tmp/wayland-remapped-keys-{147,148}.log`.
 
+Regressions 149–151 verify keys held before compositor entry and XKB persistent
+modifiers. Physical key state survives cancellation of a delivered stream;
+inherited releases update modifiers without emitting unmatched Android key-ups.
+Left/right modifier combinations and latched/locked Shift retain their meaning.
+Shift Lock and F13–F24 also carry their Android identities. Native checks, the
+corrected module smoke, all 15 APK tests, stock input channels and both compositor
+task gates pass. Logs: `/tmp/wayland-held-keys-{149,150,151}.log`; 149's initial
+module failure was a test attempting a duplicate physical press after cancellation,
+corrected to release the key and require no unmatched event in 150.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application

@@ -288,6 +288,17 @@ fn sendLayout(entry: *Entry, layout: Queue.KeyboardLayout) !void {
     try ok(AIBinder_transact(entry.events, 10, &input, &output, 1));
 }
 
+fn sendFocus(entry: *Entry, focus: anytype) !void {
+    var held: [768]i32 = undefined;
+    var count: usize = 0;
+    for (0..768) |scan| {
+        if (focus.held[scan / 64] & (@as(u64, 1) << @intCast(scan % 64)) == 0) continue;
+        held[count] = @intCast(scan);
+        count += 1;
+    }
+    try send(entry, 3, .{ focus.active, @as([]const i32, held[0..count]) });
+}
+
 fn send(entry: *Entry, code: u32, values: anytype) !void {
     var input: ?*Parcel = null;
     var output: ?*Parcel = null;
@@ -300,6 +311,10 @@ fn send(entry: *Entry, code: u32, values: anytype) !void {
         .bool => try ok(AParcel_writeInt32(input.?, @intFromBool(value))),
         .int, .comptime_int => try ok(AParcel_writeInt32(input.?, @intCast(value))),
         .float, .comptime_float => try ok(AParcel_writeFloat(input.?, @floatCast(value))),
+        .pointer => |pointer| {
+            if (pointer.size != .slice or pointer.child != i32) @compileError("Unsupported task callback array");
+            try ok(AParcel_writeInt32Array(input.?, value.ptr, @intCast(value.len)));
+        },
         else => @compileError("Unsupported task callback field"),
     };
     try ok(AIBinder_transact(entry.events, code, &input, &output, 1));
@@ -370,10 +385,10 @@ fn run(init: std.process.Init) !void {
             switch (item.event) {
                 .configure => |size| try send(entry, 1, .{ size.width, size.height }),
                 .close => try send(entry, 2, .{}),
-                .keyboard_modifiers => |meta| try send(entry, 11, .{meta}),
+                .keyboard_modifiers => |meta| try send(entry, 11, .{ meta.effective, meta.persistent }),
                 .keyboard_layout => |layout| try sendLayout(entry, layout),
-                .keyboard_focus => |focused| try send(entry, 3, .{focused}),
-                .keyboard_reset => try send(entry, 3, .{false}),
+                .keyboard_focus => |focused| try sendFocus(entry, focused),
+                .keyboard_reset => try send(entry, 3, .{ false, @as([]const i32, &.{}) }),
                 .pointer_motion => |p| try send(entry, 4, .{ 0, 0, false, p.x, p.y }),
                 .pointer_enter => |p| try send(entry, 4, .{ 1, 0, false, p.x, p.y }),
                 .pointer_leave => |p| try send(entry, 4, .{ 2, 0, false, p.x, p.y }),

@@ -22,7 +22,8 @@ internal object WaylandKeyboardMap {
         0xffe2 -> KeyEvent.KEYCODE_SHIFT_RIGHT
         0xffe3 -> KeyEvent.KEYCODE_CTRL_LEFT
         0xffe4 -> KeyEvent.KEYCODE_CTRL_RIGHT
-        0xffe5, 0xffe6 -> KeyEvent.KEYCODE_CAPS_LOCK
+        0xffe5 -> KeyEvent.KEYCODE_CAPS_LOCK
+        0xffe6 -> KeyEvent.KEYCODE_SHIFT_LEFT
         0xffe7, 0xffeb, 0xffed -> KeyEvent.KEYCODE_META_LEFT
         0xffe8, 0xffec, 0xffee -> KeyEvent.KEYCODE_META_RIGHT
         0xffe9 -> KeyEvent.KEYCODE_ALT_LEFT
@@ -44,6 +45,7 @@ internal object WaylandKeyboardMap {
         0xff57 -> KeyEvent.KEYCODE_MOVE_END
         0xff63 -> KeyEvent.KEYCODE_INSERT
         0xff67 -> KeyEvent.KEYCODE_MENU
+        in 0xffca..0xffd5 -> KeyEvent.KEYCODE_F13 + symbol - 0xffca
         in 0xffbe..0xffc9 -> KeyEvent.KEYCODE_F1 + symbol - 0xffbe
         // Generic.kl aliases ISO's extra key to BACKSLASH. Keep the extra
         // character position independent through a device KCM scan-code remap.

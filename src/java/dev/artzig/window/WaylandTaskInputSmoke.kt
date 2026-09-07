@@ -150,6 +150,8 @@ object WaylandTaskInputSmoke {
             check(events.filterIsInstance<KeyEvent>().single().isCanceled)
             check(repeats.last() == Triple(400, 1, false))
             clear()
+            replacement.key(30, false)
+            check(events.isEmpty()) // The canceled stream still had a physical key held.
             seat.modifiers(KeyEvent.META_SHIFT_ON or KeyEvent.META_CAPS_LOCK_ON)
             replacement.key(48, true) // Shift/Caps were held before this task entered.
             check((events.single() as KeyEvent).isShiftPressed && (events.single() as KeyEvent).isCapsLockOn)
@@ -182,6 +184,31 @@ object WaylandTaskInputSmoke {
             check((events.last() as KeyEvent).isCtrlPressed)
             replacement.key(29, false)
             check(!(events.last() as KeyEvent).isCtrlPressed)
+            replacement.keyboardFocus(false)
+            clear()
+            seat.modifiers(KeyEvent.META_SHIFT_ON)
+            replacement.keyboardFocus(true, intArrayOf(42)) // Left Shift held in another desktop application.
+            check(events.isEmpty()) // Enter must not synthesize a key-down.
+            replacement.key(54, true)
+            replacement.key(54, false) // Effective Shift mask stayed set; Wayland need not send modifiers.
+            replacement.key(30, true)
+            val shifted = events.last() as KeyEvent
+            check(shifted.isShiftPressed && shifted.metaState and KeyEvent.META_SHIFT_LEFT_ON != 0)
+            check(shifted.metaState and KeyEvent.META_SHIFT_RIGHT_ON == 0)
+            val beforeInheritedRelease = events.size
+            replacement.key(42, false)
+            check(events.size == beforeInheritedRelease) // No unmatched key-up for the inherited press.
+            replacement.key(48, true)
+            check(!(events.last() as KeyEvent).isShiftPressed)
+            replacement.key(30, false); replacement.key(48, false)
+            clear()
+            seat.modifiers(KeyEvent.META_SHIFT_ON, KeyEvent.META_SHIFT_ON) // Latched or locked by XKB.
+            replacement.key(42, true); replacement.key(42, false)
+            replacement.key(30, true)
+            check((events.last() as KeyEvent).isShiftPressed)
+            seat.modifiers(0, 0)
+            replacement.key(30, false); replacement.key(48, true)
+            check(!(events.last() as KeyEvent).isShiftPressed)
             replacement.close()
             check(!keyboardActive)
         } finally { first.close(); second.close(); clear() }

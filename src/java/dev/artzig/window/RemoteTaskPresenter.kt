@@ -46,8 +46,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             deliver(taskId, generation) { it.events.configure(WaylandTaskShell.Size(width, height)) }
         override fun closeRequested(taskId: Int, generation: Long) =
             deliver(taskId, generation) { it.events.closeRequested() }
-        override fun keyboardFocus(taskId: Int, generation: Long, gained: Boolean) =
-            deliver(taskId, generation) { it.seat.keyboardFocus(gained) }
+        override fun keyboardFocus(taskId: Int, generation: Long, gained: Boolean, heldScanCodes: IntArray) =
+            deliver(taskId, generation) { it.seat.keyboardFocus(gained, heldScanCodes) }
         override fun pointer(taskId: Int, generation: Long, kind: Int, button: Int, pressed: Boolean, x: Float, y: Float) =
             deliver(taskId, generation) { it.seat.pointer(kind, button, pressed, x, y) }
         override fun scroll(taskId: Int, generation: Long, x: Float, y: Float, horizontal: Float, vertical: Float) =
@@ -65,8 +65,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             deliver(taskId, generation) { capture.changed(it.task, enabled, sequence) }
         override fun relativePointer(taskId: Int, generation: Long, dx: Float, dy: Float) =
             deliver(taskId, generation) { it.seat.relativePointer(dx, dy) }
-        override fun modifiers(taskId: Int, generation: Long, metaState: Int) =
-            deliver(taskId, generation) { input.modifiers(metaState) }
+        override fun modifiers(taskId: Int, generation: Long, metaState: Int, persistentMetaState: Int) =
+            deliver(taskId, generation) { input.modifiers(metaState, persistentMetaState) }
         override fun keyboardLayout(taskId: Int, generation: Long, layoutGeneration: Int, characters: IntArray, symbols: IntArray) =
             deliver(taskId, generation) { input.keyboardLayout(layoutGeneration, characters, symbols) }
     }
