@@ -28,6 +28,25 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- Shared audio-client prerequisites now compile in one batch: 14 original HDMI
+  client/model classes, the three AudioMetadata classes, and 19 generated AIDL
+  inputs for HDMI callbacks/services and audio mix/offload transport. All 17 Java
+  archive inputs match the pinned checkout verbatim. Tests cover typed metadata
+  keys, copy isolation, both byte orders, Atmos metadata translation, malformed
+  input, audio-mix union tags and Binder-token identity, HDMI soundbar-mode client
+  selection, callbacks, executor delivery, and port connect/disconnect updates.
+  HDMI tests use an in-memory Binder fixture; no CEC hardware service or new audio
+  backend is added. JVM, system, native, Binder/C++ Binder and build audits pass,
+  along with all 11 APK tests (39 steps without runtime issues). The AOSP archive
+  and package pin are refreshed. The remaining combined AudioManager,
+  RingtoneManager, AudioTrack and MediaCodec closure drops from 135 sources/68
+  AIDL inputs to 109/48; its 36 native/service/generator blockers remain.
+  The closure tool now reads AIDL roots from the build configuration, removing
+  seven earlier false blockers. The stub inventory remains 19 (11 pending,
+  8 survivors); this batch supplies dependencies for the remaining audio clients.
+
+
+
 - DownloadManager now compiles verbatim and uses the original DownloadProvider
   in a separately built, host-signed system APK. The batch adds 19 provider Java
   classes, their resources, generated flags and supporting annotations; the
@@ -1710,6 +1729,11 @@ the follow-up work.
 
 ## Per-batch workflow
 
+Group related stubs and their shared dependency closure into each batch. Run one
+combined preflight, import the complete supported group, and share the packaging,
+rebuild and regression cycle. Split a batch when a real backend blocker would
+hold up independently usable imports; commit each verified batch incrementally.
+
 1. Build once so a current classes jar exists:
    `zig build -j<n> java` (add `--system zig-pkg` on the machine described in
    the section at the end). The jar is the newest
@@ -1726,9 +1750,10 @@ the follow-up work.
    did seed. It prints the `aosp/androlinzberg-files.txt` lines,
    `build/java_sources.zig` lines, and `build/generator_sources.zig` entries
    (AIDL, aconfig) the real classes need, and names every blocker.
-3. Apply those lines. New AIDL include roots go in both `addAidlIncludes` and
-   `aidlOutputPath` in `build/generators.zig` and in the tool's `AIDL_ROOTS`.
-   Proto outputs go in `proto_outputs`.
+3. Apply those lines. New AIDL include roots go in `addAidlIncludes` and,
+   where needed for output naming, `aidlOutputPath` in `build/generators.zig`.
+   The closure tool reads the include and staging roots from that configuration;
+   there is no separate root catalog. Proto outputs go in `proto_outputs`.
 4. Delete the stubs, remove them from `build/project_jvm_sources.zig`, delete
    their lines from `tools/stub-audit.txt`, lower `pending-budget` by the
    number of pending stubs deleted.

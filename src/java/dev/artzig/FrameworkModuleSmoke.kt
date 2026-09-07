@@ -271,6 +271,7 @@ internal object FrameworkModuleSmoke {
         com.android.server.uri.StockUriPermissionSmoke.run()
         StockAudioPolicySmoke.run()
         StockAudioTransportSmoke.run()
+        StockAudioClientPrerequisitesSmoke.run()
         StockAudioFoundationSmoke.run()
         StockVoiceTypesSmoke.run()
         StockMainlineTypesSmoke.run()

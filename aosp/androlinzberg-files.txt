@@ -6721,3 +6721,8 @@ F aosp packages/providers/DownloadProvider/src/com/android/providers/downloads/S
 F aosp packages/providers/DownloadProvider/src/com/android/providers/downloads/SystemFacade.java
 F aosp packages/providers/DownloadProvider/AndroidManifest.xml
 D aosp packages/providers/DownloadProvider/res
+
+# Shared audio metadata prerequisites.
+F aosp frameworks/base/media/java/android/media/AudioMetadata.java
+F aosp frameworks/base/media/java/android/media/AudioMetadataMap.java
+F aosp frameworks/base/media/java/android/media/AudioMetadataReadMap.java

@@ -122,6 +122,24 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    // Stock HDMI clients and audio metadata shared by the remaining audio family.
+    try c.file("$CJ/android/hardware/hdmi/DeviceFeatures.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiAudioSystemClient.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiClient.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiControlManager.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiDeviceInfo.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiHotplugEvent.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiPlaybackClient.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiPortInfo.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiRecordListener.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiRecordSources.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiSwitchClient.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiTimerRecordSources.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiTvClient.java");
+    try c.file("$CJ/android/hardware/hdmi/HdmiUtils.java");
+    try c.file("$FB/media/java/android/media/AudioMetadata.java");
+    try c.file("$FB/media/java/android/media/AudioMetadataMap.java");
+    try c.file("$FB/media/java/android/media/AudioMetadataReadMap.java");
     // MediaHTTPConnection only uses an inlined MediaPlayer constant; the SDK header
     // stays compile-only and the runtime bytecode audit enforces that boundary.
     try c.file("$FB/media/java/android/media/VolumeAutomation.java");
