@@ -213,6 +213,7 @@ internal object FrameworkModuleSmoke {
         testStockOverlayProperties()
         dev.artzig.window.HostedLogicalDisplaySmoke.run()
         dev.artzig.window.WaylandTaskInputSmoke.run()
+        dev.artzig.window.WaylandPointerCaptureSmoke.run()
         dev.artzig.window.WaylandKeyboardMapSmoke.run()
         testStockSurfaceSynchronization()
         testStockPixelCopy()

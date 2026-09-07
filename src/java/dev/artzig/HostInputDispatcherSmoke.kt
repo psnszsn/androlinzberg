@@ -151,6 +151,8 @@ object HostInputDispatcherSmoke {
                         is MotionEvent -> {
                             observed.add("motion:$index:${event.actionMasked}:${event.x.toInt()}:${event.y.toInt()}")
                             observed.add("raw:$index:${event.actionMasked}:${event.rawX.toInt()}:${event.rawY.toInt()}")
+                            if (event.source == InputDevice.SOURCE_MOUSE_RELATIVE)
+                                observed.add("relative:$index:${event.actionMasked}:${event.x.toInt()}:${event.y.toInt()}:${event.getAxisValue(MotionEvent.AXIS_RELATIVE_X).toInt()}:${event.getAxisValue(MotionEvent.AXIS_RELATIVE_Y).toInt()}")
                         }
                         else -> unexpected.add("event $event")
                     }
@@ -302,6 +304,18 @@ object HostInputDispatcherSmoke {
                 leftSeat.pointer(dev.artzig.window.WaylandTaskInput.POINTER_BUTTON, 0x110, true, 8f, 8f)
                 leftSeat.pointer(dev.artzig.window.WaylandTaskInput.POINTER_BUTTON, 0x110, false, 8f, 8f)
                 await("scaled task pointer delivery") { "motion:0:1:16:16" in observed && "raw:0:1:116:116" in observed }
+                observed.clear()
+                dispatcher.requestPointerCapture(checkNotNull(channels[0].token), true)
+                await("task seat native capture") { "capture:0:true" in observed }
+                leftSeat.captureChanged(true)
+                leftSeat.relativePointer(3f, -4f)
+                await("relative input keeps deltas without synthetic origin") { "relative:0:2:6:-8:6:-8" in observed }
+                leftSeat.pointer(dev.artzig.window.WaylandTaskInput.POINTER_BUTTON, 0x110, true, 99f, 99f)
+                await("captured mouse button") { "relative:0:11:0:0:0:0" in observed }
+                leftSeat.captureChanged(false)
+                await("capture loss cancels relative source") { "relative:0:3:0:0:0:0" in observed }
+                dispatcher.requestPointerCapture(checkNotNull(channels[0].token), false)
+                await("task seat native capture release") { "capture:0:false" in observed }
                 seat.repeatConfiguration(0, 10)
                 observed.clear()
                 leftSeat.key(30, true)

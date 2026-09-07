@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <focus><followMouse>no</followMouse></focus>
+  <windowRules>
+    <windowRule identifier="org.androlinzberg" serverDecoration="no">
+      <action name="ResizeTo" width="1280" height="720" />
+      <action name="MoveTo" x="0" y="0" />
+    </windowRule>
+  </windowRules>
+</labwc_config>

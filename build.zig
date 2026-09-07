@@ -491,9 +491,13 @@ pub fn build(b: *std.Build) void {
     surface_producer.root_module.linkLibrary(binder_ndk);
     const surface_test_step = b.step("surface-wayland-test", "Present stock Surface frames in Cage and verify resize, teardown and peer loss");
     var previous_surface_run: ?*std.Build.Step = null;
-    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure" }) |scenario| {
+    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture" }) |scenario| {
         const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
         const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
+        if (std.mem.eql(u8, scenario, "pointer-capture")) {
+            surface_run.addArg("SHOT_COMPOSITOR=labwc");
+            surface_run.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/surface-capture.xml"));
+        }
         surface_run.addFileArg(b.path("tools/shot.sh"));
         surface_run.addArgs(&.{ b.pathResolve(&.{ output, "screenshot.png" }), "--runner", "--", "python3" });
         surface_run.addFileArg(b.path("tests/native/wayland-surface-test.py"));

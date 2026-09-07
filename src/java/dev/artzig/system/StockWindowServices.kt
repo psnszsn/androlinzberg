@@ -35,11 +35,13 @@ internal class StockWindowServices private constructor() {
     private val context = BootstrapContext()
     private val handler = Handler(Looper.getMainLooper())
     private val display = SurfaceFlingerDisplayOutput.createService(context, handler)
-    private val devices = HostedInputManagerService()
+    private val devices = HostedInputManagerService(captureRequest = { token, enabled ->
+        input.requestPointerCapture(token, enabled)
+    })
     private lateinit var tasks: ActivityTaskManagerService
     private lateinit var windows: WindowManagerService
     private lateinit var input: HostInputManagerBridge
-    private var shell: AutoCloseable? = null
+    private var shell: dev.artzig.window.SessionTaskShell.Controller? = null
 
     fun attachContext(value: Context) { context.bind(value) }
 
@@ -100,7 +102,9 @@ internal class StockWindowServices private constructor() {
         windows.enableScreenAfterBoot()
         if (System.getenv("AZK_TASK_WINDOWS") == "1") {
             check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
-            shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap)
+            shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap) { token ->
+                com.android.server.wm.HostedTaskInputTargets.taskId(windows, token)
+            }
         }
     }
 
@@ -135,8 +139,13 @@ internal class StockWindowServices private constructor() {
                 .userActivity(eventTimeNanos / 1_000_000, eventType, 0)
         }
         override fun setPointerCapture(windowToken: IBinder?, sequence: Int) {
-            throw dev.artzig.ArtzigTestDiagnostics.unsupported("WaylandSeat", "setPointerCapture",
-                "The session presenter has not connected a pointer seat")
+            // Native policy callbacks run outside the dispatcher lock. Post to
+            // the shell handler before taking WMS's lock or calling Wayland.
+            check(handler.post {
+                val current = shell
+                if (current != null) current.pointerCapture(windowToken, sequence)
+                else input.notifyPointerCaptureChanged(null, sequence)
+            })
         }
         override fun notifyDeviceInteraction(deviceId: Int, timestampNanos: Long, uids: IntArray) { }
         override fun notifyUnsupportedHardwareEvent(kind: String) {

@@ -5,8 +5,13 @@ import android.os.ServiceManager
 
 /** The system process owns one organizer independently of APK launchers. */
 internal object SessionTaskShell {
+    class Controller(private val presenter: RemoteTaskPresenter, private val cleanup: () -> Unit) : AutoCloseable {
+        fun pointerCapture(token: android.os.IBinder?, sequence: Int) = presenter.pointerCapture(token, sequence)
+        override fun close() = cleanup()
+    }
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,
-        publishKeyboard: (android.view.KeyCharacterMap) -> Unit): AutoCloseable {
+        publishKeyboard: (android.view.KeyCharacterMap) -> Unit,
+        taskForToken: (android.os.IBinder) -> Int?): Controller {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
             "Session presenter did not register before system startup"
         }
@@ -21,7 +26,8 @@ internal object SessionTaskShell {
         // Wait for Wayland's repeat policy before allowing stock dispatcher to
         // synthesize repeats. The presenter sends physical key edges only.
         dispatcher.setKeyRepeatConfiguration(500, 50, false)
-        val shell = WaylandTaskShell(StockTaskOrganizer(handler), RemoteTaskPresenter(remote, handler, input))
+        val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, dispatcher::notifyPointerCaptureChanged)
+        val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)
         val death = android.os.IBinder.DeathRecipient {
             check(handler.post {
                 // Surface/Binder identities cannot be reused after presenter
@@ -33,7 +39,7 @@ internal object SessionTaskShell {
         binder.linkToDeath(death, 0)
         try { shell.start() }
         catch (failure: Throwable) { binder.unlinkToDeath(death, 0); throw failure }
-        return AutoCloseable {
+        return Controller(presenter) {
             binder.unlinkToDeath(death, 0)
             shell.close()
         }

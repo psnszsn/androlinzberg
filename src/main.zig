@@ -1022,7 +1022,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                     env,
                     cls,
                     mid,
-                    @as(art.jni.jboolean, @intFromBool(has_capture)),
+                    @as(art.jni.jboolean, @intFromBool(has_capture.enabled)),
                 );
                 try e.check();
             },
@@ -1445,7 +1445,7 @@ fn syncAppPointerCapture(win: *wayland.Window, env: anytype, cls: art.jni.jclass
     try (art.Env{ .env = env }).check();
     if (capture == previous.*) return;
     previous.* = capture;
-    win.setPointerCapture(capture);
+    try win.setPointerCapture(capture);
 }
 
 fn inputX(win: *const wayland.Window, abi: HardwareDrawAbi, x: f64) f32 {

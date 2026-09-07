@@ -13,4 +13,6 @@ oneway interface IWaylandTaskEvents {
     void repeatConfiguration(int taskId, long generation, int rate, int delayMillis);
     void keyboardLayout(int taskId, long generation, int layoutGeneration, in int[] characters);
     void modifiers(int taskId, long generation, int metaState);
+    void pointerCaptureChanged(int taskId, long generation, boolean enabled, int sequence);
+    void relativePointer(int taskId, long generation, float dx, float dy);
 }

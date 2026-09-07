@@ -59,6 +59,33 @@ object WaylandTaskInputSmoke {
             val downTime = (events.first() as MotionEvent).downTime
             check(events.all { (it as MotionEvent).downTime == downTime })
             clear()
+            first.captureChanged(true)
+            check((events.single() as MotionEvent).action == MotionEvent.ACTION_HOVER_EXIT)
+            clear()
+            first.relativePointer(3f, -4f)
+            val relative = events.single() as MotionEvent
+            check(relative.source == android.view.InputDevice.SOURCE_MOUSE_RELATIVE)
+            check(relative.action == MotionEvent.ACTION_MOVE && relative.x == 6f && relative.y == -8f)
+            check(relative.getAxisValue(MotionEvent.AXIS_RELATIVE_X) == 6f)
+            check(relative.getAxisValue(MotionEvent.AXIS_RELATIVE_Y) == -8f)
+            clear()
+            first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 99f, 99f)
+            check(events.isEmpty()) // wl_pointer absolute motion is irrelevant while locked.
+            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 99f, 99f)
+            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, false, 99f, 99f)
+            check(events.map { (it as MotionEvent).actionMasked } == listOf(
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_BUTTON_PRESS,
+                MotionEvent.ACTION_BUTTON_RELEASE, MotionEvent.ACTION_UP))
+            check(events.all { (it as MotionEvent).source == android.view.InputDevice.SOURCE_MOUSE_RELATIVE && it.x == 0f && it.y == 0f })
+            clear()
+            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 99f, 99f)
+            clear()
+            first.captureChanged(false)
+            check((events.single() as MotionEvent).action == MotionEvent.ACTION_CANCEL)
+            check((events.single() as MotionEvent).source == android.view.InputDevice.SOURCE_MOUSE_RELATIVE)
+            clear()
+            first.relativePointer(5f, 5f)
+            check(events.isEmpty())
             first.key(42, true) // Left shift.
             first.key(30, true) // A.
             first.key(30, true) // Repeats retain the initial down time.

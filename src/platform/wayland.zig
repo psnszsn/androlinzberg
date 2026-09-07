@@ -254,10 +254,10 @@ pub const Event = union(enum) {
     pointer_enter: struct { x: f64, y: f64 },
     pointer_leave: struct { x: f64, y: f64 },
     pointer_button: struct { button: u32, pressed: bool, x: f64, y: f64 },
-    pointer_axis: struct { horizontal: f64, vertical: f64 },
+    pointer_axis: struct { x: f64, y: f64, horizontal: f64, vertical: f64 },
     pointer_cancel,
     pointer_relative: struct { dx: f64, dy: f64 },
-    pointer_capture_changed: bool,
+    pointer_capture_changed: struct { enabled: bool, sequence: i32 },
     key: struct { keycode: u32, pressed: bool, unicode: u32, keysym: u32, repeatable: bool = true },
     keyboard_focus: bool,
     keyboard_layout: KeyboardLayout,
@@ -743,7 +743,7 @@ pub const Session = struct {
 
     fn releasePointer(self: *Session) void {
         for (self.windows.items) |window| {
-            window.setPointerCapture(false);
+            window.setPointerCapture(false) catch unreachable;
             window.pointer_axis_frame.reset();
             window.push(.pointer_cancel);
         }
@@ -770,9 +770,8 @@ pub const Session = struct {
         self.touch_device = null;
     }
 
-    fn hasPointerCapture(self: *const Session) bool {
-        for (self.windows.items) |window| if (window.pointer_capture_requested or window.pointer_capture_actual) return true;
-        return false;
+    fn releasePointerCapture(self: *Session) void {
+        for (self.windows.items) |window| window.setPointerCapture(false) catch unreachable;
     }
 
     pub fn deinit(self: *Session) void {
@@ -885,15 +884,13 @@ pub const Session = struct {
                 if (self.seat_global_name == removed.name)
                     std.debug.panic("the compositor removed the required wl_seat global; Android input can no longer preserve device lifecycle", .{});
                 if (self.pointer_constraints_global_name == removed.name) {
-                    if (self.hasPointerCapture())
-                        std.debug.panic("the compositor removed required zwp_pointer_constraints_v1 while Android pointer capture was active", .{});
+                    self.releasePointerCapture();
                     if (self.pointer_constraints) |constraints| constraints.destroy();
                     self.pointer_constraints = null;
                     self.pointer_constraints_global_name = null;
                 }
                 if (self.relative_pointer_global_name == removed.name) {
-                    if (self.hasPointerCapture())
-                        std.debug.panic("the compositor removed required zwp_relative_pointer_manager_v1 while Android pointer capture was active", .{});
+                    self.releasePointerCapture();
                     if (self.relative_pointer_manager) |manager| manager.destroy();
                     self.relative_pointer_manager = null;
                     self.relative_pointer_global_name = null;
@@ -1008,6 +1005,7 @@ pub const Window = struct {
     locked_pointer: ?*zwp.LockedPointerV1 = null,
     pointer_capture_requested: bool = false,
     pointer_capture_actual: bool = false,
+    pointer_capture_sequence: i32 = 0,
     pointer_enter_serial: u32 = 0,
     cursor_shape: u32 = 0, // last applied wp_cursor_shape_device_v1.shape (0 = none)
 
@@ -1078,12 +1076,6 @@ pub const Window = struct {
         self.surface = try self.session.compositor.?.createSurface();
         errdefer self.surface.destroy();
         self.surface_created = true;
-        // The xdg parent is only the opaque application background. Android
-        // input is delivered through the UI child, so exclude the parent from
-        // compositor hit testing.
-        const empty_input_region = try self.session.compositor.?.createRegion();
-        self.surface.setInputRegion(empty_input_region);
-        empty_input_region.destroy();
         self.opaque_region = try self.session.compositor.?.createRegion();
         errdefer self.opaque_region.destroy();
         // fractional-scale-v1 deliberately leaves wl_surface.buffer_scale at
@@ -1138,6 +1130,13 @@ pub const Window = struct {
 
         self.ui_surface = try self.session.compositor.?.createSurface();
         errdefer self.ui_surface.destroy();
+        // The task's toplevel owns the seat, including keyboard focus and
+        // pointer constraints. The rendered child shares its origin/viewport;
+        // leave hit testing to the parent instead of splitting seat identity.
+        // labwc 0.20.1 activates constraints against the active view's surface.
+        const empty_input_region = try self.session.compositor.?.createRegion();
+        self.ui_surface.setInputRegion(empty_input_region);
+        empty_input_region.destroy();
         self.ui_subsurface = try self.session.subcompositor.?.getSubsurface(self.ui_surface, self.surface);
         errdefer self.ui_subsurface.destroy();
         self.ui_subsurface.placeAbove(self.surface);
@@ -1283,7 +1282,8 @@ pub const Window = struct {
         );
         self.pointer_axis_frame.reset();
         if (horizontal != 0 or vertical != 0) {
-            self.push(.{ .pointer_axis = .{ .horizontal = horizontal, .vertical = vertical } });
+            self.push(.{ .pointer_axis = .{ .x = self.pointer_x, .y = self.pointer_y,
+                .horizontal = horizontal, .vertical = vertical } });
         }
     }
 
@@ -1409,55 +1409,60 @@ pub const Window = struct {
         };
         if (actual == self.pointer_capture_actual) return;
         self.pointer_capture_actual = actual;
-        self.push(.{ .pointer_capture_changed = actual });
+        self.push(.{ .pointer_capture_changed = .{ .enabled = actual, .sequence = self.pointer_capture_sequence } });
     }
 
     fn relativePointerListener(_: *zwp.RelativePointerV1, event: zwp.RelativePointerV1.Event, self: *Window) void {
         switch (event) {
             .relative_motion => |motion| if (self.pointer_capture_actual) {
                 self.push(.{ .pointer_relative = .{
-                    .dx = motion.dx.toDouble(),
-                    .dy = motion.dy.toDouble(),
+                    .dx = motion.dx_unaccel.toDouble(),
+                    .dy = motion.dy_unaccel.toDouble(),
                 } });
             },
         }
     }
 
-    /// Host adaptation of WaydroidWindow.setPointerCapture(): Android's InputManager/WMS
-    /// handshake is absent, so the hosted ViewRoot request is realized directly with the
-    /// compositor protocols and acknowledged only by the locked/unlocked events.
-    pub fn setPointerCapture(self: *Window, enabled: bool) void {
+    /// InputReader's capture acknowledgement is supplied by the compositor lock.
+    /// Keep the request sequence in each queued event so a later request cannot
+    /// relabel an acknowledgement that is still waiting to be delivered.
+    pub fn requestPointerCapture(self: *Window, enabled: bool, sequence: i32) !void {
+        self.pointer_capture_sequence = sequence;
+        const was_actual = self.pointer_capture_actual;
+        try self.setPointerCapture(enabled);
+        if (enabled == was_actual) {
+            self.push(.{ .pointer_capture_changed = .{ .enabled = enabled, .sequence = sequence } });
+        }
+    }
+
+    pub fn setPointerCapture(self: *Window, enabled: bool) !void {
         if (enabled == self.pointer_capture_requested) return;
-        self.pointer_capture_requested = enabled;
         if (!enabled) {
+            self.pointer_capture_requested = false;
             if (self.locked_pointer) |locked| locked.destroy();
             if (self.relative_pointer) |relative| relative.destroy();
             self.locked_pointer = null;
             self.relative_pointer = null;
             if (self.pointer_capture_actual) {
                 self.pointer_capture_actual = false;
-                self.push(.{ .pointer_capture_changed = false });
+                self.push(.{ .pointer_capture_changed = .{ .enabled = false,
+                    .sequence = self.pointer_capture_sequence } });
             }
             return;
         }
 
-        const pointer = self.session.pointer orelse
-            std.debug.panic("Android requested pointer capture, but the active wl_seat has no pointer capability", .{});
-        const relative_manager = self.session.relative_pointer_manager orelse
-            std.debug.panic("Android requested pointer capture, but zwp_relative_pointer_manager_v1 is unavailable", .{});
-        const constraints = self.session.pointer_constraints orelse
-            std.debug.panic("Android requested pointer capture, but zwp_pointer_constraints_v1 is unavailable", .{});
-        self.relative_pointer = relative_manager.getRelativePointer(pointer) catch
-            std.debug.panic("failed to create zwp_relative_pointer_v1 for Android pointer capture", .{});
-        self.relative_pointer.?.setListener(*Window, relativePointerListener, self);
-        self.locked_pointer = constraints.lockPointer(
-            self.ui_surface,
-            pointer,
-            null,
-            .persistent,
-        ) catch std.debug.panic("failed to create zwp_locked_pointer_v1 for Android pointer capture", .{});
-        self.locked_pointer.?.setListener(*Window, lockedPointerListener, self);
-        self.ui_surface.commit();
+        const pointer = self.session.pointer orelse return error.PointerCapabilityUnavailable;
+        const relative_manager = self.session.relative_pointer_manager orelse return error.RelativePointerUnavailable;
+        const constraints = self.session.pointer_constraints orelse return error.PointerConstraintsUnavailable;
+        const relative = try relative_manager.getRelativePointer(pointer);
+        errdefer relative.destroy();
+        const locked = try constraints.lockPointer(self.surface, pointer, null, .persistent);
+        relative.setListener(*Window, relativePointerListener, self);
+        locked.setListener(*Window, lockedPointerListener, self);
+        self.relative_pointer = relative;
+        self.locked_pointer = locked;
+        self.pointer_capture_requested = true;
+        self.surface.commit();
     }
 
     pub fn hasPointerCapture(self: *const Window) bool {
@@ -1781,6 +1786,16 @@ pub const Window = struct {
         if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
+    /// Relative virtual-device motion still travels through the compositor and
+    /// its active pointer constraint before reaching the normal seat listener.
+    pub fn testRelativeMotion(self: *Window, dx: f64, dy: f64) !void {
+        if (!std.math.isFinite(dx) or !std.math.isFinite(dy)) return error.InvalidPointerDelta;
+        const pointer = try self.ensureVirtualPointer();
+        pointer.motion(inputTimestamp(self.io), wl.Fixed.fromDouble(dx), wl.Fixed.fromDouble(dy));
+        pointer.frame();
+        if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
     /// Inject a compositor-routed primary-button drag between Android buffer
     /// coordinates. Each motion gets its own pointer frame so the client sees
     /// the same ordered gesture stream as it would from a physical mouse.
@@ -1974,7 +1989,7 @@ pub const Window = struct {
     pub fn deinit(self: *Window) void {
         if (self.frame_cb) |callback| callback.destroy();
         self.frame_cb = null;
-        self.setPointerCapture(false);
+        self.setPointerCapture(false) catch unreachable;
         self.session.removeWindow(self);
         // Tear down the child surface tree before destroying its xdg parent.
         for (self.ui_dmabuf_buffers.items) |state| state.wl_buffer.destroy();
@@ -2229,6 +2244,45 @@ test "control client polls writable only while output is pending" {
     try std.testing.expect(pending & std.posix.POLL.IN != 0);
 }
 
+
+test "pointer capture rejects missing capability and snapshots acknowledgement sequences" {
+    var session: Session = undefined;
+    session.ordered_events = .{};
+    session.pointer = null;
+    defer session.ordered_events.?.deinit(std.testing.allocator);
+    var window: Window = .{ .session = &session, .gpa = std.testing.allocator,
+        .io = undefined, .width = 100, .height = 100 };
+    try std.testing.expectError(error.PointerCapabilityUnavailable, window.requestPointerCapture(true, 1));
+    try std.testing.expect(!window.pointer_capture_requested);
+    try std.testing.expect(!window.pointer_capture_actual);
+    try window.requestPointerCapture(false, 2);
+    try window.requestPointerCapture(false, 3);
+    const events = session.ordered_events.?.take();
+    try std.testing.expectEqual(@as(usize, 2), events.len);
+    try std.testing.expectEqual(@as(i32, 2), events[0].event.pointer_capture_changed.sequence);
+    try std.testing.expectEqual(@as(i32, 3), events[1].event.pointer_capture_changed.sequence);
+    try std.testing.expect(!events[0].event.pointer_capture_changed.enabled);
+}
+
+test "queued scroll retains its surface position across later pointer motion" {
+    var session: Session = undefined;
+    session.ordered_events = .{};
+    defer session.ordered_events.?.deinit(std.testing.allocator);
+    var window: Window = .{ .session = &session, .gpa = std.testing.allocator,
+        .io = undefined, .width = 100, .height = 100 };
+    window.pointer_x = 12;
+    window.pointer_y = 13;
+    window.pointer_axis_frame.vertical_value120 = 120;
+    window.flushPointerAxisFrame();
+    window.pointer_x = 99;
+    window.pointer_y = 98;
+    const events = session.ordered_events.?.take();
+    try std.testing.expectEqual(@as(usize, 1), events.len);
+    const axis = events[0].event.pointer_axis;
+    try std.testing.expectEqual(@as(f64, 12), axis.x);
+    try std.testing.expectEqual(@as(f64, 13), axis.y);
+    try std.testing.expectEqual(@as(f64, -1), axis.vertical);
+}
 
 test "session input preserves cross-window order, removal and bounded admission" {
     var events: OrderedEvents = .{};

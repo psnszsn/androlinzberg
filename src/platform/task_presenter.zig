@@ -179,6 +179,22 @@ const Server = struct {
                 entry.bounds = bounds;
                 try ok(AParcel_writeInt32(output, 0));
             },
+            5 => {
+                const enabled_value = try readInt(input);
+                if (enabled_value != 0 and enabled_value != 1) return error.InvalidBoolean;
+                const sequence = try readInt(input);
+                try end(input);
+                const entry = self.find(key) orelse return error.StaleTask;
+                const supported = supported: {
+                    entry.window.requestPointerCapture(enabled_value == 1, sequence) catch |err| {
+                        std.log.warn("task {d} pointer capture unavailable: {s}", .{ key.id, @errorName(err) });
+                        break :supported false;
+                    };
+                    break :supported true;
+                };
+                try ok(AParcel_writeInt32(output, 0));
+                try ok(AParcel_writeInt32(output, @intFromBool(supported)));
+            },
             else => return -38,
         }
         return 0;
@@ -203,7 +219,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 4) return -38;
+    if (code < 1 or code > 5) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -361,7 +377,9 @@ fn run(init: std.process.Init) !void {
                 .pointer_leave => |p| try send(entry, 4, .{ 2, 0, false, p.x, p.y }),
                 .pointer_button => |p| try send(entry, 4, .{ 3, p.button, p.pressed, p.x, p.y }),
                 .pointer_cancel => try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 }),
-                .pointer_axis => |axis| try send(entry, 5, .{ entry.window.pointer_x, entry.window.pointer_y, axis.horizontal, axis.vertical }),
+                .pointer_capture_changed => |capture| try send(entry, 12, .{ capture.enabled, capture.sequence }),
+                .pointer_relative => |motion| try send(entry, 13, .{ motion.dx, motion.dy }),
+                .pointer_axis => |axis| try send(entry, 5, .{ axis.x, axis.y, axis.horizontal, axis.vertical }),
                 .key => |key| try send(entry, 6, .{ key.keycode, key.pressed, key.repeatable }),
                 .touch => |touch| try send(entry, 7, .{ @backingInt(touch.action), touch.id, touch.x, touch.y, touch.major, touch.minor, touch.orientation }),
                 .touch_cancel => try send(entry, 8, .{}),

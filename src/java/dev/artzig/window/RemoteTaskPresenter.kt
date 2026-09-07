@@ -7,8 +7,30 @@ import android.view.Surface
 /** Binder transports a stock Surface; the session's Zig presenter owns the
  * consumer queue and all Wayland objects on its protocol thread. */
 internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
-    private val handler: Handler, private val input: WaylandTaskInput) : WaylandTaskShell.Presenter {
+    private val handler: Handler, private val input: WaylandTaskInput,
+    taskForToken: (android.os.IBinder) -> Int?,
+    acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
+    private val capture = WaylandPointerCapture(object : WaylandPointerCapture.Host {
+        override fun task(token: android.os.IBinder) = taskForToken(token)?.let { windows[it]?.task }
+        override fun request(task: TaskGeometry.Task, enabled: Boolean, sequence: Int): Boolean {
+            if (windows[task.id]?.task != task) return false
+            return remote.setPointerCapture(task.id, task.generation, enabled, sequence)
+        }
+        override fun mode(task: TaskGeometry.Task, enabled: Boolean) {
+            windows[task.id]?.takeIf { it.task == task }?.seat?.captureChanged(enabled)
+        }
+        override fun acknowledge(token: android.os.IBinder?, sequence: Int) = acknowledgeCapture(token, sequence)
+        override fun unsupported(task: TaskGeometry.Task) {
+            android.util.Log.w("WaylandSeat", "Pointer capture unavailable for task ${task.id}",
+                dev.artzig.ArtzigTestDiagnostics.unsupported("WaylandSeat", "setPointerCapture",
+                    "Compositor pointer constraints or relative pointer capability unavailable"))
+        }
+    })
+    fun pointerCapture(token: android.os.IBinder?, sequence: Int) {
+        check(Looper.myLooper() === handler.looper)
+        capture.request(token, sequence)
+    }
     // Binder serializes oneway calls per target object. One callback for the
     // whole seat preserves leave/enter/key chronology across different tasks.
     private val callback = object : IWaylandTaskEvents.Stub() {
@@ -39,6 +61,10 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             deliver(taskId, generation) { input.cancelTouch() }
         override fun repeatConfiguration(taskId: Int, generation: Long, rate: Int, delayMillis: Int) =
             deliver(taskId, generation) { input.repeatConfiguration(rate, delayMillis) }
+        override fun pointerCaptureChanged(taskId: Int, generation: Long, enabled: Boolean, sequence: Int) =
+            deliver(taskId, generation) { capture.changed(it.task, enabled, sequence) }
+        override fun relativePointer(taskId: Int, generation: Long, dx: Float, dy: Float) =
+            deliver(taskId, generation) { it.seat.relativePointer(dx, dy) }
         override fun modifiers(taskId: Int, generation: Long, metaState: Int) =
             deliver(taskId, generation) { input.modifiers(metaState) }
         override fun keyboardLayout(taskId: Int, generation: Long, layoutGeneration: Int, characters: IntArray) =
@@ -85,6 +111,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override fun close() {
             if (closed) return
             closed = true
+            capture.closed(task)
             if (windows[task.id] === this) windows.remove(task.id)
             try { seat.close() }
             finally {

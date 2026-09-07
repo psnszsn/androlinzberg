@@ -78,6 +78,7 @@ internal class WaylandTaskInput(private val android: Android,
         private var pointerX = 0f
         private var pointerY = 0f
         private var hovering = false
+        private var captured = false
         private fun live() = !closed && windows[task.id] === this
 
         fun committed(value: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
@@ -118,8 +119,13 @@ internal class WaylandTaskInput(private val android: Android,
 
         fun pointer(kind: Int, button: Int, pressed: Boolean, x: Float, y: Float) {
             if (kind == POINTER_CANCEL) { cancelPointer(); return }
-            val p = point(x, y) ?: return
-            pointerX = p.first; pointerY = p.second
+            if (captured) {
+                if (!live() || kind != POINTER_BUTTON) return
+                pointerX = 0f; pointerY = 0f
+            } else {
+                val p = point(x, y) ?: return
+                pointerX = p.first; pointerY = p.second
+            }
             when (kind) {
                 POINTER_ENTER -> {
                     if (!hovering && buttons and DOWN_BUTTONS == 0) {
@@ -154,10 +160,10 @@ internal class WaylandTaskInput(private val android: Android,
                     if (!pressed) mouse(MotionEvent.ACTION_BUTTON_RELEASE, bit)
                     val action = if (wasDown != down) {
                         if (down) MotionEvent.ACTION_DOWN else MotionEvent.ACTION_UP
-                    } else if (down) MotionEvent.ACTION_MOVE else MotionEvent.ACTION_HOVER_MOVE
+                    } else if (down || captured) MotionEvent.ACTION_MOVE else MotionEvent.ACTION_HOVER_MOVE
                     mouse(action)
                     if (pressed) mouse(MotionEvent.ACTION_BUTTON_PRESS, bit)
-                    if (action == MotionEvent.ACTION_UP) mouse(MotionEvent.ACTION_HOVER_MOVE)
+                    if (action == MotionEvent.ACTION_UP && !captured) mouse(MotionEvent.ACTION_HOVER_MOVE)
                     if (!pressed && keyCode != 0) buttonKey(keyCode, false)
                 }
                 else -> throw IllegalArgumentException("Unknown pointer operation: $kind")
@@ -166,21 +172,60 @@ internal class WaylandTaskInput(private val android: Android,
 
         fun scroll(x: Float, y: Float, horizontal: Float, vertical: Float) {
             if (!horizontal.isFinite() || !vertical.isFinite()) return
-            val p = point(x, y) ?: return
-            pointerX = p.first; pointerY = p.second
+            if (captured) {
+                if (!live()) return
+                pointerX = 0f; pointerY = 0f
+            } else {
+                val p = point(x, y) ?: return
+                pointerX = p.first; pointerY = p.second
+            }
             mouse(MotionEvent.ACTION_SCROLL, horizontal = horizontal, vertical = vertical)
+        }
+
+        fun captureChanged(enabled: Boolean) {
+            if (!live() || captured == enabled) return
+            // InputReader resets the outgoing source before changing mode.
+            cancelPointer()
+            captured = enabled
+            pointerX = 0f; pointerY = 0f
+        }
+
+        fun relativePointer(dx: Float, dy: Float) {
+            if (!live() || !captured || focus !== this || !dx.isFinite() || !dy.isFinite()) return
+            val b = bounds ?: return
+            val s = output ?: return
+            pointerX = dx * (b.width.toFloat() / s.width)
+            pointerY = dy * (b.height.toFloat() / s.height)
+            if (!pointerX.isFinite() || !pointerY.isFinite()) return
+            mouse(MotionEvent.ACTION_MOVE)
+            pointerX = 0f; pointerY = 0f
         }
 
         private fun mouse(action: Int, actionButton: Int = 0, horizontal: Float = 0f, vertical: Float = 0f) {
             val event = HostedInputDispatcher.createMouseEvent(pointerDownTime, clock(), action,
                 buttons, actionButton, pointerX, pointerY, horizontal, vertical, metaState())
-            event.displayId = Display.DEFAULT_DISPLAY
-            dispatch(event)
+            if (captured) {
+                event.source = InputDevice.SOURCE_MOUSE_RELATIVE
+                val coordinates = MotionEvent.PointerCoords()
+                event.getPointerCoords(0, coordinates)
+                coordinates.setAxisValue(MotionEvent.AXIS_RELATIVE_X, pointerX)
+                coordinates.setAxisValue(MotionEvent.AXIS_RELATIVE_Y, pointerY)
+                // Use the stock MotionEvent constructor so relative axes and
+                // X/Y are carried together through the native input channel.
+                val relative = MotionEvent.obtain(pointerDownTime, event.eventTime, action, 1,
+                    arrayOf(MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_MOUSE }),
+                    arrayOf(coordinates), metaState(), buttons, 1f, 1f, event.deviceId, 0,
+                    InputDevice.SOURCE_MOUSE_RELATIVE, 0)
+                relative.actionButton = actionButton
+                event.recycle()
+                dispatch(relative)
+            } else dispatch(event)
         }
 
         private fun buttonKey(code: Int, down: Boolean) = dispatch(KeyEvent(pointerDownTime, clock(),
             if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, code, 0, metaState(),
-            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_MOUSE), false)
+            KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM,
+            if (captured) InputDevice.SOURCE_MOUSE_RELATIVE else InputDevice.SOURCE_MOUSE), false)
 
         fun cancelPointer() {
             if (buttons and DOWN_BUTTONS != 0) mouse(MotionEvent.ACTION_CANCEL)

@@ -50,6 +50,9 @@ fn run(init: std.process.Init) !void {
     defer AIBinder_decStrong(producer);
     if (AServiceManager_addService(producer, "dev.artzig.surface.v1") != 0) return error.PublishFailed;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const unavailable = args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture-unavailable");
+    const capture = unavailable or (args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture"));
+    var captured = false;
     const hold = args.len > 1 and std.mem.eql(u8, args[1], "--hold-presentation");
     var stop: Stop = .{ .io = io, .queue = queue, .hold = .init(hold) };
     var group: Io.Group = .init;
@@ -69,6 +72,58 @@ fn run(init: std.process.Init) !void {
             var buffer: [80]u8 = undefined;
             const line = try std.fmt.bufPrint(&buffer, "presented {d}\n", .{frames});
             try Io.File.stdout().writeStreamingAll(io, line);
+            if (capture and !captured and frames >= 12) {
+                try verifyCapture(session, window, io, queue.notify_file, unavailable);
+                captured = true;
+                try Io.File.stdout().writeStreamingAll(io, if (unavailable) "pointer capture unavailable passed\n" else "pointer capture passed\n");
+            }
         }
     }
+}
+
+fn verifyCapture(session: *Queue.Session, window: *Queue.Window, io: Io, wake: Io.File, unavailable: bool) !void {
+    try window.prepareTestInput();
+    try window.testTap(@divTrunc(window.bufferWidth(), 2), @divTrunc(window.bufferHeight(), 2));
+    var phase: enum { focus, lock, relative, unlock } = .focus;
+    const deadline = Io.Clock.awake.now(io).nanoseconds + 5 * std.time.ns_per_s;
+    while (Io.Clock.awake.now(io).nanoseconds < deadline) {
+        var ready = [_]bool{false};
+        try session.dispatch(&.{wake}, &ready, 100);
+        for (window.takeEvents()) |event| switch (event) {
+            .close => return error.UnexpectedClose,
+            .pointer_capture_changed => |state| {
+                if (phase == .lock and state.enabled) {
+                    if (state.sequence != 101) return error.WrongCaptureSequence;
+                    phase = .relative;
+                    try window.testRelativeMotion(7, -5);
+                } else if (phase == .unlock and !state.enabled) {
+                    if (state.sequence != 102) return error.WrongCaptureSequence;
+                    if (window.hasPointerCapture()) return error.CaptureStillActive;
+                    return;
+                }
+            },
+            .pointer_relative => |motion| if (phase == .relative) {
+                if (motion.dx != 7 or motion.dy != -5) return error.WrongRelativeMotion;
+                phase = .unlock;
+                try window.requestPointerCapture(false, 102);
+            },
+            else => {},
+        };
+        if (phase == .focus and session.pointer_focus == window and session.keyboard_focus == window) {
+            phase = .lock;
+            window.requestPointerCapture(true, 101) catch |err| {
+                if (!unavailable or (err != error.PointerConstraintsUnavailable and err != error.RelativePointerUnavailable)) return err;
+                if (window.hasPointerCapture() or window.pointer_capture_requested or
+                    window.locked_pointer != null or window.relative_pointer != null) return error.CaptureFailureLeakedState;
+                return;
+            };
+            if (unavailable) return error.ExpectedUnsupportedCapture;
+            if (window.hasPointerCapture()) return error.PrematureCaptureAcknowledgement;
+        }
+    }
+    std.log.err("capture timeout phase={s} pointer={any} keyboard={any} requested={any} actual={any} size={d}x{d} cursor={d},{d}",
+        .{ @tagName(phase), session.pointer_focus == window, session.keyboard_focus == window,
+        window.pointer_capture_requested, window.hasPointerCapture(), window.width, window.height,
+        window.pointer_x, window.pointer_y });
+    return error.PointerCaptureTimeout;
 }

@@ -18,7 +18,7 @@ p.add_argument('--server', type=Path, required=True)
 p.add_argument('--producer', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure'], default='normal')
+p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable'], default='normal')
 a = p.parse_args()
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -63,7 +63,7 @@ try:
                                       '--prop-area', env['AZK_PROP_AREA']))
     assert line(broker).startswith('ready')
     pressure = a.scenario == 'backpressure'
-    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ())
+    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') else ())
     assert line(server) == 'ready'
     env.pop('AZK_BINDER_SYSTEM_COOKIE')
     env['AZK_BINDER_PACKAGE'] = 'dev.artzig.surface.producer'
@@ -87,6 +87,9 @@ try:
         value = line(server)
         assert value.startswith('presented ')
         presented = int(value.split()[1])
+    if a.scenario.startswith('pointer-capture'):
+        assert line(server) == ('pointer capture unavailable passed' if a.scenario.endswith('unavailable') else 'pointer capture passed')
+        result['pointer_capture'] = 'unsupported without state/objects' if a.scenario.endswith('unavailable') else 'compositor lock, raw relative motion and unlock acknowledged'
     time.sleep(0.2)
     subprocess.run(['grim', str(out / 'screenshot.png')], check=True)
     ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'])

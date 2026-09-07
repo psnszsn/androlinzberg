@@ -22,6 +22,39 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Pointer capture and accepted resize checkpoint (2026-09-07)
+
+Stock IInputManager now forwards pointer-capture requests to InputDispatcher.
+WMS resolves its authorized input token to the enclosing task, including embedded
+windows, before the serial shell requests a Wayland lock. Queued acknowledgements
+retain Android's sequence and task generation. Stale replies cannot capture a
+replacement window; actual unlock destroys a persistent constraint so it cannot
+reactivate after Android has lost capture. Relative motion uses unaccelerated
+compositor deltas, transformed into Android task units without a synthetic origin.
+Mode changes cancel the outgoing pointer source, and buttons/scroll retain the
+stock relative-source ordering.
+
+Regression 143 passes native checks, both stock task-window compositor gates and
+all seven Surface scenarios. Cage lacks pointer constraints: its new gate verifies
+clean rejection without state or object leaks. The labwc gate verifies actual
+lock acknowledgement, exact relative deltas and unlock. The gate exposed split
+seat ownership between the rendered child and its toplevel; both hit testing and
+the constraint now belong to the toplevel, matching compositor keyboard focus.
+The labwc screenshot was visually inspected. Retained artifacts:
+`/tmp/wayland-capture-143-{cage,labwc}/`; log `/tmp/wayland-capture-143.log`.
+
+Regression 144 passes framework-module, native, task-shell and all 15 APK tests
+after that input-surface change (45 diagnostic steps, no runtime issues).
+Regression 140 also passes the stock Java input-channel gate, including relative
+axes, scaled deltas, button delivery and cancellation. Delayed/stale capture
+replies, token validation and unsupported-capability behavior pass module tests.
+Queued scroll now retains its event-time position. Failed/rejected resize no
+longer replaces the accepted presentation size used for later bounds repair.
+
+Desktop focus withdrawal and focus acknowledgement, task-addressed APK semantic
+input, device capabilities, launcher cutover and the remaining M9–M11 work are
+still in progress. These capture gates do not complete M8.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application

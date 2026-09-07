@@ -24,7 +24,8 @@ import android.view.KeyCharacterMap
  * keyboard whose character map follows the Wayland seat. Unserved methods fail through the shared unsupported Binder
  * delegate.
  */
-internal class HostedInputManagerService(private val handler: Handler = Handler(Looper.getMainLooper())) :
+internal class HostedInputManagerService(private val handler: Handler = Handler(Looper.getMainLooper()),
+    private val captureRequest: ((IBinder, Boolean) -> Unit)? = null) :
     IInputManager.Stub(HostedBootstrapPermissionEnforcer()),
     IInputManager by unsupported<IInputManager>() {
     // Interface delegation must not shadow the Binder identity.
@@ -89,6 +90,15 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
     override fun hasKeys(deviceId: Int, sourceMask: Int, keyCodes: IntArray, keyExists: BooleanArray): Boolean {
         for (i in keyCodes.indices) keyExists[i] = true
         return true
+    }
+
+    /** Pinned InputManagerService.requestPointerCapture: reject null and defer
+     * focus/token authorization to native InputDispatcher. */
+    override fun requestPointerCapture(inputChannelToken: IBinder?, enabled: Boolean) {
+        val token = java.util.Objects.requireNonNull(inputChannelToken, "inputChannelToken must not be null")!!
+        val request = captureRequest ?: throw dev.artzig.ArtzigTestDiagnostics.unsupported(
+            "InputManagerService", "requestPointerCapture", "No stock input dispatcher is attached")
+        request(token, enabled)
     }
 
     override fun getVelocityTrackerStrategy(): String? = null

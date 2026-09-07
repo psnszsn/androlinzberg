@@ -12,4 +12,5 @@ interface IWaylandTaskPresenter {
     void setMetadata(int taskId, long generation, String appId, String title);
     void configurationCommitted(int taskId, long generation, int left, int top,
         int width, int height, int outputWidth, int outputHeight);
+    boolean setPointerCapture(int taskId, long generation, boolean enabled, int sequence);
 }
