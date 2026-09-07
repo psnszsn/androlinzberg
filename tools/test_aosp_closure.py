@@ -221,6 +221,38 @@ enum State { UNKNOWN = 0; }
             self.assertIn('"android/view/ViewProtoEnums.java"', rendered)
             self.assertFalse(resolver.index.lookup("wire.ViewProtoEnums"))
 
+    def test_multifile_proto_is_found_from_same_package_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "stats.proto").write_text('''syntax = "proto2";
+package wire;
+option java_package = "usage";
+option java_multiple_files = true;
+// message Fake {}
+message IntervalStatsProto { message Event { optional string text = 1 [default = "}"]; } }
+message OtherStats { optional int32 count = 1; }
+''')
+            (root / "Caller.java").write_text(
+                "package usage; class Caller { long value = IntervalStatsProto.Event.TEXT; }")
+            manifest, sources = root / "manifest", root / "sources"
+            manifest.write_text("")
+            sources.write_text("")
+            classes = root / "classes/java/lang"
+            classes.mkdir(parents=True)
+            (classes / "Object.class").write_bytes(b"")
+            index = aosp_closure.SourceIndex(root, None)
+            resolver = aosp_closure.Resolver(root, index,
+                aosp_closure.Manifest(manifest), aosp_closure.SourceRules(sources),
+                aosp_closure.Classes([root / "classes"]), aosp_closure.Stubs(root / "stubs"))
+            closure = resolver.closure(["usage.Caller"])
+            self.assertEqual("generated", closure["usage.IntervalStatsProto"].kind)
+            rendered = aosp_closure.render_closure(resolver, ["usage.Caller"], closure)
+            self.assertIn('path = "stats.proto"', rendered)
+            self.assertIn('"usage/IntervalStatsProto.java"', rendered)
+            self.assertTrue(index.lookup("usage.OtherStats"))
+            for absent in ("usage.Event", "usage.Fake", "wire.IntervalStatsProto"):
+                self.assertFalse(index.lookup(absent))
+
     def test_logtags_and_colliding_static_import_owners(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
