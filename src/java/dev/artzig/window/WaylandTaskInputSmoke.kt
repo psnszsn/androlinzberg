@@ -169,26 +169,47 @@ object WaylandTaskInputSmoke {
             replacement.key(86, true)
             check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_RO)
             check(!(events.single() as KeyEvent).isShiftPressed)
-            val symbols = IntArray(WaylandKeyboardMap.SCAN_COUNT).apply { this[58] = 0xffe3 }
+            val symbols = IntArray(WaylandKeyboardMap.SCAN_COUNT).apply {
+                this[58] = 0xffe3; this[29] = 0xffe3
+                this[42] = 0xffe1; this[54] = 0xffe2
+                this[30] = 'a'.code; this[48] = 'b'.code
+            }
             seat.keyboardLayout(2, IntArray(WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT), symbols)
             check((events.last() as KeyEvent).isCanceled) // Old layout's held ISO key is released.
             symbols[58] = 0xffe5 // Caller mutation cannot change the installed layout.
             clear()
+            val keyboardSource = android.view.InputDevice.SOURCE_KEYBOARD
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 0)
+            check(seat.scanCodeState(-1, keyboardSource, 58) == 0)
             replacement.key(58, true)
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 1)
+            check(seat.scanCodeState(-1, keyboardSource, 58) == 1)
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CAPS_LOCK) == -1)
+            check(seat.keyCodeState(0, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
+            check(seat.keyCodeState(-1, android.view.InputDevice.SOURCE_MOUSE, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
+            check(seat.keyCodeState(-1, android.view.InputDevice.SOURCE_CLASS_BUTTON, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
+            check(seat.scanCodeState(-1, keyboardSource, 767) == -1)
+            check(seat.scanCodeState(-1, keyboardSource, -1) == -1)
             replacement.key(30, true)
             check((events[0] as KeyEvent).keyCode == KeyEvent.KEYCODE_CTRL_LEFT)
             check((events[1] as KeyEvent).isCtrlPressed && !(events[1] as KeyEvent).isCapsLockOn)
             clear()
             replacement.key(29, true) // Both physical keys now mean Control_L.
             replacement.key(58, false)
+            check(seat.scanCodeState(-1, keyboardSource, 58) == 0)
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 1)
             check((events.last() as KeyEvent).isCtrlPressed)
             replacement.key(29, false)
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == 0)
             check(!(events.last() as KeyEvent).isCtrlPressed)
             replacement.keyboardFocus(false)
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_CTRL_LEFT) == -1)
             clear()
             seat.modifiers(KeyEvent.META_SHIFT_ON)
             replacement.keyboardFocus(true, intArrayOf(42)) // Left Shift held in another desktop application.
             check(events.isEmpty()) // Enter must not synthesize a key-down.
+            check(seat.scanCodeState(-1, keyboardSource, 42) == 1)
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_SHIFT_LEFT) == 1)
             replacement.key(54, true)
             replacement.key(54, false) // Effective Shift mask stayed set; Wayland need not send modifiers.
             replacement.key(30, true)
@@ -198,6 +219,7 @@ object WaylandTaskInputSmoke {
             val beforeInheritedRelease = events.size
             replacement.key(42, false)
             check(events.size == beforeInheritedRelease) // No unmatched key-up for the inherited press.
+            check(seat.scanCodeState(-1, keyboardSource, 42) == 0)
             replacement.key(48, true)
             check(!(events.last() as KeyEvent).isShiftPressed)
             replacement.key(30, false); replacement.key(48, false)
@@ -211,6 +233,26 @@ object WaylandTaskInputSmoke {
             check(!(events.last() as KeyEvent).isShiftPressed)
             replacement.close()
             check(!keyboardActive)
+            check(seat.scanCodeState(-1, keyboardSource, 42) == -1)
+            clear()
+            val pending = seat.open(TaskGeometry.Task(3, 4))
+            try {
+                pending.keyboardFocus(true)
+                pending.key(30, true)
+                check(events.isEmpty() && seat.scanCodeState(-1, keyboardSource, 30) == 1)
+                pending.committed(TaskGeometry.Bounds(2000, 0, 400, 300), WaylandTaskShell.Size(200, 150))
+                pending.key(30, false)
+                check(events.isEmpty() && seat.scanCodeState(-1, keyboardSource, 30) == 0)
+                pending.key(30, true)
+                clear()
+                seat.repeatConfiguration(25, 200)
+                check((events.single() as KeyEvent).isCanceled)
+                check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == 1)
+                clear()
+                pending.key(30, false)
+                check(events.isEmpty() && seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == 0)
+            } finally { pending.close() }
+            check(seat.keyCodeState(-1, keyboardSource, KeyEvent.KEYCODE_A) == -1)
         } finally { first.close(); second.close(); clear() }
         println("Wayland task input: projection, button ordering, focus, key cancellation, touch IDs and stale generations passed")
     }

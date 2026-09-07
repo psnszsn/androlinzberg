@@ -163,8 +163,10 @@ internal class StockWindowServices private constructor() {
             devices.inputDeviceIds.map { checkNotNull(devices.getInputDevice(it)) }.toTypedArray()
         override fun canDispatchToDisplay(deviceId: Int, displayId: Int): Boolean =
             displayId == Display.DEFAULT_DISPLAY && devices.getInputDevice(deviceId) != null
-        override fun getKeyCodeState(deviceId: Int, sourceMask: Int, keyCode: Int): Int = HostInputManagerBridge.KEY_STATE_UNKNOWN
-        override fun getScanCodeState(deviceId: Int, sourceMask: Int, scanCode: Int): Int = HostInputManagerBridge.KEY_STATE_UNKNOWN
+        override fun getKeyCodeState(deviceId: Int, sourceMask: Int, keyCode: Int): Int =
+            shell?.keyCodeState(deviceId, sourceMask, keyCode) ?: HostInputManagerBridge.KEY_STATE_UNKNOWN
+        override fun getScanCodeState(deviceId: Int, sourceMask: Int, scanCode: Int): Int =
+            shell?.scanCodeState(deviceId, sourceMask, scanCode) ?: HostInputManagerBridge.KEY_STATE_UNKNOWN
         override fun getSwitchState(deviceId: Int, sourceMask: Int, switchCode: Int): Int = HostInputManagerBridge.KEY_STATE_UNKNOWN
         override fun isDisplayInteractive(displayId: Int): Boolean =
             display.getDisplayInfo(displayId)?.state == Display.STATE_ON

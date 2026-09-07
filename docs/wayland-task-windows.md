@@ -22,6 +22,31 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Physical keyboard state checkpoint (2026-09-07)
+
+WMS's key/scan state queries now read immutable snapshots of the compositor
+keyboard. Source/device filtering, supported scan positions, remapped Android
+keys and aggregate DOWN/UP answers follow pinned InputReader/EventHub semantics.
+Wayland supplies physical state only while this session has keyboard focus;
+queries return UNKNOWN outside that scope and for unavailable keys/devices.
+Inherited enter keys remain down without invented Android key presses. Delivery
+cancellation, including repeat-policy changes, does not imply physical release.
+Keys received before a committed projection update state without producing an
+unmatched Android stream. Switch state remains UNKNOWN because wl_seat provides
+no corresponding switch state.
+
+Regression 198 passes the module gate. Regression 199 passes full JVM/native and
+all 15 APK integration tests (49 diagnostic steps, zero runtime issues), including
+remapped modifier aggregation, inherited state, source rejection, pre-projection
+edges, cancellation versus release and focused-task removal. Regression 200 passes
+stock desktop, Cage/labwc task gates and the native-dispatcher Java gate. Logs:
+`/tmp/wayland-key-state-198.log`, `/tmp/wayland-key-state-regressions-199.log`, and
+`/tmp/wayland-key-state-stock-200.log`.
+
+This closes focused key-state queries for the current keyboard map. Full physical
+keyboard inventory, cross-task focus acknowledgement and remaining M8–M11 gates
+are still pending.
+
 ## Inspection peer isolation checkpoint (2026-09-07)
 
 Session inspection validates each complete app tree before merging it. Invalid

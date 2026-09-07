@@ -47,6 +47,34 @@ internal class WaylandTaskInput(private val android: Android,
         compositorMeta = KeyEvent.normalizeMetaState(value)
         lockedMeta = value and (KeyEvent.META_CAPS_LOCK_ON or KeyEvent.META_NUM_LOCK_ON or KeyEvent.META_SCROLL_LOCK_ON)
     }
+    // EventHub.getKeyCodeState/getScanCodeState consult the device's key map,
+    // capability mask and physical state. Wayland replaces that hardware seam:
+    // its enter snapshot and key edges are observable only while we have focus.
+    // Publish immutable snapshots for WMS/Binder readers, without waiting for
+    // the shell handler while a caller might own the WM lock.
+    private data class KeyboardState(val active: Boolean = false,
+        val supportedKeys: Set<Int> = emptySet(), val supportedScans: Set<Int> = emptySet(),
+        val down: Map<Int, Int> = emptyMap()) {
+        fun accepts(deviceId: Int, sourceMask: Int) = active && deviceId < 0 &&
+            InputDevice.SOURCE_KEYBOARD and sourceMask and InputDevice.SOURCE_CLASS_MASK.inv() != 0
+    }
+    @Volatile private var keyboardState = KeyboardState()
+    private var supportedKeys = emptySet<Int>()
+    private var supportedScans = emptySet<Int>()
+    private fun publishKeyboardState() {
+        keyboardState = KeyboardState(focus != null, supportedKeys, supportedScans, physicalKeys.toMap())
+    }
+    fun keyCodeState(deviceId: Int, sourceMask: Int, code: Int): Int {
+        val state = keyboardState
+        if (!state.accepts(deviceId, sourceMask) || code !in state.supportedKeys) return -1
+        return if (code in state.down.values) 1 else 0
+    }
+    fun scanCodeState(deviceId: Int, sourceMask: Int, scan: Int): Int {
+        val state = keyboardState
+        if (!state.accepts(deviceId, sourceMask) || scan !in state.supportedScans) return -1
+        return if (scan in state.down) 1 else 0
+    }
+
     private var touchDownTime = 0L
     private var repeat: Pair<Int, Int>? = null
     private var layoutGeneration = 0
@@ -56,10 +84,14 @@ internal class WaylandTaskInput(private val android: Android,
         if (generation <= layoutGeneration) return
         val map = WaylandKeyboardMap.compile(characters, symbols)
         focus?.releaseKeys()
-        android.keyboardLayout(map, WaylandKeyboardMap.supportedKeyCodes(characters, symbols))
+        val available = WaylandKeyboardMap.supportedKeyCodes(characters, symbols)
+        supportedKeys = available.toSet()
+        supportedScans = WaylandKeyboardMap.supportedScanCodes(characters, symbols).toSet()
+        android.keyboardLayout(map, available)
         layoutSymbols = symbols.copyOf()
         layoutGeneration = generation
         for (scan in physicalKeys.keys.toList()) physicalKeys[scan] = keyCode(scan)
+        publishKeyboardState()
     }
 
     fun repeatConfiguration(rate: Int, delayMillis: Int) {
@@ -110,6 +142,7 @@ internal class WaylandTaskInput(private val android: Android,
                 }
                 physicalKeys.clear()
                 for (scan in heldScanCodes) physicalKeys[scan] = keyCode(scan)
+                publishKeyboardState()
                 android.keyboardActive(true)
                 if (bounds != null) android.focusTask(task.id)
             } else {
@@ -117,6 +150,7 @@ internal class WaylandTaskInput(private val android: Android,
                 if (focus === this) {
                     focus = null
                     physicalKeys.clear()
+                    publishKeyboardState()
                     android.keyboardActive(false)
                 }
             }
@@ -255,7 +289,12 @@ internal class WaylandTaskInput(private val android: Android,
         }
 
         fun key(scanCode: Int, down: Boolean, repeatable: Boolean = true) {
-            if (!live() || focus !== this || bounds == null || scanCode !in 0..767) return
+            if (!live() || focus !== this || scanCode !in 0..767) return
+            if (bounds == null) {
+                if (down) physicalKeys[scanCode] = keyCode(scanCode) else physicalKeys.remove(scanCode)
+                publishKeyboardState()
+                return // Track hardware without inventing delivery before a projection exists.
+            }
             var held = keys[scanCode]
             val code = held?.code ?: physicalKeys[scanCode] ?: keyCode(scanCode)
             if (down) {
@@ -285,6 +324,7 @@ internal class WaylandTaskInput(private val android: Android,
                     if (active) current or bit else current and bit.inv()
                 } else (current and LOCKS.inv()) or lockedMeta
             }
+            publishKeyboardState()
             held ?: return // Update physical state without inventing a delivered key-up.
             dispatch(KeyEvent(held!!.time, clock(), if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP,
                 held.code, 0, metaState(), KeyCharacterMap.VIRTUAL_KEYBOARD, scanCode,
@@ -349,6 +389,7 @@ internal class WaylandTaskInput(private val android: Android,
             if (focus === this) {
                 focus = null
                 physicalKeys.clear()
+                publishKeyboardState()
                 android.keyboardActive(false)
             }
             windows.remove(task.id)

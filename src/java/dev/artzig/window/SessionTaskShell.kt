@@ -5,10 +5,12 @@ import android.os.ServiceManager
 
 /** The system process owns one organizer independently of APK launchers. */
 internal object SessionTaskShell {
-    class Controller(private val presenter: RemoteTaskPresenter, private val cleanup: () -> Unit) : AutoCloseable {
+    class Controller(private val presenter: RemoteTaskPresenter, private val input: WaylandTaskInput, private val cleanup: () -> Unit) : AutoCloseable {
         fun pointerCapture(token: android.os.IBinder?, sequence: Int) = presenter.pointerCapture(token, sequence)
         fun pointerIcon(token: android.os.IBinder, type: Int): Boolean = presenter.pointerIcon(token, type)
         fun testInputQueued(sequence: Long): Boolean = presenter.testInputQueued(sequence)
+        fun keyCodeState(deviceId: Int, sourceMask: Int, code: Int) = input.keyCodeState(deviceId, sourceMask, code)
+        fun scanCodeState(deviceId: Int, sourceMask: Int, scan: Int) = input.scanCodeState(deviceId, sourceMask, scan)
         override fun close() = cleanup()
     }
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,
@@ -45,7 +47,7 @@ internal object SessionTaskShell {
         binder.linkToDeath(death, 0)
         try { shell.start() }
         catch (failure: Throwable) { binder.unlinkToDeath(death, 0); throw failure }
-        return Controller(presenter) {
+        return Controller(presenter, input) {
             binder.unlinkToDeath(death, 0)
             shell.close()
         }
