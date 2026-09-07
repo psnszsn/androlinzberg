@@ -22,6 +22,31 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Early seat connection checkpoint (2026-09-07)
+
+The task shell now connects the session keyboard before registering its organizer.
+A synchronous snapshot seeds layout, key capabilities, modifiers and repeat
+policy before any APK window can be created. Subsequent keyboard state callbacks
+have session scope and remain ordered with task input on the shared Binder
+endpoint, including periods with no task windows.
+
+Regression 194 passes the stock desktop launcher, Cage/labwc task gates and native
+checks. The trusted cold-launch driver verifies the compositor character map and
+key capabilities before installing the APK. After both native task windows are
+removed, the same compositor helper switches US → German → US; Android publishes
+new device generations and the corresponding Shift+2 character each time. The
+existing pointer lifetime and task pixel gates also pass. Regression 193 passed
+the live gates but found an outdated native test invocation, corrected in 194.
+Log: `/tmp/wayland-early-seat-194.log`; retained artifacts:
+`/tmp/wayland-early-seat-success-194-{cage,labwc}/`.
+
+Regression 195 passes the full JVM/native and all 15 APK integration tests
+(45 diagnostic steps, zero runtime issues):
+`/tmp/wayland-early-seat-regressions-195.log`.
+
+Cross-task focus acknowledgement, complete key-state queries and the remaining
+M9–M11 work are still pending; this checkpoint does not complete M8.
+
 ## Task-addressed physical input checkpoint (2026-09-07)
 
 The session controller now validates the observed process generation, window

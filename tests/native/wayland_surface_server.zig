@@ -37,6 +37,10 @@ pub fn main(init: std.process.Init) !void {
                     const line = try std.fmt.bufPrint(&status, "pointer updated {d}\n", .{session.seat_capabilities});
                     try Io.File.stdout().writeStreamingAll(init.io, line);
                 },
+                'd', 'u' => {
+                    try session.testKeyboardLayout(buffer[0] == 'd');
+                    try Io.File.stdout().writeStreamingAll(init.io, "keyboard updated\n");
+                },
                 '\n' => {},
                 else => return error.UnknownKeyboardSeatCommand,
             }

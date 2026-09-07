@@ -27,6 +27,20 @@ object StockColdLaunchSmoke {
         check(manager.runningAppProcesses.orEmpty().none { pkg in it.pkgList.orEmpty() })
         val packages = android.app.ActivityThread.getPackageManager()
         check(packages.getApplicationInfo(pkg, 0L, 0) == null)
+        if (System.getenv("AZK_TASK_WINDOWS") == "1") {
+            val input = android.hardware.input.IInputManager.Stub.asInterface(
+                android.os.ServiceManager.getService(Context.INPUT_SERVICE))
+            val keyboard = checkNotNull(input.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD))
+            check(keyboard.generation > 0)
+            check(keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, 0) == 'a'.code)
+            check(keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A,
+                android.view.KeyEvent.META_SHIFT_ON) == 'A'.code)
+            val supported = BooleanArray(2)
+            check(input.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD,
+                intArrayOf(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.KEYCODE_DEL), supported))
+            check(supported.all { it })
+            println("Stock Wayland keyboard: layout and keys available before APK installation")
+        }
         check(checkNotNull(HostedServiceClient.installerOrNull()).installPackage(args.single(), null) == pkg)
         val info = checkNotNull(packages.getApplicationInfo(pkg, 0L, 0))
         check(info.uid in Process.FIRST_APPLICATION_UID..Process.LAST_APPLICATION_UID)
@@ -335,6 +349,18 @@ object StockColdLaunchSmoke {
         check(pointerCapability("WINDOWLESS_POINTER_RECREATE"))
         await("Seat capability did not reappear without task windows") { inputDevices.getInputDevice(0) != null }
         if (!windowlessRetained) check(checkNotNull(inputDevices.getInputDevice(0)).generation > currentPointer.generation)
+        for ((marker, expected) in listOf("WINDOWLESS_KEYBOARD_GERMAN" to '"', "WINDOWLESS_KEYBOARD_US" to '@')) {
+            val previous = checkNotNull(inputDevices.getInputDevice(-1)).generation
+            println(marker)
+            System.out.flush()
+            check(commands.readLine() == "keyboard updated")
+            await("Keyboard layout update was lost without task windows: $marker") {
+                val keyboard = checkNotNull(inputDevices.getInputDevice(-1))
+                keyboard.generation > previous && keyboard.keyCharacterMap.get(
+                    android.view.KeyEvent.KEYCODE_2, android.view.KeyEvent.META_SHIFT_ON) == expected.code
+            }
+        }
+        println("Stock Wayland keyboard: layout changes survive removal of every task window")
         println("Stock Wayland seat: capability updates survive removal of every task window")
         println("Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed")
     }

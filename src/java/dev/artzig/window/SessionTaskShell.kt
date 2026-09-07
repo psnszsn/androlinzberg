@@ -32,6 +32,7 @@ internal object SessionTaskShell {
         dispatcher.setKeyRepeatConfiguration(500, 50, false)
         dispatcher.setDesktopKeyboardFocus(false)
         val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, publishCapabilities, dispatcher::notifyPointerCaptureChanged)
+        presenter.connect()
         val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)
         val death = android.os.IBinder.DeathRecipient {
             check(handler.post {

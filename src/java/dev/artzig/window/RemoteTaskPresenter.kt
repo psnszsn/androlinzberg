@@ -14,6 +14,20 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val windows = mutableMapOf<Int, Window>()
     @Volatile private var queuedTestInput = 0L
     fun testInputQueued(sequence: Long): Boolean = sequence > 0 && queuedTestInput >= sequence
+    fun connect() {
+        check(Looper.myLooper() === handler.looper)
+        val state = remote.connectSeat(callback)
+        val characterCount = WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT
+        check(state.size == 8 + characterCount + WaylandKeyboardMap.SCAN_COUNT && state[0] == 1)
+        check(state[1] > 0 && state[2] and 15 == state[2] && state[3] >= 0 && state[4] >= 0 && state[5] >= 0)
+        // Seed clients synchronously before organizer registration can create an
+        // APK window. Later global callbacks retain the same seat chronology.
+        input.keyboardLayout(state[3], state.copyOfRange(8, 8 + characterCount),
+            state.copyOfRange(8 + characterCount, state.size))
+        input.repeatConfiguration(state[4], state[5])
+        input.modifiers(state[6], state[7])
+        publishCapabilities(state[1], state[2])
+    }
     private val capture = WaylandPointerCapture(object : WaylandPointerCapture.Host {
         override fun task(token: android.os.IBinder) = taskForToken(token)?.let { windows[it]?.task }
         override fun request(task: TaskGeometry.Task, enabled: Boolean, sequence: Int): Boolean {
@@ -42,6 +56,11 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     // Binder serializes oneway calls per target object. One callback for the
     // whole seat preserves leave/enter/key chronology across different tasks.
     private val callback = object : IWaylandTaskEvents.Stub() {
+        private fun deliverSeat(action: () -> Unit) {
+            if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
+                throw SecurityException("Only the session presenter may publish seat state")
+            check(handler.post { action() })
+        }
         private fun deliver(id: Int, generation: Long, action: (Window) -> Unit) {
             if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
                 throw SecurityException("Only the session presenter may deliver task events")
@@ -67,8 +86,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             deliver(taskId, generation) { it.seat.touch(action, id, x, y, major, minor, orientation) }
         override fun cancelTouch(taskId: Int, generation: Long) =
             deliver(taskId, generation) { input.cancelTouch() }
-        override fun repeatConfiguration(taskId: Int, generation: Long, rate: Int, delayMillis: Int) =
-            deliver(taskId, generation) { input.repeatConfiguration(rate, delayMillis) }
+        override fun repeatConfiguration(rate: Int, delayMillis: Int) =
+            deliverSeat { input.repeatConfiguration(rate, delayMillis) }
         override fun pointerCaptureChanged(taskId: Int, generation: Long, enabled: Boolean, sequence: Int) =
             deliver(taskId, generation) { capture.changed(it.task, enabled, sequence) }
         override fun relativePointer(taskId: Int, generation: Long, dx: Float, dy: Float) =
@@ -78,15 +97,12 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 check(sequence > queuedTestInput) { "Test input sequence rewound" }
                 queuedTestInput = sequence
             }
-        override fun seatCapabilities(sourceGeneration: Int, capabilities: Int) {
-            if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
-                throw SecurityException("Only the session presenter may publish seat capabilities")
-            check(handler.post { publishCapabilities(sourceGeneration, capabilities) })
-        }
-        override fun modifiers(taskId: Int, generation: Long, metaState: Int, persistentMetaState: Int) =
-            deliver(taskId, generation) { input.modifiers(metaState, persistentMetaState) }
-        override fun keyboardLayout(taskId: Int, generation: Long, layoutGeneration: Int, characters: IntArray, symbols: IntArray) =
-            deliver(taskId, generation) { input.keyboardLayout(layoutGeneration, characters, symbols) }
+        override fun seatCapabilities(sourceGeneration: Int, capabilities: Int) =
+            deliverSeat { publishCapabilities(sourceGeneration, capabilities) }
+        override fun modifiers(metaState: Int, persistentMetaState: Int) =
+            deliverSeat { input.modifiers(metaState, persistentMetaState) }
+        override fun keyboardLayout(layoutGeneration: Int, characters: IntArray, symbols: IntArray) =
+            deliverSeat { input.keyboardLayout(layoutGeneration, characters, symbols) }
     }
 
     override fun open(task: TaskGeometry.Task, appId: String, title: String,

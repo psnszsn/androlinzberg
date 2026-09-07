@@ -116,6 +116,22 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 process.stdin.write(f'{mask}\n'.encode())
                 process.stdin.flush()
 
+            def change_keyboard(marker, operation):
+                deadline = time.monotonic() + 15
+                while marker not in (out / 'app.log').read_text(errors='replace'):
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError(f'{marker} timeout/exit: {process.poll()}')
+                    time.sleep(0.02)
+                seat.stdin.write(operation)
+                seat.stdin.flush()
+                if not select.select([seat.stdout], [], [], 3)[0]:
+                    raise RuntimeError(f'{marker} compositor keymap command failed')
+                state = seat.stdout.readline()
+                if state != b'keyboard updated\n':
+                    raise RuntimeError(f'{marker} invalid keymap acknowledgement: {state}')
+                process.stdin.write(state)
+                process.stdin.flush()
+
             if args.launcher:
                 deadline = time.monotonic() + 60
                 while True:
@@ -206,6 +222,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 verify_pixels('SURVIVING_TASK_WINDOW_READY', (0, 255, 255), 'screenshot')
                 change_pointer('WINDOWLESS_POINTER_REMOVE', b'r')
                 change_pointer('WINDOWLESS_POINTER_RECREATE', b'p')
+                change_keyboard('WINDOWLESS_KEYBOARD_GERMAN', b'd')
+                change_keyboard('WINDOWLESS_KEYBOARD_US', b'u')
                 if process.wait(timeout=30) != 0:
                     raise RuntimeError(f'session failed: {process.returncode}')
                 text = (out / 'app.log').read_text(errors='replace')

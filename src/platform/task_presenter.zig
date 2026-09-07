@@ -111,11 +111,43 @@ const Server = struct {
             request.done.set(self.io);
         }
     }
+    fn connectSeat(self: *Server, request: *Request) !i32 {
+        if (self.owner != null) return error.SeatAlreadyConnected;
+        var remote: ?*Binder = null;
+        try ok(AParcel_readStrongBinder(request.input, &remote));
+        const callback = remote orelse return error.MissingCallback;
+        defer AIBinder_decStrong(callback);
+        if (!AIBinder_associateClass(callback, self.events_class)) return error.InvalidCallback;
+        try end(request.input);
+        const snapshot = try self.session.seatSnapshot();
+        try ok(AIBinder_linkToDeath(callback, self.death, null));
+        AIBinder_incStrong(callback);
+        self.owner = callback;
+        self.owner_pid = request.pid;
+        try ok(AParcel_writeInt32(request.output, 0));
+        try ok(AParcel_writeInt32Array(request.output, &snapshot, snapshot.len));
+        return 0;
+    }
     fn dispatchEvents(self: *Server) !void {
         for (self.session.ordered_events.?.take()) |item| {
-            if (item.event == .seat_capabilities) {
-                if (self.owner) |callback| try sendCapabilities(callback, item.event.seat_capabilities.generation, item.event.seat_capabilities.mask);
-                continue;
+            switch (item.event) {
+                .seat_capabilities => |caps| {
+                    if (self.owner) |callback| try sendGlobal(callback, 15, .{ caps.generation, caps.mask });
+                    continue;
+                },
+                .keyboard_layout => |layout| {
+                    if (self.owner) |callback| try sendLayout(callback, layout);
+                    continue;
+                },
+                .keyboard_modifiers => |meta| {
+                    if (self.owner) |callback| try sendGlobal(callback, 11, .{ meta.effective, meta.persistent });
+                    continue;
+                },
+                .keyboard_repeat_configuration => |config| {
+                    if (self.owner) |callback| try sendGlobal(callback, 9, .{ config.rate, config.delay_ms });
+                    continue;
+                },
+                else => {},
             }
             const entry = for (&self.entries) |*slot| {
                 if (slot.*) |*candidate| if (candidate.window == item.window) break candidate;
@@ -126,8 +158,6 @@ const Server = struct {
                 },
                 .configure => |size| try send(entry, 1, .{ size.width, size.height }),
                 .close => try send(entry, 2, .{}),
-                .keyboard_modifiers => |meta| try send(entry, 11, .{ meta.effective, meta.persistent }),
-                .keyboard_layout => |layout| try sendLayout(entry, layout),
                 .keyboard_focus => |focused| try sendFocus(entry, focused),
                 .keyboard_reset => try send(entry, 3, .{ false, @as([]const i32, &.{}) }),
                 .pointer_motion => |p| try send(entry, 4, .{ 0, 0, false, p.x, p.y }),
@@ -141,7 +171,6 @@ const Server = struct {
                 .key => |key| try send(entry, 6, .{ key.keycode, key.pressed, key.repeatable }),
                 .touch => |touch| try send(entry, 7, .{ @backingInt(touch.action), touch.id, touch.x, touch.y, touch.major, touch.minor, touch.orientation }),
                 .touch_cancel => try send(entry, 8, .{}),
-                .keyboard_repeat_configuration => |configuration| try send(entry, 9, .{ configuration.rate, configuration.delay_ms }),
                 else => {},
             }
         }
@@ -246,6 +275,7 @@ const Server = struct {
     fn handle(self: *Server, request: *Request) !i32 {
         // This read/test-pacing API is available to the system controller; only
         // the system-server owner may mutate task identities and geometry.
+        if (request.code == 10) return self.connectSeat(request);
         if (request.code == 6) return self.observeTestFrames(request);
         if (request.code == 7) return self.testWindow(request);
         if (request.code == 8) {
@@ -398,7 +428,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 9) return -38;
+    if (code < 1 or code > 10) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -451,31 +481,18 @@ const Text = struct {
         return self.bytes[0..self.len :0];
     }
 };
-fn sendCapabilities(callback: *Binder, generation: i32, mask: i32) !void {
-    var input: ?*Parcel = null;
-    var output: ?*Parcel = null;
-    try ok(AIBinder_prepareTransaction(callback, &input));
-    defer if (input) |parcel| AParcel_delete(parcel);
-    defer if (output) |parcel| AParcel_delete(parcel);
-    try ok(AParcel_writeInt32(input.?, generation));
-    try ok(AParcel_writeInt32(input.?, mask));
-    try ok(AIBinder_transact(callback, 15, &input, &output, 1));
-}
-
-fn sendLayout(entry: *Entry, layout: Queue.KeyboardLayout) !void {
+fn sendLayout(callback: *Binder, layout: Queue.KeyboardLayout) !void {
     const characters = try layout.characters();
     const symbols = try layout.symbols();
     var input: ?*Parcel = null;
-    try ok(AIBinder_prepareTransaction(entry.events, &input));
+    try ok(AIBinder_prepareTransaction(callback, &input));
     defer if (input) |parcel| AParcel_delete(parcel);
-    try ok(AParcel_writeInt32(input.?, entry.key.id));
-    try ok(AParcel_writeInt64(input.?, entry.key.generation));
     try ok(AParcel_writeInt32(input.?, layout.generation));
     try ok(AParcel_writeInt32Array(input.?, &characters, characters.len));
     try ok(AParcel_writeInt32Array(input.?, &symbols, symbols.len));
     var output: ?*Parcel = null;
     defer if (output) |parcel| AParcel_delete(parcel);
-    try ok(AIBinder_transact(entry.events, 10, &input, &output, 1));
+    try ok(AIBinder_transact(callback, 10, &input, &output, 1));
 }
 
 fn sendFocus(entry: *Entry, focus: anytype) !void {
@@ -497,20 +514,32 @@ fn send(entry: *Entry, code: u32, values: anytype) !void {
     try ok(AParcel_writeInt32(input.?, entry.key.id));
     try ok(AParcel_writeInt64(input.?, entry.key.generation));
     defer if (output) |parcel| AParcel_delete(parcel);
+    try writeValues(input.?, values);
+    try ok(AIBinder_transact(entry.events, code, &input, &output, 1));
+}
+fn sendGlobal(callback: *Binder, code: u32, values: anytype) !void {
+    var input: ?*Parcel = null;
+    var output: ?*Parcel = null;
+    try ok(AIBinder_prepareTransaction(callback, &input));
+    defer if (input) |parcel| AParcel_delete(parcel);
+    defer if (output) |parcel| AParcel_delete(parcel);
+    try writeValues(input.?, values);
+    try ok(AIBinder_transact(callback, code, &input, &output, 1));
+}
+fn writeValues(parcel: *Parcel, values: anytype) !void {
     inline for (values) |value| switch (@typeInfo(@TypeOf(value))) {
-        .bool => try ok(AParcel_writeInt32(input.?, @intFromBool(value))),
+        .bool => try ok(AParcel_writeInt32(parcel, @intFromBool(value))),
         .int, .comptime_int => if (@TypeOf(value) == i64)
-            try ok(AParcel_writeInt64(input.?, value))
+            try ok(AParcel_writeInt64(parcel, value))
         else
-            try ok(AParcel_writeInt32(input.?, @intCast(value))),
-        .float, .comptime_float => try ok(AParcel_writeFloat(input.?, @floatCast(value))),
+            try ok(AParcel_writeInt32(parcel, @intCast(value))),
+        .float, .comptime_float => try ok(AParcel_writeFloat(parcel, @floatCast(value))),
         .pointer => |pointer| {
             if (pointer.size != .slice or pointer.child != i32) @compileError("Unsupported task callback array");
-            try ok(AParcel_writeInt32Array(input.?, value.ptr, @intCast(value.len)));
+            try ok(AParcel_writeInt32Array(parcel, value.ptr, @intCast(value.len)));
         },
         else => @compileError("Unsupported task callback field"),
     };
-    try ok(AIBinder_transact(entry.events, code, &input, &output, 1));
 }
 pub fn main(init: std.process.Init) !void {
     try run(init);

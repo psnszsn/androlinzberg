@@ -22,4 +22,6 @@ interface IWaylandTaskPresenter {
     long injectTestInput(int taskId, long generation, in int[] geometry,
         int kind, in int[] points, String text);
     boolean setPointerIcon(int taskId, long generation, int type);
+    /** Establish the session-wide seat owner and return a versioned initial snapshot. */
+    int[] connectSeat(IWaylandTaskEvents events);
 }
