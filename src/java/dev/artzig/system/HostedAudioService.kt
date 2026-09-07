@@ -17,6 +17,13 @@ import java.util.Objects
 internal class HostedAudioService(enforcer: PermissionEnforcer) : IAudioService.Stub(enforcer),
     IAudioService by unsupported<IAudioService>() {
     override fun asBinder(): IBinder = this
+    // AudioService.readCameraSoundForced: the host has no active SIM subscriptions.
+    // Read the current host resource/property policy when legacy Camera asks for it.
+    override fun isCameraSoundForced(): Boolean =
+        android.os.SystemProperties.getBoolean("audio.camerasound.force", false) ||
+            android.content.res.Resources.getSystem().getBoolean(
+                com.android.internal.R.bool.config_camera_sound_forced)
+
     // AudioDeviceInventory.startWatchingRoutes: a snapshot plus listener ownership. There is
     // one speaker output, no Bluetooth route, and no framework master gain on this backend.
     private val routeCallbacks = RemoteCallbackList<IAudioRoutesObserver>()

@@ -8,7 +8,6 @@ pub const framework = [_][]const u8{
 
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
     "src/framework-stubs/android/app/AppOpsManager.java",
-    "src/framework-stubs/android/hardware/Camera.java",
     "src/framework-stubs/android/hardware/gnss/V2_1/IGnssMeasurementCallback.java",
     "src/framework-stubs/android/media/AudioManager.java",
     "src/framework-stubs/android/media/MediaMetadataRetriever.java",
@@ -97,6 +96,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockMediaDrmSmoke.kt",
     "src/java/dev/artzig/StockMediaHttpSmoke.kt",
     "src/java/dev/artzig/StockHidlMemorySmoke.kt",
+    "src/java/dev/artzig/HostedLegacyCamera.kt",
+    "src/java/dev/artzig/StockLegacyCameraSmoke.kt",
     "src/java/dev/artzig/StockImageSmoke.kt",
     "src/java/dev/artzig/StockConfigurationSmoke.kt",
     "src/java/dev/artzig/StockActivityCallbacksSmoke.kt",

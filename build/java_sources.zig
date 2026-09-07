@@ -2721,6 +2721,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/companion/virtual/sensor/VirtualSensorDirectChannelCallback.java");
     try c.file("$CJ/android/companion/virtual/sensor/VirtualSensorEvent.java");
     try c.file("$CJ/android/hardware/CameraInfo.java");
+    try c.file("$CJ/android/hardware/Camera.java");
     try c.file("$CJ/android/hardware/CameraStatus.java");
     try c.file("$CJ/android/hardware/camera2/CameraAccessException.java");
     try c.file("$CJ/android/hardware/camera2/CameraCaptureSession.java");

@@ -3,6 +3,8 @@
  * ("appops") when published, so the system can turn individual ops off. */
 package android.app;
 public class AppOpsManager {
+    // Pinned AppOpsManager operation value; used by the stock legacy camera client.
+    public static final int OP_PLAY_AUDIO = android.app.AppOpEnums.APP_OP_PLAY_AUDIO;
     public static final String OPSTR_MEDIA_ROUTING_CONTROL = "android:media_routing_control";
     public static final int MODE_ALLOWED = 0;
     public static final int MODE_IGNORED = 1;

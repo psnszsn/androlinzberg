@@ -27,6 +27,20 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- The legacy Camera placeholder is replaced by the verbatim AOSP class. Its 29
+  native methods preserve absent-service connection failures, invalid-ID ordering,
+  released-object errors and cleanup, with generated Binder service queries below
+  the Java API. AOSP now supplies parameter encoding, validation, copying and public
+  lifecycle logic. The audio service supplies the host shutter-sound resource/property
+  policy. ART tests exercise parameter round trips, service attribution and queries,
+  connection rejection, all 24 initialized-camera native operations, and repeated
+  release. JVM/system, native/Binder and build checks pass; all 11 APK tests pass
+  (39 steps, zero structured runtime issues). Capture/preview producers remain absent;
+  a service returning a camera is disconnected and reported as unsupported rather than
+  published as a usable device. Both archives are unchanged; the source was already
+  packaged. The regenerated inventory is 25 stubs (15 pending, 10 survivors).
+
+
 - NativeHandle and HidlMemory now compile verbatim with their original JNI,
   EphemeralStorage and libhidl value-type support. ART tests verify constructor
   array copying, borrowed versus owned descriptors, close-on-exec duplication,
