@@ -3335,6 +3335,7 @@ F aosp frameworks/base/core/java/com/android/internal/protolog/ViewerConfigInput
 F aosp frameworks/base/media/java/android/media/AudioDeviceCallback.java
 F aosp frameworks/base/media/java/android/media/AudioRouting.java
 F aosp frameworks/base/media/java/android/media/MediaCrypto.java
+F aosp frameworks/base/media/java/android/media/MediaMetadataRetriever.java
 F aosp frameworks/base/media/java/android/media/MediaCryptoException.java
 F aosp frameworks/base/media/java/android/media/MediaDrmThrowable.java
 F aosp frameworks/base/media/java/android/media/RouteDiscoveryPreference.aidl

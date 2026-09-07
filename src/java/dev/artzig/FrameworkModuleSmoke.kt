@@ -220,6 +220,7 @@ internal object FrameworkModuleSmoke {
         StockNetworkPolicySmoke.run()
         StockUsbSmoke.run()
         StockMediaCryptoSmoke.run()
+        StockMediaMetadataRetrieverSmoke.run()
         StockMediaDrmSmoke.run()
         StockMediaHttpSmoke.run()
         StockHidlMemorySmoke.run()

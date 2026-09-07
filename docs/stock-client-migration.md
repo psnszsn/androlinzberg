@@ -27,6 +27,21 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- MediaMetadataRetriever now compiles verbatim; its constants/no-data Java stub
+  is deleted. The 13-method JNI seam preserves the pinned native client's state
+  when the media.player retriever service is absent: data-source setup fails,
+  reads have no extracted data, and release changes subsequent calls to released-client
+  errors. Stock Java owns path/URI dispatch, option and image/frame checks, bitmap
+  parameters and genre parsing. Tests cover those contracts, header validation,
+  borrowed descriptor and callback-source ownership, failed-read parameter mutation,
+  all nine native operations after release, repeated cleanup and reuse. JVM/system,
+  native/Binder and build checks pass; all 11 APK tests pass (37 steps, zero structured
+  runtime issues). AOSP is rebuilt and repinned, and the added source is byte-verified.
+  ART is unchanged. The inventory is 19 stubs (11 pending, 8 survivors); the removed
+  retriever was a survivor. Metadata/frame extraction remains unavailable and would
+  require a service/backend; this batch adds no FFmpeg implementation.
+
+
 - The native platform now compiles AOSP's AMediaFormat implementation, its private
   message bridge, and ten foundation sources verbatim. Native callers get the original
   typed scalar/string/buffer/rectangle storage, copying, ownership and formatting rules.
