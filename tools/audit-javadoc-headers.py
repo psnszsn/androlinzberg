@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Reject packaging or bytecode use of compile-only SDK Javadoc imports."""
+"""Reject packaging or runtime use of compile-only SDK headers."""
 
+import re
 import struct
+import subprocess
+import tempfile
+from pathlib import Path
 import sys
 import zipfile
 
@@ -40,6 +44,32 @@ def utf8_constants(data):
             raise ValueError("invalid double-slot constant")
 
 
+def referenced_bare_names(data, names):
+    """Javac retains unused CONSTANT_Class owners for inlined static constants.
+
+    Use the JDK classfile reader to inspect code and every class attribute, with
+    only the constant-pool listing removed. This keeps class literals, member
+    calls, inheritance, stack maps, bootstrap arguments and nest metadata visible.
+    Descriptors/signatures are checked independently from all UTF8 constants.
+    Missing tools, malformed output and decode failures all fail closed.
+    """
+    with tempfile.TemporaryDirectory(prefix="azk-header-audit-") as directory:
+        path = Path(directory) / "Input.class"
+        path.write_bytes(data)
+        result = subprocess.run(["javap", "-p", "-v", str(path)],
+                                capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise ValueError("JDK classfile inspection failed")
+    before, separator, pool = result.stdout.partition("Constant pool:\n")
+    _, body_start, body = pool.partition("\n{\n")
+    if not separator or not body_start:
+        raise ValueError("unrecognized JDK classfile inspection output")
+    live = before + body
+    return {name for name in names if re.search(
+        r"(?<![\w$/])" + re.escape(name.decode()).replace("/", r"[/.]")
+        + r"(?![\w$/])", live)}
+
+
 def audit(archive, names):
     names = tuple(name.encode("ascii") for name in names)
     failures = []
@@ -49,15 +79,22 @@ def audit(archive, names):
                 continue
             if entry.filename.removesuffix(".class").encode() in names:
                 failures.append(f"packaged Javadoc header: {entry.filename}")
-            # Also catch array descriptors, generic signatures and annotation class
-            # literals. Scan every UTF8 entry so no method/field shape is missed.
+            # Descriptors also cover arrays, generics and annotation class literals.
             try:
-                for value in utf8_constants(jar.read(entry)):
+                data = jar.read(entry)
+                bare = set()
+                runtime = set()
+                for value in utf8_constants(data):
                     for name in names:
-                        if (value == name or b"L" + name + b";" in value
-                                or b"L" + name + b"<" in value):
-                            failures.append(f"{entry.filename}: runtime reference to {name.decode()}")
-            except ValueError as error:
+                        if value == name:
+                            bare.add(name)
+                        if b"L" + name + b";" in value or b"L" + name + b"<" in value:
+                            runtime.add(name)
+                if bare - runtime:
+                    runtime.update(referenced_bare_names(data, bare - runtime))
+                for name in runtime:
+                    failures.append(f"{entry.filename}: runtime reference to {name.decode()}")
+            except (ValueError, OSError, subprocess.SubprocessError) as error:
                 failures.append(f"{entry.filename}: {error}")
     return sorted(set(failures))
 

@@ -6,6 +6,8 @@
 #include <android/gui/BnFpsListener.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IResultReceiver.h>
+#include <binder/IMemory.h>
+#include <binder/MemoryDealer.h>
 #include <binder/Parcel.h>
 #include <fcntl.h>
 
@@ -86,6 +88,15 @@ struct Service final : BBinder {
   int ownUid = IPCThreadState::self()->getCallingUid();
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t) override {
+    if (code == 7) {
+      auto memory = interface_cast<IMemory>(in.readStrongBinder());
+      assert(memory && memory->size() == 8192 && memory->offset() > 0);
+      auto *bytes = static_cast<uint8_t *>(memory->unsecurePointer());
+      assert(bytes);
+      for (size_t i = 0; i < memory->size(); ++i) assert(bytes[i] == uint8_t(i));
+      bytes[0] = 93;
+      return out->writeStrongBinder(IInterface::asBinder(memory));
+    }
     if (code == 6) {
       const int32_t size = in.readInt32();
       assert(size > 16 * 1024);
@@ -213,6 +224,24 @@ int main(int argc, char **argv) {
       AServiceManager_waitForService("dev.artzig.facade.v2"));
   assert(server == same);
   same.clear();
+  // Stock IMemory/IMemoryHeap protocol, including a nonzero allocation offset.
+  {
+    auto dealer = sp<MemoryDealer>::make(64 * 1024, "binder-facade-memory");
+    auto first = dealer->allocate(32 * 1024);
+    auto memory = dealer->allocate(8192);
+    assert(first && memory && !dealer->allocate(64 * 1024));
+    auto *bytes = static_cast<uint8_t *>(memory->unsecurePointer());
+    for (size_t i = 0; i < memory->size(); ++i) bytes[i] = uint8_t(i);
+    // The allocation retains the dealer and heap after the creator releases them.
+    first.clear();
+    dealer.clear();
+    Parcel request, response;
+    assert(request.writeStrongBinder(IInterface::asBinder(memory)) == OK);
+    assert(server->transact(7, request, &response) == OK);
+    auto returned = interface_cast<IMemory>(response.readStrongBinder());
+    assert(returned == memory && bytes[0] == 93);
+    pass("stock shared-memory Binder, allocation lifetime and remote writes");
+  }
   for (bool mutableCopy : {false, true}) {
     // Larger than the broker's inline frame limit: bytes must travel through an FD.
     constexpr int size = 2 * 1024 * 1024;

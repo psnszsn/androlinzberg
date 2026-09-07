@@ -65,6 +65,7 @@ extern int register_android_graphics_BitmapRegionDecoder(JNIEnv*);
 extern int register_android_graphics_RuntimeXfermode(JNIEnv*);
 extern int register_android_graphics_Camera(JNIEnv*);
 extern int register_android_hardware_camera2_CameraMetadata(JNIEnv*);
+extern int register_android_media_MediaHTTPConnection(JNIEnv*);
 extern int register_android_graphics_CreateJavaOutputStreamAdaptor(JNIEnv*);
 extern int register_android_graphics_Graphics(JNIEnv*);
 extern int register_android_graphics_Interpolator(JNIEnv*);
@@ -320,6 +321,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_graphics_RuntimeXfermode),
             E(register_android_graphics_Camera),
             E(register_android_hardware_camera2_CameraMetadata),
+            E(register_android_media_MediaHTTPConnection),
             E(register_android_graphics_CreateJavaOutputStreamAdaptor),
             E(android::register_android_graphics_CanvasProperty),
             E(android::register_android_graphics_ColorFilter),
@@ -510,3 +512,15 @@ extern "C" jint azk_camera_setup_vendor_tags(JNIEnv *env) {
     }
     return OK;
 }
+
+// Pinned android_util_Binder::javaObjectForIBinder conversion over the shared
+// Java/NDK Binder transport. The original bridge assumes kernel libbinder.
+namespace android {
+jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& binder) {
+    if (!binder) return nullptr;
+    AIBinder* native = binder->acquireNative();
+    jobject result = AIBinder_toJavaBinder(env, native);
+    AIBinder_decStrong(native);
+    return result;
+}
+} // namespace android

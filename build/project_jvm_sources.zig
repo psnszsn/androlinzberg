@@ -95,6 +95,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockUsbSmoke.kt",
     "src/java/dev/artzig/StockMediaCryptoSmoke.kt",
     "src/java/dev/artzig/StockMediaDrmSmoke.kt",
+    "src/java/dev/artzig/StockMediaHttpSmoke.kt",
     "src/java/dev/artzig/StockImageSmoke.kt",
     "src/java/dev/artzig/StockConfigurationSmoke.kt",
     "src/java/dev/artzig/StockActivityCallbacksSmoke.kt",

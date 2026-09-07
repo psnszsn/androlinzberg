@@ -7,6 +7,7 @@ pub const SourcePath = struct { source: Source, path: []const u8 };
 
 // TrafficStats and MediaStore import MediaPlayer only for Javadoc. The pinned SDK header
 // satisfies javac; the audit forbids runtime use.
+// Compile-only imports and inlined constants; audited against runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
     .classes = [_][]const u8{"android/media/MediaPlayer"},
@@ -376,6 +377,8 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMediaHTTPConnection.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMediaHTTPService.aidl" },
     .{ .source = .aosp, .path = "packages/providers/MediaProvider/apex/framework/java/android/provider/IMPCancellationSignal.aidl" },
     .{ .source = .aosp, .path = "packages/providers/MediaProvider/apex/framework/java/android/provider/IOpenAssetFileCallback.aidl" },
     .{ .source = .aosp, .path = "packages/providers/MediaProvider/apex/framework/java/android/provider/IOpenFileCallback.aidl" },

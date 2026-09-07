@@ -223,6 +223,7 @@ internal object FrameworkModuleSmoke {
         StockUsbSmoke.run()
         StockMediaCryptoSmoke.run()
         StockMediaDrmSmoke.run()
+        StockMediaHttpSmoke.run()
         StockImageSmoke.run()
         testStockProtoLog()
         testStockActivityOptions()

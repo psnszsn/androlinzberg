@@ -23,7 +23,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     lib.root_module.addIncludePath(aosp.path(b, "system/logging/liblog"));
     const flags = &.{ "-std=gnu++23", "-fno-exceptions", "-fno-rtti", "-fno-sanitize=undefined", "-DNDEBUG", "-D_GNU_SOURCE", "-D__ANDROID_HOST__", "-DLIBLOG_LOG_TAG=1006", "-DANDROID_DEBUGGABLE=0", "-include", b.pathResolve(&.{"src/native/azk_prelude.h"}) };
     lib.root_module.addCSourceFiles(.{ .files = &.{ "src/native/binder/Binder.cpp", "src/native/binder/Parcel.cpp" }, .flags = flags });
-    lib.root_module.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/binder"), .files = &.{ "IInterface.cpp", "Status.cpp", "IResultReceiver.cpp" }, .flags = flags });
+    lib.root_module.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/binder"), .files = &.{ "IInterface.cpp", "Status.cpp", "IResultReceiver.cpp", "IMemory.cpp", "MemoryBase.cpp", "MemoryHeapBase.cpp", "MemoryDealer.cpp" }, .flags = flags });
     for (gen.libutils_srcs) |file| if (sharedUtils(file)) {
         lib.root_module.addCSourceFile(.{ .file = aosp.path(b, b.fmt("system/core/libutils/{s}", .{file})), .flags = flags });
     };

@@ -6323,3 +6323,14 @@ F aosp system/media/private/camera/include/camera_metadata_hidden.h
 F aosp frameworks/base/media/java/android/media/MediaCodecInfo.java
 F aosp frameworks/base/media/java/android/media/MediaCodecList.java
 F aosp system/libsysprop/srcs/android/sysprop/MediaProperties.sysprop
+
+# Stock Binder shared memory and media HTTP JNI.
+F aosp frameworks/native/libs/binder/IMemory.cpp
+F aosp frameworks/native/libs/binder/MemoryBase.cpp
+F aosp frameworks/native/libs/binder/MemoryHeapBase.cpp
+F aosp frameworks/native/libs/binder/MemoryDealer.cpp
+F aosp frameworks/base/media/jni/android_media_MediaHTTPConnection.cpp
+F aosp frameworks/base/media/jni/android_media_MediaHTTPConnection.h
+F aosp frameworks/av/media/module/foundation/include/media/stagefright/foundation/ABase.h
+F aosp frameworks/av/media/module/foundation/include/media/stagefright/foundation/ADebug.h
+F aosp frameworks/av/media/module/foundation/include/media/stagefright/foundation/AString.h

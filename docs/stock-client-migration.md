@@ -27,6 +27,22 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- MediaHTTPConnection and MediaHTTPService now compile verbatim with their generated
+  Binder interfaces and the original HTTP JNI. The C++ Binder facade uses AOSP's
+  IMemory, MemoryHeapBase, MemoryBase and MemoryDealer over the existing host ashmem
+  implementation. ART tests cover cookies and headers, ranged reads and seeking,
+  redirects and redirect policy, HTTP failures, EOF, the 32 KiB native buffer and
+  descriptor lifetime after disconnect. A cross-process native test verifies shared
+  allocation lifetime, Binder identity and remote writes. The SDK-header audit now
+  distinguishes javac's unused constant-owner entries from executable references;
+  its regression tests reject class literals, calls, inheritance and stack-map uses.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass (38 steps,
+  zero structured runtime issues). AOSP is rebuilt and repinned with all nine new
+  inputs byte-verified; ART is unchanged. This enables the stock HTTP data source,
+  without changing MediaPlayer, demuxing or decoder backends. The inventory remains
+  26 stubs (15 pending, 11 survivors); the broader migration remains unfinished.
+
+
 - MediaDrm and its five exception classes now compile verbatim. JNI follows the
   pinned no-factory path: supported-scheme enumeration is empty, per-scheme queries
   report MakeDrm's BAD_VALUE error, construction reports UnsupportedSchemeException

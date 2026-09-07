@@ -122,6 +122,11 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    // MediaHTTPConnection only uses an inlined MediaPlayer constant; the SDK header
+    // stays compile-only and the runtime bytecode audit enforces that boundary.
+    try c.file("$FB/media/java/android/media/VolumeAutomation.java");
+    try c.file("$FB/media/java/android/media/MediaHTTPConnection.java");
+    try c.file("$FB/media/java/android/media/MediaHTTPService.java");
     try c.file("$FB/media/java/android/media/DeniedByServerException.java");
     try c.file("$FB/media/java/android/media/MediaDrm.java");
     try c.file("$FB/media/java/android/media/MediaDrmException.java");

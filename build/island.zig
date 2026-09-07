@@ -248,6 +248,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "packages/modules/Connectivity/bpf/headers/include"),
         // KernelUtils uses bionic's unused annotation; the host libc has no spelling for it.
     }, &.{"-D__unused=__attribute__((__unused__))"});
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_MediaHTTPConnection.cpp"}, &.{ o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
     // Android's host-capable camera metadata library and C++ value containers.
     g.add(o.aosp.path(b, "frameworks/av/camera"), &.{ "CameraMetadata.cpp", "VendorTagDescriptor.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/media/camera/src"), &.{"camera_metadata.c"}, &.{}, &.{});
