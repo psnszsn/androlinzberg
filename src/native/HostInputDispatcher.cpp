@@ -277,6 +277,31 @@ struct State {
   Policy policy;
   InputDispatcher dispatcher;
   std::mutex connectionMutex;
+  // SF remains the window-focus authority within Android. The compositor can
+  // withdraw the whole desktop seat without changing ATMS's focused task.
+  std::mutex desktopFocusMutex;
+  bool desktopKeyboardFocused = true;
+  std::map<int32_t, gui::FocusRequest> windowFocusRequests;
+  void windowFocus(const gui::FocusRequest &request) {
+    std::lock_guard lock(desktopFocusMutex);
+    windowFocusRequests[request.displayId] = request;
+    if (desktopKeyboardFocused)
+      dispatcher.setFocusedWindow(request);
+  }
+  void desktopFocus(bool focused) {
+    std::lock_guard lock(desktopFocusMutex);
+    if (desktopKeyboardFocused == focused)
+      return;
+    desktopKeyboardFocused = focused;
+    for (const auto &[display, requested] : windowFocusRequests) {
+      gui::FocusRequest effective = requested;
+      if (!focused) {
+        effective.token.clear();
+        effective.windowName = "Wayland keyboard left session";
+      }
+      dispatcher.setFocusedWindow(effective);
+    }
+  }
   std::atomic<bool> closed{false};
   std::atomic<bool> keyRepeatEnabled{true};
   sp<SurfaceComposerClient> client;
@@ -349,7 +374,7 @@ FocusService::setFocusedWindow(const gui::FocusRequest &request) {
   auto owner = state.lock();
   if (!owner || owner->closed)
     return binder::Status::fromStatusT(DEAD_OBJECT);
-  owner->dispatcher.setFocusedWindow(request);
+  owner->windowFocus(request);
   return binder::Status::ok();
 }
 void WindowListener::onWindowInfosChanged(
@@ -427,8 +452,11 @@ static jobject createMonitor(JNIEnv *env, jclass, jlong handle, jstring name,
 }
 static void displayRemoved(JNIEnv *env, jclass, jlong handle, jint display) {
   auto owner = get(env, handle);
-  if (owner)
+  if (owner) {
+    std::lock_guard lock(owner->desktopFocusMutex);
+    owner->windowFocusRequests.erase(display);
     owner->dispatcher.displayRemoved(ui::LogicalDisplayId{display});
+  }
 }
 static void removeChannel(JNIEnv *env, jclass, jlong handle, jobject token) {
   auto owner = get(env, handle);
@@ -446,8 +474,10 @@ static void focusedApplication(JNIEnv *env, jclass, jlong handle, jint display,
   // NativeInputManager refreshes the Java application's token, name and ANR
   // timeout before giving the handle to InputDispatcher. A window need not
   // exist yet to refresh this information on its behalf.
-  if (!app)
+  if (!app) {
+    owner->dispatcher.setFocusedApplication(ui::LogicalDisplayId{display}, nullptr);
     return;
+  }
   auto application = android_view_InputApplicationHandle_getHandle(env, app);
   application->updateInfo();
   owner->dispatcher.setFocusedApplication(ui::LogicalDisplayId{display},
@@ -457,6 +487,11 @@ static void focusedDisplay(JNIEnv *env, jclass, jlong handle, jint display) {
   auto owner = get(env, handle);
   if (owner)
     owner->dispatcher.setFocusedDisplay(ui::LogicalDisplayId{display});
+}
+static void desktopKeyboardFocus(JNIEnv *env, jclass, jlong handle, jboolean focused) {
+  auto owner = get(env, handle);
+  if (owner)
+    owner->desktopFocus(focused);
 }
 static void dispatchMode(JNIEnv *env, jclass, jlong handle, jboolean enabled,
                          jboolean frozen) {
@@ -709,6 +744,8 @@ int registerNatives(JNIEnv *env) {
       {"nativeSetFocusedApplication",
        "(JILandroid/view/InputApplicationHandle;)V",
        reinterpret_cast<void *>(focusedApplication)},
+      {"nativeSetDesktopKeyboardFocus", "(JZ)V",
+       reinterpret_cast<void *>(desktopKeyboardFocus)},
       {"nativeSetFocusedDisplay", "(JI)V",
        reinterpret_cast<void *>(focusedDisplay)},
       {"nativeSetInputDispatchMode", "(JZZ)V",

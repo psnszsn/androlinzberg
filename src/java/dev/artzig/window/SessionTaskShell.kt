@@ -17,6 +17,7 @@ internal object SessionTaskShell {
         }
         val remote = IWaylandTaskPresenter.Stub.asInterface(binder)
         val input = WaylandTaskInput(object : WaylandTaskInput.Android {
+            override fun keyboardActive(active: Boolean) = dispatcher.setDesktopKeyboardFocus(active)
             override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
             override fun keyboardLayout(map: android.view.KeyCharacterMap) = publishKeyboard(map)
             override fun dispatch(event: android.view.InputEvent, repeatable: Boolean) = dispatcher.dispatchDesktopEvent(event, repeatable)
@@ -26,6 +27,7 @@ internal object SessionTaskShell {
         // Wait for Wayland's repeat policy before allowing stock dispatcher to
         // synthesize repeats. The presenter sends physical key edges only.
         dispatcher.setKeyRepeatConfiguration(500, 50, false)
+        dispatcher.setDesktopKeyboardFocus(false)
         val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, dispatcher::notifyPointerCaptureChanged)
         val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)
         val death = android.os.IBinder.DeathRecipient {

@@ -267,7 +267,26 @@ object HostInputDispatcherSmoke {
             await("pointer capture acknowledgment") { "capture:1:true" in observed }
             dispatcher.requestPointerCapture(checkNotNull(channels[1].token), false)
             await("pointer capture release") { "capture:1:false" in observed }
+            observed.clear()
+            dispatcher.setDesktopKeyboardFocus(false)
+            await("desktop keyboard leave removes native window focus") { "focus:1:false" in observed }
+            val hiddenFocusReady = java.util.concurrent.CountDownLatch(1)
+            SurfaceControl.Transaction().use {
+                it.setFocusedWindow(checkNotNull(channels[0].token), "JavaInput0", 0)
+                    .addWindowInfosReportedListener { hiddenFocusReady.countDown() }.apply()
+            }
+            await("Android focus updates while desktop keyboard is absent") { hiddenFocusReady.count == 0L }
+            val inactiveUntil = SystemClock.uptimeMillis() + 100
+            await("background Android cannot regain compositor keyboard focus") { SystemClock.uptimeMillis() >= inactiveUntil }
+            check("focus:0:true" !in observed)
+            dispatcher.setDesktopKeyboardFocus(true)
+            await("desktop reentry restores latest SF focus request") { "focus:0:true" in observed }
+            SurfaceControl.Transaction().use {
+                it.setFocusedWindow(checkNotNull(channels[1].token), "JavaInput1", 0).apply()
+            }
+            await("restore initial task seat focus") { "focus:1:true" in observed }
             val seat = dev.artzig.window.WaylandTaskInput(object : dev.artzig.window.WaylandTaskInput.Android {
+                override fun keyboardActive(active: Boolean) = dispatcher.setDesktopKeyboardFocus(active)
                 override fun focusTask(taskId: Int) {
                     val index = taskId - 1
                     SurfaceControl.Transaction().use {

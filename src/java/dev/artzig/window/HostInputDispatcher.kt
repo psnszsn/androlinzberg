@@ -49,6 +49,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
     fun removeInputChannel(token: IBinder) = nativeRemoveInputChannel(handle, token)
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) =
         nativeSetFocusedApplication(handle, displayId, application)
+    fun setDesktopKeyboardFocus(focused: Boolean) = nativeSetDesktopKeyboardFocus(handle, focused)
     fun setFocusedDisplay(displayId: Int) = nativeSetFocusedDisplay(handle, displayId)
     fun setInputDispatchMode(enabled: Boolean, frozen: Boolean) = nativeSetInputDispatchMode(handle, enabled, frozen)
     fun setKeyRepeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
@@ -90,6 +91,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         @JvmStatic private external fun nativeDisplayRemoved(handle: Long, displayId: Int)
         @JvmStatic private external fun nativeRemoveInputChannel(handle: Long, token: IBinder)
         @JvmStatic private external fun nativeSetFocusedApplication(handle: Long, displayId: Int, application: InputApplicationHandle?)
+        @JvmStatic private external fun nativeSetDesktopKeyboardFocus(handle: Long, focused: Boolean)
         @JvmStatic private external fun nativeSetFocusedDisplay(handle: Long, displayId: Int)
         @JvmStatic private external fun nativeSetInputDispatchMode(handle: Long, enabled: Boolean, frozen: Boolean)
         @JvmStatic private external fun nativeSetKeyRepeatConfiguration(handle: Long, timeoutMillis: Int, delayMillis: Int, enabled: Boolean)

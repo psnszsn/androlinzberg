@@ -11,9 +11,11 @@ object WaylandTaskInputSmoke {
         val order = mutableListOf<String>()
         val focus = mutableListOf<Int>()
         val repeats = mutableListOf<Triple<Int, Int, Boolean>>()
+        var keyboardActive = false
         var layouts = 0
         var time = 100L
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
+            override fun keyboardActive(active: Boolean) { keyboardActive = active }
             override fun focusTask(taskId: Int) { focus.add(taskId); order.add("focus:$taskId") }
             override fun keyboardLayout(map: android.view.KeyCharacterMap) { layouts++ }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
@@ -39,7 +41,7 @@ object WaylandTaskInputSmoke {
             first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 10f, 20f)
             check(events.isEmpty()) // No input before a committed projection.
             first.keyboardFocus(true)
-            check(focus.isEmpty())
+            check(focus.isEmpty() && keyboardActive)
             first.committed(TaskGeometry.Bounds(100, 200, 400, 300), WaylandTaskShell.Size(200, 150))
             second.committed(TaskGeometry.Bounds(1000, 400, 400, 300), WaylandTaskShell.Size(200, 150))
             check(focus == listOf(1))
@@ -166,6 +168,7 @@ object WaylandTaskInputSmoke {
             check((events.single() as KeyEvent).keyCode == KeyEvent.KEYCODE_RO)
             check(!(events.single() as KeyEvent).isShiftPressed)
             replacement.close()
+            check(!keyboardActive)
         } finally { first.close(); second.close(); clear() }
         println("Wayland task input: projection, button ordering, focus, key cancellation, touch IDs and stale generations passed")
     }

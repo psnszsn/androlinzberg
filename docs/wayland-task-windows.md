@@ -55,6 +55,16 @@ Desktop focus withdrawal and focus acknowledgement, task-addressed APK semantic
 input, device capabilities, launcher cutover and the remaining M9–M11 work are
 still in progress. These capture gates do not complete M8.
 
+Regressions 145–146 also verify desktop keyboard withdrawal: the native adapter
+retains SF's preferred window while clearing effective input focus on Wayland
+leave. SF updates cannot reclaim focus while the compositor seat is elsewhere;
+reentry restores the latest request. Stock InputDispatcher owns focus/capture
+cancellation. Removed displays discard retained requests, and clearing the
+focused application now forwards the null handle. Default module/native/input
+and 15 APK tests pass (45 steps, no issues), as do both stock compositor gates.
+Logs: `/tmp/wayland-desktop-focus-{145,146}.log`. Focus acknowledgement before
+cross-task key delivery remains a separate pending gate.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application

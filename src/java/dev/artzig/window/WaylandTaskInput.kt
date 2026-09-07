@@ -21,6 +21,7 @@ internal class WaylandTaskInput(private val android: Android,
     private val clock: () -> Long = SystemClock::uptimeMillis) {
     interface Android {
         fun focusTask(taskId: Int)
+        fun keyboardActive(active: Boolean)
         /** Borrowed for this call; retain a copy if dispatch is asynchronous. */
         fun dispatch(event: InputEvent, repeatable: Boolean = true)
         fun keyboardLayout(map: KeyCharacterMap)
@@ -98,10 +99,14 @@ internal class WaylandTaskInput(private val android: Android,
                     focus?.releaseKeys()
                     focus = this
                 }
+                android.keyboardActive(true)
                 if (bounds != null) android.focusTask(task.id)
             } else {
                 releaseKeys()
-                if (focus === this) focus = null
+                if (focus === this) {
+                    focus = null
+                    android.keyboardActive(false)
+                }
             }
         }
 
@@ -326,7 +331,10 @@ internal class WaylandTaskInput(private val android: Android,
             cancelPointer()
             releaseKeys()
             if (contacts.values.any { it.owner === this }) cancelTouch()
-            if (focus === this) focus = null
+            if (focus === this) {
+                focus = null
+                android.keyboardActive(false)
+            }
             windows.remove(task.id)
             closed = true
         }

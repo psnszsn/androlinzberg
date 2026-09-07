@@ -102,6 +102,7 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     fun getScanCodeState(deviceId: Int, sourceMask: Int, scanCode: Int): Int = desktop.getScanCodeState(deviceId, sourceMask, scanCode)
     fun getSwitchState(deviceId: Int, sourceMask: Int, switchCode: Int): Int = desktop.getSwitchState(deviceId, sourceMask, switchCode)
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) = dispatcher.setFocusedApplication(displayId, application)
+    fun setDesktopKeyboardFocus(focused: Boolean) = dispatcher.setDesktopKeyboardFocus(focused)
     fun setFocusedDisplay(displayId: Int) = dispatcher.setFocusedDisplay(displayId)
     fun setInputDispatchMode(enabled: Boolean, frozen: Boolean) = dispatcher.setInputDispatchMode(enabled, frozen)
     fun setKeyRepeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
