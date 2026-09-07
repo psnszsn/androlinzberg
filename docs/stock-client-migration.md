@@ -27,6 +27,18 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- MediaDrm and its five exception classes now compile verbatim. JNI follows the
+  pinned no-factory path: supported-scheme enumeration is empty, per-scheme queries
+  report MakeDrm's BAD_VALUE error, construction reports UnsupportedSchemeException
+  with NO_INIT, and native operations reject an uninitialized object before validating
+  session arguments. ART tests cover public queries/construction, malformed UUIDs,
+  package validation, all 38 native instance-dependent operations and repeated failed-object
+  cleanup. JVM/system, native/Binder and build checks pass; all 11 APK tests pass (37 steps,
+  zero structured runtime issues). These sources were already archived, so both tarballs
+  remain unchanged. No DRM plugin, key/session service or protected-content decryption
+  is supplied. The stub inventory remains 26 (15 pending, 11 survivors); migration continues.
+
+
 - MediaCodecInfo and MediaCodecList now compile verbatim, replacing both hosted
   adaptations. The existing eight-decoder catalogue, backend names and advertised
   limits moved to a native boundary; AOSP owns capability parsing, profile/level limits,

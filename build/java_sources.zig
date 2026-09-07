@@ -122,6 +122,12 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    try c.file("$FB/media/java/android/media/DeniedByServerException.java");
+    try c.file("$FB/media/java/android/media/MediaDrm.java");
+    try c.file("$FB/media/java/android/media/MediaDrmException.java");
+    try c.file("$FB/media/java/android/media/NotProvisionedException.java");
+    try c.file("$FB/media/java/android/media/ResourceBusyException.java");
+    try c.file("$FB/media/java/android/media/UnsupportedSchemeException.java");
     try c.file("$FB/media/java/android/media/MediaCodecInfo.java");
     try c.file("$FB/media/java/android/media/MediaCodecList.java");
     try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/CloudMediaProviderContract.java");
