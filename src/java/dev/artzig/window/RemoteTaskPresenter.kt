@@ -8,7 +8,7 @@ import android.view.Surface
  * consumer queue and all Wayland objects on its protocol thread. */
 internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val handler: Handler, private val input: WaylandTaskInput,
-    taskForToken: (android.os.IBinder) -> Int?,
+    private val taskForToken: (android.os.IBinder) -> Int?,
     acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
     private val capture = WaylandPointerCapture(object : WaylandPointerCapture.Host {
@@ -27,6 +27,11 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                     "Compositor pointer constraints or relative pointer capability unavailable"))
         }
     })
+    fun pointerIcon(token: android.os.IBinder, type: Int): Boolean {
+        check(Looper.myLooper() === handler.looper)
+        val window = taskForToken(token)?.let(windows::get) ?: return false
+        return remote.setPointerIcon(window.task.id, window.task.generation, type)
+    }
     fun pointerCapture(token: android.os.IBinder?, sequence: Int) {
         check(Looper.myLooper() === handler.looper)
         capture.request(token, sequence)

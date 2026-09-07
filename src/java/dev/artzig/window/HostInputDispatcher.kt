@@ -47,6 +47,8 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
     }
     fun displayRemoved(displayId: Int) = nativeDisplayRemoved(handle, displayId)
     fun removeInputChannel(token: IBinder) = nativeRemoveInputChannel(handle, token)
+    fun isPointerInWindow(token: IBinder, displayId: Int, deviceId: Int, pointerId: Int): Boolean =
+        nativeIsPointerInWindow(handle, token, displayId, deviceId, pointerId)
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) =
         nativeSetFocusedApplication(handle, displayId, application)
     fun setDesktopKeyboardFocus(focused: Boolean) = nativeSetDesktopKeyboardFocus(handle, focused)
@@ -90,6 +92,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         @JvmStatic private external fun nativeCreateInputMonitor(handle: Long, name: String, displayId: Int, ownerPid: Int): InputChannel
         @JvmStatic private external fun nativeDisplayRemoved(handle: Long, displayId: Int)
         @JvmStatic private external fun nativeRemoveInputChannel(handle: Long, token: IBinder)
+        @JvmStatic private external fun nativeIsPointerInWindow(handle: Long, token: IBinder, displayId: Int, deviceId: Int, pointerId: Int): Boolean
         @JvmStatic private external fun nativeSetFocusedApplication(handle: Long, displayId: Int, application: InputApplicationHandle?)
         @JvmStatic private external fun nativeSetDesktopKeyboardFocus(handle: Long, focused: Boolean)
         @JvmStatic private external fun nativeSetFocusedDisplay(handle: Long, displayId: Int)

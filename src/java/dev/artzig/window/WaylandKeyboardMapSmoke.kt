@@ -18,6 +18,11 @@ object WaylandKeyboardMapSmoke {
             characters[86 * 64 + state] = '<'.code
             characters[43 * 64 + state] = '\\'.code
             characters[40 * 64 + state] = 0x0301 // Stock combining-accent/dead-key convention.
+            characters[14 * 64 + state] = 8 // XKB BackSpace is an editing key, not text.
+            characters[111 * 64 + state] = 127
+            characters[1 * 64 + state] = 27
+            characters[28 * 64 + state] = 13
+            characters[15 * 64 + state] = 9
         }
         val symbols = IntArray(WaylandKeyboardMap.SCAN_COUNT)
         symbols[58] = 0xffe3 // Caps remapped to Control_L.
@@ -31,6 +36,11 @@ object WaylandKeyboardMapSmoke {
         check(WaylandKeyboardMap.keyCode(125, 0xffeb) == KeyEvent.KEYCODE_META_LEFT)
         check(runCatching { WaylandKeyboardMap.compile(characters, IntArray(1)) }.exceptionOrNull() is IllegalArgumentException)
         val map = WaylandKeyboardMap.compile(characters, symbols)
+        check(map.get(KeyEvent.KEYCODE_DEL, 0) == 0)
+        check(map.get(KeyEvent.KEYCODE_FORWARD_DEL, 0) == 0)
+        check(map.get(KeyEvent.KEYCODE_ESCAPE, 0) == 0)
+        check(map.get(KeyEvent.KEYCODE_ENTER, 0) == 10)
+        check(map.get(KeyEvent.KEYCODE_TAB, 0) == 9)
         check(map.keyboardType == KeyCharacterMap.FULL)
         check(map.get(KeyEvent.KEYCODE_A, 0) == 'q'.code)
         check(map.get(KeyEvent.KEYCODE_A, KeyEvent.META_SHIFT_ON) == 'Q'.code)

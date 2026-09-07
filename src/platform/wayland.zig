@@ -1046,6 +1046,7 @@ pub const Window = struct {
     pointer_capture_actual: bool = false,
     pointer_capture_sequence: i32 = 0,
     pointer_enter_serial: u32 = 0,
+    cursor_hidden: bool = false,
     cursor_shape: u32 = 0, // last applied wp_cursor_shape_device_v1.shape (0 = none)
 
     surface: *wl.Surface = undefined,
@@ -1260,7 +1261,7 @@ pub const Window = struct {
         }
     }
 
-    fn pointerListener(_: *wl.Pointer, event: wl.Pointer.Event, self: *Window) void {
+    fn pointerListener(pointer: *wl.Pointer, event: wl.Pointer.Event, self: *Window) void {
         switch (event) {
             .motion => |m| {
                 self.pointer_x = m.surface_x.toDouble();
@@ -1294,9 +1295,13 @@ pub const Window = struct {
                 self.pointer_y = e.surface_y.toDouble();
                 self.pointer_enter_serial = e.serial;
                 // re-apply our cursor on every enter (the compositor resets it)
-                const shape = if (self.cursor_shape != 0) self.cursor_shape else 1; // default
-                self.cursor_shape = 0;
-                self.setCursorShape(shape);
+                if (self.cursor_hidden) {
+                    pointer.setCursor(self.pointer_enter_serial, null, 0, 0);
+                } else {
+                    const shape = if (self.cursor_shape != 0) self.cursor_shape else 1; // default
+                    self.cursor_shape = 0;
+                    self.setCursorShape(shape);
+                }
                 self.push(.{ .pointer_enter = .{ .x = self.pointer_x, .y = self.pointer_y } });
             },
             .leave => {
@@ -1767,6 +1772,27 @@ pub const Window = struct {
         _ = self.session.display.flush();
     }
 
+    /// Apply a stock pointer request only while this task owns the compositor
+    /// pointer. Android InputDispatcher validates the individual input window.
+    pub fn setPointerIcon(self: *Window, icon: i32) bool {
+        const pointer = self.session.pointer orelse return false;
+        if (self.session.pointer_focus != self or self.pointer_enter_serial == 0) return false;
+        if (icon == 0) {
+            pointer.setCursor(self.pointer_enter_serial, null, 0, 0);
+            self.cursor_hidden = true;
+            _ = self.session.display.flush();
+            return true;
+        }
+        const shape = @import("cursor_shape.zig").fromAndroid(icon) orelse return false;
+        if (self.session.cursor_shape_manager == null) return false;
+        if (self.cursor_hidden) {
+            self.cursor_hidden = false;
+            self.cursor_shape = 0;
+        }
+        self.setCursorShape(shape);
+        return self.cursor_shape == shape;
+    }
+
     /// Ask the compositor to enter or leave xdg-shell fullscreen mode. The
     /// actual size arrives asynchronously in the following configure event.
     pub fn setFullscreen(self: *Window, fullscreen: bool) void {
@@ -1810,14 +1836,22 @@ pub const Window = struct {
     /// coordinate. Cage sends the resulting wl_pointer events back through the
     /// normal input path; this does not call the Java host directly.
     pub fn testTap(self: *Window, buffer_x: i32, buffer_y: i32) !void {
-        const pointer = try self.ensureVirtualPointer();
         const x: u32 = @intCast(std.math.clamp(self.bufferToSurfaceX(buffer_x), 0, @max(0, self.width - 1)));
         const y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(buffer_y), 0, @max(0, self.height - 1)));
         const width: u32 = @intCast(@max(1, self.width));
         const height: u32 = @intCast(@max(1, self.height));
+        try self.testTapAtOutput(.{ x, y }, .{ width, height }, null);
+    }
+
+    /// The harness supplies output-local placement; Android synthetic origins
+    /// must never be passed to the virtual pointer as desktop coordinates.
+    pub fn testTapAtOutput(self: *Window, point: [2]u32, extent: [2]u32, local: ?[2]u32) !void {
+        if (extent[0] == 0 or extent[1] == 0 or point[0] >= extent[0] or point[1] >= extent[1]) return error.InvalidTestPoint;
+        const pointer = try self.ensureVirtualPointer();
         const time = inputTimestamp(self.io);
-        pointer.motionAbsolute(time, x, y, width, height);
+        pointer.motionAbsolute(time, point[0], point[1], extent[0], extent[1]);
         pointer.frame();
+        if (local) |expected| try self.verifyTestPointer(expected);
         pointer.button(time, 0x110, .pressed); // BTN_LEFT
         pointer.frame();
         pointer.button(time +% 1, 0x110, .released);
@@ -1839,22 +1873,29 @@ pub const Window = struct {
     /// coordinates. Each motion gets its own pointer frame so the client sees
     /// the same ordered gesture stream as it would from a physical mouse.
     pub fn testDrag(self: *Window, from_buffer_x: i32, from_buffer_y: i32, to_buffer_x: i32, to_buffer_y: i32) !void {
-        const pointer = try self.ensureVirtualPointer();
         const from_x: u32 = @intCast(std.math.clamp(self.bufferToSurfaceX(from_buffer_x), 0, @max(0, self.width - 1)));
         const from_y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(from_buffer_y), 0, @max(0, self.height - 1)));
         const to_x: u32 = @intCast(std.math.clamp(self.bufferToSurfaceX(to_buffer_x), 0, @max(0, self.width - 1)));
         const to_y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(to_buffer_y), 0, @max(0, self.height - 1)));
         const width: u32 = @intCast(@max(1, self.width));
         const height: u32 = @intCast(@max(1, self.height));
+        try self.testDragAtOutput(.{ from_x, from_y }, .{ to_x, to_y }, .{ width, height }, null);
+    }
+
+    pub fn testDragAtOutput(self: *Window, from: [2]u32, to: [2]u32, extent: [2]u32, local: ?[2]u32) !void {
+        if (extent[0] == 0 or extent[1] == 0 or from[0] >= extent[0] or from[1] >= extent[1] or
+            to[0] >= extent[0] or to[1] >= extent[1]) return error.InvalidTestPoint;
+        const pointer = try self.ensureVirtualPointer();
         const time = inputTimestamp(self.io);
-        pointer.motionAbsolute(time, from_x, from_y, width, height);
+        pointer.motionAbsolute(time, from[0], from[1], extent[0], extent[1]);
         pointer.frame();
+        if (local) |expected| try self.verifyTestPointer(expected);
         pointer.button(time, 0x110, .pressed); // BTN_LEFT
         pointer.frame();
         for (1..11) |step| {
-            const x = interpolateCoordinate(from_x, to_x, step, 10);
-            const y = interpolateCoordinate(from_y, to_y, step, 10);
-            pointer.motionAbsolute(time +% @as(u32, @intCast(step)), x, y, width, height);
+            const x = interpolateCoordinate(from[0], to[0], step, 10);
+            const y = interpolateCoordinate(from[1], to[1], step, 10);
+            pointer.motionAbsolute(time +% @as(u32, @intCast(step)), x, y, extent[0], extent[1]);
             pointer.frame();
         }
         pointer.button(time +% 11, 0x110, .released);
@@ -1862,10 +1903,21 @@ pub const Window = struct {
         if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
+    fn verifyTestPointer(self: *Window, local: [2]u32) !void {
+        // Roundtrip only the motion. Inspect the compositor's actual hit target
+        // and surface coordinates before emitting any button edge.
+        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (self.session.pointer_focus != self) return error.InputTargetOccluded;
+        if (@abs(self.pointer_x - @as(f64, @floatFromInt(local[0]))) > 1 or
+            @abs(self.pointer_y - @as(f64, @floatFromInt(local[1]))) > 1) return error.InputPlacementChanged;
+    }
+
     /// Type UTF-8 text through Cage's virtual keyboard. The fixed US keymap
     /// intentionally accepts printable ASCII plus newline/tab/backspace;
     /// semantic set_text remains available for arbitrary Unicode input.
     pub fn testType(self: *Window, text: []const u8) !void {
+        // Reject the whole request before typing a prefix of unsupported text.
+        for (text) |byte| _ = asciiKey(byte) orelse return error.UnsupportedText;
         const keyboard = try self.session.ensureVirtualKeyboard();
         for (text) |byte| {
             const key = asciiKey(byte) orelse return error.UnsupportedText;
@@ -2423,4 +2475,14 @@ test "keyboard modifier snapshots distinguish held keys from persistent Shift" {
         try std.testing.expect(snapshot.effective & 1 != 0);
         try std.testing.expectEqual(kind != 0, snapshot.persistent & 1 != 0);
     }
+}
+
+test "stock pointer styles retain named compositor shapes" {
+    const shapes = @import("cursor_shape.zig");
+    try std.testing.expectEqual(@as(u32, 1), shapes.fromAndroid(1000).?);
+    try std.testing.expectEqual(@as(u32, 4), shapes.fromAndroid(1002).?);
+    try std.testing.expectEqual(@as(u32, 9), shapes.fromAndroid(1008).?);
+    try std.testing.expectEqual(@as(u32, 26), shapes.fromAndroid(1014).?);
+    try std.testing.expect(shapes.fromAndroid(-1) == null);
+    try std.testing.expect(shapes.fromAndroid(0) == null);
 }

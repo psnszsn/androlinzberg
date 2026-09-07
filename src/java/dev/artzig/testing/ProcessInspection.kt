@@ -42,6 +42,11 @@ object ProcessInspection {
                 }
             }
 
+            override fun inputWindow(revision: Long, windowId: Long): android.os.IBinder? {
+                enforceSystem()
+                return onMain(handler) { ArtzigAccessibilityBridge.inputWindow(revision, windowId) }
+            }
+
             override fun perform(revision: Long, windowId: Long, viewId: Int, virtualId: Int,
                 action: Int, text: String?): Boolean {
                 enforceSystem()

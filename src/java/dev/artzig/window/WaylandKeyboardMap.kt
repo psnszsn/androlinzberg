@@ -63,6 +63,19 @@ internal object WaylandKeyboardMap {
             val code = keyCode(scan, symbols[scan])
             if (code == KeyEvent.KEYCODE_UNKNOWN) continue
             val row = characters.copyOfRange(scan * STATE_COUNT, (scan + 1) * STATE_COUNT)
+            // Pinned Generic.kcm gives DEL/ESCAPE no text and ENTER a newline.
+            // XKB returns terminal control scalars (BS, CR, DEL, Ctrl+A ...).
+            // QwertyKeyListener inserts any nonzero character before reaching
+            // BaseKeyListener's editing-key handling, so those are not KCM text.
+            for (state in row.indices) row[state] = when {
+                code == KeyEvent.KEYCODE_DEL || code == KeyEvent.KEYCODE_FORWARD_DEL ||
+                    code == KeyEvent.KEYCODE_ESCAPE -> 0
+                (code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) &&
+                    row[state] in 10..13 -> 10
+                code == KeyEvent.KEYCODE_TAB && row[state] == 9 -> 9
+                row[state] < 32 || row[state] == 127 -> 0
+                else -> row[state]
+            }
             if (row.all { it == 0 }) continue
             val previous = rows[code]
             require(previous == null || previous.contentEquals(row)) {

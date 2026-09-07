@@ -22,6 +22,43 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Task-addressed physical input checkpoint (2026-09-07)
+
+The session controller now validates the observed process generation, window
+revision and WMS task ownership before injecting compositor input. The presenter
+checks the task generation and accepted geometry again. Test output placement is
+supplied explicitly by the existing labwc harness; synthetic Android coordinates
+are transformed into that placement. Before sending a pointer button, the
+presenter verifies the compositor's actual pointer target and local coordinates.
+Unknown text is rejected before any supported prefix is typed.
+
+Regression 179 passes the desktop launch gate's seven diagnostic steps: semantic
+counter/dialog actions followed by physical counter click, editor click, typing
+and Backspace. Every step has zero runtime issues. The retained screenshot shows
+counter 2 and editor text `ab`; it was visually inspected. Stock cold launch,
+Java input channels and native checks also pass. Log:
+`/tmp/wayland-physical-editing-179.log`; desktop artifacts:
+`/tmp/wayland-physical-success-179/`.
+
+Regression 180 passes the full JVM, native and complete 15-APK integration suite
+with zero runtime issues in its diagnostic steps. Log:
+`/tmp/wayland-physical-regressions-180.log`.
+
+These actions exposed and fixed three host boundary gaps. Boot completion now
+uses ATMS's screen/input enable path after AMS boot flags change. Built-in cursor
+requests retain stock InputDispatcher's pointer/window validation and use Wayland
+cursor shapes (or an explicitly hidden cursor). Channel removal tolerates an
+already removed channel, matching the pinned native InputManager JNI. The empty
+IME service returns the stock no-bound-method result for software keyboard
+visibility requests. XKB terminal control characters no longer become editable
+text: Backspace/Delete/Escape retain editing identities and Enter maps to newline.
+
+This checkpoint does not complete input or IME support. Input acknowledgement
+before test idle, cross-task focus acknowledgement, full seat/device publication,
+custom cursor bitmaps, text-input composition and the remaining M9–M11 work are
+still pending. The no-software-IME branch is the keyboard-only fallback, not the
+future compositor text-input bridge.
+
 ## Pointer capture and accepted resize checkpoint (2026-09-07)
 
 Stock IInputManager now forwards pointer-capture requests to InputDispatcher.

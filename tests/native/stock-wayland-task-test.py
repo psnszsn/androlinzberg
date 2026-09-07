@@ -23,6 +23,8 @@ parser.add_argument('command', nargs=argparse.REMAINDER)
 args = parser.parse_args()
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
+for artifact in ('result.json', 'control-failure.txt', 'failure.json', 'a11y-before.json', 'a11y.json'):
+    (out / artifact).unlink(missing_ok=True)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 command = args.command[1:] if args.command[0] == '--' else args.command
 result = {'passed': False}
@@ -36,6 +38,12 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                            AZK_TEST_RAW_LOG=str(out / 'app.log'),
                            AZK_TEST_STEP_LOG=str(out / 'steps.jsonl'))
         (out / 'steps.jsonl').write_text('')
+        # launcher-desktop.xml deliberately places this fixture at output origin.
+        # Supply that harness knowledge explicitly; Android cannot discover it.
+        initial_ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
+        output_width, output_height = map(int, initial_ppm.split(b'\n', 3)[1].split())
+        environment['AZK_TEST_WINDOW_PLACEMENT'] = f'0,0,{output_width},{output_height}'
+
     def control(*arguments):
         completed = subprocess.run([str(Path(__file__).resolve().parents[2] / 'tools/azk-test'), *arguments],
                                    env=environment, capture_output=True, text=True, timeout=30)
@@ -138,12 +146,22 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 close = next(node for node in dialog['nodes'] if (node.get('text') or '').lower() == 'close dialog')
                 control('step', 'click', '--window-id', str(close['window_id']), '--text', close['text'],
                         '--via', 'semantic', '--settle', 'idle')
+                control('step', 'click', '--task-id', task, '--text', label('Increment counter'),
+                        '--via', 'wayland', '--settle', 'idle')
+                control('wait', 'exists', '--task-id', task, '--text', 'Counter: 2')
+                control('step', 'click', '--task-id', task, '--description', 'Fixture editor',
+                        '--via', 'wayland', '--settle', 'idle')
+                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'abc',
+                        '--via', 'wayland', '--settle', 'idle')
+                control('step', 'key', '--task-id', task, '--description', 'Fixture editor', 'Backspace',
+                        '--via', 'wayland', '--settle', 'idle')
+                control('wait', 'exists', '--task-id', task, '--description', 'Fixture editor', '--text', 'ab')
                 after = control('observe', '--tree')['observation']
                 assert len(after['tree']['windows']) == 1
                 assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
                 (out / 'a11y.json').write_text(json.dumps(after, indent=2))
                 steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                assert len(steps) == 3 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                assert len(steps) == 7 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                 result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
                 subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 seat.stdin.write(b'c')

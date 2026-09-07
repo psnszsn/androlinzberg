@@ -167,6 +167,23 @@ class SessionObservation(private val registry: IInspectionRegistry) {
         return applied
     }
 
+    data class InputTarget internal constructor(val taskId: Int, internal val pid: Int,
+        internal val generation: Long, internal val revision: Long, internal val windowId: Long)
+
+    fun inputTarget(expectedRevision: Long, windowId: Long): InputTarget? {
+        if (expectedRevision != revision) return null
+        val window = windowIds.entries.singleOrNull { it.value == windowId }?.key ?: return null
+        val peer = peers[window.process] ?: return null
+        if (peer.starting || peer.failure != null) return null
+        val tasks = peer.observation?.getBundle("window_tasks") ?: return null
+        if (!tasks.containsKey(window.localId.toString())) return null
+        return InputTarget(tasks.getInt(window.localId.toString()), window.process.pid,
+            window.process.generation, peer.revision, window.localId).takeIf(::validateInputTarget)
+    }
+
+    fun validateInputTarget(target: InputTarget): Boolean = registry.validateInputTarget(target.pid,
+        target.generation, target.revision, target.windowId) == target.taskId
+
     private fun event(reason: String, process: ProcessKey? = null, sourceRevision: Long? = null) {
         val event = JSONObject().put("revision", ++revision).put("reason", reason)
         if (process != null) event.put("pid", process.pid).put("process_generation", process.generation)

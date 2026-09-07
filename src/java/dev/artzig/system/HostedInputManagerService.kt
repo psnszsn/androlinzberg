@@ -25,7 +25,8 @@ import android.view.KeyCharacterMap
  * delegate.
  */
 internal class HostedInputManagerService(private val handler: Handler = Handler(Looper.getMainLooper()),
-    private val captureRequest: ((IBinder, Boolean) -> Unit)? = null) :
+    private val captureRequest: ((IBinder, Boolean) -> Unit)? = null,
+    private val pointerIconRequest: ((android.view.PointerIcon, Int, Int, Int, IBinder?) -> Boolean)? = null) :
     IInputManager.Stub(HostedBootstrapPermissionEnforcer()),
     IInputManager by unsupported<IInputManager>() {
     // Interface delegation must not shadow the Binder identity.
@@ -76,6 +77,17 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
             try { target.remote.onInputDevicesChanged(info) }
             catch (_: RemoteException) { target.binderDied() }
         }
+    }
+
+    /** Pinned InputManagerService.setPointerIcon and NativeInputManager validate
+     * the current pointer/window before PointerChoreographer applies the icon.
+     * Wayland owns cursor presentation here, so the stock dispatcher validation
+     * stays in the host input boundary and cursor rendering goes to the shell. */
+    override fun setPointerIcon(icon: android.view.PointerIcon?, displayId: Int, deviceId: Int,
+        pointerId: Int, inputToken: IBinder?): Boolean {
+        val value = icon ?: throw NullPointerException()
+        return pointerIconRequest?.invoke(value, displayId, deviceId, pointerId, inputToken)
+            ?: false // No pointer controller in a windowless/legacy service.
     }
 
     override fun getInputDeviceIds(): IntArray = intArrayOf(KeyCharacterMap.VIRTUAL_KEYBOARD)

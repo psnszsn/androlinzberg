@@ -3,6 +3,7 @@
 const std = @import("std");
 const Io = std.Io;
 const Queue = @import("surface_queue");
+const TestPlacement = @import("test_input_placement.zig").Placement;
 const Binder = opaque {};
 const Class = opaque {};
 const Parcel = opaque {};
@@ -44,6 +45,11 @@ const Entry = struct {
     bounds: [6]i32 = @splat(0),
     has_content: bool = false,
     test_frame_pending: bool = false,
+    cursor_icon: ?i32 = null,
+    fn matchesInputGeometry(self: *const Entry, geometry: [8]i32) bool {
+        return self.has_content and std.mem.eql(i32, geometry[0..6], &self.bounds) and
+            geometry[6] == self.window.width and geometry[7] == self.window.height;
+    }
     fn deinit(self: *Entry) void {
         self.window.deinit();
         self.queue.deinit();
@@ -74,6 +80,7 @@ const Server = struct {
     completed_round: i64 = 0,
     round_active: bool = false,
     round_valid: bool = false,
+    test_placement: ?TestPlacement = null,
     death: *Death,
     events_class: *Class,
     fn signal(self: *Server) void {
@@ -139,10 +146,77 @@ const Server = struct {
         try ok(AParcel_writeInt64(request.output, self.completed_round));
         return 0;
     }
+    fn testWindow(self: *Server, request: *Request) !i32 {
+        if (!self.inspection_enabled) return -1;
+        const id = try readInt(request.input);
+        try end(request.input);
+        const entry = for (&self.entries) |*slot| {
+            if (slot.*) |*entry| if (entry.key.id == id) break entry;
+        } else null;
+        try ok(AParcel_writeInt32(request.output, 0));
+        try ok(AParcel_writeInt32(request.output, if (entry != null) 10 else 0));
+        if (entry) |value| {
+            try ok(AParcel_writeInt64(request.output, value.key.generation));
+            for (value.bounds) |number| try ok(AParcel_writeInt64(request.output, number));
+            try ok(AParcel_writeInt64(request.output, value.window.width));
+            try ok(AParcel_writeInt64(request.output, value.window.height));
+            try ok(AParcel_writeInt64(request.output, @intFromBool(value.window.isFullscreen())));
+        }
+        return 0;
+    }
+    fn injectTestInput(self: *Server, request: *Request) !bool {
+        const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
+        var geometry: [8]i32 = undefined;
+        if (try readInt(request.input) != geometry.len) return error.InvalidGeometry;
+        for (&geometry) |*number| number.* = try readInt(request.input);
+        const kind = try readInt(request.input);
+        var points: [4]i32 = undefined;
+        if (try readInt(request.input) != points.len) return error.InvalidPoints;
+        for (&points) |*number| number.* = try readInt(request.input);
+        var text: Text = .{};
+        try text.read(request.input);
+        try end(request.input);
+        const entry = self.find(key) orelse return false;
+        if (!entry.matchesInputGeometry(geometry)) return false;
+        try entry.window.prepareTestInput();
+        // Seat roundtrips can receive a configure; reject its old geometry too.
+        if (!entry.matchesInputGeometry(geometry)) return false;
+        switch (kind) {
+            0, 1 => {
+                const placement = self.test_placement orelse return false;
+                const from = try placement.point(entry.bounds[0..4].*, .{ entry.window.width, entry.window.height }, points[0], points[1]);
+                const extent = [2]u32{ @intCast(placement.output_width), @intCast(placement.output_height) };
+                const local = [2]u32{ from[0] - @as(u32, @intCast(placement.left)), from[1] - @as(u32, @intCast(placement.top)) };
+                if (kind == 0) try entry.window.testTapAtOutput(from, extent, local) else {
+                    const to = try placement.point(entry.bounds[0..4].*, .{ entry.window.width, entry.window.height }, points[2], points[3]);
+                    try entry.window.testDragAtOutput(from, to, extent, local);
+                }
+            },
+            2, 3 => {
+                if (self.session.keyboard_focus != entry.window) return false;
+                if (kind == 2) try entry.window.testType(text.slice()) else try entry.window.testKey(text.slice());
+            },
+            else => return false,
+        }
+        return true;
+    }
     fn handle(self: *Server, request: *Request) !i32 {
         // This read/test-pacing API is available to the system controller; only
         // the system-server owner may mutate task identities and geometry.
         if (request.code == 6) return self.observeTestFrames(request);
+        if (request.code == 7) return self.testWindow(request);
+        if (request.code == 8) {
+            if (!self.inspection_enabled) return -1;
+            const injected = self.injectTestInput(request) catch |failure| {
+                std.log.warn("test input rejected: {s}", .{@errorName(failure)});
+                try ok(AParcel_writeInt32(request.output, 0));
+                try ok(AParcel_writeInt32(request.output, 0));
+                return 0;
+            };
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, @intFromBool(injected)));
+            return 0;
+        }
         if (self.owner_pid != 0 and self.owner_pid != request.pid) return -1;
         const input = request.input;
         const output = request.output;
@@ -245,6 +319,18 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 0));
                 try ok(AParcel_writeInt32(output, @intFromBool(supported)));
             },
+            9 => {
+                const icon = try readInt(input);
+                try end(input);
+                const entry = self.find(key) orelse return error.StaleTask;
+                const applied = entry.window.setPointerIcon(icon);
+                if (applied and entry.cursor_icon != icon) {
+                    entry.cursor_icon = icon;
+                    if (self.inspection_enabled) std.log.info("task cursor task={d} type={d} applied=true", .{ key.id, icon });
+                }
+                try ok(AParcel_writeInt32(output, 0));
+                try ok(AParcel_writeInt32(output, @intFromBool(applied)));
+            },
             else => return -38,
         }
         return 0;
@@ -269,7 +355,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 6) return -38;
+    if (code < 1 or code > 9) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -392,6 +478,9 @@ fn run(init: std.process.Init) !void {
     server = .{ .gpa = init.gpa, .io = io, .session = session, .wake = wake, .death = death, .events_class = AIBinder_Class_define("dev.artzig.window.IWaylandTaskEvents", null, null, null) };
     server.inspection_enabled = init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null or
         std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1");
+    if (server.inspection_enabled) if (init.minimal.environ.getPosix("AZK_TEST_WINDOW_PLACEMENT")) |placement| {
+        server.test_placement = try TestPlacement.parse(placement);
+    };
     const class = AIBinder_Class_define("dev.artzig.window.IWaylandTaskPresenter", null, null, transact);
     const binder = AIBinder_new(class, null);
     defer AIBinder_decStrong(binder);

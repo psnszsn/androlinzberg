@@ -37,6 +37,8 @@ internal class StockWindowServices private constructor() {
     private val display = SurfaceFlingerDisplayOutput.createService(context, handler)
     private val devices = HostedInputManagerService(captureRequest = { token, enabled ->
         input.requestPointerCapture(token, enabled)
+    }, pointerIconRequest = { icon, displayId, deviceId, pointerId, token ->
+        setPointerIcon(icon, displayId, deviceId, pointerId, token)
     })
     private lateinit var tasks: ActivityTaskManagerService
     private lateinit var windows: WindowManagerService
@@ -105,6 +107,37 @@ internal class StockWindowServices private constructor() {
             shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap) { token ->
                 com.android.server.wm.HostedTaskInputTargets.taskId(windows, token)
             }
+        }
+    }
+
+    fun enableScreenAfterBoot(booted: Boolean) {
+        // ATMS.LocalService also updates event dispatch under its WM lock.
+        // Calling WMS.enableScreenAfterBoot alone leaves dispatch disabled.
+        checkNotNull(LocalServices.getService(com.android.server.wm.ActivityTaskManagerInternal::class.java))
+            .enableScreenAfterBoot(booted)
+    }
+
+    private fun setPointerIcon(icon: android.view.PointerIcon, displayId: Int, deviceId: Int,
+        pointerId: Int, token: IBinder?): Boolean {
+        if (token == null || displayId != Display.DEFAULT_DISPLAY || deviceId != 0 || pointerId != 0 ||
+            !input.isPointerInWindow(token, displayId, deviceId, pointerId)) return false
+        val work = java.util.concurrent.FutureTask(java.util.concurrent.Callable {
+            // Revalidate after crossing to the shell thread; hover may have left
+            // this input window while the Binder request was queued.
+            if (!input.isPointerInWindow(token, displayId, deviceId, pointerId)) false
+            else shell?.pointerIcon(token, icon.type) == true
+        })
+        if (Looper.myLooper() == handler.looper) work.run() else check(handler.post(work))
+        try { return work.get(3, java.util.concurrent.TimeUnit.SECONDS) }
+        catch (failure: java.util.concurrent.TimeoutException) {
+            work.cancel(false); handler.removeCallbacks(work)
+            return false
+        } catch (failure: InterruptedException) {
+            work.cancel(false); handler.removeCallbacks(work)
+            Thread.currentThread().interrupt()
+            return false
+        } catch (failure: java.util.concurrent.ExecutionException) {
+            throw IllegalStateException("Wayland cursor request failed", failure.cause ?: failure)
         }
     }
 

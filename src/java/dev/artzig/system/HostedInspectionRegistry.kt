@@ -122,6 +122,20 @@ class HostedInspectionRegistry(
         }
     }
 
+    override fun validateInputTarget(pid: Int, generation: Long, revision: Long, windowId: Long): Int {
+        val entry = entry(pid, generation)
+        if (!checkCurrent(entry).ready) return -1
+        try {
+            val token = entry.endpoint.inputWindow(revision, windowId) ?: return -1
+            val task = windowTask(token, entry.process.uid, entry.process.pid) ?: return -1
+            checkCurrent(entry)
+            return task
+        } catch (failure: Exception) {
+            synchronized(journal) { journal.failure(source(entry), "validateInputTarget", failure.toString()) }
+            throw failure
+        }
+    }
+
     override fun diagnostics(afterLog: Long, afterIssue: Long): String {
         enforceSystem()
         return synchronized(journal) {

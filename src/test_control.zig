@@ -165,6 +165,11 @@ pub const Input = struct {
     type_fn: *const fn (*anyopaque, []const u8) anyerror!void,
     key_fn: *const fn (*anyopaque, []const u8) anyerror!void,
     fullscreen_fn: *const fn (*anyopaque) bool,
+    select_fn: ?*const fn (*anyopaque, u64, i64) anyerror!void = null,
+
+    pub fn select(self: Input, revision: u64, window_id: i64) !void {
+        if (self.select_fn) |callback| try callback(self.context, revision, window_id);
+    }
 
     pub fn tap(self: Input, x: i32, y: i32) !void {
         try self.tap_fn(self.context, x, y);
@@ -540,6 +545,10 @@ pub const Server = struct {
         } else if (std.mem.eql(u8, via, "wayland")) blk: {
             const input = self.ui_input orelse {
                 if (!oneway) try self.interfaceError("InputUnavailable", "reason", "compositor does not expose virtual input");
+                return;
+            };
+            input.select(revision, intField(node, "window_id") orelse return error.InvalidNode) catch |err| {
+                if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
                 return;
             };
             const bounds = valueField(node, "bounds") orelse return error.InvalidNode;

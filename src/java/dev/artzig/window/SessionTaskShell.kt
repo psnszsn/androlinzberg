@@ -7,6 +7,7 @@ import android.os.ServiceManager
 internal object SessionTaskShell {
     class Controller(private val presenter: RemoteTaskPresenter, private val cleanup: () -> Unit) : AutoCloseable {
         fun pointerCapture(token: android.os.IBinder?, sequence: Int) = presenter.pointerCapture(token, sequence)
+        fun pointerIcon(token: android.os.IBinder, type: Int): Boolean = presenter.pointerIcon(token, type)
         override fun close() = cleanup()
     }
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,

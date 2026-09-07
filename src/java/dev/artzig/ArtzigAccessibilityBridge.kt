@@ -135,6 +135,15 @@ object ArtzigAccessibilityBridge {
         return applied
     }
 
+    /** Validate a physical-input selection on the same main thread as the
+     * tree. The system registry resolves this real IWindow token through WMS. */
+    @JvmStatic @Synchronized fun inputWindow(expectedRevision: Long, windowId: Long): android.os.IBinder? {
+        observeTree()
+        if (expectedRevision < actionRevision || expectedRevision > currentRevision) return null
+        val root = collectWindows().firstOrNull { it.id == windowId }?.root ?: return null
+        return android.view.HostedRootFrames.windowToken(root)
+    }
+
     private fun observeDraws(root: ViewRootImpl) {
         val tree = root.view?.viewTreeObserver ?: return
         if (tree.isAlive && observedTrees.put(tree, true) == null) {

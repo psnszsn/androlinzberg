@@ -17,8 +17,8 @@ import com.android.internal.inputmethod.InputBindResult
  * Hosted input-method service for a device with no software IMEs.
  *
  * Source note: follows the client-visible empty-device behavior of AOSP
- * `InputMethodManagerService`. The real service cannot run without the system-server
- * window/input stack; physical text is injected by `HostedInputDispatcher`, while
+ * `InputMethodManagerService`. Android IME binding/services are absent; physical
+ * text is delivered through the host input dispatcher, while
  * stock `InputMethodManager` still performs its normal AIDL registration and queries.
  */
 internal class HostedInputMethodManagerService(private val context: android.content.Context) :
@@ -110,6 +110,32 @@ internal class HostedInputMethodManagerService(private val context: android.cont
                 return if (editorInfo == null) InputBindResult.NULL_EDITOR_INFO else InputBindResult.NO_IME
             } finally { Binder.restoreCallingIdentity(identity) }
         }
+    }
+
+    /** Pinned IMMS.show/hideSoftInput, canInteractWithImeLocked and the
+     * show/hideCurrentInputLocked branches with no bound method: neither request
+     * changes visibility or succeeds. Only the ZeroJank proxy failure path sends
+     * RESULT_UNCHANGED_HIDDEN. There is no Android IME process to bind here. */
+    override fun showSoftInput(client: IInputMethodClient, windowToken: IBinder?,
+        statsToken: android.view.inputmethod.ImeTracker.Token, flags: Int,
+        lastClickToolType: Int, resultReceiver: android.os.ResultReceiver?,
+        reason: Int, async: Boolean): Boolean = unavailableVisibility(client, resultReceiver)
+
+    override fun hideSoftInput(client: IInputMethodClient, windowToken: IBinder?,
+        statsToken: android.view.inputmethod.ImeTracker.Token, flags: Int,
+        resultReceiver: android.os.ResultReceiver?, reason: Int, async: Boolean): Boolean =
+        unavailableVisibility(client, resultReceiver)
+
+    private fun unavailableVisibility(client: IInputMethodClient,
+        resultReceiver: android.os.ResultReceiver?): Boolean {
+        synchronized(lock) {
+            // Unknown clients remain a programmer error even without a selected IME.
+            clients[client.asBinder()] ?: throw IllegalArgumentException("unknown client ${client.asBinder()}")
+        }
+        if (android.view.inputmethod.Flags.useZeroJankProxy()) {
+            resultReceiver?.send(android.view.inputmethod.InputMethodManager.RESULT_UNCHANGED_HIDDEN, null)
+        }
+        return false
     }
 
     /** No IME process exists to receive or report visibility transitions. */

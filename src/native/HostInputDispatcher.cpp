@@ -462,9 +462,16 @@ static void removeChannel(JNIEnv *env, jclass, jlong handle, jobject token) {
   auto owner = get(env, handle);
   if (!owner)
     return;
-  status(env,
-         owner->dispatcher.removeInputChannel(ibinderForJavaObject(env, token)),
-         "removeInputChannel");
+  // Pinned NativeInputManager.nativeRemoveInputChannel tolerates BAD_VALUE:
+  // InputDispatcher may already have removed a broken channel before WMS teardown.
+  const status_t result = owner->dispatcher.removeInputChannel(ibinderForJavaObject(env, token));
+  if (result != BAD_VALUE) status(env, result, "removeInputChannel");
+}
+static jboolean pointerInWindow(JNIEnv *env, jclass, jlong handle, jobject token,
+                                 jint display, jint device, jint pointer) {
+  auto owner = get(env, handle);
+  return owner && owner->dispatcher.isPointerInWindow(ibinderForJavaObject(env, token),
+      ui::LogicalDisplayId{display}, device, pointer);
 }
 static void focusedApplication(JNIEnv *env, jclass, jlong handle, jint display,
                                jobject app) {
@@ -741,6 +748,8 @@ int registerNatives(JNIEnv *env) {
        reinterpret_cast<void *>(displayRemoved)},
       {"nativeRemoveInputChannel", "(JLandroid/os/IBinder;)V",
        reinterpret_cast<void *>(removeChannel)},
+      {"nativeIsPointerInWindow", "(JLandroid/os/IBinder;III)Z",
+       reinterpret_cast<void *>(pointerInWindow)},
       {"nativeSetFocusedApplication",
        "(JILandroid/view/InputApplicationHandle;)V",
        reinterpret_cast<void *>(focusedApplication)},

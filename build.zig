@@ -1016,6 +1016,12 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);
+    const input_placement_test = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/platform/test_input_placement.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) });
+    native_test_step.dependOn(&b.addRunArtifact(input_placement_test).step);
     native_test_step.dependOn(&run_binder_broker_tests.step);
     native_test_step.dependOn(&ndk_abi_check.step);
     native_test_step.dependOn(&platform_abi_check.step);

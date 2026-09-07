@@ -381,9 +381,13 @@ object HostInputDispatcherSmoke {
             await("removed window gesture cancellation") { observed.any { it.startsWith("motion:0:3:") } }
             dispatcher.onDisplayRemoved(9)
             check("removed:9" in observed)
+            val removedToken = channels[1].token
             receivers[1].dispose()
             channels[1].dispose()
             await("channel death policy") { "broken" in observed }
+            // Pinned JNI tolerates the channel already removed by its dead-peer path.
+            dispatcher.removeInputChannel(removedToken)
+            dispatcher.removeInputChannel(removedToken)
             // WindowInfos publication starts with SF bootFinished/inputflinger.
             // Exercise the Java observer in this live system input session.
             dev.artzig.window.StockWindowInfosSmoke.granted()

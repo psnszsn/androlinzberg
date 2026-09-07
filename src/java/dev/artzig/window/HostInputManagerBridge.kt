@@ -101,6 +101,8 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     fun getKeyCodeState(deviceId: Int, sourceMask: Int, keyCode: Int): Int = desktop.getKeyCodeState(deviceId, sourceMask, keyCode)
     fun getScanCodeState(deviceId: Int, sourceMask: Int, scanCode: Int): Int = desktop.getScanCodeState(deviceId, sourceMask, scanCode)
     fun getSwitchState(deviceId: Int, sourceMask: Int, switchCode: Int): Int = desktop.getSwitchState(deviceId, sourceMask, switchCode)
+    fun isPointerInWindow(token: IBinder, displayId: Int, deviceId: Int, pointerId: Int): Boolean =
+        dispatcher.isPointerInWindow(token, displayId, deviceId, pointerId)
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) = dispatcher.setFocusedApplication(displayId, application)
     fun setDesktopKeyboardFocus(focused: Boolean) = dispatcher.setDesktopKeyboardFocus(focused)
     fun setFocusedDisplay(displayId: Int) = dispatcher.setFocusedDisplay(displayId)

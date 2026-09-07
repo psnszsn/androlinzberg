@@ -427,6 +427,10 @@ internal object SystemServices {
             check(completionHandler.post {
                 activityManager.booting = false
                 activityManager.booted = true
+                // Pinned AMS.ensureBootCompleted sets these flags before asking
+                // ATMS to enable screen/input. Host boot has no initial home
+                // activity whose idle callback would otherwise perform this step.
+                stockWindows?.enableScreenAfterBoot(activityManager.booted)
                 manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
                 // BatteryService publishes its sticky broadcast once the broadcast queue is up.
                 battery.start()
