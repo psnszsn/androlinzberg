@@ -210,6 +210,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/com/android/internal/util/AsyncChannel.java");
     try c.file("$CJ/com/android/internal/util/AsyncService.java");
     try c.file("$CJ/android/view/WindowlessWindowLayout.java");
+    try c.file("$CJ/android/view/SurfaceControlViewHost.java");
+    try c.file("$CJ/android/view/WindowlessWindowManager.java");
+    try c.file("$CJ/android/window/SplashScreenView.java");
     try c.file("$CJ/android/hardware/usb/UsbConfiguration.java");
     try c.file("$CJ/android/hardware/usb/UsbConstants.java");
     try c.file("$CJ/android/hardware/usb/UsbDevice.java");

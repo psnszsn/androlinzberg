@@ -22,6 +22,17 @@ object HostedWindowRoots {
         "android.view.ViewRootImpl", "<init>", "Windowless SurfaceControl presentation is not hosted")
 
     @JvmStatic
+    fun unsupportedWindowlessOperation(member: String): RuntimeException = ArtzigTestDiagnostics.unsupported(
+        "android.view.ViewRootImpl", member,
+        "Windowless input and buffer-transaction reporting require an embedded-surface backend")
+
+    /** AOSP SurfaceView.setChildSurfacePackage reparents a remote SurfaceControl hierarchy. */
+    @JvmStatic
+    fun attachEmbeddedSurface(surfacePackage: android.view.SurfaceControlViewHost.SurfacePackage): Unit =
+        throw ArtzigTestDiagnostics.unsupported("android.view.SurfaceView", "setChildSurfacePackage",
+            "The hosted video surface cannot embed a remote SurfaceControl hierarchy")
+
+    @JvmStatic
     @JvmOverloads
     fun attach(view: View, width: Int, height: Int,
                params: WindowManager.LayoutParams =

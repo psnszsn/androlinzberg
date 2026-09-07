@@ -5942,3 +5942,7 @@ F aosp packages/modules/Connectivity/staticlibs/native/bpfmapjni/com_android_net
 
 # Stock renderer, with desktop presentation owned by dev.artzig.
 F aosp frameworks/base/core/java/android/view/ThreadedRenderer.java
+
+# Stock splash and surface-host client closure.
+F aosp frameworks/base/core/java/android/view/SurfaceControlViewHost.java
+F aosp frameworks/base/core/java/android/view/WindowlessWindowManager.java

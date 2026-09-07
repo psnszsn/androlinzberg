@@ -13,6 +13,41 @@ import com.android.window.flags.Flags;
 public final class SurfaceControl implements Parcelable {
     public long mNativeObject;
     private String mName;
+    private final Object mLock = new Object();
+    private java.util.ArrayList<OnReparentListener> mReparentListeners;
+
+    // Pinned AOSP Java listener registration; no callbacks are synthesized for
+    // the unallocated SurfaceControls used by the hosted window seam.
+    public interface OnReparentListener {
+        void onReparent(Transaction transaction, SurfaceControl parent);
+    }
+    public boolean addOnReparentListener(@NonNull OnReparentListener listener) {
+        synchronized (mLock) {
+            if (mReparentListeners == null) {
+                mReparentListeners = new java.util.ArrayList<>(1);
+            }
+            return mReparentListeners.add(listener);
+        }
+    }
+    public boolean removeOnReparentListener(@NonNull OnReparentListener listener) {
+        synchronized (mLock) {
+            final boolean removed = mReparentListeners.remove(listener);
+            if (mReparentListeners.isEmpty()) mReparentListeners = null;
+            return removed;
+        }
+    }
+    /** AOSP copyFrom copies Java metadata and retains the native surface. Hosted
+     * controls are unallocated; a nonzero handle requires SurfaceFlinger JNI. */
+    public void copyFrom(SurfaceControl other, String callsite) {
+        if (other.mNativeObject != 0) {
+            throw dev.artzig.ArtzigTestDiagnostics.unsupported("android.view.SurfaceControl",
+                    "copyFrom", "Native SurfaceControl ownership is not hosted");
+        }
+        mName = other.mName;
+        mNativeObject = 0;
+        setUnreleasedWarningCallSite(callsite);
+    }
+
     public SurfaceControl() {}
     public SurfaceControl(SurfaceControl other, String callsite) { mName = other.mName; }
     /** AOSP Java diagnostic name; this does not allocate a compositor layer. */

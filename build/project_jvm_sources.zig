@@ -4,6 +4,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/HostedRenderer.kt",
     "src/java/dev/artzig/HostedHardwareSnapshot.kt",
     "src/java/dev/artzig/StockRendererSmoke.kt",
+    "src/java/dev/artzig/StockSplashScreenSmoke.kt",
 
     "src/framework-stubs/android/companion/virtual/VirtualDeviceParams.java",
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
@@ -25,7 +26,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/os/VintfObject.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",
     "src/framework-stubs/android/view/SurfaceControl.java",
-    "src/framework-stubs/android/view/SurfaceControlViewHost.java",
     "src/framework-stubs/android/view/SurfaceSession.java",
     "src/framework-stubs/android/view/TextureView.java",
     "src/framework-stubs/android/webkit/CookieManager.kt",
@@ -33,7 +33,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/webkit/WebChromeClient.kt",
     "src/framework-stubs/android/webkit/WebSettings.kt",
     "src/framework-stubs/android/webkit/WebView.java",
-    "src/framework-stubs/android/window/SplashScreenView.java",
     "src/framework-stubs/com/android/internal/accessibility/AccessibilityShortcutController.java",
     "src/framework-stubs/com/android/internal/os/SystemServerClassLoaderFactory.java",
     "src/framework-stubs/com/android/server/SystemServerInitThreadPool.java",

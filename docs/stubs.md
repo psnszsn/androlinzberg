@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 22 (budget 22). Survivors: 15. Total: 37.
+Pending: 22 (budget 22). Survivors: 13. Total: 35.
 
 ## Survivors
 
@@ -25,12 +25,10 @@ Pending: 22 (budget 22). Survivors: 15. Total: 37.
 | `android/os/VintfObject.java` | JNI natives (libvintf) | blocked |
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | blocked |
 | `android/view/SurfaceControl.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
-| `android/view/SurfaceControlViewHost.java` | window seam (SurfaceFlinger) | blocked |
 | `android/view/SurfaceSession.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/view/TextureView.java` | window seam (HWUI layer natives; players use SurfaceView) | blocked |
 | `android/webkit/HostedWebViewProvider.kt` | host-only WebView provider (Chromium WebView is not available) | no-aosp-source |
 | `android/webkit/WebView.java` | WebView host seam (Chromium WebView provider is not available) | blocked |
-| `android/window/SplashScreenView.java` | window seam (no system splash window on the desktop host) | blocked |
 
 ## Pending replacement
 
@@ -60,7 +58,7 @@ Pending: 22 (budget 22). Survivors: 15. Total: 37.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/widget/inline/InlineContentView.java` | blocked | frameworks/base/core/java/android/widget/inline/InlineContentView.java (1 to add); android.widget.inline.InlineContentView: existing host class android.view.SurfaceControl lacks method addOnReparentListener (via InlineContentView); android.widget.inline.InlineContentView: existing host class android |
+| `android/widget/inline/InlineContentView.java` | blocked | frameworks/base/core/java/android/widget/inline/InlineContentView.java (1 to add); android.widget.inline.InlineContentView: existing host class android.view.SurfaceView lacks method getSurfaceRenderPosition (via InlineContentView); android.widget.inline.InlineContentView: existing host class android |
 
 ### packagemanager
 

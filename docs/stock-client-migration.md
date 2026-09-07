@@ -27,6 +27,18 @@ in force.
 
 Follow-up changes in the current tree:
 
+- SplashScreenView, SurfaceControlViewHost and WindowlessWindowManager now compile
+  verbatim. The former empty splash placeholder now uses stock material building,
+  icon/branding bitmap Parcel transport, copy policy and removal/resource cleanup.
+  The surface-host clients retain their stock API/protocol; embedded-surface creation,
+  input and BLAST draw reporting remain unavailable and fail explicitly at the
+  hosted root/surface boundary. This does not add animated
+  cross-process splash surfaces. The two removed stubs were survivors, so the budget
+  stays 22. The regenerated inventory is 35 stubs: 22 pending and 13 survivors.
+  AOSP is rebuilt, repinned and all three source inputs are byte-verified; ART is
+  unchanged. JVM/system, native/Binder/build checks and all 11 APK tests pass
+  (36 captured steps, zero structured runtime issues).
+
 - ThreadedRenderer now compiles verbatim. The existing desktop frame adapter lives
   in dev.artzig.HostedRenderer, and stock HardwareRenderer snapshots draw through
   HardwareBufferRenderer below JNI instead of returning transparent bitmaps.

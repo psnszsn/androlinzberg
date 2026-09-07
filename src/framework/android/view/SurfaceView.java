@@ -62,6 +62,13 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
 
     public SurfaceHolder getHolder() { return mHolder; }
 
+    /** Pinned SurfaceView.setChildSurfacePackage requires compositor reparenting,
+     * accessibility association and an embedded input channel. */
+    public void setChildSurfacePackage(SurfaceControlViewHost.SurfacePackage surfacePackage) {
+        dev.artzig.HostedWindowRoots.attachEmbeddedSurface(surfacePackage);
+    }
+
+
     /** AOSP SurfaceView.getName(), used by SurfaceSyncGroup diagnostics. */
     public String getName() {
         ViewRootImpl viewRoot = getViewRootImpl();

@@ -180,6 +180,44 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     final WindowLeaked getLocation() { return mLocation; }
     public IWindowSession getWindowSession() { return mWindowSession; }
 
+    // Pinned ViewRootImpl overload and windowless client collaborators. The
+    // windowless constructor still rejects the absent embedded-surface backend.
+    public void setView(View view, WindowManager.LayoutParams attrs, View panelParentView) {
+        setView(view, attrs, panelParentView, android.os.UserHandle.myUserId());
+    }
+
+    void forceWmRelayout() {
+        mForceNextWindowRelayout = true;
+        scheduleTraversals();
+    }
+
+    private Rect mOverrideInsetsFrame;
+    void setOverrideInsetsFrame(Rect frame) {
+        mOverrideInsetsFrame = new Rect(frame);
+        getInsetsController().onFrameChanged(mOverrideInsetsFrame);
+    }
+
+    private android.view.accessibility.IAccessibilityEmbeddedConnection mAccessibilityEmbeddedConnection;
+    public android.view.accessibility.IAccessibilityEmbeddedConnection getAccessibilityEmbeddedConnection() {
+        if (mAccessibilityEmbeddedConnection == null) {
+            mAccessibilityEmbeddedConnection = new AccessibilityEmbeddedConnection(this);
+        }
+        return mAccessibilityEmbeddedConnection;
+    }
+
+    void setBackKeyCallbackForWindowlessWindow(java.util.function.Predicate<KeyEvent> callback) {
+        // This callback requires a windowless InputChannel. Such roots are
+        // rejected at construction until surface embedding is hosted.
+        throw dev.artzig.HostedWindowRoots.unsupportedWindowlessOperation(
+                "setBackKeyCallbackForWindowlessWindow");
+    }
+
+    public void setReportNextDraw(boolean syncBuffer, String reason) {
+        // AOSP reports through Session.finishDrawing and optionally transfers
+        // the BLAST buffer transaction. Neither is supplied by a hosted root.
+        throw dev.artzig.HostedWindowRoots.unsupportedWindowlessOperation("setReportNextDraw");
+    }
+
     public void setView(View view, WindowManager.LayoutParams attrs, View panelParentView,
             int userId) {
         mRegisteredWithWindowManager = true;
