@@ -23,6 +23,7 @@ object FrameCommitProbe {
     private var registeredDuringDraw = false
     private var rebuilt = false
     private var complete = false
+    private var renderedFrameTime = Long.MIN_VALUE
 
     @JvmStatic fun drawHardware(width: Int, height: Int, bufferWidth: Int, bufferHeight: Int, scale120: Int) {
         if (!::root.isInitialized) {
@@ -73,12 +74,13 @@ object FrameCommitProbe {
                 events += "second"
             }
         }
+        renderedFrameTime = Choreographer.getInstance().lastFrameTimeNanos
         HostedRenderer.getInstance().render(root.doTraversal(), width, height, bufferWidth, bufferHeight, root)
         if (complete) check(events == listOf("first", "second", "fromDraw")) { events }
     }
 
     @JvmStatic fun pumpMainLooper(): Long = ViewHost.pumpMainLooper()
-    @JvmStatic fun needsFrame(): Boolean = Choreographer.getInstance().`hasDueCallbacks$artzig`()
+    @JvmStatic fun needsFrame(): Boolean = Choreographer.getInstance().lastFrameTimeNanos > renderedFrameTime
     @JvmStatic fun shutdown() {
         check(complete && draws >= 3) { "Frame callbacks did not complete: $events, draws=$draws" }
         root.destroy()

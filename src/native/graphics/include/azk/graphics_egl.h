@@ -2,6 +2,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <cutils/native_handle.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -13,6 +14,7 @@ EGLDisplay azk_graphics_egl_display(void);
 EGLBoolean azk_graphics_egl_initialize(EGLDisplay, EGLint *major,
                                        EGLint *minor);
 EGLBoolean azk_graphics_egl_terminate(EGLDisplay);
+EGLBoolean azk_graphics_egl_release(EGLDisplay, uint64_t *remaining);
 // Import registered GBM storage, preserving its explicit layout. The caller
 // retains the GraphicBuffer while importing and owns the returned EGLImage.
 // Fences are deliberately separate: callers must order access through EGL or

@@ -39,6 +39,7 @@ extern "EGL" fn eglMakeCurrent(Handle, Handle, Handle, Handle) u32;
 extern "EGL" fn eglReleaseThread() u32;
 extern "EGL" fn eglInitialize(Handle, ?*i32, ?*i32) u32;
 extern "EGL" fn eglTerminate(Handle) u32;
+extern "EGL" fn eglQueryString(Handle, i32) ?[*:0]const u8;
 extern "gbm" fn gbm_surface_create(Handle, u32, u32, u32, u32) Handle;
 extern "gbm" fn gbm_surface_destroy(Handle) void;
 
@@ -49,6 +50,18 @@ var mutex: Io.Mutex = .init;
 var surfaces: std.AutoHashMapUnmanaged(usize, Surface) = .empty;
 const Display = struct { refs: i32, major: i32, minor: i32 };
 var displays: std.AutoHashMapUnmanaged(usize, Display) = .empty;
+const InitializeDisplay = *const fn (Handle, ?*i32, ?*i32) callconv(.c) u32;
+const ReleaseDisplay = *const fn (Handle, ?*u64) callconv(.c) u32;
+var shared_display_ownership: ?struct { initialize: InitializeDisplay, release: ReleaseDisplay } = null;
+
+/// JNI registration precedes EGL calls. Both Java API generations share the
+/// platform's display lifetime with HWUI and stock image/probe consumers.
+pub fn bindDisplayOwnership(platform: *std.DynLib) !void {
+    shared_display_ownership = .{
+        .initialize = platform.lookup(InitializeDisplay, "azk_graphics_egl_initialize") orelse return error.NoMethod,
+        .release = platform.lookup(ReleaseDisplay, "azk_graphics_egl_release") orelse return error.NoMethod,
+    };
+}
 const Surface = struct {
     display: Handle,
     buffer: Handle,
@@ -282,6 +295,10 @@ pub fn releaseThread(io: Io) u32 {
 // so repeated initializers see the established version and only the last
 // terminator destroys display resources. GLVND itself does not count these calls.
 pub fn initialize(io: Io, display: Handle, major: ?*i32, minor: ?*i32) u32 {
+    if (display == null) {
+        fail(0x3008); // EGL_BAD_DISPLAY
+        return 0;
+    }
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
     const entry = displays.getOrPut(alloc, @intFromPtr(display)) catch {
@@ -291,7 +308,8 @@ pub fn initialize(io: Io, display: Handle, major: ?*i32, minor: ?*i32) u32 {
     if (!entry.found_existing) {
         var version_major: i32 = 0;
         var version_minor: i32 = 0;
-        if (eglInitialize(display, &version_major, &version_minor) == 0) {
+        const initialize_display = if (shared_display_ownership) |owner| owner.initialize else &eglInitialize;
+        if (initialize_display(display, &version_major, &version_minor) == 0) {
             _ = displays.remove(@intFromPtr(display));
             return 0;
         }
@@ -314,9 +332,21 @@ pub fn terminate(io: Io, display: Handle) u32 {
         state.refs -= 1;
         if (state.refs > 0) return 1;
         _ = displays.remove(@intFromPtr(display));
+    } else if (shared_display_ownership != null) {
+        // No Java initialization is outstanding. Match Android egl_display_t's
+        // idempotent termination without consuming another owner's reference.
+        if (eglQueryString(display, 0x3054) == null) { // EGL_VERSION
+            const code = eglGetError();
+            if (code != 0x3001) { // A valid but uninitialized display is allowed.
+                fail(code);
+                return 0;
+            }
+        }
+        return 1;
     }
-    const result = eglTerminate(display);
-    if (result != 0) {
+    var remaining: u64 = 0;
+    const result = if (shared_display_ownership) |owner| owner.release(display, &remaining) else eglTerminate(display);
+    if (result != 0 and remaining == 0) {
         while (true) {
             // Deletion invalidates hash-map iterators; collect one entry and
             // restart only when an unbound buffer has actually been removed.

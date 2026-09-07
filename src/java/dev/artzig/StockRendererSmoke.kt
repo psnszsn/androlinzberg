@@ -37,6 +37,12 @@ internal object StockRendererSmoke {
         }
         record(Color.RED)
         verify(Color.RED)
+        // Android EGL clients and HWUI share one display. Terminating Java's
+        // references (including an extra idempotent termination) must preserve
+        // the native renderer's context for the next snapshot.
+        val display = android.opengl.EGL14.eglGetDisplay(android.opengl.EGL14.EGL_DEFAULT_DISPLAY)
+        repeat(2) { check(android.opengl.EGL14.eglInitialize(display, null, 0, null, 0)) }
+        repeat(3) { check(android.opengl.EGL14.eglTerminate(display)) }
         // Snapshotting borrows the caller's RenderNode; recording it again remains valid.
         record(Color.GREEN)
         verify(Color.GREEN)

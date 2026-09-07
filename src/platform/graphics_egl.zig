@@ -38,16 +38,23 @@ export fn azk_graphics_egl_initialize(display: Display, major: ?*c_int, minor: ?
     return 1;
 }
 export fn azk_graphics_egl_terminate(display: Display) c_uint {
+    return azk_graphics_egl_release(display, null);
+}
+// Return the remaining ownership count in the same critical section as release.
+// Java EGL must only discard its emulated pbuffers when the shared display dies.
+export fn azk_graphics_egl_release(display: Display, remaining: ?*u64) c_uint {
     const io = graphics.activeIo();
     mutex.lockUncancelable(io);
     defer mutex.unlock(io);
     for (&displays) |*entry| {
         if (entry.display != display or entry.count == 0) continue;
         entry.count -= 1;
+        if (remaining) |value| value.* = entry.count;
         if (entry.count != 0) return 1;
         entry.display = null;
         return eglTerminate(display);
     }
+    if (remaining) |value| value.* = 0;
     return 0;
 }
 export fn azk_graphics_egl_display() Display {

@@ -11,12 +11,11 @@ struct wl_egl_window;
 
 namespace android::uirenderer::skiapipeline {
 
-struct HostGpuContext;
-
 // Ganesh/OpenGL host seam. Android surfaces use stock ANativeWindow queues and
 // the shared DMA-BUF mapper; the legacy Wayland target remains during cutover.
 class ArtzigGpuPipeline final : public SkiaPipeline {
 public:
+  static void bindHostDisplay(void* display);
   explicit ArtzigGpuPipeline(renderthread::RenderThread &thread);
   ~ArtzigGpuPipeline() override;
 
@@ -83,9 +82,9 @@ private:
   EGLContext mEglContext = EGL_NO_CONTEXT;
   EGLSurface mEglSurface = EGL_NO_SURFACE;
   bool mUsingGbmDisplay = false;
+  bool mSurfaceless = false;
   wl_egl_window *mWaylandWindow = nullptr;
   sk_sp<GrDirectContext> mContext;
-  std::shared_ptr<HostGpuContext> mGbmContext;
   sk_sp<SkSurface> mSurface;
   ANativeWindow *mAndroidWindow = nullptr;
   ANativeWindowBuffer *mDequeuedBuffer = nullptr;
