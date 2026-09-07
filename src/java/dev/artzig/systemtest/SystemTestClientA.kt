@@ -776,6 +776,12 @@ internal object SystemTestClientA {
             "a job in another package is rejected",
         )
         check(
+            runCatching { scheduler.schedule(android.app.job.JobInfo.Builder(90, jobComponent)
+                .setRequiredNetworkType(android.app.job.JobInfo.NETWORK_TYPE_ANY).build()) }
+                .exceptionOrNull() is SecurityException,
+            "modern connectivity jobs require ACCESS_NETWORK_STATE",
+        )
+        check(
             scheduler.schedule(android.app.job.JobInfo.Builder(1, jobComponent).setMinimumLatency(300).build()) ==
                 android.app.job.JobScheduler.RESULT_SUCCESS,
             "schedule succeeds",

@@ -27,6 +27,26 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- Hosted job scheduling now evaluates stock NetworkRequest capabilities and
+  passes the selected Network through JobParameters. Network jobs wait for a
+  matching network, start on arrival, and stop with the connectivity reason on
+  loss; deadlines may run without a network, and jobs without network constraints
+  receive none. Network changes defer until start acknowledgement. Binding cleanup
+  also handles completion before bindService returns and late connection callbacks
+  after cancellation. Tests exercise these contracts through stock Binder protocols;
+  system tests reject modern connectivity jobs without ACCESS_NETWORK_STATE.
+  The hosted permission check applies the pinned default target-SDK gate; server-only
+  compatibility override metadata remains unavailable for the uncompiled scheduler.
+  Linux Ethernet/Wi-Fi observations now include their non-VCN/non-roaming capabilities.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass (38 steps,
+  zero structured runtime issues). One earlier APK run showed NewPipe's external-feed
+  parse error; the focused test and complete suite passed unchanged on rerun.
+  AOSP/ART archives are unchanged and current. The inventory remains 19 stubs
+  (11 pending, 8 survivors). Real Internet validation is still required before
+  stock DownloadProvider's default network jobs can run; route presence alone
+  does not set VALIDATED. Provider packaging and storage integration also remain.
+
+
 - DownloadProvider's remaining filesystem support now compiles verbatim:
   MediaFile, MtpConstants, MetadataReader and FileSystemProvider. Tests exercise
   MIME/MTP mapping precedence, metadata support and stream ownership, document

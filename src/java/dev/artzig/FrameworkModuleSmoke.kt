@@ -283,6 +283,7 @@ internal object FrameworkModuleSmoke {
         StockRendererSmoke.run()
         StockSplashScreenSmoke.run()
         StockConnectivitySmoke.run(checkNotNull(permissionsFixtureApk), ::drainMainQueue)
+        StockJobNetworkSmoke.run(checkNotNull(permissionsFixtureApk), ::drainMainQueue)
         StockWifiManagerSmoke.run()
         com.android.server.pm.StockApexManagerSmoke.run()
         com.android.server.pm.StockSharedUserSmoke.run()

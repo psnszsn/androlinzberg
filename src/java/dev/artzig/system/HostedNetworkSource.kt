@@ -76,6 +76,10 @@ internal class LinuxNetworkSource : HostedNetworkSource {
                 addTransportType(if (wifi) NetworkCapabilities.TRANSPORT_WIFI else NetworkCapabilities.TRANSPORT_ETHERNET)
                 addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
+                // EthernetTracker supplies these for non-cellular, non-VCN networks.
+                // Linux discovery here exposes only Ethernet/Wi-Fi and has no Android VCN.
+                addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
+                addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING)
                 // HostedNetworkPolicyService has no metered transport policy. A route is
                 // not evidence of Internet validation, so VALIDATED is deliberately absent.
                 addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)

@@ -16,7 +16,12 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.content.pm.ParceledListSlice
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Binder
+import android.os.Handler
 import android.os.IBinder
 import android.os.Process
 import android.os.RemoteException
@@ -39,9 +44,9 @@ import java.util.concurrent.TimeUnit
  * `completeWork`, `jobFinished`, stop reasons and timeouts). The AOSP service
  * evaluates constraints through a dozen controllers (connectivity, idle,
  * battery, quota, standby); this host reduces them to what it knows:
- * charging, battery and storage are always satisfied, connectivity is
- * satisfied (the desktop is online), device idle and content triggers are
- * never satisfied, so such jobs run only when their deadline expires. Jobs
+ * charging, battery and storage are always satisfied; connectivity follows
+ * the networks and capabilities supplied by ConnectivityManager. Device idle
+ * and content triggers are never satisfied, so those jobs need a deadline. Jobs
  * execute by binding the app's JobService through the activity manager from
  * the system context, exactly as `JobServiceContext` does.
  */
@@ -90,6 +95,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         fun unsatisfiedConstraintReason(): Int = when {
             job.isRequireDeviceIdle -> JobScheduler.PENDING_JOB_REASON_CONSTRAINT_DEVICE_IDLE
             job.triggerContentUris?.isNotEmpty() == true -> JobScheduler.PENDING_JOB_REASON_CONSTRAINT_CONTENT_TRIGGER
+            job.requiredNetwork != null && networkFor(job) == null -> JobScheduler.PENDING_JOB_REASON_CONSTRAINT_CONNECTIVITY
             else -> JobScheduler.PENDING_JOB_REASON_UNDEFINED
         }
 
@@ -114,6 +120,63 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         Thread(r, "JobScheduler").apply { isDaemon = true }
     }
 
+    private val networks = LinkedHashMap<Network, NetworkCapabilities>()
+    private var connectivity: ConnectivityManager? = null
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            updateNetworks(network, capabilities)
+        }
+        override fun onLost(network: Network) { updateNetworks(network, null) }
+    }
+
+    /** ConnectivityController: observe usable network capabilities before scheduling app jobs.
+     * The hosted connectivity service owns Linux discovery; this service owns job constraints,
+     * the assigned JobParameters network, and callbacks when that assignment changes. */
+    fun startNetworkTracking(manager: ConnectivityManager,
+        handler: Handler = com.android.internal.os.BackgroundThread.getHandler()) {
+        check(connectivity == null) { "Job network tracking already started" }
+        connectivity = manager
+        for (network in manager.allNetworks) {
+            manager.getNetworkCapabilities(network)?.let { updateNetworks(network, it) }
+        }
+        manager.registerNetworkCallback(NetworkRequest.Builder().clearCapabilities().build(), networkCallback, handler)
+    }
+
+    fun stopNetworkTracking() {
+        connectivity?.unregisterNetworkCallback(networkCallback)
+        connectivity = null
+    }
+
+    /** Requires lock; copy the chosen Network because JobParameters is a parcelable boundary. */
+    private fun networkFor(job: JobInfo): Network? {
+        val request = job.requiredNetwork ?: return null
+        return networks.entries.firstOrNull { request.canBeSatisfiedBy(it.value) }?.key?.let(::Network)
+    }
+
+    private fun updateNetworks(network: Network, capabilities: NetworkCapabilities?) {
+        val changes = ArrayList<() -> Unit>()
+        synchronized(lock) {
+            if (capabilities == null) networks.remove(network)
+            else networks[Network(network)] = NetworkCapabilities(capabilities)
+            val now = SystemClock.elapsedRealtime()
+            for (status in jobs.values) {
+                val run = status.running
+                if (run == null) {
+                    scheduleTimerLocked(status, now)
+                } else if (status.job.requiredNetwork != null) {
+                    val assigned = networkFor(status.job)
+                    if (assigned == null) {
+                        changes.add { run.stop(JobParameters.STOP_REASON_CONSTRAINT_CONNECTIVITY,
+                            JobParameters.INTERNAL_STOP_REASON_CONSTRAINTS_NOT_SATISFIED,
+                            "connectivity constraint no longer satisfied") }
+                    } else { changes.add { run.networkChanged(assigned) } }
+                }
+            }
+        }
+        // A remote JobService may synchronously call back; never hold the scheduler lock here.
+        changes.forEach { executor.execute(it) }
+    }
+
     // ------------------------------------------------------------ scheduling (JobSchedulerService)
 
     /** JobSchedulerService.enforceValidJobRequest. */
@@ -130,6 +193,18 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         if (job.isPersisted && packageService?.checkUidPermission(android.Manifest.permission.RECEIVE_BOOT_COMPLETED, uid) != PackageManager.PERMISSION_GRANTED) {
             throw IllegalArgumentException("Requested job cannot be persisted without holding android.permission.RECEIVE_BOOT_COMPLETED permission")
         }
+        if (job.requiredNetwork != null && !canAccessJobNetwork(uid, service.packageName)) {
+            throw SecurityException("android.permission.ACCESS_NETWORK_STATE required for connectivity jobs")
+        }
+    }
+
+    // Pinned JobSchedulerService change 271850009 is enabled after target SDK 33.
+    // This hosted scheduler applies that default SDK gate; it does not consume server-only
+    // compat metadata from the uncompiled JobSchedulerService implementation.
+    private fun canAccessJobNetwork(uid: Int, packageName: String): Boolean {
+        val app = packageService?.getApplicationInfo(packageName, 0, 0) ?: return false
+        return app.targetSdkVersion <= android.os.Build.VERSION_CODES.TIRAMISU ||
+            packageService?.checkUidPermission(android.Manifest.permission.ACCESS_NETWORK_STATE, uid) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun callingPackageFor(uid: Int, job: JobInfo): String =
@@ -225,11 +300,14 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         val run: RunningJob
         synchronized(lock) {
             if (jobs[status.key] !== status || status.running != null) return
+            if (SystemClock.elapsedRealtime() < status.readyTimeElapsed()) {
+                scheduleTimerLocked(status, SystemClock.elapsedRealtime())
+                return
+            }
             run = RunningJob(status)
             status.running = run
         }
         if (!run.bind()) {
-            synchronized(lock) { if (status.running === run) status.running = null }
             onJobCompleted(status, run, reschedule = true, failed = true)
         }
     }
@@ -340,7 +418,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
     private fun onJobCompleted(status: JobStatus, run: RunningJob, reschedule: Boolean, failed: Boolean) {
         val nowElapsed = SystemClock.elapsedRealtime()
         synchronized(lock) {
-            if (jobs[status.key] !== status) return // cancelled while running: nothing to reschedule
+            if (jobs[status.key] !== status || status.running !== run) return // cancelled or superseded
             jobs.remove(status.key)
             val next: JobStatus? = when {
                 reschedule -> rescheduleForFailure(status, nowElapsed)
@@ -385,9 +463,10 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
             this, status.namespace, status.job.id, status.job.extras, status.job.transientExtras,
             status.job.clipData, status.job.clipGrantFlags,
             /* overrideDeadlineExpired */ status.latestRunTimeElapsed != NO_LATEST_RUNTIME && SystemClock.elapsedRealtime() >= status.latestRunTimeElapsed,
-            status.job.isExpedited, status.job.isUserInitiated, null, null, null,
+            status.job.isExpedited, status.job.isUserInitiated, null, null, if (canAccessJobNetwork(status.uid, status.packageName)) networkFor(status.job) else null,
         )
         private var service: IJobService? = null
+        private var pendingNetwork: Network? = null
         private var verb = VERB_BINDING
         private var timeout: ScheduledFuture<*>? = null
         private var bound = false
@@ -397,18 +476,30 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
             var flags = Context.BIND_AUTO_CREATE or Context.BIND_NOT_APP_COMPONENT_USAGE
             flags = if (status.job.isUserInitiated) flags or Context.BIND_ALMOST_PERCEPTIBLE
             else flags or Context.BIND_NOT_FOREGROUND or Context.BIND_NOT_PERCEPTIBLE
-            bound = try {
+            val acquired = try {
                 context.bindService(intent, this, flags)
             } catch (e: SecurityException) {
                 Log.w(TAG, "Job service ${status.job.service.shortClassName} cannot be executed: ${e.message}")
                 false
             }
-            if (!bound) {
+            if (!acquired) {
                 Log.d(TAG, "${status.job.service.shortClassName} unavailable.")
-                context.unbindService(this)
+                try { context.unbindService(this) } catch (_: IllegalArgumentException) { }
                 return false
             }
-            armTimeout(OP_BIND_TIMEOUT_MILLIS, "bind") { closeAndCleanup(reschedule = true, failed = true, "timed out while binding") }
+            val release = synchronized(lock) {
+                if (verb == VERB_FINISHED || status.running !== this) true
+                else {
+                    bound = true
+                    // A local service can connect and finish before bindService returns.
+                    // Do not replace its execution timeout or leak a completed binding.
+                    if (verb == VERB_BINDING) armTimeout(OP_BIND_TIMEOUT_MILLIS, "bind") {
+                        closeAndCleanup(reschedule = true, failed = true, "timed out while binding")
+                    }
+                    false
+                }
+            }
+            if (release) context.unbindService(this)
             return true
         }
 
@@ -420,7 +511,7 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val svc = IJobService.Stub.asInterface(binder)
             synchronized(lock) {
-                if (status.running !== this) return
+                if (status.running !== this || verb != VERB_BINDING) return
                 service = svc
                 verb = VERB_STARTING
                 // handleServiceBoundLocked: startJob, then wait for the start acknowledgement.
@@ -461,6 +552,10 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
                 }
                 verb = VERB_EXECUTING
                 armTimeout(EXECUTING_TIMESLICE_MILLIS, "execute") { onExecutionTimeout() }
+                if (pendingNetwork != null) executor.execute {
+                    val network = synchronized(lock) { pendingNetwork }
+                    if (network != null) networkChanged(network)
+                }
             }
         }
 
@@ -516,6 +611,28 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         }
 
         /** Sends onStopJob with the given reason; the job completes on acknowledgeStopMessage. Requires no lock. */
+        /** JobServiceContext.informOfNetworkChangeLocked defers delivery until start acknowledgement. */
+        fun networkChanged(network: Network) {
+            val svc: IJobService = synchronized(lock) {
+                if (status.running !== this || !canAccessJobNetwork(status.uid, status.packageName)) return
+                if (verb == VERB_BINDING || verb == VERB_STARTING) {
+                    pendingNetwork = Network(network)
+                    return
+                }
+                if (verb != VERB_EXECUTING || params.network == network) return
+                params.network = Network(network)
+                pendingNetwork = null
+                service ?: return
+            }
+            try {
+                svc.onNetworkChanged(params)
+            } catch (e: RemoteException) {
+                synchronized(lock) {
+                    closeAndCleanup(reschedule = true, failed = true, "network update failed")
+                }
+            }
+        }
+
         fun stop(stopReason: Int, internalStopReason: Int, debugReason: String) {
             val svc: IJobService = synchronized(lock) {
                 if (verb == VERB_STOPPING || verb == VERB_FINISHED) return
@@ -543,8 +660,10 @@ class HostedJobSchedulerService(private val context: Context) : android.app.job.
         private fun closeAndCleanup(reschedule: Boolean, failed: Boolean, reason: String) {
             if (verb == VERB_FINISHED) return
             verb = VERB_FINISHED
+            pendingNetwork = null
             timeout?.cancel(false)
-            if (status.running === this) status.running = null
+            // Keep the completed run attached until onJobCompleted removes or replaces it;
+            // a simultaneous network callback must not restart this same record.
             if (bound) {
                 bound = false
                 try {
