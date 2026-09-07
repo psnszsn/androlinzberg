@@ -51,6 +51,10 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         nativeSetFocusedApplication(handle, displayId, application)
     fun setFocusedDisplay(displayId: Int) = nativeSetFocusedDisplay(handle, displayId)
     fun setInputDispatchMode(enabled: Boolean, frozen: Boolean) = nativeSetInputDispatchMode(handle, enabled, frozen)
+    fun setKeyRepeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
+        require(timeoutMillis >= 0 && delayMillis > 0)
+        nativeSetKeyRepeatConfiguration(handle, timeoutMillis, delayMillis, enabled)
+    }
     fun setInputFilterEnabled(enabled: Boolean) = nativeSetInputFilterEnabled(handle, enabled)
     fun setInTouchMode(inTouchMode: Boolean, pid: Int, uid: Int, hasPermission: Boolean, displayId: Int): Boolean =
         nativeSetInTouchMode(handle, inTouchMode, pid, uid, hasPermission, displayId)
@@ -88,6 +92,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         @JvmStatic private external fun nativeSetFocusedApplication(handle: Long, displayId: Int, application: InputApplicationHandle?)
         @JvmStatic private external fun nativeSetFocusedDisplay(handle: Long, displayId: Int)
         @JvmStatic private external fun nativeSetInputDispatchMode(handle: Long, enabled: Boolean, frozen: Boolean)
+        @JvmStatic private external fun nativeSetKeyRepeatConfiguration(handle: Long, timeoutMillis: Int, delayMillis: Int, enabled: Boolean)
         @JvmStatic private external fun nativeSetInputFilterEnabled(handle: Long, enabled: Boolean)
         @JvmStatic private external fun nativeSetInTouchMode(handle: Long, inTouchMode: Boolean, pid: Int, uid: Int, hasPermission: Boolean, displayId: Int): Boolean
         @JvmStatic private external fun nativeTransferTouch(handle: Long, from: IBinder, to: IBinder, isDragDrop: Boolean, entireGesture: Boolean): Boolean

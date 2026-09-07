@@ -23,6 +23,7 @@ internal class WaylandTaskInput(private val android: Android,
         fun focusTask(taskId: Int)
         /** Borrowed for this call; retain a copy if dispatch is asynchronous. */
         fun dispatch(event: InputEvent)
+        fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean)
     }
     private data class Pressed(val owner: Window, val code: Int, val time: Long)
     private data class Contact(val owner: Window, val id: Int, var x: Float, var y: Float,
@@ -33,6 +34,18 @@ internal class WaylandTaskInput(private val android: Android,
     private var focus: Window? = null
     private var lockedMeta = 0
     private var touchDownTime = 0L
+    private var repeat: Pair<Int, Int>? = null
+
+    fun repeatConfiguration(rate: Int, delayMillis: Int) {
+        require(rate >= 0 && delayMillis >= 0)
+        val configuration = rate to delayMillis
+        if (repeat == configuration) return
+        // End the old repeat stream before changing its policy. InputDispatcher
+        // retains an active repeat's state across configuration updates.
+        focus?.releaseKeys()
+        repeat = configuration
+        android.repeatConfiguration(delayMillis, if (rate == 0) 1 else maxOf(1, 1000 / rate), rate != 0)
+    }
 
     fun open(task: TaskGeometry.Task): Window {
         check(windows[task.id] == null) { "Input task already exists" }
@@ -143,7 +156,7 @@ internal class WaylandTaskInput(private val android: Android,
 
         private fun mouse(action: Int, actionButton: Int = 0, horizontal: Float = 0f, vertical: Float = 0f) {
             val event = HostedInputDispatcher.createMouseEvent(pointerDownTime, clock(), action,
-                buttons, actionButton, pointerX, pointerY, horizontal, vertical)
+                buttons, actionButton, pointerX, pointerY, horizontal, vertical, metaState())
             event.displayId = Display.DEFAULT_DISPLAY
             dispatch(event)
         }
@@ -186,7 +199,7 @@ internal class WaylandTaskInput(private val android: Android,
                 KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD))
         }
 
-        private fun releaseKeys() {
+        internal fun releaseKeys() {
             for ((scan, held) in keys.toList().asReversed()) {
                 if (held.owner !== this) continue
                 keys.remove(scan)

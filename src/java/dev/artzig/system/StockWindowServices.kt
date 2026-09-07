@@ -100,7 +100,7 @@ internal class StockWindowServices private constructor() {
         windows.enableScreenAfterBoot()
         if (System.getenv("AZK_TASK_WINDOWS") == "1") {
             check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
-            shell = dev.artzig.window.SessionTaskShell.start(handler)
+            shell = dev.artzig.window.SessionTaskShell.start(handler, input)
         }
     }
 

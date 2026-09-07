@@ -211,6 +211,8 @@ pub const Event = union(enum) {
     pointer_relative: struct { dx: f64, dy: f64 },
     pointer_capture_changed: bool,
     key: struct { keycode: u32, pressed: bool, unicode: u32, keysym: u32 },
+    keyboard_focus: bool,
+    keyboard_repeat_configuration: struct { rate: i32, delay_ms: i32 },
     keyboard_reset,
     touch: struct {
         action: TouchAction,
@@ -365,6 +367,7 @@ pub const Session = struct {
     xkb_state: ?*xkb.State = null,
     keyboard_repeat_rate: i32 = 0,
     keyboard_repeat_delay_ms: i32 = 0,
+    generate_key_repeats: bool = true,
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Session {
         const self = try gpa.create(Session);
@@ -531,7 +534,9 @@ pub const Session = struct {
                 }
             },
             .enter => |entered| {
+                if (self.keyboard_focus) |old| old.push(.keyboard_reset);
                 self.keyboard_focus = self.surfaceWindow(entered.surface);
+                if (self.keyboard_focus) |window| window.push(.{ .keyboard_focus = true });
             },
             .leave => {
                 if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window);
@@ -543,6 +548,10 @@ pub const Session = struct {
                 if (repeat.rate == 0) for (self.windows.items) |window| {
                     window.key_repeat = null;
                 };
+                for (self.windows.items) |window| window.push(.{ .keyboard_repeat_configuration = .{
+                    .rate = @max(0, repeat.rate),
+                    .delay_ms = @max(0, repeat.delay),
+                } });
             },
             else => if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window),
         }
@@ -884,6 +893,10 @@ pub const Window = struct {
         try session.windows.append(gpa, self);
         errdefer session.removeWindow(self);
         errdefer self.events.deinit(gpa);
+        self.push(.{ .keyboard_repeat_configuration = .{
+            .rate = @max(0, session.keyboard_repeat_rate),
+            .delay_ms = @max(0, session.keyboard_repeat_delay_ms),
+        } });
         errdefer if (self.frame_cb) |callback| callback.destroy();
         self.surface = try self.session.compositor.?.createSurface();
         errdefer self.surface.destroy();
@@ -1117,7 +1130,7 @@ pub const Window = struct {
                         xkb.xkb_keymap_key_repeats(keymap, k.key + 8) != 0
                     else
                         false;
-                    if (repeats and self.session.keyboard_repeat_rate > 0) {
+                    if (repeats and self.session.generate_key_repeats and self.session.keyboard_repeat_rate > 0) {
                         const period_ns = @divTrunc(@as(u64, std.time.ns_per_s), @as(u64, @intCast(self.session.keyboard_repeat_rate)));
                         self.key_repeat = .{
                             .keycode = k.key,

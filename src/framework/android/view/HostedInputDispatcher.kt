@@ -757,6 +757,7 @@ object HostedInputDispatcher {
         y: Float,
         horizontalScroll: Float = 0f,
         verticalScroll: Float = 0f,
+        metaState: Int = 0,
     ): MotionEvent = createEvent(
         downTime,
         eventTime,
@@ -769,6 +770,7 @@ object HostedInputDispatcher {
         y,
         horizontalScroll,
         verticalScroll,
+        metaState,
     )
 
     internal fun createTouchEvent(
@@ -886,6 +888,7 @@ object HostedInputDispatcher {
         y: Float,
         horizontalScroll: Float,
         verticalScroll: Float,
+        metaState: Int = 0,
     ): MotionEvent {
         val properties = MotionEvent.PointerProperties().apply {
             id = 0
@@ -907,7 +910,7 @@ object HostedInputDispatcher {
             1,
             arrayOf(properties),
             arrayOf(coordinates),
-            0,
+            metaState,
             buttonState,
             1f,
             1f,

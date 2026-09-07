@@ -83,6 +83,24 @@ activity grouping. This checkpoint does not complete task restoration,
 decoration fallback, input, output/configuration policy, desktop bridges or the
 default launcher migration.
 
+## Stock task seat checkpoint (2026-09-07)
+
+Regression 123 passes the native Java input-channel gate and both stock APK
+Cage/labwc presentation gates with presenter input callbacks connected. The
+native gate verifies a task at synthetic x=12000 receives local x=8 and raw
+x=12008, a scaled task receives the inverse-projected coordinates, and hover
+preserves keyboard focus. Focus transfer cancels held keys before delivery to
+the new task. Wayland rate/delay configure stock InputDispatcher's repeat timer;
+a zero rate sets its per-event disable-repeat policy even with the pinned
+aconfig default. Client-side repeat generation is disabled for the presenter.
+Mouse events carry the seat modifier state. Log:
+`/tmp/wayland-task-input-dispatch-123.log`.
+
+The first build attempt (122) stopped on Kotlin nested-class visibility; the
+corrected build and runtime gates pass. These checks do not yet prove physical
+Wayland input through APK semantic actions. Layout publication, modifier
+snapshots, pointer capture and the remaining M8–M11 work are still in progress.
+
 ## Session task presenter checkpoint (2026-09-07)
 
 The system process now owns a TaskOrganizer independently of APK launchers.

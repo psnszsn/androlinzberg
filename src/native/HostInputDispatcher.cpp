@@ -278,6 +278,7 @@ struct State {
   InputDispatcher dispatcher;
   std::mutex connectionMutex;
   std::atomic<bool> closed{false};
+  std::atomic<bool> keyRepeatEnabled{true};
   sp<SurfaceComposerClient> client;
   sp<WindowListener> listener;
   sp<FocusService> focus;
@@ -463,6 +464,15 @@ static void dispatchMode(JNIEnv *env, jclass, jlong handle, jboolean enabled,
   if (owner)
     owner->dispatcher.setInputDispatchMode(enabled, frozen);
 }
+static void keyRepeatConfiguration(JNIEnv *env, jclass, jlong handle,
+                                   jint timeout, jint delay, jboolean enabled) {
+  auto owner = get(env, handle);
+  if (owner) {
+    owner->keyRepeatEnabled.store(enabled);
+    owner->dispatcher.setKeyRepeatConfiguration(std::chrono::milliseconds(timeout),
+                                                std::chrono::milliseconds(delay), enabled);
+  }
+}
 static void filterEnabled(JNIEnv *env, jclass, jlong handle, jboolean enabled) {
   auto owner = get(env, handle);
   if (owner)
@@ -556,9 +566,13 @@ static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event) {
   const auto readTime = systemTime(SYSTEM_TIME_MONOTONIC);
   if (env->IsInstanceOf(event, keyClass)) {
     auto key = android_view_KeyEvent_obtainAsCopy(env, event);
+    // Wayland's zero repeat rate must also work when the pinned aconfig default
+    // disables the optional Android user-setting branch in notifyKey.
+    const uint32_t policyFlags = POLICY_FLAG_TRUSTED |
+        (owner->keyRepeatEnabled.load() ? 0 : POLICY_FLAG_DISABLE_KEY_REPEAT);
     owner->dispatcher.notifyKey(NotifyKeyArgs{
         key.getId(), key.getEventTime(), readTime, key.getDeviceId(),
-        key.getSource(), key.getDisplayId(), POLICY_FLAG_TRUSTED,
+        key.getSource(), key.getDisplayId(), policyFlags,
         key.getAction(), key.getFlags(), key.getKeyCode(), key.getScanCode(),
         key.getMetaState(), key.getDownTime()});
     return;
@@ -699,6 +713,8 @@ int registerNatives(JNIEnv *env) {
        reinterpret_cast<void *>(focusedDisplay)},
       {"nativeSetInputDispatchMode", "(JZZ)V",
        reinterpret_cast<void *>(dispatchMode)},
+      {"nativeSetKeyRepeatConfiguration", "(JIIZ)V",
+       reinterpret_cast<void *>(keyRepeatConfiguration)},
       {"nativeSetInputFilterEnabled", "(JZ)V",
        reinterpret_cast<void *>(filterEnabled)},
       {"nativeSetInTouchMode", "(JZIIZI)Z",

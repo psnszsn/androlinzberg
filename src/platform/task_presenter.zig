@@ -28,6 +28,7 @@ extern "c" fn AParcel_getDataSize(*const Parcel) i32;
 extern "c" fn AParcel_readString(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, *?[*]u8) callconv(.c) bool) i32;
 extern "c" fn AParcel_readStrongBinder(*const Parcel, *?*Binder) i32;
 extern "c" fn AParcel_writeInt32(*Parcel, i32) i32;
+extern "c" fn AParcel_writeFloat(*Parcel, f32) i32;
 extern "c" fn AParcel_writeInt32Array(*Parcel, [*]const i32, i32) i32;
 extern "c" fn AParcel_delete(*Parcel) void;
 extern "c" fn azk_graphics_live_buffers() u64;
@@ -254,14 +255,17 @@ const Text = struct {
         return self.bytes[0..self.len :0];
     }
 };
-fn send(entry: *Entry, code: u32, dimensions: ?[2]i32) !void {
+fn send(entry: *Entry, code: u32, values: anytype) !void {
     var input: ?*Parcel = null;
     var output: ?*Parcel = null;
     try ok(AIBinder_prepareTransaction(entry.events, &input));
     defer if (input) |parcel| AParcel_delete(parcel);
     defer if (output) |parcel| AParcel_delete(parcel);
-    if (dimensions) |values| for (values) |value| {
-        try ok(AParcel_writeInt32(input.?, value));
+    inline for (values) |value| switch (@typeInfo(@TypeOf(value))) {
+        .bool => try ok(AParcel_writeInt32(input.?, @intFromBool(value))),
+        .int, .comptime_int => try ok(AParcel_writeInt32(input.?, @intCast(value))),
+        .float, .comptime_float => try ok(AParcel_writeFloat(input.?, @floatCast(value))),
+        else => @compileError("Unsupported task callback field"),
     };
     try ok(AIBinder_transact(entry.events, code, &input, &output, 1));
 }
@@ -280,6 +284,7 @@ fn run(init: std.process.Init) !void {
     const wake: Io.File = .{ .handle = @intCast(raw), .flags = .{ .nonblocking = true } };
     defer wake.close(io);
     const session = try Queue.Session.init(init.gpa, io);
+    session.generate_key_repeats = false; // Stock InputDispatcher owns the timer.
     defer session.deinit();
     const death = AIBinder_DeathRecipient_new(onDeath);
     defer AIBinder_DeathRecipient_delete(death);
@@ -323,8 +328,20 @@ fn run(init: std.process.Init) !void {
             if (ready[index]) _ = try entry.queue.presentNotified(entry.window);
             for (entry.window.takeEvents()) |event| switch (event) {
                 .configure => |size| try send(entry, 1, .{ size.width, size.height }),
-                .close => try send(entry, 2, null),
-                else => {}, // Input is routed by the subsequent input milestone.
+                .close => try send(entry, 2, .{}),
+                .keyboard_focus => |focused| try send(entry, 3, .{focused}),
+                .keyboard_reset => try send(entry, 3, .{false}),
+                .pointer_motion => |p| try send(entry, 4, .{ 0, 0, false, p.x, p.y }),
+                .pointer_enter => |p| try send(entry, 4, .{ 1, 0, false, p.x, p.y }),
+                .pointer_leave => |p| try send(entry, 4, .{ 2, 0, false, p.x, p.y }),
+                .pointer_button => |p| try send(entry, 4, .{ 3, p.button, p.pressed, p.x, p.y }),
+                .pointer_cancel => try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 }),
+                .pointer_axis => |axis| try send(entry, 5, .{ entry.window.pointer_x, entry.window.pointer_y, axis.horizontal, axis.vertical }),
+                .key => |key| try send(entry, 6, .{ key.keycode, key.pressed }),
+                .touch => |touch| try send(entry, 7, .{ @backingInt(touch.action), touch.id, touch.x, touch.y, touch.major, touch.minor, touch.orientation }),
+                .touch_cancel => try send(entry, 8, .{}),
+                .keyboard_repeat_configuration => |configuration| try send(entry, 9, .{ configuration.rate, configuration.delay_ms }),
+                else => {},
             };
         }
         if (ready[0]) server.drain(!disconnected.load(.acquire));

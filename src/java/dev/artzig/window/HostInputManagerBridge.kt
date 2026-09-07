@@ -104,6 +104,8 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) = dispatcher.setFocusedApplication(displayId, application)
     fun setFocusedDisplay(displayId: Int) = dispatcher.setFocusedDisplay(displayId)
     fun setInputDispatchMode(enabled: Boolean, frozen: Boolean) = dispatcher.setInputDispatchMode(enabled, frozen)
+    fun setKeyRepeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
+        dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
     fun setInTouchMode(inTouchMode: Boolean, pid: Int, uid: Int, hasPermission: Boolean, displayId: Int): Boolean =
         dispatcher.setInTouchMode(inTouchMode, pid, uid, hasPermission, displayId)
     fun transferTouch(to: IBinder, displayId: Int): Boolean = dispatcher.transferTouchOnDisplay(to, displayId)

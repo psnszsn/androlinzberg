@@ -5,12 +5,21 @@ import android.os.ServiceManager
 
 /** The system process owns one organizer independently of APK launchers. */
 internal object SessionTaskShell {
-    fun start(handler: Handler): AutoCloseable {
+    fun start(handler: Handler, dispatcher: HostInputManagerBridge): AutoCloseable {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
             "Session presenter did not register before system startup"
         }
         val remote = IWaylandTaskPresenter.Stub.asInterface(binder)
-        val shell = WaylandTaskShell(StockTaskOrganizer(handler), RemoteTaskPresenter(remote, handler))
+        val input = WaylandTaskInput(object : WaylandTaskInput.Android {
+            override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
+            override fun dispatch(event: android.view.InputEvent) = dispatcher.dispatchDesktopEvent(event)
+            override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
+                dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
+        })
+        // Wait for Wayland's repeat policy before allowing stock dispatcher to
+        // synthesize repeats. The presenter sends physical key edges only.
+        dispatcher.setKeyRepeatConfiguration(500, 50, false)
+        val shell = WaylandTaskShell(StockTaskOrganizer(handler), RemoteTaskPresenter(remote, handler, input))
         val death = android.os.IBinder.DeathRecipient {
             check(handler.post {
                 // Surface/Binder identities cannot be reused after presenter

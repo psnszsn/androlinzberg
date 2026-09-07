@@ -10,9 +10,13 @@ object WaylandTaskInputSmoke {
         val events = mutableListOf<InputEvent>()
         val order = mutableListOf<String>()
         val focus = mutableListOf<Int>()
+        val repeats = mutableListOf<Triple<Int, Int, Boolean>>()
         var time = 100L
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun focusTask(taskId: Int) { focus.add(taskId); order.add("focus:$taskId") }
+            override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
+                repeats.add(Triple(timeoutMillis, delayMillis, enabled))
+            }
             override fun dispatch(event: InputEvent) {
                 check(event.displayId == 0)
                 events.add(event.copy())
@@ -27,6 +31,9 @@ object WaylandTaskInputSmoke {
         val first = seat.open(TaskGeometry.Task(1, 1))
         val second = seat.open(TaskGeometry.Task(2, 2))
         try {
+            seat.repeatConfiguration(50, 300)
+            seat.repeatConfiguration(50, 300)
+            check(repeats == listOf(Triple(300, 20, true)))
             first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 10f, 20f)
             check(events.isEmpty()) // No input before a committed projection.
             first.keyboardFocus(true)
@@ -56,6 +63,9 @@ object WaylandTaskInputSmoke {
             val key = events[1] as KeyEvent
             check(key.keyCode == KeyEvent.KEYCODE_A && key.isShiftPressed)
             check((events[2] as KeyEvent).downTime == key.downTime)
+            clear()
+            second.scroll(3f, 4f, 0f, 1f)
+            check((events.single() as MotionEvent).metaState and KeyEvent.META_SHIFT_ON != 0)
             clear()
             second.keyboardFocus(true)
             check(order == listOf("key:1:${KeyEvent.KEYCODE_A}:true",
@@ -104,6 +114,10 @@ object WaylandTaskInputSmoke {
             second.keyboardFocus(false)
             replacement.key(30, true)
             check(events.filterIsInstance<KeyEvent>().single().action == KeyEvent.ACTION_DOWN)
+            clear()
+            seat.repeatConfiguration(0, 400)
+            check(events.filterIsInstance<KeyEvent>().single().isCanceled)
+            check(repeats.last() == Triple(400, 1, false))
             replacement.close()
         } finally { first.close(); second.close(); clear() }
         println("Wayland task input: projection, button ordering, focus, key cancellation, touch IDs and stale generations passed")

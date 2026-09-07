@@ -144,8 +144,14 @@ object HostInputDispatcherSmoke {
                 }
                 override fun onInputEvent(event: InputEvent) {
                     when (event) {
-                        is KeyEvent -> observed.add("key:$index:${event.action}:${event.keyCode}")
-                        is MotionEvent -> observed.add("motion:$index:${event.actionMasked}:${event.x.toInt()}:${event.y.toInt()}")
+                        is KeyEvent -> {
+                            observed.add("key:$index:${event.action}:${event.keyCode}")
+                            observed.add("repeat:$index:${event.keyCode}:${event.repeatCount}:${event.isCanceled}")
+                        }
+                        is MotionEvent -> {
+                            observed.add("motion:$index:${event.actionMasked}:${event.x.toInt()}:${event.y.toInt()}")
+                            observed.add("raw:$index:${event.actionMasked}:${event.rawX.toInt()}:${event.rawY.toInt()}")
+                        }
                         else -> unexpected.add("event $event")
                     }
                     finishInputEvent(event, true)
@@ -259,6 +265,70 @@ object HostInputDispatcherSmoke {
             await("pointer capture acknowledgment") { "capture:1:true" in observed }
             dispatcher.requestPointerCapture(checkNotNull(channels[1].token), false)
             await("pointer capture release") { "capture:1:false" in observed }
+            val seat = dev.artzig.window.WaylandTaskInput(object : dev.artzig.window.WaylandTaskInput.Android {
+                override fun focusTask(taskId: Int) {
+                    val index = taskId - 1
+                    SurfaceControl.Transaction().use {
+                        it.setFocusedWindow(checkNotNull(channels[index].token), "JavaInput$index", 0).apply()
+                    }
+                }
+                override fun dispatch(event: InputEvent) = dispatcher.dispatchDesktopEvent(event)
+                override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
+                    dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
+            })
+            val leftSeat = seat.open(dev.artzig.window.TaskGeometry.Task(1, 1))
+            val rightSeat = seat.open(dev.artzig.window.TaskGeometry.Task(2, 2))
+            try {
+                val desktopReady = java.util.concurrent.CountDownLatch(1)
+                SurfaceControl.Transaction().use {
+                    it.setDisplayProjection(display, 0, Rect(0, 0, 16384, 16384), Rect(0, 0, 16384, 16384))
+                        .setPosition(roots[1], 12000f, 100f)
+                        .addWindowInfosReportedListener { desktopReady.countDown() }.apply()
+                }
+                await("synthetic display input metadata") { desktopReady.count == 0L }
+                leftSeat.committed(dev.artzig.window.TaskGeometry.Bounds(100, 100, 64, 64),
+                    dev.artzig.window.WaylandTaskShell.Size(32, 32))
+                rightSeat.committed(dev.artzig.window.TaskGeometry.Bounds(12000, 100, 64, 64),
+                    dev.artzig.window.WaylandTaskShell.Size(64, 64))
+                observed.clear()
+                leftSeat.keyboardFocus(true)
+                await("task seat keyboard focus") { "focus:0:true" in observed }
+                rightSeat.pointer(dev.artzig.window.WaylandTaskInput.POINTER_ENTER, 0, false, 8f, 8f)
+                await("far task hover and raw coordinates") {
+                    "motion:1:9:8:8" in observed && "raw:1:9:12008:108" in observed
+                }
+                check("focus:0:false" !in observed)
+                leftSeat.pointer(dev.artzig.window.WaylandTaskInput.POINTER_BUTTON, 0x110, true, 8f, 8f)
+                leftSeat.pointer(dev.artzig.window.WaylandTaskInput.POINTER_BUTTON, 0x110, false, 8f, 8f)
+                await("scaled task pointer delivery") { "motion:0:1:16:16" in observed && "raw:0:1:116:116" in observed }
+                seat.repeatConfiguration(0, 10)
+                observed.clear()
+                leftSeat.key(30, true)
+                await("task seat key delivery") { "key:0:0:${KeyEvent.KEYCODE_A}" in observed }
+                val quietUntil = SystemClock.uptimeMillis() + 100
+                await("Wayland zero rate disables repeats") { SystemClock.uptimeMillis() >= quietUntil }
+                check(observed.count { it == "key:0:0:${KeyEvent.KEYCODE_A}" } == 1)
+                leftSeat.key(30, false)
+                seat.repeatConfiguration(50, 20)
+                observed.clear()
+                leftSeat.key(30, true)
+                await("stock repeat timer and count") { "repeat:0:${KeyEvent.KEYCODE_A}:1:false" in observed }
+                rightSeat.keyboardFocus(true)
+                await("task seat focus cancels held keys") {
+                    "repeat:0:${KeyEvent.KEYCODE_A}:0:true" in observed && "focus:1:true" in observed
+                }
+                rightSeat.key(48, true); rightSeat.key(48, false)
+                await("new focused task key delivery") { "key:1:1:${KeyEvent.KEYCODE_B}" in observed }
+            } finally {
+                leftSeat.close(); rightSeat.close()
+                val restored = java.util.concurrent.CountDownLatch(1)
+                SurfaceControl.Transaction().use {
+                    it.setDisplayProjection(display, 0, Rect(0, 0, 1280, 720), Rect(0, 0, 1280, 720))
+                        .setPosition(roots[1], 140f, 100f)
+                        .addWindowInfosReportedListener { restored.countDown() }.apply()
+                }
+                await("restored dispatcher fixture geometry") { restored.count == 0L }
+            }
             val secondDown = MotionEvent.obtain(SystemClock.uptimeMillis(), SystemClock.uptimeMillis(), MotionEvent.ACTION_DOWN, 120f, 120f, 0)
             secondDown.source = InputDevice.SOURCE_TOUCHSCREEN
             secondDown.displayId = 0
