@@ -249,6 +249,13 @@ object StockColdLaunchSmoke {
                 keyboard.keyCharacterMap.get(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.META_SHIFT_ON) == 'A'.code
         }
         println("Stock Wayland keyboard: compositor layout published through InputDevice")
+        val keySupport = BooleanArray(4)
+        check(inputDevices.hasKeys(-1, android.view.InputDevice.SOURCE_KEYBOARD,
+            intArrayOf(android.view.KeyEvent.KEYCODE_A, android.view.KeyEvent.KEYCODE_DEL,
+                android.view.KeyEvent.KEYCODE_UNKNOWN, Int.MAX_VALUE), keySupport))
+        check(keySupport.contentEquals(booleanArrayOf(true, true, false, false)))
+        check(!inputDevices.hasKeys(0, android.view.InputDevice.SOURCE_MOUSE,
+            intArrayOf(android.view.KeyEvent.KEYCODE_A), BooleanArray(1)))
         val firstBounds = android.graphics.Rect(applicationTasks().single().configuration.windowConfiguration.bounds)
         check(tasks.startActivity(null, "android", null,
             Intent().setClassName(packageName, "$packageName.ColdProcessActivity")

@@ -24,7 +24,7 @@ internal class WaylandTaskInput(private val android: Android,
         fun keyboardActive(active: Boolean)
         /** Borrowed for this call; retain a copy if dispatch is asynchronous. */
         fun dispatch(event: InputEvent, repeatable: Boolean = true)
-        fun keyboardLayout(map: KeyCharacterMap)
+        fun keyboardLayout(map: KeyCharacterMap, supportedKeyCodes: IntArray)
         fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean)
     }
     private data class Pressed(val owner: Window, val code: Int, val time: Long)
@@ -56,7 +56,7 @@ internal class WaylandTaskInput(private val android: Android,
         if (generation <= layoutGeneration) return
         val map = WaylandKeyboardMap.compile(characters, symbols)
         focus?.releaseKeys()
-        android.keyboardLayout(map)
+        android.keyboardLayout(map, WaylandKeyboardMap.supportedKeyCodes(characters, symbols))
         layoutSymbols = symbols.copyOf()
         layoutGeneration = generation
         for (scan in physicalKeys.keys.toList()) physicalKeys[scan] = keyCode(scan)

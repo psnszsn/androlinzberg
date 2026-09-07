@@ -117,6 +117,17 @@ device snapshots, listener notification and keyboard fallback checks:
 `/tmp/wayland-seat-device-regressions-190.log`. Live device artifacts are retained
 in `/tmp/wayland-seat-success-189-{cage,labwc}/`.
 
+Regression 191 passes stock desktop and both task compositor gates with
+layout-derived `IInputManager.hasKeys` answers. XKB symbols retain non-text
+editing/modifier capabilities; remapped positions advertise their Android key
+identities. Queries apply pinned InputReader's device/non-class-source filtering,
+clear only the requested output prefix, reject short output arrays and return
+false for absent keys. The pointer/touch devices have no keyboard mapper. Log:
+`/tmp/wayland-key-capabilities-191.log`. Held-key state and complete pre-window
+keyboard publication remain pending.
+Regression 192 passes the full JVM/native and all 15 APK tests (45 diagnostic
+steps, zero runtime issues): `/tmp/wayland-key-capability-regressions-192.log`.
+
 ## Pointer capture and accepted resize checkpoint (2026-09-07)
 
 Stock IInputManager now forwards pointer-capture requests to InputDispatcher.

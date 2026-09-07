@@ -17,7 +17,7 @@ object WaylandTaskInputSmoke {
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun keyboardActive(active: Boolean) { keyboardActive = active }
             override fun focusTask(taskId: Int) { focus.add(taskId); order.add("focus:$taskId") }
-            override fun keyboardLayout(map: android.view.KeyCharacterMap) { layouts++ }
+            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) { layouts++ }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
                 repeats.add(Triple(timeoutMillis, delayMillis, enabled))
             }

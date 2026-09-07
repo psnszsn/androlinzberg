@@ -111,5 +111,14 @@ internal object WaylandKeyboardMap {
         return HostedInputDispatcher.createHostKeyCharacterMap(contents)
     }
 
+    /** Only positions present in the XKB layout are advertised. Modifier and
+     * editing keys may have no text; their symbols still establish capability. */
+    fun supportedKeyCodes(characters: IntArray, symbols: IntArray): IntArray {
+        require(symbols.size == SCAN_COUNT && characters.size == SCAN_COUNT * STATE_COUNT)
+        return (0 until SCAN_COUNT).filter { scan ->
+            symbols[scan] != 0 || (0 until STATE_COUNT).any { characters[scan * STATE_COUNT + it] != 0 }
+        }.map { keyCode(it, symbols[it]) }.filter { it != KeyEvent.KEYCODE_UNKNOWN }.distinct().toIntArray()
+    }
+
     private fun literal(codePoint: Int) = "'\\u${codePoint.toString(16).padStart(4, '0')}'"
 }

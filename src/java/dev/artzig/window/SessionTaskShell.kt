@@ -12,7 +12,7 @@ internal object SessionTaskShell {
         override fun close() = cleanup()
     }
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,
-        publishKeyboard: (android.view.KeyCharacterMap) -> Unit,
+        publishKeyboard: (android.view.KeyCharacterMap, IntArray) -> Unit,
         publishCapabilities: (Int, Int) -> Unit,
         taskForToken: (android.os.IBinder) -> Int?): Controller {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
@@ -22,7 +22,7 @@ internal object SessionTaskShell {
         val input = WaylandTaskInput(object : WaylandTaskInput.Android {
             override fun keyboardActive(active: Boolean) = dispatcher.setDesktopKeyboardFocus(active)
             override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
-            override fun keyboardLayout(map: android.view.KeyCharacterMap) = publishKeyboard(map)
+            override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) = publishKeyboard(map, supportedKeyCodes)
             override fun dispatch(event: android.view.InputEvent, repeatable: Boolean) = dispatcher.dispatchDesktopEvent(event, repeatable)
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
                 dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)

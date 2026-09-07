@@ -39,6 +39,7 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
     private var generation = 0
     private var notificationPending = false
     private var keyboardMap = HostedInputDispatcher.createHostKeyCharacterMap()
+    private var keyboardKeys: Set<Int> = emptySet()
     private var virtualKeyboard = keyboard(keyboardMap)
     private var pointerDevice: InputDevice? = null
     private var touchDevice: InputDevice? = null
@@ -98,8 +99,10 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
      * handler outside the device lock. InputManagerGlobal drops its cached map.
      * InputReader is absent; the compositor supplies this device's layout.
      */
-    fun publishKeyboardMap(map: KeyCharacterMap) = synchronized(deviceLock) {
+    fun publishKeyboardMap(map: KeyCharacterMap, supportedKeyCodes: IntArray = IntArray(0)) = synchronized(deviceLock) {
+        require(supportedKeyCodes.size <= 768 && supportedKeyCodes.all { it in 1..android.view.KeyEvent.getMaxKeyCode() })
         keyboardMap = map
+        keyboardKeys = supportedKeyCodes.toSet()
         advanceGeneration()
     }
 
@@ -141,8 +144,20 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
         synchronized(deviceLock) { keyboardMap }
 
     override fun hasKeys(deviceId: Int, sourceMask: Int, keyCodes: IntArray, keyExists: BooleanArray): Boolean {
-        for (i in keyCodes.indices) keyExists[i] = true
-        return true
+        // Pinned IMS.hasKeys validates the output size; InputReader.hasKeys
+        // clears the requested flags before filtering device and non-class
+        // source bits. Our fallback keyboard's XKB snapshot replaces EventHub's
+        // key-layout/capability lookup. Pointer/touch provide no keyboard mapper.
+        require(keyExists.size >= keyCodes.size) { "keyExists must be at least as large as keyCodes" }
+        for (i in keyCodes.indices) keyExists[i] = false
+        return synchronized(deviceLock) {
+            if (deviceId >= 0 || InputDevice.SOURCE_KEYBOARD and sourceMask and InputDevice.SOURCE_CLASS_MASK.inv() == 0) {
+                false
+            } else {
+                for (i in keyCodes.indices) keyExists[i] = keyCodes[i] in keyboardKeys
+                true
+            }
+        }
     }
 
     /** Pinned InputManagerService.requestPointerCapture: reject null and defer
