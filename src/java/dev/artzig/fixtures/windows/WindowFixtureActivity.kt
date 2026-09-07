@@ -33,7 +33,7 @@ open class WindowFixtureActivity : Activity() {
         content.addView(count)
         updateCounter()
         editor = EditText(this).apply {
-            id = 0x7f010001
+            id = android.R.id.edit
             contentDescription = "Fixture editor"
             hint = "Type here"
             setSingleLine(true)
@@ -53,9 +53,12 @@ open class WindowFixtureActivity : Activity() {
         }
         button("Open handled resize activity") { startActivity(Intent(this, HandledResizeActivity::class.java)) }
         button("Show attached dialog") {
-            AlertDialog.Builder(this).setTitle("Fixture dialog")
+            journal("dialog-requested")
+            val dialog = AlertDialog.Builder(this).setTitle("Fixture dialog")
                 .setMessage("This dialog belongs to the current task")
                 .setPositiveButton("Close dialog") { dialog, _ -> dialog.dismiss() }.show()
+            check(dialog.isShowing)
+            journal("dialog-shown")
         }
         button("Recreate activity") { recreate() }
         button("Show SurfaceView") {

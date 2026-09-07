@@ -83,6 +83,17 @@ task gates pass. Logs: `/tmp/wayland-held-keys-{149,150,151}.log`; 149's initial
 module failure was a test attempting a duplicate physical press after cancellation,
 corrected to release the key and require no unmatched event in 150.
 
+Stock accessibility now discovers actual WindowManagerGlobal roots, retains
+Android screen bounds for dialogs, scopes resource-ID fetch flags to each query,
+and rejects stale revisions and removed window IDs. Registration is observed
+through the decor's parent before its first traversal: View.getViewRootImpl is
+still null then, and using it incorrectly reported the new dialog as idle.
+Regression 158 passes the stock activity/dialog action and bounds gate, native
+checks and all seven Surface scenarios. Regression 159 passes the default module,
+native and complete 15-APK suite. Logs: `/tmp/wayland-desktop-launcher-158.log`
+and `/tmp/wayland-stock-accessibility-159.log`. This is process-local inspection;
+session aggregation and task selectors are still being implemented.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application

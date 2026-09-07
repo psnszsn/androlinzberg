@@ -7,6 +7,19 @@ package android.view
 object HostedRootFrames {
     @JvmField val stockClients = true
     @JvmStatic fun stopped(root: ViewRootImpl) = root.mStopped
+    @JvmStatic fun managedRoots(): List<ViewRootImpl> =
+        // setView assigns the root as parent before the first traversal attaches
+        // the decor. View.getViewRootImpl is still null in that interval.
+        WindowManagerGlobal.getInstance().windowViews.mapNotNull { it.parent as? ViewRootImpl }
+    @JvmStatic fun frame(root: ViewRootImpl) = android.graphics.Rect(root.mWinFrame)
+    @JvmStatic fun <T> inspectAccessibility(root: ViewRootImpl, block: () -> T): T {
+        // AccessibilityInteractionController scopes these flags to each query.
+        val info = root.mAttachInfo
+        val previous = info.mAccessibilityFetchFlags
+        info.mAccessibilityFetchFlags = previous or
+            android.view.accessibility.AccessibilityNodeInfo.FLAG_SERVICE_REQUESTS_REPORT_VIEW_IDS
+        try { return block() } finally { info.mAccessibilityFetchFlags = previous }
+    }
 
     @JvmStatic fun resize(root: ViewRootImpl, width: Int, height: Int) {
         require(width > 0 && height > 0)
