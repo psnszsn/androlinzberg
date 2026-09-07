@@ -905,9 +905,9 @@ fn mimeResources(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
     return result;
 }
 
-fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
+fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile) []const LazyPath {
     const inputs = b.addWriteFiles();
-    inline for (.{ declarations.cronet.support, declarations.cronet.enum_headers }) |paths| {
+    inline for (.{ declarations.cronet.support, declarations.cronet.enum_headers, declarations.cronet.proto_inputs }) |paths| {
         for (paths) |path| _ = inputs.addCopyFile(aosp.path(b.fmt("{s}/{s}", .{ declarations.cronet.root, path })), path);
     }
     const root = inputs.getDirectory();
@@ -924,6 +924,15 @@ fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
     const enum_root = extract.addOutputDirectoryArg("cronet-enums");
     extract.setName("extract Cronet enum sources");
     for (declarations.cronet.enum_outputs) |output| files.append(b.allocator, enum_root.path(b, output)) catch @panic("OOM");
+
+    // Chromium build/protoc_java.py uses --java_out=lite with these schemas.
+    // The packaged AOSP protoc and Chromium's pinned protoc are both 3.21.12.
+    const proto = b.addRunArtifact(protoc);
+    const proto_root = proto.addPrefixedOutputDirectoryArg("--java_out=lite:", "cronet-protos");
+    proto.addPrefixedDirectoryArg("--proto_path=", root.path(b, "components/cronet/android"));
+    for (declarations.cronet.proto_inputs) |input| proto.addFileArg(root.path(b, input));
+    proto.setName("generate stock Cronet protobuf messages");
+    for (declarations.cronet.proto_outputs) |output| files.append(b.allocator, proto_root.path(b, output)) catch @panic("OOM");
 
     const version = b.addSystemCommand(&.{ "python3", "-B" });
     version.addFileArg(root.path(b, "build/util/version.py"));
@@ -973,7 +982,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const graphics_sources = graphics.addOutputDirectoryArg("binder-graphics-sources");
     graphics.addFileArg(o.aosp.path(declarations.binder_graphics_aidl));
     graphics.setName("generate graphics Binder test interface");
-    const cronet_java = cronetJava(b, o.aosp);
+    const cronet_java = cronetJava(b, o.aosp, o.protoc);
     const logtags_java = logtagsJava(b, o.aosp);
     const aconfig_java = aconfigJava(b, o.aosp, runner);
     const sysprop_java = syspropJava(b, o.aosp, o.sysprop_tool);

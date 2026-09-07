@@ -28,6 +28,22 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- Cronet's request configuration, HTTP flags and base-feature overrides now use
+  11 original generated protobuf classes and AOSP's 91-source protobuf lite runtime.
+  The build uses the pinned protoc lite backend. Protobuf compiles separately against
+  AOSP's original private Unsafe header, as required by its Android.bp; that header
+  is excluded from the shipped jar, which continues to use ART's Unsafe implementation.
+  The closure index now recognizes multiple-file protobuf messages and default outer
+  class names, including collisions. Tests on ART cover proto2 presence, builder
+  isolation, unknown-field preservation, oneof replacement, delimited streams, binary
+  buffer ownership and malformed input. All 12 closure tests, JVM/system, native/Binder
+  and build checks pass; all 11 APK tests pass (37 steps, zero structured runtime issues).
+  The rebuilt AOSP archive is repinned and its three added schemas are byte-verified;
+  ART's checksum is unchanged. The inventory remains 28 stubs (16 pending, 12 survivors).
+  This completes the protobuf dependency for the AppOps/HttpEngine source closure;
+  it does not yet select AppOps or implement Cronet's native networking backend.
+
+
 - The AppOps/process-initialization closure now has the pinned Cronet generators
   for nine Java enums, ApiVersion, BuildConfig and NetError. The build uses the
   original enum parser, version script and C-preprocessor templates, with declared

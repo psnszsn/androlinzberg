@@ -6082,3 +6082,6 @@ F aosp external/cronet/stable/net/base/request_priority.h
 F aosp external/cronet/stable/net/nqe/network_quality.h
 F aosp external/cronet/stable/build/util/LASTCHANGE
 F aosp external/cronet/stable/chrome/VERSION
+F aosp external/cronet/stable/components/cronet/android/proto/request_context_config.proto
+F aosp external/cronet/stable/components/cronet/android/proto/flags.proto
+F aosp external/cronet/stable/components/cronet/android/proto/base_feature_overrides.proto

@@ -51,6 +51,7 @@ pub const Set = struct {
     java: SourceFiles.Files,
     kotlin: SourceFiles.Files,
     annotations: SourceFiles.Files,
+    protobuf_lite: SourceFiles.Files,
     java_rsp: std.Build.LazyPath,
     kotlin_rsp: std.Build.LazyPath,
     annotations_rsp: std.Build.LazyPath,
@@ -96,11 +97,17 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     }) |path| annotations.addFile(modules_utils, path);
     for (project_sources.annotations) |path| annotations.addFile(project_root, path);
 
+    // AOSP builds libprotobuf-java-lite against libcore_private.stubs. Keep
+    // those compile-only Unsafe symbols out of the framework compiler and jar.
+    var protobuf = StaticCollector.init(b);
+    protobuf.addRoot("A", SourceFiles.Root.dependency(b, aosp, ""));
+    collectProtobuf(&protobuf) catch |err| std.debug.panic("unable to collect protobuf sources: {t}", .{err});
     const java = framework.files.select(".java");
     const kotlin = framework.files.select(".kt");
     const annotation_files = annotations.select(".java");
     return .{
         .java = java,
+        .protobuf_lite = protobuf.files.select(".java"),
         .kotlin = kotlin,
         .annotations = annotation_files,
         .java_rsp = java.responseFile(b, "framework-static-java-sources.rsp"),
@@ -3272,4 +3279,99 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$A/packages/modules/Connectivity/staticlibs/device/com/android/net/module/util/Struct.java");
     try c.file("$A/packages/modules/Connectivity/staticlibs/framework/com/android/net/module/util/IpUtils.java");
     try c.file("$A/packages/modules/Connectivity/framework/src/android/net/NetworkAgent.java");
+}
+
+fn collectProtobuf(c: *StaticCollector) !void {
+    // Pinned external/protobuf Android.bp: libprotobuf-java-lite.
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/AbstractMessageLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/AbstractParser.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/AbstractProtobufList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/AllocatedBuffer.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Android.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ArrayDecoders.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/BinaryReader.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/BinaryWriter.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/BooleanArrayList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/BufferAllocator.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ByteBufferWriter.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ByteOutput.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ByteString.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/CanIgnoreReturnValue.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/CheckReturnValue.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/CodedInputStream.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/CodedInputStreamReader.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/CodedOutputStream.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/CodedOutputStreamWriter.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/CompileTimeConstant.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/DoubleArrayList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ExperimentalApi.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ExtensionLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ExtensionRegistryFactory.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ExtensionRegistryLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ExtensionSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ExtensionSchemaLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ExtensionSchemas.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/FieldInfo.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/FieldSet.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/FieldType.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/FloatArrayList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/GeneratedMessageInfoFactory.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/GeneratedMessageLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/InlineMe.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/IntArrayList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Internal.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/InvalidProtocolBufferException.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/IterableByteBufferInputStream.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/JavaType.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/LazyField.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/LazyFieldLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/LazyStringArrayList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/LazyStringList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ListFieldSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/LongArrayList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ManifestSchemaFactory.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MapEntryLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MapFieldLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MapFieldSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MapFieldSchemaLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MapFieldSchemas.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MessageInfo.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MessageInfoFactory.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MessageLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MessageLiteOrBuilder.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MessageLiteToString.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MessageSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MessageSetSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/MutabilityOracle.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/NewInstanceSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/NewInstanceSchemaLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/NewInstanceSchemas.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/NioByteString.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/OneofInfo.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Parser.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/PrimitiveNonBoxingCollection.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ProtoSyntax.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Protobuf.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ProtobufArrayList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ProtobufLists.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/ProtocolStringList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/RawMessageInfo.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Reader.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/RopeByteString.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Schema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/SchemaFactory.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/SchemaUtil.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/SmallSortedMap.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/StructuralMessageInfo.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/TextFormatEscaper.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/UninitializedMessageException.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/UnknownFieldSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/UnknownFieldSetLite.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/UnknownFieldSetLiteSchema.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/UnmodifiableLazyStringList.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/UnsafeByteOperations.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/UnsafeUtil.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Utf8.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/WireFormat.java");
+    try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Writer.java");
 }

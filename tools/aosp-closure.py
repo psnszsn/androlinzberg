@@ -155,7 +155,7 @@ KNOWN_GENERATED = {
     "com.android.modules.expresslog.StatsExpressLog": "stats-log expresslog module (build/generators.zig)",
 }
 
-INDEX_VERSION = 11
+INDEX_VERSION = 12
 
 
 def strip_code(text: str) -> str:
@@ -218,6 +218,56 @@ def read(path: Path) -> str:
         return ""
 
 
+def proto_java_names(path: str, declaration: str) -> list[str]:
+    """Pinned protobuf Java name_resolver.cc, including multiple-file messages."""
+    package = re.search(r'^\s*option\s+java_package\s*=\s*"([\w.]+)"', declaration, re.M)
+    if package is None:
+        package = PACKAGE_RE.search(declaration)
+    if package is None:
+        return []
+    code = strip_code(declaration)
+    depth = 0
+    top_level: list[tuple[str, str]] = []
+    declared_names: set[str] = set()
+    for match in re.finditer(r"[{}]|\b(message|enum|service)\s+(\w+)", code):
+        if match.group(0) == "{":
+            depth += 1
+        elif match.group(0) == "}":
+            depth -= 1
+        else:
+            kind, name = match.groups()
+            declared_names.add(name)
+            if depth == 0:
+                top_level.append((kind, name))
+    explicit = re.search(r'^\s*option\s+java_outer_classname\s*=\s*"(\w+)"', declaration, re.M)
+    if explicit:
+        outer = explicit.group(1)
+    else:
+        # helpers.cc::UnderscoresToCamelCase(..., true).
+        outer = ""
+        capitalize = True
+        for char in Path(path).stem:
+            if "a" <= char <= "z" or "A" <= char <= "Z":
+                outer += char.upper() if capitalize else char
+                capitalize = False
+            elif "0" <= char <= "9":
+                outer += char
+                capitalize = True
+            else:
+                capitalize = True
+        if outer in declared_names:
+            outer += "OuterClass"
+    names = [outer]
+    if re.search(r"\boption\s+java_multiple_files\s*=\s*true\s*;", code):
+        generic_services = re.search(r"\boption\s+java_generic_services\s*=\s*true\s*;", code)
+        for kind, name in top_level:
+            if kind != "service" or generic_services:
+                names.append(name)
+            if kind == "message":
+                names.append(name + "OrBuilder")
+    return [f"{package.group(1)}.{name}" for name in names]
+
+
 class SourceIndex:
     """FQN -> source files of the AOSP checkout, keyed by kind (java/kt/aidl)."""
 
@@ -251,13 +301,9 @@ class SourceIndex:
             for f in filenames:
                 if f.endswith(".proto"):
                     declaration = read(Path(dirpath, f))
-                    package = re.search(r'^\s*option\s+java_package\s*=\s*"([\w.]+)"', declaration, re.M)
-                    if package is None:
-                        package = PACKAGE_RE.search(declaration)
-                    outer = re.search(r'^\s*option\s+java_outer_classname\s*=\s*"(\w+)"', declaration, re.M)
-                    if package and outer:
-                        by_fqn[f"{package.group(1)}.{outer.group(1)}"]["proto"].append(
-                            os.path.normpath(os.path.join(rel_dir, f)))
+                    path = os.path.normpath(os.path.join(rel_dir, f))
+                    for name in proto_java_names(f, declaration):
+                        by_fqn[name]["proto"].append(path)
                 if f.endswith(".logtags"):
                     package = re.search(r"^\s*option\s+java_package\s+([\w.]+)",
                                         read(Path(dirpath, f)), re.M)

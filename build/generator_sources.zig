@@ -55,6 +55,24 @@ pub const cronet = .{
         "org/chromium/net/RequestPriority.java",
         "org/chromium/net/RttThroughputValues.java",
     },
+    .proto_inputs = &[_][]const u8{
+        "components/cronet/android/proto/request_context_config.proto",
+        "components/cronet/android/proto/flags.proto",
+        "components/cronet/android/proto/base_feature_overrides.proto",
+    },
+    .proto_outputs = &[_][]const u8{
+        "org/chromium/net/RequestContextConfig.java",
+        "org/chromium/net/RequestContextConfigOptions.java",
+        "org/chromium/net/RequestContextConfigOptionsOrBuilder.java",
+        "org/chromium/net/httpflags/FlagsOuterClass.java",
+        "org/chromium/net/httpflags/Flags.java",
+        "org/chromium/net/httpflags/FlagsOrBuilder.java",
+        "org/chromium/net/httpflags/FlagValue.java",
+        "org/chromium/net/httpflags/FlagValueOrBuilder.java",
+        "org/chromium/net/httpflags/BaseFeatureOverridesOuterClass.java",
+        "org/chromium/net/httpflags/BaseFeatureOverrides.java",
+        "org/chromium/net/httpflags/BaseFeatureOverridesOrBuilder.java",
+    },
     .api_version_output = "org/chromium/net/ApiVersion.java",
     .api_level = "API_LEVEL=34",
     .templates = &.{
@@ -2576,6 +2594,7 @@ test "generator declarations map typed inputs to unique Java outputs" {
     defer outputs.deinit(std.testing.allocator);
 
     for (cronet.enum_outputs) |output| try expectUniqueOutput(&outputs, output);
+    for (cronet.proto_outputs) |output| try expectUniqueOutput(&outputs, output);
     try expectUniqueOutput(&outputs, cronet.api_version_output);
     inline for (cronet.templates) |entry| try expectUniqueOutput(&outputs, entry.output);
     for (hidl) |entry| {

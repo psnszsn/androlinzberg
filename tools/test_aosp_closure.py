@@ -17,6 +17,23 @@ SPEC.loader.exec_module(aosp_closure)
 
 
 class SourceIndexTest(unittest.TestCase):
+    def test_proto_multiple_files_and_default_outer_name_collision(self) -> None:
+        declaration = '''syntax = "proto2";
+package wire;
+option java_package = "org.chromium.net.httpflags";
+option java_multiple_files = true;
+message FlagValue { message ConstrainedValue { optional bool value = 1; } }
+message Flags { map<string, FlagValue> flags = 1; }
+service HiddenService {}
+'''
+        names = aosp_closure.proto_java_names("flags.proto", declaration)
+        self.assertEqual({"FlagsOuterClass", "Flags", "FlagsOrBuilder", "FlagValue", "FlagValueOrBuilder"},
+                         {name.rsplit(".", 1)[1] for name in names})
+        self.assertTrue(all(name.startswith("org.chromium.net.httpflags.") for name in names))
+        self.assertEqual(["org.chromium.net.httpflags.FlagsOuterClass"],
+                         aosp_closure.proto_java_names("flags.proto", declaration.replace(
+                             "java_multiple_files = true", "java_multiple_files = false")))
+
     def test_cronet_uses_the_pinned_stable_module_without_mixing_tot(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

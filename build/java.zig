@@ -153,6 +153,25 @@ pub fn build(b: *std.Build, o: Options) Result {
         b.path("artzig/tools/build-command.zig"),
     );
 
+    // external/protobuf/Android.bp compiles its host fallback against the
+    // original libcore_private.stubs Unsafe declaration. The stub must never
+    // replace ART's Unsafe or enter the shipped framework jar.
+    const protobuf_header = command.create(b);
+    protobuf_header.addArgs(&.{ "javac", "-source", "8", "-target", "8", "-nowarn", "-bootclasspath" });
+    protobuf_header.addFileArg(core_plus);
+    protobuf_header.addArg("-d");
+    const protobuf_header_classes = protobuf_header.addOutputDirectoryArg("protobuf-private-headers");
+    protobuf_header.addFileArg(aosp.path("external/protobuf/java/core/src/stubs/sun/misc/Unsafe.java"));
+    protobuf_header.run.setName("compile pinned protobuf private header");
+    const protobuf_javac = command.create(b);
+    protobuf_javac.addArgs(&.{ "javac", "-source", "8", "-target", "8", "-nowarn", "-bootclasspath" });
+    protobuf_javac.addJoinedPathInputs(":", &.{ .{ .directory = protobuf_header_classes }, .{ .file = core_plus } });
+    protobuf_javac.addArg("-d");
+    const protobuf_classes = protobuf_javac.addOutputDirectoryArg("protobuf-lite-classes");
+    protobuf_javac.addPrefixedFileArg("@", sources.protobuf_lite.responseFile(b, "protobuf-lite-sources.rsp"));
+    sources.protobuf_lite.addInputs(protobuf_javac.run);
+    protobuf_javac.run.setName("compile stock protobuf lite runtime");
+
     // 2. Generated Java, framework resources, and fixture APKs are cacheable
     // Run/WriteFiles nodes owned by build/generators.zig.
     const res_apk = o.generated.resources.apk;
@@ -309,6 +328,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = androidx_annotation_classes },
         .{ .directory = error_prone_annotation_classes },
         .{ .directory = r8_keepanno_classes },
+        .{ .directory = protobuf_classes },
         .{ .directory = javadoc_classes },
     });
     kotlinc.addArg("-d");
@@ -339,6 +359,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = androidx_annotation_classes },
         .{ .directory = error_prone_annotation_classes },
         .{ .directory = r8_keepanno_classes },
+        .{ .directory = protobuf_classes },
         .{ .directory = javadoc_classes },
         .{ .file = kotlin_stdlib },
     });
@@ -393,6 +414,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(r8_keepanno_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(protobuf_classes);
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(o.generated.jvm.resources);

@@ -41,7 +41,7 @@ Pending: 16 (budget 16). Survivors: 12. Total: 28.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (353 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < AppOpsManager); android.permission.PermissionUsageHelper: existing host class android.permission.PermissionM |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (249 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < AppOpsManager); android.permission.PermissionUsageHelper: existing host class android.permission.PermissionM |
 
 ### audio
 
@@ -60,23 +60,23 @@ Pending: 16 (budget 16). Survivors: 12. Total: 28.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2658 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2656 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2767 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2669 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3109 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3218 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3120 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
 
 ### runtime
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (350 to add), not vendored; android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < SystemServerClassLoaderFactory); android.service.print.PrintAttri |
+| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (246 to add), not vendored; android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < SystemServerClassLoaderFactory); android.service.print.PrintAttri |
 
 ### systemserver
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2656 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2656 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
 
 ### virtualdevice
 
@@ -88,9 +88,9 @@ Pending: 16 (budget 16). Survivors: 12. Total: 28.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (350 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < CookieManager); android.service.print.PrintAttributesProto: gen |
-| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (352 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebChromeClient); android.service.print.PrintAttributesProto: |
-| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (350 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebSettings); android.service.print.PrintAttributesProto: generat |
+| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (246 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < CookieManager); android.service.print.PrintAttributesProto: gen |
+| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (248 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebChromeClient); android.service.print.PrintAttributesProto: |
+| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (246 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebSettings); android.service.print.PrintAttributesProto: generat |
 
 ## Hubs
 
@@ -108,7 +108,6 @@ decides where to cut.
 | `android.print.PrintAttributes` | 12 | 2 |
 | `com.android.internal.os.Zygote` | 12 | 2 |
 | `org.chromium.net.ExperimentalCronetEngine` | 12 | 3 |
-| `org.chromium.net.impl.CronetLibraryLoader` | 12 | 3 |
 | `org.chromium.net.impl.NativeCronetEngineBuilderImpl` | 12 | 3 |
 | `org.chromium.net.ConnectionMigrationOptions` | 12 | 4 |
 | `org.chromium.net.impl.CronetUrlRequestContext` | 12 | 4 |
@@ -141,3 +140,4 @@ decides where to cut.
 | `com.android.server.art.DexUseManagerLocal` | 6 | 1 |
 | `com.android.server.input.InputManagerService` | 6 | 1 |
 | `com.android.server.pm.AppDataHelper` | 6 | 1 |
+| `com.android.server.pm.AppsFilterImpl` | 6 | 1 |
