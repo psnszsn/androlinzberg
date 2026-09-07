@@ -24,7 +24,17 @@ data class Selector(
     val allWindows: Boolean = false,
     val visible: Boolean? = null,
     val stateDescription: String? = null,
+    val taskId: Int? = null,
+    val windowId: Long? = null,
+    val pid: Int? = null,
+    val processGeneration: Long? = null,
 ) {
+    init {
+        require(taskId == null || taskId >= 0)
+        require(windowId == null || windowId > 0)
+        require(pid == null || pid > 0)
+        require(processGeneration == null || processGeneration > 0)
+    }
     fun toJson(): JsonObject = JsonObject().apply {
         resourceId?.let { addProperty("resource_id", it) }
         text?.let { addProperty("text", it) }
@@ -35,12 +45,16 @@ data class Selector(
         if (allWindows) addProperty("window", "all")
         visible?.let { addProperty("visible", it) }
         stateDescription?.let { addProperty("state_description", it) }
+        taskId?.let { addProperty("task_id", it) }
+        windowId?.let { addProperty("window_id", it) }
+        pid?.let { addProperty("pid", it) }
+        processGeneration?.let { addProperty("process_generation", it) }
     }
 
     val isEmpty: Boolean
         get() = resourceId == null && text == null && description == null &&
             className == null && role == null && index == null && !allWindows &&
-            stateDescription == null
+            stateDescription == null && taskId == null && windowId == null && pid == null && processGeneration == null
 }
 
 enum class WaitKind(val wireName: String) {

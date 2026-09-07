@@ -132,6 +132,10 @@ object AzkTestCli {
             command = "step:${args[cursor++]}"
         }
 
+        var taskId: Int? = null
+        var windowId: Long? = null
+        var pid: Int? = null
+        var processGeneration: Long? = null
         var resourceId: String? = null
         var text: String? = null
         var description: String? = null
@@ -165,6 +169,14 @@ object AzkTestCli {
                 if (attachedValue != null) throw UsageException("$argument does not take a value")
             }
             when (argument) {
+                "--task-id" -> taskId = value().toIntOrNull()?.takeIf { it >= 0 }
+                    ?: throw UsageException("--task-id requires a nonnegative integer")
+                "--window-id" -> windowId = value().toLongOrNull()?.takeIf { it > 0 }
+                    ?: throw UsageException("--window-id requires a positive integer")
+                "--pid" -> pid = value().toIntOrNull()?.takeIf { it > 0 }
+                    ?: throw UsageException("--pid requires a positive integer")
+                "--process-generation" -> processGeneration = value().toLongOrNull()?.takeIf { it > 0 }
+                    ?: throw UsageException("--process-generation requires a positive integer")
                 "--id" -> resourceId = value()
                 "--text" -> text = value()
                 "--description" -> description = value()
@@ -216,7 +228,7 @@ object AzkTestCli {
         }
         val selector = Selector(
             resourceId, text, description, className, role, selectorIndex, allWindows, visible,
-            stateDescription,
+            stateDescription, taskId, windowId, pid, processGeneration,
         )
         val action = when (actualCommand) {
             "click" -> {
@@ -336,6 +348,7 @@ Commands:
 
 Selectors: --id ID --text TEXT --description TEXT --class CLASS --role ROLE
            --state-description TEXT --index N --visible true|false --all-windows
+           --task-id N --window-id N --pid N --process-generation N
 Drag: --from-x FRACTION --from-y FRACTION --to-x FRACTION --to-y FRACTION
 """
 }

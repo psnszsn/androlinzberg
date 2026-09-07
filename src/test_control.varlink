@@ -14,6 +14,10 @@ type Mark (
 
 type Selector (
   window: ?(active, all),
+  task_id: ?int,
+  window_id: ?int,
+  pid: ?int,
+  process_generation: ?int,
   resource_id: ?string,
   text: ?string,
   content_description: ?string,

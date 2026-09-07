@@ -19,6 +19,13 @@ class AzkTestCliCompatibilityTest {
     @Test
     fun preservesRequestsForEveryDirectCommand() {
         val cases = listOf(
+            Case(arrayOf("observe", "--task-id", "10", "--window-id", "4294967297", "--pid", "100", "--process-generation", "3"), "Observe") {
+                val selector = it.parameters["selector"].asJsonObject
+                assertEquals(10, selector["task_id"].asInt)
+                assertEquals(4294967297L, selector["window_id"].asLong)
+                assertEquals(100, selector["pid"].asInt)
+                assertEquals(3L, selector["process_generation"].asLong)
+            },
             Case(arrayOf("observe", "--text=Ready", "--tree", "--wait=exists"), "Observe") {
                 assertEquals("Ready", it.parameters["selector"].asJsonObject["text"].asString)
                 assertTrue(it.parameters["include_tree"].asBoolean)

@@ -993,8 +993,13 @@ fn selectNodes(
     const all_windows = if (stringField(selector, "window")) |window|
         std.mem.eql(u8, window, "all")
     else
-        false;
+        intField(selector, "task_id") != null or intField(selector, "window_id") != null or
+            intField(selector, "pid") != null or intField(selector, "process_generation") != null;
     for (nodes) |node| {
+        if (!matchesInt(selector, node, "task_id")) continue;
+        if (!matchesInt(selector, node, "window_id")) continue;
+        if (!matchesInt(selector, node, "pid")) continue;
+        if (!matchesInt(selector, node, "process_generation")) continue;
         if (!all_windows and active_window != null and intField(node, "window_id") != active_window) continue;
         if (!matchesString(selector, node, "resource_id")) continue;
         if (!matchesString(selector, node, "text")) continue;
@@ -1024,6 +1029,14 @@ fn matchesString(selector: std.json.Value, node: std.json.Value, name: []const u
     const expected = stringField(selector, name) orelse return true;
     const actual = stringField(node, name) orelse return false;
     return std.mem.eql(u8, expected, actual);
+}
+
+fn matchesInt(selector: std.json.Value, node: std.json.Value, name: []const u8) bool {
+    const field = valueField(selector, name) orelse return true;
+    if (field == .null) return true;
+    const expected = intField(selector, name) orelse return false;
+    const actual = intField(node, name) orelse return false;
+    return expected == actual;
 }
 
 fn matchesBool(selector: std.json.Value, node: std.json.Value, name: []const u8) bool {
@@ -1140,4 +1153,35 @@ test "pointer fractions map within selected bounds" {
     defer action.deinit();
     try std.testing.expectEqual(@as(i32, 125), fractionCoordinate(action.value, "from_x_fraction", 100, 201).?);
     try std.testing.expectEqual(@as(i32, 200), fractionCoordinate(action.value, "to_x_fraction", 100, 201).?);
+}
+
+// Explicit process/task identities select independently of current desktop focus.
+// A missing identity must never broaden the selector to a different app.
+test "task selectors preserve identity across duplicate labels and focus" {
+    const json =
+        \\{"windows":[{"id":1,"active":false},{"id":2,"active":true}],"nodes":[
+        \\{"window_id":1,"task_id":10,"pid":100,"process_generation":3,"text":"Go"},
+        \\{"window_id":2,"task_id":20,"pid":200,"process_generation":4,"text":"Go"}]}
+    ;
+    var snapshot = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, json, .{});
+    defer snapshot.deinit();
+    const cases = .{
+        .{ "{\"text\":\"Go\",\"task_id\":10}", 1 },
+        .{ "{\"text\":\"Go\",\"window_id\":1}", 1 },
+        .{ "{\"pid\":100,\"process_generation\":3}", 1 },
+        .{ "{\"pid\":100,\"process_generation\":4}", 0 },
+        .{ "{\"task_id\":10,\"window_id\":2}", 0 },
+        .{ "{\"task_id\":10,\"window\":\"active\"}", 0 },
+        .{ "{\"task_id\":999}", 0 },
+        .{ "{\"task_id\":\"10\"}", 0 },
+    };
+    inline for (cases) |case| {
+        var selector = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, case[0], .{});
+        defer selector.deinit();
+        var matches: std.ArrayList(std.json.Value) = .empty;
+        defer matches.deinit(std.testing.allocator);
+        try selectNodes(std.testing.allocator, snapshot.value, selector.value, &matches);
+        try std.testing.expectEqual(@as(usize, case[1]), matches.items.len);
+        if (case[1] != 0) try std.testing.expectEqual(@as(i64, 1), intField(matches.items[0], "window_id").?);
+    }
 }
