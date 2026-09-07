@@ -65,6 +65,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/ArtzigTestDiagnostics.kt",
     "src/java/dev/artzig/ArtzigAccessibilityBridge.kt",
     "src/java/dev/artzig/AppProcess.kt",
+    "src/java/dev/artzig/window/DesktopLauncher.kt",
     "src/java/dev/artzig/ArtzigKeyStoreProvider.kt",
     "src/java/dev/artzig/AudioProbe.kt",
     "src/java/dev/artzig/BinderSession.kt",

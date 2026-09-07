@@ -263,6 +263,23 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
     try ensureSession(init, &binder, join_dir);
+    if (apk != null and std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TASK_WINDOWS") orelse "", "1")) {
+        if (frames_limit != null or fullscreen) return error.TaskWindowPresentationOptionsUnavailable;
+        if (init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null) return error.TaskWindowTestControlNotAttached;
+        const arena = init.arena.allocator();
+        const path = if (std.fs.path.isAbsolute(apk.?)) apk.? else try std.fs.path.join(arena, &.{ init.minimal.environ.getPosix("PWD") orelse ".", apk.? });
+        _ = setenv("ARTZIG_APK", try arena.dupeSentinel(u8, path, 0), 1);
+        // Only the session owner holds the privileged cookie. APK processes are
+        // spawned by the system service with app credentials, as on cold launch.
+        if (binder) |*session| {
+            _ = setenv(binder_session.system_cookie_env, try arena.dupeSentinel(u8, session.system_cookie, 0), 1);
+        }
+        var headless = try bootHeadlessApk(init, path);
+        defer headless.rt.releaseProcessState();
+        if (binder) |*session| try session.awaitSystemReady();
+        try runFrameworkMain(&headless.rt, "dev.artzig.window.DesktopLauncher", &.{if (binder != null) "owner" else "joined"});
+        return;
+    }
     return javaMain(init, frames_limit, apk, fullscreen, if (binder) |*session| session else null);
 }
 

@@ -231,13 +231,14 @@ pub const KeyboardLayout = struct {
         var result: [256 * 64]i32 = undefined;
         for (0..64) |combination| {
             var mask: u32 = 0;
-            for (masks, 0..) |bit, i| if (combination & (@as(usize, 1) << @intCast(i)) != 0) { mask |= bit; };
+            for (masks, 0..) |bit, i| if (combination & (@as(usize, 1) << @intCast(i)) != 0) {
+                mask |= bit;
+            };
             _ = xkb.xkb_state_update_mask(state, mask, 0, 0, 0, 0, self.group);
             for (0..256) |scan| {
                 const key: u32 = @intCast(scan + 8);
                 const unicode = xkb.xkb_state_key_get_utf32(state, key);
-                result[scan * 64 + combination] = @intCast(if (unicode != 0) unicode else
-                    deadAccent(xkb.xkb_state_key_get_one_sym(state, key)));
+                result[scan * 64 + combination] = @intCast(if (unicode != 0) unicode else deadAccent(xkb.xkb_state_key_get_one_sym(state, key)));
             }
         }
         return result;
@@ -245,13 +246,13 @@ pub const KeyboardLayout = struct {
 
     fn deadAccent(symbol: u32) u32 {
         // XKB_KEY_dead_grave..dead_belowcomma, from pinned xkbcommon-keysyms.h.
-        const accents = [_]u32{ 0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x0306, 0x0307,
-            0x0308, 0x030a, 0x030b, 0x030c, 0x0327, 0x0328, 0x0345, 0x3099, 0x309a,
-            0x0323, 0x0309, 0x031b, 0x0335, 0x0313, 0x0314, 0x030f, 0x0325, 0x0331,
-            0x032d, 0x0330, 0x032e, 0x0324, 0x0311, 0x0326 };
+        const accents = [_]u32{ 0x0300, 0x0301, 0x0302, 0x0303, 0x0304, 0x0306, 0x0307, 0x0308, 0x030a, 0x030b, 0x030c, 0x0327, 0x0328, 0x0345, 0x3099, 0x309a, 0x0323, 0x0309, 0x031b, 0x0335, 0x0313, 0x0314, 0x030f, 0x0325, 0x0331, 0x032d, 0x0330, 0x032e, 0x0324, 0x0311, 0x0326 };
         if (symbol >= 0xfe50 and symbol <= 0xfe6e) return accents[symbol - 0xfe50];
         return switch (symbol) {
-            0xfe90 => 0x0332, 0xfe91 => 0x030d, 0xfe92 => 0x0329, 0xfe93 => 0x0338,
+            0xfe90 => 0x0332,
+            0xfe91 => 0x030d,
+            0xfe92 => 0x0329,
+            0xfe93 => 0x0338,
             else => 0,
         };
     }
@@ -720,6 +721,17 @@ pub const Session = struct {
     pub fn prepareTestKeyboard(self: *Session) !void {
         _ = try self.ensureVirtualKeyboard();
         if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+    }
+
+    /// Compositor shortcut injection for protocol/lifetime gates in tools/shot.sh.
+    pub fn testKeyboardShortcut(self: *Session, scan: u32, modifiers: u32) !void {
+        const keyboard = try self.ensureVirtualKeyboard();
+        const time = inputTimestamp(self.io);
+        keyboard.modifiers(modifiers, 0, 0, 0);
+        keyboard.key(time, scan, 1);
+        keyboard.key(time +% 1, scan, 0);
+        keyboard.modifiers(0, 0, 0, 0);
+        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
     fn ensureVirtualKeyboard(self: *Session) !*zwp.VirtualKeyboardV1 {
@@ -1309,8 +1321,7 @@ pub const Window = struct {
         );
         self.pointer_axis_frame.reset();
         if (horizontal != 0 or vertical != 0) {
-            self.push(.{ .pointer_axis = .{ .x = self.pointer_x, .y = self.pointer_y,
-                .horizontal = horizontal, .vertical = vertical } });
+            self.push(.{ .pointer_axis = .{ .x = self.pointer_x, .y = self.pointer_y, .horizontal = horizontal, .vertical = vertical } });
         }
     }
 
@@ -1324,7 +1335,9 @@ pub const Window = struct {
                     keysym = xkb.xkb_state_key_get_one_sym(st, k.key + 8);
                 }
                 const repeatable = if (self.session.xkb_keymap) |keymap|
-                    xkb.xkb_keymap_key_repeats(keymap, k.key + 8) != 0 else false;
+                    xkb.xkb_keymap_key_repeats(keymap, k.key + 8) != 0
+                else
+                    false;
                 self.push(.{ .key = .{
                     .repeatable = repeatable,
                     .keycode = k.key,
@@ -1472,8 +1485,7 @@ pub const Window = struct {
             self.relative_pointer = null;
             if (self.pointer_capture_actual) {
                 self.pointer_capture_actual = false;
-                self.push(.{ .pointer_capture_changed = .{ .enabled = false,
-                    .sequence = self.pointer_capture_sequence } });
+                self.push(.{ .pointer_capture_changed = .{ .enabled = false, .sequence = self.pointer_capture_sequence } });
             }
             return;
         }
@@ -2271,14 +2283,12 @@ test "control client polls writable only while output is pending" {
     try std.testing.expect(pending & std.posix.POLL.IN != 0);
 }
 
-
 test "pointer capture rejects missing capability and snapshots acknowledgement sequences" {
     var session: Session = undefined;
     session.ordered_events = .{};
     session.pointer = null;
     defer session.ordered_events.?.deinit(std.testing.allocator);
-    var window: Window = .{ .session = &session, .gpa = std.testing.allocator,
-        .io = undefined, .width = 100, .height = 100 };
+    var window: Window = .{ .session = &session, .gpa = std.testing.allocator, .io = undefined, .width = 100, .height = 100 };
     try std.testing.expectError(error.PointerCapabilityUnavailable, window.requestPointerCapture(true, 1));
     try std.testing.expect(!window.pointer_capture_requested);
     try std.testing.expect(!window.pointer_capture_actual);
@@ -2295,8 +2305,7 @@ test "queued scroll retains its surface position across later pointer motion" {
     var session: Session = undefined;
     session.ordered_events = .{};
     defer session.ordered_events.?.deinit(std.testing.allocator);
-    var window: Window = .{ .session = &session, .gpa = std.testing.allocator,
-        .io = undefined, .width = 100, .height = 100 };
+    var window: Window = .{ .session = &session, .gpa = std.testing.allocator, .io = undefined, .width = 100, .height = 100 };
     window.pointer_x = 12;
     window.pointer_y = 13;
     window.pointer_axis_frame.vertical_value120 = 120;
@@ -2345,10 +2354,14 @@ test "queued XKB layouts retain groups and produce Android character states" {
     defer events.deinit(std.testing.allocator);
     var window: Window = undefined;
     events.push(std.testing.allocator, &window, .{ .keyboard_layout = .{
-        .keymap = xkb.xkb_keymap_ref(map), .group = 0, .generation = 1,
+        .keymap = xkb.xkb_keymap_ref(map),
+        .group = 0,
+        .generation = 1,
     } });
     events.push(std.testing.allocator, &window, .{ .keyboard_layout = .{
-        .keymap = xkb.xkb_keymap_ref(map), .group = 1, .generation = 2,
+        .keymap = xkb.xkb_keymap_ref(map),
+        .group = 1,
+        .generation = 2,
     } });
     xkb.xkb_keymap_unref(map); // Queue retains both immutable snapshots.
     const snapshots = events.take();
@@ -2402,11 +2415,9 @@ test "keyboard modifier snapshots distinguish held keys from persistent Shift" {
     session.ordered_events = .{};
     session.xkb_state = state;
     defer session.ordered_events.?.deinit(std.testing.allocator);
-    var window: Window = .{ .session = &session, .gpa = std.testing.allocator,
-        .io = undefined, .width = 100, .height = 100 };
+    var window: Window = .{ .session = &session, .gpa = std.testing.allocator, .io = undefined, .width = 100, .height = 100 };
     for (0..3) |kind| {
-        _ = xkb.xkb_state_update_mask(state, if (kind == 0) shift else 0,
-            if (kind == 1) shift else 0, if (kind == 2) shift else 0, 0, 0, 0);
+        _ = xkb.xkb_state_update_mask(state, if (kind == 0) shift else 0, if (kind == 1) shift else 0, if (kind == 2) shift else 0, 0, 0, 0);
         session.queueModifiers(&window);
         const snapshot = session.ordered_events.?.take()[0].event.keyboard_modifiers;
         try std.testing.expect(snapshot.effective & 1 != 0);

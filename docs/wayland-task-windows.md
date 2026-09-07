@@ -94,6 +94,17 @@ native and complete 15-APK suite. Logs: `/tmp/wayland-desktop-launcher-158.log`
 and `/tmp/wayland-stock-accessibility-159.log`. This is process-local inspection;
 session aggregation and task selectors are still being implemented.
 
+The development APK command now selects DesktopLauncher when AZK_TASK_WINDOWS=1
+and stock clients/services are enabled. The session owner installs and starts
+the APK through ATMS without attaching as that APK or creating a legacy render
+window; its lifetime follows the session's application tasks. Regression 158's
+stock-desktop-launcher-test verifies a separate app PID, actual labwc pixels,
+compositor close, pause/stop/destroy and zero retained presenter buffers.
+Screenshot inspected; artifacts: `/tmp/wayland-desktop-launcher-158-artifacts/`.
+Default launcher selection remains legacy. Task-window test-control and initial
+fullscreen/frame-limit options reject explicitly until their adapters are wired;
+ordinary joined-launch authorization still needs its regression gate.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application

@@ -23,7 +23,18 @@ pub fn main(init: std.process.Init) !void {
         try session.prepareTestKeyboard();
         try Io.File.stdout().writeStreamingAll(init.io, "ready\n");
         var buffer: [1]u8 = undefined;
-        while (try Io.File.stdin().readStreaming(init.io, &.{&buffer}) != 0) {}
+        while (true) {
+            const count = Io.File.stdin().readStreaming(init.io, &.{&buffer}) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
+            if (count == 0) break;
+            switch (buffer[0]) {
+                'c' => try session.testKeyboardShortcut(62, 1 << 3), // Alt+F4: compositor close.
+                '\n' => {},
+                else => return error.UnknownKeyboardSeatCommand,
+            }
+        }
         return;
     }
     try run(init);
@@ -121,9 +132,6 @@ fn verifyCapture(session: *Queue.Session, window: *Queue.Window, io: Io, wake: I
             if (window.hasPointerCapture()) return error.PrematureCaptureAcknowledgement;
         }
     }
-    std.log.err("capture timeout phase={s} pointer={any} keyboard={any} requested={any} actual={any} size={d}x{d} cursor={d},{d}",
-        .{ @tagName(phase), session.pointer_focus == window, session.keyboard_focus == window,
-        window.pointer_capture_requested, window.hasPointerCapture(), window.width, window.height,
-        window.pointer_x, window.pointer_y });
+    std.log.err("capture timeout phase={s} pointer={any} keyboard={any} requested={any} actual={any} size={d}x{d} cursor={d},{d}", .{ @tagName(phase), session.pointer_focus == window, session.keyboard_focus == window, window.pointer_capture_requested, window.hasPointerCapture(), window.width, window.height, window.pointer_x, window.pointer_y });
     return error.PointerCaptureTimeout;
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <keyboard><keybind key="A-F4"><action name="Close" /></keybind></keyboard>
+  <windowRules>
+    <windowRule identifier="dev.artzig.fixtures.windows" serverDecoration="no">
+      <action name="ResizeTo" width="640" height="480" />
+      <action name="MoveTo" x="0" y="0" />
+    </windowRule>
+  </windowRules>
+</labwc_config>

@@ -487,6 +487,14 @@ public final class ApkHost {
             check(installed == pkg) { "installed as " + installed + ", expected " + pkg }
         }
 
+        /** Install an APK for ATMS to launch in its own process. The desktop
+         * controller has already selected its Binder identity before this call. */
+        @JvmStatic fun installForDesktop(): String {
+            val path = checkNotNull(System.getenv("ARTZIG_APK"))
+            return checkNotNull(HostedServiceClient.installerOrNull())
+                .installPackage(path, extractNativeLibraries(path))
+        }
+
         /** AOSP ActivityThread.handleBindApplication: the process's LoadedApk
          * (CONTEXT_INCLUDE_CODE) owns the APK class loader. */
         @JvmStatic

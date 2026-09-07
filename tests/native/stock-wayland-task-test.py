@@ -8,11 +8,13 @@ import json
 import os
 from pathlib import Path
 import resource
+import re
 import select
 import subprocess
 import time
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--launcher', action='store_true')
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
 parser.add_argument('command', nargs=argparse.REMAINDER)
@@ -70,14 +72,46 @@ with (out / 'app.log').open('wb') as log:
                 process.stdin.write(b'continue\n')
                 process.stdin.flush()
 
-            verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
-            verify_pixels('SECOND_TASK_WINDOW_READY', (255, 0, 255), 'second-task')
-            verify_pixels('GROUPED_ACTIVITY_WINDOW_READY', (255, 127, 0), 'grouped-activity')
-            verify_pixels('SURVIVING_TASK_WINDOW_READY', (0, 255, 255), 'screenshot')
-            if process.wait(timeout=30) != 0:
-                raise RuntimeError(f'session failed: {process.returncode}')
-            text = (out / 'app.log').read_text(errors='replace')
-            assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
+            if args.launcher:
+                deadline = time.monotonic() + 60
+                while True:
+                    text = (out / 'app.log').read_text(errors='replace')
+                    if 'Desktop launch accepted: dev.artzig.fixtures.windows' in text and 'Displayed dev.artzig.fixtures.windows/' in text:
+                        break
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError(f'desktop APK launch failed: {process.poll()}')
+                    time.sleep(0.05)
+                app_pid = int(re.search(r'\d\d-\d\d \S+ (\d+) +\d+ I WindowFixture:', text).group(1))
+                assert app_pid != process.pid, 'launcher attached as the APK'
+                deadline = time.monotonic() + 15
+                while True:
+                    ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
+                    magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
+                    assert magic == b'P6' and maximum == b'255'
+                    width, height = map(int, dimensions.split())
+                    samples = [tuple(pixels[(y * width + x) * 3:(y * width + x) * 3 + 3])
+                               for y in range(20, 460, 5) for x in range(20, 620, 5)]
+                    if sum(min(pixel) > 220 for pixel in samples) > 500 and len(set(samples)) > 10:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('launcher fixture did not reach compositor pixels')
+                    time.sleep(0.05)
+                subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
+                result['launcher'] = {'pid': process.pid, 'app_pid': app_pid, 'size': [width, height]}
+                seat.stdin.write(b'c')
+                seat.stdin.flush()
+                if process.wait(timeout=30) != 0:
+                    raise RuntimeError(f'desktop session did not close successfully: {process.returncode}')
+                text = (out / 'app.log').read_text(errors='replace')
+            else:
+                verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
+                verify_pixels('SECOND_TASK_WINDOW_READY', (255, 0, 255), 'second-task')
+                verify_pixels('GROUPED_ACTIVITY_WINDOW_READY', (255, 127, 0), 'grouped-activity')
+                verify_pixels('SURVIVING_TASK_WINDOW_READY', (0, 255, 255), 'screenshot')
+                if process.wait(timeout=30) != 0:
+                    raise RuntimeError(f'session failed: {process.returncode}')
+                text = (out / 'app.log').read_text(errors='replace')
+                assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
             assert 'task presenter released all buffers' in text
             for fatal in ['Native thread exited without calling DetachCurrentThread',
                           'FATAL EXCEPTION', 'Unhandled exception', 'panic:']:
