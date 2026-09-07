@@ -29,6 +29,12 @@ pub const cronet = .{
         "build/util/LASTCHANGE",
         "chrome/VERSION",
         "components/cronet/android/api/src/org/chromium/net/ApiVersion.template",
+        "components/cronet/android/java/src/org/chromium/net/impl/ImplVersion.template",
+        "build/android/gyp/java_cpp_strings.py",
+        "base/android/java/src/org/chromium/base/BaseSwitches.java.tmpl",
+        "base/base_switches.cc",
+        "components/cronet/android/java/src/org/chromium/net/impl/LoadState.template",
+        "net/base/load_states_list.h",
         "build/android/java/templates/BuildConfig.template",
         "net/android/java/NetError.template",
         "net/base/net_error_list.h",
@@ -43,6 +49,14 @@ pub const cronet = .{
         "net/base/idempotency.h",
         "net/base/request_priority.h",
         "net/nqe/network_quality.h",
+        "components/cronet/url_request_context_config.h",
+        "components/cronet/android/url_request_error.h",
+        "net/base/network_change_notifier.h",
+        "net/socket/socket_tag.cc",
+        "net/android/cert_verify_result_android.h",
+        "net/android/keystore.h",
+        "net/android/network_change_notifier_android.cc",
+        "net/android/traffic_stats.cc",
     },
     .enum_outputs = &[_][]const u8{
         "org/chromium/base/ApplicationState.java",
@@ -54,6 +68,70 @@ pub const cronet = .{
         "org/chromium/net/Idempotency.java",
         "org/chromium/net/RequestPriority.java",
         "org/chromium/net/RttThroughputValues.java",
+        "org/chromium/net/impl/HttpCacheType.java",
+        "org/chromium/net/impl/UrlRequestError.java",
+        "org/chromium/net/ConnectionType.java",
+        "org/chromium/net/ConnectionSubtype.java",
+        "org/chromium/net/ConnectionCost.java",
+        "org/chromium/net/TrafficStatsUid.java",
+        "org/chromium/net/TrafficStatsTag.java",
+        "org/chromium/net/CertVerifyStatusAndroid.java",
+        "org/chromium/net/PrivateKeyType.java",
+        "org/chromium/net/NetId.java",
+        "org/chromium/net/TrafficStatsError.java",
+    },
+    .jni_support = &[_][]const u8{
+        "third_party/jni_zero/codegen/called_by_native_header.py",
+        "third_party/jni_zero/codegen/convert_type.py",
+        "third_party/jni_zero/codegen/gen_jni_java.py",
+        "third_party/jni_zero/codegen/header_common.py",
+        "third_party/jni_zero/codegen/natives_header.py",
+        "third_party/jni_zero/codegen/placeholder_gen_jni_java.py",
+        "third_party/jni_zero/codegen/placeholder_java_type.py",
+        "third_party/jni_zero/codegen/proxy_impl_java.py",
+        "third_party/jni_zero/codegen/register_natives.py",
+        "third_party/jni_zero/common.py",
+        "third_party/jni_zero/java_lang_classes.py",
+        "third_party/jni_zero/java_types.py",
+        "third_party/jni_zero/jni_generator.py",
+        "third_party/jni_zero/jni_registration_generator.py",
+        "third_party/jni_zero/jni_zero.py",
+        "third_party/jni_zero/parse.py",
+        "third_party/jni_zero/proxy.py",
+    },
+    .jni_inputs = &[_][]const u8{
+        "base/android/java/src/org/chromium/base/ApplicationStatus.java",
+        "base/android/java/src/org/chromium/base/CommandLine.java",
+        "base/android/java/src/org/chromium/base/EarlyTraceEvent.java",
+        "base/android/java/src/org/chromium/base/TraceEvent.java",
+        "base/android/java/src/org/chromium/base/metrics/NativeUmaRecorder.java",
+        "base/android/java/src/org/chromium/base/task/TaskRunnerImpl.java",
+        "components/cronet/android/java/src/org/chromium/net/impl/CronetBidirectionalStream.java",
+        "components/cronet/android/java/src/org/chromium/net/impl/CronetLibraryLoader.java",
+        "components/cronet/android/java/src/org/chromium/net/impl/CronetUploadDataStream.java",
+        "components/cronet/android/java/src/org/chromium/net/impl/CronetUrlRequest.java",
+        "components/cronet/android/java/src/org/chromium/net/impl/CronetUrlRequestContext.java",
+        "net/android/java/src/org/chromium/net/NetworkChangeNotifier.java",
+        "net/android/java/src/org/chromium/net/X509Util.java",
+    },
+    .jni_outputs = &[_][]const u8{
+        "org/chromium/base/ApplicationStatusJni.java",
+        "org/chromium/base/CommandLineJni.java",
+        "org/chromium/base/EarlyTraceEventJni.java",
+        "org/chromium/base/TraceEventJni.java",
+        "org/chromium/base/metrics/NativeUmaRecorderJni.java",
+        "org/chromium/base/task/TaskRunnerImplJni.java",
+        "org/chromium/net/impl/CronetBidirectionalStreamJni.java",
+        "org/chromium/net/impl/CronetLibraryLoaderJni.java",
+        "org/chromium/net/impl/CronetUploadDataStreamJni.java",
+        "org/chromium/net/impl/CronetUrlRequestJni.java",
+        "org/chromium/net/impl/CronetUrlRequestContextJni.java",
+        "org/chromium/net/NetworkChangeNotifierJni.java",
+        "org/chromium/net/X509UtilJni.java",
+    },
+    .jni_final_outputs = &[_][]const u8{
+        "org/jni_zero/GEN_JNI.java",
+        "J/N.java",
     },
     .proto_inputs = &[_][]const u8{
         "components/cronet/android/proto/request_context_config.proto",
@@ -74,10 +152,22 @@ pub const cronet = .{
         "org/chromium/net/httpflags/BaseFeatureOverridesOrBuilder.java",
     },
     .api_version_output = "org/chromium/net/ApiVersion.java",
+    .impl_version_output = "org/chromium/net/impl/ImplVersion.java",
+    .switches_output = "org/chromium/base/BaseSwitches.java",
+    .preload = .{
+        .tool = "external/cronet/android/tools/classes_collector/classes_collector.py",
+        .excludes = "external/cronet/android/preloading_exclude.txt",
+        .prefix_excludes = "external/cronet/android/package_prefix_exclude.txt",
+        .output = "android/net/http/HttpEngineJavaClasses.java",
+        .sdk = "prebuilts/sdk/current/public/android.jar",
+        .stats_sdk = "prebuilts/sdk/current/module-lib/framework-statsd.jar",
+        .experimental_annotations = "prebuilts/sdk/current/androidx/m2repository/androidx/annotation/annotation-experimental/1.5.0-alpha01/annotation-experimental-1.5.0-alpha01.aar",
+    },
     .api_level = "API_LEVEL=34",
     .templates = &.{
         .{ .input = "build/android/java/templates/BuildConfig.template", .output = "org/chromium/build/BuildConfig.java", .flags = &[_][]const u8{ "-D_DISABLE_DEBUG_LOGS", "-D_IS_CRONET_BUILD", "-D_LOGTAG_PREFIX=cn_", "-D_MIN_SDK_VERSION=23", "-D_VERSION_CODE=1" } },
         .{ .input = "net/android/java/NetError.template", .output = "org/chromium/net/NetError.java", .flags = &[_][]const u8{} },
+        .{ .input = "components/cronet/android/java/src/org/chromium/net/impl/LoadState.template", .output = "org/chromium/net/impl/LoadState.java", .flags = &[_][]const u8{} },
     },
 };
 
@@ -1515,6 +1605,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "android.net.http", .container = "com.android.tethering", .source = .aosp, .declarations = &.{"external/cronet/android/flags/preload_httpengine.aconfig"} },
     .{ .package = "android.hardware.devicestate.feature.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/hardware/devicestate/feature/flags.aconfig"} },
     .{ .package = "android.os.profiling", .container = "com.android.profiling", .source = .aosp, .declarations = &.{"packages/modules/Profiling/framework/java/android/os/flags.aconfig"} },
     .{ .package = "com.android.nfc.module.flags", .container = "com.android.nfcservices", .source = .aosp, .declarations = &.{"packages/modules/Nfc/flags/flags.aconfig"} },
@@ -2595,6 +2686,11 @@ test "generator declarations map typed inputs to unique Java outputs" {
 
     for (cronet.enum_outputs) |output| try expectUniqueOutput(&outputs, output);
     for (cronet.proto_outputs) |output| try expectUniqueOutput(&outputs, output);
+    for (cronet.jni_outputs) |output| try expectUniqueOutput(&outputs, output);
+    for (cronet.jni_final_outputs) |output| try expectUniqueOutput(&outputs, output);
+    try expectUniqueOutput(&outputs, cronet.impl_version_output);
+    try expectUniqueOutput(&outputs, cronet.switches_output);
+    try expectUniqueOutput(&outputs, cronet.preload.output);
     try expectUniqueOutput(&outputs, cronet.api_version_output);
     inline for (cronet.templates) |entry| try expectUniqueOutput(&outputs, entry.output);
     for (hidl) |entry| {

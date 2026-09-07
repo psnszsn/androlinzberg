@@ -27,6 +27,7 @@ pub const Result = struct {
 
 pub const GeneratedJvm = struct {
     sources: []const LazyPath,
+    cronet_sources: []const LazyPath,
     aconfig_source_roots: []const LazyPath,
     resources: LazyPath,
     system_features_processor: LazyPath,
@@ -907,7 +908,7 @@ fn mimeResources(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
 
 fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile) []const LazyPath {
     const inputs = b.addWriteFiles();
-    inline for (.{ declarations.cronet.support, declarations.cronet.enum_headers, declarations.cronet.proto_inputs }) |paths| {
+    inline for (.{ declarations.cronet.support, declarations.cronet.enum_headers, declarations.cronet.proto_inputs, declarations.cronet.jni_support, declarations.cronet.jni_inputs }) |paths| {
         for (paths) |path| _ = inputs.addCopyFile(aosp.path(b.fmt("{s}/{s}", .{ declarations.cronet.root, path })), path);
     }
     const root = inputs.getDirectory();
@@ -924,6 +925,54 @@ fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Ste
     const enum_root = extract.addOutputDirectoryArg("cronet-enums");
     extract.setName("extract Cronet enum sources");
     for (declarations.cronet.enum_outputs) |output| files.append(b.allocator, enum_root.path(b, output)) catch @panic("OOM");
+
+    const switches = b.addSystemCommand(&.{ "python3", "-B" });
+    switches.addFileArg(root.path(b, "build/android/gyp/java_cpp_strings.py"));
+    switches.addArg("--srcjar");
+    const switches_archive = switches.addOutputFileArg("cronet-switches.srcjar");
+    switches.addArgs(&.{ "--template", "base/android/java/src/org/chromium/base/BaseSwitches.java.tmpl", "base/base_switches.cc" });
+    switches.setCwd(root);
+    switches.setName("generate stock Cronet switches");
+    const extract_switches = b.addSystemCommand(&.{ "python3", "-B", "-m", "zipfile", "-e" });
+    extract_switches.addFileArg(switches_archive);
+    const switches_root = extract_switches.addOutputDirectoryArg("cronet-switches");
+    files.append(b.allocator, switches_root.path(b, declarations.cronet.switches_output)) catch @panic("OOM");
+
+    // Match stable/Android.bp: separate the provisional GEN_JNI source and
+    // compile only the final hashed bindings, retaining ForTesting methods.
+    const jni = b.addSystemCommand(&.{ "python3", "-B" });
+    jni.addFileArg(root.path(b, "third_party/jni_zero/jni_zero.py"));
+    jni.addArgs(&.{ "from-source", "--use-proxy-hash", "--extra-include", "third_party/jni_zero/jni_zero_internal.h", "--output-dir" });
+    _ = jni.addOutputDirectoryArg("cronet-jni-headers");
+    jni.addArg("--srcjar-path");
+    const jni_archive = jni.addOutputFileArg("cronet-jni.srcjar");
+    jni.addArg("--placeholder-srcjar-path");
+    _ = jni.addOutputFileArg("cronet-jni-placeholder.srcjar");
+    for (declarations.cronet.jni_inputs) |input| {
+        jni.addArgs(&.{ "--input-file", input, "--output-name", b.fmt("{s}_jni.h", .{std.fs.path.stem(input)}) });
+    }
+    jni.setCwd(root);
+    jni.setName("generate stock Cronet JNI interfaces");
+    const extract_jni = b.addSystemCommand(&.{ "python3", "-B", "-m", "zipfile", "-e" });
+    extract_jni.addFileArg(jni_archive);
+    const jni_root = extract_jni.addOutputDirectoryArg("cronet-jni");
+    for (declarations.cronet.jni_outputs) |output| files.append(b.allocator, jni_root.path(b, output)) catch @panic("OOM");
+
+    const jni_list = inputs.add("cronet-jni-sources.txt", b.fmt("{s}\n", .{std.mem.join(b.allocator, "\n", declarations.cronet.jni_inputs) catch @panic("OOM")}));
+    const final_jni = b.addSystemCommand(&.{ "python3", "-B" });
+    final_jni.addFileArg(root.path(b, "third_party/jni_zero/jni_zero.py"));
+    final_jni.addArgs(&.{ "generate-final", "--include-test-only", "--use-proxy-hash", "--manual-jni-registration", "--java-sources-file" });
+    final_jni.addFileArg(jni_list);
+    final_jni.addArg("--srcjar-path");
+    const final_archive = final_jni.addOutputFileArg("cronet-final-jni.srcjar");
+    final_jni.addArg("--header-path");
+    _ = final_jni.addOutputFileArg("cronet-jni-registration.h");
+    final_jni.setCwd(root);
+    final_jni.setName("generate stock Cronet final JNI bindings");
+    const extract_final_jni = b.addSystemCommand(&.{ "python3", "-B", "-m", "zipfile", "-e" });
+    extract_final_jni.addFileArg(final_archive);
+    const final_jni_root = extract_final_jni.addOutputDirectoryArg("cronet-final-jni");
+    for (declarations.cronet.jni_final_outputs) |output| files.append(b.allocator, final_jni_root.path(b, output)) catch @panic("OOM");
 
     // Chromium build/protoc_java.py uses --java_out=lite with these schemas.
     // The packaged AOSP protoc and Chromium's pinned protoc are both 3.21.12.
@@ -942,6 +991,14 @@ fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Ste
     version.setCwd(root);
     version.setName("generate stock Cronet API version");
     files.append(b.allocator, api_version) catch @panic("OOM");
+    const impl_version = b.addSystemCommand(&.{ "python3", "-B" });
+    impl_version.addFileArg(root.path(b, "build/util/version.py"));
+    impl_version.addArgs(&.{ "--official", "-f", "chrome/VERSION", "-f", "build/util/LASTCHANGE", "-e", declarations.cronet.api_level, "-o" });
+    const impl_version_java = impl_version.addOutputFileArg(declarations.cronet.impl_version_output);
+    impl_version.addArg("components/cronet/android/java/src/org/chromium/net/impl/ImplVersion.template");
+    impl_version.setCwd(root);
+    impl_version.setName("generate stock Cronet implementation version");
+    files.append(b.allocator, impl_version_java) catch @panic("OOM");
     inline for (declarations.cronet.templates) |entry| {
         const run = b.addSystemCommand(&.{ "cc", "-E", "-P", "-x", "c++", "-DANDROID", "-I", "." });
         run.addArgs(entry.flags);
@@ -1017,6 +1074,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     return .{
         .jvm = .{
             .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM"),
+            .cronet_sources = cronet_java,
             .aconfig_source_roots = aconfig_java.java_roots,
             .resources = mime_resources,
             .system_features_processor = system_features_java.processor,

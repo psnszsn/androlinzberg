@@ -40,7 +40,7 @@ Pending: 15 (budget 15). Survivors: 11. Total: 26.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (249 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < AppOpsManager); android.permission.PermissionUsageHelper: existing host class android.permission.PermissionM |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (63 to add); android.permission.PermissionUsageHelper: existing host class android.permission.PermissionManager lacks method shouldShowPackageForIndicatorCached (via PermissionUsageHelper < AppOpsManager); android.service.print.PrintAttributes |
 
 ### audio
 
@@ -59,31 +59,31 @@ Pending: 15 (budget 15). Survivors: 11. Total: 26.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (3109 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3218 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (3120 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2923 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2921 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (3032 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2934 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
 
 ### runtime
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (246 to add), not vendored; android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < SystemServerClassLoaderFactory); android.service.print.PrintAttri |
+| `com/android/internal/os/SystemServerClassLoaderFactory.java` | blocked | frameworks/base/core/java/com/android/internal/os/SystemServerClassLoaderFactory.java (60 to add), not vendored; android.service.print.PrintAttributesProto: generated: proto generator (build/generator_sources.zig) (via PrintAttributesProto < PrintAttributes < PrintDocumentAdapter < WebViewProvider < |
 
 ### systemserver
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (3107 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2921 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2921 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
 
 ### webkit
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (246 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < CookieManager); android.service.print.PrintAttributesProto: gen |
-| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (248 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebChromeClient); android.service.print.PrintAttributesProto: |
-| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (246 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < Zygote < WebViewZygote < WebViewFactory < WebSettings); android.service.print.PrintAttributesProto: generat |
+| `android/webkit/CookieManager.kt` | blocked | frameworks/base/core/java/android/webkit/CookieManager.java (60 to add); android.service.print.PrintAttributesProto: generated: proto generator (build/generator_sources.zig) (via PrintAttributesProto < PrintAttributes < PrintDocumentAdapter < WebViewProvider < WebViewFactoryProvider < WebViewFactory |
+| `android/webkit/WebChromeClient.kt` | blocked | frameworks/base/core/java/android/webkit/WebChromeClient.java (62 to add); android.service.print.PrintAttributesProto: generated: proto generator (build/generator_sources.zig) (via PrintAttributesProto < PrintAttributes < PrintDocumentAdapter < WebViewProvider < WebViewFactoryProvider < WebViewFacto |
+| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (60 to add); android.service.print.PrintAttributesProto: generated: proto generator (build/generator_sources.zig) (via PrintAttributesProto < PrintAttributes < PrintDocumentAdapter < WebViewProvider < WebViewFactoryProvider < WebViewFactory < |
 
 ## Hubs
 
@@ -96,16 +96,8 @@ decides where to cut.
 |---|---|---|
 | `android.webkit.WebViewFactory` | 12 | 1 |
 | `android.webkit.WebViewFactoryProvider` | 12 | 1 |
-| `com.android.internal.os.ZygoteInit` | 12 | 1 |
-| `android.net.http.HttpEngine` | 12 | 2 |
 | `android.print.PrintAttributes` | 12 | 2 |
 | `com.android.internal.os.Zygote` | 12 | 2 |
-| `org.chromium.net.ExperimentalCronetEngine` | 12 | 3 |
-| `org.chromium.net.impl.NativeCronetEngineBuilderImpl` | 12 | 3 |
-| `org.chromium.net.ConnectionMigrationOptions` | 12 | 4 |
-| `org.chromium.net.impl.CronetUrlRequestContext` | 12 | 4 |
-| `org.chromium.net.impl.CronetEngineBase` | 12 | 5 |
-| `org.chromium.net.impl.UrlRequestBuilderImpl` | 12 | 6 |
 | `android.print.PrintDocumentAdapter` | 11 | 1 |
 | `android.webkit.ServiceWorkerController` | 11 | 2 |
 | `android.media.MediaHTTPService` | 10 | 1 |
@@ -114,6 +106,7 @@ decides where to cut.
 | `android.webkit.WebViewProvider` | 10 | 3 |
 | `android.widget.VideoView` | 10 | 3 |
 | `android.media.Ringtone` | 8 | 1 |
+| `com.android.internal.os.ZygoteInit` | 8 | 1 |
 | `android.media.AudioMix` | 7 | 1 |
 | `android.media.MediaExtractor` | 7 | 1 |
 | `android.media.AudioMixMatchCriterion` | 7 | 2 |
@@ -134,3 +127,10 @@ decides where to cut.
 | `com.android.server.input.InputManagerService` | 6 | 1 |
 | `com.android.server.pm.AppDataHelper` | 6 | 1 |
 | `com.android.server.pm.AppsFilterImpl` | 6 | 1 |
+| `com.android.server.pm.BroadcastHelper` | 6 | 1 |
+| `com.android.server.pm.DexOptHelper` | 6 | 1 |
+| `com.android.server.pm.PackageDexOptimizer` | 6 | 1 |
+| `com.android.server.pm.PackageInstallerService` | 6 | 1 |
+| `com.android.server.pm.PackageInstallerSession` | 6 | 1 |
+| `com.android.server.sdksandbox.SdkSandboxManagerLocal` | 6 | 1 |
+| `android.app.AppOpsManager.AttributionFlags` | 6 | 2 |

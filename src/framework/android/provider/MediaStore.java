@@ -18,6 +18,7 @@ import android.util.Log;
 import android.util.Size;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -122,6 +123,18 @@ public final class MediaStore {
             public static final String DEFAULT_SORT_ORDER = BUCKET_DISPLAY_NAME;
 
             public Media() {}
+
+            // Verbatim Android 16 MediaStore.Images.Media.getBitmap. The full
+            // MediaStore source requires the unselected MediaProvider AIDL closure; this
+            // legacy helper delegates URI access to the existing ContentResolver.
+            @Deprecated
+            public static final Bitmap getBitmap(ContentResolver cr, Uri url)
+                    throws FileNotFoundException, IOException {
+                InputStream input = cr.openInputStream(url);
+                Bitmap bitmap = BitmapFactory.decodeStream(input);
+                input.close();
+                return bitmap;
+            }
 
             public static Uri getContentUri(String volumeName) {
                 return contentUri(volumeName, "images", "media");

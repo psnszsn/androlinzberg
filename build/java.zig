@@ -195,6 +195,16 @@ pub fn build(b: *std.Build, o: Options) Result {
         "com/google/errorprone/annotations/*",
         "error-prone-annotation-classes",
     );
+    const cronet = @import("cronet.zig").build(b, .{
+        .aosp = aosp,
+        .system_modules = sysmod_dir,
+        .implementation_sources = sources.cronet_preload,
+        .generated_sources = o.generated.jvm.cronet_sources,
+        .protobuf_classes = protobuf_classes,
+        .androidx_annotations = androidx_annotation_classes,
+        .error_prone_annotations = error_prone_annotation_classes,
+        .kotlin_stdlib = kotlin_stdlib,
+    });
     const guava_host_jar = aosp.path("prebuilts/tools/common/m2/repository/com/google/guava/guava/32.1.1-jre/guava-32.1.1-jre.jar");
     // Reuse AOSP's keepanno-annotations java_import, including its generated API.
     const r8_keepanno_jar = aosp.path("prebuilts/r8/keepanno-annotations.jar");
@@ -326,6 +336,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .file = core_plus },
         .{ .file = kotlin_stdlib },
         .{ .directory = androidx_annotation_classes },
+        .{ .directory = cronet.experimental_annotations },
         .{ .directory = error_prone_annotation_classes },
         .{ .directory = r8_keepanno_classes },
         .{ .directory = protobuf_classes },
@@ -336,6 +347,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     kotlinc.addPrefixedFileArg("@", sources.java_rsp);
     kotlinc.addPrefixedFileArg("@", sources.kotlin_rsp);
     for (o.generated.jvm.sources) |file| kotlinc.addFileArg(file);
+    kotlinc.addFileArg(cronet.preload_source);
     // K2 also needs package roots to resolve fully qualified Java annotation constants
     // inherited from Activity. These roots contain only the declared aconfig outputs.
     for (o.generated.jvm.aconfig_source_roots) |root| {
@@ -357,6 +369,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         .{ .directory = kotlin_classes },
         .{ .directory = annotation_classes },
         .{ .directory = androidx_annotation_classes },
+        .{ .directory = cronet.experimental_annotations },
         .{ .directory = error_prone_annotation_classes },
         .{ .directory = r8_keepanno_classes },
         .{ .directory = protobuf_classes },
@@ -383,6 +396,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const java_classes = javac.addOutputDirectoryArg("java-classes");
     javac.addPrefixedFileArg("@", sources.java_rsp);
     for (o.generated.jvm.sources) |file| javac.addFileArg(file);
+    javac.addFileArg(cronet.preload_source);
     inline for (.{
         "Note: Some input files use or override a deprecated API.",
         "Note: Recompile with -Xlint:deprecation for details.",
@@ -408,6 +422,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(androidx_annotation_classes);
+    jar.addArg(".");
+    jar.addArg("-C");
+    jar.addDirectoryArg(cronet.experimental_annotations);
     jar.addArg(".");
     jar.addArg("-C");
     jar.addDirectoryArg(error_prone_annotation_classes);

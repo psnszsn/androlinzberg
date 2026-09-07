@@ -79,7 +79,12 @@ fn generatedClasses(io: Io, allocator: std.mem.Allocator, aosp_root: []const u8)
     }
     for (generator_sources.cronet.enum_outputs) |output| try putForbidden(&result, allocator, output);
     for (generator_sources.cronet.proto_outputs) |output| try putForbidden(&result, allocator, output);
+    for (generator_sources.cronet.jni_outputs) |output| try putForbidden(&result, allocator, output);
+    for (generator_sources.cronet.jni_final_outputs) |output| try putForbidden(&result, allocator, output);
     try putForbidden(&result, allocator, generator_sources.cronet.api_version_output);
+    try putForbidden(&result, allocator, generator_sources.cronet.impl_version_output);
+    try putForbidden(&result, allocator, generator_sources.cronet.switches_output);
+    try putForbidden(&result, allocator, generator_sources.cronet.preload.output);
     inline for (generator_sources.cronet.templates) |entry| try putForbidden(&result, allocator, entry.output);
     for (generator_sources.logtags) |entry| try putForbidden(&result, allocator, entry.output);
     for (generator_sources.proto_outputs) |output| try putForbidden(&result, allocator, output);

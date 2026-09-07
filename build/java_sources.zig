@@ -52,6 +52,7 @@ pub const Set = struct {
     kotlin: SourceFiles.Files,
     annotations: SourceFiles.Files,
     protobuf_lite: SourceFiles.Files,
+    cronet_preload: SourceFiles.Files,
     java_rsp: std.Build.LazyPath,
     kotlin_rsp: std.Build.LazyPath,
     annotations_rsp: std.Build.LazyPath,
@@ -102,12 +103,16 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     var protobuf = StaticCollector.init(b);
     protobuf.addRoot("A", SourceFiles.Root.dependency(b, aosp, ""));
     collectProtobuf(&protobuf) catch |err| std.debug.panic("unable to collect protobuf sources: {t}", .{err});
+    var cronet = StaticCollector.init(b);
+    cronet.addRoot("A", SourceFiles.Root.dependency(b, aosp, ""));
+    collectCronet(&cronet) catch |err| std.debug.panic("unable to collect Cronet sources: {t}", .{err});
     const java = framework.files.select(".java");
     const kotlin = framework.files.select(".kt");
     const annotation_files = annotations.select(".java");
     return .{
         .java = java,
         .protobuf_lite = protobuf.files.select(".java"),
+        .cronet_preload = cronet.files.select(".java"),
         .kotlin = kotlin,
         .annotations = annotation_files,
         .java_rsp = java.responseFile(b, "framework-static-java-sources.rsp"),
@@ -117,6 +122,9 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    try collectCronet(c);
+    try collectCronetApi(c);
+    try c.file("$CJ/android/net/http/HttpResponseCache.java");
     try c.file("$CJ/android/os/VintfObject.java");
     try c.file("$FB/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java");
     try c.file("$CJ/android/view/WindowManagerGlobal.java");
@@ -3376,4 +3384,183 @@ fn collectProtobuf(c: *StaticCollector) !void {
     try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Utf8.java");
     try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/WireFormat.java");
     try c.file("$A/external/protobuf/java/core/src/main/java/com/google/protobuf/Writer.java");
+}
+
+// Pinned httpclient_impl_internal and cronet_aml_java dependency closure.
+fn collectCronet(c: *StaticCollector) !void {
+    try c.file("$A/external/cronet/android/java/src/android/net/http/BidirectionalStreamBuilderWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/BidirectionalStreamCallbackWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/BidirectionalStreamWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/CallbackExceptionWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/CronetEngineBuilderWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/CronetEngineWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/CronetExceptionTranslationUtils.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/CronetExceptionWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/HeaderBlockImpl.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/HeaderBlockWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/IHttpEngineBuilder.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/NetworkExceptionWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/QuicExceptionWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UploadDataProviderWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UploadDataSinkWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UrlRequestBuilderWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UrlRequestCallbackWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UrlRequestStatusListenerWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UrlRequestWrapper.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UrlResponseInfoWrapper.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ActivityLifecycleCallbacksAdapter.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ActivityState.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ApiCompatibilityUtils.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ApplicationStatus.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/Callback.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/CommandLine.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ContextUtils.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/EarlyTraceEvent.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/JavaUtils.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/Log.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ObserverList.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ResettersForTesting.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/StrictModeContext.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/ThreadUtils.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/TimeUtils.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/TraceEvent.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/metrics/CachingUmaRecorder.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/metrics/HistogramBucket.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/metrics/NativeUmaRecorder.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/metrics/RecordHistogram.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/metrics/ScopedSysTraceEvent.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/metrics/UmaRecorder.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/metrics/UmaRecorderHolder.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/AsyncTask.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/BackgroundOnlyAsyncTask.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/ChromeThreadPoolExecutor.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/PostTask.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/SequencedTaskRunner.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/SequencedTaskRunnerImpl.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/SerialExecutor.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/TaskOriginException.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/TaskRunner.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/TaskRunnerImpl.java");
+    try c.file("$A/external/cronet/stable/base/android/java/src/org/chromium/base/task/UiThreadTaskRunnerImpl.java");
+    try c.file("$A/external/cronet/stable/build/android/java/src/org/chromium/build/annotations/AlwaysInline.java");
+    try c.file("$A/external/cronet/stable/build/android/java/src/org/chromium/build/annotations/CheckDiscard.java");
+    try c.file("$A/external/cronet/stable/build/android/java/src/org/chromium/build/annotations/DoNotInline.java");
+    try c.file("$A/external/cronet/stable/build/android/java/src/org/chromium/build/annotations/UsedByReflection.java");
+    try c.file("$A/external/cronet/stable/build/android/java/src/org/chromium/build/annotations/UsedReflectively.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/BidirectionalStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/CallbackException.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/ConnectionMigrationOptions.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/CronetEngine.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/CronetException.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/CronetProvider.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/DnsOptions.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/ExperimentalBidirectionalStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/ExperimentalCronetEngine.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/ExperimentalOptionsTranslator.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/ExperimentalUrlRequest.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/ICronetEngineBuilder.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/InlineExecutionProhibitedException.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/NetworkException.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/NetworkQualityRttListener.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/NetworkQualityThroughputListener.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/QuicException.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/QuicOptions.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/RequestFinishedInfo.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/UploadDataProvider.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/UploadDataSink.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/UrlRequest.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/api/src/org/chromium/net/UrlResponseInfo.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/httpflags/BaseFeature.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/httpflags/HttpFlagsLoader.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/httpflags/ResolvedFlags.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/BidirectionalStreamBuilderImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/BidirectionalStreamNetworkException.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CallbackExceptionImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetBidirectionalStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetEngineBase.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetEngineBuilderImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetExceptionImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetLibraryLoader.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetLogger.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetLoggerFactory.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetManifest.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetMetrics.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetRequestCommon.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetUploadDataStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetUrlRequest.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/CronetUrlRequestContext.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/NativeCronetEngineBuilderImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/NetworkExceptionImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/NoOpLogger.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/Preconditions.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/QuicExceptionImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/RefCountDelegate.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/RequestFinishedInfoImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/UrlRequestBuilderImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/UrlRequestUtil.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/UrlResponseInfoImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/UserAgent.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/impl/VersionSafeCallbacks.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/telemetry/CronetLoggerImpl.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/telemetry/CronetStatsLog.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/telemetry/ExperimentalOptions.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/telemetry/Hash.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/telemetry/OptionalBoolean.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/telemetry/RateLimiter.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/telemetry/SizeBuckets.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetBufferedOutputStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetChunkedOutputStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetFixedModeOutputStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetHttpURLConnection.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetHttpURLStreamHandler.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetInputStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetOutputStream.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/CronetURLStreamHandlerFactory.java");
+    try c.file("$A/external/cronet/stable/components/cronet/android/java/src/org/chromium/net/urlconnection/MessageLoop.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/AndroidCertVerifyResult.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/AndroidNetworkLibrary.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/DnsStatus.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/NetworkChangeNotifier.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/NetworkChangeNotifierAutoDetect.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/RegistrationPolicyAlwaysRegister.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/RegistrationPolicyApplicationStatus.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/ThreadStatsUid.java");
+    try c.file("$A/external/cronet/stable/net/android/java/src/org/chromium/net/X509Util.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/AccessedByNative.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/CalledByNative.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/CalledByNativeForTesting.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/CalledByNativeUnchecked.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/CheckDiscard.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/JNINamespace.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/JniInit.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/JniTestInstanceHolder.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/JniType.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/JniUtil.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/NativeClassQualifiedName.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/NativeLibraryLoadedStatus.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/NativeMethods.java");
+    try c.file("$A/external/cronet/stable/third_party/jni_zero/java/src/org/jni_zero/UsedReflectively.java");
+    try c.file("$A/external/jsr305/ri/src/main/java/javax/annotation/concurrent/GuardedBy.java");
+    try c.file("$A/external/jsr305/ri/src/main/java/javax/annotation/concurrent/Immutable.java");
+    try c.file("$A/external/jsr305/ri/src/main/java/javax/annotation/concurrent/NotThreadSafe.java");
+    try c.file("$A/external/jsr305/ri/src/main/java/javax/annotation/concurrent/ThreadSafe.java");
+}
+
+// Pinned httpclient_impl_internal and cronet_aml_java dependency closure.
+fn collectCronetApi(c: *StaticCollector) !void {
+    try c.file("$A/external/cronet/android/java/src/android/net/http/BidirectionalStream.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/CallbackException.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/ConnectionMigrationOptions.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/DnsOptions.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/HeaderBlock.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/HttpEngine.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/HttpException.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/InlineExecutionProhibitedException.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/NetworkException.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/QuicException.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/QuicOptions.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UploadDataProvider.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UploadDataSink.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UrlRequest.java");
+    try c.file("$A/external/cronet/android/java/src/android/net/http/UrlResponseInfo.java");
 }

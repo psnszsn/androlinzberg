@@ -28,6 +28,27 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- HttpEngine's public Java API and its Cronet implementation now compile verbatim,
+  with 52 original generated sources covering configuration, protobufs, JNI bindings,
+  switches and version information. The original final JNI generator retains the
+  test-suffixed methods required by the pinned Java and replaces provisional bindings.
+  A separate compile against pinned SDK/stats headers feeds AOSP's class collector;
+  its 634-class preload list retains upstream exclusions and the framework's unrelocated
+  package names. Those compile-only headers and intermediate classes are not shipped.
+  Original AndroidX experimental annotations are imported from the pinned AAR.
+  ART tests cover builder validation, configuration snapshots, every preload class link,
+  native-readiness rejection and Java command-line behavior. The existing MediaStore
+  adaptation gained the verbatim legacy getBitmap helper needed by Cronet, with pixel,
+  malformed-input and missing-file tests alongside its modern ImageDecoder path.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass (37 steps,
+  zero structured runtime issues). The inventory remains 26 stubs (15 pending,
+  11 survivors). AOSP is repackaged and repinned with all 205 added inputs byte-verified;
+  ART's checksum is unchanged. This supplies the Java dependency for AppOps/ZygoteInit;
+  it does not provide Cronet's native shared library or working HTTP requests.
+  MediaProvider's pinned project is now synced for the subsequent complete MediaStore
+  replacement; AppOps, WebView and the broader stock-client plan remain unfinished.
+
+
 - VintfObject and VirtualDeviceManagerInternal now compile verbatim. The VINTF native
   boundary follows AOSP's missing-manifest/matrix path: compatibility returns NO_INIT,
   metadata queries return null or empty arrays, and the platform-policy query throws
