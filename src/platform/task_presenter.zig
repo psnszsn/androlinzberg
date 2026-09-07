@@ -129,6 +129,7 @@ const Server = struct {
         return 0;
     }
     fn dispatchEvents(self: *Server) !void {
+        if (self.session.ordered_events.?.failed) return error.SeatEventQueueOverflow;
         for (self.session.ordered_events.?.take()) |item| {
             switch (item.event) {
                 .seat_capabilities => |caps| {
@@ -259,7 +260,23 @@ const Server = struct {
             },
             2, 3 => {
                 if (self.session.keyboard_focus != entry.window) return 0;
-                if (kind == 2) try entry.window.testType(text.slice()) else try entry.window.testKey(text.slice());
+                if (kind == 2) {
+                    const value = text.slice();
+                    try Queue.Window.validateTestText(value);
+                    // Shifted characters produce key and modifier callbacks.
+                    // Drain bounded groups well below the 4096-event seat cap,
+                    // preserving one final completion barrier for the action.
+                    var offset: usize = 0;
+                    while (offset < value.len) {
+                        const limit = @min(offset + 128, value.len);
+                        if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry))
+                            return error.InputTargetChanged;
+                        try entry.window.testType(value[offset..limit]);
+                        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+                        try self.dispatchEvents();
+                        offset = limit;
+                    }
+                } else try entry.window.testKey(text.slice());
             },
             else => return 0,
         }

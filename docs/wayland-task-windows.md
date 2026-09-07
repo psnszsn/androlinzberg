@@ -22,6 +22,27 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Bounded physical typing checkpoint (2026-09-07)
+
+Task-addressed typing validates the entire request before producing keys, then
+drains compositor events in groups of at most 128 characters. Shifted input can
+produce six seat callbacks per character; a maximum-size 1,024-character request
+must not overrun the 4,096-event queue. Each group rechecks focus and accepted
+geometry. The action retains one final ordered completion barrier. A failure
+following partial delivery reports unknown completion and must not be retried.
+
+Regression 201 passes native checks and all nine stock desktop diagnostic steps
+with zero runtime issues. The new physical request types 1,024 uppercase letters
+and immediately verifies the exact editor contents after idle, then restores
+`ab` semantically. The final screenshot was visually checked (counter 2, text
+`ab`). Artifacts: `/tmp/wayland-bounded-type-success-201/`; log:
+`/tmp/wayland-bounded-type-201.log`.
+
+Regression 202 passes full JVM/native, all 15 APK integration tests
+(49 diagnostic steps, zero runtime issues), and all seven Surface scenarios:
+normal, backpressure, producer/consumer death, broker loss and both pointer-capture
+capability paths. Log: `/tmp/wayland-bounded-type-regressions-202.log`.
+
 ## Physical keyboard state checkpoint (2026-09-07)
 
 WMS's key/scan state queries now read immutable snapshots of the compositor

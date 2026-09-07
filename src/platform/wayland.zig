@@ -2008,12 +2008,16 @@ pub const Window = struct {
             @abs(self.pointer_y - @as(f64, @floatFromInt(local[1]))) > 1) return error.InputPlacementChanged;
     }
 
+    pub fn validateTestText(text: []const u8) !void {
+        for (text) |byte| _ = asciiKey(byte) orelse return error.UnsupportedText;
+    }
+
     /// Type UTF-8 text through Cage's virtual keyboard. The fixed US keymap
     /// intentionally accepts printable ASCII plus newline/tab/backspace;
     /// semantic set_text remains available for arbitrary Unicode input.
     pub fn testType(self: *Window, text: []const u8) !void {
         // Reject the whole request before typing a prefix of unsupported text.
-        for (text) |byte| _ = asciiKey(byte) orelse return error.UnsupportedText;
+        try validateTestText(text);
         const keyboard = try self.session.ensureVirtualKeyboard();
         for (text) |byte| {
             const key = asciiKey(byte) orelse return error.UnsupportedText;
@@ -2600,4 +2604,10 @@ test "test input rejects a removed seat without choosing another compositor seat
     session.virtual_keyboard_manager = null;
     try std.testing.expectError(error.VirtualPointerUnavailable, session.testPointerPresent(true));
     try std.testing.expectError(error.VirtualKeyboardUnavailable, session.prepareTestKeyboard());
+}
+
+test "test text validates the complete request before any key can be sent" {
+    try Window.validateTestText("aAZ09 !@#$%^&*()_+-=\n\t");
+    try std.testing.expectError(error.UnsupportedText, Window.validateTestText("supported prefix\xc3\xa9"));
+    try std.testing.expectError(error.UnsupportedText, Window.validateTestText("supported prefix\x00"));
 }

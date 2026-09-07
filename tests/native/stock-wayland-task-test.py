@@ -198,12 +198,19 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 control('step', 'key', '--task-id', task, '--description', 'Fixture editor', 'Backspace',
                         '--via', 'wayland', '--settle', 'idle')
                 settled_text('ab', 'Fixture editor')
+                long_text = 'A' * 1024
+                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', long_text,
+                        '--via', 'wayland', '--settle', 'idle')
+                settled_text('ab' + long_text, 'Fixture editor')
+                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'ab',
+                        '--via', 'semantic', '--settle', 'idle')
+                settled_text('ab', 'Fixture editor')
                 after = control('observe', '--tree')['observation']
                 assert len(after['tree']['windows']) == 1
                 assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
                 (out / 'a11y.json').write_text(json.dumps(after, indent=2))
                 steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                assert len(steps) == 7 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                assert len(steps) == 9 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                 result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
                 subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 seat.stdin.write(b'c')
