@@ -27,6 +27,26 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- PermissionManagerService now supplies AOSP's Binder facade, attribution registry
+  and permission checker. Its four-source closure includes the original one-time
+  permission helper and PermissionThread. A small server startup patch selects the
+  Kotlin hosted package-grant policy through PermissionManagerServiceInterface;
+  permission checking and AppOps transactions are unchanged AOSP source. The former
+  HostedPermissionManagerService and HostedPermissionCheckerService are deleted.
+  Operation checks now enforce AppOps modes, preflight avoids starting accounting,
+  data-delivery starts/finishes use stock nested accounting, and unregistered or
+  modified attribution chains are rejected. Existing metadata and attribution tests
+  pass, along with new Binder regressions for mode denial, chain trust, normal and
+  runtime permissions, preflight and nested data delivery across the test processes.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass (37 steps,
+  zero structured runtime issues). AOSP is rebuilt and repinned; all four added
+  archive inputs, including the exact server startup patch, are verified. ART is
+  unchanged. The inventory remains 22 stubs (13 pending, 9 survivors). Permission
+  grant/revoke policy and a PermissionController service remain unfinished; importing
+  the one-time helper does not establish those capabilities. The remaining client
+  adaptations and real Chromium provider are still outstanding.
+
+
 - AppOpsService now compiles verbatim with its 42-source Java closure, two generated
   sensor-privacy Binder interfaces and sensor-privacy proto constants. The previous
   HostedAppOpsService is deleted. Stock code owns package/UID mode precedence, access

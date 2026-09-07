@@ -179,7 +179,6 @@ internal object SystemServices {
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
         )
         android.os.ServiceManager.addService("package", packageManager)
-        android.os.ServiceManager.addService("permissionmgr", HostedPermissionManagerService(packageManager))
         LocalServices.addService(
             com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java,
             HostedLegacyPermissionManagerInternal(packageManager),
@@ -189,7 +188,6 @@ internal object SystemServices {
         ).getConstructor(HostedPackageManagerService::class.java)
             .newInstance(packageManager) as PackageManagerInternal
         LocalServices.addService(PackageManagerInternal::class.java, packageManagerInternal)
-        android.os.ServiceManager.addService("permission_checker", HostedPermissionCheckerService(packageManager))
         android.os.ServiceManager.addService("apexservice", HostedApexService())
         com.android.server.pm.HostedApexPackages.initialize()
         val platformCompat = com.android.server.compat.PlatformCompat(context)
@@ -227,6 +225,9 @@ internal object SystemServices {
             HostedSensorPrivacyService(context))
         val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
         activityManager.appOps = appOps
+        LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
+            HostedPermissionPolicy(packageManager))
+        com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())
         android.os.ServiceManager.addService(Context.FINGERPRINT_SERVICE,
             HostedFingerprintService(HostedPermissions(packageManager), appOps))
         // Observer registry and the settings provider, registered before any

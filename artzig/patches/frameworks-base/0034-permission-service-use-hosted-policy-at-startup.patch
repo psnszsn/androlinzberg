@@ -1,0 +1,24 @@
+From: Artzig contributors
+Subject: [PATCH] PermissionManagerService: select the hosted policy at startup
+
+Reuse the original Binder facade, attribution registry and permission checker.
+The hosted package registry supplies PermissionManagerServiceInterface before
+startup instead of importing Android's legacy permission persistence stack.
+Client classes and the service's permission/AppOps transactions are unchanged.
+
+--- a/services/core/java/com/android/server/pm/permission/PermissionManagerService.java
++++ b/services/core/java/com/android/server/pm/permission/PermissionManagerService.java
+@@ -162,9 +162,6 @@
+ 
+-        if (PermissionManager.USE_ACCESS_CHECKING_SERVICE) {
+-            mPermissionManagerServiceImpl = LocalServices.getService(
+-                    PermissionManagerServiceInterface.class);
+-        } else {
+-            mPermissionManagerServiceImpl = new PermissionManagerServiceImpl(context,
+-                    availableFeatures);
+-        }
++        // Host adaptation: the session registers its package-backed permission policy.
++        // Android's legacy/access-checking stores require unavailable persistent state.
++        mPermissionManagerServiceImpl = Objects.requireNonNull(LocalServices.getService(
++                PermissionManagerServiceInterface.class), "Hosted permission policy not registered");
+     }

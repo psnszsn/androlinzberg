@@ -204,6 +204,7 @@ internal object SystemTestClientA {
                 context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
                     android.content.pm.PackageManager.PERMISSION_GRANTED
             }
+            StockPermissionCheckerSystemSmoke.runRuntimeDelivery(context)
             check(manager.allValidScorers.any { it.recommendationServiceComponent == component },
                 "stock scorer discovery resolves the declared recommendation service")
             check(manager.setActiveScorer(packageName), "stock scorer selection accepts the qualified provider")

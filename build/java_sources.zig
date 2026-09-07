@@ -1206,6 +1206,10 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/appop/AppOpsRestrictionsImpl.java");
     try c.file("$FB/services/core/java/com/android/server/appop/LegacyAppOpStateParser.java");
     try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionManagerServiceInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/PermissionThread.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/OneTimePermissionUserManager.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/permission/PermissionManagerServiceInterface.java");
     try c.file("$FB/core/java/android/app/AppOpsManagerInternal.java");
     try c.file("$FB/core/java/android/app/admin/DevicePolicyCache.java");
     try c.file("$FB/core/java/android/app/admin/DevicePolicyManagerInternal.java");

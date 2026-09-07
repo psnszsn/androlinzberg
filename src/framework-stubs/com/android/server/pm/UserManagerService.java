@@ -21,6 +21,9 @@ public final class UserManagerService {
 
     public boolean exists(int userId) { return userId == 0; }
 
+    // UserManagerService.getUserIdsIncludingPreCreated: this host has no pre-created users.
+    public int[] getUserIdsIncludingPreCreated() { return getUserIds(); }
+
     public int[] getUserIds() { return new int[] {0}; }
 
     public UserInfo getUserInfo(int userId) { return userId == 0 ? USER_SYSTEM : null; }
