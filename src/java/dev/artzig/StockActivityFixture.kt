@@ -23,15 +23,7 @@ import dev.artzig.system.HostedPackageManagerService
 /** Manifest-backed process fixture. The production task manager and stock transactions own
  * lifecycle decisions; only component metadata and service lookup are replaced for the test. */
 internal class StockActivityFixture(apk: String, private val drain: () -> Unit) : AutoCloseable {
-    private fun pump() {
-        repeat(16) {
-            drain()
-            android.view.Choreographer.getInstance().`doFrame$artzig`(System.nanoTime())
-            drain()
-            if (!android.view.Choreographer.getInstance().`hasDueCallbacks$artzig`()) return
-        }
-        error("Activity fixture frame callbacks did not settle")
-    }
+    private fun pump() = StockFrameTestDriver.settle(drain)
 
     private val context = HostContexts.systemContext(
         checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 320, 240, 120, 0)

@@ -39,9 +39,9 @@ object StockWindowBootSmoke {
         android.os.Looper.prepareMainLooper()
         dev.artzig.HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
             320, 240, 120, 0)
-        val installer = checkNotNull(android.app.HostedServiceClient.installerOrNull())
+        val installer = checkNotNull(dev.artzig.HostedServiceClient.installerOrNull())
         val packageName = installer.installPackage(args.single(), null)
-        val application = android.app.HostedServiceClient.attachApplication(packageName)
+        val application = dev.artzig.HostedServiceClient.attachApplication(packageName)
         check(application.packageName == packageName)
         check(application.checkSelfPermission(android.Manifest.permission.SYSTEM_ALERT_WINDOW) ==
             android.content.pm.PackageManager.PERMISSION_DENIED)
@@ -57,7 +57,7 @@ object StockWindowBootSmoke {
         check(session.asBinder().pingBinder())
         println("Stock WMS registered application session: $packageName")
         var resumed: android.app.Activity? = null
-        android.app.ActivityThread.configureActivityHost(object : android.app.ActivityThread.HostAdapter {
+        dev.artzig.HostedActivityProcess.configureActivityHost(object : dev.artzig.HostedActivityProcess.HostAdapter {
             override fun showActivity(activity: android.app.Activity) { resumed = activity }
             override fun clearActivityWindows() { resumed = null }
             override fun resizeActivityRoot(activity: android.app.Activity, width: Int, height: Int) { }
@@ -67,7 +67,8 @@ object StockWindowBootSmoke {
         while (resumed == null && android.os.SystemClock.uptimeMillis() < deadline) {
             val message = android.os.Looper.myQueue().`pollDueMessage$artzig`()
             if (message == null) android.os.SystemClock.sleep(1)
-            else message.target.dispatchMessage(message)
+            else try { message.target.dispatchMessage(message) }
+            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
         }
         checkNotNull(resumed) { "Stock ATMS did not resume the fixture activity" }
         check(resumed!!.taskId > 0)

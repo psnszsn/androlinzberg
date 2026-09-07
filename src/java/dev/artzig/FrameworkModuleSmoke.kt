@@ -4753,17 +4753,7 @@ internal object FrameworkModuleSmoke {
         }
     }
 
-    private fun awaitChoreographerFrame() {
-        var committed = false
-        Choreographer.getInstance().postCallback(Choreographer.CALLBACK_COMMIT,
-            { committed = true }, null)
-        val deadline = System.nanoTime() + 2_000_000_000L
-        while (!committed && System.nanoTime() < deadline) {
-            drainMainQueue()
-            if (!committed) Thread.sleep(1)
-        }
-        check(committed) { "Stock DisplayEventReceiver did not deliver a frame" }
-    }
+    private fun awaitChoreographerFrame() = StockFrameTestDriver.awaitFrame(::drainMainQueue)
 
     private fun runHostedFrame() {
         drainMainQueue()
@@ -4771,15 +4761,7 @@ internal object FrameworkModuleSmoke {
         drainMainQueue()
     }
 
-    private fun settleActivityFrames() {
-        // A newly resumed root can enqueue another traversal while the previous frame drains.
-        // Keep driving the headless compositor until all currently due frame work is done.
-        repeat(16) {
-            runHostedFrame()
-            if (!Choreographer.getInstance().`hasDueCallbacks$artzig`()) return
-        }
-        error("Activity frame callbacks did not settle")
-    }
+    private fun settleActivityFrames() = StockFrameTestDriver.settle(::drainMainQueue)
 
     private fun drainMainQueue() {
         drainMainQueueCounting()
@@ -5239,9 +5221,11 @@ internal object FrameworkModuleSmoke {
         check(systemUi !== thread.systemContext)
         check(systemUi === thread.systemUiContext && systemUi === thread.systemUiContextNoCreate)
         check(systemUi.displayId == Display.DEFAULT_DISPLAY)
-        thread.onSystemUiContextCleanup(systemUi)
-        check(thread.systemUiContextNoCreate == null)
-        check(thread.systemUiContext !== systemUi)
+        val isolatedUi = thread.createSystemUiContextForTesting(Display.DEFAULT_DISPLAY)
+        check(isolatedUi !== systemUi && isolatedUi.displayId == Display.DEFAULT_DISPLAY)
+        isolatedUi.destroy()
+        drainMainQueue()
+        check(thread.systemUiContextNoCreate === systemUi)
         val context = base.createWindowContext(
             android.view.ArtzigDisplay.get(), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null,
         ) as android.window.WindowContext

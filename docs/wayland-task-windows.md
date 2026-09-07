@@ -42,6 +42,29 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Stock ActivityThread rebase checkpoint (2026-09-07)
+
+Rebased onto main's 3c58b02 stock ActivityThread commit. The obsolete hosted
+system-UI context cache is removed; stock ActivityThread owns that cache and
+client lifecycle dispatch. The URI-permission host adapter retains main's new
+provider reference counting, including release on exceptions and early returns.
+The first combined build (`/tmp/wayland-stock-window-boot-30.log`) found six
+fixture compilation errors from retired ActivityThread/Choreographer helpers.
+The adapted fixtures and package-property index pass module validation. Regression
+31 passes the system/full APK/graph checks: 14 APK tests, 44 steps, zero runtime
+issues. Stock display construction now supplies its PermissionEnforcer with the
+deferred bootstrap Context, allowing startup before ActivityThread exists.
+Regression 32 boots stock WMS/ATMS and creates a real task/activity record; launch
+still fails at PackageManagerInternal.notifyComponentUsed and the asynchronous
+ActivityManagerInternal.updateActivityUsageStats callback. A resumed activity and
+real client window remain unverified.
+
+The live closure scan for ViewRootImpl reports three selected sources and no
+source-closure blockers: ViewRootImpl, AccessibilityInteractionController and
+PhoneFallbackEventHandler (`/tmp/wayland-view-root-closure-main8.log`). Adding SurfaceView and TextureView makes five sources and adds the TextureView
+JNI blocker (`/tmp/wayland-window-client-closure-main8.log`). Runtime and
+host-caller adaptation remain required before the M6 cutover.
+
 ## Registered application process checkpoint (2026-09-07)
 
 Ordinary process attachment now creates a real WindowProcessController in the
@@ -79,9 +102,8 @@ APK initial launches still need the desktop task shell's user-launch path.
 The module/system/full APK/graph checks in regression 27 pass: 14 APK tests,
 44 steps, zero runtime issues. Only the expanded stock task-launch gate fails.
 
-Main committed the stock ActivityThread cutover as 3c58b02. The next rebase
-will preserve this branch's process/configuration authority and main's client
-lifecycle work; its newer uncommitted audio changes remain in the main worktree.
+Main committed the stock ActivityThread cutover as 3c58b02 and this branch is
+now rebased onto it. Main's newer uncommitted audio changes remain in its worktree.
 
 ## Stock service boot checkpoint (2026-09-07)
 

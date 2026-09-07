@@ -78,16 +78,21 @@ internal class HostedUriAccess(
      */
     fun checkProvider(
         uri: Uri, userId: Int, uid: Int, mode: Int,
+        release: (android.app.ContentProviderHolder) -> Unit,
         acquire: (String, Int) -> android.app.ContentProviderHolder?,
     ): Int {
         val identity = Binder.clearCallingIdentity()
         try {
             val holder = acquire(uri.authority ?: return PackageManager.PERMISSION_DENIED, userId)
                 ?: return PackageManager.PERMISSION_DENIED
-            val packageName = packages.getPackagesForUid(uid)?.firstOrNull()
-                ?: return PackageManager.PERMISSION_DENIED
-            return holder.provider.checkUriPermission(
-                android.content.AttributionSource(uid, packageName, null), uri, uid, mode)
+            try {
+                val packageName = packages.getPackagesForUid(uid)?.firstOrNull()
+                    ?: return PackageManager.PERMISSION_DENIED
+                return holder.provider.checkUriPermission(
+                    android.content.AttributionSource(uid, packageName, null), uri, uid, mode)
+            } finally {
+                if (!holder.noReleaseNeeded) release(holder)
+            }
         } catch (error: Exception) {
             android.util.Log.w("HostedUriAccess", "Provider URI permission check failed", error)
             return PackageManager.PERMISSION_DENIED

@@ -133,7 +133,6 @@ internal object ActivityUriGrantSystemSmoke {
     private var originalCallerFlags: Any? = null
 
     fun publish(context: Context) {
-        HeadlessActivityFrames.start()
         val name = context.packageName + ".activity-uri-grants"
         val handler = Handler.createAsync(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {

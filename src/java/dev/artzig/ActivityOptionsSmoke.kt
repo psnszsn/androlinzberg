@@ -16,7 +16,8 @@ object ActivityOptionsSmoke {
     class SplashProbe : android.app.Activity()
 
     private fun appTaskLaunch(context: android.content.Context) {
-        val thread = android.app.ActivityThread.currentActivityThread().applicationThread.asBinder()
+        val applicationThread: android.app.IApplicationThread = android.app.ActivityThread.currentActivityThread().applicationThread
+        val thread = applicationThread.asBinder()
         val options = ActivityOptions.makeBasic().setLaunchBounds(Rect(2, 3, 42, 33)).toBundle()
         val uri = android.net.Uri.parse("content://test/shared")
         var result = android.app.ActivityManager.START_SUCCESS

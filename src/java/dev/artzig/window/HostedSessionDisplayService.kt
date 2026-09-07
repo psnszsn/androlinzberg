@@ -28,7 +28,9 @@ class HostedSessionDisplayService(private val context: Context, private val hand
     physicalInfo: DisplayInfo, output: HostedLogicalDisplay.Output,
     private val wideColorSpaceId: Int, private val overlays: OverlayProperties, installRotation: Int = 0,
     private val invalidateDisplayCache: () -> Unit = DisplayManagerGlobal::invalidateLocalDisplayInfoCaches) :
-    IDisplayManager.Stub(), IDisplayManager by unsupported<IDisplayManager>() {
+    // Display discovery precedes ActivityThread's first Context. Supply the
+    // service's bootstrap Context explicitly; permission checks run on requests.
+    IDisplayManager.Stub(android.os.PermissionEnforcer(context)), IDisplayManager by unsupported<IDisplayManager>() {
     override fun asBinder(): IBinder = this
     private val lock = Any()
     private val callbacks = SparseArray<Callback>()

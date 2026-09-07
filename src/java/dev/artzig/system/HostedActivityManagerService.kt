@@ -429,7 +429,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
     }
 
     internal fun checkProviderUriPermissionFromHost(uri: android.net.Uri, userId: Int, uid: Int, mode: Int): Int =
-        uriAccess.checkProvider(uri, userId, uid, mode) { authority, providerUser ->
+        uriAccess.checkProvider(uri, userId, uid, mode,
+            release = { holder -> removeContentProvider(holder.connection, true) }) { authority, providerUser ->
             getContentProvider(null, "android", authority, providerUser, true)
         }
 

@@ -100,6 +100,7 @@ object StockOptionalWmServicesSmoke {
             is SecurityException)
         val uid = packages.getPackageUid(packageName, 0L, 0)
         check(uid >= android.os.Process.FIRST_APPLICATION_UID)
+        verifyProviderReferenceRelease(packages, uid)
         val state = packages.getPackageStateInternal(packageName) as HostedPackageState
         val applicationProperty = checkNotNull(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName, null, 0))
         check(applicationProperty.isBoolean && applicationProperty.boolean)
@@ -179,6 +180,41 @@ object StockOptionalWmServicesSmoke {
         check(spoofPlatform is SecurityException && spoofPlatform.message == "Calling package name mismatch")
         val denied = runCatching { shortcut(uid, packageName) }.exceptionOrNull()
         check(denied is SecurityException && denied.message!!.contains("not the default launcher"))
+    }
+
+    private fun verifyProviderReferenceRelease(packages: HostedPackageManagerService, uid: Int) {
+        val access = HostedUriAccess(packages) { error("No application caller in local lookup") }
+        val uri = android.net.Uri.parse("content://fixture/permission")
+        var fail = false
+        val provider = object : android.content.IContentProvider by
+                dev.artzig.system.unsupported<android.content.IContentProvider>() {
+            override fun checkUriPermission(source: android.content.AttributionSource,
+                requested: android.net.Uri?, requestedUid: Int, mode: Int): Int {
+                check(source.uid == uid && requestedUid == uid && requested == uri)
+                if (fail) throw android.os.RemoteException("provider died during permission check")
+                return android.content.pm.PackageManager.PERMISSION_GRANTED
+            }
+        }
+        val holder = android.app.ContentProviderHolder(android.content.pm.ProviderInfo()).apply {
+            this.provider = provider
+            connection = Binder()
+        }
+        var releases = 0
+        fun query(callingUid: Int = uid): Int = access.checkProvider(uri, 0, callingUid,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION, release = {
+                check(it === holder)
+                releases++
+            }) { _, _ -> holder }
+        check(query() == android.content.pm.PackageManager.PERMISSION_GRANTED && releases == 1)
+        fail = true
+        check(query() == android.content.pm.PackageManager.PERMISSION_DENIED && releases == 2)
+        check(query(98765) == android.content.pm.PackageManager.PERMISSION_DENIED && releases == 3)
+        fail = false
+        holder.noReleaseNeeded = true
+        check(query() == android.content.pm.PackageManager.PERMISSION_GRANTED && releases == 3)
+        check(access.checkProvider(uri, 0, uid, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            release = { error("Missing provider has no reference") }) { _, _ -> null } ==
+            android.content.pm.PackageManager.PERMISSION_DENIED)
     }
 
     private fun verifyPackageObservers(packages: HostedPackageManagerService, apk: String): String {
