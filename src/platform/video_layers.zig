@@ -191,7 +191,7 @@ pub export fn azk_video_dmabuf_supports(format: u32, plane_count: c_int, modifie
                     .{ format, index, modifiers[index] },
                 );
                 var first = true;
-                for (win.dmabuf_formats.items) |supported| {
+                for (win.session.dmabuf_formats.items) |supported| {
                     if (supported.format != format) continue;
                     std.debug.print("{s}0x{x}", .{ if (first) "" else ",", supported.modifier });
                     first = false;

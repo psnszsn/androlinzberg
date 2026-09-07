@@ -43,6 +43,30 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Shared Wayland session checkpoint (2026-09-07)
+
+`wayland.Session` owns one connection, registry, seat, keyboard map, compositor
+factories and DMA-BUF formats. Each `Window` owns its surfaces, configure state,
+input gesture/repeat state and imported buffer leases. Surface identity routes
+pointer/keyboard focus and touch contacts; destroying a shared window leaves
+its peers and connection alive. Partial initialization releases acquired globals
+and window resources. Keymaps and DMA-BUF tables use bounded std.Io reads.
+
+The session dispatcher uses std.Io batched socket peeking and eventfd reads.
+libwayland retains ownership of wire bytes and descriptor transfer. Cancellation
+collects completed notifications, and window events remain queued until consumed.
+Only congested flushes use a bounded retry timer. The legacy single-window API
+remains available while the task presenter is connected.
+
+Regression 85 passes native checks and all five existing Cage surface-queue
+scenarios (normal, producer death, consumer death, broker loss and backpressure).
+Each creates two windows on one session, destroys the sibling, and exercises the
+surviving window through the shared dispatcher. Normal/backpressure runs verify
+12 producer frames and zero live graphics buffers after graceful teardown.
+This proves shared connection lifetime and queue delivery, not yet concurrent
+presentation of two Android tasks; that M7 integration gate remains outstanding.
+Log: `/tmp/wayland-session-pump-85.log`.
+
 ## Stock window-client rendering checkpoint (2026-09-07)
 
 The `-Dstock-window-clients=true` source selection compiles pinned ViewRootImpl,

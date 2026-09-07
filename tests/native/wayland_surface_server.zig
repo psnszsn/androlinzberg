@@ -24,8 +24,18 @@ fn run(init: std.process.Init) !void {
     const io = init.io;
     const queue = try Queue.init(init.gpa, io, 320, 240);
     defer queue.deinit();
-    const window = try Queue.Window.init(init.gpa, io, 320, 240, "Stock Surface / AZKB");
+    const session = try Queue.Session.init(init.gpa, io);
+    defer session.deinit();
+    var sibling: ?*Queue.Window = try session.createWindow(160, 120, "Sibling task", false);
+    defer if (sibling) |window| window.deinit();
+    const window = try session.createWindow(320, 240, "Stock Surface / AZKB", false);
     defer window.deinit();
+    std.debug.assert(session.windows.items.len == 2);
+    std.debug.assert(window.session == sibling.?.session);
+    sibling.?.deinit();
+    sibling = null;
+    std.debug.assert(session.windows.items.len == 1);
+    // The following producer frames must still render after the sibling closes.
     const producer = queue.producer();
     defer AIBinder_decStrong(producer);
     if (AServiceManager_addService(producer, "dev.artzig.surface.v1") != 0) return error.PublishFailed;
@@ -38,14 +48,14 @@ fn run(init: std.process.Init) !void {
     try Io.File.stdout().writeStreamingAll(io, "ready\n");
     var frames: usize = 0;
     while (!stop.stopped.load(.acquire)) {
-        const events = try window.waitEvents(.{ .renderer = queue.notify_file.handle, .timeout_ms = 100 });
-        for (events.events) |event| if (event == .close) return;
-        if (events.renderer_ready) {
+        var ready = [_]bool{false};
+        try session.dispatch(&.{queue.notify_file}, &ready, 100);
+        for (window.takeEvents()) |event| if (event == .close) return;
+        if (ready[0]) {
             if (stop.hold.load(.acquire)) {
-                try queue.drainNotification();
                 continue;
             }
-            frames += try queue.presentReady(window);
+            frames += try queue.presentNotified(window);
             var buffer: [80]u8 = undefined;
             const line = try std.fmt.bufPrint(&buffer, "presented {d}\n", .{frames});
             try Io.File.stdout().writeStreamingAll(io, line);

@@ -178,10 +178,14 @@ fn namedKey(name: []const u8) ?u32 {
     return null;
 }
 
-fn inputTimestamp() u32 {
-    var time: linux.timespec = undefined;
-    _ = linux.clock_gettime(.MONOTONIC, &time);
-    return @truncate(@as(u64, @intCast(time.sec)) * 1000 + @as(u64, @intCast(time.nsec)) / 1_000_000);
+fn createMemoryFile(name: [*:0]const u8) !std.Io.File.Handle {
+    const result = linux.memfd_create(name, linux.MFD.CLOEXEC);
+    if (linux.errno(result) != .SUCCESS) return error.MemoryFileCreationFailed;
+    return @intCast(result);
+}
+
+fn inputTimestamp(io: std.Io) u32 {
+    return @truncate(@as(u64, @intCast(std.Io.Clock.awake.now(io).toMilliseconds())));
 }
 
 fn interpolateCoordinate(from: u32, to: u32, step: usize, steps: usize) u32 {
@@ -190,10 +194,8 @@ fn interpolateCoordinate(from: u32, to: u32, step: usize, steps: usize) u32 {
     return @intCast(start + @divTrunc(delta * @as(i64, @intCast(step)), @as(i64, @intCast(steps))));
 }
 
-fn monotonicNs() u64 {
-    var time: linux.timespec = undefined;
-    _ = linux.clock_gettime(.MONOTONIC, &time);
-    return @as(u64, @intCast(time.sec)) * std.time.ns_per_s + @as(u64, @intCast(time.nsec));
+fn monotonicNs(io: std.Io) u64 {
+    return @intCast(std.Io.Clock.awake.now(io).nanoseconds);
 }
 
 pub const Event = union(enum) {
@@ -321,9 +323,15 @@ const FullscreenState = struct {
     }
 };
 
-pub const Window = struct {
+/// One compositor connection, registry and seat for every task in the session.
+/// Protocol callbacks and surface mutations run on the owning event thread.
+/// Windows retain their own geometry, gestures and buffer leases.
+pub const Session = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
+    windows: std.ArrayList(*Window) = .empty,
+    pointer_focus: ?*Window = null,
+    keyboard_focus: ?*Window = null,
     display: *wl.Display,
     registry: *wl.Registry,
     compositor: ?*wl.Compositor = null,
@@ -333,7 +341,7 @@ pub const Window = struct {
     fractional_scale_manager: ?*wp.FractionalScaleManagerV1 = null,
     dmabuf: ?*zwp.LinuxDmabufV1 = null,
     dmabuf_feedback: ?*zwp.LinuxDmabufFeedbackV1 = null,
-    dmabuf_table: ?[]align(std.heap.page_size_min) u8 = null,
+    dmabuf_table: ?[]align(@alignOf(DmabufTableEntry)) u8 = null,
     dmabuf_formats: std.ArrayList(DmabufFormat) = .empty,
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
@@ -346,16 +354,472 @@ pub const Window = struct {
     seat_global_name: ?u32 = null,
     pointer_constraints_global_name: ?u32 = null,
     relative_pointer_global_name: ?u32 = null,
-    relative_pointer: ?*zwp.RelativePointerV1 = null,
-    locked_pointer: ?*zwp.LockedPointerV1 = null,
-    pointer_capture_requested: bool = false,
-    pointer_capture_actual: bool = false,
     cursor_shape_manager: ?*wp.CursorShapeManagerV1 = null,
     cursor_device: ?*wp.CursorShapeDeviceV1 = null,
     virtual_pointer_manager: ?*zwlr.VirtualPointerManagerV1 = null,
     virtual_pointer: ?*zwlr.VirtualPointerV1 = null,
     virtual_keyboard_manager: ?*zwp.VirtualKeyboardManagerV1 = null,
     virtual_keyboard: ?*zwp.VirtualKeyboardV1 = null,
+    xkb_context: ?*xkb.Context = null,
+    xkb_keymap: ?*xkb.Keymap = null,
+    xkb_state: ?*xkb.State = null,
+    keyboard_repeat_rate: i32 = 0,
+    keyboard_repeat_delay_ms: i32 = 0,
+
+    pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Session {
+        const self = try gpa.create(Session);
+        errdefer gpa.destroy(self);
+        const display = try wl.Display.connect(null);
+        errdefer display.disconnect();
+        self.* = .{ .gpa = gpa, .io = io, .display = display, .registry = try display.getRegistry() };
+        errdefer self.destroyGlobals();
+        self.registry.setListener(*Session, registryListener, self);
+        if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        self.requireGlobals();
+        return self;
+    }
+
+    pub fn createWindow(self: *Session, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !*Window {
+        return Window.initInSession(self, width, height, title, fullscreen);
+    }
+
+    /// Dispatch the shared connection and consume eventfd notifications owned by
+    /// the task presenter. Events remain queued per window until takeEvents().
+    /// The caller must inspect every ready slot even when a Wayland event also
+    /// arrives. Files are borrowed for this call; libwayland retains its socket.
+    pub fn dispatch(self: *Session, wakes: []const std.Io.File, ready: []bool, timeout_ms: i32) !void {
+        if (wakes.len > 64 or ready.len != wakes.len) return error.InvalidWakeSources;
+        @memset(ready, false);
+        if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        var timeout = timeout_ms;
+        for (self.windows.items) |window| {
+            _ = window.emitKeyRepeatIfDue();
+            if (window.events.items.len != 0) timeout = 0;
+            const repeat = window.keyRepeatTimeoutMs();
+            if (repeat >= 0) timeout = if (timeout < 0) repeat else @min(timeout, repeat);
+        }
+        while (!self.display.prepareRead()) {
+            if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            timeout = 0;
+        }
+        var read_prepared = true;
+        defer if (read_prepared) self.display.cancelRead();
+        while (true) switch (self.display.flush()) {
+            .SUCCESS => break,
+            .INTR => continue,
+            .AGAIN => {
+                // std.Io has no readiness-only writable operation. Retry a
+                // congested libwayland flush on a bounded timer while continuing
+                // to service input and producer notifications normally.
+                timeout = if (timeout < 0) 1 else @min(timeout, 1);
+                break;
+            },
+            else => return error.FlushFailed,
+        };
+
+        var storage: [65]std.Io.Operation.Storage = undefined;
+        var batch = std.Io.Batch.init(storage[0 .. wakes.len + 1]);
+        defer batch.cancel(self.io);
+        var message: std.Io.net.IncomingMessage = .init;
+        var peek: [1]u8 = undefined;
+        batch.addAt(0, .{
+            .net_receive = .{
+                .socket_handle = self.display.getFd(),
+                .message_buffer = (&message)[0..1],
+                .data_buffer = &peek,
+                // Preserve both bytes and SCM_RIGHTS for wl_display_read_events.
+                .flags = .{ .peek = true },
+            },
+        });
+        var counters: [64]u64 = undefined;
+        var vectors: [64][1][]u8 = undefined;
+        for (wakes, 0..) |file, index| {
+            vectors[index][0] = std.mem.asBytes(&counters[index]);
+            batch.addAt(@intCast(index + 1), .{ .file_read_streaming = .{
+                .file = file,
+                .data = &vectors[index],
+            } });
+        }
+        const deadline: std.Io.Timeout = if (timeout < 0) .none else .{ .duration = .{
+            .raw = .fromMilliseconds(timeout),
+            .clock = .awake,
+        } };
+        batch.awaitConcurrent(self.io, deadline) catch |err| switch (err) {
+            error.Timeout => {},
+            else => return err,
+        };
+        // Cancellation may race a completed eventfd read. Collect completions
+        // after cancellation so no consumed notification is lost.
+        batch.cancel(self.io);
+        var readable = false;
+        while (batch.next()) |completion| {
+            if (completion.index == 0) {
+                const failure, const count = completion.result.net_receive;
+                if (failure) |err| return err;
+                if (count == 0 or message.data.len == 0) return error.CompositorDisconnected;
+                readable = true;
+            } else {
+                const count = try completion.result.file_read_streaming;
+                if (count != @sizeOf(u64)) return error.InvalidWakeNotification;
+                ready[completion.index - 1] = true;
+            }
+        }
+        if (readable) {
+            read_prepared = false;
+            if (self.display.readEvents() != .SUCCESS) return error.DispatchFailed;
+            if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        }
+        for (self.windows.items) |window| _ = window.emitKeyRepeatIfDue();
+    }
+
+    fn surfaceWindow(self: *Session, surface: ?*wl.Surface) ?*Window {
+        const target = surface orelse return null;
+        for (self.windows.items) |window| {
+            if ((window.surface_created and target == window.surface) or
+                (window.ui_initialized and target == window.ui_surface)) return window;
+        }
+        return null;
+    }
+
+    fn removeWindow(self: *Session, window: *Window) void {
+        if (self.pointer_focus == window) self.pointer_focus = null;
+        if (self.keyboard_focus == window) self.keyboard_focus = null;
+        for (self.windows.items, 0..) |candidate, index| {
+            if (candidate == window) {
+                _ = self.windows.orderedRemove(index);
+                break;
+            }
+        }
+    }
+
+    fn pointerListener(pointer: *wl.Pointer, event: wl.Pointer.Event, self: *Session) void {
+        if (event == .enter) self.pointer_focus = self.surfaceWindow(event.enter.surface);
+        if (self.pointer_focus) |window| Window.pointerListener(pointer, event, window);
+        if (event == .leave) self.pointer_focus = null;
+    }
+
+    fn keyboardListener(keyboard: *wl.Keyboard, event: wl.Keyboard.Event, self: *Session) void {
+        switch (event) {
+            .keymap => |k| {
+                defer (std.Io.File{
+                    .handle = k.fd,
+                    .flags = .{ .nonblocking = false },
+                }).close(self.io);
+                if (k.format != .xkb_v1) return;
+                if (k.size == 0 or k.size > 16 * 1024 * 1024) return;
+                const data = self.gpa.alloc(u8, k.size) catch return;
+                defer self.gpa.free(data);
+                const file: std.Io.File = .{ .handle = k.fd, .flags = .{ .nonblocking = false } };
+                const count = file.readPositionalAll(self.io, data, 0) catch return;
+                if (count != data.len or data[data.len - 1] != 0) return;
+                if (self.xkb_context == null) self.xkb_context = xkb.xkb_context_new(0);
+                const ctx = self.xkb_context orelse return;
+                // data is a NUL-terminated keymap string
+                const keymap = xkb.xkb_keymap_new_from_string(ctx, @ptrCast(data.ptr), 1, 0) orelse return; // 1 = XKB_KEYMAP_FORMAT_TEXT_V1
+                xkb.xkb_state_unref(self.xkb_state);
+                xkb.xkb_keymap_unref(self.xkb_keymap);
+                self.xkb_keymap = keymap;
+                self.xkb_state = xkb.xkb_state_new(keymap);
+            },
+            .modifiers => |m| {
+                if (self.xkb_state) |st| {
+                    _ = xkb.xkb_state_update_mask(st, m.mods_depressed, m.mods_latched, m.mods_locked, 0, 0, m.group);
+                }
+            },
+            .enter => |entered| {
+                self.keyboard_focus = self.surfaceWindow(entered.surface);
+            },
+            .leave => {
+                if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window);
+                self.keyboard_focus = null;
+            },
+            .repeat_info => |repeat| {
+                self.keyboard_repeat_rate = repeat.rate;
+                self.keyboard_repeat_delay_ms = repeat.delay;
+                if (repeat.rate == 0) for (self.windows.items) |window| {
+                    window.key_repeat = null;
+                };
+            },
+            else => if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window),
+        }
+    }
+
+    fn touchListener(touch: *wl.Touch, event: wl.Touch.Event, self: *Session) void {
+        if (event == .down) {
+            if (self.surfaceWindow(event.down.surface)) |window| Window.touchListener(touch, event, window);
+        } else {
+            // Touch IDs belong to the seat. Only the window that accepted DOWN
+            // has that ID, and keeps it through motion outside its own bounds.
+            for (self.windows.items) |window| Window.touchListener(touch, event, window);
+        }
+    }
+
+    fn releasePointer(self: *Session) void {
+        for (self.windows.items) |window| {
+            window.setPointerCapture(false);
+            window.pointer_axis_frame.reset();
+            window.push(.pointer_cancel);
+        }
+        if (self.cursor_device) |device| device.destroy();
+        self.cursor_device = null;
+        if (self.pointer) |pointer| pointer.release();
+        self.pointer = null;
+        self.pointer_focus = null;
+    }
+
+    fn releaseKeyboard(self: *Session) void {
+        for (self.windows.items) |window| {
+            window.key_repeat = null;
+            window.push(.keyboard_reset);
+        }
+        if (self.keyboard) |keyboard| keyboard.release();
+        self.keyboard = null;
+        self.keyboard_focus = null;
+    }
+
+    fn releaseTouch(self: *Session) void {
+        for (self.windows.items) |window| window.cancelTouches();
+        if (self.touch_device) |touch| touch.release();
+        self.touch_device = null;
+    }
+
+    fn hasPointerCapture(self: *const Session) bool {
+        for (self.windows.items) |window| if (window.pointer_capture_requested or window.pointer_capture_actual) return true;
+        return false;
+    }
+
+    pub fn deinit(self: *Session) void {
+        std.debug.assert(self.windows.items.len == 0);
+        self.destroyGlobals();
+        self.display.disconnect();
+        self.gpa.destroy(self);
+    }
+
+    fn destroyGlobals(self: *Session) void {
+        self.releasePointer();
+        self.releaseKeyboard();
+        self.releaseTouch();
+        xkb.xkb_state_unref(self.xkb_state);
+        xkb.xkb_keymap_unref(self.xkb_keymap);
+        xkb.xkb_context_unref(self.xkb_context);
+        if (self.virtual_pointer) |pointer| pointer.destroy();
+        if (self.virtual_keyboard) |keyboard| keyboard.destroy();
+        if (self.virtual_pointer_manager) |manager| manager.destroy();
+        if (self.virtual_keyboard_manager) |manager| manager.destroy();
+        if (self.cursor_shape_manager) |manager| manager.destroy();
+        if (self.relative_pointer_manager) |manager| manager.destroy();
+        if (self.pointer_constraints) |constraints| constraints.destroy();
+        if (self.seat) |seat| seat.release();
+        if (self.dmabuf_feedback) |feedback| feedback.destroy();
+        if (self.dmabuf_table) |table| self.gpa.free(table);
+        if (self.dmabuf) |dmabuf| dmabuf.destroy();
+        if (self.viewporter) |viewporter| viewporter.destroy();
+        if (self.fractional_scale_manager) |manager| manager.destroy();
+        if (self.subcompositor) |subcompositor| subcompositor.destroy();
+        if (self.output) |output| {
+            const proxy: *wl.Proxy = @ptrCast(output);
+            // wl_output v2 has no protocol destructor.
+            proxy.destroy();
+        }
+        if (self.compositor) |compositor| compositor.destroy();
+        if (self.shm) |shm| shm.destroy();
+        if (self.wm_base) |wm_base| wm_base.destroy();
+        self.registry.destroy();
+        self.dmabuf_formats.deinit(self.gpa);
+        self.windows.deinit(self.gpa);
+    }
+
+    fn requireGlobals(self: *const Session) void {
+        if (self.compositor == null)
+            std.debug.panic("required Wayland protocol wl_compositor is unavailable; Android UI presentation cannot create surfaces", .{});
+        if (self.wm_base == null)
+            std.debug.panic("required Wayland protocol xdg_wm_base is unavailable; Android applications require an xdg_toplevel", .{});
+        if (self.subcompositor == null)
+            std.debug.panic("required Wayland protocol wl_subcompositor is unavailable; Android SurfaceView layers require synchronized subsurfaces", .{});
+        if (self.viewporter == null)
+            std.debug.panic("required Wayland protocol wp_viewporter is unavailable; Android buffers require logical-size and crop mapping", .{});
+        if (self.shm == null)
+            std.debug.panic("required Wayland protocol wl_shm is unavailable; the opaque application-window background cannot be created", .{});
+        if (self.dmabuf == null)
+            std.debug.panic("required Wayland protocol zwp_linux_dmabuf_v1 is unavailable; decoded Android video frames cannot be presented", .{});
+        if (self.seat == null)
+            std.debug.panic("required Wayland protocol wl_seat is unavailable; Android input cannot receive keyboard, pointer, or touch devices", .{});
+    }
+
+    fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Session) void {
+        switch (event) {
+            .global => |g| {
+                if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
+                    self.compositor = registry.bind(g.name, wl.Compositor, 4) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wl.Subcompositor.interface.name) == .eq) {
+                    self.subcompositor = registry.bind(g.name, wl.Subcompositor, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
+                    self.shm = registry.bind(g.name, wl.Shm, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wp.Viewporter.interface.name) == .eq) {
+                    self.viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wp.FractionalScaleManagerV1.interface.name) == .eq) {
+                    self.fractional_scale_manager = registry.bind(g.name, wp.FractionalScaleManagerV1, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, zwp.LinuxDmabufV1.interface.name) == .eq) {
+                    const version = @min(g.version, 4);
+                    self.dmabuf = registry.bind(g.name, zwp.LinuxDmabufV1, version) catch return;
+                    if (version >= 4) {
+                        self.dmabuf_feedback = self.dmabuf.?.getDefaultFeedback() catch return;
+                        self.dmabuf_feedback.?.setListener(*Session, dmabufFeedbackListener, self);
+                    } else {
+                        self.dmabuf.?.setListener(*Session, dmabufListener, self);
+                    }
+                } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
+                    self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, zwlr.VirtualPointerManagerV1.interface.name) == .eq) {
+                    self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, 2)) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, zwp.VirtualKeyboardManagerV1.interface.name) == .eq) {
+                    self.virtual_keyboard_manager = registry.bind(g.name, zwp.VirtualKeyboardManagerV1, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, zwp.PointerConstraintsV1.interface.name) == .eq and self.pointer_constraints == null) {
+                    self.pointer_constraints = registry.bind(g.name, zwp.PointerConstraintsV1, 1) catch return;
+                    self.pointer_constraints_global_name = g.name;
+                } else if (std.mem.orderZ(u8, g.interface, zwp.RelativePointerManagerV1.interface.name) == .eq and self.relative_pointer_manager == null) {
+                    self.relative_pointer_manager = registry.bind(g.name, zwp.RelativePointerManagerV1, 1) catch return;
+                    self.relative_pointer_global_name = g.name;
+                } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
+                    self.wm_base = registry.bind(g.name, xdg.WmBase, 2) catch return;
+                    self.wm_base.?.setListener(*Session, wmBaseListener, self);
+                } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq and self.seat == null) {
+                    if (g.version < 8)
+                        std.debug.panic("required wl_seat version 8 is unavailable (compositor advertises version {d}); framed high-resolution scrolling and touch shape require version 8", .{g.version});
+                    self.seat = registry.bind(g.name, wl.Seat, 8) catch return;
+                    self.seat_global_name = g.name;
+                    self.seat.?.setListener(*Session, seatListener, self);
+                } else if (std.mem.orderZ(u8, g.interface, wl.Output.interface.name) == .eq and self.output == null) {
+                    self.output = registry.bind(g.name, wl.Output, @min(g.version, 2)) catch return;
+                }
+            },
+            .global_remove => |removed| {
+                if (self.seat_global_name == removed.name)
+                    std.debug.panic("the compositor removed the required wl_seat global; Android input can no longer preserve device lifecycle", .{});
+                if (self.pointer_constraints_global_name == removed.name) {
+                    if (self.hasPointerCapture())
+                        std.debug.panic("the compositor removed required zwp_pointer_constraints_v1 while Android pointer capture was active", .{});
+                    if (self.pointer_constraints) |constraints| constraints.destroy();
+                    self.pointer_constraints = null;
+                    self.pointer_constraints_global_name = null;
+                }
+                if (self.relative_pointer_global_name == removed.name) {
+                    if (self.hasPointerCapture())
+                        std.debug.panic("the compositor removed required zwp_relative_pointer_manager_v1 while Android pointer capture was active", .{});
+                    if (self.relative_pointer_manager) |manager| manager.destroy();
+                    self.relative_pointer_manager = null;
+                    self.relative_pointer_global_name = null;
+                }
+            },
+        }
+    }
+
+    fn dmabufListener(_: *zwp.LinuxDmabufV1, event: zwp.LinuxDmabufV1.Event, self: *Session) void {
+        const pair: DmabufFormat = switch (event) {
+            .format => |value| .{ .format = value.format, .modifier = drm_format_mod_invalid },
+            .modifier => |value| .{
+                .format = value.format,
+                .modifier = (@as(u64, value.modifier_hi) << 32) | value.modifier_lo,
+            },
+        };
+        self.dmabuf_formats.append(self.gpa, pair) catch {};
+    }
+
+    fn dmabufFeedbackListener(feedback: *zwp.LinuxDmabufFeedbackV1, event: zwp.LinuxDmabufFeedbackV1.Event, self: *Session) void {
+        switch (event) {
+            .format_table => |table| {
+                if (self.dmabuf_table) |old| self.gpa.free(old);
+                self.dmabuf_table = null;
+                self.dmabuf_formats.clearRetainingCapacity();
+                defer (std.Io.File{
+                    .handle = table.fd,
+                    .flags = .{ .nonblocking = false },
+                }).close(self.io);
+                if (table.size == 0 or table.size % @sizeOf(DmabufTableEntry) != 0) return;
+                // Tranche indices are u16; only the first 65536 entries can
+                // be referenced. Copy the immutable table through std.Io so no
+                // mapped descriptor or compositor-owned storage outlives this event.
+                const size = @min(table.size, 65536 * @sizeOf(DmabufTableEntry));
+                const bytes = self.gpa.alignedAlloc(u8, .fromByteUnits(@alignOf(DmabufTableEntry)), size) catch return;
+                const file: std.Io.File = .{ .handle = table.fd, .flags = .{ .nonblocking = false } };
+                const count = file.readPositionalAll(self.io, bytes, 0) catch {
+                    self.gpa.free(bytes);
+                    return;
+                };
+                if (count != size) {
+                    self.gpa.free(bytes);
+                    return;
+                }
+                self.dmabuf_table = bytes;
+            },
+            .tranche_formats => |formats| {
+                const table = self.dmabuf_table orelse return;
+                const entries = @as([*]const DmabufTableEntry, @ptrCast(@alignCast(table.ptr)))[0 .. table.len / @sizeOf(DmabufTableEntry)];
+                for (formats.indices.*.slice(u16)) |index| {
+                    if (index >= entries.len) continue;
+                    const entry = entries[index];
+                    self.dmabuf_formats.append(self.gpa, .{
+                        .format = entry.format,
+                        .modifier = entry.modifier,
+                    }) catch {};
+                }
+            },
+            .done => {
+                // Import support is immutable for this Window. Stop feedback
+                // updates so codec threads can read dmabuf_formats lock-free.
+                feedback.destroy();
+                self.dmabuf_feedback = null;
+                if (self.dmabuf_table) |table| self.gpa.free(table);
+                self.dmabuf_table = null;
+            },
+            .main_device, .tranche_done, .tranche_target_device, .tranche_flags => {},
+        }
+    }
+
+    fn wmBaseListener(wm_base: *xdg.WmBase, event: xdg.WmBase.Event, self: *Session) void {
+        _ = self;
+        switch (event) {
+            .ping => |p| wm_base.pong(p.serial),
+        }
+    }
+
+    fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, self: *Session) void {
+        switch (event) {
+            .capabilities => |c| {
+                if (c.capabilities.pointer and self.pointer == null) {
+                    self.pointer = seat.getPointer() catch null;
+                    if (self.pointer) |p| p.setListener(*Session, pointerListener, self);
+                } else if (!c.capabilities.pointer and self.pointer != null) {
+                    self.releasePointer();
+                }
+                if (c.capabilities.keyboard and self.keyboard == null) {
+                    self.keyboard = seat.getKeyboard() catch null;
+                    if (self.keyboard) |k| k.setListener(*Session, keyboardListener, self);
+                } else if (!c.capabilities.keyboard and self.keyboard != null) {
+                    self.releaseKeyboard();
+                }
+                if (c.capabilities.touch and self.touch_device == null) {
+                    self.touch_device = seat.getTouch() catch null;
+                    if (self.touch_device) |touch| touch.setListener(*Session, touchListener, self);
+                } else if (!c.capabilities.touch and self.touch_device != null) {
+                    self.releaseTouch();
+                }
+            },
+            .name => {},
+        }
+    }
+};
+
+pub const Window = struct {
+    session: *Session,
+    owns_session: bool = false,
+    surface_created: bool = false,
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    relative_pointer: ?*zwp.RelativePointerV1 = null,
+    locked_pointer: ?*zwp.LockedPointerV1 = null,
+    pointer_capture_requested: bool = false,
+    pointer_capture_actual: bool = false,
     pointer_enter_serial: u32 = 0,
     cursor_shape: u32 = 0, // last applied wp_cursor_shape_device_v1.shape (0 = none)
 
@@ -389,15 +853,11 @@ pub const Window = struct {
 
     touch_points: [10]TouchPoint = std.mem.zeroes([10]TouchPoint),
 
-    xkb_context: ?*xkb.Context = null,
-    xkb_keymap: ?*xkb.Keymap = null,
-    xkb_state: ?*xkb.State = null,
-    keyboard_repeat_rate: i32 = 0,
-    keyboard_repeat_delay_ms: i32 = 0,
     key_repeat: ?KeyRepeat = null,
 
     // simple event queue filled by listeners, drained by the caller
     events: std.ArrayList(Event) = .empty,
+    delivered_events: std.ArrayList(Event) = .empty,
     frame_cb: ?*wl.Callback = null,
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io, width: i32, height: i32, title: [:0]const u8) !*Window {
@@ -405,40 +865,48 @@ pub const Window = struct {
     }
 
     pub fn initOpts(gpa: std.mem.Allocator, io: std.Io, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !*Window {
-        const self = try gpa.create(Window);
-        self.* = .{
-            .gpa = gpa,
-            .io = io,
-            .display = try wl.Display.connect(null),
-            .registry = undefined,
-            .width = width,
-            .height = height,
-            .fullscreen = FullscreenState.init(fullscreen),
-        };
-        self.registry = try self.display.getRegistry();
-        self.registry.setListener(*Window, registryListener, self);
-        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        self.requireGlobals();
+        const session = try Session.init(gpa, io);
+        errdefer session.deinit();
+        const window = try session.createWindow(width, height, title, fullscreen);
+        window.owns_session = true;
+        return window;
+    }
 
-        self.surface = try self.compositor.?.createSurface();
+    fn initInSession(session: *Session, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !*Window {
+        const gpa = session.gpa;
+        const self = try gpa.create(Window);
+        errdefer gpa.destroy(self);
+        self.* = .{ .gpa = gpa, .io = session.io, .session = session, .width = width, .height = height, .fullscreen = FullscreenState.init(fullscreen) };
+        try session.windows.append(gpa, self);
+        errdefer session.removeWindow(self);
+        errdefer self.events.deinit(gpa);
+        errdefer if (self.frame_cb) |callback| callback.destroy();
+        self.surface = try self.session.compositor.?.createSurface();
+        errdefer self.surface.destroy();
+        self.surface_created = true;
         // The xdg parent is only the opaque application background. Android
         // input is delivered through the UI child, so exclude the parent from
         // compositor hit testing.
-        const empty_input_region = try self.compositor.?.createRegion();
+        const empty_input_region = try self.session.compositor.?.createRegion();
         self.surface.setInputRegion(empty_input_region);
         empty_input_region.destroy();
-        self.opaque_region = try self.compositor.?.createRegion();
+        self.opaque_region = try self.session.compositor.?.createRegion();
+        errdefer self.opaque_region.destroy();
         // fractional-scale-v1 deliberately leaves wl_surface.buffer_scale at
         // 1. A viewport maps the higher-resolution buffer back to the logical
         // surface size used by xdg-shell and input events.
-        self.viewport = try self.viewporter.?.getViewport(self.surface);
-        if (self.fractional_scale_manager != null) {
-            self.fractional_scale = try self.fractional_scale_manager.?.getFractionalScale(self.surface);
+        self.viewport = try self.session.viewporter.?.getViewport(self.surface);
+        errdefer self.viewport.destroy();
+        if (self.session.fractional_scale_manager != null) {
+            self.fractional_scale = try self.session.fractional_scale_manager.?.getFractionalScale(self.surface);
             self.fractional_scale.?.setListener(*Window, fractionalScaleListener, self);
         }
+        errdefer if (self.fractional_scale) |scale| scale.destroy();
         self.updateViewport();
-        self.xdg_surface = try self.wm_base.?.getXdgSurface(self.surface);
+        self.xdg_surface = try self.session.wm_base.?.getXdgSurface(self.surface);
+        errdefer self.xdg_surface.destroy();
         self.toplevel = try self.xdg_surface.getToplevel();
+        errdefer self.toplevel.destroy();
         self.xdg_surface.setListener(*Window, xdgSurfaceListener, self);
         self.toplevel.setListener(*Window, toplevelListener, self);
         self.toplevel.setTitle(title);
@@ -449,7 +917,7 @@ pub const Window = struct {
         // the first buffer is attached.
         self.surface.commit();
         while (!self.configured) {
-            if (self.display.dispatch() != .SUCCESS) return error.DispatchFailed;
+            if (self.session.display.dispatch() != .SUCCESS) return error.DispatchFailed;
         }
         self.updateWindowGeometry();
 
@@ -462,6 +930,7 @@ pub const Window = struct {
         // considering a child below it, which turns the valid SurfaceView hole
         // black.
         self.base_buffer = try self.createBaseBuffer();
+        errdefer self.base_buffer.destroy();
         self.surface.attach(self.base_buffer, 0, 0);
         self.surface.damageBuffer(0, 0, 1, 1);
         self.base_attached = true;
@@ -471,12 +940,15 @@ pub const Window = struct {
         // Some compositors refine the configured logical size only after a
         // client attaches its first buffer. A roundtrip observes that optional
         // second configure before the EGL child is sized.
-        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
-        self.ui_surface = try self.compositor.?.createSurface();
-        self.ui_subsurface = try self.subcompositor.?.getSubsurface(self.ui_surface, self.surface);
+        self.ui_surface = try self.session.compositor.?.createSurface();
+        errdefer self.ui_surface.destroy();
+        self.ui_subsurface = try self.session.subcompositor.?.getSubsurface(self.ui_surface, self.surface);
+        errdefer self.ui_subsurface.destroy();
         self.ui_subsurface.placeAbove(self.surface);
-        self.ui_viewport = try self.viewporter.?.getViewport(self.ui_surface);
+        self.ui_viewport = try self.session.viewporter.?.getViewport(self.ui_surface);
+        errdefer self.ui_viewport.destroy();
         self.ui_initialized = true;
         self.updateViewport();
         self.surface.commit();
@@ -484,168 +956,21 @@ pub const Window = struct {
         return self;
     }
 
-    fn requireGlobals(self: *const Window) void {
-        if (self.compositor == null)
-            std.debug.panic("required Wayland protocol wl_compositor is unavailable; Android UI presentation cannot create surfaces", .{});
-        if (self.wm_base == null)
-            std.debug.panic("required Wayland protocol xdg_wm_base is unavailable; Android applications require an xdg_toplevel", .{});
-        if (self.subcompositor == null)
-            std.debug.panic("required Wayland protocol wl_subcompositor is unavailable; Android SurfaceView layers require synchronized subsurfaces", .{});
-        if (self.viewporter == null)
-            std.debug.panic("required Wayland protocol wp_viewporter is unavailable; Android buffers require logical-size and crop mapping", .{});
-        if (self.shm == null)
-            std.debug.panic("required Wayland protocol wl_shm is unavailable; the opaque application-window background cannot be created", .{});
-        if (self.dmabuf == null)
-            std.debug.panic("required Wayland protocol zwp_linux_dmabuf_v1 is unavailable; decoded Android video frames cannot be presented", .{});
-        if (self.seat == null)
-            std.debug.panic("required Wayland protocol wl_seat is unavailable; Android input cannot receive keyboard, pointer, or touch devices", .{});
-    }
-
-    fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, self: *Window) void {
-        switch (event) {
-            .global => |g| {
-                if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
-                    self.compositor = registry.bind(g.name, wl.Compositor, 4) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, wl.Subcompositor.interface.name) == .eq) {
-                    self.subcompositor = registry.bind(g.name, wl.Subcompositor, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
-                    self.shm = registry.bind(g.name, wl.Shm, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, wp.Viewporter.interface.name) == .eq) {
-                    self.viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, wp.FractionalScaleManagerV1.interface.name) == .eq) {
-                    self.fractional_scale_manager = registry.bind(g.name, wp.FractionalScaleManagerV1, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, zwp.LinuxDmabufV1.interface.name) == .eq) {
-                    const version = @min(g.version, 4);
-                    self.dmabuf = registry.bind(g.name, zwp.LinuxDmabufV1, version) catch return;
-                    if (version >= 4) {
-                        self.dmabuf_feedback = self.dmabuf.?.getDefaultFeedback() catch return;
-                        self.dmabuf_feedback.?.setListener(*Window, dmabufFeedbackListener, self);
-                    } else {
-                        self.dmabuf.?.setListener(*Window, dmabufListener, self);
-                    }
-                } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
-                    self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, zwlr.VirtualPointerManagerV1.interface.name) == .eq) {
-                    self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, 2)) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, zwp.VirtualKeyboardManagerV1.interface.name) == .eq) {
-                    self.virtual_keyboard_manager = registry.bind(g.name, zwp.VirtualKeyboardManagerV1, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, zwp.PointerConstraintsV1.interface.name) == .eq and self.pointer_constraints == null) {
-                    self.pointer_constraints = registry.bind(g.name, zwp.PointerConstraintsV1, 1) catch return;
-                    self.pointer_constraints_global_name = g.name;
-                } else if (std.mem.orderZ(u8, g.interface, zwp.RelativePointerManagerV1.interface.name) == .eq and self.relative_pointer_manager == null) {
-                    self.relative_pointer_manager = registry.bind(g.name, zwp.RelativePointerManagerV1, 1) catch return;
-                    self.relative_pointer_global_name = g.name;
-                } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
-                    self.wm_base = registry.bind(g.name, xdg.WmBase, 2) catch return;
-                    self.wm_base.?.setListener(*Window, wmBaseListener, self);
-                } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq and self.seat == null) {
-                    if (g.version < 8)
-                        std.debug.panic("required wl_seat version 8 is unavailable (compositor advertises version {d}); framed high-resolution scrolling and touch shape require version 8", .{g.version});
-                    self.seat = registry.bind(g.name, wl.Seat, 8) catch return;
-                    self.seat_global_name = g.name;
-                    self.seat.?.setListener(*Window, seatListener, self);
-                } else if (std.mem.orderZ(u8, g.interface, wl.Output.interface.name) == .eq and self.output == null) {
-                    self.output = registry.bind(g.name, wl.Output, 2) catch return;
-                }
-            },
-            .global_remove => |removed| {
-                if (self.seat_global_name == removed.name)
-                    std.debug.panic("the compositor removed the required wl_seat global; Android input can no longer preserve device lifecycle", .{});
-                if (self.pointer_constraints_global_name == removed.name) {
-                    if (self.pointer_capture_requested or self.pointer_capture_actual)
-                        std.debug.panic("the compositor removed required zwp_pointer_constraints_v1 while Android pointer capture was active", .{});
-                    if (self.pointer_constraints) |constraints| constraints.destroy();
-                    self.pointer_constraints = null;
-                    self.pointer_constraints_global_name = null;
-                }
-                if (self.relative_pointer_global_name == removed.name) {
-                    if (self.pointer_capture_requested or self.pointer_capture_actual)
-                        std.debug.panic("the compositor removed required zwp_relative_pointer_manager_v1 while Android pointer capture was active", .{});
-                    if (self.relative_pointer_manager) |manager| manager.destroy();
-                    self.relative_pointer_manager = null;
-                    self.relative_pointer_global_name = null;
-                }
-            },
-        }
-    }
-
-    fn dmabufListener(_: *zwp.LinuxDmabufV1, event: zwp.LinuxDmabufV1.Event, self: *Window) void {
-        const pair: DmabufFormat = switch (event) {
-            .format => |value| .{ .format = value.format, .modifier = drm_format_mod_invalid },
-            .modifier => |value| .{
-                .format = value.format,
-                .modifier = (@as(u64, value.modifier_hi) << 32) | value.modifier_lo,
-            },
-        };
-        self.dmabuf_formats.append(self.gpa, pair) catch {};
-    }
-
-    fn dmabufFeedbackListener(feedback: *zwp.LinuxDmabufFeedbackV1, event: zwp.LinuxDmabufFeedbackV1.Event, self: *Window) void {
-        switch (event) {
-            .format_table => |table| {
-                if (self.dmabuf_table) |old| std.posix.munmap(old);
-                self.dmabuf_table = null;
-                self.dmabuf_formats.clearRetainingCapacity();
-                defer (std.Io.File{
-                    .handle = table.fd,
-                    .flags = .{ .nonblocking = false },
-                }).close(self.io);
-                if (table.size == 0 or table.size % @sizeOf(DmabufTableEntry) != 0) return;
-                self.dmabuf_table = std.posix.mmap(
-                    null,
-                    table.size,
-                    .{ .READ = true },
-                    .{ .TYPE = .PRIVATE },
-                    table.fd,
-                    0,
-                ) catch null;
-            },
-            .tranche_formats => |formats| {
-                const table = self.dmabuf_table orelse return;
-                const entries = @as([*]const DmabufTableEntry, @ptrCast(@alignCast(table.ptr)))[0 .. table.len / @sizeOf(DmabufTableEntry)];
-                for (formats.indices.*.slice(u16)) |index| {
-                    if (index >= entries.len) continue;
-                    const entry = entries[index];
-                    self.dmabuf_formats.append(self.gpa, .{
-                        .format = entry.format,
-                        .modifier = entry.modifier,
-                    }) catch {};
-                }
-            },
-            .done => {
-                // Import support is immutable for this Window. Stop feedback
-                // updates so codec threads can read dmabuf_formats lock-free.
-                feedback.destroy();
-                self.dmabuf_feedback = null;
-                if (self.dmabuf_table) |table| std.posix.munmap(table);
-                self.dmabuf_table = null;
-            },
-            .main_device, .tranche_done, .tranche_target_device, .tranche_flags => {},
-        }
-    }
-
     pub fn supportsVideoDmabuf(self: *Window, format: u32, modifier: u64) bool {
-        return selectDmabufImportModifier(self.dmabuf_formats.items, format, modifier) != null;
+        return selectDmabufImportModifier(self.session.dmabuf_formats.items, format, modifier) != null;
     }
 
     fn videoDmabufImportModifier(self: *Window, format: u32, modifier: u64) ?u64 {
-        return selectDmabufImportModifier(self.dmabuf_formats.items, format, modifier);
+        return selectDmabufImportModifier(self.session.dmabuf_formats.items, format, modifier);
     }
 
     pub fn hasVideoDmabuf(self: *Window) bool {
-        if (self.dmabuf == null) return false;
-        for (self.dmabuf_formats.items) |supported| {
+        if (self.session.dmabuf == null) return false;
+        for (self.session.dmabuf_formats.items) |supported| {
             if (supported.format == drm_format_nv12 or supported.format == drm_format_p010)
                 return true;
         }
         return false;
-    }
-
-    fn wmBaseListener(wm_base: *xdg.WmBase, event: xdg.WmBase.Event, self: *Window) void {
-        _ = self;
-        switch (event) {
-            .ping => |p| wm_base.pong(p.serial),
-        }
     }
 
     fn xdgSurfaceListener(s: *xdg.Surface, event: xdg.Surface.Event, self: *Window) void {
@@ -700,32 +1025,6 @@ pub const Window = struct {
                 }
             },
             .close => self.push(.close),
-        }
-    }
-
-    fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, self: *Window) void {
-        switch (event) {
-            .capabilities => |c| {
-                if (c.capabilities.pointer and self.pointer == null) {
-                    self.pointer = seat.getPointer() catch null;
-                    if (self.pointer) |p| p.setListener(*Window, pointerListener, self);
-                } else if (!c.capabilities.pointer and self.pointer != null) {
-                    self.releasePointer();
-                }
-                if (c.capabilities.keyboard and self.keyboard == null) {
-                    self.keyboard = seat.getKeyboard() catch null;
-                    if (self.keyboard) |k| k.setListener(*Window, keyboardListener, self);
-                } else if (!c.capabilities.keyboard and self.keyboard != null) {
-                    self.releaseKeyboard();
-                }
-                if (c.capabilities.touch and self.touch_device == null) {
-                    self.touch_device = seat.getTouch() catch null;
-                    if (self.touch_device) |touch| touch.setListener(*Window, touchListener, self);
-                } else if (!c.capabilities.touch and self.touch_device != null) {
-                    self.releaseTouch();
-                }
-            },
-            .name => {},
         }
     }
 
@@ -796,32 +1095,10 @@ pub const Window = struct {
 
     fn keyboardListener(_: *wl.Keyboard, event: wl.Keyboard.Event, self: *Window) void {
         switch (event) {
-            .keymap => |k| {
-                defer (std.Io.File{
-                    .handle = k.fd,
-                    .flags = .{ .nonblocking = false },
-                }).close(self.io);
-                if (k.format != .xkb_v1) return;
-                const data = std.posix.mmap(null, k.size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, k.fd, 0) catch return;
-                defer std.posix.munmap(data);
-                if (self.xkb_context == null) self.xkb_context = xkb.xkb_context_new(0);
-                const ctx = self.xkb_context orelse return;
-                // data is a NUL-terminated keymap string
-                const keymap = xkb.xkb_keymap_new_from_string(ctx, @ptrCast(data.ptr), 1, 0) orelse return; // 1 = XKB_KEYMAP_FORMAT_TEXT_V1
-                xkb.xkb_state_unref(self.xkb_state);
-                xkb.xkb_keymap_unref(self.xkb_keymap);
-                self.xkb_keymap = keymap;
-                self.xkb_state = xkb.xkb_state_new(keymap);
-            },
-            .modifiers => |m| {
-                if (self.xkb_state) |st| {
-                    _ = xkb.xkb_state_update_mask(st, m.mods_depressed, m.mods_latched, m.mods_locked, 0, 0, m.group);
-                }
-            },
             .key => |k| {
                 var unicode: u32 = 0;
                 var keysym: u32 = 0;
-                if (self.xkb_state) |st| {
+                if (self.session.xkb_state) |st| {
                     unicode = xkb.xkb_state_key_get_utf32(st, k.key + 8);
                     keysym = xkb.xkb_state_key_get_one_sym(st, k.key + 8);
                 }
@@ -832,18 +1109,18 @@ pub const Window = struct {
                     .keysym = keysym,
                 } });
                 if (k.state == .pressed) {
-                    const repeats = if (self.xkb_keymap) |keymap|
+                    const repeats = if (self.session.xkb_keymap) |keymap|
                         xkb.xkb_keymap_key_repeats(keymap, k.key + 8) != 0
                     else
                         false;
-                    if (repeats and self.keyboard_repeat_rate > 0) {
-                        const period_ns = @divTrunc(@as(u64, std.time.ns_per_s), @as(u64, @intCast(self.keyboard_repeat_rate)));
+                    if (repeats and self.session.keyboard_repeat_rate > 0) {
+                        const period_ns = @divTrunc(@as(u64, std.time.ns_per_s), @as(u64, @intCast(self.session.keyboard_repeat_rate)));
                         self.key_repeat = .{
                             .keycode = k.key,
                             .unicode = unicode,
                             .keysym = keysym,
-                            .next_ns = monotonicNs() +
-                                @as(u64, @intCast(@max(self.keyboard_repeat_delay_ms, 0))) *
+                            .next_ns = monotonicNs(self.io) +
+                                @as(u64, @intCast(@max(self.session.keyboard_repeat_delay_ms, 0))) *
                                     std.time.ns_per_ms,
                             .period_ns = period_ns,
                         };
@@ -855,11 +1132,6 @@ pub const Window = struct {
             .leave => {
                 self.key_repeat = null;
                 self.push(.keyboard_reset);
-            },
-            .repeat_info => |repeat| {
-                self.keyboard_repeat_rate = repeat.rate;
-                self.keyboard_repeat_delay_ms = repeat.delay;
-                if (repeat.rate == 0) self.key_repeat = null;
             },
             else => {},
         }
@@ -976,11 +1248,11 @@ pub const Window = struct {
             return;
         }
 
-        const pointer = self.pointer orelse
+        const pointer = self.session.pointer orelse
             std.debug.panic("Android requested pointer capture, but the active wl_seat has no pointer capability", .{});
-        const relative_manager = self.relative_pointer_manager orelse
+        const relative_manager = self.session.relative_pointer_manager orelse
             std.debug.panic("Android requested pointer capture, but zwp_relative_pointer_manager_v1 is unavailable", .{});
-        const constraints = self.pointer_constraints orelse
+        const constraints = self.session.pointer_constraints orelse
             std.debug.panic("Android requested pointer capture, but zwp_pointer_constraints_v1 is unavailable", .{});
         self.relative_pointer = relative_manager.getRelativePointer(pointer) catch
             std.debug.panic("failed to create zwp_relative_pointer_v1 for Android pointer capture", .{});
@@ -999,34 +1271,11 @@ pub const Window = struct {
         return self.pointer_capture_actual;
     }
 
-    fn releasePointer(self: *Window) void {
-        self.setPointerCapture(false);
-        if (self.cursor_device) |device| device.destroy();
-        self.cursor_device = null;
-        if (self.pointer) |pointer| pointer.release();
-        self.pointer = null;
-        self.pointer_axis_frame.reset();
-        self.push(.pointer_cancel);
-    }
-
-    fn releaseKeyboard(self: *Window) void {
-        self.key_repeat = null;
-        if (self.keyboard) |keyboard| keyboard.release();
-        self.keyboard = null;
-        self.push(.keyboard_reset);
-    }
-
-    fn releaseTouch(self: *Window) void {
-        self.cancelTouches();
-        if (self.touch_device) |touch| touch.release();
-        self.touch_device = null;
-    }
-
     fn emitKeyRepeatIfDue(self: *Window) bool {
         var repeat = self.key_repeat orelse return false;
-        const now = monotonicNs();
+        const now = monotonicNs(self.io);
         if (now < repeat.next_ns) return false;
-        if (self.xkb_state) |state| {
+        if (self.session.xkb_state) |state| {
             repeat.unicode = xkb.xkb_state_key_get_utf32(state, repeat.keycode + 8);
             repeat.keysym = xkb.xkb_state_key_get_one_sym(state, repeat.keycode + 8);
         }
@@ -1044,7 +1293,7 @@ pub const Window = struct {
 
     fn keyRepeatTimeoutMs(self: *const Window) i32 {
         const repeat = self.key_repeat orelse return -1;
-        const now = monotonicNs();
+        const now = monotonicNs(self.io);
         if (now >= repeat.next_ns) return 0;
         const remaining = repeat.next_ns - now;
         return @intCast(@min(@as(u64, std.math.maxInt(i32)), @divTrunc(remaining + std.time.ns_per_ms - 1, std.time.ns_per_ms)));
@@ -1137,7 +1386,7 @@ pub const Window = struct {
     }
 
     fn createBaseBuffer(self: *Window) !*wl.Buffer {
-        const base_fd = try std.posix.memfd_create("azk-window-base", 0);
+        const base_fd = try createMemoryFile("azk-window-base");
         const base_file = std.Io.File{
             .handle = base_fd,
             .flags = .{ .nonblocking = false },
@@ -1145,7 +1394,7 @@ pub const Window = struct {
         defer base_file.close(self.io);
         const pixel = [_]u8{ 0, 0, 0, 0 };
         base_file.writeStreamingAll(self.io, &pixel) catch return error.BaseBufferWriteFailed;
-        const pool = try self.shm.?.createPool(base_fd, @intCast(pixel.len));
+        const pool = try self.session.shm.?.createPool(base_fd, @intCast(pixel.len));
         defer pool.destroy();
         return pool.createBuffer(0, 1, 1, 4, .xrgb8888);
     }
@@ -1182,13 +1431,13 @@ pub const Window = struct {
     /// before transfer. Only wl_buffer.release permits normal queue reuse.
     fn importDmabuf(self: *Window, frame: DmabufFrame, pending: *std.ArrayList(*ImportedDmabuf)) !*wl.Buffer {
         errdefer frame.release();
-        const factory = self.dmabuf orelse return error.DmabufUnavailable;
+        const factory = self.session.dmabuf orelse return error.DmabufUnavailable;
         if (frame.width <= 0 or frame.height <= 0 or frame.plane_count == 0 or frame.plane_count > frame.fds.len)
             return error.InvalidDmabuf;
         if (pending.items.len >= 64) return error.TooManyPendingBuffers;
         for (0..frame.plane_count) |index| {
             if (frame.fds[index] < 0 or frame.strides[index] == 0) return error.InvalidDmabuf;
-            if (selectDmabufImportModifier(self.dmabuf_formats.items, frame.format, frame.modifiers[index]) == null)
+            if (selectDmabufImportModifier(self.session.dmabuf_formats.items, frame.format, frame.modifiers[index]) == null)
                 return error.UnsupportedDmabufFormat;
         }
         const params = try factory.createParams();
@@ -1250,7 +1499,7 @@ pub const Window = struct {
         if (!self.presentation_dirty) return;
         self.presentation_dirty = false;
         self.surface.commit();
-        switch (self.display.flush()) {
+        switch (self.session.display.flush()) {
             .SUCCESS, .AGAIN => {},
             else => return error.FlushFailed,
         }
@@ -1266,15 +1515,15 @@ pub const Window = struct {
     /// value, 1 = default). No-op if the compositor lacks the protocol.
     pub fn setCursorShape(self: *Window, shape: u32) void {
         if (shape == self.cursor_shape) return;
-        const mgr = self.cursor_shape_manager orelse return;
-        const ptr = self.pointer orelse return;
-        if (self.cursor_device == null) {
-            self.cursor_device = mgr.getPointer(ptr) catch return;
+        const mgr = self.session.cursor_shape_manager orelse return;
+        const ptr = self.session.pointer orelse return;
+        if (self.session.cursor_device == null) {
+            self.session.cursor_device = mgr.getPointer(ptr) catch return;
         }
-        const dev = self.cursor_device orelse return;
+        const dev = self.session.cursor_device orelse return;
         dev.setShape(self.pointer_enter_serial, @fromBackingInt(@intCast(shape)));
         self.cursor_shape = shape;
-        _ = self.display.flush();
+        _ = self.session.display.flush();
     }
 
     /// Ask the compositor to enter or leave xdg-shell fullscreen mode. The
@@ -1300,8 +1549,8 @@ pub const Window = struct {
     /// True when the compositor exposes both wlroots virtual-input protocols.
     /// The devices themselves are created lazily, only for an enabled test API.
     pub fn testInputAvailable(self: *const Window) bool {
-        return self.seat != null and self.virtual_pointer_manager != null and
-            self.virtual_keyboard_manager != null;
+        return self.session.seat != null and self.session.virtual_pointer_manager != null and
+            self.session.virtual_keyboard_manager != null;
     }
 
     /// Create the test devices and let the compositor advertise the resulting
@@ -1311,9 +1560,9 @@ pub const Window = struct {
     pub fn prepareTestInput(self: *Window) !void {
         _ = try self.ensureVirtualPointer();
         _ = try self.ensureVirtualKeyboard();
-        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-        if (self.pointer == null or self.keyboard == null) return error.SeatCapabilitiesUnavailable;
+        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (self.session.pointer == null or self.session.keyboard == null) return error.SeatCapabilitiesUnavailable;
     }
 
     /// Inject a real compositor-routed pointer click at an Android buffer
@@ -1325,14 +1574,14 @@ pub const Window = struct {
         const y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(buffer_y), 0, @max(0, self.height - 1)));
         const width: u32 = @intCast(@max(1, self.width));
         const height: u32 = @intCast(@max(1, self.height));
-        const time = inputTimestamp();
+        const time = inputTimestamp(self.io);
         pointer.motionAbsolute(time, x, y, width, height);
         pointer.frame();
         pointer.button(time, 0x110, .pressed); // BTN_LEFT
         pointer.frame();
         pointer.button(time +% 1, 0x110, .released);
         pointer.frame();
-        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+        if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
     /// Inject a compositor-routed primary-button drag between Android buffer
@@ -1346,7 +1595,7 @@ pub const Window = struct {
         const to_y: u32 = @intCast(std.math.clamp(self.bufferToSurfaceY(to_buffer_y), 0, @max(0, self.height - 1)));
         const width: u32 = @intCast(@max(1, self.width));
         const height: u32 = @intCast(@max(1, self.height));
-        const time = inputTimestamp();
+        const time = inputTimestamp(self.io);
         pointer.motionAbsolute(time, from_x, from_y, width, height);
         pointer.frame();
         pointer.button(time, 0x110, .pressed); // BTN_LEFT
@@ -1359,7 +1608,7 @@ pub const Window = struct {
         }
         pointer.button(time +% 11, 0x110, .released);
         pointer.frame();
-        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+        if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
     /// Type UTF-8 text through Cage's virtual keyboard. The fixed US keymap
@@ -1371,33 +1620,33 @@ pub const Window = struct {
             const key = asciiKey(byte) orelse return error.UnsupportedText;
             self.sendVirtualKey(keyboard, key.code, key.shift);
         }
-        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+        if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
     pub fn testKey(self: *Window, name: []const u8) !void {
         const code = namedKey(name) orelse return error.UnsupportedKey;
         const keyboard = try self.ensureVirtualKeyboard();
         self.sendVirtualKey(keyboard, code, false);
-        if (self.display.flush() != .SUCCESS) return error.FlushFailed;
+        if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
     fn ensureVirtualPointer(self: *Window) !*zwlr.VirtualPointerV1 {
-        if (self.virtual_pointer) |pointer| return pointer;
-        const manager = self.virtual_pointer_manager orelse return error.VirtualPointerUnavailable;
-        self.virtual_pointer = if (self.output) |output|
-            try manager.createVirtualPointerWithOutput(self.seat, output)
+        if (self.session.virtual_pointer) |pointer| return pointer;
+        const manager = self.session.virtual_pointer_manager orelse return error.VirtualPointerUnavailable;
+        self.session.virtual_pointer = if (self.session.output) |output|
+            try manager.createVirtualPointerWithOutput(self.session.seat, output)
         else
-            try manager.createVirtualPointer(self.seat);
-        return self.virtual_pointer.?;
+            try manager.createVirtualPointer(self.session.seat);
+        return self.session.virtual_pointer.?;
     }
 
     fn ensureVirtualKeyboard(self: *Window) !*zwp.VirtualKeyboardV1 {
-        if (self.virtual_keyboard) |keyboard| return keyboard;
-        const manager = self.virtual_keyboard_manager orelse return error.VirtualKeyboardUnavailable;
-        const seat = self.seat orelse return error.VirtualKeyboardUnavailable;
+        if (self.session.virtual_keyboard) |keyboard| return keyboard;
+        const manager = self.session.virtual_keyboard_manager orelse return error.VirtualKeyboardUnavailable;
+        const seat = self.session.seat orelse return error.VirtualKeyboardUnavailable;
         const keyboard = try manager.createVirtualKeyboard(seat);
         errdefer keyboard.destroy();
-        const keymap_fd = try std.posix.memfd_create("azk-test-keymap", 0);
+        const keymap_fd = try createMemoryFile("azk-test-keymap");
         const keymap_file = std.Io.File{
             .handle = keymap_fd,
             .flags = .{ .nonblocking = false },
@@ -1405,12 +1654,12 @@ pub const Window = struct {
         defer keymap_file.close(self.io);
         keymap_file.writeStreamingAll(self.io, test_keymap) catch return error.KeymapWriteFailed;
         keyboard.keymap(.xkb_v1, keymap_fd, @intCast(test_keymap.len));
-        self.virtual_keyboard = keyboard;
+        self.session.virtual_keyboard = keyboard;
         return keyboard;
     }
 
     fn sendVirtualKey(self: *Window, keyboard: *zwp.VirtualKeyboardV1, code: u32, shift: bool) void {
-        const time = inputTimestamp();
+        const time = inputTimestamp(self.io);
         if (shift) {
             keyboard.key(time, 42, 1); // KEY_LEFTSHIFT
             keyboard.modifiers(1, 0, 0, 0);
@@ -1421,7 +1670,6 @@ pub const Window = struct {
             keyboard.modifiers(0, 0, 0, 0);
             keyboard.key(time +% 1, 42, 0);
         }
-        _ = self;
     }
 
     /// Testing hook: behave as if the compositor resized us.
@@ -1439,17 +1687,17 @@ pub const Window = struct {
     pub fn waitEvents(self: *Window, sources: WakeSources) !WaitResult {
         self.events.clearRetainingCapacity();
         while (self.events.items.len == 0) {
-            if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
             _ = self.emitKeyRepeatIfDue();
             if (self.events.items.len != 0) break;
 
-            while (!self.display.prepareRead()) {
-                if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            while (!self.session.display.prepareRead()) {
+                if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
                 if (self.events.items.len != 0) return .{ .events = self.events.items };
             }
             var wait_for_write = false;
             while (true) {
-                switch (self.display.flush()) {
+                switch (self.session.display.flush()) {
                     .SUCCESS => break,
                     .AGAIN => {
                         wait_for_write = true;
@@ -1457,7 +1705,7 @@ pub const Window = struct {
                     },
                     .INTR => continue,
                     else => {
-                        self.display.cancelRead();
+                        self.session.display.cancelRead();
                         return error.FlushFailed;
                     },
                 }
@@ -1465,7 +1713,7 @@ pub const Window = struct {
 
             var poll_fds = [_]std.posix.pollfd{
                 .{
-                    .fd = self.display.getFd(),
+                    .fd = self.session.display.getFd(),
                     .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP |
                         @as(i16, if (wait_for_write) std.posix.POLL.OUT else 0),
                     .revents = 0,
@@ -1495,10 +1743,10 @@ pub const Window = struct {
             const control_ready = (sources.control_listener != null and poll_fds[5].revents != 0) or
                 (sources.control_client != null and poll_fds[6].revents != 0);
             if (wayland_readable) {
-                if (self.display.readEvents() != .SUCCESS) return error.DispatchFailed;
-                if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+                if (self.session.display.readEvents() != .SUCCESS) return error.DispatchFailed;
+                if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
             } else {
-                self.display.cancelRead();
+                self.session.display.cancelRead();
             }
             _ = self.emitKeyRepeatIfDue();
             if (video_ready or looper_ready or renderer_ready or optimizer_ready or control_ready or ready_count == 0) {
@@ -1521,17 +1769,25 @@ pub const Window = struct {
             @as(i16, if (wants_write) std.posix.POLL.OUT else 0);
     }
 
+    /// Return this window's events without clearing notifications belonging to
+    /// peers. The returned slice is valid until the next takeEvents or deinit.
+    pub fn takeEvents(self: *Window) []const Event {
+        self.delivered_events.clearRetainingCapacity();
+        std.mem.swap(std.ArrayList(Event), &self.events, &self.delivered_events);
+        return self.delivered_events.items;
+    }
+
     /// Non-blocking drain of pending events.
     pub fn pollEvents(self: *Window) ![]const Event {
         self.events.clearRetainingCapacity();
-        if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         _ = self.emitKeyRepeatIfDue();
-        _ = self.display.flush();
+        _ = self.session.display.flush();
         return self.events.items;
     }
 
     pub fn fd(self: *Window) std.posix.fd_t {
-        return self.display.getFd();
+        return self.session.display.getFd();
     }
 
     /// Release all client-side resources before the process disconnects from
@@ -1539,25 +1795,8 @@ pub const Window = struct {
     pub fn deinit(self: *Window) void {
         if (self.frame_cb) |callback| callback.destroy();
         self.frame_cb = null;
-        xkb.xkb_state_unref(self.xkb_state);
-        xkb.xkb_keymap_unref(self.xkb_keymap);
-        xkb.xkb_context_unref(self.xkb_context);
-        self.xkb_state = null;
-        self.xkb_keymap = null;
-        self.xkb_context = null;
-
         self.setPointerCapture(false);
-        if (self.cursor_device) |device| device.destroy();
-        if (self.cursor_shape_manager) |manager| manager.destroy();
-        if (self.virtual_pointer) |pointer| pointer.destroy();
-        if (self.virtual_keyboard) |keyboard| keyboard.destroy();
-        if (self.virtual_pointer_manager) |manager| manager.destroy();
-        if (self.pointer) |pointer| pointer.release();
-        if (self.keyboard) |keyboard| keyboard.release();
-        if (self.touch_device) |touch| touch.release();
-        if (self.relative_pointer_manager) |manager| manager.destroy();
-        if (self.pointer_constraints) |constraints| constraints.destroy();
-        if (self.seat) |seat| seat.release();
+        self.session.removeWindow(self);
         // Tear down the child surface tree before destroying its xdg parent.
         for (self.ui_dmabuf_buffers.items) |state| state.wl_buffer.destroy();
         self.ui_viewport.destroy();
@@ -1570,24 +1809,17 @@ pub const Window = struct {
         self.toplevel.destroy();
         self.xdg_surface.destroy();
         self.surface.destroy();
-        if (self.dmabuf_feedback) |feedback| feedback.destroy();
-        if (self.dmabuf_table) |table| std.posix.munmap(table);
-        if (self.dmabuf) |dmabuf| dmabuf.destroy();
-        if (self.viewporter) |viewporter| viewporter.destroy();
-        if (self.fractional_scale_manager) |manager| manager.destroy();
-        if (self.subcompositor) |subcompositor| subcompositor.destroy();
-        if (self.shm) |shm| shm.destroy();
-        if (self.wm_base) |wm_base| wm_base.destroy();
-
         self.events.deinit(self.gpa);
-        self.dmabuf_formats.deinit(self.gpa);
-        self.display.disconnect();
+        self.delivered_events.deinit(self.gpa);
         for (self.ui_dmabuf_buffers.items) |state| {
             state.frame.abandon();
             self.gpa.destroy(state);
         }
         self.ui_dmabuf_buffers.deinit(self.gpa);
+        const session = self.session;
+        const owns_session = self.owns_session;
         self.gpa.destroy(self);
+        if (owns_session) session.deinit();
     }
 
     // ---------------------------------------------------------------------
@@ -1717,8 +1949,8 @@ pub const Window = struct {
     };
 
     pub fn createVideoLayer(self: *Window) !*VideoLayer {
-        const sub = self.subcompositor orelse return error.NoSubcompositor;
-        const vsurf = try self.compositor.?.createSurface();
+        const sub = self.session.subcompositor orelse return error.NoSubcompositor;
+        const vsurf = try self.session.compositor.?.createSurface();
         const subsurf = try sub.getSubsurface(vsurf, self.surface);
         // State the complete parent < video < UI ordering explicitly. This is
         // the host equivalent of SurfaceView's SurfaceControl relative-layer
@@ -1729,10 +1961,10 @@ pub const Window = struct {
         self.ui_subsurface.placeAbove(vsurf);
         self.presentation_dirty = true;
         // input falls through to the main surface
-        const region = try self.compositor.?.createRegion();
+        const region = try self.session.compositor.?.createRegion();
         vsurf.setInputRegion(region);
         region.destroy();
-        const vp = try self.viewporter.?.getViewport(vsurf);
+        const vp = try self.session.viewporter.?.getViewport(vsurf);
         const layer = try self.gpa.create(VideoLayer);
         layer.* = .{ .win = self, .surface = vsurf, .subsurface = subsurf, .viewport = vp };
         return layer;

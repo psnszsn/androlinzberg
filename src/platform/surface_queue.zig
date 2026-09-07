@@ -4,6 +4,7 @@ const std = @import("std");
 const Io = std.Io;
 const wayland = @import("wayland.zig");
 pub const Window = wayland.Window;
+pub const Session = wayland.Session;
 const c = struct {
     const AzkSurfaceQueue = opaque {};
     const AzkSurfaceFrame = opaque {};
@@ -173,6 +174,11 @@ fn abandon(context: *anyopaque) void {
 /// Call only when notify_file is readable, then present all newly ready frames.
 pub fn presentReady(self: *Self, window: *wayland.Window) !usize {
     try self.drainNotification();
+    return self.presentNotified(window);
+}
+
+/// Session.dispatch already consumed this queue's eventfd notification.
+pub fn presentNotified(self: *Self, window: *wayland.Window) !usize {
     if (self.failure.load(.acquire) != 0) return error.SurfaceQueueFailed;
     var frames: [2]*Frame = undefined;
     const count = try self.ready.get(self.io, &frames, 0);
