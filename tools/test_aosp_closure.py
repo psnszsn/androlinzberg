@@ -16,6 +16,80 @@ aosp_closure = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(aosp_closure)
 
 
+class AidlIncludesTest(unittest.TestCase):
+    CONFIG = '''fn addAidlIncludes(run: anytype, aosp: anytype, compat: anytype) void {
+    // run.addPrefixedDirectoryArg("-I", aosp.path("commented/aidl"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("direct/aidl"));
+    inline for (.{
+        "loop/aidl",
+        // "disabled/aidl",
+    }) |path| run.addPrefixedDirectoryArg("-I", aosp.path(path));
+    run.addPrefixedDirectoryArg("-I", compat);
+}
+fn aidlJava(b: anytype, aosp: anytype) void {
+    const permission_aidl = "staged/aidl/";
+    const unused = "unused/aidl";
+    _ = compat.addCopyDirectory(aosp.path(permission_aidl), "", .{});
+    _ = compat.addCopyDirectory(aosp.path("literal/aidl"), "", .{});
+    _ = compat.addCopyDirectory(b.path("aidl-compat"), "", .{});
+}
+fn nativeCode(run: anytype, aosp: anytype) void {
+    run.addPrefixedDirectoryArg("-I", aosp.path("native/include"));
+}
+'''
+
+    def test_only_configured_aidl_search_and_staging_roots_are_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            generators = root / "generators.zig"
+            generators.write_text(self.CONFIG)
+            expected = {"direct/aidl", "loop/aidl", "staged/aidl", "literal/aidl"}
+            self.assertEqual(expected, set(aosp_closure.aidl_include_roots(generators)))
+            for directory, name in (("direct/aidl", "Direct"), ("loop/aidl", "Loop"),
+                                    ("staged/aidl", "Staged"), ("literal/aidl", "Literal"),
+                                    ("unconfigured/aidl", "Missing")):
+                source = root / directory / f"example/{name}.aidl"
+                source.parent.mkdir(parents=True)
+                source.write_text(f"package example; interface {name} {{ void call(); }}")
+            manifest, sources = root / "manifest", root / "sources"
+            manifest.write_text("")
+            sources.write_text("")
+            classes = root / "classes"
+            (classes / "java/lang").mkdir(parents=True)
+            (classes / "java/lang/Object.class").write_bytes(b"")
+
+            def resolver():
+                return aosp_closure.Resolver(root, aosp_closure.SourceIndex(root, None),
+                    aosp_closure.Manifest(manifest), aosp_closure.SourceRules(sources),
+                    aosp_closure.Classes([classes]), aosp_closure.Stubs(root / "stubs"), generators)
+
+            configured = resolver()
+            for name in ("Direct", "Loop", "Staged", "Literal"):
+                self.assertTrue(configured.node(f"example.{name}").aidl_root)
+            self.assertFalse(configured.node("example.Missing").aidl_root)
+            generators.write_text(self.CONFIG.replace('"loop/aidl"', '"replacement/aidl"'))
+            self.assertFalse(resolver().node("example.Loop").aidl_root)
+
+    def test_repository_roots_include_audio_and_exported_connectivity(self) -> None:
+        roots = aosp_closure.aidl_include_roots(aosp_closure.REPO / "build/generators.zig")
+        for root in ("frameworks/av/media/libaudioclient/aidl", "frameworks/base/media/aidl",
+                     "frameworks/av/aidl", "system/hardware/interfaces/media/aidl",
+                     "packages/modules/Connectivity/framework/aidl-export",
+                     "frameworks/native/libs/permission/aidl"):
+            self.assertIn(root, roots)
+
+    def test_unreadable_or_unrecognized_configuration_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "generators.zig"
+            with self.assertRaises(FileNotFoundError):
+                aosp_closure.aidl_include_roots(config)
+            for text in ("", self.CONFIG.replace("addAidlIncludes", "renamed"),
+                         self.CONFIG.replace('const permission_aidl = "staged/aidl/";', "")):
+                config.write_text(text)
+                with self.assertRaises(ValueError):
+                    aosp_closure.aidl_include_roots(config)
+
+
 class SourceIndexTest(unittest.TestCase):
     def test_source_packages_can_differ_within_one_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
