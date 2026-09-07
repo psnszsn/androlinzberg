@@ -2529,6 +2529,9 @@ F aosp frameworks/base/core/java/android/hardware/SensorEvent.java
 F aosp frameworks/base/core/java/android/hardware/SensorEventListener.java
 F aosp frameworks/base/core/java/android/hardware/SensorListener.java
 F aosp frameworks/base/core/java/android/hardware/SensorManager.java
+F aosp frameworks/base/core/java/android/hardware/SensorEventCallback.java
+F aosp frameworks/base/core/java/android/hardware/SensorEventListener2.java
+F aosp frameworks/base/core/java/android/hardware/SystemSensorManager.java
 F aosp frameworks/base/core/java/android/hardware/TriggerEvent.java
 F aosp frameworks/base/core/java/android/hardware/TriggerEventListener.java
 F aosp frameworks/base/core/java/android/hardware/display/ColorDisplayManager.java

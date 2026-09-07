@@ -309,6 +309,7 @@ internal object FrameworkModuleSmoke {
             StockAudioPolicyClientsSmoke.run()
             StockMediaRouterSmoke.run(::drainMainQueue)
             StockVirtualDeviceClientsSmoke.run(::drainMainQueue)
+            StockSystemSensorSmoke.run(::drainMainQueue)
             testHostedAudioCapabilities()
             testAsyncMediaCodecFlushRestartsOnePump()
             testMediaMetricsContracts()

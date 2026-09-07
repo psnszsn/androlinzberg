@@ -2428,7 +2428,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/metrics/TranscodingSession.java");
     // Managers over hosted services, phase 4: the real LocationManager and GNSS value types
     // over the hosted ILocationManager, the real abstract SensorManager and sensor value
-    // types under the hosted SystemSensorManager seam (src/framework), the real LightsManager
+    // types and stock SystemSensorManager over its native service seam, the real LightsManager
     // (SystemLightsManager) and ColorDisplayManager over hosted services, and the input-device
     // lights/sensor/vibrator managers over the hosted input service.
     try c.file("$CJ/android/location/Geofence.java");
@@ -2736,6 +2736,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/hardware/lights/LightsRequest.java");
     try c.file("$CJ/android/hardware/lights/SystemLightsManager.java");
     try c.file("$CJ/android/hardware/SensorManager.java");
+    try c.file("$CJ/android/hardware/SensorEventCallback.java");
+    try c.file("$CJ/android/hardware/SensorEventListener2.java");
+    try c.file("$CJ/android/hardware/SystemSensorManager.java");
     try c.file("$CJ/android/app/TaskStackBuilder.java");
     try c.file("$CJ/android/content/pm/AppSearchShortcutInfo.java");
     try c.file("$CJ/android/content/pm/AppSearchShortcutPerson.java");

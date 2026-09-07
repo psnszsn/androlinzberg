@@ -27,6 +27,22 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- SystemSensorManager and its SensorEventCallback/SensorEventListener2 closure
+  now compile verbatim; the hosted Java manager is deleted. Its 19 JNI entries
+  preserve discovery and failure behavior at the absent sensorservice boundary.
+  Stock Java owns device policy, listener/callback validation, injection modes,
+  channel validation and queue cleanup. Tests cover service caching and empty
+  discovery, invalid/null listeners, duplicate dynamic-callback registration,
+  injection enable/disable results, failed event connections, native discovery
+  list ownership, and direct-channel failures that preserve caller-owned shared
+  memory. JVM/system, native/Binder and build checks pass; all 11 APK tests pass
+  (37 steps, zero structured runtime issues). AOSP is rebuilt and repinned; all
+  three sources are byte-verified. ART is unchanged. The inventory remains
+  19 stubs (11 pending, 8 survivors), since this was an adaptation outside the
+  stub audit. Physical/runtime sensor production and injection remain unavailable;
+  the existing presentation and media backends are unchanged.
+
+
 - MediaMetadataRetriever now compiles verbatim; its constants/no-data Java stub
   is deleted. The 13-method JNI seam preserves the pinned native client's state
   when the media.player retriever service is absent: data-source setup fails,
