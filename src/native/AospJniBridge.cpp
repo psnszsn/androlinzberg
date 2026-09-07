@@ -69,8 +69,8 @@ namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
 #include <nativehelper/JNIHelp.h>
 #include <Properties.h>
 #include <android_runtime/AndroidRuntime.h>
-#include <system/audio.h>
 #include <android/binder_ibinder_jni.h>
+#include <system/audio.h>
 #include <binder/IBinder.h>
 #include <binder/Parcel.h>
 #include <binder/Status.h>
@@ -872,23 +872,6 @@ extern "C" jint azk_camera_setup_vendor_tags(JNIEnv *env) {
     }
     return OK;
 }
-
-// Pinned android_util_Binder::javaObjectForIBinder conversion over the shared
-// Java/NDK Binder transport. The original bridge assumes kernel libbinder.
-namespace android {
-sp<IBinder> ibinderForJavaObject(JNIEnv* env, jobject object) {
-    if (!object) return nullptr;
-    return IBinder::fromNative(AIBinder_fromJavaBinder(env, object));
-}
-jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& binder) {
-    if (!binder) return nullptr;
-    AIBinder* native = binder->acquireNative();
-    jobject result = AIBinder_toJavaBinder(env, native);
-    AIBinder_decStrong(native);
-    return result;
-}
-} // namespace android
-
 // AOSP NativeMessageQueue and ALooper share Looper::getForThread(). The host
 // observes its epoll descriptor; only stock pollOnce drains it and dispatches.
 #include <utils/Looper.h>

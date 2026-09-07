@@ -17,7 +17,6 @@ Pending: 6 (budget 6). Survivors: 5. Total: 11.
 | Stub | Reason | Audit |
 |---|---|---|
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
-| `android/net/ipsec/ike/SaProposal.java` | stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted | no-aosp-source |
 | `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | replaceable |
 
 ## Pending replacement

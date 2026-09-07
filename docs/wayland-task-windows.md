@@ -13,6 +13,15 @@ and the work needed to make task windows the normal APK presentation path.
 
 ## Outcome and scope
 
+Rebased onto main `1b8b637` on 2026-09-07, incorporating its camera, media,
+shared-memory, NSD and IKE framework additions. The native SF display-event path
+remains the Choreographer authority. Package 71 contains 55,586 sources and 78
+patches; the audit reports 19 stubs (13 pending, six survivors). Regression 135
+passes framework-module, native, Binder C++, system, graph and the complete APK
+integration targets. The rebase exposed duplicate JNI Binder converters; their
+shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
+`/tmp/wayland-rebase12-validation-135.log`.
+
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple
 activities in one task share that toplevel; attached dialogs and application
