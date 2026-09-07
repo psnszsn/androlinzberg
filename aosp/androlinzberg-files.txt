@@ -6683,3 +6683,14 @@ F aosp frameworks/base/core/java/android/provider/MetadataReader.java
 F aosp frameworks/base/core/java/com/android/internal/content/FileSystemProvider.java
 F aosp frameworks/base/media/java/android/media/MediaFile.java
 F aosp frameworks/base/media/java/android/mtp/MtpConstants.java
+
+# Stock captive portal probe results and validation metrics.
+F aosp frameworks/base/core/java/android/net/ConnectivityMetricsEvent.aidl
+F aosp frameworks/base/core/java/android/net/ConnectivityMetricsEvent.java
+F aosp frameworks/base/core/java/android/net/IIpConnectivityMetrics.aidl
+F aosp frameworks/base/core/java/android/net/INetdEventCallback.aidl
+F aosp frameworks/base/core/java/android/net/metrics/IpConnectivityLog.java
+F aosp frameworks/base/core/java/android/net/metrics/ValidationProbeEvent.java
+F aosp frameworks/base/core/java/com/android/internal/util/MessageUtils.java
+F aosp packages/modules/NetworkStack/common/captiveportal/src/android/net/captiveportal/CaptivePortalProbeResult.java
+F aosp packages/modules/NetworkStack/common/captiveportal/src/android/net/captiveportal/CaptivePortalProbeSpec.java

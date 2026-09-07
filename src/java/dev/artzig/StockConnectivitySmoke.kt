@@ -29,10 +29,11 @@ import dev.artzig.system.HostedPackageManagerService
 internal object StockConnectivitySmoke {
     private class CallerContext(base: Context, private val caller: String) : android.content.ContextWrapper(base) {
         var allowed = true
+        var internetAllowed = true
         override fun getPackageName(): String = caller
         override fun getOpPackageName(): String = caller
         override fun enforceCallingOrSelfPermission(name: String, message: String?) {
-            if (!allowed) throw SecurityException(name)
+            if (!allowed || (!internetAllowed && name == android.Manifest.permission.INTERNET)) throw SecurityException(name)
         }
     }
 
@@ -46,7 +47,15 @@ internal object StockConnectivitySmoke {
         check(packages.getPackagesForUid(Binder.getCallingUid())!!.contains(caller))
         val context = CallerContext(base, caller)
         var observed: HostedNetworkSnapshot? = snapshot(100)
-        val service = HostedConnectivityService(context, packages, HostedNetworkSource { observed }, Handler(Looper.getMainLooper()))
+        val reports = ArrayList<Pair<Network, Boolean>>()
+        val observations = object : HostedNetworkSource {
+            override fun snapshot(): HostedNetworkSnapshot? = observed
+            override fun reportConnectivity(network: Network, hasConnectivity: Boolean): Boolean {
+                reports.add(Network(network) to hasConnectivity)
+                return true
+            }
+        }
+        val service = HostedConnectivityService(context, packages, observations, Handler(Looper.getMainLooper()))
         val remote = object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean =
                 service.transact(code, data, reply, flags)
@@ -55,7 +64,17 @@ internal object StockConnectivitySmoke {
         val manager = ConnectivityManager(context, transport)
         context.allowed = false
         check(runCatching { manager.activeNetwork }.exceptionOrNull() is SecurityException)
+        check(runCatching { manager.reportNetworkConnectivity(null, true) }.exceptionOrNull() is SecurityException)
         context.allowed = true
+        context.internetAllowed = false
+        check(manager.activeNetwork == Network(100))
+        check(runCatching { manager.reportNetworkConnectivity(null, true) }.exceptionOrNull() is SecurityException)
+        check(reports.isEmpty())
+        context.internetAllowed = true
+        manager.reportNetworkConnectivity(Network(999), true)
+        check(reports.isEmpty())
+        manager.reportNetworkConnectivity(null, true)
+        check(reports.single() == (Network(100) to true))
         check(manager.isDefaultNetworkActive)
         var radioActivityEvents = 0
         val radioListener = ConnectivityManager.OnNetworkActiveListener { radioActivityEvents++ }

@@ -675,6 +675,8 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/speech/tts/ITextToSpeechSessionCallback.aidl" },
 
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/IIpConnectivityMetrics.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/net/INetdEventCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/INetworkStatsSession.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/StatsResult.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/netstats/TrafficStatsRateLimitCacheConfig.aidl" },

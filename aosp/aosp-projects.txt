@@ -119,6 +119,7 @@ platform/packages/modules/Connectivity
 platform/packages/modules/HealthFitness
 platform/packages/modules/IPsec
 platform/packages/modules/Media
+platform/packages/modules/NetworkStack
 platform/packages/modules/NeuralNetworks
 platform/packages/modules/Nfc
 platform/packages/modules/Permission

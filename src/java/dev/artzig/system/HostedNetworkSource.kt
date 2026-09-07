@@ -25,6 +25,7 @@ internal data class HostedNetworkSnapshot(
 internal fun interface HostedNetworkSource {
     fun snapshot(): HostedNetworkSnapshot?
     fun supportsLegacyType(type: Int): Boolean = snapshot()?.info?.type == type
+    fun reportConnectivity(network: Network, hasConnectivity: Boolean): Boolean = false
 }
 
 /** Linux replaces netd/NetworkAgent discovery; Android values and callbacks remain stock. */

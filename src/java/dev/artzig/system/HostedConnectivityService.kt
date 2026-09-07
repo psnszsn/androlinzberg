@@ -32,7 +32,7 @@ import com.android.internal.os.BackgroundThread
 internal class HostedConnectivityService(
     private val context: Context,
     private val packages: HostedPackageManagerService,
-    private val source: HostedNetworkSource = LinuxNetworkSource(),
+    private val source: HostedNetworkSource = ValidatedNetworkSource(LinuxNetworkSource(), HttpNetworkProbe.forContext(context)),
     private val handler: Handler = BackgroundThread.getHandler(),
 ) : IConnectivityManager.Stub(), IConnectivityManager by unsupported<IConnectivityManager>() {
     override fun asBinder(): IBinder = this
@@ -77,6 +77,17 @@ internal class HostedConnectivityService(
     private fun forNetwork(network: Network?): HostedNetworkSnapshot? = state()?.takeIf { it.network == network }
 
     override fun getActiveNetwork(): Network? = state()?.network?.let(::Network)
+
+    override fun reportNetworkConnectivity(network: Network?, hasConnectivity: Boolean) {
+        access()
+        context.enforceCallingOrSelfPermission(Manifest.permission.INTERNET, "Connectivity report")
+        val current = state() ?: return
+        if (network != null && network != current.network) return
+        if (!source.reportConnectivity(current.network, hasConnectivity)) {
+            throw dev.artzig.ArtzigTestDiagnostics.unsupported("android.net.IConnectivityManager",
+                "reportNetworkConnectivity", "This network source cannot perform validation probes")
+        }
+    }
     override fun getActiveNetworkForUid(uid: Int, ignoreBlocked: Boolean): Network? = forUid(uid)?.network?.let(::Network)
     override fun getActiveNetworkInfo(): NetworkInfo? = state()?.info?.let(::NetworkInfo)
     override fun getActiveNetworkInfoForUid(uid: Int, ignoreBlocked: Boolean): NetworkInfo? = forUid(uid)?.info?.let(::NetworkInfo)

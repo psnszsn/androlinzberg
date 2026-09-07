@@ -27,6 +27,26 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+
+- Hosted connectivity now validates Internet access with HTTP/HTTPS probes instead
+  of treating a Linux route as proof. Original NetworkStack captive-portal result
+  and probe-spec classes, validation metrics and their Java/AIDL closure compile
+  verbatim. The hosted NetworkMonitor adaptation owns asynchronous probing, PAC
+  fetches, fallback/partial/portal decisions, retry backoff, contradictory application
+  reports and rejection of results from replaced routes. Stock ConnectivityManager
+  reports cross the generated Binder interface with network-state and Internet
+  permission checks. This is the default probe algorithm, not the full NetworkStack
+  daemon: CAPPORT, resource overlays, private-DNS and data-stall monitoring remain
+  unavailable. Deterministic local HTTP and fake-clock tests pass, along with JVM,
+  system, native/Binder and build checks. All 11 APK tests pass (41 steps, zero
+  structured runtime issues). An earlier fullscreen timeout passed unchanged in
+  both the focused rerun on the same portrait stream and the complete suite.
+  AOSP is rebuilt and repinned; all nine added inputs are byte-verified. ART is
+  unchanged and verified. Inventory remains 19 stubs (11 pending, 8 survivors).
+  The stock DownloadManager/DownloadProvider source closure now has no unresolved
+  compile blockers; provider packaging, installation and storage integration remain.
+
+
 - Hosted job scheduling now evaluates stock NetworkRequest capabilities and
   passes the selected Network through JobParameters. Network jobs wait for a
   matching network, start on arrival, and stop with the connectivity reason on
