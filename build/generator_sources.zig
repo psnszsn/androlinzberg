@@ -5,11 +5,18 @@ const std = @import("std");
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
 
-// TrafficStats imports MediaPlayer only for Javadoc. The pinned SDK header
+// TrafficStats and MediaStore import MediaPlayer only for Javadoc. The pinned SDK header
 // satisfies javac; the audit forbids runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
     .classes = [_][]const u8{"android/media/MediaPlayer"},
+};
+
+// MediaProvider's module SDK build resolves short parcelable names through
+// Soong's generated framework.aidl, including AssetFileDescriptor.
+pub const sdk_aidl = .{
+    .preprocessed = "prebuilts/sdk/current/public/framework.aidl",
+    .prefixes = &[_][]const u8{"packages/providers/MediaProvider/apex/framework/java/"},
 };
 // external/cronet/Android.bp selects stable unless enable_cronet_tot is set.
 // These declarations follow stable/Android.bp's enum, version and C-preprocessor rules.
@@ -369,6 +376,9 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "packages/providers/MediaProvider/apex/framework/java/android/provider/IMPCancellationSignal.aidl" },
+    .{ .source = .aosp, .path = "packages/providers/MediaProvider/apex/framework/java/android/provider/IOpenAssetFileCallback.aidl" },
+    .{ .source = .aosp, .path = "packages/providers/MediaProvider/apex/framework/java/android/provider/IOpenFileCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework-t/src/android/net/IIpSecService.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/IConnectivityDiagnosticsCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Connectivity/framework/src/android/net/IConnectivityManager.aidl" },
@@ -1605,6 +1615,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "com.android.providers.media.flags", .container = "com.android.mediaprovider", .source = .aosp, .declarations = &.{"packages/providers/MediaProvider/mediaprovider_flags.aconfig"} },
     .{ .package = "android.net.http", .container = "com.android.tethering", .source = .aosp, .declarations = &.{"external/cronet/android/flags/preload_httpengine.aconfig"} },
     .{ .package = "android.hardware.devicestate.feature.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/hardware/devicestate/feature/flags.aconfig"} },
     .{ .package = "android.os.profiling", .container = "com.android.profiling", .source = .aosp, .declarations = &.{"packages/modules/Profiling/framework/java/android/os/flags.aconfig"} },

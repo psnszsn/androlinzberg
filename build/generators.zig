@@ -95,6 +95,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "frameworks/base/packages/services/PacProcessor/src/",
         "frameworks/base/nfc-non-updatable/java/",
         "packages/modules/Media/apex/aidl/stable/",
+        "packages/providers/MediaProvider/apex/framework/java/",
 
         "aidl-compat/",
         "frameworks/base/core/java/",
@@ -200,6 +201,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "frameworks/base/packages/services/PacProcessor/src",
         "frameworks/base/nfc-non-updatable/java",
         "packages/modules/Media/apex/aidl/stable",
+        "packages/providers/MediaProvider/apex/framework/java",
         "packages/modules/Connectivity/framework-t/src",
         "frameworks/base/media/java",
         "frameworks/base/media/aidl",
@@ -306,7 +308,14 @@ fn aidlJava(
             }
         }
         addAidlIncludes(run, aosp, compat_dir);
-        run.addPrefixedFileArg("-p", sdk_preprocessed);
+        var preprocessed = sdk_preprocessed;
+        for (declarations.sdk_aidl.prefixes) |prefix| {
+            if (input.source == .aosp and std.mem.startsWith(u8, input.path, prefix)) {
+                preprocessed = aosp.path(declarations.sdk_aidl.preprocessed);
+                break;
+            }
+        }
+        run.addPrefixedFileArg("-p", preprocessed);
         run.addArg("-o");
         const output = run.addOutputDirectoryArg(b.fmt("aidl-java-{d}", .{index}));
         if (input.source == .repo) {

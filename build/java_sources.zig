@@ -122,6 +122,12 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/CloudMediaProviderContract.java");
+    try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/Column.java");
+    try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/MediaStore.java");
+    try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/OpenAssetFileRequest.java");
+    try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/OpenFileRequest.java");
+    try c.file("$A/packages/providers/MediaProvider/apex/framework/java/android/provider/ParcelableException.java");
     try collectCronet(c);
     try collectCronetApi(c);
     try c.file("$CJ/android/net/http/HttpResponseCache.java");

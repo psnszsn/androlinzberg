@@ -6292,3 +6292,17 @@ F aosp external/cronet/stable/third_party/jni_zero/proxy.py
 F aosp frameworks/base/core/java/android/net/http/HttpResponseCache.java
 F aosp prebuilts/sdk/current/androidx/m2repository/androidx/annotation/annotation-experimental/1.5.0-alpha01/annotation-experimental-1.5.0-alpha01.aar
 F aosp prebuilts/sdk/current/module-lib/framework-statsd.jar
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/CloudMediaProviderContract.java
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/Column.java
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/IMPCancellationSignal.aidl
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/IOpenAssetFileCallback.aidl
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/IOpenFileCallback.aidl
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/MediaStore.java
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/OpenAssetFileRequest.aidl
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/OpenAssetFileRequest.java
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/OpenFileRequest.aidl
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/OpenFileRequest.java
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/ParcelableException.aidl
+F aosp packages/providers/MediaProvider/apex/framework/java/android/provider/ParcelableException.java
+F aosp packages/providers/MediaProvider/mediaprovider_flags.aconfig
+F aosp prebuilts/sdk/current/public/framework.aidl

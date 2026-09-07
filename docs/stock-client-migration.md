@@ -28,6 +28,23 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- MediaStore now compiles verbatim with CloudMediaProviderContract, its parcelable
+  requests/errors and three provider callback/cancellation AIDL interfaces. The former
+  311-line adaptation is deleted. MediaProvider's AIDL uses the pinned SDK framework.aidl
+  to resolve platform parcelables; its aconfig package comes from the original declaration.
+  MediaPlayer is only a Javadoc import, covered by the existing compile-only header and
+  runtime bytecode audit. ART tests exercise local and cloud-picker URI routing, read-only
+  enforcement, callback delivery, parcelled errors, cancellation and provider lifetimes.
+  The original-format descriptor API now honors the provider's returned descriptor instead
+  of duplicating the input; tests verify distinct contents and retained input ownership.
+  Existing thumbnail and image-decoding tests also pass. This is the stock client and its
+  protocol, not a production media catalogue or cloud provider. JVM/system, native/Binder
+  and build checks pass; all 11 APK tests pass (37 steps, zero structured runtime issues).
+  AOSP is repackaged and repinned with all 14 added inputs byte-verified. The inventory
+  remains 26 stubs (15 pending, 11 survivors): MediaStore was an adaptation outside the
+  stub directory. The broader migration remains unfinished.
+
+
 - HttpEngine's public Java API and its Cronet implementation now compile verbatim,
   with 52 original generated sources covering configuration, protobufs, JNI bindings,
   switches and version information. The original final JNI generator retains the

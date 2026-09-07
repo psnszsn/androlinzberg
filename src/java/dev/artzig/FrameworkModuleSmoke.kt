@@ -267,6 +267,7 @@ internal object FrameworkModuleSmoke {
         StockMainlineTypesSmoke.run()
         StockCronetConfigSmoke.run()
         StockHttpEngineSmoke.run()
+        StockMediaStoreSmoke.run()
         StockRendererSmoke.run()
         StockSplashScreenSmoke.run()
         StockConnectivitySmoke.run(checkNotNull(permissionsFixtureApk), ::drainMainQueue)
