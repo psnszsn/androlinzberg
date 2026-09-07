@@ -217,6 +217,31 @@ object StockColdLaunchSmoke {
             manager.runningAppProcesses.orEmpty().single { it.pid == pid }.uid, packageName)
         val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
             android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
+        // The harness initially owns only a keyboard. Create/remove/recreate a
+        // compositor virtual pointer after checking truthful absence.
+        fun pointerCapability(marker: String): Boolean {
+            println("$marker ${task.taskId}")
+            System.out.flush()
+            val mask = checkNotNull(commands.readLine()).toInt()
+            check(mask and 15 == mask)
+            return mask and 1 != 0
+        }
+        check(inputDevices.getInputDevice(0) == null)
+        check(pointerCapability("POINTER_DEVICE_CREATE"))
+        await("Wayland pointer device publication") { inputDevices.getInputDevice(0) != null }
+        val pointer = checkNotNull(inputDevices.getInputDevice(0))
+        check(pointer.isEnabled && pointer.supportsSource(android.view.InputDevice.SOURCE_MOUSE))
+        val retained = pointerCapability("POINTER_DEVICE_REMOVE")
+        // A compositor may retain its aggregate pointer capability after the
+        // last physical/test device disappears. Follow wl_seat, not our helper's
+        // device lifetime; only an actual capability loss removes Android input.
+        await("Wayland pointer capability after device removal") { (inputDevices.getInputDevice(0) != null) == retained }
+        check(inputDevices.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD) != null)
+        check(pointerCapability("POINTER_DEVICE_RECREATE"))
+        await("Wayland pointer device reappearance") { inputDevices.getInputDevice(0) != null }
+        val currentPointer = checkNotNull(inputDevices.getInputDevice(0))
+        check(if (retained) currentPointer.generation >= pointer.generation else currentPointer.generation > pointer.generation)
+        println("Stock Wayland pointer: absence and compositor capability lifecycle passed; retained=$retained")
         await("Compositor character map was not published to stock input clients") {
             val keyboard = inputDevices.getInputDevice(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD)
             keyboard != null && keyboard.generation > 0 &&
@@ -293,6 +318,17 @@ object StockColdLaunchSmoke {
         val exit = manager.getHistoricalProcessExitReasons(packageName, pid, 1).single()
         check(exit.reason == android.app.ApplicationExitInfo.REASON_USER_REQUESTED &&
             exit.subReason == android.app.ApplicationExitInfo.SUBREASON_REMOVE_TASK) { "Task removal exit reason: $exit" }
+        val presenter = IWaylandTaskPresenter.Stub.asInterface(
+            android.os.ServiceManager.getService("dev.artzig.window.presenter"))
+        await("Native task windows remained after removal") {
+            presenter.testWindow(task.taskId).isEmpty() && presenter.testWindow(second.taskId).isEmpty()
+        }
+        val windowlessRetained = pointerCapability("WINDOWLESS_POINTER_REMOVE")
+        await("Seat update was lost without task windows") { (inputDevices.getInputDevice(0) != null) == windowlessRetained }
+        check(pointerCapability("WINDOWLESS_POINTER_RECREATE"))
+        await("Seat capability did not reappear without task windows") { inputDevices.getInputDevice(0) != null }
+        if (!windowlessRetained) check(checkNotNull(inputDevices.getInputDevice(0)).generation > currentPointer.generation)
+        println("Stock Wayland seat: capability updates survive removal of every task window")
         println("Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed")
     }
 

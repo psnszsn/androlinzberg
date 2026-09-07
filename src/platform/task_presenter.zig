@@ -113,6 +113,10 @@ const Server = struct {
     }
     fn dispatchEvents(self: *Server) !void {
         for (self.session.ordered_events.?.take()) |item| {
+            if (item.event == .seat_capabilities) {
+                if (self.owner) |callback| try sendCapabilities(callback, item.event.seat_capabilities.generation, item.event.seat_capabilities.mask);
+                continue;
+            }
             const entry = for (&self.entries) |*slot| {
                 if (slot.*) |*candidate| if (candidate.window == item.window) break candidate;
             } else continue;
@@ -447,6 +451,17 @@ const Text = struct {
         return self.bytes[0..self.len :0];
     }
 };
+fn sendCapabilities(callback: *Binder, generation: i32, mask: i32) !void {
+    var input: ?*Parcel = null;
+    var output: ?*Parcel = null;
+    try ok(AIBinder_prepareTransaction(callback, &input));
+    defer if (input) |parcel| AParcel_delete(parcel);
+    defer if (output) |parcel| AParcel_delete(parcel);
+    try ok(AParcel_writeInt32(input.?, generation));
+    try ok(AParcel_writeInt32(input.?, mask));
+    try ok(AIBinder_transact(callback, 15, &input, &output, 1));
+}
+
 fn sendLayout(entry: *Entry, layout: Queue.KeyboardLayout) !void {
     const characters = try layout.characters();
     const symbols = try layout.symbols();

@@ -273,6 +273,7 @@ pub const KeyboardFocus = struct {
 };
 
 pub const Event = union(enum) {
+    seat_capabilities: struct { generation: i32, mask: i32 },
     close,
     configure: struct { width: i32, height: i32 },
     fullscreen_changed: bool,
@@ -306,13 +307,13 @@ pub const Event = union(enum) {
 /// Bounded session chronology: draining per-window queues would reorder a
 /// keyboard leave/enter/key sequence whenever the new task has an earlier slot.
 pub const OrderedEvents = struct {
-    pub const Item = struct { window: *Window, event: Event };
+    pub const Item = struct { window: ?*Window, event: Event };
     const limit = 4096;
     pending: std.ArrayList(Item) = .empty,
     delivered: std.ArrayList(Item) = .empty,
     failed: bool = false,
 
-    fn push(self: *OrderedEvents, gpa: std.mem.Allocator, window: *Window, event: Event) void {
+    fn push(self: *OrderedEvents, gpa: std.mem.Allocator, window: ?*Window, event: Event) void {
         if (self.failed or self.pending.items.len == limit) {
             self.failed = true;
             release(event);
@@ -461,6 +462,8 @@ pub const Session = struct {
     windows: std.ArrayList(*Window) = .empty,
     pointer_focus: ?*Window = null,
     keyboard_focus: ?*Window = null,
+    seat_generation: i32 = 1,
+    seat_capabilities: i32 = 0,
     display: *wl.Display,
     registry: *wl.Registry,
     compositor: ?*wl.Compositor = null,
@@ -920,8 +923,18 @@ pub const Session = struct {
                 }
             },
             .global_remove => |removed| {
-                if (self.seat_global_name == removed.name)
-                    std.debug.panic("the compositor removed the required wl_seat global; Android input can no longer preserve device lifecycle", .{});
+                if (self.seat_global_name == removed.name) {
+                    self.releasePointer();
+                    self.releaseKeyboard();
+                    self.releaseTouch();
+                    if (self.virtual_pointer) |pointer| pointer.destroy();
+                    if (self.virtual_keyboard) |keyboard| keyboard.destroy();
+                    self.virtual_pointer = null;
+                    self.virtual_keyboard = null;
+                    if (self.seat) |seat| seat.release();
+                    self.seat = null;
+                    self.seat_global_name = null;
+                }
                 if (self.pointer_constraints_global_name == removed.name) {
                     self.releasePointerCapture();
                     if (self.pointer_constraints) |constraints| constraints.destroy();
@@ -936,6 +949,7 @@ pub const Session = struct {
                 }
             },
         }
+        self.publishSeatCapabilities();
     }
 
     fn dmabufListener(_: *zwp.LinuxDmabufV1, event: zwp.LinuxDmabufV1.Event, self: *Session) void {
@@ -1007,6 +1021,49 @@ pub const Session = struct {
         }
     }
 
+    fn publishSeatCapabilities(self: *Session) void {
+        const mask: i32 = @as(i32, @intFromBool(self.pointer != null)) |
+            (@as(i32, @intFromBool(self.keyboard != null)) << 1) |
+            (@as(i32, @intFromBool(self.touch_device != null)) << 2) |
+            (@as(i32, @intFromBool(self.pointer != null and self.relative_pointer_manager != null and self.pointer_constraints != null)) << 3);
+        if (mask == self.seat_capabilities) return;
+        self.seat_generation = std.math.add(i32, self.seat_generation, 1) catch
+            std.debug.panic("Wayland seat generation exhausted", .{});
+        self.seat_capabilities = mask;
+        // Removal cancellation is queued first by releasePointer/Keyboard/Touch.
+        // All task callbacks share one ordered Binder endpoint.
+        self.queueCapabilities();
+    }
+
+    fn queueCapabilities(self: *Session) void {
+        // Seat state survives removal of the last task. Keeping this in the
+        // same queue preserves cancellation -> capability loss -> new input.
+        if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .seat_capabilities = .{ .generation = self.seat_generation, .mask = self.seat_capabilities } });
+    }
+
+    fn ensureVirtualPointer(self: *Session) !*zwlr.VirtualPointerV1 {
+        if (self.virtual_pointer) |pointer| return pointer;
+        const seat = self.seat orelse return error.VirtualPointerUnavailable;
+        const manager = self.virtual_pointer_manager orelse return error.VirtualPointerUnavailable;
+        self.virtual_pointer = if (self.output) |output|
+            try manager.createVirtualPointerWithOutput(seat, output)
+        else
+            try manager.createVirtualPointer(seat);
+        return self.virtual_pointer.?;
+    }
+
+    /// Existing headless harness: publish/remove a virtual pointer without an
+    /// application surface, so the normal seat capability lifecycle is tested.
+    pub fn testPointerPresent(self: *Session, present: bool) !void {
+        if (present) {
+            _ = try self.ensureVirtualPointer();
+        } else {
+            if (self.virtual_pointer) |pointer| pointer.destroy();
+            self.virtual_pointer = null;
+        }
+        if (self.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+    }
+
     fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, self: *Session) void {
         switch (event) {
             .capabilities => |c| {
@@ -1031,6 +1088,7 @@ pub const Session = struct {
             },
             .name => {},
         }
+        self.publishSeatCapabilities();
     }
 };
 
@@ -1106,6 +1164,7 @@ pub const Window = struct {
         try session.windows.append(gpa, self);
         errdefer session.removeWindow(self);
         errdefer self.events.deinit(gpa);
+        session.queueCapabilities();
         session.queueLayout(self);
         session.queueModifiers(self);
         self.push(.{ .keyboard_repeat_configuration = .{
@@ -1825,7 +1884,7 @@ pub const Window = struct {
     /// intentional: the first delivers wl_seat.capabilities, whose listener
     /// requests wl_pointer/wl_keyboard; the second installs those objects.
     pub fn prepareTestInput(self: *Window) !void {
-        _ = try self.ensureVirtualPointer();
+        _ = try self.session.ensureVirtualPointer();
         _ = try self.session.ensureVirtualKeyboard();
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
@@ -1847,7 +1906,7 @@ pub const Window = struct {
     /// must never be passed to the virtual pointer as desktop coordinates.
     pub fn testTapAtOutput(self: *Window, point: [2]u32, extent: [2]u32, local: ?[2]u32) !void {
         if (extent[0] == 0 or extent[1] == 0 or point[0] >= extent[0] or point[1] >= extent[1]) return error.InvalidTestPoint;
-        const pointer = try self.ensureVirtualPointer();
+        const pointer = try self.session.ensureVirtualPointer();
         const time = inputTimestamp(self.io);
         pointer.motionAbsolute(time, point[0], point[1], extent[0], extent[1]);
         pointer.frame();
@@ -1863,7 +1922,7 @@ pub const Window = struct {
     /// its active pointer constraint before reaching the normal seat listener.
     pub fn testRelativeMotion(self: *Window, dx: f64, dy: f64) !void {
         if (!std.math.isFinite(dx) or !std.math.isFinite(dy)) return error.InvalidPointerDelta;
-        const pointer = try self.ensureVirtualPointer();
+        const pointer = try self.session.ensureVirtualPointer();
         pointer.motion(inputTimestamp(self.io), wl.Fixed.fromDouble(dx), wl.Fixed.fromDouble(dy));
         pointer.frame();
         if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
@@ -1885,7 +1944,7 @@ pub const Window = struct {
     pub fn testDragAtOutput(self: *Window, from: [2]u32, to: [2]u32, extent: [2]u32, local: ?[2]u32) !void {
         if (extent[0] == 0 or extent[1] == 0 or from[0] >= extent[0] or from[1] >= extent[1] or
             to[0] >= extent[0] or to[1] >= extent[1]) return error.InvalidTestPoint;
-        const pointer = try self.ensureVirtualPointer();
+        const pointer = try self.session.ensureVirtualPointer();
         const time = inputTimestamp(self.io);
         pointer.motionAbsolute(time, from[0], from[1], extent[0], extent[1]);
         pointer.frame();
@@ -1933,16 +1992,6 @@ pub const Window = struct {
         const keyboard = try self.session.ensureVirtualKeyboard();
         self.sendVirtualKey(keyboard, code, false);
         if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
-    }
-
-    fn ensureVirtualPointer(self: *Window) !*zwlr.VirtualPointerV1 {
-        if (self.session.virtual_pointer) |pointer| return pointer;
-        const manager = self.session.virtual_pointer_manager orelse return error.VirtualPointerUnavailable;
-        self.session.virtual_pointer = if (self.session.output) |output|
-            try manager.createVirtualPointerWithOutput(self.session.seat, output)
-        else
-            try manager.createVirtualPointer(self.session.seat);
-        return self.session.virtual_pointer.?;
     }
 
     fn sendVirtualKey(self: *Window, keyboard: *zwp.VirtualKeyboardV1, code: u32, shift: bool) void {
@@ -2487,4 +2536,33 @@ test "stock pointer styles retain named compositor shapes" {
     try std.testing.expectEqual(@as(u32, 26), shapes.fromAndroid(1014).?);
     try std.testing.expect(shapes.fromAndroid(-1) == null);
     try std.testing.expect(shapes.fromAndroid(0) == null);
+}
+
+test "seat capability chronology survives removal of the last task" {
+    var events: OrderedEvents = .{};
+    defer events.deinit(std.testing.allocator);
+    var window: Window = undefined;
+    events.push(std.testing.allocator, &window, .pointer_cancel);
+    events.push(std.testing.allocator, null, .{ .seat_capabilities = .{ .generation = 7, .mask = 2 } });
+    const before = events.take();
+    try std.testing.expect(before[0].event == .pointer_cancel);
+    try std.testing.expect(before[1].window == null);
+    events.removeWindow(&window);
+    try std.testing.expectEqual(@as(usize, 1), events.delivered.items.len);
+    try std.testing.expectEqual(@as(i32, 7), events.delivered.items[0].event.seat_capabilities.generation);
+    events.push(std.testing.allocator, null, .{ .seat_capabilities = .{ .generation = 8, .mask = 3 } });
+    events.removeWindow(&window);
+    const next = events.take();
+    try std.testing.expectEqual(@as(usize, 1), next.len);
+    try std.testing.expectEqual(@as(i32, 8), next[0].event.seat_capabilities.generation);
+}
+
+test "test input rejects a removed seat without choosing another compositor seat" {
+    var session: Session = undefined;
+    session.seat = null;
+    session.virtual_pointer = null;
+    session.virtual_keyboard = null;
+    session.virtual_keyboard_manager = null;
+    try std.testing.expectError(error.VirtualPointerUnavailable, session.testPointerPresent(true));
+    try std.testing.expectError(error.VirtualKeyboardUnavailable, session.prepareTestKeyboard());
 }

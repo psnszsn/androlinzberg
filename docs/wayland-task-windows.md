@@ -79,6 +79,44 @@ masking delayed input. Native checks pass. Logs:
 Regression 183 passes the full JVM/native and all 15 APK tests (47 steps, zero
 runtime issues): `/tmp/wayland-input-completion-regressions-183.log`.
 
+## Seat device publication checkpoint (2026-09-07)
+
+The hosted input service publishes the Wayland seat's available mouse (device 0)
+and touch (device 2), matching the existing event stream. Android's virtual
+keyboard remains the fallback KCM. Capability changes rebuild immutable device
+records, advance their generations and notify stock WMS plus input-device
+listeners outside the service lock. Relative-pointer source support follows the
+negotiated pointer-constraint/relative-pointer protocols. Old source generations
+cannot restore removed devices.
+
+Seat capability events now have session scope in the ordered native queue and
+shared Binder callback. They survive removal of the final task; cancellation
+precedes capability loss. Removing the selected wl_seat releases its input
+objects and test devices and publishes the loss. Test injection rejects a missing
+selected seat rather than implicitly selecting another compositor seat.
+
+Regressions 187–189 pass desktop physical/semantic actions and both stock task
+compositor gates. The live device test starts with only a keyboard, creates a
+pointer, destroys it, and creates it again, then repeats after both native task
+windows are gone. Cage reports capability masks 3 → 2 → 3 (pointer+keyboard,
+keyboard only, pointer+keyboard); Android removes the pointer and publishes a
+newer generation on return. Labwc retains mask 11 (including relative pointer)
+after virtual-device destruction; Android correctly retains the aggregate device.
+The earlier 185–186 assertions assumed hardware-device lifetime implied a
+compositor capability change, which the protocol does not promise.
+
+Regression 187 also passes all seven Surface scenarios. Logs:
+`/tmp/wayland-seat-capabilities-187.log`, `/tmp/wayland-global-seat-188.log`, and
+`/tmp/wayland-windowless-seat-189.log`. Per-compositor `result.json` files retain
+the reported masks under `seat_capabilities`. Full keyboard capability/key-state
+queries, focus acknowledgement, pre-window layout publication and M9–M11 remain
+pending; this checkpoint does not mark M8 complete.
+Regression 190 passes the full JVM/native and all 15 APK tests (46 diagnostic
+steps, zero runtime issues), including source generation validation, immutable
+device snapshots, listener notification and keyboard fallback checks:
+`/tmp/wayland-seat-device-regressions-190.log`. Live device artifacts are retained
+in `/tmp/wayland-seat-success-189-{cage,labwc}/`.
+
 ## Pointer capture and accepted resize checkpoint (2026-09-07)
 
 Stock IInputManager now forwards pointer-capture requests to InputDispatcher.

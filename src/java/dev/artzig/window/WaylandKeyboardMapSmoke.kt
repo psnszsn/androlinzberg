@@ -84,9 +84,39 @@ object WaylandKeyboardMapSmoke {
             finally { MessageQueue.`recycleDispatched$artzig`(message) }
         }
         check(changes.single().contentEquals(intArrayOf(KeyCharacterMap.VIRTUAL_KEYBOARD, current.generation)))
+        fun awaitDeviceNotice(count: Int) {
+            while (changes.size < count) {
+                val message = checkNotNull(looper.queue.`pollDueMessage$artzig`())
+                try { message.target.dispatchMessage(message) }
+                finally { MessageQueue.`recycleDispatched$artzig`(message) }
+            }
+        }
+        service.publishSeatCapabilities(1, 15)
+        check(service.inputDeviceIds.contentEquals(intArrayOf(-1, 0, 2)))
+        val pointer = checkNotNull(service.getInputDevice(0))
+        check(pointer.supportsSource(android.view.InputDevice.SOURCE_MOUSE))
+        check(pointer.supportsSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
+        check(pointer.keyboardType == android.view.InputDevice.KEYBOARD_TYPE_NONE)
+        check(checkNotNull(service.getInputDevice(2)).supportsSource(android.view.InputDevice.SOURCE_TOUCHSCREEN))
+        check(service.getInputDevice(99) == null)
+        awaitDeviceNotice(2)
+        check(changes.last().filterIndexed { index, _ -> index % 2 == 0 } == listOf(-1, 0, 2))
+        service.publishSeatCapabilities(2, 2)
+        check(service.getInputDevice(0) == null && service.getInputDevice(2) == null)
+        check(service.inputDeviceIds.contentEquals(intArrayOf(-1)))
+        awaitDeviceNotice(3)
+        service.publishSeatCapabilities(3, 3)
+        val reappeared = checkNotNull(service.getInputDevice(0))
+        check(reappeared.generation > pointer.generation)
+        check(!reappeared.supportsSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
+        service.publishSeatCapabilities(1, 15) // Late callback from an older seat state.
+        check(service.getInputDevice(0) === reappeared && service.getInputDevice(2) == null)
+        check(runCatching { service.publishSeatCapabilities(3, 7) }.exceptionOrNull() is IllegalArgumentException)
+        check(runCatching { service.publishSeatCapabilities(4, 16) }.exceptionOrNull() is IllegalArgumentException)
+        awaitDeviceNotice(4)
         check(runCatching { WaylandKeyboardMap.compile(IntArray(1)) }.exceptionOrNull() is IllegalArgumentException)
         characters[30 * 64] = 0x1f600
         check(runCatching { WaylandKeyboardMap.compile(characters) }.exceptionOrNull() is IllegalArgumentException)
-        println("Wayland keyboard map: layout, modifiers, ISO key, dead accents, parcel and device generations passed")
+        println("Wayland keyboard map: layout, modifiers, ISO key, dead accents, parcel and seat device lifecycle passed")
     }
 }

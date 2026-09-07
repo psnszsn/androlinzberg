@@ -21,10 +21,12 @@ import android.view.KeyCharacterMap
  * Source note: follows `com.android.server.input.InputManagerService` for the
  * device queries the framework makes (`InputDevice.getDevice`,
  * `KeyCharacterMap.load`, `VelocityTracker`). The host exposes one virtual
- * keyboard whose character map follows the Wayland seat. Unserved methods fail through the shared unsupported Binder
+ * fallback keyboard whose character map follows the Wayland seat, plus its
+ * currently available pointer/touch devices. Unserved methods fail through the shared unsupported Binder
  * delegate.
  */
 internal class HostedInputManagerService(private val handler: Handler = Handler(Looper.getMainLooper()),
+    private val devicesChanged: () -> Unit = {},
     private val captureRequest: ((IBinder, Boolean) -> Unit)? = null,
     private val pointerIconRequest: ((android.view.PointerIcon, Int, Int, Int, IBinder?) -> Boolean)? = null) :
     IInputManager.Stub(HostedBootstrapPermissionEnforcer()),
@@ -38,6 +40,48 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
     private var notificationPending = false
     private var keyboardMap = HostedInputDispatcher.createHostKeyCharacterMap()
     private var virtualKeyboard = keyboard(keyboardMap)
+    private var pointerDevice: InputDevice? = null
+    private var touchDevice: InputDevice? = null
+    private var seatGeneration = 0
+    private var seatCapabilities = 0
+
+    /** wl_seat exposes aggregate logical devices, not the physical hardware
+     * behind them. IDs match WaylandTaskInput's event stream. The Android
+     * virtual keyboard remains available as the fallback KCM across seat loss.
+     * Bit 8 additionally advertises the negotiated relative-pointer path. */
+    fun publishSeatCapabilities(sourceGeneration: Int, capabilities: Int) = synchronized(deviceLock) {
+        require(sourceGeneration > 0 && capabilities and 15 == capabilities)
+        if (sourceGeneration < seatGeneration) return@synchronized
+        if (sourceGeneration == seatGeneration) {
+            require(capabilities == seatCapabilities) { "Seat capability generation changed contents" }
+            return@synchronized
+        }
+        seatGeneration = sourceGeneration
+        seatCapabilities = capabilities
+        advanceGeneration()
+    }
+
+    private fun pointingDevice(id: Int, name: String, sources: Int): InputDevice = InputDevice.Builder()
+        .setId(id).setGeneration(generation).setName("artzig Wayland $name")
+        .setDescriptor("artzig-wayland-$name").setSources(sources)
+        .setKeyboardType(InputDevice.KEYBOARD_TYPE_NONE)
+        .setKeyCharacterMap(KeyCharacterMap.obtainEmptyMap(id))
+        .setAssociatedDisplayId(android.view.Display.DEFAULT_DISPLAY).build()
+
+    private fun currentDevices(): List<InputDevice> = listOfNotNull(virtualKeyboard, pointerDevice, touchDevice)
+
+    private fun advanceGeneration() {
+        check(generation < Int.MAX_VALUE) { "Input device generation exhausted" }
+        generation++
+        virtualKeyboard = keyboard(keyboardMap)
+        pointerDevice = if (seatCapabilities and 1 == 0) null else pointingDevice(0, "pointer",
+            InputDevice.SOURCE_MOUSE or if (seatCapabilities and 8 != 0) InputDevice.SOURCE_MOUSE_RELATIVE else 0)
+        touchDevice = if (seatCapabilities and 4 == 0) null else pointingDevice(2, "touch", InputDevice.SOURCE_TOUCHSCREEN)
+        if (!notificationPending) {
+            notificationPending = true
+            check(handler.post { deliverDevicesChanged() })
+        }
+    }
 
     private fun keyboard(map: KeyCharacterMap): InputDevice = InputDevice.Builder()
         .setId(KeyCharacterMap.VIRTUAL_KEYBOARD)
@@ -55,14 +99,8 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
      * InputReader is absent; the compositor supplies this device's layout.
      */
     fun publishKeyboardMap(map: KeyCharacterMap) = synchronized(deviceLock) {
-        check(generation < Int.MAX_VALUE) { "Keyboard generation exhausted" }
-        generation++
         keyboardMap = map
-        virtualKeyboard = keyboard(map)
-        if (!notificationPending) {
-            notificationPending = true
-            check(handler.post { deliverDevicesChanged() })
-        }
+        advanceGeneration()
     }
 
     private fun deliverDevicesChanged() {
@@ -71,8 +109,9 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
         synchronized(deviceLock) {
             notificationPending = false
             targets = listeners.values.toList()
-            info = intArrayOf(KeyCharacterMap.VIRTUAL_KEYBOARD, generation)
+            info = currentDevices().flatMap { listOf(it.id, it.generation) }.toIntArray()
         }
+        devicesChanged()
         for (target in targets) {
             try { target.remote.onInputDevicesChanged(info) }
             catch (_: RemoteException) { target.binderDied() }
@@ -90,10 +129,12 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
             ?: false // No pointer controller in a windowless/legacy service.
     }
 
-    override fun getInputDeviceIds(): IntArray = intArrayOf(KeyCharacterMap.VIRTUAL_KEYBOARD)
+    override fun getInputDeviceIds(): IntArray = synchronized(deviceLock) {
+        currentDevices().map { it.id }.toIntArray()
+    }
 
     override fun getInputDevice(deviceId: Int): InputDevice? = synchronized(deviceLock) {
-        if (deviceId == KeyCharacterMap.VIRTUAL_KEYBOARD) virtualKeyboard else null
+        currentDevices().firstOrNull { it.id == deviceId }
     }
 
     override fun getKeyCharacterMap(layoutDescriptor: String?): KeyCharacterMap =

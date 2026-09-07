@@ -35,7 +35,7 @@ internal class StockWindowServices private constructor() {
     private val context = BootstrapContext()
     private val handler = Handler(Looper.getMainLooper())
     private val display = SurfaceFlingerDisplayOutput.createService(context, handler)
-    private val devices = HostedInputManagerService(captureRequest = { token, enabled ->
+    private val devices = HostedInputManagerService(devicesChanged = { input.notifyInputDevicesChanged() }, captureRequest = { token, enabled ->
         input.requestPointerCapture(token, enabled)
     }, pointerIconRequest = { icon, displayId, deviceId, pointerId, token ->
         setPointerIcon(icon, displayId, deviceId, pointerId, token)
@@ -106,7 +106,7 @@ internal class StockWindowServices private constructor() {
         windows.enableScreenAfterBoot()
         if (System.getenv("AZK_TASK_WINDOWS") == "1") {
             check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
-            shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap) { token ->
+            shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap, devices::publishSeatCapabilities) { token ->
                 com.android.server.wm.HostedTaskInputTargets.taskId(windows, token)
             }
         }
@@ -162,7 +162,7 @@ internal class StockWindowServices private constructor() {
         override fun getInputDevices(): Array<InputDevice> =
             devices.inputDeviceIds.map { checkNotNull(devices.getInputDevice(it)) }.toTypedArray()
         override fun canDispatchToDisplay(deviceId: Int, displayId: Int): Boolean =
-            displayId == Display.DEFAULT_DISPLAY
+            displayId == Display.DEFAULT_DISPLAY && devices.getInputDevice(deviceId) != null
         override fun getKeyCodeState(deviceId: Int, sourceMask: Int, keyCode: Int): Int = HostInputManagerBridge.KEY_STATE_UNKNOWN
         override fun getScanCodeState(deviceId: Int, sourceMask: Int, scanCode: Int): Int = HostInputManagerBridge.KEY_STATE_UNKNOWN
         override fun getSwitchState(deviceId: Int, sourceMask: Int, switchCode: Int): Int = HostInputManagerBridge.KEY_STATE_UNKNOWN

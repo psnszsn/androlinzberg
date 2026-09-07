@@ -13,6 +13,7 @@ internal object SessionTaskShell {
     }
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,
         publishKeyboard: (android.view.KeyCharacterMap) -> Unit,
+        publishCapabilities: (Int, Int) -> Unit,
         taskForToken: (android.os.IBinder) -> Int?): Controller {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
             "Session presenter did not register before system startup"
@@ -30,7 +31,7 @@ internal object SessionTaskShell {
         // synthesize repeats. The presenter sends physical key edges only.
         dispatcher.setKeyRepeatConfiguration(500, 50, false)
         dispatcher.setDesktopKeyboardFocus(false)
-        val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, dispatcher::notifyPointerCaptureChanged)
+        val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, publishCapabilities, dispatcher::notifyPointerCaptureChanged)
         val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)
         val death = android.os.IBinder.DeathRecipient {
             check(handler.post {

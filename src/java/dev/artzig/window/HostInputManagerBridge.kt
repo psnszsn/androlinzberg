@@ -97,6 +97,7 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     fun monitorInput(name: String, displayId: Int): InputChannel =
         dispatcher.createInputMonitor(name, displayId, Binder.getCallingPid())
     fun getInputDevices(): Array<InputDevice> = desktop.getInputDevices()
+    fun notifyInputDevicesChanged() = checkNotNull(windowCallbacks).notifyConfigurationChanged()
     fun waitForIdle(): Boolean = dispatcher.waitForIdle()
     fun canDispatchToDisplay(deviceId: Int, displayId: Int): Boolean = desktop.canDispatchToDisplay(deviceId, displayId)
     fun getKeyCodeState(deviceId: Int, sourceMask: Int, keyCode: Int): Int = desktop.getKeyCodeState(deviceId, sourceMask, keyCode)

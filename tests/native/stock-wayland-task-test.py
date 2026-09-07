@@ -98,6 +98,24 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 process.stdin.write(b'continue\n')
                 process.stdin.flush()
 
+            def change_pointer(marker, operation):
+                deadline = time.monotonic() + 15
+                while marker not in (out / 'app.log').read_text(errors='replace'):
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError(f'{marker} timeout/exit: {process.poll()}')
+                    time.sleep(0.02)
+                seat.stdin.write(operation)
+                seat.stdin.flush()
+                if not select.select([seat.stdout], [], [], 3)[0]:
+                    raise RuntimeError(f'{marker} compositor device command failed')
+                state = seat.stdout.readline().decode().strip().split()
+                if len(state) != 3 or state[:2] != ['pointer', 'updated']:
+                    raise RuntimeError(f'{marker} invalid capability acknowledgement: {state}')
+                mask = int(state[2])
+                result.setdefault('seat_capabilities', {})[marker] = mask
+                process.stdin.write(f'{mask}\n'.encode())
+                process.stdin.flush()
+
             if args.launcher:
                 deadline = time.monotonic() + 60
                 while True:
@@ -179,13 +197,20 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 text = (out / 'app.log').read_text(errors='replace')
             else:
                 verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
+                for marker, operation in [('POINTER_DEVICE_CREATE', b'p'),
+                                          ('POINTER_DEVICE_REMOVE', b'r'),
+                                          ('POINTER_DEVICE_RECREATE', b'p')]:
+                    change_pointer(marker, operation)
                 verify_pixels('SECOND_TASK_WINDOW_READY', (255, 0, 255), 'second-task')
                 verify_pixels('GROUPED_ACTIVITY_WINDOW_READY', (255, 127, 0), 'grouped-activity')
                 verify_pixels('SURVIVING_TASK_WINDOW_READY', (0, 255, 255), 'screenshot')
+                change_pointer('WINDOWLESS_POINTER_REMOVE', b'r')
+                change_pointer('WINDOWLESS_POINTER_RECREATE', b'p')
                 if process.wait(timeout=30) != 0:
                     raise RuntimeError(f'session failed: {process.returncode}')
                 text = (out / 'app.log').read_text(errors='replace')
                 assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
+                assert 'Stock Wayland pointer: absence and compositor capability lifecycle passed' in text
             assert 'task presenter released all buffers' in text
             for fatal in ['Native thread exited without calling DetachCurrentThread',
                           'FATAL EXCEPTION', 'Unhandled exception', 'panic:']:

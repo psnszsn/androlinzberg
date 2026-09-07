@@ -9,6 +9,7 @@ import android.view.Surface
 internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val handler: Handler, private val input: WaylandTaskInput,
     private val taskForToken: (android.os.IBinder) -> Int?,
+    private val publishCapabilities: (Int, Int) -> Unit,
     acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
     @Volatile private var queuedTestInput = 0L
@@ -77,6 +78,11 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 check(sequence > queuedTestInput) { "Test input sequence rewound" }
                 queuedTestInput = sequence
             }
+        override fun seatCapabilities(sourceGeneration: Int, capabilities: Int) {
+            if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
+                throw SecurityException("Only the session presenter may publish seat capabilities")
+            check(handler.post { publishCapabilities(sourceGeneration, capabilities) })
+        }
         override fun modifiers(taskId: Int, generation: Long, metaState: Int, persistentMetaState: Int) =
             deliver(taskId, generation) { input.modifiers(metaState, persistentMetaState) }
         override fun keyboardLayout(taskId: Int, generation: Long, layoutGeneration: Int, characters: IntArray, symbols: IntArray) =

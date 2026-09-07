@@ -31,6 +31,12 @@ pub fn main(init: std.process.Init) !void {
             if (count == 0) break;
             switch (buffer[0]) {
                 'c' => try session.testKeyboardShortcut(62, 1 << 3), // Alt+F4: compositor close.
+                'p', 'r' => {
+                    try session.testPointerPresent(buffer[0] == 'p');
+                    var status: [48]u8 = undefined;
+                    const line = try std.fmt.bufPrint(&status, "pointer updated {d}\n", .{session.seat_capabilities});
+                    try Io.File.stdout().writeStreamingAll(init.io, line);
+                },
                 '\n' => {},
                 else => return error.UnknownKeyboardSeatCommand,
             }
