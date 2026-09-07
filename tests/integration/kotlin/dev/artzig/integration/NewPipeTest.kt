@@ -67,9 +67,11 @@ class NewPipeTest {
         click(description = "Open Drawer")
         waitFor(text = "Downloads")
         waitForPresentedFrames(30)
+        val panel = drawerPanelBounds()
         val open = screenshot("drawer-open.png")
         waitForPresentedFrames(3)
-        assertDrawerOpened(closed, open, screenshot("drawer-settled.png"))
+        assertEquals(panel, drawerPanelBounds(), "drawer bounds were still moving")
+        assertDrawerOpened(closed, open, screenshot("drawer-settled.png"), panel)
     }
 
     @Test
@@ -155,9 +157,11 @@ class NewPipeDesktopTest {
         click(description = "Open Drawer")
         waitFor(text = "Downloads")
         waitForPresentedFrames(30)
+        val panel = drawerPanelBounds()
         val open = screenshot("drawer-open.png")
         waitForPresentedFrames(3)
-        assertDrawerOpened(closed, open, screenshot("drawer-settled.png"))
+        assertEquals(panel, drawerPanelBounds(), "drawer bounds were still moving")
+        assertDrawerOpened(closed, open, screenshot("drawer-settled.png"), panel)
     }
 
     @Test
@@ -214,7 +218,25 @@ private fun assertFullscreenVideoVisible(screenshot: Path) {
     )
 }
 
-private fun assertDrawerOpened(closedScreenshot: Path, openScreenshot: Path, settledScreenshot: Path) {
+/** DrawerLayout hides its content child from accessibility while its drawer is
+ * open. Observe that visible panel; desktop thumbnails behind it load/fade
+ * independently and are not evidence that the drawer is still moving.
+ */
+private fun AppSession.drawerPanelBounds(): java.awt.Rectangle {
+    val drawer = expectVisible(className = "androidx.drawerlayout.widget.DrawerLayout")
+        .getAsJsonObject("observation").getAsJsonArray("matches").single().asJsonObject
+    val children = drawer.getAsJsonArray("children").map { it.asString }.toSet()
+    val panel = expectVisible(className = "android.widget.FrameLayout")
+        .getAsJsonObject("observation").getAsJsonArray("matches")
+        .map { it.asJsonObject }.single { it["id"].asString in children }
+        .getAsJsonObject("bounds")
+    val left = panel["left"].asInt
+    val top = panel["top"].asInt
+    return java.awt.Rectangle(left, top, panel["right"].asInt - left, panel["bottom"].asInt - top)
+}
+
+private fun assertDrawerOpened(closedScreenshot: Path, openScreenshot: Path, settledScreenshot: Path,
+    panel: java.awt.Rectangle) {
     val closed = ImageIO.read(closedScreenshot.toFile())
         ?: throw AssertionError("could not decode compositor screenshot: $closedScreenshot")
     val open = ImageIO.read(openScreenshot.toFile())
@@ -230,8 +252,10 @@ private fun assertDrawerOpened(closedScreenshot: Path, openScreenshot: Path, set
     var changedPixels = 0
     var unsettledPixels = 0
     var sampledPixels = 0
-    for (y in 0 until open.height step 4) {
-        for (x in 0 until open.width * 2 / 5 step 4) {
+    check(panel.width > 0 && panel.height > 0 && panel.x >= 0 && panel.y >= 0 &&
+        panel.x + panel.width <= open.width && panel.y + panel.height <= open.height)
+    for (y in panel.y until panel.y + panel.height step 4) {
+        for (x in panel.x until panel.x + panel.width step 4) {
             val before = closed.getRGB(x, y)
             val after = open.getRGB(x, y)
             if (colorDelta(before, after) > 30) changedPixels++
