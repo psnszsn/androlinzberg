@@ -54,7 +54,18 @@ open class ColdProcessProvider : ContentProvider() {
 
 class ProviderOnlyProcess : ColdProcessProvider()
 
-class ColdProcessService : android.app.Service() {
+/** Crash before Application.onCreate once, then allow an ordinary service retry. */
+class FailingStartupProvider : ColdProcessProvider() {
+    override fun onCreate(): Boolean {
+        val marker = java.io.File(checkNotNull(context).filesDir, "startup-failure-once")
+        if (marker.createNewFile()) throw IllegalStateException("fixture startup failure")
+        return super.onCreate()
+    }
+}
+
+class RetryProcessService : ColdProcessService()
+
+open class ColdProcessService : android.app.Service() {
     override fun onCreate() { super.onCreate(); ColdLifecycle.record("service-create") }
     override fun onBind(intent: android.content.Intent): android.os.IBinder {
         ColdLifecycle.record("service-bind")

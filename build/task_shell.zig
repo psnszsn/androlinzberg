@@ -16,6 +16,8 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     compile.addFileArg(stdlib);
     compile.addFileArg(b.path("src/java/dev/artzig/window/TaskGeometry.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/window/TaskGeometrySmoke.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStarts.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStartsSmoke.kt"));
     compile.addArg("-d");
     const classes = compile.addOutputFileArg("task-geometry.jar");
     compiler.select(null).addInputs(compile.run);
@@ -26,4 +28,11 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     run.run.setName("verify bounded task geometry and transaction reservations");
     b.step("task-geometry-test", "Verify task bounds, relocation, capacity and stale acknowledgements").dependOn(&run.run.step);
     parent.dependOn(&run.run.step);
+    const processes = command.create(b);
+    processes.addArgs(&.{ "java", "-cp" });
+    processes.addJoinedPaths(":", &.{ classes, stdlib });
+    processes.addArg("dev.artzig.system.HostedProcessStartsSmoke");
+    processes.run.setName("verify process startup generations and deadlines");
+    b.step("process-start-test", "Verify process attach, exit, retry and stale startup callbacks").dependOn(&processes.run.step);
+    parent.dependOn(&processes.run.step);
 }

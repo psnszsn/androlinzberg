@@ -77,6 +77,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/IntentFirewallSmoke.kt",
     "src/java/dev/artzig/ActivityOptionsSmoke.kt",
     "src/java/dev/artzig/window/TaskGeometry.kt",
+    "src/java/dev/artzig/system/HostedProcessStarts.kt",
+    "src/java/dev/artzig/system/HostedProcessStartsSmoke.kt",
     "src/java/dev/artzig/window/HostedTransitionInput.kt",
     "src/java/dev/artzig/window/TaskGeometrySmoke.kt",
     "src/java/dev/artzig/SurfaceBufferSmoke.kt",

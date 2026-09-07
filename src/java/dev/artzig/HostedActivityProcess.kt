@@ -49,7 +49,9 @@ object HostedActivityProcess {
         val thread = constructor.newInstance()
         val attach = ActivityThread::class.java.getDeclaredMethod("attach",
             Boolean::class.javaPrimitiveType, Long::class.javaPrimitiveType).apply { isAccessible = true }
-        try { attach.invoke(thread, false, 0L) }
+        val startSequence = System.getenv("AZK_APP_START_SEQUENCE")?.toLong() ?: 0L
+        require(startSequence >= 0)
+        try { attach.invoke(thread, false, startSequence) }
         catch (failure: InvocationTargetException) { throw failure.targetException }
         initializeMainHandler(thread)
         return thread

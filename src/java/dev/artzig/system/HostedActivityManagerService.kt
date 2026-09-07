@@ -43,12 +43,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
         return HostedIntentCreators.refresh(requireNotNull(intent))
     }
 
-    /** Launches a process for a package that is not attached (production: the launcher's --app-process). */
-    fun interface ProcessLauncher {
-        /** Returns false when the package cannot be launched. */
-        fun launch(packageName: String, processName: String, apkPath: String): Boolean
-    }
-
     // AppExitInfoTracker equivalent for this hosted session. Binder death supplies no
     // wait status or tombstone, so retain REASON_UNKNOWN instead of inventing one.
 
@@ -134,7 +128,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         var unstableCount = 0
     }
 
-    private class ProviderWaiter(val packageName: String) {
+    private class ProviderWaiter(val key: HostedProcessStarts.Key) {
         val latch = java.util.concurrent.CountDownLatch(1)
     }
 
@@ -388,17 +382,32 @@ class HostedActivityManagerService(private val context: android.content.Context?
     }
     private val servicesByComponent = LinkedHashMap<ComponentName, ServiceRecord>()
     private val servicesByToken = LinkedHashMap<IBinder, ServiceRecord>()
+    private class PendingWork(val ready: () -> Unit, val failed: () -> Unit = {})
     /** Bind/start operations waiting for a package's process to attach. */
-    private val pendingByPackage = LinkedHashMap<String, MutableList<() -> Unit>>()
+    private val pendingByPackage = LinkedHashMap<String, MutableList<PendingWork>>()
     /** Activity launches wait for the manifest-selected process, not merely the package. */
-    private val pendingByProcess = LinkedHashMap<Pair<String, String>, MutableList<() -> Unit>>()
+    private val pendingByProcess = LinkedHashMap<Pair<String, String>, MutableList<PendingWork>>()
     /** Published content providers, one record per declared authority
      * (source note: ActivityManagerService.mProviderMap). */
     private val providersByAuthority = LinkedHashMap<String, ContentProviderRecord>()
     private val providerConnections = ArrayList<ProviderConnection>()
     /** getContentProvider calls blocked until the owning package publishes. */
     private val providerWaiters = LinkedHashMap<String, MutableList<ProviderWaiter>>()
-    @Volatile var processLauncher: ProcessLauncher? = null
+    @Volatile internal var processLauncher: HostedProcessStarts.Launcher? = null
+    private val processStarts by lazy {
+        HostedProcessStarts(
+            schedule = { delay, callback ->
+                val runnable = Runnable { synchronized(lock) { callback() } }
+                importanceHandler.postDelayed(runnable, delay)
+                AutoCloseable { importanceHandler.removeCallbacks(runnable) }
+            },
+            finished = ::processStartFinishedLocked,
+        )
+    }
+
+    internal fun dispatchProcessExit(callback: () -> Unit) {
+        importanceHandler.post { synchronized(lock) { callback() } }
+    }
     private val processObservers by lazy {
         HostedProcessObservers(com.android.server.UiThread.getHandler())
     }
@@ -725,8 +734,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (stockTasks != null && processes.values.any {
                     it.pid == record.pid || (it.uid == record.uid && it.processName == record.processName)
                 }) throw IllegalStateException("Process is already attached: ${record.processName}/${record.pid}")
+            if (!processStarts.attach(HostedProcessStarts.Key(packageName, processName), startSeq))
+                throw SecurityException("Stale or duplicate process start: $processName/$startSeq")
             processes[record.binder] = record
-            startingProcesses.remove(record.packageName to record.processName)
             HostActivityManagerAccess.attached(record.pid, record.binder,
                 packageService?.getPackage(packageName)?.processes?.get(processName)?.deniedPermissions)
         }
@@ -786,6 +796,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     private fun completeApplicationAttachment(record: ProcessRecord) {
         val drained = synchronized(lock) {
             if (processes[record.binder] !== record || record.ready) return
+            processStarts.ready(HostedProcessStarts.Key(record.packageName, record.processName), record.startSeq)
             record.ready = true
             startingProcesses.remove(record.packageName to record.processName)
             buildList {
@@ -812,7 +823,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         if (record.uid != android.os.Process.SYSTEM_UID) processObserver?.invoke(record.packageName, record.uid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
-        for (op in drained) op()
+        for (op in drained) op.ready()
     }
 
     private fun bindApplication(record: ProcessRecord, announcement: ProcessAnnouncement) {
@@ -862,6 +873,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             record.importanceFollowUp?.let { importanceHandler.removeCallbacks(it) }
             record.importanceFollowUp = null
             processes.remove(record.binder)
+            processStarts.died(HostedProcessStarts.Key(record.packageName, record.processName), record.startSeq)
             processHistory.died(record.binder, android.app.ApplicationExitInfo().apply {
                 pid = record.pid
                 realUid = record.uid
@@ -908,14 +920,16 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 val owned = service.connections.values.filter { it.client === record }
                 for (connection in owned) removeConnectionLocked(connection)
             }
-            // Provider records the dead process published, and waiters that
-            // were counting on that package publishing.
+            // ContentProviderHelper.cleanupAppInLaunchingProvidersLocked keys
+            // waiting providers by their launching process, including siblings.
             providersByAuthority.values.filter { it.app === record }.forEach { it.dead = true }
             providerConnections.filter { it.provider.app === record }.forEach { it.provider.dead = true }
             providerConnections.removeAll { it.client == record.binder || it.provider.app === record }
             providersByAuthority.entries.removeAll { it.value.app === record }
             for (waiters in providerWaiters.values) {
-                val failed = waiters.filter { it.packageName == record.packageName }
+                val failed = waiters.filter {
+                    it.key == HostedProcessStarts.Key(record.packageName, record.processName)
+                }
                 for (waiter in failed) waiter.latch.countDown()
             }
         }
@@ -996,11 +1010,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 } else {
                     pendingByProcess.getOrPut(packageName to processName) { ArrayList() }
                 }
-                pending.add(replay)
+                val work = PendingWork(replay)
+                pending.add(work)
                 if (record != null || bringUpProcessLocked(packageName, processName ?: packageName)) {
                     true
                 } else {
-                    pending.remove(replay)
+                    pending.remove(work)
                     if (processName == null && pending.isEmpty()) {
                         pendingByPackage.remove(packageName)
                     } else if (processName != null && pending.isEmpty()) {
@@ -1051,28 +1066,34 @@ class HostedActivityManagerService(private val context: android.content.Context?
         return process to info
     }
 
-    /** Not attached: spawn the package's process; the pending op replays on attach. Requires `lock`. */
-    private val startingProcesses = HashMap<Pair<String, String>, Any>()
-
+    /** Not attached: spawn the manifest process; the pending op replays on attach. Requires `lock`. */
     private fun bringUpProcessLocked(packageName: String, processName: String = packageName): Boolean {
-        val key = packageName to processName
-        if (startingProcesses.containsKey(key)) return true
         val launcher = processLauncher ?: return false
         val apkPath = packageService?.getApkPathInternal(packageName) ?: return false
-        val attempt = Any()
-        startingProcesses[key] = attempt
-        val started = try { launcher.launch(packageName, processName, apkPath) }
+        return try { processStarts.start(HostedProcessStarts.Key(packageName, processName), apkPath, launcher) }
         catch (failure: Exception) { Log.e(TAG, "Cannot launch $processName", failure); false }
-        if (!started) startingProcesses.remove(key)
-        else importanceHandler.postDelayed({
-            synchronized(lock) {
-                if (startingProcesses[key] === attempt) {
-                    startingProcesses.remove(key)
-                    Log.e(TAG, "Process did not attach before deadline: $processName")
-                }
+    }
+
+    /** AMS.handleProcessStartOrKillTimeoutLocked / ContentProviderHelper cleanup:
+     * release only this start's component waiters, then clean any attached WPC. */
+    private fun processStartFinishedLocked(request: HostedProcessStarts.Request,
+        failure: HostedProcessStarts.Failure?) {
+        val key = request.key
+        val record = processes.values.firstOrNull { it.packageName == key.packageName &&
+            it.processName == key.processName && it.startSeq == request.sequence }
+        if (failure != null) {
+            Log.e(TAG, "Process start ${request.sequence} failed: ${key.processName}: $failure")
+            pendingByProcess.remove(key.packageName to key.processName)?.forEach { it.failed() }
+            if (key.processName == key.packageName)
+                pendingByPackage.remove(key.packageName)?.forEach { it.failed() }
+            for (waiters in providerWaiters.values)
+                waiters.filter { it.key == key }.forEach { it.latch.countDown() }
+            if (record != null) {
+                record.exitReason = android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE
+                record.exitDescription = failure.name
             }
-        }, 10_000)
-        return started
+        }
+        if (record != null) handleProcessDied(record)
     }
 
     /** AMS.LocalService.startProcess -> ProcessList.startProcessLocked. Stock ATMS
@@ -1167,12 +1188,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (allowSpawn && pkg != null && processName != null &&
                 (processes.values.any { it.packageName == pkg && it.processName == processName } ||
                     bringUpProcessLocked(pkg, processName))) {
-                pendingByProcess.getOrPut(pkg to processName) { ArrayList() }.add {
+                pendingByProcess.getOrPut(pkg to processName) { ArrayList() }.add(PendingWork({
                     // allowSpawn=false on replay: the process has attached, so a
                     // still-unresolved service is genuinely absent, not un-spawned.
                     val p = synchronized(lock) { doStartLocked(callingUid, service, callingPackage, false) }
                     p.schedule?.invoke()
-                }
+                }))
                 val name = service.component
                     ?: packageService?.resolveServiceInfo(service)
                         ?.let { ComponentName(it.packageName, it.name) }
@@ -1288,13 +1309,18 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 (processes.values.any { it.packageName == pkg && it.processName == processName } ||
                     bringUpProcessLocked(pkg, processName))) {
                 Log.i(TAG, "bindService: spawning host for " + pkg)
-                pendingByProcess.getOrPut(pkg to processName) { ArrayList() }.add {
+                pendingByProcess.getOrPut(pkg to processName) { ArrayList() }.add(PendingWork({
                     // allowSpawn=false on replay (process now attached).
                     val p = synchronized(lock) {
                         doBindLocked(client, callingUid, service, connection, flags, callingPackage, false)
                     }
                     if (p.status != -1) applyPostBind(p, connection)
-                }
+                }, {
+                    // ActiveServices.processStartTimedOutLocked brings the
+                    // pending service down and reports a dead binding.
+                    try { connection.connected(ComponentName(info.packageName, info.name), null, true) }
+                    catch (_: RemoteException) { }
+                }))
                 return PostBind(null, null, false, null, 2)
             }
             Log.w(TAG, "bindService: no process hosts " + service)
@@ -1669,7 +1695,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (processes.values.none { it.packageName == info.packageName && it.processName == processName }) {
                 if (!bringUpProcessLocked(info.packageName, processName)) return null
             }
-            waiter = ProviderWaiter(info.packageName)
+            waiter = ProviderWaiter(HostedProcessStarts.Key(info.packageName, processName))
             providerWaiters.getOrPut(authority) { ArrayList() }.add(waiter)
         }
         // Wait outside the lock; publish/death arrive on other binder threads.

@@ -89,6 +89,33 @@ full regression 58 pass: 15 APK tests, 45 steps, no structured runtime issues,
 plus both stock launch gates, JVM, system, broker, session and graph checks.
 Startup failure recovery and complete process supervision remain outstanding.
 
+## Process startup recovery checkpoint (2026-09-07)
+
+HostedProcessStarts now owns start sequences, duplicate-start suppression,
+attachment validation, readiness deadlines and matching-generation exit cleanup.
+The launcher passes each sequence through ActivityThread.attach; an old child,
+late timeout or delayed exit cannot claim or cancel a replacement. A watcher
+reaps each child and removes it from the session's child set. Startup death and
+timeout release pending service bindings with onBindingDied and wake only the
+providers assigned to that manifest process. Deadline termination uses the
+host Java child handle; forced termination and pre-attach ATMS activity recovery
+still need completion.
+
+Regression 59 passes deterministic generation, timeout, early-exit, retry and
+sibling tests. Regression 60 passes both production cold-launch gates; its module
+mock used an arbitrary nonzero start sequence without a supervised launch, and
+now uses the external-launch sequence zero while retaining its mismatched-ack
+check. Regression 61 passes the targeted gates and a real provider-startup crash:
+the pending service receives onBindingDied, retry starts a fresh process, and
+both existing sibling PIDs survive. Full regression 62 passes all stock, JVM,
+system, broker, session, graph and 15 APK tests with no structured runtime issues.
+The intentional crash exists only in the stock recovery fixture action.
+
+Closure 63 against the live framework jar reports four stock client sources
+(ViewRootImpl, SurfaceView, AccessibilityInteractionController and
+PhoneFallbackEventHandler), no additional AIDL and no source blockers. Host
+caller adaptation and presentation remain the M6 cutover work.
+
 ## Real WMS client and TextureView checkpoint (2026-09-07)
 
 Regression 41 passes the real WMS session gate: the fixture resumes in task 2,

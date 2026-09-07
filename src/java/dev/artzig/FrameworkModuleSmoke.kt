@@ -3257,17 +3257,17 @@ internal object FrameworkModuleSmoke {
         val callingUid = Binder.getCallingUid()
         packages.bindPackageUid(callerPackage, callingUid)
         activityManager.noteProcessPackage(callingUid, callerPackage, processOne)
-        activityManager.attachApplication(threadOne, 41)
+        activityManager.attachApplication(threadOne, 0)
         var readyCallbacks = 0
         check(activityManager.attachedProcessForPackage(callerPackage, processOne) == null)
         check(activityManager.withApplicationThread(callerPackage, processOne, false) { readyCallbacks++ })
         check(readyCallbacks == 0 && threadOne.transactions.isEmpty())
-        check(runCatching { activityManager.finishAttachApplication(42, 0) }
+        check(runCatching { activityManager.finishAttachApplication(1, 0) }
             .exceptionOrNull() is SecurityException)
         check(readyCallbacks == 0)
-        activityManager.finishAttachApplication(41, 0)
+        activityManager.finishAttachApplication(0, 0)
         check(readyCallbacks == 1)
-        activityManager.finishAttachApplication(41, 0)
+        activityManager.finishAttachApplication(0, 0)
         check(readyCallbacks == 1) { "duplicate attach acknowledgement replayed component work" }
         activityManager.noteProcessPackage(callingUid, callerPackage, processTwo)
         activityManager.attachApplication(threadTwo, 0)
@@ -3500,9 +3500,9 @@ internal object FrameworkModuleSmoke {
         // Failed process bring-up removes its provisional activity/task record immediately.
         val beforeFailedLaunch = service.getTasks(10, false, true, Display.DEFAULT_DISPLAY).size
         var headlessLauncherCalls = 0
-        activityManager.processLauncher = HostedActivityManagerService.ProcessLauncher { _, _, _ ->
+        activityManager.processLauncher = dev.artzig.system.HostedProcessStarts.Launcher { _, _ ->
             headlessLauncherCalls++
-            true
+            object : dev.artzig.system.HostedProcessStarts.Child { override fun terminate() {} }
         }
         check(launch("MissingProcess") == ActivityManager.START_CANCELED)
         check(headlessLauncherCalls == 0) {

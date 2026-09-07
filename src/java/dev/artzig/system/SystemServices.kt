@@ -207,7 +207,7 @@ internal object SystemServices {
             com.android.server.compat.PlatformCompatNative(platformCompat))
         val activityManager = HostedActivityManagerService(context)
         activityManager.platformCompat = platformCompat
-        activityManager.processLauncher = sessionProcessLauncher()
+        activityManager.processLauncher = sessionProcessLauncher(activityManager)
         activityManager.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
         android.os.ServiceManager.addService(Context.WIFI_SERVICE,
@@ -439,17 +439,44 @@ internal object SystemServices {
      * service in a package with no running process gets one. The launcher and
      * session directory come from the environment the launcher gave us.
      */
-    private fun sessionProcessLauncher(): HostedActivityManagerService.ProcessLauncher? {
+    private fun sessionProcessLauncher(activityManager: HostedActivityManagerService): HostedProcessStarts.Launcher? {
         val sessionDir = System.getenv("AZK_BINDER_SESSION_DIR") ?: return null
         val launcher = System.getenv("AZK_LAUNCHER_EXE") ?: return null
-        return HostedActivityManagerService.ProcessLauncher { packageName, processName, apkPath ->
+        return HostedProcessStarts.Launcher { request, onExit ->
+            val (packageName, processName) = request.key
             try {
-                val builder = ProcessBuilder(launcher, "--join", sessionDir, "--app-process", apkPath)
+                val builder = ProcessBuilder(launcher, "--join", sessionDir, "--app-process", request.apkPath)
                     .redirectOutput(ProcessBuilder.Redirect.INHERIT)
                     .redirectError(ProcessBuilder.Redirect.INHERIT)
                 // Never hand the system identity to an app process: with the
                 // system cookie an APK could reconnect as uid 1000 and claim
                 // the system service names.
+                builder.environment().remove("ARTZIG_SYSTEM_DATA_DIR")
                 builder.environment().remove("AZK_BINDER_SYSTEM_COOKIE")
                 builder.environment()["AZK_BINDER_PACKAGE"] = packageName
                 builder.environment()["AZK_APP_PROCESS_NAME"] = processName
+                builder.environment()["AZK_APP_START_SEQUENCE"] = request.sequence.toString()
+                val child = builder.start()
+                spawnedProcesses.add(child)
+                try {
+                    Thread({
+                        child.waitFor()
+                        spawnedProcesses.remove(child)
+                        activityManager.dispatchProcessExit(onExit)
+                    }, "app-exit-${request.sequence}").apply { isDaemon = true; start() }
+                } catch (failure: Throwable) {
+                    child.destroy()
+                    spawnedProcesses.remove(child)
+                    throw failure
+                }
+                Log.i(TAG, "spawning $processName start=${request.sequence}")
+                object : HostedProcessStarts.Child {
+                    override fun terminate() { child.destroy() }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "cannot spawn process for " + packageName, t)
+                null
+            }
+        }
+    }
+}

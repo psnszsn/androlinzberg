@@ -89,6 +89,7 @@ object StockWindowBootSmoke {
         println("Stock ATMS resumed application task: ${resumed!!.taskId}")
         verifyClientWindow(session, resumed!!)
         verifyColdActivity(application)
+        verifyStartupRetry(application)
         println("Stock WMS/ATMS boot: display=${info.displayId} physical=${initial.x}x${initial.y}")
     }
 
@@ -158,6 +159,59 @@ object StockWindowBootSmoke {
         check(provider.getInt("uid") == android.os.Process.myUid())
         check(provider.getStringArrayList("events") == arrayListOf("provider"))
         println("Secondary component routing: service reused activity process; provider started its own process")
+    }
+
+    /** A process dying while bindApplication installs its providers must fail
+     * pending bindings, then permit a fresh start without disturbing siblings. */
+    private fun verifyStartupRetry(application: android.app.Application) {
+        val pkg = application.packageName
+        java.io.File(application.filesDir, "startup-failure-once").delete()
+        val manager = application.getSystemService(android.app.ActivityManager::class.java)
+        val siblings = manager.runningAppProcesses.orEmpty().filter {
+            it.processName == "$pkg:cold" || it.processName == "$pkg:provider"
+        }.associate { it.processName to it.pid }
+        check(siblings.size == 2)
+        val intent = android.content.Intent().setClassName(pkg, "$pkg.RetryProcessService")
+        var died = false
+        val first = object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
+                error("The failing startup unexpectedly bound its service")
+            }
+            override fun onServiceDisconnected(name: android.content.ComponentName) { }
+            override fun onBindingDied(name: android.content.ComponentName) { died = true }
+        }
+        check(application.bindService(intent, first, Context.BIND_AUTO_CREATE))
+        try {
+            val deadline = android.os.SystemClock.uptimeMillis() + 15_000
+            while (!died && android.os.SystemClock.uptimeMillis() < deadline) {
+                drainDueMessages(); android.os.SystemClock.sleep(5)
+            }
+            check(died) { "Process startup death left its binding pending" }
+        } finally { application.unbindService(first) }
+        var state: android.os.Bundle? = null
+        val receiver = android.os.Messenger(android.os.Handler(android.os.Looper.getMainLooper()) {
+            state = it.data; true
+        })
+        val retry = object : android.content.ServiceConnection {
+            override fun onServiceConnected(name: android.content.ComponentName, binder: android.os.IBinder) {
+                android.os.Messenger(binder).send(android.os.Message.obtain().apply { replyTo = receiver })
+            }
+            override fun onServiceDisconnected(name: android.content.ComponentName) { }
+        }
+        check(application.bindService(intent, retry, Context.BIND_AUTO_CREATE))
+        try {
+            val deadline = android.os.SystemClock.uptimeMillis() + 15_000
+            while (state == null && android.os.SystemClock.uptimeMillis() < deadline) {
+                drainDueMessages(); android.os.SystemClock.sleep(5)
+            }
+            val ready = checkNotNull(state) { "Fresh process failed to bind after startup failure" }
+            check(ready.getString("process") == "$pkg:retry")
+            check(ready.getInt("uid") == android.os.Process.myUid())
+            check(ready.getStringArrayList("events") == arrayListOf("provider", "service-create", "service-bind"))
+            check(manager.runningAppProcesses.orEmpty().filter { it.processName in siblings }
+                .associate { it.processName to it.pid } == siblings)
+            println("Process startup recovery: dead binding reported, fresh service start succeeded, sibling PIDs preserved")
+        } finally { application.unbindService(retry) }
     }
 
     private fun drainDueMessages() {

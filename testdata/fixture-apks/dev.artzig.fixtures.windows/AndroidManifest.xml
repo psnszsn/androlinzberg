@@ -18,6 +18,9 @@
         <service android:name=".ColdProcessService" android:process=":cold" android:exported="false" />
         <provider android:name=".ProviderOnlyProcess" android:process=":provider" android:exported="false"
             android:authorities="dev.artzig.fixtures.windows.provider" />
+        <provider android:name=".FailingStartupProvider" android:process=":retry" android:exported="false"
+            android:authorities="dev.artzig.fixtures.windows.retry" />
+        <service android:name=".RetryProcessService" android:process=":retry" android:exported="false" />
         <activity android:name=".SecondActivity" android:resizeableActivity="true" />
         <activity android:name=".IndependentTaskActivity" android:resizeableActivity="true"
             android:taskAffinity="dev.artzig.fixtures.windows.independent" />
