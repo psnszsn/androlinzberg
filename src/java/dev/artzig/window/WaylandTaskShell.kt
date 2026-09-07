@@ -152,7 +152,6 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
     private fun current(entry: Entry): Boolean = !closed && entries[entry.key.id] === entry
 
     private fun resize(entry: Entry, size: Size) {
-        entry.presentationSize = size
         entry.desired = size
         val window = entry.window ?: return
         if (entry.pending != null) return // Coalesce a configure storm behind one Android sync.
@@ -160,6 +159,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         val height = if (entry.info.resizable) size.height else entry.info.height
         val proposal = geometry.prepare(entry.key, width, height)
         if (proposal is TaskGeometry.Proposal.Rejected) {
+            entry.desired = null
             window.rejected(proposal.reason)
             if (geometry.bounds(entry.key) == null) {
                 entry.closing = true
@@ -178,6 +178,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
                     entry.pending = null
                     if (success) {
                         check(geometry.commit(change))
+                        entry.presentationSize = size
                         window.committed(change.after, size)
                     } else {
                         check(geometry.cancel(change))

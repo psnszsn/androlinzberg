@@ -177,7 +177,31 @@ object WaylandTaskShellSmoke {
         repaired.done(true)
         reusedAndroid.events.changed(reusedTask.info)
         check(reusedAndroid.configurations.size == 2)
+        val reusedWindow = reusedDesktop.windows.single()
+        reusedWindow.events.configure(WaylandTaskShell.Size(110, 90))
+        reusedAndroid.configurations.last().done(false)
+        reusedAndroid.events.changed(reusedTask.info.copy(left = 500))
+        check(reusedAndroid.configurations.last().size == WaylandTaskShell.Size(100, 80)) {
+            "Failed configure replaced the accepted presentation size"
+        }
+        reusedAndroid.configurations.last().done(true)
         reused.close()
+        val rejectedAndroid = Android()
+        val rejectedDesktop = Desktop()
+        val boundedTask = task(22)
+        rejectedAndroid.initial = listOf(boundedTask)
+        val bounded = WaylandTaskShell(rejectedAndroid, rejectedDesktop, TaskGeometry(200, 200))
+        bounded.start()
+        rejectedAndroid.configurations.single().done(true)
+        rejectedDesktop.windows.single().events.configure(WaylandTaskShell.Size(300, 300))
+        check(rejectedAndroid.configurations.size == 1)
+        rejectedAndroid.events.changed(boundedTask.info.copy(left = 20))
+        check(rejectedAndroid.configurations.size == 2 &&
+            rejectedAndroid.configurations.last().size == WaylandTaskShell.Size(100, 80)) {
+            "Rejected configure poisoned later Android bounds reconciliation"
+        }
+        rejectedAndroid.configurations.last().done(true)
+        bounded.close()
         val tinyAndroid = Android()
         val tinyDesktop = Desktop()
         val oversized = task(21)
