@@ -10,14 +10,13 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 19 (budget 19). Survivors: 13. Total: 32.
+Pending: 16 (budget 16). Survivors: 12. Total: 28.
 
 ## Survivors
 
 | Stub | Reason | Audit |
 |---|---|---|
 | `android/hardware/Camera.java` | legacy camera client is JNI/cameraserver-backed and no camera service is hosted | blocked |
-| `android/hardware/camera2/CameraManager.java` | camera stack (cameraserver, CameraMetadataNative JNI, frameworks/av camera AIDL) not hosted; android.telecom.Connection javadoc import | blocked |
 | `android/hardware/gnss/V2_1/IGnssMeasurementCallback.java` | generated callback requires the legacy libhwbinder runtime | no-aosp-source |
 | `android/media/MediaMetadataRetriever.java` | JNI natives (libmedia_jni) | blocked |
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
@@ -42,7 +41,7 @@ Pending: 19 (budget 19). Survivors: 13. Total: 32.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (364 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < PermissionUsageHelper < AppOpsManager); android.companion.virtual.VirtualDevi |
+| `android/app/AppOpsManager.java` | blocked | frameworks/base/core/java/android/app/AppOpsManager.java (363 to add); android.net.http.HttpEngineJavaClasses: no source in the checkout (via HttpEngineJavaClasses < HttpEngine < ZygoteInit < AppOpsManager); android.permission.PermissionUsageHelper: existing host class android.permission.PermissionM |
 
 ### audio
 
@@ -61,10 +60,10 @@ Pending: 19 (budget 19). Survivors: 13. Total: 32.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2835 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2833 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2944 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2846 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2668 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog < Package |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2666 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog <  |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2777 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashRecoveryAdaptor < PackageManagerSer |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2679 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watchdog |
 
 ### runtime
 
@@ -76,17 +75,14 @@ Pending: 19 (budget 19). Survivors: 13. Total: 32.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2833 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2833 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
+| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2666 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Wat |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2666 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: no source in the checkout (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityManagerService < Watch |
 
 ### virtualdevice
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/companion/virtual/IVirtualDevice.java` | blocked | frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl (187 to add, AIDL interface); android.companion.virtual.VirtualDevice: existing stub android.companion.virtual.VirtualDeviceParams lacks member POLICY_TYPE_CAMERA (via VirtualDevice < VirtualCameraConfig < IVirtualDevice); andro |
-| `android/companion/virtual/VirtualDeviceManager.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceManager.java (206 to add); android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceManager); android.companion.virtual.Virtual |
-| `android/companion/virtual/VirtualDeviceParams.java` | blocked | frameworks/base/core/java/android/companion/virtual/VirtualDeviceParams.java (8 to add); android.companion.virtual.sensor.VirtualSensor: existing host class android.companion.virtual.IVirtualDevice lacks method getDeviceId (via VirtualSensor < VirtualDeviceParams); android.companion.virtual.sensor.V |
-| `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (6 to add), not vendored; android.companion.virtual.VirtualDevice: existing host class android.companion.virtual.IVirtualDevice lacks method getDevicePolicy (via VirtualDevice < VirtualDeviceMan |
+| `com/android/server/companion/virtual/VirtualDeviceManagerInternal.java` | replaceable | frameworks/base/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java (1 to add), not vendored |
 
 ### webkit
 
@@ -134,14 +130,14 @@ decides where to cut.
 | `android.media.SubtitleController` | 10 | 3 |
 | `android.webkit.WebViewProvider` | 10 | 3 |
 | `android.widget.VideoView` | 10 | 3 |
-| `android.hardware.camera2.CameraCharacteristics` | 9 | 1 |
-| `android.hardware.camera2.CaptureRequest` | 9 | 1 |
-| `android.hardware.camera2.params.ExtensionSessionConfiguration` | 9 | 1 |
-| `android.hardware.camera2.params.StreamConfigurationMap` | 9 | 2 |
-| `android.renderscript.Allocation` | 9 | 3 |
 | `android.media.Ringtone` | 8 | 1 |
-| `android.hardware.camera2.CameraDevice` | 8 | 2 |
-| `android.hardware.camera2.TotalCaptureResult` | 8 | 3 |
-| `android.hardware.camera2.CameraExtensionCharacteristics.Extension` | 8 | 4 |
-| `android.hardware.camera2.impl.PhysicalCaptureResultInfo` | 8 | 4 |
 | `android.media.AudioMix` | 7 | 1 |
+| `android.media.MediaExtractor` | 7 | 1 |
+| `android.media.AudioMixMatchCriterion` | 7 | 2 |
+| `android.media.MediaCas` | 7 | 2 |
+| `android.os.IHwBinder` | 7 | 2 |
+| `android.hardware.cas.IMediaCasService` | 7 | 3 |
+| `android.media.MediaCasException` | 7 | 3 |
+| `android.media.tv.TvInputService.PriorityHintUseCaseType` | 7 | 3 |
+| `android.os.HwParcel` | 7 | 3 |
+| `android.hardware.cas.IDescrambler` | 7 | 4 |

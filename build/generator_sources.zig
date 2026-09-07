@@ -5,12 +5,11 @@ const std = @import("std");
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
 
-// SyncFence imports ImageWriter and TrafficStats imports MediaPlayer only for
-// Javadoc; TextToSpeech similarly imports VirtualDevice. Pinned SDK headers
-// satisfy javac; the audit forbids runtime use.
+// TrafficStats imports MediaPlayer only for Javadoc. The pinned SDK header
+// satisfies javac; the audit forbids runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
-    .classes = [_][]const u8{ "android/media/ImageWriter", "android/media/MediaPlayer", "android/companion/virtual/VirtualDevice", "android/hardware/camera2/CameraMetadata" },
+    .classes = [_][]const u8{ "android/media/MediaPlayer" },
 };
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
@@ -321,6 +320,61 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IDeviceVolumeBehaviorDispatcher.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IDevicesForAttributesCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/ILoudnessCodecUpdatesDispatcher.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/CameraExtensionSessionStats.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/ICamera.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/ICameraClient.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/ICameraService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/ICameraServiceListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/camera2/CameraMetadataInfo.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/camera2/ICameraDeviceCallbacks.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/camera2/ICameraDeviceUser.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/camera2/ICameraInjectionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/camera2/ICameraInjectionSession.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/camera/aidl/android/hardware/camera2/ICameraOfflineSession.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/IVirtualDevice.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/IVirtualDeviceActivityListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/IVirtualDeviceIntentInterceptor.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/IVirtualDeviceListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/IVirtualDeviceManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/IVirtualDeviceSoundEffectListener.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/audio/IAudioConfigChangedCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/audio/IAudioRoutingCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/camera/IVirtualCameraCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/companion/virtual/sensor/IVirtualSensorCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/CameraOutputConfig.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/CameraSessionConfig.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/CaptureBundle.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/CaptureFailure.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/CaptureStageImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IAdvancedExtenderImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/ICameraExtensionsProxyService.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/ICaptureCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/ICaptureProcessorImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IImageCaptureExtenderImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IImageProcessorImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IInitializeSessionCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IPreviewExtenderImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IPreviewImageProcessorImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IProcessResultImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IRequestCallback.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IRequestProcessorImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/IRequestUpdateProcessorImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/ISessionProcessorImpl.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/LatencyPair.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/LatencyRange.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/OutputConfigId.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/OutputSurface.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/ParcelCaptureResult.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/ParcelImage.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/ParcelTotalCaptureResult.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/Request.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/Size.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/camera2/extension/SizeList.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/devicestate/IDeviceStateManager.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/core/java/android/hardware/devicestate/IDeviceStateManagerCallback.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/common/fmq/aidl/android/hardware/common/fmq/GrantorDescriptor.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/common/fmq/aidl/android/hardware/common/fmq/MQDescriptor.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/common/fmq/aidl/android/hardware/common/fmq/SynchronizedReadWrite.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMediaRoute2ProviderService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMediaRoute2ProviderServiceCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/IMediaRouter2.aidl" },
@@ -1391,6 +1445,7 @@ pub const logtags = [_]Logtags{
 };
 
 pub const aconfig = [_]Aconfig{
+    .{ .package = "android.hardware.devicestate.feature.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/hardware/devicestate/feature/flags.aconfig"} },
     .{ .package = "android.os.profiling", .container = "com.android.profiling", .source = .aosp, .declarations = &.{"packages/modules/Profiling/framework/java/android/os/flags.aconfig"} },
     .{ .package = "com.android.nfc.module.flags", .container = "com.android.nfcservices", .source = .aosp, .declarations = &.{"packages/modules/Nfc/flags/flags.aconfig"} },
     .{ .package = "com.android.sdksandbox.flags", .container = "com.android.adservices", .source = .aosp, .declarations = &.{"packages/modules/AdServices/sdksandbox/flags/sandbox_flags.aconfig"} },

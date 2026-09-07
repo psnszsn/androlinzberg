@@ -208,6 +208,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.WIFI_SERVICE,
             HostedWifiService(HostedPermissions(packageManager)))
         android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
+        android.os.ServiceManager.addService(Context.VIRTUAL_DEVICE_SERVICE, HostedVirtualDeviceService(context))
         val activityTaskManager = HostedActivityTaskManagerService(
             context,
             activityManager,

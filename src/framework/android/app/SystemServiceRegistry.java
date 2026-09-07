@@ -188,6 +188,22 @@ public final class SystemServiceRegistry {
         // ServiceManager; the hosted services answer as a device without a radio.
         // AOSP ActivityThread.initializeMainlineModules and service wrappers.
         android.bluetooth.BluetoothFrameworkInitializer.registerServiceWrappers();
+        // Pinned SystemServiceRegistry camera/virtual-device construction expressions.
+        registerService(Context.CAMERA_SERVICE, android.hardware.camera2.CameraManager.class,
+                new CachedServiceFetcher<android.hardware.camera2.CameraManager>() {
+            @Override public android.hardware.camera2.CameraManager createService(ContextImpl ctx) {
+                return new android.hardware.camera2.CameraManager(ctx);
+            }});
+        registerService(Context.VIRTUAL_DEVICE_SERVICE, android.companion.virtual.VirtualDeviceManager.class,
+                new CachedServiceFetcher<android.companion.virtual.VirtualDeviceManager>() {
+            @Override public android.companion.virtual.VirtualDeviceManager createService(ContextImpl ctx)
+                    throws ServiceNotFoundException {
+                if (!ctx.getResources().getBoolean(com.android.internal.R.bool.config_enableVirtualDeviceManager)) return null;
+                android.companion.virtual.IVirtualDeviceManager service =
+                    android.companion.virtual.IVirtualDeviceManager.Stub.asInterface(
+                        android.os.ServiceManager.getServiceOrThrow(Context.VIRTUAL_DEVICE_SERVICE));
+                return new android.companion.virtual.VirtualDeviceManager(service, ctx.getOuterContext());
+            }});
         registerService(Context.COMPANION_DEVICE_SERVICE,
                 android.companion.CompanionDeviceManager.class,
                 new CachedServiceFetcher<android.companion.CompanionDeviceManager>() {

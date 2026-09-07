@@ -27,6 +27,27 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+
+- VirtualDeviceManager, VirtualDeviceParams, their Binder protocol and CameraManager
+  now compile verbatim with the stock virtual input/audio/sensor/camera and camera2
+  dependency closure. Context exposes both managers. The hosted virtual-device service
+  validates permissions, identity and companion associations, owns listener lifetimes,
+  and reports stock defaults when no virtual devices exist. CameraManager follows the
+  stock absent-camera-service path: empty camera lists and CAMERA_DISCONNECTED for
+  unavailable characteristics. VirtualDeviceParams now has stock validation, parceling
+  and policy constants (clipboard policy is 4; the former placeholder incorrectly used 3).
+  This does not implement virtual device creation, camera capture, ImageReader/ImageWriter
+  buffer queues or RenderScript natives; those imported dependency paths still need native
+  support. AudioTrack's required array overloads preserve AOSP argument/state errors and
+  zero-length results; nonempty array submission reports structured unsupported behavior
+  because the existing backend lacks that contract. No Wayland, PipeWire or FFmpeg backend
+  changes were made. The AIDL closure tool now follows generic structured parcelables,
+  with a dependency regression test. All 10 closure tests, JVM/system, native/Binder and
+  build checks pass; all 11 APK tests pass (39 steps, zero structured runtime issues).
+  The desktop drawer screenshot was inspected. The inventory is 28 stubs: 16 pending
+  and 12 survivors. The rebuilt AOSP archive is repinned, with all 85 new inputs
+  byte-verified; ART remains unchanged. The broader stock-client plan remains unfinished.
+
 - MediaRouter2 now compiles verbatim with MediaRouter2Manager, the legacy MediaRouter,
   MediaRoute2ProviderService and their route/session models. The hosted Binder service
   exposes the existing desktop speaker as one fixed-volume system route. It owns

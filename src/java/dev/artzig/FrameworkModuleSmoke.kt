@@ -295,6 +295,7 @@ internal object FrameworkModuleSmoke {
             testHostedActivityTaskServiceTransactions()
             StockAudioPolicyClientsSmoke.run()
             StockMediaRouterSmoke.run(::drainMainQueue)
+            StockVirtualDeviceClientsSmoke.run()
             testHostedAudioCapabilities()
             testAsyncMediaCodecFlushRestartsOnePump()
             testMediaMetricsContracts()

@@ -142,6 +142,33 @@ interface IExample { void call(); }
                 aosp_closure.Classes([root / "classes"]), aosp_closure.Stubs(root / "stubs"))
             self.assertEqual("aidl-interface", resolver.node("android.example.IExample").kind)
 
+    def test_generic_aidl_parcelable_includes_field_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "android/example"
+            directory.mkdir(parents=True)
+            (directory / "Queue.aidl").write_text("""package android.example;
+import android.example.Grantor;
+@VintfStability parcelable Queue<T, Flavor> { Grantor[] grantors; int quantum; }
+""")
+            (directory / "Grantor.aidl").write_text(
+                "package android.example;\nparcelable Grantor { int fdIndex; }")
+            manifest, sources = root / "manifest", root / "sources"
+            manifest.write_text("")
+            sources.write_text("")
+            classes = root / "classes/java/lang"
+            classes.mkdir(parents=True)
+            (classes / "Object.class").write_bytes(b"")
+            resolver = aosp_closure.Resolver(root, aosp_closure.SourceIndex(root, None),
+                aosp_closure.Manifest(manifest), aosp_closure.SourceRules(sources),
+                aosp_closure.Classes([root / "classes"]), aosp_closure.Stubs(root / "stubs"))
+            closure = resolver.closure(["android.example.Queue"])
+            self.assertEqual("aidl-structured", closure["android.example.Queue"].kind)
+            self.assertIn("android.example.Grantor", closure)
+            rendered = aosp_closure.render_closure(resolver, ["android.example.Queue"], closure)
+            self.assertIn('path = "android/example/Queue.aidl"', rendered)
+            self.assertIn('path = "android/example/Grantor.aidl"', rendered)
+
     def test_live_aidl_excludes_frozen_versions_from_closure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

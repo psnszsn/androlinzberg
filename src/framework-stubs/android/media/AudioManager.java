@@ -24,6 +24,23 @@ public class AudioManager {
     public @interface SystemVolumeFlags {}
     public @interface Flags {}
 
+    // Pinned AudioManager annotation for virtual-device sound requests.
+    @IntDef(prefix = { "FX_" }, value = {
+            FX_KEY_CLICK,
+            FX_FOCUS_NAVIGATION_UP,
+            FX_FOCUS_NAVIGATION_DOWN,
+            FX_FOCUS_NAVIGATION_LEFT,
+            FX_FOCUS_NAVIGATION_RIGHT,
+            FX_KEYPRESS_STANDARD,
+            FX_KEYPRESS_SPACEBAR,
+            FX_KEYPRESS_DELETE,
+            FX_KEYPRESS_RETURN,
+            FX_KEYPRESS_INVALID,
+            FX_BACK
+    })
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface SystemSoundEffect {}
+
     public static final String ACTION_HEADSET_PLUG = "android.intent.action.HEADSET_PLUG";
     public static final int PLAYBACK_OFFLOAD_NOT_SUPPORTED = 0;
     public static final int PLAYBACK_OFFLOAD_SUPPORTED = 1;

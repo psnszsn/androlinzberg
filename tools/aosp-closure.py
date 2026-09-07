@@ -69,6 +69,7 @@ AIDL_ROOTS = (
     "frameworks/base/core/java",
     "frameworks/base/graphics/java",
     "frameworks/base/media/java",
+    "frameworks/av/camera/aidl",
     "frameworks/base/keystore/java",
     "frameworks/libs/modules-utils/java",
     "frameworks/native/libs/input",
@@ -93,6 +94,7 @@ AIDL_ROOTS = (
     "hardware/interfaces/biometrics/face/aidl",
     "hardware/interfaces/biometrics/fingerprint/aidl",
     "hardware/interfaces/common/aidl",
+    "hardware/interfaces/common/fmq/aidl",
     "hardware/interfaces/keymaster/aidl",
     "hardware/interfaces/security/keymint/aidl",
     "system/hardware/interfaces/keystore2/aidl",
@@ -194,7 +196,7 @@ SIMPLE_QUALIFIED_RE = re.compile(r"\b([A-Z]\w*(?:\.[A-Z]\w*)+)\b")
 ACONFIG_PACKAGE_RE = re.compile(r'^\s*package:\s*"([\w.]+)"', re.M)
 SIMPLE_RE = re.compile(r"\b([A-Z]\w*)\b")
 NATIVE_RE = re.compile(r"\bnative\b\s+[\w<>\[\], .]+\s*\(|\bSystem\.loadLibrary\b|\bRuntime\.getRuntime\(\)\.loadLibrary\b")
-AIDL_DECL_RE = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:oneway\s+)?(interface|parcelable|enum|union)\s+(\w+)\s*(\{|;|extends|:)?", re.M)
+AIDL_DECL_RE = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:oneway\s+)?(interface|parcelable|enum|union)\s+(\w+)\s*(?:<[^>]+>\s*)?(\{|;|extends|:)?", re.M)
 
 
 def read(path: Path) -> str:

@@ -10,6 +10,10 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 public class AudioTrack implements AudioRouting {
+    // Pinned AudioTrack write-mode annotation used by virtual audio injection.
+    @IntDef({ WRITE_BLOCKING, WRITE_NON_BLOCKING })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface WriteMode {}
     public static final int STATE_UNINITIALIZED = 0;
     public static final int STATE_INITIALIZED = 1;
     public static final int STATE_NO_STATIC_DATA = 2;
@@ -138,6 +142,16 @@ public class AudioTrack implements AudioRouting {
     public void release() {
         if (mHandle != 0) { nativeRelease(mHandle); mHandle = 0; }
         mPlayState = PLAYSTATE_STOPPED;
+    }
+
+    public int write(short[] audioData, int offsetInShorts, int sizeInShorts) {
+        return write(audioData, offsetInShorts, sizeInShorts, WRITE_BLOCKING);
+    }
+    public int write(short[] audioData, int offsetInShorts, int sizeInShorts, int writeMode) {
+        return dev.artzig.HostedAudioArrayWrites.write(this, audioData, offsetInShorts, sizeInShorts, writeMode);
+    }
+    public int write(float[] audioData, int offsetInFloats, int sizeInFloats, int writeMode) {
+        return dev.artzig.HostedAudioArrayWrites.write(this, audioData, offsetInFloats, sizeInFloats, writeMode);
     }
 
     public int write(byte[] audioData, int offsetInBytes, int sizeInBytes) {
