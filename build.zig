@@ -1114,6 +1114,17 @@ pub fn build(b: *std.Build) void {
     const input_channel_jvm_step = b.step("input-channel-jvm-test", "Verify stock input JNI, Binder identity, Parcel, event callbacks and Looper");
     input_channel_jvm_step.dependOn(&input_channel_log.step);
     jvm_test_step.dependOn(input_channel_jvm_step);
+    const stock_window_boot = @import("build/command.zig").create(b);
+    setApplicationEnvironment(stock_window_boot, application_tree);
+    stock_window_boot.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    stock_window_boot.addArg("--javatest");
+    stock_window_boot.setEnvironment("AZK_TEST_CLASS", "dev.artzig.window.StockWindowBootSmoke");
+    stock_window_boot.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+    stock_window_boot.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    stock_window_boot.run.setName("verify stock WMS and ATMS session startup");
+    stock_window_boot.run.has_side_effects = true;
+    b.step("stock-window-boot-test", "Boot stock window/task services and query their shared display")
+        .dependOn(&stock_window_boot.run.step);
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

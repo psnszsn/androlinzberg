@@ -84,6 +84,18 @@ object HostedLogicalDisplaySmoke {
             check(order.last() == "configure")
             check(display.getDisplayInfo(0)!!.logicalWidth == 1280)
             check(projections.last().frame == Rect(0, 0, 1280, 720))
+            val previousRequests = traversalRequests
+            val previousProjections = projections.size
+            display.setDisplayProperties(0, true, true, true)
+            check(display.isMinimalPostProcessingRequested() && traversalRequests == previousRequests)
+            display.performTraversal(transaction)
+            check(projections.size == previousProjections + 1)
+            display.setDisplayProperties(0, true, true, false)
+            check(traversalRequests == previousRequests)
+            display.setDisplayProperties(900, false, false, false)
+            check(display.isMinimalPostProcessingRequested())
+            display.setDisplayProperties(0, false, false, false)
+            check(!display.isMinimalPostProcessingRequested() && traversalRequests == previousRequests + 1)
         }
     }
 }

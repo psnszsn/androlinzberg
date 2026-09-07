@@ -213,6 +213,9 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/net/http/HttpResponseCache.java");
     try c.file("$CJ/android/os/VintfObject.java");
     try c.file("$FB/services/core/java/com/android/server/companion/virtual/VirtualDeviceManagerInternal.java");
+    try c.file("$CJ/android/app/usage/EventList.java");
+    try c.file("$FB/services/usage/java/com/android/server/usage/IntervalStats.java");
+    try c.file("$FB/services/usage/java/com/android/server/usage/PackagesTokenData.java");
     try c.file("$FB/core/java/android/hardware/devicestate/DeviceStateManagerInternal.java");
     try c.file("$FB/services/core/java/com/android/server/devicestate/DeviceStateManagerService.java");
     try c.file("$FB/services/core/java/com/android/server/devicestate/DeviceStateManagerShellCommand.java");
@@ -3760,6 +3763,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/pm/KnownPackages.java");
     try c.file("$FB/services/core/java/com/android/server/pm/PackageKeySetData.java");
     try c.file("$FB/services/core/java/com/android/server/pm/PackageList.java");
+    try c.file("$FB/services/core/java/com/android/server/pm/PackageObserverHelper.java");
     try c.file("$FB/services/core/java/com/android/server/pm/PackageSignatures.java");
     try c.file("$FB/services/core/java/com/android/server/pm/RestrictionsSet.java");
     try c.file("$FB/services/core/java/com/android/server/pm/UserManagerInternal.java");

@@ -54,6 +54,27 @@ object HostedSessionDisplaySmoke {
                 ColorSpace.Named.SRGB.ordinal, OverlayProperties.getDefault(),
                 invalidateDisplayCache = { invalidations++ })
             val local = localService(service)
+            check(local.getDisplayIdToMirror(0) == 0 && local.getDisplayIdToMirror(900) == Display.INVALID_DISPLAY)
+            local.setDisplayProperties(0, true, 90f, 99, 80f, 100f, true, true, false)
+            check(service.isMinimalPostProcessingRequested(0))
+            check(service.getDisplayInfo(0)!!.modeId == 1) // One physical mode despite application votes.
+            local.setDisplayProperties(0, false, 0f, 0, 0f, 0f, false, false, true)
+            check(!service.isMinimalPostProcessingRequested(0))
+            local.setScreenBrightnessOverrideFromWindowManager(SparseArray())
+            for (brightness in floatArrayOf(Float.NaN, -1f, 1.1f, Float.POSITIVE_INFINITY)) {
+                local.setScreenBrightnessOverrideFromWindowManager(SparseArray<DisplayManagerInternal.DisplayBrightnessOverrideRequest>().apply {
+                    put(0, DisplayManagerInternal.DisplayBrightnessOverrideRequest().apply { this.brightness = brightness })
+                })
+            }
+            val mark = dev.artzig.ArtzigTestDiagnostics.issueSequence()
+            check(runCatching {
+                local.setScreenBrightnessOverrideFromWindowManager(SparseArray<DisplayManagerInternal.DisplayBrightnessOverrideRequest>().apply {
+                    put(0, DisplayManagerInternal.DisplayBrightnessOverrideRequest().apply { brightness = 0.5f })
+                })
+            }.exceptionOrNull() is UnsupportedOperationException)
+            val issues = org.json.JSONObject(dev.artzig.ArtzigTestDiagnostics.snapshot(Long.MAX_VALUE, mark)).getJSONArray("issues")
+            check(issues.length() == 1 && issues.getJSONObject(0).getString("member") ==
+                "setScreenBrightnessOverrideFromWindowManager")
             check(service.getDisplayIds(false).contentEquals(intArrayOf(0)))
             check(service.getDisplayInfo(900) == null && local.getPossibleDisplayInfo(900).isEmpty())
             check(runCatching { service.isMinimalPostProcessingRequested(900) }

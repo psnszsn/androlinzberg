@@ -34,6 +34,7 @@ class HostedSessionDisplayService(private val context: Context, private val hand
     private val callbacks = SparseArray<Callback>()
     private val accessUids = SparseArray<IntArray>()
     private var windowManager: com.android.server.wm.WindowManagerInternal? = null
+    @Volatile private var minimalPostProcessingAllowed = true
     private val display = HostedLogicalDisplay(physicalInfo, output, ::displayChanged, {
         handler.post { windowManager?.requestTraversalFromDisplayManager() }
     }, installRotation)
@@ -41,7 +42,20 @@ class HostedSessionDisplayService(private val context: Context, private val hand
     fun attachWindowManager(manager: com.android.server.wm.WindowManagerInternal) {
         check(windowManager == null)
         windowManager = manager
+        val uri = android.provider.Settings.Secure.getUriFor(
+            android.provider.Settings.Secure.MINIMAL_POST_PROCESSING_ALLOWED)
+        context.contentResolver.registerContentObserver(uri, false,
+            object : android.database.ContentObserver(handler) {
+                override fun onChange(selfChange: Boolean) { updateMinimalPostProcessingAllowed() }
+            })
+        updateMinimalPostProcessingAllowed()
         manager.requestTraversalFromDisplayManager()
+    }
+
+    private fun updateMinimalPostProcessingAllowed() {
+        minimalPostProcessingAllowed = android.provider.Settings.Secure.getIntForUser(
+            context.contentResolver, android.provider.Settings.Secure.MINIMAL_POST_PROCESSING_ALLOWED,
+            1, android.os.UserHandle.USER_SYSTEM) != 0
     }
 
     override fun getDisplayInfo(displayId: Int): DisplayInfo? =
@@ -60,7 +74,7 @@ class HostedSessionDisplayService(private val context: Context, private val hand
     override fun isMinimalPostProcessingRequested(displayId: Int): Boolean {
         // The stock query dereferences the selected logical display directly.
         display.getDisplayInfo(displayId)!!
-        return false
+        return display.isMinimalPostProcessingRequested()
     }
 
     override fun registerCallback(callback: IDisplayManagerCallback?) = registerCallbackWithEventMask(
@@ -127,6 +141,33 @@ class HostedSessionDisplayService(private val context: Context, private val hand
     fun setDisplayOffsets(displayId: Int, x: Int, y: Int) = display.setDisplayOffsets(displayId, x, y)
     fun setDisplayScalingDisabled(displayId: Int, disabled: Boolean) =
         display.setDisplayScalingDisabled(displayId, disabled)
+    fun setDisplayProperties(displayId: Int, hasContent: Boolean, requestedRefreshRate: Float,
+        requestedModeId: Int, requestedMinRefreshRate: Float, requestedMaxRefreshRate: Float,
+        preferMinimalPostProcessing: Boolean, disableHdrConversion: Boolean, inTraversal: Boolean) {
+        // DMS's app mode votes cannot select another mode on this fixed-mode
+        // output. HDR conversion is absent (mHdrConversionMode == null branch).
+        // The primary display always uses its own layer stack, even without
+        // content; there is no other Android display to mirror.
+        display.setDisplayProperties(displayId, hasContent,
+            minimalPostProcessingAllowed && preferMinimalPostProcessing, inTraversal)
+    }
+    fun setScreenBrightnessOverrideFromWindowManager(
+        overrides: SparseArray<DisplayManagerInternal.DisplayBrightnessOverrideRequest>) {
+        val brightness = overrides[Display.DEFAULT_DISPLAY]?.brightness ?: return
+        // DisplayBrightnessController only selects a valid override in [0, 1].
+        // Missing, NaN and out-of-range values all clear the override.
+        if (brightness >= android.os.PowerManager.BRIGHTNESS_MIN &&
+            brightness <= android.os.PowerManager.BRIGHTNESS_MAX) {
+            throw dev.artzig.ArtzigTestDiagnostics.unsupported("DisplayManagerInternal",
+                "setScreenBrightnessOverrideFromWindowManager",
+                "The desktop compositor does not expose per-window display brightness")
+        }
+    }
+    fun getDisplayIdToMirror(displayId: Int): Int =
+        if (displayId == Display.DEFAULT_DISPLAY) Display.DEFAULT_DISPLAY else Display.INVALID_DISPLAY
+    fun onDisplayBelongToTopologyChanged(displayId: Int, inTopology: Boolean) {
+        // DMS's null DisplayTopologyCoordinator branch: a single Android display.
+    }
     fun setDisplayAccessUIDs(uids: SparseArray<IntArray>) { synchronized(lock) {
         accessUids.clear()
         uids[Display.DEFAULT_DISPLAY]?.let { accessUids.put(Display.DEFAULT_DISPLAY, it.clone()) }

@@ -27,6 +27,16 @@ import android.os.UserHandle
 class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), android.app.usage.IUsageStatsManager by unsupported<android.app.usage.IUsageStatsManager>() {
     override fun asBinder(): android.os.IBinder = this
 
+    private val configurationUsage = com.android.server.usage.HostedConfigurationUsage()
+
+    fun reportConfigurationChange(config: android.content.res.Configuration?, userId: Int) {
+        if (config == null) {
+            android.util.Log.w("UsageStatsService", "Configuration event reported with a null config")
+            return
+        }
+        configurationUsage.report(config, userId)
+    }
+
     @Volatile var packageService: HostedPackageManagerService? = null
 
     private class Event(val packageName: String, val type: Int, val timeStamp: Long)
@@ -114,13 +124,17 @@ class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), and
         }
     }
 
-    override fun queryConfigurationStats(bucketType: Int, beginTime: Long, endTime: Long, callingPackage: String?): ParceledListSlice<*>? =
-        ParceledListSlice(emptyList<android.app.usage.ConfigurationStats>())
+    override fun queryConfigurationStats(bucketType: Int, beginTime: Long, endTime: Long, callingPackage: String?): ParceledListSlice<*>? {
+        checkCallerIsSystemOrSameApp(callingPackage)
+        require(bucketType in UsageStatsManager.INTERVAL_DAILY..UsageStatsManager.INTERVAL_BEST) { "Bad interval type: $bucketType" }
+        return ParceledListSlice(configurationUsage.query(UserHandle.getUserId(Binder.getCallingUid()), beginTime, endTime))
+    }
 
     override fun queryEventStats(bucketType: Int, beginTime: Long, endTime: Long, callingPackage: String?): ParceledListSlice<*>? =
         ParceledListSlice(emptyList<android.app.usage.EventStats>())
 
-    private fun eventsBetween(beginTime: Long, endTime: Long, packageFilter: String?): UsageEvents {
+    private fun eventsBetween(beginTime: Long, endTime: Long, packageFilter: String?,
+        userId: Int = UserHandle.getUserId(Binder.getCallingUid())): UsageEvents {
         val list = ArrayList<UsageEvents.Event>()
         val pool = LinkedHashSet<String>()
         synchronized(lock) {
@@ -133,6 +147,13 @@ class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), and
                 pool.add(event.packageName)
             }
         }
+        for (event in configurationUsage.events(userId, beginTime, endTime)) {
+            if (packageFilter == null || packageFilter == event.mPackage) {
+                list.add(event)
+                pool.add(event.mPackage)
+            }
+        }
+        list.sortBy { it.mTimeStamp }
         // UsageEvents resolves pool indices with a binary search: the pool must be sorted.
         return UsageEvents(list, pool.sorted().toTypedArray(), false)
     }
@@ -147,9 +168,12 @@ class HostedUsageStatsService : android.app.usage.IUsageStatsManager.Stub(), and
         return eventsBetween(beginTime, endTime, callingPackage)
     }
 
-    override fun queryEventsForUser(beginTime: Long, endTime: Long, userId: Int, callingPackage: String?): UsageEvents? = queryEvents(beginTime, endTime, callingPackage)
+    override fun queryEventsForUser(beginTime: Long, endTime: Long, userId: Int, callingPackage: String?): UsageEvents? {
+        checkCallerIsSystemOrSameApp(callingPackage)
+        return eventsBetween(beginTime, endTime, null, userId)
+    }
     override fun queryEventsForPackageForUser(beginTime: Long, endTime: Long, userId: Int, pkg: String?, callingPackage: String?): UsageEvents? =
-        eventsBetween(beginTime, endTime, pkg)
+        eventsBetween(beginTime, endTime, pkg, userId)
     override fun queryEventsWithFilter(query: UsageEventsQuery?, callingPackage: String?): UsageEvents? {
         query ?: return null
         return eventsBetween(query.beginTimeMillis, query.endTimeMillis, null)

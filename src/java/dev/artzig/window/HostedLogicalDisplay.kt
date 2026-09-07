@@ -33,6 +33,8 @@ class HostedLogicalDisplay(physicalInfo: DisplayInfo, private val output: Output
     private var offsetX = 0
     private var offsetY = 0
     private var scalingDisabled = false
+    private var hasContent = false
+    private var minimalPostProcessingRequested = false
     private val position = Point()
     private val transactionListeners = CopyOnWriteArrayList<DisplayTransactionListener>()
 
@@ -60,6 +62,25 @@ class HostedLogicalDisplay(physicalInfo: DisplayInfo, private val output: Output
     }
 
     fun getStableDisplaySize(): Point = Point(physical.logicalWidth, physical.logicalHeight)
+
+    fun isMinimalPostProcessingRequested(): Boolean = synchronized(lock) { minimalPostProcessingRequested }
+
+    fun setDisplayProperties(displayId: Int, content: Boolean, minimalProcessing: Boolean,
+        inTraversal: Boolean) {
+        val updated = synchronized(lock) {
+            if (displayId != Display.DEFAULT_DISPLAY ||
+                (hasContent == content && minimalPostProcessingRequested == minimalProcessing)) false
+            else {
+                hasContent = content
+                minimalPostProcessingRequested = minimalProcessing
+                pendingTraversal = true
+                true
+            }
+        }
+        // DMS.scheduleTraversalLocked marks pending work even when WM is already
+        // traversing, but only asks WM for another traversal outside that pass.
+        if (updated && !inTraversal) requestTraversal()
+    }
 
     fun setDisplayInfoOverrideFromWindowManager(displayId: Int, info: DisplayInfo?) {
         val updated = synchronized(lock) {

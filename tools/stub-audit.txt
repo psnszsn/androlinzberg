@@ -15,8 +15,6 @@
 # pending-budget: 6
 
 src/framework-stubs/android/media/ToneGenerator.java|blocked|survivor: JNI tone synthesizer (libmedia ToneGenerator)|frameworks/base/media/java/android/media/ToneGenerator.java (1 to add), not vendored; real class has JNI natives
-src/framework-stubs/android/net/ConnectivityManager.java|no-aosp-source|survivor: hosted synthetic network has no IConnectivityManager/ConnectivityService; stock closure reaches NetworkUtils/BPF JNI|no class with this name in the checkout
-src/framework-stubs/android/net/NetworkAgent.java|no-aosp-source|survivor: no hosted ConnectivityService/IConnectivityManager network-agent path; stock closure reaches BPF JNI and unwired stats generation|no class with this name in the checkout
 src/framework-stubs/android/net/ipsec/ike/SaProposal.java|no-aosp-source|survivor: stock API couples to the internal IKE engine and its connectivity/BPF JNI closure; no IPsec runtime is hosted|no class with this name in the checkout
 src/framework-stubs/android/os/VintfObject.java|blocked|survivor: JNI natives (libvintf)|frameworks/base/core/java/android/os/VintfObject.java (1 to add), not vendored; real class has JNI natives
 src/framework-stubs/android/service/wallpaper/WallpaperService.java|blocked|survivor: live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks|frameworks/base/core/java/android/service/wallpaper/WallpaperService.java (1 to add); android.service.wallpaper.WallpaperService: existing host class android.view.SurfaceControl lacks method rotationToBufferTransform (via WallpaperService); android.service.wallpaper.WallpaperService: existing host class android.view.SurfaceControl lacks method setTransformHint (via WallpaperService)

@@ -19,6 +19,12 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
         val name = method.simpleName.toString()
         val params = method.parameters.map { processingEnv.typeUtils.erasure(it.asType()).toString() }
         return when {
+            name == "getPackageList" && params == listOf("android.content.pm.PackageManagerInternal.PackageListObserver") ->
+                "return packages.getPackageList(p0);"
+            name == "removePackageListObserver" && params == listOf("android.content.pm.PackageManagerInternal.PackageListObserver") ->
+                "packages.removePackageListObserver(p0);"
+            name == "getSystemUiServiceComponent" && params.isEmpty() ->
+                "return packages.getSystemUiServiceComponent();"
             name == "isSameApp" && params == listOf("java.lang.String", "int", "int") ->
                 "return packages.isSameAppInternal(p0, p1);"
             name == "isSameApp" && params == listOf("java.lang.String", "long", "int", "int") ->
@@ -42,8 +48,8 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
             name == "getPackageStateInternal" && params == listOf("java.lang.String") -> "return packages.getPackageStateInternal(p0);"
             name == "isSystemPackage" -> "var state = packages.getPackageStateInternal(p0); return state != null && state.isSystem();"
             name == "isPackageSuspended" -> "var state = packages.getPackageStateInternal(p0); return state != null && state.getUserStateOrDefault(p1).isSuspended();"
-            name == "getPackageList" -> "return packages.getPackageListInternal(p0);"
-            name == "removePackageListObserver" -> "packages.removePackageListObserverInternal(p0);"
+            name == "getPackageList" -> "return packages.getPackageList(p0);"
+            name == "removePackageListObserver" -> "packages.removePackageListObserver(p0);"
             name == "isInstantApp" -> "return false;" // No instant-app install path in this session.
             name == "setExternalSourcesPolicy" -> "packages.setExternalSourcesPolicy(p0);"
             name == "checkUidSignaturesForAllUsers" && params == listOf("int", "int") ->

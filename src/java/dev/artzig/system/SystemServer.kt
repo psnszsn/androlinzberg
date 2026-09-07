@@ -32,11 +32,13 @@ internal object SystemServer {
         check(!android.os.Build.IS_EMULATOR) { "hosted sessions are not emulators" }
         val frameworkRes = System.getenv("ARTZIG_FRAMEWORK_RES")
             ?: throw IllegalStateException("ARTZIG_FRAMEWORK_RES is not set")
+        val stockWindows = if (dev.artzig.window.WindowBackend.stock) StockWindowServices.prepare() else null
         val context = dev.artzig.HostContexts.systemContext(frameworkRes, 800, 600, 120, 0)
         // Reused services read @hide settings; the verbatim AOSP Settings
         // client exempts the system server from the @Readable restriction.
         android.provider.Settings.setInSystemServer()
-        SystemServices.start(context)
+        stockWindows?.attachContext(context)
+        SystemServices.start(context, stockWindows)
 
         // The launcher holds the other end of stdin; EOF means the session is over.
         thread(name = "SystemServer-stdin", isDaemon = true) {

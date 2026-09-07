@@ -41,6 +41,7 @@ class HostedDesktopWindowPolicy {
     @Volatile private var displayGoingToSleep = false
     @Volatile private var safeMode = false
     private var currentUser = UserHandle.USER_SYSTEM
+    private val allowLockscreenWhenOnDisplays = HashSet<Int>()
 
     fun init(context: Context, windowManagerFuncs: WindowManagerPolicy.WindowManagerFuncs) {
         check(!this::context.isInitialized)
@@ -200,6 +201,12 @@ class HostedDesktopWindowPolicy {
     fun isKeyguardTrustedLw(): Boolean = false
     fun inKeyguardRestrictedKeyInputMode(): Boolean = false
     fun enableKeyguard(enabled: Boolean) { }
+    fun setAllowLockscreenWhenOn(displayId: Int, allow: Boolean) {
+        if (allow) allowLockscreenWhenOnDisplays.add(displayId)
+        else allowLockscreenWhenOnDisplays.remove(displayId)
+        // PhoneWindowManager.updateLockScreenTimeout cannot enable its timer
+        // without a secure KeyguardServiceDelegate. This desktop has none.
+    }
     fun exitKeyguardSecurely(callback: WindowManagerPolicy.OnKeyguardExitResult?) { }
     fun startKeyguardExitAnimation(startTime: Long) { }
     fun onKeyguardOccludedChangedLw(occluded: Boolean) { }
@@ -221,5 +228,6 @@ class HostedDesktopWindowPolicy {
     fun setSafeMode(safeMode: Boolean) { this.safeMode = safeMode }
     fun dump(prefix: String, writer: java.io.PrintWriter, args: Array<String>?) {
         writer.println("${prefix}Desktop window policy: user=$currentUser safeMode=$safeMode drawnOnce=$drawnOnce")
+        writer.println("${prefix}Allow lockscreen while on: $allowLockscreenWhenOnDisplays")
     }
 }

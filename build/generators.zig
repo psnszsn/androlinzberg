@@ -905,6 +905,11 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
     const compiled = compile.addOutputFileArg("framework-res-compiled.zip");
     compile.setName("aapt2 compile framework resources");
     const remote_colors = remoteColorResources(b, res);
+    const desktop_compile = b.addSystemCommand(&.{ "aapt2", "compile", "--dir" });
+    desktop_compile.addDirectoryArg(b.path("src/resources/framework"));
+    desktop_compile.addArg("-o");
+    const desktop_resources = desktop_compile.addOutputFileArg("desktop-framework-res.zip");
+    desktop_compile.setName("aapt2 compile desktop framework configuration");
 
     const link = command.create(b);
     link.addArgs(&.{ "aapt2", "link", "-o" });
@@ -922,6 +927,8 @@ fn resources(b: *std.Build, aosp: *std.Build.Dependency, filter: *std.Build.Step
     });
     link.addFileArg(compiled);
     link.addFileArg(remote_colors);
+    link.addArg("-R");
+    link.addFileArg(desktop_resources);
     inline for (.{
         "warn: removing resource android:string/user_switched without required default value.",
         "warn: duplicate definitions of 'SET_DEFAULT_ACCOUNT_FOR_CONTACTS', overriding previous.",

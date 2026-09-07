@@ -1,0 +1,62 @@
+From: Androlinzberg host integration
+Subject: [PATCH] Tunnel listener: release ownership after compositor disconnect
+
+Keep stock callbacks and failure reporting while releasing local ownership on
+failed remote removal, and serialize registration against explicit destruction.
+
+diff --git a/core/java/android/view/TunnelModeEnabledListener.java b/core/java/android/view/TunnelModeEnabledListener.java
+--- a/core/java/android/view/TunnelModeEnabledListener.java
++++ b/core/java/android/view/TunnelModeEnabledListener.java
+@@ -37,13 +37,18 @@
+     /**
+      * Destroys the listener.
+      */
+-    public void destroy() {
++    public synchronized void destroy() {
+         if (mNativeListener == 0) {
+             return;
+         }
+-        unregister(this);
+-        nativeDestroy(mNativeListener);
++        final long listener = mNativeListener;
+         mNativeListener = 0;
++        try {
++            nativeUnregister(listener);
++        } finally {
++            // A disconnected compositor must not retain the Java-owned native reference.
++            nativeDestroy(listener);
++        }
+     }
+ 
+     @Override
+@@ -64,20 +69,24 @@
+      * Registers a listener.
+      */
+     public static void register(TunnelModeEnabledListener listener) {
+-        if (listener.mNativeListener == 0) {
+-            return;
++        synchronized (listener) {
++            if (listener.mNativeListener == 0) {
++                return;
++            }
++            nativeRegister(listener.mNativeListener);
+         }
+-        nativeRegister(listener.mNativeListener);
+     }
+ 
+     /**
+      * Unregisters a listener.
+      */
+     public static void unregister(TunnelModeEnabledListener listener) {
+-        if (listener.mNativeListener == 0) {
+-            return;
++        synchronized (listener) {
++            if (listener.mNativeListener == 0) {
++                return;
++            }
++            nativeUnregister(listener.mNativeListener);
+         }
+-        nativeUnregister(listener.mNativeListener);
+     }
+ 
+     /**

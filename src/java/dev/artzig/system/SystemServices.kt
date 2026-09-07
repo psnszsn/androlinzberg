@@ -132,7 +132,7 @@ internal object SystemServices {
     private val spawnedProcesses = java.util.concurrent.CopyOnWriteArrayList<Process>()
 
     @JvmStatic
-    fun start(context: Context) {
+    fun start(context: Context, stockWindows: StockWindowServices? = null) {
         com.android.server.HostedBootTasks.start()
         // Auto-spawned service hosts must not outlive the session. Each host
         // also exits on broker disconnect (HostedBinderRuntime), but destroy
@@ -157,7 +157,7 @@ internal object SystemServices {
         LocalServices.addService(UserManagerInternal::class.java, HostedUserManagerInternal(context, userLifecycle))
         // Seams the reused AOSP services consult (clipboard first): window focus,
         // URI grants, and the IUserManager binder.
-        LocalServices.addService(
+        if (stockWindows == null) LocalServices.addService(
             com.android.server.wm.WindowManagerInternal::class.java,
             Class.forName("com.android.server.wm.HostedLegacyWindowManagerInternal")
                 .getConstructor(java.util.function.IntPredicate::class.java)
@@ -177,7 +177,7 @@ internal object SystemServices {
         // starts the package manager before the activity manager). The
         // platform package "android" is framework-res.apk parsed by the real
         // AOSP parser — its manifest is the session's permission source.
-        val packageManager = HostedPackageManagerService()
+        val packageManager = HostedPackageManagerService(desktopWindows = stockWindows != null)
         packageManager.installPlatform(
             checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
         )
@@ -211,13 +211,17 @@ internal object SystemServices {
             HostedWifiService(HostedPermissions(packageManager)))
         android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
         android.os.ServiceManager.addService(Context.VIRTUAL_DEVICE_SERVICE, HostedVirtualDeviceService(context))
-        val activityTaskManager = HostedActivityTaskManagerService(
-            context,
-            activityManager,
-            packageManager,
-        )
-        activityManager.activityTaskManager = activityTaskManager
-        android.os.ServiceManager.addService(Context.ACTIVITY_TASK_SERVICE, activityTaskManager)
+        if (stockWindows != null) {
+            stockWindows.startTasks(manager)
+        } else {
+            val activityTaskManager = HostedActivityTaskManagerService(
+                context,
+                activityManager,
+                packageManager,
+            )
+            activityManager.activityTaskManager = activityTaskManager
+            android.os.ServiceManager.addService(Context.ACTIVITY_TASK_SERVICE, activityTaskManager)
+        }
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
         val activityManagerAccess = HostActivityManagerInternalAccess(activityManager, packageManager, userLifecycle)
         val activityManagerInternal = Class.forName("android.app.HostedActivityManagerInternal")
@@ -300,6 +304,13 @@ internal object SystemServices {
         usageStats.packageService = packageManager
         activityManager.processObserver = { packageName, _, foreground -> usageStats.reportProcessState(packageName, foreground) }
         android.os.ServiceManager.addService(Context.USAGE_STATS_SERVICE, usageStats)
+        if (stockWindows != null) {
+            val usageLocal = Class.forName("android.app.usage.HostedUsageStatsManagerInternal")
+                .getConstructor(HostedUsageStatsService::class.java)
+                .newInstance(usageStats) as android.app.usage.UsageStatsManagerInternal
+            LocalServices.addService(android.app.usage.UsageStatsManagerInternal::class.java, usageLocal)
+            stockWindows.setUsageStats(usageLocal)
+        }
         val storageStats = HostedStorageStatsService()
         storageStats.packageService = packageManager
         android.os.ServiceManager.addService(Context.STORAGE_STATS_SERVICE, storageStats)
@@ -364,6 +375,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.LAUNCHER_APPS_SERVICE, launcherApps)
         LocalServices.addService(HostedLauncherAppsService::class.java, launcherApps)
         android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
+        stockWindows?.startWindows(manager, activityManager)
         // Reused AOSP clipboard service (publishes "clipboard" itself).
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
         manager.startService(com.android.server.NetworkScoreService.Lifecycle::class.java)
@@ -378,6 +390,7 @@ internal object SystemServices {
         LocalServices.getService(com.android.server.uri.UriGrantsManagerInternal::class.java).onSystemReady()
         // Pinned AMS.systemReady marks its state before the phase callback.
         activityManagerAccess.setSystemReady()
+        stockWindows?.systemReady()
         manager.startBootPhase(trace, SystemService.PHASE_ACTIVITY_MANAGER_READY)
         com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions).start()
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
@@ -387,6 +400,7 @@ internal object SystemServices {
             override fun unlocked(userId: Int) { manager.onUserUnlocked(userId) }
         })
         manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
+        stockWindows?.bootCompleted()
         // BatteryService publishes its sticky broadcast once the broadcast queue is up.
         battery.start()
         // Session-wide marker: app processes (system-test) observe a property

@@ -273,6 +273,9 @@ object HostInputDispatcherSmoke {
             receivers[1].dispose()
             channels[1].dispose()
             await("channel death policy") { "broken" in observed }
+            // WindowInfos publication starts with SF bootFinished/inputflinger.
+            // Exercise the Java observer in this live system input session.
+            dev.artzig.window.StockWindowInfosSmoke.granted()
         } finally {
             monitorReceiver.dispose()
             monitor.dispose()

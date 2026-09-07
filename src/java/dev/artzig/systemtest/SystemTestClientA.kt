@@ -500,13 +500,18 @@ internal object SystemTestClientA {
             nativeAppOps.noteOpNoThrow(android.app.AppOpsManager.OPSTR_CAMERA, Process.myUid(), context.packageName),
             "native permission noteOp uses the existing app-op mode")
         com.android.server.wm.StockTaskFpsSmoke.granted()
+        dev.artzig.window.StockTunnelModeSmoke.granted()
         dev.artzig.window.HostedSessionDisplaySmoke.compositor(context, android.os.Handler(Looper.getMainLooper()))
         check(service.add(20, 22) == 42, "cross-process service call")
         check(service.echo("héllo") == "héllo", "string round trip")
         val bundle = android.os.Bundle()
         bundle.putInt("i", 7)
+        val transferToken = android.window.InputTransferToken()
+        bundle.putParcelable("input_transfer", transferToken)
         val back = service.roundTripBundle(bundle)
         check(back != null && back.getInt("i") == 7 && back.getString("server") == "seen", "bundle through a bound service")
+        check(back?.getParcelable("input_transfer", android.window.InputTransferToken::class.java) == transferToken,
+            "native input transfer token preserves Binder identity across processes")
         check(back?.getString("action") == "dev.artzig.test.ECHO", "bind Intent action reached onBind")
         check(back?.getString("data") == "test://echo", "bind Intent data reached onBind")
         check(service.callerUid() == Process.myUid(), "callee sees this package's uid")

@@ -62,7 +62,8 @@ object HostContexts {
                 // AOSP ActivityThread.ApplicationThread.bindApplication seeds
                 // process-specific Binder references through this stock API.
                 android.os.ServiceManager.initServiceCache(
-                    hashMapOf<String, android.os.IBinder>(
+                    if (dev.artzig.window.WindowBackend.stock) emptyMap<String, android.os.IBinder>()
+                    else hashMapOf<String, android.os.IBinder>(
                         Context.WINDOW_SERVICE to dev.artzig.system.HostedWindowManagerService().also { windowService = it },
                         Context.DISPLAY_SERVICE to dev.artzig.system.HostedDisplayManagerService(),
                         Context.INPUT_SERVICE to dev.artzig.system.HostedInputManagerService(),
@@ -109,6 +110,8 @@ object HostContexts {
      * (AOSP ActivityThread.handleConfigurationChanged applies the configuration the same way). */
     @JvmStatic
     fun configureDisplay(width: Int, height: Int, scale120: Int) {
+        // Stock WM owns the session display and delivers per-activity configurations.
+        if (dev.artzig.window.WindowBackend.stock) return
         val density = scale120 / 120f
         val densityDpi = Math.round(160f * density)
         ArtzigDisplay.configure(width, height, densityDpi)

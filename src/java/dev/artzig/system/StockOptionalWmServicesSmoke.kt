@@ -37,7 +37,7 @@ object StockOptionalWmServicesSmoke {
         val packages = HostedPackageManagerService().apply {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
-        val packageName = packages.installPackage(apk)
+        val packageName = verifyPackageObservers(packages, apk)
         val uid = packages.getPackageUid(packageName, 0L, 0)
         check(uid >= android.os.Process.FIRST_APPLICATION_UID)
         val state = packages.getPackageStateInternal(packageName) as HostedPackageState
@@ -71,5 +71,46 @@ object StockOptionalWmServicesSmoke {
         check(spoofPlatform is SecurityException && spoofPlatform.message == "Calling package name mismatch")
         val denied = runCatching { shortcut(uid, packageName) }.exceptionOrNull()
         check(denied is SecurityException && denied.message!!.contains("not the default launcher"))
+    }
+
+    private fun verifyPackageObservers(packages: HostedPackageManagerService, apk: String): String {
+        val serviceClass = android.content.pm.PackageManagerInternal::class.java
+        val previous = com.android.server.LocalServices.getService(serviceClass)
+        val internal = Class.forName("android.content.pm.HostedPackageManagerInternal")
+            .getConstructor(HostedPackageManagerService::class.java).newInstance(packages)
+            as android.content.pm.PackageManagerInternal
+        com.android.server.LocalServices.removeServiceForTest(serviceClass)
+        com.android.server.LocalServices.addService(serviceClass, internal)
+        val events = ArrayList<String>()
+        val snapshot = internal.getPackageList(object : android.content.pm.PackageManagerInternal.PackageListObserver {
+            override fun onPackageAdded(name: String, uid: Int) {
+                check(packages.getPackageUid(name, 0L, 0) == uid)
+                events.add("added:$name")
+            }
+            override fun onPackageChanged(name: String, uid: Int) { events.add("changed:$name") }
+            override fun onPackageRemoved(name: String, uid: Int) { error("Unexpected removal") }
+        })
+        try {
+            check(snapshot.packageNames == listOf("android"))
+            val name = packages.installPackage(apk)
+            check(events == listOf("added:$name"))
+            check(snapshot.packageNames == listOf("android"))
+            internal.getPackageList(null).use { check(it.packageNames.toSet() == setOf("android", name)) }
+            check(packages.installPackage(apk) == name)
+            check(events.size == 1)
+            packages.setApplicationEnabledSetting(name, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP, 0, name)
+            check(events == listOf("added:$name", "changed:$name"))
+            snapshot.close()
+            snapshot.close()
+            packages.setApplicationEnabledSetting(name, android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT,
+                android.content.pm.PackageManager.DONT_KILL_APP, 0, name)
+            check(events.size == 2)
+            return name
+        } finally {
+            snapshot.close()
+            com.android.server.LocalServices.removeServiceForTest(serviceClass)
+            if (previous != null) com.android.server.LocalServices.addService(serviceClass, previous)
+        }
     }
 }

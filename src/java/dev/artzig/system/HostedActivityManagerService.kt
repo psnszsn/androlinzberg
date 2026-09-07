@@ -65,6 +65,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val binder: IBinder = thread.asBinder()
         var exitReason = android.app.ApplicationExitInfo.REASON_UNKNOWN
         var exitDescription: String? = null
+        var windowProcess: com.android.server.wm.WindowProcessController? = null
         override fun binderDied() = handleProcessDied(this)
     }
 
@@ -135,6 +136,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     )
 
     private val lock = Any()
+    internal fun windowServiceLock(): Any = lock
     private val processes = LinkedHashMap<IBinder, ProcessRecord>()
 
     /**
@@ -396,6 +398,47 @@ class HostedActivityManagerService(private val context: android.content.Context?
 
     /** Activity/task ownership is separate in AOSP; this is the host seam between AMS and ATMS. */
     @Volatile internal var activityTaskManager: HostedActivityTaskManagerService? = null
+
+    /**
+     * AMS.setSystemProcess / ProcessList.MyProcessMap: the already attached system
+     * process must be present in ATMS before DisplayContent registers its UI context.
+     * This is the persistent system process, not an application activity host.
+     * Application process callbacks are connected during the stock task cutover.
+     */
+    internal fun attachSystemWindowProcess(tasks: com.android.server.wm.ActivityTaskManagerService) {
+        synchronized(lock) {
+            val record = checkNotNull(processes.values.singleOrNull {
+                it.pid == android.os.Process.myPid() && it.uid == android.os.Process.SYSTEM_UID
+            }) { "System process must attach to AMS before WMS startup" }
+            check(record.windowProcess == null)
+            val local = checkNotNull(com.android.server.LocalServices.getService(
+                com.android.server.wm.ActivityTaskManagerInternal::class.java))
+            val info = checkNotNull(packageService?.getApplicationInfo(record.packageName, 0L,
+                UserHandle.USER_SYSTEM))
+            val listener = object : com.android.server.wm.WindowProcessListener by unsupported<com.android.server.wm.WindowProcessListener>() {
+                override fun isRemoved(): Boolean = synchronized(lock) { processes[record.binder] !== record }
+                override fun isCached(): Boolean = false // AOSP's persistent system process.
+                override fun getCpuTime(): Long = android.os.Process.getElapsedCpuTime()
+                override fun appDied(reason: String) {
+                    record.exitDescription = reason
+                    handleProcessDied(record)
+                }
+                override fun setRunningRemoteAnimation(running: Boolean) {
+                    Log.wtf(TAG, "system can't run remote animation")
+                }
+            }
+            val controller = com.android.server.wm.WindowProcessController(tasks, info,
+                record.processName, record.uid, UserHandle.USER_SYSTEM, record, listener)
+            local.onProcessAdded(controller)
+            controller.setPersistent(true)
+            controller.setPid(record.pid)
+            controller.setCurrentProcState(android.app.ActivityManager.PROCESS_STATE_PERSISTENT)
+            controller.setReportedProcState(android.app.ActivityManager.PROCESS_STATE_PERSISTENT)
+            controller.setThread(record.thread)
+            local.onProcessMapped(record.pid, controller)
+            record.windowProcess = controller
+        }
+    }
 
     // ------------------------------------------------------------- attach
 

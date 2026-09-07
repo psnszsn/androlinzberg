@@ -66,6 +66,9 @@ object HostedDesktopWindowPolicySmoke {
         check(config.navigationHidden == Configuration.NAVIGATIONHIDDEN_YES)
         check(!policy.isKeyguardLocked && !policy.isKeyguardShowing && !policy.isKeyguardSecure(0))
         check(!policy.isKeyguardTrustedLw && !policy.hasNavigationBar())
+        policy.setAllowLockscreenWhenOn(0, true)
+        check(!policy.isKeyguardLocked)
+        policy.setAllowLockscreenWhenOn(0, false)
         var dismissErrors = 0
         policy.dismissKeyguardLw(object : com.android.internal.policy.IKeyguardDismissCallback.Stub() {
             override fun onDismissError() { dismissErrors++ }

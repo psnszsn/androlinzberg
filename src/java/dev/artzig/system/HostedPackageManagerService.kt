@@ -50,9 +50,24 @@ import java.io.File
  * Anything not overridden here fails loudly through
  * [PackageManagerServiceBase].
  */
-class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
+class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageManagerServiceBase(), Computer {
+    /** PackageManagerInternalBase reads the configured name without resolving a service. */
+    fun getSystemUiServiceComponent(): ComponentName? = ComponentName.unflattenFromString(
+        (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context).resources.getString(
+            com.android.internal.R.string.config_systemUIServiceComponent))
+    private val hostFeatures = if (desktopWindows) HOST_FEATURES + setOf(
+        PackageManager.FEATURE_PC, PackageManager.FEATURE_FREEFORM_WINDOW_MANAGEMENT) else HOST_FEATURES
     private val lock = Any()
     private val packageMonitors = com.android.server.pm.PackageMonitorCallbackHelper()
+    private val packageObservers = com.android.server.pm.HostedPackageObservers()
+
+    fun getPackageList(observer: android.content.pm.PackageManagerInternal.PackageListObserver?):
+        com.android.server.pm.PackageList = synchronized(lock) {
+            packageObservers.snapshot(packages.keys.toList(), observer)
+        }
+
+    fun removePackageListObserver(observer: android.content.pm.PackageManagerInternal.PackageListObserver) =
+        packageObservers.remove(observer)
 
     // PMS.registerPackageMonitorCallback and BroadcastHelper's post-mutation
     // notifications. The stock helper owns Binder death, user filtering, and
@@ -70,6 +85,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
 
     private fun notifyPackageChanged(packageName: String, components: ArrayList<String>, flags: Int, userId: Int) {
         val uid = synchronized(lock) { packages[packageName]?.appId } ?: return
+        packageObservers.changed(packageName, uid)
         packageMonitors.notifyPackageChanged(packageName,
             flags and PackageManager.DONT_KILL_APP != 0, components, uid, null,
             intArrayOf(userId), intArrayOf(), null, com.android.internal.os.BackgroundThread.getHandler())
@@ -375,7 +391,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     private fun notifyPackageUidBound(packageName: String, uid: Int) {
         com.android.server.LocalServices.getService(android.app.AppOpsManagerInternal::class.java)
             ?.onPackageAdded(packageName, uid)
-        for (observer in packageObservers) observer.onPackageAdded(packageName, uid)
+        packageObservers.added(packageName, uid)
     }
 
     /** Requires `lock`; caller invalidates caches once outside it. */
@@ -431,16 +447,6 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
                     if (handle.identifier == 0) user else com.android.server.pm.pkg.PackageUserState.DEFAULT
             }
         })
-    }
-
-    private val packageObservers = java.util.concurrent.CopyOnWriteArrayList<android.content.pm.PackageManagerInternal.PackageListObserver>()
-    fun getPackageListInternal(observer: android.content.pm.PackageManagerInternal.PackageListObserver?): com.android.server.pm.PackageList {
-        val result = synchronized(lock) { com.android.server.pm.PackageList(packages.keys.toList(), observer) }
-        if (observer != null) packageObservers.add(result)
-        return result
-    }
-    fun removePackageListObserverInternal(observer: android.content.pm.PackageManagerInternal.PackageListObserver) {
-        packageObservers.remove(observer)
     }
 
     @Volatile var externalSourcesPolicy: android.content.pm.PackageManagerInternal.ExternalSourcesPolicy? = null
@@ -1085,9 +1091,9 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     override fun isInstantApp(packageName: String?, userId: Int): Boolean = false
     override fun getInstallerPackageName(packageName: String?): String? = null
     /** The system features this host declares: app-widget hosting (the hosted IAppWidgetService). */
-    override fun hasSystemFeature(name: String?, version: Int): Boolean = name in HOST_FEATURES && version <= 0
+    override fun hasSystemFeature(name: String?, version: Int): Boolean = name in hostFeatures && version <= 0
     override fun getSystemAvailableFeatures(): ParceledListSlice<*> =
-        ParceledListSlice(HOST_FEATURES.map { android.content.pm.FeatureInfo().apply { this.name = it } })
+        ParceledListSlice(hostFeatures.map { android.content.pm.FeatureInfo().apply { this.name = it } })
     override fun getSystemSharedLibraryNames(): Array<String>? = null
     override fun isSafeMode(): Boolean = false
     override fun isFirstBoot(): Boolean = false

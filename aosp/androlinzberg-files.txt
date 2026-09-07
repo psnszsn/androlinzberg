@@ -2908,6 +2908,7 @@ F aosp frameworks/base/services/core/java/com/android/server/pm/InstallSource.ja
 F aosp frameworks/base/services/core/java/com/android/server/pm/KnownPackages.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageKeySetData.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageList.java
+F aosp frameworks/base/services/core/java/com/android/server/pm/PackageObserverHelper.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageSignatures.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/RestrictionsSet.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java
@@ -9033,3 +9034,9 @@ F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.framewor
 F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/ErrorCode.aidl
 F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/IDeviceStateListener.aidl
 F aosp frameworks/hardware/interfaces/devicestate/aidl/aidl_api/android.frameworks.devicestate/1/android/frameworks/devicestate/IDeviceStateService.aidl
+F aosp frameworks/base/core/jni/android_view_TunnelModeEnabledListener.cpp
+F aosp frameworks/base/core/java/android/app/usage/EventList.java
+F aosp frameworks/base/services/usage/java/com/android/server/usage/IntervalStats.java
+F aosp frameworks/base/services/usage/java/com/android/server/usage/PackagesTokenData.java
+F aosp frameworks/base/core/jni/android_window_WindowInfosListener.cpp
+F aosp frameworks/base/core/jni/android_window_InputTransferToken.cpp

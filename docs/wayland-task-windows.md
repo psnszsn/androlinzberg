@@ -41,6 +41,48 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Main framework integration and stock boot checkpoint (2026-09-07)
+
+Rebased onto main `1365002`, including stock ThreadedRenderer,
+SurfaceControlViewHost, WindowlessWindowManager, SplashScreenView, connectivity
+clients, submitted-frame callbacks and preserved-window fixes. The combined
+HWUI pipeline retains main's shared EGL/Ganesh lifetime and this branch's stock
+ANativeWindow queues. Java EGL14 and legacy EGL now acquire display ownership
+through the same native authority, so terminating a Java EGL lease no longer
+invalidates HWUI snapshots. The regression includes repeated initialize,
+terminate and an extra terminate between verified hardware snapshots.
+
+Stock WindowInfosListener and InputTransferToken JNI are compiled and registered.
+The live InputDispatcher/SF fixture verifies Java input-window metadata and
+transforms; the system test round-trips a native InputTransferToken through
+another application process. Native tests pass (25/25). The full JVM, system,
+buffer, APK, build-tools and source/graph audit run passes except for the separate
+opt-in stock-window startup gate (`/tmp/wayland-stock-window-boot-9.log`). APK
+artifacts contain 14 tests, 42 steps and no structured runtime issues.
+The Cage FrameCommitProbe and HardwareBitmapProbe also pass, including the
+post-teardown desktop frame; screenshots were inspected at
+`/tmp/wayland-main6-frame-commit-2.png` and
+`/tmp/wayland-main6-hardware-bitmap.png`. The first manual invocation used a
+stale zig-out runtime and failed to load ART; both passing probes use the
+current build's runtime tree explicitly.
+
+The stock startup path constructs WMS and its primary DisplayContent, attaches
+the existing system process to ATMS with a real WindowProcessController, and
+reaches system-ready initialization. Display policy now handles absent-keyguard
+lockscreen flags, fixed-mode display properties and cleared brightness overrides.
+The package-list observer dependency in ATMS's LaunchParamsPersister now uses
+the stock PackageList and PackageObserverHelper over the hosted package registry.
+Module checks verify snapshot stability, installation and enabled-state callbacks,
+idempotent installation and repeated close/unregistration. Module, system and
+graph checks pass (`/tmp/wayland-stock-window-boot-10.log`); the separate boot
+gate next fails because the grammatical-inflection Binder service has no local
+interface registered for ATMS's configuration initialization. Source package 63
+is pinned as `N-V-__8AAC0hpE3ouNqdBe4H3_XNKPULGWazUTOg-tu0eTbc`, archive SHA-256
+`76a9d7ef73b214a69ce7b767017893eeff51c5a8ba262c7796956a564817befd`. Boot is
+still opt-in. Application process/task attachment, stock application window
+clients, the Wayland task presenter and M6–M11 are not complete. The current stub
+audit has 31 stubs: 20 pending and 11 survivors.
+
 ## Desktop window policy checkpoint (2026-09-06)
 
 HostedDesktopWindowPolicy now has a generated WindowManagerPolicy interface

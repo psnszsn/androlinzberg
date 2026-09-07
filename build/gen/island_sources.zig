@@ -509,6 +509,9 @@ pub const surface_jni_srcs = [_][]const u8{
     "android_hardware_camera2_utils_SurfaceUtils.cpp",
     "android_view_SurfaceSession.cpp",
     "android_view_SurfaceControl.cpp",
+    "android_view_TunnelModeEnabledListener.cpp",
+    "android_window_WindowInfosListener.cpp",
+    "android_window_InputTransferToken.cpp",
     "android_view_DisplayEventReceiver.cpp",
     "android_window_ScreenCapture.cpp",
 };

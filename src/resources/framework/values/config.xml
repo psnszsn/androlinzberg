@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The desktop compositor supplies the desktop background. Stock WMS must
+         not wait for an Android wallpaper window before enabling the display. -->
+    <bool name="config_checkWallpaperAtBoot">false</bool>
+</resources>
