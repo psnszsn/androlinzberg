@@ -78,8 +78,6 @@ const Server = struct {
     inspection_enabled: bool = false,
     submitted_round: i64 = 0,
     completed_round: i64 = 0,
-    round_active: bool = false,
-    round_valid: bool = false,
     test_placement: ?TestPlacement = null,
     test_input_sequence: i64 = 0,
     death: *Death,
@@ -155,6 +153,9 @@ const Server = struct {
             } else continue;
             switch (item.event) {
                 .frame_done => {
+                    // A covered task may receive no frame callbacks. Progress
+                    // belongs to actual callbacks, not an all-window barrier.
+                    if (entry.test_frame_pending) self.completed_round += 1;
                     entry.test_frame_pending = false;
                 },
                 .configure => |size| try send(entry, 1, .{ size.width, size.height }),
@@ -176,33 +177,20 @@ const Server = struct {
             }
         }
     }
-    fn completeTestRound(self: *Server) void {
-        if (!self.round_active) return;
-        for (self.entries) |slot| if (slot) |entry| {
-            if (entry.test_frame_pending) return;
-        };
-        self.round_active = false;
-        if (self.round_valid) self.completed_round = self.submitted_round;
-    }
     fn observeTestFrames(self: *Server, request: *Request) !i32 {
         if (!self.inspection_enabled) return -1;
         const requested = try readInt(request.input);
         if (requested != 0 and requested != 1) return error.InvalidBoolean;
         try end(request.input);
-        self.completeTestRound();
-        if (requested == 1 and !self.round_active) arm: {
-            var count: usize = 0;
-            for (self.entries) |slot| if (slot) |entry| {
-                if (!entry.has_content) break :arm;
-                count += 1;
-            };
-            if (count == 0) break :arm;
-            self.submitted_round += 1;
-            self.round_active = true;
-            self.round_valid = true;
+        if (requested == 1) {
             for (&self.entries) |*slot| if (slot.*) |*entry| {
-                entry.test_frame_pending = true;
+                // Do not assign an older, already committed callback to a new
+                // inspection request. Each window retains at most one request.
+                if (!entry.has_content or entry.test_frame_pending or
+                    entry.window.frame_cb != null) continue;
                 try entry.window.requestVsync();
+                self.submitted_round += 1;
+                entry.test_frame_pending = true;
                 try entry.window.present();
             };
         }
@@ -247,38 +235,48 @@ const Server = struct {
         try entry.window.prepareTestInput();
         // Seat roundtrips can receive a configure; reject its old geometry too.
         if (!entry.matchesInputGeometry(geometry)) return 0;
+        if (kind == 2 or kind == 4) try Queue.Window.validateTestText(text.slice());
         switch (kind) {
-            0, 1 => {
+            0, 1, 4, 5 => {
                 const placement = self.test_placement orelse return 0;
                 const from = try placement.point(entry.bounds[0..4].*, .{ entry.window.width, entry.window.height }, points[0], points[1]);
                 const extent = [2]u32{ @intCast(placement.output_width), @intCast(placement.output_height) };
                 const local = [2]u32{ from[0] - @as(u32, @intCast(placement.left)), from[1] - @as(u32, @intCast(placement.top)) };
-                if (kind == 0) try entry.window.testTapAtOutput(from, extent, local) else {
+                if (kind != 1) try entry.window.testTapAtOutput(from, extent, local) else {
                     const to = try placement.point(entry.bounds[0..4].*, .{ entry.window.width, entry.window.height }, points[2], points[3]);
                     try entry.window.testDragAtOutput(from, to, extent, local);
                 }
             },
-            2, 3 => {
-                if (self.session.keyboard_focus != entry.window) return 0;
-                if (kind == 2) {
-                    const value = text.slice();
-                    try Queue.Window.validateTestText(value);
-                    // Shifted characters produce key and modifier callbacks.
-                    // Drain bounded groups well below the 4096-event seat cap,
-                    // preserving one final completion barrier for the action.
-                    var offset: usize = 0;
-                    while (offset < value.len) {
-                        const limit = @min(offset + 128, value.len);
-                        if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry))
-                            return error.InputTargetChanged;
-                        try entry.window.testType(value[offset..limit]);
-                        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-                        try self.dispatchEvents();
-                        offset = limit;
-                    }
-                } else try entry.window.testKey(text.slice());
-            },
+            2, 3 => {},
             else => return 0,
+        }
+        if (kind >= 4 and kind <= 5) {
+            if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+            try self.dispatchEvents();
+        }
+        if (kind >= 2 and kind <= 5) {
+            // Tap plus key/text is one validated operation. Its own focus
+            // and selection events may legitimately change accessibility.
+            if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry)) {
+                if (kind >= 4) return error.InputTargetChanged;
+                return 0;
+            }
+            if (kind == 2 or kind == 4) {
+                const value = text.slice();
+                // Shifted characters produce key and modifier callbacks.
+                // Drain bounded groups well below the 4096-event seat cap,
+                // preserving one final completion barrier for the action.
+                var offset: usize = 0;
+                while (offset < value.len) {
+                    const limit = @min(offset + 128, value.len);
+                    if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry))
+                        return error.InputTargetChanged;
+                    try entry.window.testType(value[offset..limit]);
+                    if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+                    try self.dispatchEvents();
+                    offset = limit;
+                }
+            } else try entry.window.testKey(text.slice());
         }
         // Drain the compositor's events before sending the barrier on the same
         // ordered Binder callback used by the entire seat. Shell receipt means
@@ -353,16 +351,12 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 1)); // non-null Surface
                 try ok(queue.writeSurface(output));
                 try ok(AParcel_writeInt32Array(output, &.{ window.width, window.height }, 2));
-                // Membership changes invalidate an in-flight round. Remaining
-                // callbacks still drain, but cannot acknowledge the new topology.
-                self.round_valid = false;
                 slot.* = .{ .key = key, .window = window, .queue = queue, .events = callback };
             },
             2 => {
                 try end(input);
                 for (&self.entries) |*slot| if (slot.*) |*entry| {
                     if (std.meta.eql(entry.key, key)) {
-                        self.round_valid = false;
                         entry.deinit();
                         slot.* = null;
                         break;
@@ -623,7 +617,6 @@ fn run(init: std.process.Init) !void {
             if (ready[index] and try entry.queue.presentNotified(entry.window) > 0) entry.has_content = true;
         }
         try server.dispatchEvents();
-        server.completeTestRound();
         if (ready[0]) server.drain(!disconnected.load(.acquire));
     }
 }

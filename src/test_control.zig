@@ -165,6 +165,8 @@ pub const Input = struct {
     type_fn: *const fn (*anyopaque, []const u8) anyerror!void,
     key_fn: *const fn (*anyopaque, []const u8) anyerror!void,
     fullscreen_fn: *const fn (*anyopaque) bool,
+    type_at_fn: ?*const fn (*anyopaque, i32, i32, []const u8) anyerror!void = null,
+    key_at_fn: ?*const fn (*anyopaque, i32, i32, []const u8) anyerror!void = null,
     select_fn: ?*const fn (*anyopaque, u64, i64) anyerror!void = null,
 
     pub fn select(self: Input, revision: u64, window_id: i64) !void {
@@ -185,6 +187,18 @@ pub const Input = struct {
 
     pub fn key(self: Input, value: []const u8) !void {
         try self.key_fn(self.context, value);
+    }
+
+    pub fn typeAt(self: Input, x: i32, y: i32, value: []const u8) !void {
+        if (self.type_at_fn) |callback| return callback(self.context, x, y, value);
+        try self.tap(x, y);
+        try self.typeText(value);
+    }
+
+    pub fn keyAt(self: Input, x: i32, y: i32, value: []const u8) !void {
+        if (self.key_at_fn) |callback| return callback(self.context, x, y, value);
+        try self.tap(x, y);
+        try self.key(value);
     }
 
     pub fn fullscreen(self: Input) bool {
@@ -609,11 +623,7 @@ pub const Server = struct {
                     if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
                     return;
                 };
-                input.tap(x, y) catch |err| {
-                    if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
-                    return;
-                };
-                input.typeText(value) catch |err| {
+                input.typeAt(x, y, value) catch |err| {
                     if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
                     return;
                 };
@@ -622,11 +632,7 @@ pub const Server = struct {
                     if (!oneway) try self.interfaceError("ActionRejected", "action", kind);
                     return;
                 };
-                input.tap(x, y) catch |err| {
-                    if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
-                    return;
-                };
-                input.key(value) catch |err| {
+                input.keyAt(x, y, value) catch |err| {
                     if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
                     return;
                 };

@@ -79,8 +79,11 @@ internal class StockWindowServices private constructor() {
         }
         ServiceManager.addService(Context.WINDOW_SERVICE, windows)
         input.setWindowManagerCallbacks(windows.inputManagerCallback)
-        display.attachWindowManager(checkNotNull(LocalServices.getService(WindowManagerInternal::class.java)))
+        // Pinned RootWindowContainer.setWindowManager creates the default
+        // DisplayContent under the WM lock. The host display attachment requests
+        // traversal immediately, so it must follow that initialization.
         tasks.setWindowManager(windows)
+        display.attachWindowManager(checkNotNull(LocalServices.getService(WindowManagerInternal::class.java)))
         windows.onInitReady()
         input.connectSurfaceFlinger()
         tasks.installSystemProviders()
@@ -106,7 +109,9 @@ internal class StockWindowServices private constructor() {
         windows.enableScreenAfterBoot()
         if (System.getenv("AZK_TASK_WINDOWS") == "1") {
             check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
-            shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap, devices::publishSeatCapabilities) { token ->
+            shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap,
+                devices::publishSeatCapabilities,
+                { id -> com.android.server.wm.HostedTaskInputTargets.taskToken(windows, id) }) { token ->
                 com.android.server.wm.HostedTaskInputTargets.taskId(windows, token)
             }
         }
@@ -159,6 +164,8 @@ internal class StockWindowServices private constructor() {
      * No pointer capture is acknowledged before that connection exists.
      */
     private inner class BootstrapSeat : HostInputManagerBridge.Desktop {
+        override fun inputWindowTasks(tokens: Array<IBinder>): Array<IBinder?> =
+            com.android.server.wm.HostedTaskInputTargets.inputWindowTasks(windows, tokens)
         override fun getInputDevices(): Array<InputDevice> =
             devices.inputDeviceIds.map { checkNotNull(devices.getInputDevice(it)) }.toTypedArray()
         override fun canDispatchToDisplay(deviceId: Int, displayId: Int): Boolean =

@@ -22,6 +22,45 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Task-scoped keyboard focus checkpoint (2026-09-07)
+
+The hosted seat now supplies the actual WM Task Binder identity to the pinned
+InputDispatcher. Window-to-task membership accompanies SF input metadata under
+the dispatcher lock. Stock FocusResolver sees only the keyboard seat's current
+task candidates; pointer/touch routing retains the complete window list. Keys
+retain their originating task and focus epoch through policy delays, repeats and
+fallbacks. Leaving and returning to the same task cannot revive an old queued
+key. Ordinary unscoped InputReader/privileged injection paths remain available.
+
+Native gate 207 passes all 11 dispatcher tests, including five task-focus tests:
+waiting for task metadata, delayed A→B→A delivery rejection, same-task popup
+retargeting, independent touch through keyboard withdrawal, and held-key/repeat
+cancellation. The delay test uses a ten-second stale-event timeout so the stock
+age limit cannot mask an authority failure. Log:
+`/tmp/wayland-task-focus-native-207.log`.
+
+Live gate 209 passes all 13 desktop steps with zero per-step runtime issues:
+open another task, type only into its editor, finish it, and resume typing in the
+original task. The final screenshot shows counter 2 and editor `abC`. Artifacts:
+`/tmp/wayland-focus-success-209/`; log: `/tmp/wayland-task-focus-stock-209.log`.
+Cage/labwc task and dispatcher JVM gates pass in 208. That run also exposed an
+existing two-phase controller action rejecting its own tap's accessibility
+changes; tap+key/text now validates once and retains one ordered input barrier.
+
+The live tests exposed two sequencing defects fixed at their host boundaries:
+WM display attachment requests traversal only after ATMS creates the default
+DisplayContent; frame inspection counts actual callbacks per task, allowing a
+visible task to progress while a covered task receives no callbacks. An existing
+callback is never attributed to a newer request. These are global progress
+counts, not task-specific presentation or scanout acknowledgements.
+
+Package 73 contains 55,586 sources and 79 patches, including the hosted dispatcher
+seam. Regression 210 passes full JVM/native, all 15 APK integration tests
+(45 steps, zero runtime issues), all seven Surface/Wayland scenarios, native
+input/SF integration and build/source audits. Log:
+`/tmp/wayland-task-focus-regressions-210.log`. Physical keyboard inventory and the
+remaining M8–M11 behavior are still unfinished.
+
 ## Bounded physical typing checkpoint (2026-09-07)
 
 Task-addressed typing validates the entire request before producing keys, then

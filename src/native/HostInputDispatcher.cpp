@@ -28,10 +28,11 @@ static thread_local unsigned callbackDepth;
 static JavaVM *vm;
 static jclass keyClass;
 static jclass motionClass;
+static jclass binderClass;
 struct Methods {
   jmethodID noFocus, unresponsive, responsive, broken, focus, display, filter;
   jmethodID keyQueue, motionQueue, keyDispatch, unhandled, activity, outside;
-  jmethodID capture, drop, interaction, unsupported;
+  jmethodID capture, drop, interaction, unsupported, windowTasks;
 } methods;
 
 // InputDispatcher and Binder invoke policy on native threads. Attach only for
@@ -86,6 +87,44 @@ public:
     env->DeleteGlobalRef(callbacks);
     if (attached)
       vm->DetachCurrentThread();
+  }
+
+  InputDispatcher::HostedWindowTasks inputWindowTasks(const gui::WindowInfosUpdate &update) {
+    std::vector<sp<IBinder>> tokens;
+    for (const auto &window : update.windowInfos)
+      if (window.token) tokens.push_back(window.token);
+    if (tokens.empty()) return {};
+    Callback c;
+    auto array = c.env->NewObjectArray(tokens.size(), binderClass, nullptr);
+    if (c.failed() || !array) return {};
+    for (size_t i = 0; i < tokens.size(); ++i) {
+      auto token = javaObjectForIBinder(c.env, tokens[i]);
+      c.env->SetObjectArrayElement(array, i, token);
+      c.env->DeleteLocalRef(token);
+      if (c.failed()) return {};
+    }
+    // WMS owns the membership snapshot. This callback runs before acquiring
+    // InputDispatcher's lock; task metadata and SF windows are then published
+    // together by onHostedWindowInfosChanged.
+    auto result = static_cast<jobjectArray>(
+        c.env->CallObjectMethod(callbacks, methods.windowTasks, array));
+    if (c.failed()) return {};
+    if (!result || c.env->GetArrayLength(result) != static_cast<jsize>(tokens.size())) {
+      jniThrowException(c.env, "java/lang/IllegalStateException", "Input task map length mismatch");
+      c.failed();
+      return {};
+    }
+    InputDispatcher::HostedWindowTasks tasks;
+    for (size_t i = 0; i < tokens.size(); ++i) {
+      auto value = c.env->GetObjectArrayElement(result, i);
+      if (value) {
+        auto task = ibinderForJavaObject(c.env, value);
+        c.env->DeleteLocalRef(value);
+        if (c.failed()) return {};
+        if (task) tasks[tokens[i]] = std::move(task);
+      }
+    }
+    return tasks;
   }
 
   void notifyNoFocusedWindowAnr(
@@ -380,8 +419,11 @@ FocusService::setFocusedWindow(const gui::FocusRequest &request) {
 void WindowListener::onWindowInfosChanged(
     const gui::WindowInfosUpdate &update) {
   auto owner = state.lock();
-  if (owner && !owner->closed)
-    owner->dispatcher.onWindowInfosChanged(update);
+  if (owner && !owner->closed) {
+    auto tasks = owner->policy.inputWindowTasks(update);
+    if (!owner->closed)
+      owner->dispatcher.onHostedWindowInfosChanged(update, std::move(tasks));
+  }
 }
 
 static jlong create(JNIEnv *env, jclass, jobject callbacks) {
@@ -499,6 +541,12 @@ static void focusedDisplay(JNIEnv *env, jclass, jlong handle, jint display) {
   if (owner)
     owner->dispatcher.setFocusedDisplay(ui::LogicalDisplayId{display});
 }
+static void hostedKeyboardFocus(JNIEnv *env, jclass, jlong handle, jobject task) {
+  auto owner = get(env, handle);
+  if (!owner) return;
+  auto token = ibinderForJavaObject(env, task);
+  if (!env->ExceptionCheck()) owner->dispatcher.setHostedKeyboardFocus(token);
+}
 static void desktopKeyboardFocus(JNIEnv *env, jclass, jlong handle, jboolean focused) {
   auto owner = get(env, handle);
   if (owner)
@@ -605,7 +653,7 @@ static jint inject(JNIEnv *env, jclass, jlong handle, jobject event, jint uid,
 // separate injection API intentionally bypasses filtering and is used when an
 // InputFilter sends its result back. Preserve batched samples and transform
 // Java coordinates into the display space, as stock injection does.
-static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event, jboolean repeatable) {
+static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event, jboolean repeatable, jobject task) {
   auto owner = get(env, handle);
   if (!owner)
     return;
@@ -616,11 +664,15 @@ static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event, jboole
     // disables the optional Android user-setting branch in notifyKey.
     const uint32_t policyFlags = POLICY_FLAG_TRUSTED |
         (owner->keyRepeatEnabled.load() && repeatable ? 0 : POLICY_FLAG_DISABLE_KEY_REPEAT);
-    owner->dispatcher.notifyKey(NotifyKeyArgs{
+    const NotifyKeyArgs notification{
         key.getId(), key.getEventTime(), readTime, key.getDeviceId(),
         key.getSource(), key.getDisplayId(), policyFlags,
         key.getAction(), key.getFlags(), key.getKeyCode(), key.getScanCode(),
-        key.getMetaState(), key.getDownTime()});
+        key.getMetaState(), key.getDownTime()};
+    if (task) {
+      auto token = ibinderForJavaObject(env, task);
+      if (!env->ExceptionCheck()) owner->dispatcher.notifyHostedKey(notification, token);
+    } else owner->dispatcher.notifyKey(notification);
     return;
   }
   if (env->IsInstanceOf(event, motionClass)) {
@@ -708,10 +760,13 @@ int registerNatives(JNIEnv *env) {
       env->NewGlobalRef(FindClassOrDie(env, "android/view/KeyEvent")));
   motionClass = static_cast<jclass>(
       env->NewGlobalRef(FindClassOrDie(env, "android/view/MotionEvent")));
+  binderClass = static_cast<jclass>(
+      env->NewGlobalRef(FindClassOrDie(env, "android/os/IBinder")));
   jclass callbacks =
       FindClassOrDie(env, "dev/artzig/window/HostInputDispatcher$Callbacks");
 #define METHOD(field, name, signature)                                         \
   methods.field = GetMethodIDOrDie(env, callbacks, name, signature)
+  METHOD(windowTasks, "inputWindowTasks", "([Landroid/os/IBinder;)[Landroid/os/IBinder;");
   METHOD(noFocus, "notifyNoFocusedWindowAnr",
          "(Landroid/view/InputApplicationHandle;)V");
   METHOD(unresponsive, "notifyWindowUnresponsive",
@@ -758,6 +813,8 @@ int registerNatives(JNIEnv *env) {
       {"nativeSetFocusedApplication",
        "(JILandroid/view/InputApplicationHandle;)V",
        reinterpret_cast<void *>(focusedApplication)},
+      {"nativeSetHostedKeyboardFocus", "(JLandroid/os/IBinder;)V",
+       reinterpret_cast<void *>(hostedKeyboardFocus)},
       {"nativeSetDesktopKeyboardFocus", "(JZ)V",
        reinterpret_cast<void *>(desktopKeyboardFocus)},
       {"nativeSetFocusedDisplay", "(JI)V",
@@ -784,7 +841,7 @@ int registerNatives(JNIEnv *env) {
        reinterpret_cast<void *>(eligibility)},
       {"nativeInjectInputEvent", "(JLandroid/view/InputEvent;IIII)I",
        reinterpret_cast<void *>(inject)},
-      {"nativeNotifyInputEvent", "(JLandroid/view/InputEvent;Z)V",
+      {"nativeNotifyInputEvent", "(JLandroid/view/InputEvent;ZLandroid/os/IBinder;)V",
        reinterpret_cast<void *>(notifyEvent)},
       {"nativeConnectSurfaceFlinger", "(J)V",
        reinterpret_cast<void *>(connect)},

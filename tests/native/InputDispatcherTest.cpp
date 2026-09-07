@@ -6,6 +6,7 @@
 #include "FakeInputDispatcherPolicy.h"
 #include "FakeWindows.h"
 #include <input/InputEventBuilders.h>
+#include <binder/Binder.h>
 #include <gtest/gtest.h>
 
 using namespace android;
@@ -179,4 +180,142 @@ TEST_F(HostedInputDispatcher, VerifiesSignedEventsAndRejectsTampering) {
   ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
             motion(AMOTION_EVENT_ACTION_UP, 350, 150));
   expectMotion(left, AMOTION_EVENT_ACTION_UP, 50, 50);
+}
+
+// WMS task Binder identities are independent of window token, UID and geometry.
+class HostedTaskKeyboard : public HostedInputDispatcher {
+protected:
+  sp<IBinder> leftTask = sp<BBinder>::make();
+  sp<IBinder> rightTask = sp<BBinder>::make();
+  nsecs_t keyStart = 0;
+
+  void publishTasks(bool includeRight = true, bool sameTask = false) {
+    InputDispatcher::HostedWindowTasks tasks{{left->getToken(), leftTask}};
+    if (includeRight)
+      tasks.emplace(right->getToken(), sameTask ? leftTask : rightTask);
+    dispatcher->onHostedWindowInfosChanged(
+        {{*right->getInfo(), *left->getInfo()}, {}, 0, 0}, std::move(tasks));
+  }
+  void SetUp() override {
+    HostedInputDispatcher::SetUp();
+    dispatcher->setFocusedApplication(ui::LogicalDisplayId::DEFAULT, application);
+    publishTasks();
+    dispatcher->setHostedKeyboardFocus(leftTask);
+    focus(left);
+    left->consumeFocusEvent(true);
+    ASSERT_EQ(left->getInfo()->ownerUid, right->getInfo()->ownerUid);
+  }
+  void scopedKey(const sp<IBinder>& task, int32_t action,
+                 int32_t code = AKEYCODE_A, bool repeatable = false) {
+    const auto time = systemTime(SYSTEM_TIME_MONOTONIC);
+    if (action == AKEY_EVENT_ACTION_DOWN) keyStart = time;
+    dispatcher->notifyHostedKey(
+        NotifyKeyArgs{InputEvent::nextId(), time, time, 7, AINPUT_SOURCE_KEYBOARD,
+                      ui::LogicalDisplayId::DEFAULT,
+                      POLICY_FLAG_TRUSTED | POLICY_FLAG_PASS_TO_USER |
+                          (repeatable ? 0u : POLICY_FLAG_DISABLE_KEY_REPEAT),
+                      action, 0, code, KEY_A, AMETA_NONE, keyStart}, task);
+  }
+};
+
+TEST_F(HostedTaskKeyboard, WaitsForMatchingTaskMetadataAndFocus) {
+  publishTasks(false);
+  dispatcher->setHostedKeyboardFocus(rightTask);
+  left->consumeFocusEvent(false);
+  scopedKey(rightTask, AKEY_EVENT_ACTION_DOWN);
+  focus(right); // The requested window exists, but task membership is not published.
+  left->assertNoEvents(50ms);
+  right->assertNoEvents(50ms);
+  publishTasks();
+  right->consumeFocusEvent(true);
+  right->consumeKeyDown(ui::LogicalDisplayId::DEFAULT);
+  scopedKey(rightTask, AKEY_EVENT_ACTION_UP);
+  right->consumeKeyUp(ui::LogicalDisplayId::DEFAULT);
+  left->assertNoEvents();
+}
+
+TEST_F(HostedTaskKeyboard, QueuedKeyCannotFollowFocusAcrossTasksOrBackToOldTask) {
+  // Keep the delayed event fresh so generic age rejection cannot mask a lost scope.
+  policy.setStaleEventTimeout(10s);
+  policy.setInterceptKeyBeforeDispatchingResult(static_cast<nsecs_t>(1'000'000'000));
+  scopedKey(leftTask, AKEY_EVENT_ACTION_DOWN);
+  ASSERT_FALSE(dispatcher->waitForIdle()); // Key is queued behind policy, not delivered.
+  dispatcher->setHostedKeyboardFocus(rightTask);
+  focus(right);
+  left->consumeFocusEvent(false);
+  right->consumeFocusEvent(true);
+  dispatcher->setHostedKeyboardFocus(leftTask);
+  focus(left);
+  right->consumeFocusEvent(false);
+  left->consumeFocusEvent(true);
+  policy.setInterceptKeyBeforeDispatchingResult(static_cast<nsecs_t>(0));
+  scopedKey(leftTask, AKEY_EVENT_ACTION_DOWN, AKEYCODE_B);
+  scopedKey(leftTask, AKEY_EVENT_ACTION_UP, AKEYCODE_B);
+  auto down = left->consumeKey();
+  ASSERT_NE(nullptr, down);
+  EXPECT_EQ(AKEY_EVENT_ACTION_DOWN, down->getAction());
+  EXPECT_EQ(AKEYCODE_B, down->getKeyCode());
+  auto up = left->consumeKey();
+  ASSERT_NE(nullptr, up);
+  EXPECT_EQ(AKEY_EVENT_ACTION_UP, up->getAction());
+  EXPECT_EQ(AKEYCODE_B, up->getKeyCode());
+  right->assertNoEvents();
+  left->assertNoEvents();
+}
+
+TEST_F(HostedTaskKeyboard, SameTaskPopupRetainsStockWindowRetargeting) {
+  publishTasks(true, true);
+  focus(right);
+  left->consumeFocusEvent(false);
+  right->consumeFocusEvent(true);
+  scopedKey(leftTask, AKEY_EVENT_ACTION_DOWN);
+  right->consumeKeyDown(ui::LogicalDisplayId::DEFAULT);
+  scopedKey(leftTask, AKEY_EVENT_ACTION_UP);
+  right->consumeKeyUp(ui::LogicalDisplayId::DEFAULT);
+  left->assertNoEvents();
+}
+
+TEST_F(HostedTaskKeyboard, KeyboardWithdrawalDoesNotCancelIndependentTouch) {
+  ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+            motion(AMOTION_EVENT_ACTION_DOWN, 650, 150));
+  expectMotion(right, AMOTION_EVENT_ACTION_DOWN, 50, 50);
+  dispatcher->setHostedKeyboardFocus(nullptr);
+  left->consumeFocusEvent(false);
+  // Re-publication must not restore the preferred SF window while the seat is absent.
+  publishTasks();
+  focus(left);
+  scopedKey(leftTask, AKEY_EVENT_ACTION_DOWN);
+  ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+            motion(AMOTION_EVENT_ACTION_MOVE, 350, 150));
+  expectMotion(right, AMOTION_EVENT_ACTION_MOVE, -250, 50);
+  ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+            motion(AMOTION_EVENT_ACTION_UP, 350, 150));
+  expectMotion(right, AMOTION_EVENT_ACTION_UP, -250, 50);
+  left->assertNoEvents();
+  right->assertNoEvents();
+}
+
+TEST_F(HostedTaskKeyboard, FocusChangeCancelsHeldKeyAndStopsOldRepeat) {
+  dispatcher->setKeyRepeatConfiguration(20ms, 40ms, true);
+  scopedKey(leftTask, AKEY_EVENT_ACTION_DOWN, AKEYCODE_A, true);
+  left->consumeKeyDown(ui::LogicalDisplayId::DEFAULT);
+  auto repeated = left->consumeKey();
+  ASSERT_NE(nullptr, repeated);
+  EXPECT_GT(repeated->getRepeatCount(), 0);
+  dispatcher->setHostedKeyboardFocus(rightTask);
+  focus(right);
+  bool cancelled = false;
+  for (int count = 0; count < 4 && !cancelled; ++count) {
+    auto key = left->consumeKey();
+    ASSERT_NE(nullptr, key);
+    if (key->getAction() == AKEY_EVENT_ACTION_UP) {
+      EXPECT_NE(0, key->getFlags() & AKEY_EVENT_FLAG_CANCELED);
+      cancelled = true;
+    } else EXPECT_GT(key->getRepeatCount(), 0);
+  }
+  ASSERT_TRUE(cancelled);
+  left->consumeFocusEvent(false);
+  right->consumeFocusEvent(true);
+  right->assertNoEvents(150ms);
+  left->assertNoEvents(150ms);
 }

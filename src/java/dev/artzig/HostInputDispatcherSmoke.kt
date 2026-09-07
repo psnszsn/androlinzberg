@@ -290,14 +290,14 @@ object HostInputDispatcherSmoke {
             }
             await("restore initial task seat focus") { "focus:1:true" in observed }
             val seat = dev.artzig.window.WaylandTaskInput(object : dev.artzig.window.WaylandTaskInput.Android {
-                override fun keyboardActive(active: Boolean) = dispatcher.setDesktopKeyboardFocus(active)
+                override fun keyboardFocus(task: dev.artzig.window.TaskGeometry.Task?) = dispatcher.setDesktopKeyboardFocus(task != null)
                 override fun focusTask(taskId: Int) {
                     val index = taskId - 1
                     SurfaceControl.Transaction().use {
                         it.setFocusedWindow(checkNotNull(channels[index].token), "JavaInput$index", 0).apply()
                     }
                 }
-                override fun dispatch(event: InputEvent, repeatable: Boolean) = dispatcher.dispatchDesktopEvent(event, repeatable)
+                override fun dispatch(event: InputEvent, repeatable: Boolean, owner: dev.artzig.window.TaskGeometry.Task?) = dispatcher.dispatchDesktopEvent(event, repeatable)
                 override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) { }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
                     dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)

@@ -32,7 +32,7 @@ pub fn register(env: [*c]jni.JNIEnv, server: *control.Server) !void {
     };
     if (env.*.*.RegisterNatives.?(env, class, &methods, methods.len) != 0) return error.RegisterFailed;
     active = state;
-    server.setInput(.{ .context = &active.?, .select_fn = select, .tap_fn = tap, .drag_fn = drag, .type_fn = typeText, .key_fn = key, .fullscreen_fn = fullscreen });
+    server.setInput(.{ .context = &active.?, .select_fn = select, .tap_fn = tap, .drag_fn = drag, .type_fn = typeText, .key_fn = key, .type_at_fn = typeAt, .key_at_fn = keyAt, .fullscreen_fn = fullscreen });
 }
 
 pub fn deinit() void {
@@ -78,6 +78,12 @@ fn typeText(context: *anyopaque, text: []const u8) !void {
 }
 fn key(context: *anyopaque, text: []const u8) !void {
     try inject(context, 3, @splat(0), text);
+}
+fn typeAt(context: *anyopaque, x: i32, y: i32, text: []const u8) !void {
+    try inject(context, 4, .{ x, y, 0, 0 }, text);
+}
+fn keyAt(context: *anyopaque, x: i32, y: i32, text: []const u8) !void {
+    try inject(context, 5, .{ x, y, 0, 0 }, text);
 }
 fn fullscreen(context: *anyopaque) bool {
     const state: *State = @ptrCast(@alignCast(context));

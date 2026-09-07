@@ -21,9 +21,9 @@ internal class WaylandTaskInput(private val android: Android,
     private val clock: () -> Long = SystemClock::uptimeMillis) {
     interface Android {
         fun focusTask(taskId: Int)
-        fun keyboardActive(active: Boolean)
+        fun keyboardFocus(task: TaskGeometry.Task?)
         /** Borrowed for this call; retain a copy if dispatch is asynchronous. */
-        fun dispatch(event: InputEvent, repeatable: Boolean = true)
+        fun dispatch(event: InputEvent, repeatable: Boolean = true, owner: TaskGeometry.Task? = null)
         fun keyboardLayout(map: KeyCharacterMap, supportedKeyCodes: IntArray)
         fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean)
     }
@@ -143,7 +143,7 @@ internal class WaylandTaskInput(private val android: Android,
                 physicalKeys.clear()
                 for (scan in heldScanCodes) physicalKeys[scan] = keyCode(scan)
                 publishKeyboardState()
-                android.keyboardActive(true)
+                android.keyboardFocus(task)
                 if (bounds != null) android.focusTask(task.id)
             } else {
                 releaseKeys()
@@ -151,7 +151,7 @@ internal class WaylandTaskInput(private val android: Android,
                     focus = null
                     physicalKeys.clear()
                     publishKeyboardState()
-                    android.keyboardActive(false)
+                    android.keyboardFocus(null)
                 }
             }
         }
@@ -276,7 +276,7 @@ internal class WaylandTaskInput(private val android: Android,
         private fun buttonKey(code: Int, down: Boolean) = dispatch(KeyEvent(pointerDownTime, clock(),
             if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, code, 0, metaState(),
             KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FROM_SYSTEM,
-            if (captured) InputDevice.SOURCE_MOUSE_RELATIVE else InputDevice.SOURCE_MOUSE), false)
+            if (captured) InputDevice.SOURCE_MOUSE_RELATIVE else InputDevice.SOURCE_MOUSE), false, task)
 
         fun cancelPointer() {
             if (buttons and DOWN_BUTTONS != 0) mouse(MotionEvent.ACTION_CANCEL)
@@ -328,7 +328,7 @@ internal class WaylandTaskInput(private val android: Android,
             held ?: return // Update physical state without inventing a delivered key-up.
             dispatch(KeyEvent(held!!.time, clock(), if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP,
                 held.code, 0, metaState(), KeyCharacterMap.VIRTUAL_KEYBOARD, scanCode,
-                KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD), repeatable)
+                KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD), repeatable, task)
         }
 
         internal fun releaseKeys() {
@@ -337,7 +337,7 @@ internal class WaylandTaskInput(private val android: Android,
                 keys.remove(scan)
                 dispatch(KeyEvent(held.time, clock(), KeyEvent.ACTION_UP, held.code, 0, metaState(),
                     KeyCharacterMap.VIRTUAL_KEYBOARD, scan, KeyEvent.FLAG_FROM_SYSTEM or KeyEvent.FLAG_CANCELED,
-                    InputDevice.SOURCE_KEYBOARD))
+                    InputDevice.SOURCE_KEYBOARD), owner = task)
             }
         }
 
@@ -390,7 +390,7 @@ internal class WaylandTaskInput(private val android: Android,
                 focus = null
                 physicalKeys.clear()
                 publishKeyboardState()
-                android.keyboardActive(false)
+                android.keyboardFocus(null)
             }
             windows.remove(task.id)
             closed = true
@@ -449,9 +449,9 @@ internal class WaylandTaskInput(private val android: Android,
         else -> 0
     }
 
-    private fun dispatch(event: InputEvent, repeatable: Boolean = true) {
+    private fun dispatch(event: InputEvent, repeatable: Boolean = true, owner: TaskGeometry.Task? = null) {
         event.displayId = Display.DEFAULT_DISPLAY
-        try { android.dispatch(event, repeatable) } finally { event.recycle() }
+        try { android.dispatch(event, repeatable, owner) } finally { event.recycle() }
     }
 
     companion object {

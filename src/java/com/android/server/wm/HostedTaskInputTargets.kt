@@ -16,6 +16,22 @@ object HostedTaskInputTargets {
             target.windowState?.task?.mTaskId
         }
 
+    /** The organizer's Task Binder identity survives window changes and cannot
+     * alias a later task that reuses the same integer ID. No IPC occurs here. */
+    fun taskToken(windows: WindowManagerService, id: Int): IBinder? =
+        synchronized(windows.mGlobalLock) {
+            windows.mRoot.anyTaskForId(id, RootWindowContainer.MATCH_ATTACHED_TASK_ONLY)
+                ?.mRemoteToken?.toWindowContainerToken()?.asBinder()
+        }
+
+    fun inputWindowTasks(windows: WindowManagerService, tokens: Array<IBinder>): Array<IBinder?> =
+        synchronized(windows.mGlobalLock) {
+            tokens.map { token ->
+                windows.getInputTargetFromToken(token)?.windowState?.task
+                    ?.mRemoteToken?.toWindowContainerToken()?.asBinder()
+            }.toTypedArray()
+        }
+
     fun taskId(windows: WindowManagerService, token: IBinder): Int? =
         synchronized(windows.mGlobalLock) {
             windows.getInputTargetFromToken(token)?.windowState?.task?.mTaskId

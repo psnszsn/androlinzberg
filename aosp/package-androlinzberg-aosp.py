@@ -157,6 +157,10 @@ packager.PATCH_SERIES = framework_patches + (
         patch_root / "frameworks-native" / "0007-nativewindow-link-stock-parcel-operations.patch",
     ),
     (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0008-inputdispatcher-host-task-focus.patch",
+    ),
+    (
         "system/libbase",
         patch_root / "system" / "libbase" / "0001-host-prop_info_cmp-operator-must-be-const-libc-std-s.patch",
     ),

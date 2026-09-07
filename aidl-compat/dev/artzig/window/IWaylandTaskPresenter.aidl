@@ -13,12 +13,15 @@ interface IWaylandTaskPresenter {
     void configurationCommitted(int taskId, long generation, int left, int top,
         int width, int height, int outputWidth, int outputHeight);
     boolean setPointerCapture(int taskId, long generation, boolean enabled, int sequence);
-    /** Private test pacing: submitted/completed rounds over all mapped tasks.
+    /** Private test pacing: requested/received callbacks across mapped tasks.
+     * Covered tasks may stop callbacks without blocking visible task progress.
      * Completion means a Wayland frame callback, not a display scanout timestamp. */
     long[] observeTestFrames(boolean requestFrame);
     /** Private harness geometry: generation, six committed bounds, actual size, fullscreen. */
     long[] testWindow(int taskId);
-    /** Positive ordered input sequence; zero is rejection, negative is unknown completion. */
+    /** Positive ordered input sequence; zero is rejection, negative is unknown completion.
+     * Kinds: 0 tap, 1 drag, 2 text, 3 key, 4 tap+text, 5 tap+key. A combined
+     * action validates once before its own tap changes focus/selection. */
     long injectTestInput(int taskId, long generation, in int[] geometry,
         int kind, in int[] points, String text);
     boolean setPointerIcon(int taskId, long generation, int type);

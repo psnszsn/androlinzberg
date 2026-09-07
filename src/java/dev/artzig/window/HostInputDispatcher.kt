@@ -14,6 +14,7 @@ import android.view.KeyEvent
  */
 class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
     interface Callbacks {
+        fun inputWindowTasks(tokens: Array<IBinder>): Array<IBinder?>
         fun notifyNoFocusedWindowAnr(application: InputApplicationHandle)
         fun notifyWindowUnresponsive(token: IBinder, pid: Int, reason: String)
         fun notifyWindowResponsive(token: IBinder, pid: Int)
@@ -54,6 +55,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         nativeIsPointerInWindow(handle, token, displayId, deviceId, pointerId)
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) =
         nativeSetFocusedApplication(handle, displayId, application)
+    fun setHostedKeyboardFocus(task: IBinder?) = nativeSetHostedKeyboardFocus(handle, task)
     fun setDesktopKeyboardFocus(focused: Boolean) = nativeSetDesktopKeyboardFocus(handle, focused)
     fun setFocusedDisplay(displayId: Int) = nativeSetFocusedDisplay(handle, displayId)
     fun setInputDispatchMode(enabled: Boolean, frozen: Boolean) = nativeSetInputDispatchMode(handle, enabled, frozen)
@@ -81,7 +83,8 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         return nativeInjectInputEvent(handle, event, targetUid, syncMode, timeoutMillis, policyFlags)
     }
     /** Device events run through stock input filtering, unlike injected events. */
-    fun notifyInputEvent(event: InputEvent, repeatable: Boolean = true) = nativeNotifyInputEvent(handle, event, repeatable)
+    fun notifyInputEvent(event: InputEvent, repeatable: Boolean = true, task: IBinder? = null) =
+        nativeNotifyInputEvent(handle, event, repeatable, task)
     /** Publish inputflinger and subscribe to stock SF window metadata before SF bootFinished. */
     fun connectSurfaceFlinger() = nativeConnectSurfaceFlinger(handle)
     override fun close() = nativeClose(handle)
@@ -97,6 +100,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         @JvmStatic private external fun nativeRemoveInputChannel(handle: Long, token: IBinder)
         @JvmStatic private external fun nativeIsPointerInWindow(handle: Long, token: IBinder, displayId: Int, deviceId: Int, pointerId: Int): Boolean
         @JvmStatic private external fun nativeSetFocusedApplication(handle: Long, displayId: Int, application: InputApplicationHandle?)
+        @JvmStatic private external fun nativeSetHostedKeyboardFocus(handle: Long, task: IBinder?)
         @JvmStatic private external fun nativeSetDesktopKeyboardFocus(handle: Long, focused: Boolean)
         @JvmStatic private external fun nativeSetFocusedDisplay(handle: Long, displayId: Int)
         @JvmStatic private external fun nativeSetInputDispatchMode(handle: Long, enabled: Boolean, frozen: Boolean)
@@ -110,7 +114,7 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         @JvmStatic private external fun nativeNotifyPointerCaptureChanged(handle: Long, windowToken: IBinder?, sequence: Int)
         @JvmStatic private external fun nativeSetDisplayEligibilityForPointerCapture(handle: Long, displayId: Int, eligible: Boolean)
         @JvmStatic private external fun nativeInjectInputEvent(handle: Long, event: InputEvent, targetUid: Int, syncMode: Int, timeoutMillis: Int, policyFlags: Int): Int
-        @JvmStatic private external fun nativeNotifyInputEvent(handle: Long, event: InputEvent, repeatable: Boolean)
+        @JvmStatic private external fun nativeNotifyInputEvent(handle: Long, event: InputEvent, repeatable: Boolean, task: IBinder?)
         @JvmStatic private external fun nativeConnectSurfaceFlinger(handle: Long)
     }
 }

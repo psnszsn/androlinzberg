@@ -16,23 +16,38 @@ internal object SessionTaskShell {
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,
         publishKeyboard: (android.view.KeyCharacterMap, IntArray) -> Unit,
         publishCapabilities: (Int, Int) -> Unit,
+        resolveTask: (Int) -> android.os.IBinder?,
         taskForToken: (android.os.IBinder) -> Int?): Controller {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
             "Session presenter did not register before system startup"
         }
         val remote = IWaylandTaskPresenter.Stub.asInterface(binder)
+        var keyboardTask: TaskGeometry.Task? = null
+        var keyboardToken: android.os.IBinder? = null
         val input = WaylandTaskInput(object : WaylandTaskInput.Android {
-            override fun keyboardActive(active: Boolean) = dispatcher.setDesktopKeyboardFocus(active)
+            override fun keyboardFocus(task: TaskGeometry.Task?) {
+                keyboardToken = task?.let { resolveTask(it.id) }
+                keyboardTask = task.takeIf { keyboardToken != null }
+                dispatcher.setHostedKeyboardFocus(keyboardToken)
+            }
             override fun focusTask(taskId: Int) = android.app.ActivityTaskManager.getService().setFocusedTask(taskId)
             override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) = publishKeyboard(map, supportedKeyCodes)
-            override fun dispatch(event: android.view.InputEvent, repeatable: Boolean) = dispatcher.dispatchDesktopEvent(event, repeatable)
+            override fun dispatch(event: android.view.InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?) {
+                if (event is android.view.KeyEvent) {
+                    // A late old-window cancellation must not acquire the new
+                    // task's authority. Native code retains the focus epoch
+                    // across policy delays, queued delivery and key repeats.
+                    if (owner == null || owner != keyboardTask || keyboardToken == null) return
+                    dispatcher.dispatchDesktopEvent(event, repeatable, keyboardToken)
+                } else dispatcher.dispatchDesktopEvent(event, repeatable)
+            }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) =
                 dispatcher.setKeyRepeatConfiguration(timeoutMillis, delayMillis, enabled)
         })
         // Wait for Wayland's repeat policy before allowing stock dispatcher to
         // synthesize repeats. The presenter sends physical key edges only.
         dispatcher.setKeyRepeatConfiguration(500, 50, false)
-        dispatcher.setDesktopKeyboardFocus(false)
+        dispatcher.setHostedKeyboardFocus(null)
         val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, publishCapabilities, dispatcher::notifyPointerCaptureChanged)
         presenter.connect()
         val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)

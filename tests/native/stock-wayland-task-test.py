@@ -169,11 +169,11 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 window = str(windows[0]['id'])
                 def label(value):
                     return next(node['text'] for node in tree['nodes'] if (node.get('text') or '').lower() == value.lower())
-                def settled_text(value, description=None):
+                def settled_text(value, description=None, task_id=None):
                     # Observe immediately: a subsequent wait would conceal a
                     # step that settled before its input reached the app.
                     current = control('observe', '--tree')['observation']['tree']
-                    assert any(node.get('text') == value and str(node.get('task_id')) == task
+                    assert any(node.get('text') == value and str(node.get('task_id')) == (task_id or task)
                                and (description is None or node.get('content_description') == description)
                                for node in current['nodes']), (value, current)
                 control('step', 'click', '--task-id', task, '--window-id', window,
@@ -205,12 +205,28 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'ab',
                         '--via', 'semantic', '--settle', 'idle')
                 settled_text('ab', 'Fixture editor')
+                control('step', 'click', '--task-id', task, '--text', label('Open independent task'),
+                        '--via', 'semantic', '--settle', 'idle')
+                multiple = control('observe', '--tree')['observation']['tree']
+                assert len(multiple['windows']) == 2, multiple
+                sibling = next(window for window in multiple['windows'] if str(window['task_id']) != task)
+                assert sibling['pid'] == app_pid
+                sibling_task = str(sibling['task_id'])
+                control('step', 'type', '--task-id', sibling_task, '--description', 'Fixture editor', 'Z',
+                        '--via', 'wayland', '--settle', 'idle')
+                settled_text('Z', 'Fixture editor', sibling_task)
+                settled_text('ab', 'Fixture editor')
+                control('step', 'click', '--task-id', sibling_task, '--text', label('Finish this activity'),
+                        '--via', 'semantic', '--settle', 'idle')
+                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'C',
+                        '--via', 'wayland', '--settle', 'idle')
+                settled_text('abC', 'Fixture editor')
                 after = control('observe', '--tree')['observation']
                 assert len(after['tree']['windows']) == 1
                 assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
                 (out / 'a11y.json').write_text(json.dumps(after, indent=2))
                 steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                assert len(steps) == 9 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                 result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
                 subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 seat.stdin.write(b'c')

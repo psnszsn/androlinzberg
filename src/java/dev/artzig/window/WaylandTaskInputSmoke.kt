@@ -15,14 +15,15 @@ object WaylandTaskInputSmoke {
         var layouts = 0
         var time = 100L
         val seat = WaylandTaskInput(object : WaylandTaskInput.Android {
-            override fun keyboardActive(active: Boolean) { keyboardActive = active }
+            override fun keyboardFocus(task: TaskGeometry.Task?) { keyboardActive = task != null }
             override fun focusTask(taskId: Int) { focus.add(taskId); order.add("focus:$taskId") }
             override fun keyboardLayout(map: android.view.KeyCharacterMap, supportedKeyCodes: IntArray) { layouts++ }
             override fun repeatConfiguration(timeoutMillis: Int, delayMillis: Int, enabled: Boolean) {
                 repeats.add(Triple(timeoutMillis, delayMillis, enabled))
             }
-            override fun dispatch(event: InputEvent, repeatable: Boolean) {
+            override fun dispatch(event: InputEvent, repeatable: Boolean, owner: TaskGeometry.Task?) {
                 check(event.displayId == 0)
+                if (event is KeyEvent) checkNotNull(owner) { "Key lost its originating task" }
                 events.add(event.copy())
                 order.add(when (event) {
                     is KeyEvent -> "key:${event.action}:${event.keyCode}:${event.isCanceled}"

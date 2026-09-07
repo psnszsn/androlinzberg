@@ -1,0 +1,260 @@
+Subject: [PATCH] inputdispatcher: retain hosted task authority through focus changes
+
+The Wayland seat supplies a WM task Binder identity and an epoch. Keep stock
+FocusResolver, channel ordering, cancellation and repeat policy, while limiting
+keyboard focus to authoritative task membership. Publish membership with SF
+window metadata under the dispatcher lock; retain scope on repeats/fallbacks.
+
+diff --git a/services/inputflinger/dispatcher/Entry.h b/services/inputflinger/dispatcher/Entry.h
+--- a/services/inputflinger/dispatcher/Entry.h
++++ b/services/inputflinger/dispatcher/Entry.h
+@@ -26,6 +26,7 @@
+ #include <utils/Timers.h>
+ #include <functional>
+ #include <ostream>
++#include <optional>
+ #include <string>
+ 
+ namespace android::inputdispatcher {
+@@ -111,7 +112,15 @@
+     std::string getDescription() const override;
+ };
+ 
++// Host task authority supplements stock window routing for an external seat.
++// Repeats and derived keys retain the scope of the original physical edge.
++struct HostedKeyScope {
++    sp<IBinder> task;
++    uint64_t epoch;
++};
++
+ struct KeyEntry : EventEntry {
++    std::optional<HostedKeyScope> hostedScope;
+     int32_t deviceId;
+     uint32_t source;
+     ui::LogicalDisplayId displayId;
+diff --git a/services/inputflinger/dispatcher/InputDispatcher.h b/services/inputflinger/dispatcher/InputDispatcher.h
+--- a/services/inputflinger/dispatcher/InputDispatcher.h
++++ b/services/inputflinger/dispatcher/InputDispatcher.h
+@@ -55,6 +55,7 @@
+ #include <condition_variable>
+ #include <deque>
+ #include <optional>
++#include <map>
+ #include <unordered_map>
+ #include <unordered_set>
+ 
+@@ -101,6 +102,12 @@
+ 
+     void notifyInputDevicesChanged(const NotifyInputDevicesChangedArgs& args) override;
+     void notifyKey(const NotifyKeyArgs& args) override;
++    // Hosted seat seam: WM supplies task Binder identities, independently of
++    // desktop placement. Ordinary InputReader/injection paths remain unchanged.
++    using HostedWindowTasks = std::map<sp<IBinder>, sp<IBinder>>;
++    void notifyHostedKey(const NotifyKeyArgs& args, const sp<IBinder>& task);
++    void setHostedKeyboardFocus(const sp<IBinder>& task);
++    void onHostedWindowInfosChanged(const gui::WindowInfosUpdate&, HostedWindowTasks);
+     void notifyMotion(const NotifyMotionArgs& args) override;
+     void notifySwitch(const NotifySwitchArgs& args) override;
+     void notifySensor(const NotifySensorArgs& args) override;
+@@ -677,6 +684,17 @@
+ 
+     // Keeps track of the focused window per display and determines focus changes.
+     FocusResolver mFocusResolver GUARDED_BY(mLock);
++    bool mHostedKeyboardEnabled GUARDED_BY(mLock) = false;
++    sp<IBinder> mHostedKeyboardTask GUARDED_BY(mLock);
++    uint64_t mHostedKeyboardEpoch GUARDED_BY(mLock) = 0;
++    HostedWindowTasks mHostedWindowTasks GUARDED_BY(mLock);
++    bool hostedWindowAllowedLocked(const sp<gui::WindowInfoHandle>&) const REQUIRES(mLock);
++    bool hostedKeyCurrentLocked(const KeyEntry&) const REQUIRES(mLock);
++    std::vector<sp<gui::WindowInfoHandle>> hostedFocusWindowsLocked(
++            const std::vector<sp<gui::WindowInfoHandle>>&) const REQUIRES(mLock);
++    void notifyKey(const NotifyKeyArgs&, std::optional<HostedKeyScope>);
++    void onWindowInfosChanged(const gui::WindowInfosUpdate&,
++                              std::optional<HostedWindowTasks>);
+ 
+     // The enabled state of this request is true iff the focused window on the focused display has
+     // requested Pointer Capture. This request also contains the sequence number associated with the
+diff --git a/services/inputflinger/dispatcher/InputDispatcher.cpp b/services/inputflinger/dispatcher/InputDispatcher.cpp
+--- a/services/inputflinger/dispatcher/InputDispatcher.cpp
++++ b/services/inputflinger/dispatcher/InputDispatcher.cpp
+@@ -1669,6 +1669,7 @@
+                                        entry->keyCode, entry->scanCode, entry->metaState,
+                                        entry->repeatCount + 1, entry->downTime);
+ 
++    newEntry->hostedScope = entry->hostedScope;
+     newEntry->syntheticRepeat = true;
+     if (mTracer) {
+         newEntry->traceTracker = mTracer->traceInboundEvent(*newEntry);
+@@ -2011,6 +2012,7 @@
+                                        fallback.keyCode, event.getScanCode(), /*metaState=*/0,
+                                        event.getRepeatCount(), event.getDownTime());
+ 
++    fallbackKeyEntry->hostedScope = entry->hostedScope;
+     if (mTracer) {
+         fallbackKeyEntry->traceTracker =
+                 mTracer->traceDerivedEvent(*fallbackKeyEntry, *entry->traceTracker);
+@@ -2357,6 +2359,15 @@
+     sp<WindowInfoHandle> focusedWindowHandle = getFocusedWindowHandleLocked(displayId);
+     std::shared_ptr<InputApplicationHandle> focusedApplicationHandle =
+             getValueByKey(mFocusedApplicationHandlesByDisplay, displayId);
++
++    if (entry.type == EventEntry::Type::KEY) {
++        const auto& key = static_cast<const KeyEntry&>(entry);
++        if (!hostedKeyCurrentLocked(key) ||
++            (key.hostedScope && focusedWindowHandle &&
++             !hostedWindowAllowedLocked(focusedWindowHandle))) {
++            return injectionError(InputEventInjectionResult::TARGET_MISMATCH);
++        }
++    }
+ 
+     // If there is no currently focused window and no focused application
+     // then drop the event.
+@@ -3429,6 +3440,14 @@
+ void InputDispatcher::enqueueDispatchEntryLocked(const std::shared_ptr<Connection>& connection,
+                                                  std::shared_ptr<const EventEntry> eventEntry,
+                                                  const InputTarget& inputTarget) {
++    // Derived/fallback keys can bypass focused-window selection. Check their
++    // original authority again before modifying a connection's input state.
++    if (eventEntry->type == EventEntry::Type::KEY) {
++        const auto& key = static_cast<const KeyEntry&>(*eventEntry);
++        if (!hostedKeyCurrentLocked(key) ||
++            (key.hostedScope && inputTarget.windowHandle &&
++             !hostedWindowAllowedLocked(inputTarget.windowHandle))) return;
++    }
+     const bool isKeyOrMotion = eventEntry->type == EventEntry::Type::KEY ||
+             eventEntry->type == EventEntry::Type::MOTION;
+     if (isKeyOrMotion && !inputTarget.windowHandle && !connection->monitor) {
+@@ -4440,6 +4459,21 @@
+ }
+ 
+ void InputDispatcher::notifyKey(const NotifyKeyArgs& args) {
++    notifyKey(args, std::nullopt);
++}
++
++void InputDispatcher::notifyHostedKey(const NotifyKeyArgs& args, const sp<IBinder>& task) {
++    std::optional<HostedKeyScope> scope;
++    {
++        std::scoped_lock _l(mLock);
++        if (!mHostedKeyboardEnabled || !task || task != mHostedKeyboardTask) return;
++        scope = HostedKeyScope{task, mHostedKeyboardEpoch};
++    }
++    // Capture before policy: focus may change while a policy callback runs.
++    notifyKey(args, scope);
++}
++
++void InputDispatcher::notifyKey(const NotifyKeyArgs& args, std::optional<HostedKeyScope> scope) {
+     LOG_IF(INFO, debugInboundEventDetails())
+             << "notifyKey - id=" << args.id << ", eventTime=" << args.eventTime
+             << ", deviceId=" << args.deviceId
+@@ -4508,6 +4542,7 @@
+                                            args.deviceId, args.source, args.displayId, policyFlags,
+                                            args.action, flags, keyCode, args.scanCode, metaState,
+                                            repeatCount, args.downTime);
++        newEntry->hostedScope = std::move(scope);
+         if (mTracer) {
+             newEntry->traceTracker = mTracer->traceInboundEvent(*newEntry);
+         }
+@@ -5519,7 +5554,7 @@
+             mWindowInfos.getWindowHandlesForDisplay(displayId);
+ 
+     std::optional<FocusResolver::FocusChanges> changes =
+-            mFocusResolver.setInputWindows(displayId, windowHandles);
++            mFocusResolver.setInputWindows(displayId, hostedFocusWindowsLocked(windowHandles));
+     if (changes) {
+         onFocusChangedLocked(*changes, traceContext.getTracker(), removedFocusedWindowHandle);
+     }
+@@ -6909,6 +6944,7 @@
+                                                *fallbackKeyCode, event.getScanCode(),
+                                                event.getMetaState(), event.getRepeatCount(),
+                                                event.getDownTime());
++            newEntry->hostedScope = keyEntry.hostedScope;
+             if (mTracer) {
+                 newEntry->traceTracker =
+                         mTracer->traceDerivedEvent(*newEntry, *keyEntry.traceTracker);
+@@ -7003,13 +7039,56 @@
+  *  when requesting the focus change. This determines which request gets
+  *  precedence if there is a focus change request from another source such as pointer down.
+  */
++bool InputDispatcher::hostedWindowAllowedLocked(const sp<WindowInfoHandle>& window) const {
++    if (!mHostedKeyboardEnabled) return true;
++    if (!mHostedKeyboardTask) return false;
++    auto task = mHostedWindowTasks.find(window->getToken());
++    return task != mHostedWindowTasks.end() && task->second == mHostedKeyboardTask;
++}
++
++bool InputDispatcher::hostedKeyCurrentLocked(const KeyEntry& key) const {
++    return !key.hostedScope || (mHostedKeyboardEnabled &&
++            key.hostedScope->task == mHostedKeyboardTask &&
++            key.hostedScope->epoch == mHostedKeyboardEpoch);
++}
++
++std::vector<sp<WindowInfoHandle>> InputDispatcher::hostedFocusWindowsLocked(
++        const std::vector<sp<WindowInfoHandle>>& windows) const {
++    if (!mHostedKeyboardEnabled) return windows;
++    std::vector<sp<WindowInfoHandle>> result;
++    for (const auto& window : windows) {
++        if (hostedWindowAllowedLocked(window)) result.push_back(window);
++    }
++    return result;
++}
++
++void InputDispatcher::setHostedKeyboardFocus(const sp<IBinder>& task) {
++    {
++        std::scoped_lock _l(mLock);
++        LOG_ALWAYS_FATAL_IF(mHostedKeyboardEpoch == UINT64_MAX, "Hosted keyboard epoch exhausted");
++        ++mHostedKeyboardEpoch;
++        mHostedKeyboardEnabled = true;
++        mHostedKeyboardTask = task;
++        resetKeyRepeatLocked();
++        ScopedSyntheticEventTracer traceContext(mTracer);
++        std::vector<ui::LogicalDisplayId> displays;
++        mWindowInfos.forEachDisplayId([&](ui::LogicalDisplayId id) { displays.push_back(id); });
++        for (const auto display : displays) {
++            const auto changes = mFocusResolver.setInputWindows(display,
++                    hostedFocusWindowsLocked(mWindowInfos.getWindowHandlesForDisplay(display)));
++            if (changes) onFocusChangedLocked(*changes, traceContext.getTracker());
++        }
++    }
++    mLooper->wake();
++}
++
+ void InputDispatcher::setFocusedWindow(const FocusRequest& request) {
+     { // acquire lock
+         std::scoped_lock _l(mLock);
+         std::optional<FocusResolver::FocusChanges> changes =
+                 mFocusResolver.setFocusedWindow(request,
+-                                                mWindowInfos.getWindowHandlesForDisplay(
+-                                                        ui::LogicalDisplayId{request.displayId}));
++                                                hostedFocusWindowsLocked(mWindowInfos.getWindowHandlesForDisplay(
++                                                        ui::LogicalDisplayId{request.displayId})));
+         ScopedSyntheticEventTracer traceContext(mTracer);
+         if (changes) {
+             onFocusChangedLocked(*changes, traceContext.getTracker());
+@@ -7115,6 +7194,16 @@
+ }
+ 
+ void InputDispatcher::onWindowInfosChanged(const gui::WindowInfosUpdate& update) {
++    onWindowInfosChanged(update, std::nullopt);
++}
++
++void InputDispatcher::onHostedWindowInfosChanged(const gui::WindowInfosUpdate& update,
++                                                HostedWindowTasks tasks) {
++    onWindowInfosChanged(update, std::move(tasks));
++}
++
++void InputDispatcher::onWindowInfosChanged(const gui::WindowInfosUpdate& update,
++                                          std::optional<HostedWindowTasks> tasks) {
+     if (auto result = validateWindowInfosUpdate(update); !result.ok()) {
+         {
+             // acquire lock
+@@ -7134,6 +7223,10 @@
+ 
+     { // acquire lock
+         std::scoped_lock _l(mLock);
++
++        // Task ownership and the corresponding SF window snapshot become
++        // observable atomically to focus resolution and final key selection.
++        if (tasks) mHostedWindowTasks = std::move(*tasks);
+ 
+         // Ensure that we have an entry created for all existing displays so that if a displayId has
+         // no windows, we can tell that the windows were removed from the display.

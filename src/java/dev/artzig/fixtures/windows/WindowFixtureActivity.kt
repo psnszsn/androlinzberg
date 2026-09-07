@@ -45,6 +45,7 @@ open class WindowFixtureActivity : Activity() {
                 setOnClickListener { action() }
             })
         }
+        button("Finish this activity") { finish() }
         button("Increment counter") { counter++; updateCounter(); journal("increment") }
         button("Next activity in this task") { startActivity(Intent(this, SecondActivity::class.java)) }
         button("Open independent task") {

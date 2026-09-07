@@ -31,6 +31,8 @@ import java.util.OptionalInt
  */
 class HostInputManagerBridge(private val context: Context, private val desktop: Desktop) : AutoCloseable {
     interface Desktop {
+        /** Hosts without task organization have no task membership to publish. */
+        fun inputWindowTasks(tokens: Array<IBinder>): Array<IBinder?> = arrayOfNulls(tokens.size)
         fun getInputDevices(): Array<InputDevice>
         fun canDispatchToDisplay(deviceId: Int, displayId: Int): Boolean
         fun getKeyCodeState(deviceId: Int, sourceMask: Int, keyCode: Int): Int
@@ -106,6 +108,7 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     fun isPointerInWindow(token: IBinder, displayId: Int, deviceId: Int, pointerId: Int): Boolean =
         dispatcher.isPointerInWindow(token, displayId, deviceId, pointerId)
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) = dispatcher.setFocusedApplication(displayId, application)
+    fun setHostedKeyboardFocus(task: IBinder?) = dispatcher.setHostedKeyboardFocus(task)
     fun setDesktopKeyboardFocus(focused: Boolean) = dispatcher.setDesktopKeyboardFocus(focused)
     fun setFocusedDisplay(displayId: Int) = dispatcher.setFocusedDisplay(displayId)
     fun setInputDispatchMode(enabled: Boolean, frozen: Boolean) = dispatcher.setInputDispatchMode(enabled, frozen)
@@ -127,7 +130,8 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     fun pilferPointers(token: IBinder) = dispatcher.pilferPointers(token)
 
     /** For the trusted compositor transport; Binder injection is permission checked separately. */
-    fun dispatchDesktopEvent(event: InputEvent, repeatable: Boolean = true) = dispatcher.notifyInputEvent(event, repeatable)
+    fun dispatchDesktopEvent(event: InputEvent, repeatable: Boolean = true, task: IBinder? = null) =
+        dispatcher.notifyInputEvent(event, repeatable, task)
 
     fun setInputFilter(value: IInputFilter?) = synchronized(filterLock) {
         check(!closed) { "Input manager is closed" }
@@ -165,6 +169,7 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
     }
 
     private inner class Policy : HostInputDispatcher.Callbacks {
+        override fun inputWindowTasks(tokens: Array<IBinder>) = desktop.inputWindowTasks(tokens)
         override fun notifyNoFocusedWindowAnr(application: InputApplicationHandle) = wm.notifyNoFocusedWindowAnr(application)
         override fun notifyWindowUnresponsive(token: IBinder, pid: Int, reason: String) = wm.notifyWindowUnresponsive(token, optionalPid(pid), reason)
         override fun notifyWindowResponsive(token: IBinder, pid: Int) = wm.notifyWindowResponsive(token, optionalPid(pid))
