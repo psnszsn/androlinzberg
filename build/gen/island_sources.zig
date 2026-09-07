@@ -454,3 +454,25 @@ pub const media_format_foundation_srcs = [_][]const u8{
     "AStringUtils.cpp",
     "hexdump.cpp",
 };
+
+// frameworks/av/drm/common and libdrmframework Android.bp.
+pub const legacy_drm_common_srcs = [_][]const u8{
+    "DrmConstraints.cpp",
+    "DrmMetadata.cpp",
+    "DrmConvertedStatus.cpp",
+    "DrmEngineBase.cpp",
+    "DrmInfo.cpp",
+    "DrmInfoRequest.cpp",
+    "DrmInfoStatus.cpp",
+    "DrmRights.cpp",
+    "DrmSupportInfo.cpp",
+    "IDrmManagerService.cpp",
+    "IDrmServiceListener.cpp",
+    "DrmInfoEvent.cpp",
+    "ReadWriteUtils.cpp",
+};
+pub const legacy_drm_client_srcs = [_][]const u8{
+    "DrmManagerClientImpl.cpp",
+    "DrmManagerClient.cpp",
+    "NoOpDrmManagerClientImpl.cpp",
+};

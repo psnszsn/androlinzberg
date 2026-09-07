@@ -43,6 +43,8 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libvintf_jni.so");
     // Stock MediaCrypto loads this name; its no-plugin JNI is registered in the same library.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libmedia_jni.so");
+    // Legacy DRM JNI is registered from the native island during framework startup.
+    _ = tree.addCopyFile(options.binder_ndk, "lib/art/libdrmframework_jni.so");
     // Stock AudioEffect uses the same hosted JNI registrar.
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libaudioeffect_jni.so");
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libcom_android_net_module_util_jni.so");

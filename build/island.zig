@@ -332,6 +332,16 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &gen.media_format_foundation_srcs, media_format_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/ndk"), &.{"NdkMediaFormat.cpp"}, media_format_includes, &.{"-DEXPORT=__attribute__((visibility(\"default\")))"});
     g.add(o.aosp.path(b, "frameworks/av/media/libmedia"), &.{"NdkMediaFormatPriv.cpp"}, media_format_includes, &.{});
+    const legacy_drm_includes = &.{
+        o.aosp.path(b, "frameworks/av/include"),
+        o.aosp.path(b, "frameworks/av/drm/common/include"),
+        o.aosp.path(b, "frameworks/av/drm/libdrmframework/include"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+    };
+    g.add(o.aosp.path(b, "frameworks/av/drm/common"), &gen.legacy_drm_common_srcs, legacy_drm_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/drm/libdrmframework"), &gen.legacy_drm_client_srcs, legacy_drm_includes, &.{});
+    // Keep the original standalone-library registrar while sharing the native island.
+    g.add(o.aosp.path(b, "frameworks/base/drm/jni"), &.{"android_drm_DrmManagerClient.cpp"}, legacy_drm_includes, &.{"-DJNI_OnLoad=azk_legacy_drm_JNI_OnLoad"});
 
     // Zig's bundled LLD rejects valid weak-hidden libc++ COMDAT relocations in
     // Skia before resolving them locally. Keep Zig's compiler and libc++, but

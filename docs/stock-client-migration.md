@@ -27,6 +27,20 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- The legacy DRM client now compiles verbatim: 14 Java classes and 17 native
+  sources, including the original JNI registrar and AOSP's absent-service
+  `NoOpDrmManagerClientImpl`. Tests cover public argument validation, empty engine
+  discovery, native query/error values, rejected conversion sessions, borrowed
+  descriptor ownership, asynchronous failure callbacks and repeated cleanup.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass
+  (39 steps, zero structured runtime issues). AOSP is rebuilt and repinned;
+  all 49 added source/header inputs are byte-verified. ART is unchanged.
+  The inventory remains 19 stubs (11 pending, 8 survivors). This closes the
+  legacy DRM prerequisite for DownloadProvider; provider integration and the
+  stock DownloadManager replacement remain outstanding. No DRM service,
+  plugins or content decryption are supplied by the absent-service fallback.
+
+
 - FileObserver now compiles verbatim with its original Linux inotify JNI.
   Apps and provider code receive real filesystem events through AOSP's observer
   thread and weak listener registry. Tests exercise create/write/move/delete events

@@ -1751,6 +1751,20 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/SharedMemory.java");
     try c.file("$CJ/android/os/MemoryFile.java");
     try c.file("$CJ/android/os/FileObserver.java");
+    try c.file("$FB/drm/java/android/drm/DrmConvertedStatus.java");
+    try c.file("$FB/drm/java/android/drm/DrmErrorEvent.java");
+    try c.file("$FB/drm/java/android/drm/DrmEvent.java");
+    try c.file("$FB/drm/java/android/drm/DrmInfo.java");
+    try c.file("$FB/drm/java/android/drm/DrmInfoEvent.java");
+    try c.file("$FB/drm/java/android/drm/DrmInfoRequest.java");
+    try c.file("$FB/drm/java/android/drm/DrmInfoStatus.java");
+    try c.file("$FB/drm/java/android/drm/DrmManagerClient.java");
+    try c.file("$FB/drm/java/android/drm/DrmOutputStream.java");
+    try c.file("$FB/drm/java/android/drm/DrmRights.java");
+    try c.file("$FB/drm/java/android/drm/DrmStore.java");
+    try c.file("$FB/drm/java/android/drm/DrmSupportInfo.java");
+    try c.file("$FB/drm/java/android/drm/DrmUtils.java");
+    try c.file("$FB/drm/java/android/drm/ProcessedData.java");
     try c.file("$CJ/android/os/NativeHandle.java");
     try c.file("$CJ/android/os/HidlMemory.java");
     // Real AOSP binder stack (natives from libbinder_ndk via framework_jni.zig),

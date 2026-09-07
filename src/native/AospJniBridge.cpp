@@ -59,6 +59,15 @@ int android::AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* clas
 namespace android {
 int register_com_android_net_module_util_BpfMap(JNIEnv*, const char*);
 }
+// The pinned legacy DRM JNI owns its complete registration table. Rename its
+// standalone JNI_OnLoad at compile time so it can share the native island.
+extern "C" jint azk_legacy_drm_JNI_OnLoad(JavaVM*, void*);
+static int registerLegacyDrm(JNIEnv* env) {
+    JavaVM* vm = nullptr;
+    if (env->GetJavaVM(&vm) != JNI_OK) return -1;
+    return azk_legacy_drm_JNI_OnLoad(vm, nullptr) == JNI_VERSION_1_4 ? 0 : -1;
+}
+
 static int registerBpfMap(JNIEnv* env) {
     return android::register_com_android_net_module_util_BpfMap(env,
             "com/android/net/module/util/BpfMap");
@@ -389,6 +398,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_os_SELinux),
             E(android::register_android_os_NativeHandle),
             E(android::register_android_os_FileObserver),
+            E(registerLegacyDrm),
             E(android::register_android_os_HidlMemory),
             E(registerStockHidlMemorySmoke),
             E(registerHostedZygoteCommandBuffer),
