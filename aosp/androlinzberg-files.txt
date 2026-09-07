@@ -6334,3 +6334,10 @@ F aosp frameworks/base/media/jni/android_media_MediaHTTPConnection.h
 F aosp frameworks/av/media/module/foundation/include/media/stagefright/foundation/ABase.h
 F aosp frameworks/av/media/module/foundation/include/media/stagefright/foundation/ADebug.h
 F aosp frameworks/av/media/module/foundation/include/media/stagefright/foundation/AString.h
+
+# Native handle and HIDL memory value types.
+F aosp system/libhidl/base/HidlSupport.cpp
+F aosp system/libhidl/base/include/hidl/HidlSupport.h
+F aosp system/libhidl/base/include/hidl/HidlInternal.h
+F aosp system/libhidl/base/include/hidl/Status.h
+F aosp system/libhidl/base/HidlInternal.cpp

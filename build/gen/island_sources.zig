@@ -4,6 +4,7 @@
 //! packaged AOSP root retained as a compatibility name for this generated list.
 
 pub const include_dirs = [_][]const u8{
+    "$AZ/system/libhidl/base/include",
     "$APP/src/native",
     "$HW",
     "$HW/platform/host",
@@ -221,6 +222,9 @@ pub const ziparchive_srcs = [_][]const u8{
 };
 
 pub const core_jni_srcs = [_][]const u8{
+    "android_os_NativeHandle.cpp",
+    "android_os_HidlMemory.cpp",
+    "hwbinder/EphemeralStorage.cpp",
     "android_hardware_camera2_CameraMetadata.cpp",
     "android_util_jar_StrictJarFile.cpp",
     "android_util_MemoryIntArray.cpp",

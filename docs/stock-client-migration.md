@@ -27,6 +27,18 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- NativeHandle and HidlMemory now compile verbatim with their original JNI,
+  EphemeralStorage and libhidl value-type support. ART tests verify constructor
+  array copying, borrowed versus owned descriptors, close-on-exec duplication,
+  handle transfer, close/error behavior, native conversion and its cached context,
+  and duplicate lifetime after the source closes. JVM/system, native/Binder and
+  build checks pass; all 11 APK tests pass (39 steps, zero structured runtime
+  issues). AOSP is rebuilt and repinned with all five new inputs byte-verified;
+  ART is unchanged. This supplies HIDL memory values, without hardware Binder
+  transport or a hardware service. The inventory remains 26 stubs (15 pending,
+  11 survivors); broader client migration is still underway.
+
+
 - MediaHTTPConnection and MediaHTTPService now compile verbatim with their generated
   Binder interfaces and the original HTTP JNI. The C++ Binder facade uses AOSP's
   IMemory, MemoryHeapBase, MemoryBase and MemoryDealer over the existing host ashmem

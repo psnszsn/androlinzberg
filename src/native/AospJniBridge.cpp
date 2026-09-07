@@ -1,3 +1,5 @@
+#include "android_os_HidlMemory.h"
+#include "android_os_NativeHandle.h"
 // AOSP C++ ABI bridge: register the framework/HWUI JNI natives with ART,
 // mirroring libs/hwui/apex/jni_runtime.cpp (layoutlib's entry) minus the classes
 // we don't ship yet (Movie and PDF).
@@ -139,6 +141,7 @@ extern int register_android_backup_BackupDataOutput(JNIEnv*);
 extern int register_com_android_internal_os_ApplicationSharedMemory(JNIEnv*);
 extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv*);
 extern int register_android_os_SELinux(JNIEnv*);
+extern int register_android_os_NativeHandle(JNIEnv*);
 extern int register_android_os_PerfettoTrace(JNIEnv*);
 extern void android_os_PerfettoTrace_register(bool);
 extern int register_android_os_PerfettoTrackEventExtra(JNIEnv*);
@@ -199,6 +202,21 @@ static jint azk_Bitmap_nativeConfig(JNIEnv*, jclass, jlong bitmap_handle) {
         return GraphicsJNI::kARGB_8888_LegacyBitmapConfig;
     }
     return GraphicsJNI::colorTypeToLegacyBitmapConfig(color_type);
+}
+
+// Test the original JNI value conversion without requiring a hardware service.
+static jobject roundTripHidlMemory(JNIEnv* env, jclass, jobject memory) {
+    const auto* native = android::JHidlMemory::fromJava(env, memory);
+    if (env->ExceptionCheck() || native == nullptr) return nullptr;
+    return android::JHidlMemory::toJava(env, *native);
+}
+
+static int registerStockHidlMemorySmoke(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"nativeRoundTrip", "(Landroid/os/HidlMemory;)Landroid/os/HidlMemory;",
+         reinterpret_cast<void*>(roundTripHidlMemory)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/StockHidlMemorySmoke", methods, 1);
 }
 
 static int azk_register_android_graphics_Bitmap(JNIEnv* env) {
@@ -295,6 +313,9 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(azk_register_legacy_gles_backend),
             E(register_com_google_android_gles_jni_GLImpl),
             E(android::register_android_os_SELinux),
+            E(android::register_android_os_NativeHandle),
+            E(android::register_android_os_HidlMemory),
+            E(registerStockHidlMemorySmoke),
             E(registerPerfettoTrace),
             E(android::register_android_os_PerfettoTrackEventExtra),
             E(android::register_android_util_jar_StrictJarFile),

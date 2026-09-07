@@ -224,6 +224,7 @@ internal object FrameworkModuleSmoke {
         StockMediaCryptoSmoke.run()
         StockMediaDrmSmoke.run()
         StockMediaHttpSmoke.run()
+        StockHidlMemorySmoke.run()
         StockImageSmoke.run()
         testStockProtoLog()
         testStockActivityOptions()
