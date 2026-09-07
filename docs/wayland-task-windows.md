@@ -22,6 +22,23 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Inspection peer isolation checkpoint (2026-09-07)
+
+Session inspection validates each complete app tree before merging it. Invalid
+or duplicate window/node identities, cross-window references, malformed child
+arrays and oversized contributions make only that process unavailable. Healthy
+windows remain inspectable and actionable. A failed peer receives no actions or
+physical-input target, and recovering it preserves its live window identities.
+Truncated trees may reference omitted children, matching the collector contract.
+
+Regression 196 passes the framework module gate, including eight malformed-peer
+cases, unchanged-failure revision stability, healthy-peer actions and recovery.
+Regression 197 passes stock desktop's seven semantic/physical diagnostic steps
+with zero issues and both Cage/labwc multi-task inspection gates. Logs:
+`/tmp/wayland-peer-isolation-196.log` and
+`/tmp/wayland-peer-isolation-stock-197.log`. Slow-peer scheduling, native journal
+aggregation and the remaining M11 recovery/default-cutover work are still pending.
+
 ## Early seat connection checkpoint (2026-09-07)
 
 The task shell now connects the session keyboard before registering its organizer.

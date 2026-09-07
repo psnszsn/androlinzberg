@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 object SessionObservationSmoke {
     private data class Peer(val pid: Int, var generation: Long, val task: Int?,
-        var revision: Long = 1, var selected: Boolean = false, var failed: Boolean = false, var starting: Boolean = false)
+        var revision: Long = 1, var selected: Boolean = false, var failed: Boolean = false, var starting: Boolean = false, var malformed: Int = 0)
 
     fun run() {
         val peers = linkedMapOf(10 to Peer(10, 1, 100), 20 to Peer(20, 2, 200), 30 to Peer(30, 3, null))
@@ -37,6 +37,16 @@ object SessionObservationSmoke {
                         .put("selected", peer.selected).put("children", JSONArray().put("n:1:8:-1")))
                     nodes.put(JSONObject().put("id", "n:1:8:-1").put("parent", "n:1:7:-1").put("window_id", 1)
                         .put("view_id", 8).put("virtual_id", -1).put("children", JSONArray()))
+                }
+                when (peer.malformed) {
+                    1 -> windows.put(JSONObject(windows.getJSONObject(0).toString()))
+                    2 -> nodes.getJSONObject(0).put("parent", "w:999")
+                    3 -> nodes.getJSONObject(0).getJSONArray("children").put("n:999:8:-1")
+                    4 -> nodes.getJSONObject(0).put("window_id", 999)
+                    5 -> nodes.put(JSONObject(nodes.getJSONObject(0).toString()))
+                    6 -> nodes.getJSONObject(0).put("id", "n:1:bad:-1")
+                    7 -> nodes.getJSONObject(0).put("children", "bad")
+                    8 -> windows.getJSONObject(0).put("id", 0)
                 }
                 return Bundle().apply {
                     putString("snapshot", JSONObject().put("revision", peer.revision).put("windows", windows)
@@ -112,6 +122,23 @@ object SessionObservationSmoke {
         peers.getValue(20).failed = false
         observation.refresh()
         check(window(20) == second) { "A temporary observation failure changed a live window's identity" }
+        for (malformed in 1..8) {
+            peers.getValue(20).malformed = malformed
+            observation.refresh()
+            check(!observation.idle())
+            check(tree().getJSONArray("unavailable_processes").length() == 1)
+            check(tree().getJSONArray("windows").length() == 1 && window(10) == first)
+            check(tree().getJSONArray("nodes").length() == 2)
+            check(!observation.perform(observation.revision(), second, 7, -1, 4, null))
+            check(observation.inputTarget(observation.revision(), second) == null)
+            check(observation.perform(observation.revision(), first, 7, -1, 4, null))
+            val failedRevision = observation.revision()
+            observation.refresh()
+            check(observation.revision() == failedRevision) { "Unchanged malformed peer churned the session revision" }
+            peers.getValue(20).malformed = 0
+            observation.refresh()
+            check(observation.idle() && window(20) == second && window(10) == first)
+        }
         peers[20] = Peer(20, 4, 300)
         observation.refresh()
         check(window(20) != second && window(10) == first)

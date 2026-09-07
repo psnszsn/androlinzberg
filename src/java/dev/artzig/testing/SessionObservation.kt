@@ -50,6 +50,7 @@ class SessionObservation(private val registry: IInspectionRegistry) {
                     continue
                 }
                 val observedTree = JSONObject(checkNotNull(observation.getString("snapshot")))
+                validateTree(observedTree)
                 val observedRevision = observedTree.getLong("revision")
                 check(observedRevision >= peer.revision) { "Process tree revision rewound" }
                 val accessibility = JSONObject(checkNotNull(observation.getString("accessibility")))
@@ -79,6 +80,51 @@ class SessionObservation(private val registry: IInspectionRegistry) {
             event("process-removed", key)
         }
         rebuildTree()
+    }
+
+    /** Validate a complete peer contribution before publishing any of it. A
+     * malformed app tree must become an unavailable peer, not abort aggregation
+     * after some of its windows have already acquired session identities.
+     * Children may refer to omitted nodes in a deliberately truncated tree.
+     */
+    private fun validateTree(local: JSONObject) {
+        local.getBoolean("truncated")
+        val windows = local.getJSONArray("windows")
+        val nodes = local.getJSONArray("nodes")
+        require(windows.length() <= 1024 && nodes.length() <= 10_000) { "Process tree exceeds observation limits" }
+        val ids = HashSet<Long>()
+        for (index in 0 until windows.length()) {
+            val id = windows.getJSONObject(index).getLong("id")
+            require(id > 0 && ids.add(id)) { "Invalid or repeated process window identity" }
+        }
+        fun nodeWindow(value: String, rootAllowed: Boolean): Long {
+            val parts = value.split(':')
+            require(parts.size == 4 && parts[0] == "n" ||
+                rootAllowed && parts.size == 2 && parts[0] == "w") { "Invalid process node identity" }
+            val window = parts[1].toLong()
+            require(window in ids && parts[1] == window.toString()) { "Node belongs to an unobserved window" }
+            if (parts.size == 4) {
+                require(parts[2] == parts[2].toInt().toString() && parts[3] == parts[3].toInt().toString()) {
+                    "Invalid process node components"
+                }
+            }
+            return window
+        }
+        val nodeIds = HashSet<String>()
+        var childCount = 0
+        for (index in 0 until nodes.length()) {
+            val node = nodes.getJSONObject(index)
+            val id = node.getString("id")
+            val window = node.getLong("window_id")
+            require(nodeIds.add(id) && nodeWindow(id, false) == window) { "Invalid or repeated process node identity" }
+            require(nodeWindow(node.getString("parent"), true) == window) { "Node parent crosses windows" }
+            val children = node.getJSONArray("children")
+            childCount += children.length()
+            require(childCount <= 20_000) { "Process tree exceeds child limit" }
+            for (child in 0 until children.length()) require(nodeWindow(children.getString(child), false) == window) {
+                "Node child crosses windows"
+            }
+        }
     }
 
     private fun rebuildTree() {
