@@ -1,7 +1,166 @@
 #include <binder/Parcel.h>
 #include <binder/Status.h>
 #include <utils/Unicode.h>
+#include <cutils/ashmem.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <cerrno>
 namespace android {
+// Pinned Parcel.cpp Blob lifecycle and wire format. Only mAllowFds is mapped
+// to the shared Zig Parcel accessor; descriptor transfer remains in writeFileDescriptor.
+// ashmem-host.cpp is the original AOSP host backing for descriptor-sized blobs.
+static constexpr size_t BLOB_INPLACE_LIMIT = 16 * 1024;
+static constexpr int32_t BLOB_INPLACE = 0;
+static constexpr int32_t BLOB_ASHMEM_IMMUTABLE = 1;
+static constexpr int32_t BLOB_ASHMEM_MUTABLE = 2;
+
+status_t Parcel::writeBlob(size_t len, bool mutableCopy, WritableBlob* outBlob)
+{
+#ifdef BINDER_DISABLE_BLOB
+    (void)len;
+    (void)mutableCopy;
+    (void)outBlob;
+    return INVALID_OPERATION;
+#else
+    if (len > INT32_MAX) {
+        // don't accept size_t values which may have come from an
+        // inadvertent conversion from a negative int.
+        return BAD_VALUE;
+    }
+
+    status_t status;
+    if (!allowFds() || len <= BLOB_INPLACE_LIMIT) {
+        ALOGV("writeBlob: write in place");
+        status = writeInt32(BLOB_INPLACE);
+        if (status) return status;
+
+        void* ptr = writeInplace(len);
+        if (!ptr) return NO_MEMORY;
+
+        outBlob->init(-1, ptr, len, false);
+        return NO_ERROR;
+    }
+
+    ALOGV("writeBlob: write to ashmem");
+    int fd = ashmem_create_region("Parcel Blob", len);
+    if (fd < 0) return NO_MEMORY;
+
+    int result = ashmem_set_prot_region(fd, PROT_READ | PROT_WRITE);
+    if (result < 0) {
+        status = result;
+    } else {
+        void* ptr = ::mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (ptr == MAP_FAILED) {
+            status = -errno;
+        } else {
+            if (!mutableCopy) {
+                result = ashmem_set_prot_region(fd, PROT_READ);
+            }
+            if (result < 0) {
+                status = result;
+            } else {
+                status = writeInt32(mutableCopy ? BLOB_ASHMEM_MUTABLE : BLOB_ASHMEM_IMMUTABLE);
+                if (!status) {
+                    status = writeFileDescriptor(fd, true /*takeOwnership*/);
+                    if (!status) {
+                        outBlob->init(fd, ptr, len, mutableCopy);
+                        return NO_ERROR;
+                    }
+                }
+            }
+        }
+        if (::munmap(ptr, len) == -1) {
+            ALOGW("munmap() failed: %s", strerror(errno));
+        }
+    }
+    ::close(fd);
+    return status;
+#endif
+}
+
+status_t Parcel::writeDupImmutableBlobFileDescriptor(int fd)
+{
+    // Must match up with what's done in writeBlob.
+    if (!allowFds()) return FDS_NOT_ALLOWED;
+    status_t status = writeInt32(BLOB_ASHMEM_IMMUTABLE);
+    if (status) return status;
+    return writeDupFileDescriptor(fd);
+}
+
+status_t Parcel::readBlob(size_t len, ReadableBlob* outBlob) const
+{
+#ifdef BINDER_DISABLE_BLOB
+    (void)len;
+    (void)outBlob;
+    return INVALID_OPERATION;
+#else
+    int32_t blobType;
+    status_t status = readInt32(&blobType);
+    if (status) return status;
+
+    if (blobType == BLOB_INPLACE) {
+        ALOGV("readBlob: read in place");
+        const void* ptr = readInplace(len);
+        if (!ptr) return BAD_VALUE;
+
+        outBlob->init(-1, const_cast<void*>(ptr), len, false);
+        return NO_ERROR;
+    }
+
+    ALOGV("readBlob: read from ashmem");
+    bool isMutable = (blobType == BLOB_ASHMEM_MUTABLE);
+    int fd = readFileDescriptor();
+    if (fd == int(BAD_TYPE)) return BAD_VALUE;
+
+    if (!ashmem_valid(fd)) {
+        ALOGE("invalid fd");
+        return BAD_VALUE;
+    }
+    int size = ashmem_get_size_region(fd);
+    if (size < 0 || size_t(size) < len) {
+        ALOGE("request size %zu does not match fd size %d", len, size);
+        return BAD_VALUE;
+    }
+    void* ptr = ::mmap(nullptr, len, isMutable ? PROT_READ | PROT_WRITE : PROT_READ,
+            MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) return NO_MEMORY;
+
+    outBlob->init(fd, ptr, len, isMutable);
+    return NO_ERROR;
+#endif
+}
+
+Parcel::Blob::Blob() :
+        mFd(-1), mData(nullptr), mSize(0), mMutable(false) {
+}
+
+Parcel::Blob::~Blob() {
+    release();
+}
+
+void Parcel::Blob::release() {
+    if (mFd != -1 && mData) {
+        if (::munmap(mData, mSize) == -1) {
+            ALOGW("munmap() failed: %s", strerror(errno));
+        }
+    }
+    clear();
+}
+
+void Parcel::Blob::init(int fd, void* data, size_t size, bool isMutable) {
+    mFd = fd;
+    mData = data;
+    mSize = size;
+    mMutable = isMutable;
+}
+
+void Parcel::Blob::clear() {
+    mFd = -1;
+    mData = nullptr;
+    mSize = 0;
+    mMutable = false;
+}
+
 // Pinned Parcel::writeNoException delegates to the stock exception header writer.
 status_t Parcel::writeNoException() {
   binder::Status status;

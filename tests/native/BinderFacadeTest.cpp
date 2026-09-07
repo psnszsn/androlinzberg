@@ -86,6 +86,22 @@ struct Service final : BBinder {
   int ownUid = IPCThreadState::self()->getCallingUid();
   status_t onTransact(uint32_t code, const Parcel &in, Parcel *out,
                       uint32_t) override {
+    if (code == 6) {
+      const int32_t size = in.readInt32();
+      assert(size > 16 * 1024);
+      Parcel::ReadableBlob blob;
+      assert(in.readBlob(size, &blob) == OK && blob.fd() >= 0);
+      const auto *bytes = static_cast<const uint8_t *>(blob.data());
+      for (int32_t i = 0; i < size; ++i) assert(bytes[i] == uint8_t(i));
+      if (blob.isMutable()) {
+        assert(blob.mutableData());
+        static_cast<uint8_t *>(blob.mutableData())[0] = 93;
+      } else {
+        assert(!blob.mutableData());
+      }
+      assert(out->writeInt32(size) == OK);
+      return out->writeDupImmutableBlobFileDescriptor(blob.fd());
+    }
     if (code == 4)
       return out->writeStrongBinder(sp<RemoteTracked>::make());
     if (code == 5)
@@ -160,6 +176,7 @@ struct Death final : IBinder::DeathRecipient {
   }
 };
 void parcelTests();
+void blobTests();
 int main(int argc, char **argv) {
   if (argc > 1 && std::string(argv[1]) == "server") {
     auto service = sp<Service>::make();
@@ -173,6 +190,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   parcelTests();
+  blobTests();
   wp<Listener> weak;
   {
     auto local = sp<Listener>::make();
@@ -195,6 +213,34 @@ int main(int argc, char **argv) {
       AServiceManager_waitForService("dev.artzig.facade.v2"));
   assert(server == same);
   same.clear();
+  for (bool mutableCopy : {false, true}) {
+    // Larger than the broker's inline frame limit: bytes must travel through an FD.
+    constexpr int size = 2 * 1024 * 1024;
+    Parcel request, response;
+    assert(request.writeInt32(size) == OK);
+    Parcel::WritableBlob writer;
+    assert(request.writeBlob(size, mutableCopy, &writer) == OK);
+    assert(writer.fd() >= 0 && writer.isMutable() == mutableCopy);
+    auto *bytes = static_cast<uint8_t *>(writer.data());
+    for (int i = 0; i < size; ++i) bytes[i] = uint8_t(i);
+    assert(request.dataSize() < 128 && request.hasFileDescriptors());
+    assert(server->transact(6, request, &response) == OK);
+    assert(bytes[0] == (mutableCopy ? 93 : 0));
+    writer.release();
+    request.freeData();
+    assert(response.readInt32() == size);
+    Parcel::ReadableBlob reader;
+    assert(response.readBlob(size, &reader) == OK);
+    assert(!reader.isMutable() && reader.mutableData() == nullptr);
+    bytes = const_cast<uint8_t *>(static_cast<const uint8_t *>(reader.data()));
+    assert(bytes[0] == (mutableCopy ? 93 : 0) && bytes[size - 1] == 255);
+    const int receivedFd = reader.fd();
+    response.freeData();
+    assert(fcntl(receivedFd, F_GETFD) == -1);
+    assert(bytes[size - 1] == 255); // A mapping outlives the Parcel's FD.
+    reader.release();
+  }
+  pass("large immutable and mutable blobs cross Binder; mapping and FD lifetimes");
   {
     // Receiving a Binder owns its delivery even if no client ever reads it.
     Parcel request, response;
@@ -289,6 +335,87 @@ int main(int argc, char **argv) {
   std::this_thread::sleep_for(50ms);
   assert(unlinked->calls == 0);
   pass("C++ death recipient identity and unlink across service process exit");
+}
+
+void blobTests() {
+  {
+    int fds[2];
+    assert(pipe(fds) == 0);
+    Parcel borrowed, copied, owned;
+    assert(borrowed.writeFileDescriptor(fds[0], false) == OK);
+    borrowed.setDataPosition(0);
+    assert(borrowed.readFileDescriptor() == fds[0]);
+    assert(copied.appendFrom(&borrowed, 0, borrowed.dataSize()) == OK);
+    borrowed.freeData();
+    assert(fcntl(fds[0], F_GETFD) != -1);
+    assert(owned.writeFileDescriptor(fds[0], true) == OK);
+    owned.setDataPosition(0);
+    assert(owned.readFileDescriptor() == fds[0]);
+    owned.freeData();
+    assert(fcntl(fds[0], F_GETFD) == -1);
+    copied.setDataPosition(0);
+    int duplicate = copied.readFileDescriptor();
+    assert(duplicate >= 0 && duplicate != fds[0]);
+    assert(write(fds[1], "B", 1) == 1);
+    char value;
+    assert(read(duplicate, &value, 1) == 1 && value == 'B');
+    copied.freeData();
+    assert(fcntl(duplicate, F_GETFD) == -1);
+    close(fds[1]);
+  }
+  for (size_t size : {size_t(0), size_t(13), size_t(16 * 1024), size_t(16 * 1024 + 1)}) {
+    for (bool allowFds : {false, true}) {
+      Parcel parcel;
+      parcel.pushAllowFds(allowFds);
+      Parcel::WritableBlob writer;
+      assert(parcel.writeBlob(size, false, &writer) == OK);
+      assert(writer.size() == size && !writer.isMutable());
+      const bool shared = allowFds && size > 16 * 1024;
+      assert((writer.fd() >= 0) == shared && parcel.hasFileDescriptors() == shared);
+      memset(writer.data(), 0x5a, size);
+      const int ownedFd = writer.fd();
+      writer.release();
+      writer.release(); // Idempotent; releasing the mapping does not close the Parcel's FD.
+      if (shared) assert(fcntl(ownedFd, F_GETFD) != -1);
+      assert(parcel.writeInt32(1234) == OK);
+      parcel.setDataPosition(0);
+      Parcel::ReadableBlob reader;
+      assert(parcel.readBlob(size, &reader) == OK);
+      assert(reader.size() == size && reader.mutableData() == nullptr);
+      for (size_t i = 0; i < size; ++i)
+        assert(static_cast<const uint8_t *>(reader.data())[i] == 0x5a);
+      assert(parcel.readInt32() == 1234);
+      reader.release();
+      parcel.freeData();
+      if (shared) assert(fcntl(ownedFd, F_GETFD) == -1);
+    }
+  }
+  {
+    Parcel parcel;
+    Parcel::WritableBlob writer;
+    assert(parcel.writeBlob(size_t(INT32_MAX) + 1, false, &writer) == BAD_VALUE);
+    assert(parcel.dataSize() == 0);
+    parcel.pushAllowFds(false);
+    assert(parcel.writeDupImmutableBlobFileDescriptor(-1) == FDS_NOT_ALLOWED);
+    assert(parcel.dataSize() == 0);
+    parcel.writeInt32(0); // Inline blob without its advertised bytes.
+    parcel.setDataPosition(0);
+    Parcel::ReadableBlob reader;
+    assert(parcel.readBlob(16, &reader) == BAD_VALUE);
+  }
+  {
+    int fds[2];
+    assert(pipe(fds) == 0);
+    Parcel parcel;
+    parcel.writeInt32(1);
+    assert(parcel.writeDupFileDescriptor(fds[0]) == OK);
+    close(fds[0]);
+    close(fds[1]);
+    parcel.setDataPosition(0);
+    Parcel::ReadableBlob reader;
+    assert(parcel.readBlob(16, &reader) == BAD_VALUE); // A pipe is not shared memory.
+  }
+  pass("AOSP blob size threshold, descriptor policy, malformed input and release");
 }
 
 struct Tracked final : BBinder {

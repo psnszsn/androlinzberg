@@ -27,6 +27,18 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- The hosted C++ Parcel now reuses AOSP's blob lifecycle and wire-format implementation,
+  backed by the original ashmem-host implementation shared with HWUI. It supports the
+  16 KiB inline threshold, descriptor-backed immutable/mutable blobs, descriptor policy
+  and mapping lifetimes. The shared Binder storage now preserves the actual descriptor
+  for C++ borrowed and ownership-taking writes; duplicate writes and copied Parcel ranges
+  retain their own descriptors. Native tests transfer 2 MiB blobs between processes,
+  observe mutable data, forward immutable descriptors and verify release, copy, malformed
+  input and descriptor lifetimes. JVM/system, native/Binder and build checks pass; all
+  11 APK tests pass with zero structured runtime issues. This supplies the Parcel dependency
+  needed by camera metadata JNI; that JNI is subsequent work. Archive inputs are unchanged.
+
+
 - The hosted service registry now reuses the pinned AOSP service fetchers, including
   per-context construction gates, publication, retry and waiter interrupt restoration.
   Concurrent lookups no longer run duplicate manager constructors. Stock static service

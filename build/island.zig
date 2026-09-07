@@ -248,7 +248,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "system/core/libusbhost"), &.{ "usbhost.c", "usbhost_jni.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/libbase"), &gen.libbase_srcs, &.{o.aosp.path(b, "system/libbase")}, &.{});
     for (gen.libcutils_srcs) |file| {
-        if (!std.mem.eql(u8, file, "native_handle.cpp")) g.add(o.aosp.path(b, "system/core/libcutils"), &.{file}, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
+        if (!std.mem.eql(u8, file, "native_handle.cpp") and !std.mem.eql(u8, file, "ashmem-host.cpp")) g.add(o.aosp.path(b, "system/core/libcutils"), &.{file}, &.{o.aosp.path(b, "system/core/libcutils")}, &.{});
     }
     for (gen.libutils_srcs) |file| {
         if (!@import("binder_cpp.zig").sharedUtils(file)) g.add(o.aosp.path(b, "system/core/libutils"), &.{file}, &.{o.aosp.path(b, "system/core/libutils")}, &.{"-DANDROID_UTILS_REF_BASE_DISABLE_IMPLICIT_CONSTRUCTION"});

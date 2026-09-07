@@ -26,6 +26,37 @@ extern "C" int32_t AParcel_appendFrom(const AParcel *, AParcel *, int32_t,
 namespace android {
 class Parcel {
 public:
+  // Pinned Parcel blob accessors; the Parcel owns descriptors and Blob owns its mapping.
+  class Blob {
+  public:
+    Blob();
+    ~Blob();
+    void clear();
+    void release();
+    size_t size() const { return mSize; }
+    int fd() const { return mFd; }
+    bool isMutable() const { return mMutable; }
+  protected:
+    void init(int fd, void* data, size_t size, bool isMutable);
+    int mFd;
+    void* mData;
+    size_t mSize;
+    bool mMutable;
+  };
+  class ReadableBlob : public Blob {
+    friend class Parcel;
+  public:
+    const void* data() const { return mData; }
+    void* mutableData() { return isMutable() ? mData : nullptr; }
+  };
+  class WritableBlob : public Blob {
+    friend class Parcel;
+  public:
+    void* data() { return mData; }
+  };
+  status_t writeBlob(size_t len, bool mutableCopy, WritableBlob* outBlob);
+  status_t readBlob(size_t len, ReadableBlob* outBlob) const;
+  status_t writeDupImmutableBlobFileDescriptor(int fd);
   Parcel();
   ~Parcel();
   Parcel(const Parcel &) = delete;
@@ -233,7 +264,7 @@ public:
     return fd < 0 ? BAD_VALUE : azk_parcel_writeFd(mParcel, fd, take);
   }
   status_t writeDupFileDescriptor(int fd) {
-    return writeFileDescriptor(fd, false);
+    return fd < 0 ? BAD_VALUE : AParcel_writeParcelFileDescriptor(mParcel, fd);
   }
   int readFileDescriptor() const {
     int fd = -1;

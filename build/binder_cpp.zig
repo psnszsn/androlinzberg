@@ -29,6 +29,8 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     };
     lib.root_module.addCSourceFiles(.{ .root = aosp.path(b, "system/logging/liblog"), .files = &gen.liblog_srcs, .flags = flags });
     lib.root_module.addCSourceFile(.{ .file = aosp.path(b, "system/core/libcutils/native_handle.cpp"), .flags = flags });
+    // Share the original host ashmem backing with the native island.
+    lib.root_module.addCSourceFile(.{ .file = aosp.path(b, "system/core/libcutils/ashmem-host.cpp"), .flags = flags });
     // Use the declared shared-object input without Zig adding its cache
     // directory to the installed library's RUNPATH. Runtime lookup is sibling-only.
     lib.root_module.addObjectFile(ndk.getEmittedBin());

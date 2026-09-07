@@ -158,13 +158,14 @@ const Entry = struct {
     offset: u32,
     kind: ObjectEntry.Kind,
     value: u64,
-    /// Owned duplicate fd for `file_descriptor` entries the parcel must close.
+    /// Local descriptor; C++ Parcel can borrow it or take ownership without duplication.
     fd: fd_t = -1,
+    owns_fd: bool = true,
     /// Every non-null Binder entry owns a strong ref, independent of reads.
     binder: ?*AIBinder = null,
 
     fn release(e: Entry) void {
-        if (e.fd >= 0) closeFd(e.fd);
+        if (e.fd >= 0 and e.owns_fd) closeFd(e.fd);
         if (e.binder) |b| AIBinder_decStrong(b);
     }
 };
@@ -480,6 +481,7 @@ pub const AParcel = struct {
             copy.offset = @intCast(p.pos + e.offset - offset);
             if (e.fd >= 0) {
                 copy.fd = dupFd(e.fd);
+                copy.owns_fd = true;
                 if (copy.fd < 0) return STATUS_NO_MEMORY;
             }
             if (e.binder) |binder| AIBinder_incStrong(binder);
@@ -4252,9 +4254,22 @@ export fn azk_parcel_hasFds(p: *const AParcel) callconv(.c) bool {
     return false;
 }
 export fn azk_parcel_writeFd(p: *AParcel, fd: i32, take: bool) callconv(.c) i32 {
-    const rc = AParcel_writeParcelFileDescriptor(p, fd);
-    if (take and rc == STATUS_OK) closeFd(fd);
-    return rc;
+    // Pinned C++ Parcel::writeFileDescriptor retains the supplied descriptor.
+    // NDK/Java duplicate writes continue through AParcel_writeParcelFileDescriptor.
+    if (!p.allow_fds) return STATUS_FDS_NOT_ALLOWED;
+    if (fd < 0) return STATUS_BAD_VALUE;
+    p.entries.ensureUnusedCapacity(alloc, 1) catch return STATUS_NO_MEMORY;
+    const offset: u32 = @intCast(p.pos);
+    p.writeI32(1);
+    if (p.err != STATUS_OK) return p.err;
+    p.entries.appendAssumeCapacity(.{
+        .offset = offset,
+        .kind = .file_descriptor,
+        .value = 0,
+        .fd = fd,
+        .owns_fd = take,
+    });
+    return STATUS_OK;
 }
 export fn azk_parcel_dupFd(fd: i32) callconv(.c) i32 {
     return dupFd(fd);
