@@ -25,10 +25,12 @@ private object ColdLifecycle {
     }
 }
 
-class ColdProcessActivity : Activity() {
+open class ColdProcessActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ColdLifecycle.record("create")
+        setTaskDescription(android.app.ActivityManager.TaskDescription.Builder()
+            .setLabel(intent.getStringExtra("title") ?: "Cyan task").build())
         setContentView(object : TextView(this) {
             private val marker = android.graphics.Paint()
             override fun onDraw(canvas: android.graphics.Canvas) {
@@ -45,7 +47,7 @@ class ColdProcessActivity : Activity() {
             }
         }.apply {
             text = "Cold process activity"
-            setBackgroundColor(android.graphics.Color.CYAN)
+            setBackgroundColor(intent.getIntExtra("color", android.graphics.Color.CYAN))
         })
         window.decorView.viewTreeObserver.registerFrameCommitCallback { ColdLifecycle.frameCommitted = true }
     }
@@ -55,6 +57,8 @@ class ColdProcessActivity : Activity() {
     override fun onStop() { ColdLifecycle.record("stop"); super.onStop() }
     override fun onDestroy() { ColdLifecycle.record("destroy"); super.onDestroy() }
 }
+
+class ColdGroupedActivity : ColdProcessActivity()
 
 open class ColdProcessProvider : ContentProvider() {
     override fun onCreate(): Boolean { ColdLifecycle.record("provider"); return true }

@@ -87,6 +87,13 @@ internal class StockWindowServices private constructor() {
         // AMS.systemReady calls ATMS.onSystemReady before retrieveSettings;
         // the latter consumes local services initialized by the former.
         tasks.retrieveSettings(context.contentResolver)
+        if (System.getenv("AZK_TASK_WINDOWS") == "1") {
+            // Pinned LaunchParamsUtil.getDefaultFreeformSize chooses bounded
+            // density-based initial task sizes on a freeform display. Set the
+            // display policy before any application can allocate a root buffer.
+            windows.setWindowingMode(Display.DEFAULT_DISPLAY,
+                android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM)
+        }
     }
 
     fun bootCompleted() {

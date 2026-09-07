@@ -28,6 +28,7 @@ object WaylandTaskShellSmoke {
         var initial = emptyList<WaylandTaskShell.Appeared<Token, Leash>>()
         val configurations = mutableListOf<Pending>()
         val removes = mutableListOf<Token>()
+        val rejections = mutableListOf<Pair<Token, TaskGeometry.Rejection>>()
         var unregisters = 0
         class Pending(val change: TaskGeometry.Proposal.Change, val size: WaylandTaskShell.Size,
             val done: (Boolean) -> Unit)
@@ -41,6 +42,9 @@ object WaylandTaskShellSmoke {
             configurations.add(Pending(change, size, committed))
         }
         override fun remove(token: Token) { removes.add(token) }
+        override fun reject(token: Token, reason: TaskGeometry.Rejection) {
+            rejections.add(token to reason); remove(token)
+        }
     }
     private fun task(id: Int, token: Int = id, application: Boolean = true, resizable: Boolean = true) =
         WaylandTaskShell.Appeared(WaylandTaskShell.Info(id, Token(token), "test.app", "task $id",
@@ -82,19 +86,19 @@ object WaylandTaskShellSmoke {
         check(geometry.bounds(one.task)?.width == 240)
         val crowded = task(4)
         android.events.appeared(crowded)
-        check(desktop.windows.last().rejections == listOf(TaskGeometry.Rejection.CAPACITY))
-        check(desktop.windows.last().closes == 1 && crowded.leash.releases == 1)
+        check(android.rejections == listOf(crowded.info.token to TaskGeometry.Rejection.CAPACITY))
+        check(desktop.windows.size == 2 && crowded.leash.releases == 1)
 
         one.events.closeRequested()
         one.events.closeRequested()
-        check(android.removes == listOf(first.info.token) && one.closes == 0)
+        check(android.removes == listOf(crowded.info.token, first.info.token) && one.closes == 0)
         android.events.vanished(1, Token(999))
         check(one.closes == 0)
         android.events.vanished(1, first.info.token)
         check(one.closes == 1 && first.leash.releases == 1 && two.closes == 0)
         one.events.configure(WaylandTaskShell.Size(400, 400))
         one.events.closeRequested()
-        check(android.removes.size == 1)
+        check(android.removes.size == 2)
 
         val replacement = task(1, token = 11, resizable = false)
         android.events.appeared(replacement)
@@ -114,7 +118,7 @@ object WaylandTaskShellSmoke {
         check(replacementWindow.commits.size == 1)
         val late = task(5)
         android.events.appeared(late)
-        check(late.leash.releases == 1 && desktop.windows.size == 4)
+        check(late.leash.releases == 1 && desktop.windows.size == 3)
 
         val failingAndroid = Android()
         val failingDesktop = Desktop()
@@ -158,6 +162,33 @@ object WaylandTaskShellSmoke {
         })
         check(runCatching { failureShell.start() }.isFailure)
         check(bad.leash.releases == 1 && unvisited.leash.releases == 1 && startup.unregisters == 1)
+        val reusedAndroid = Android()
+        val reusedDesktop = Desktop()
+        val reusedTask = task(20)
+        reusedAndroid.initial = listOf(reusedTask)
+        val reused = WaylandTaskShell(reusedAndroid, reusedDesktop)
+        reused.start()
+        reusedAndroid.configurations.single().done(true)
+        reusedAndroid.events.changed(reusedTask.info.copy(width = 410, height = 730, left = 800, top = 600))
+        check(reusedDesktop.windows.size == 1 && reusedAndroid.configurations.size == 2)
+        val repaired = reusedAndroid.configurations.last()
+        check(repaired.change.after == TaskGeometry.Bounds(0, 0, 100, 80) &&
+            repaired.size == WaylandTaskShell.Size(100, 80))
+        repaired.done(true)
+        reusedAndroid.events.changed(reusedTask.info)
+        check(reusedAndroid.configurations.size == 2)
+        reused.close()
+        val tinyAndroid = Android()
+        val tinyDesktop = Desktop()
+        val oversized = task(21)
+        tinyAndroid.initial = listOf(oversized)
+        val tiny = WaylandTaskShell(tinyAndroid, tinyDesktop, TaskGeometry(50, 50))
+        tiny.start()
+        check(tinyAndroid.rejections == listOf(oversized.info.token to TaskGeometry.Rejection.TOO_LARGE))
+        check(tinyDesktop.windows.single().closes == 0 && oversized.leash.releases == 0)
+        tinyAndroid.events.vanished(21, oversized.info.token)
+        check(tinyDesktop.windows.single().closes == 1 && oversized.leash.releases == 1)
+        tiny.close()
         println("WaylandTaskShell: initial tasks, deduplication, generations, resize coalescing, Android close and cleanup passed")
     }
 }

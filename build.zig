@@ -1157,26 +1157,32 @@ pub fn build(b: *std.Build) void {
     stock_cold_launch.run.setName("verify install-time uid and stock ATMS first-process launch");
     b.step("stock-cold-launch-test", "Install an APK and launch its first process through stock ATMS")
         .dependOn(&stock_cold_launch.run.step);
-    const stock_task_wayland = @import("build/command.zig").create(b);
-    setApplicationEnvironment(stock_task_wayland, application_tree);
-    stock_task_wayland.setEnvironment("AZK_WINDOW_BACKEND", "stock");
-    stock_task_wayland.setEnvironment("AZK_TASK_WINDOWS", "1");
-    stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
-    stock_task_wayland.addFileArg(b.path("tools/shot.sh"));
-    stock_task_wayland.addArgs(&.{ b.pathResolve(&.{"zig-out/test-results/stock-wayland-task/screenshot.png"}), "--runner", "--", "python3" });
-    stock_task_wayland.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
-    stock_task_wayland.addArgs(&.{ "--output", b.pathResolve(&.{"zig-out/test-results/stock-wayland-task"}), "--" });
-    stock_task_wayland.addFileArg(system_test_driver.getEmittedBin());
-    stock_task_wayland.addArg("--cold-window");
-    stock_task_wayland.addFileArg(application_tree.path(b, "bin/androlinzberg"));
-    stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-binder-broker"));
-    stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
-    stock_task_wayland.addFileArg(window_fixture.apk);
-    stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-task-presenter"));
-    stock_task_wayland.run.has_side_effects = true;
-    stock_task_wayland.run.setName("verify stock APK task pixels through session Wayland presenter");
-    b.step("stock-task-wayland-test", "Present a stock APK task through the session-owned Wayland service")
-        .dependOn(&stock_task_wayland.run.step);
+    for ([_][]const u8{ "cage", "labwc" }) |compositor| {
+        const task_artifacts = b.pathResolve(&.{b.fmt("zig-out/test-results/stock-wayland-task-{s}", .{compositor})});
+        const stock_task_wayland = @import("build/command.zig").create(b);
+        setApplicationEnvironment(stock_task_wayland, application_tree);
+        stock_task_wayland.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+        stock_task_wayland.setEnvironment("AZK_TASK_WINDOWS", "1");
+        stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
+        stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", compositor);
+        if (std.mem.eql(u8, compositor, "labwc"))
+            stock_task_wayland.setEnvironment("SHOT_LABWC_CONFIG", b.pathResolve(&.{"testdata/wayland/task-desktop.xml"}));
+        stock_task_wayland.addFileArg(b.path("tools/shot.sh"));
+        stock_task_wayland.addArgs(&.{ b.pathResolve(&.{ task_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
+        stock_task_wayland.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
+        stock_task_wayland.addArgs(&.{ "--output", task_artifacts, "--" });
+        stock_task_wayland.addFileArg(system_test_driver.getEmittedBin());
+        stock_task_wayland.addArg("--cold-window");
+        stock_task_wayland.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-binder-broker"));
+        stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-surfaceflinger"));
+        stock_task_wayland.addFileArg(window_fixture.apk);
+        stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-task-presenter"));
+        stock_task_wayland.run.has_side_effects = true;
+        stock_task_wayland.run.setName("verify stock APK task pixels through session Wayland presenter");
+        b.step(if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
+            .dependOn(&stock_task_wayland.run.step);
+    }
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

@@ -125,9 +125,8 @@ const Server = struct {
                     }
                 }
                 const slot = free orelse return error.TaskCapacity;
-                const window = try self.session.createWindow(width, height, title.slice(), false);
+                const window = try self.session.createWindowWithAppId(width, height, title.slice(), app_id.slice(), false);
                 errdefer window.deinit();
-                window.toplevel.setAppId(app_id.slice());
                 const queue = try Queue.init(self.gpa, self.io, @intCast(window.width), @intCast(window.height));
                 errdefer queue.deinit();
                 // Hold the first callback independently of its window. Its

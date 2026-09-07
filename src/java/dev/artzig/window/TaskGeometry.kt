@@ -11,6 +11,7 @@ internal class TaskGeometry(
     private val capacity: Int = 64,
     private val gap: Int = 1,
 ) {
+    companion object { const val DESKTOP_SIZE = 16384 }
     data class Task(val id: Int, val generation: Long) {
         init { require(id >= 0 && generation > 0) }
     }
@@ -34,6 +35,17 @@ internal class TaskGeometry(
 
     private class Entry(val task: Task, var bounds: Bounds?, var pending: Proposal.Change?)
     private val entries = linkedMapOf<Int, Entry>()
+
+    /** Admit a task before allocating its desktop output. Geometry follows the
+     * compositor's initial configure, but output capacity must be bounded first.
+     */
+    fun reserve(task: Task): Rejection? {
+        val entry = entries[task.id]
+        if (entry != null) return if (entry.task == task) null else Rejection.STALE_TASK
+        if (entries.size == capacity) return Rejection.CAPACITY
+        entries[task.id] = Entry(task, null, null)
+        return null
+    }
 
     init {
         // Matches the hosted composer/output dimension limit. All edge and

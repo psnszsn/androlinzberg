@@ -7,6 +7,8 @@
 # when testing clients that present EGL buffers. In --test mode the harness
 # exposes AZK_TEST_SOCKET, runs the test after the socket appears, and writes
 # <out>.a11y.json, <out>.log, and <out>.steps.jsonl beside the screenshot.
+# SHOT_COMPOSITOR=labwc selects a stacking desktop instead of Cage's kiosk.
+# SHOT_LABWC_CONFIG optionally supplies an isolated compositor configuration.
 set -euo pipefail
 OUT=$(realpath -m "$1"); shift
 TEST_EXECUTABLE=
@@ -31,6 +33,7 @@ export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 unset DISPLAY
 WARMUP=${SHOT_WARMUP:-3}
 CONTROL_DIR=
+COMPOSITOR_DIR=
 export SHOT_RUNNER_MODE=$RUNNER_MODE
 if [[ -n $TEST_EXECUTABLE ]]; then
   CONTROL_DIR=$(mktemp -d "$XDG_RUNTIME_DIR/azk-shot.XXXXXX")
@@ -47,8 +50,48 @@ if [[ -n $TEST_EXECUTABLE ]]; then
   : > "$SHOT_STEP_OUT"
   rm -f -- "$SHOT_FAILURE_OUT"
 fi
-trap 'if [[ -n $CONTROL_DIR ]]; then rm -rf -- "$CONTROL_DIR"; fi' EXIT
-cage -- sh -c '
+trap 'if [[ -n $CONTROL_DIR ]]; then rm -rf -- "$CONTROL_DIR"; fi; if [[ -n $COMPOSITOR_DIR ]]; then rm -rf -- "$COMPOSITOR_DIR"; fi' EXIT
+run_compositor() {
+  case ${SHOT_COMPOSITOR:-cage} in
+    cage) cage -- "$@" ;;
+    labwc)
+      COMPOSITOR_DIR=$(mktemp -d "$XDG_RUNTIME_DIR/azk-compositor.XXXXXX")
+      mkdir "$COMPOSITOR_DIR/config"
+      if [[ -n ${SHOT_LABWC_CONFIG:-} ]]; then
+        cp -- "$SHOT_LABWC_CONFIG" "$COMPOSITOR_DIR/config/rc.xml"
+      fi
+      export SHOT_SESSION_STATUS="$COMPOSITOR_DIR/status"
+      # labwc --session accepts shell text. Write an argv-preserving script
+      # using Bash quoting, and retain the client's status independently of the
+      # compositor's successful shutdown status.
+      printf '#!/usr/bin/env bash\n' > "$COMPOSITOR_DIR/session"
+      printf '%q ' "$@" >> "$COMPOSITOR_DIR/session"
+      cat >> "$COMPOSITOR_DIR/session" <<'SESSION'
+
+result=$?
+printf '%s\n' "$result" > "$SHOT_SESSION_STATUS"
+exit "$result"
+SESSION
+      chmod +x "$COMPOSITOR_DIR/session"
+      local session_command compositor_status=0
+      printf -v session_command '%q' "$COMPOSITOR_DIR/session"
+      labwc --config-dir "$COMPOSITOR_DIR/config" --session "$session_command" || compositor_status=$?
+      if [[ ! -f $SHOT_SESSION_STATUS ]]; then
+        echo "shot.sh: labwc session exited without a client result ($compositor_status)" >&2
+        return 1
+      fi
+      local session_status
+      read -r session_status < "$SHOT_SESSION_STATUS"
+      [[ $session_status =~ ^[0-9]+$ ]] || return 1
+      if [[ $session_status == 0 && $compositor_status != 0 ]]; then
+        return "$compositor_status"
+      fi
+      return "$session_status"
+      ;;
+    *) echo "shot.sh: unknown compositor: $SHOT_COMPOSITOR" >&2; return 2 ;;
+  esac
+}
+run_compositor sh -c '
   if [ -n "${SHOT_RUNNER_MODE:-}" ]; then
     "$@"
     exit $?

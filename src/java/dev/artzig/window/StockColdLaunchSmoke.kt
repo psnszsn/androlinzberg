@@ -72,13 +72,82 @@ object StockColdLaunchSmoke {
 
     private fun verifyWaylandTask(packageName: String, pid: Int, manager: ActivityManager) {
         val tasks = ActivityTaskManager.getService()
-        val task = tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY)
-            .single { it.baseActivity?.packageName == packageName }
-        println("TASK_WINDOW_READY ${task.taskId}")
-        System.out.flush()
+        fun applicationTasks() = tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY)
+            .filter { it.baseActivity?.packageName == packageName }
+        fun await(description: String, condition: () -> Boolean) {
+            val deadline = SystemClock.uptimeMillis() + 10_000
+            while (!condition()) {
+                check(SystemClock.uptimeMillis() < deadline) {
+                    "$description; tasks=${applicationTasks().map { "${it.taskId}:${it.configuration.windowConfiguration.bounds}" }}"
+                }
+                SystemClock.sleep(5)
+            }
+        }
+        val display = checkNotNull(android.hardware.display.DisplayManagerGlobal.getInstance()
+            .getDisplayInfo(android.view.Display.DEFAULT_DISPLAY))
+        check(display.logicalWidth == TaskGeometry.DESKTOP_SIZE && display.logicalHeight == TaskGeometry.DESKTOP_SIZE)
+        val physical = android.view.SurfaceControl.getDynamicDisplayInfo(
+            com.android.server.display.DisplayControl.getPhysicalDisplayIds().single())
+        check(physical.supportedDisplayModes.single().width == 1280 &&
+            physical.supportedDisplayModes.single().height == 720) { "Synthetic metadata resized the physical framebuffer" }
+        val task = applicationTasks().single()
+        val commands = System.`in`.bufferedReader()
+        fun pixels(marker: String, taskId: Int) {
+            println("$marker $taskId")
+            System.out.flush()
+            check(commands.readLine() != null) { "Wayland screenshot runner disconnected" }
+        }
         // The Cage runner inspects actual compositor pixels before releasing
         // this gate. The driver owns no organizer or presentation surface.
-        check(System.`in`.read() >= 0) { "Wayland screenshot runner disconnected" }
+        pixels("TASK_WINDOW_READY", task.taskId)
+        val firstBounds = android.graphics.Rect(applicationTasks().single().configuration.windowConfiguration.bounds)
+        check(tasks.startActivity(null, "android", null,
+            Intent().setClassName(packageName, "$packageName.ColdProcessActivity")
+                .putExtra("color", android.graphics.Color.MAGENTA)
+                .putExtra("title", "Magenta task")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK),
+            null, null, null, -1, 0, null, null) == ActivityManager.START_SUCCESS)
+        await("Second Android task never reached disjoint synthetic bounds") {
+            val live = applicationTasks()
+            live.size == 2 && live.all { it.displayId == android.view.Display.DEFAULT_DISPLAY } &&
+                live.all { it.configuration.windowConfiguration.bounds.width() == firstBounds.width() &&
+                    it.configuration.windowConfiguration.bounds.height() == firstBounds.height() } &&
+                !android.graphics.Rect.intersects(live[0].configuration.windowConfiguration.bounds,
+                    live[1].configuration.windowConfiguration.bounds)
+        }
+        val live = applicationTasks()
+        check(live.single { it.taskId == task.taskId }.configuration.windowConfiguration.bounds == firstBounds)
+        for (info in live) {
+            val bounds = info.configuration.windowConfiguration.bounds
+            check(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= display.logicalWidth &&
+                bounds.bottom <= display.logicalHeight)
+        }
+        val second = live.single { it.taskId != task.taskId }
+        pixels("SECOND_TASK_WINDOW_READY", second.taskId)
+        // The pre-presentation snapshot may still contain ActivityStarter's
+        // provisional placement. Compare against the actual rendered geometry.
+        val secondBounds = android.graphics.Rect(applicationTasks().single { it.taskId == second.taskId }
+            .configuration.windowConfiguration.bounds)
+        val options = android.app.ActivityOptions.makeBasic().apply { setLaunchTaskId(second.taskId) }
+        check(tasks.startActivity(null, "android", null,
+            Intent().setClassName(packageName, "$packageName.ColdGroupedActivity")
+                .putExtra("color", android.graphics.Color.rgb(255, 127, 0))
+                .putExtra("title", "Magenta task").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            null, null, null, -1, 0, null, options.toBundle()) == ActivityManager.START_SUCCESS)
+        await("Additional activity did not remain inside its selected task") {
+            val current = applicationTasks()
+            current.size == 2 && current.single { it.taskId == second.taskId }.numActivities == 2
+        }
+        await("A new activity changed the task's compositor-owned bounds $secondBounds") {
+            applicationTasks().single { it.taskId == second.taskId }.configuration.windowConfiguration.bounds ==
+                secondBounds
+        }
+        pixels("GROUPED_ACTIVITY_WINDOW_READY", second.taskId)
+        check(tasks.removeTask(second.taskId))
+        await("First task did not survive sibling removal") { applicationTasks().map { it.taskId } == listOf(task.taskId) }
+        check(manager.runningAppProcesses.orEmpty().any { it.pid == pid }) { "Sibling removal killed a process with a live task" }
+        check(applicationTasks().single().configuration.windowConfiguration.bounds == firstBounds)
+        pixels("SURVIVING_TASK_WINDOW_READY", task.taskId)
         check(tasks.removeTask(task.taskId))
         val deadline = SystemClock.uptimeMillis() + 10_000
         while (SystemClock.uptimeMillis() < deadline &&
@@ -93,7 +162,7 @@ object StockColdLaunchSmoke {
         val exit = manager.getHistoricalProcessExitReasons(packageName, pid, 1).single()
         check(exit.reason == android.app.ApplicationExitInfo.REASON_USER_REQUESTED &&
             exit.subReason == android.app.ApplicationExitInfo.SUBREASON_REMOVE_TASK) { "Task removal exit reason: $exit" }
-        println("Stock Wayland task: session organizer, remote Surface and task removal passed")
+        println("Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed")
     }
 
     /** Inspect the task leash that a desktop organizer will present. This

@@ -97,5 +97,24 @@ object HostedLogicalDisplaySmoke {
             display.setDisplayProperties(0, false, false, false)
             check(!display.isMinimalPostProcessingRequested() && traversalRequests == previousRequests + 1)
         }
+        val desktopInfo = SurfaceFlingerDisplayOutput.taskDisplayInfo(base)
+        check(base.logicalWidth == 1280 && base.supportedModes.single().physicalWidth == 1280)
+        check(desktopInfo.logicalWidth == TaskGeometry.DESKTOP_SIZE &&
+            desktopInfo.logicalHeight == TaskGeometry.DESKTOP_SIZE)
+        check(desktopInfo.supportedModes.single().physicalWidth == TaskGeometry.DESKTOP_SIZE &&
+            desktopInfo.supportedModes.single().physicalHeight == TaskGeometry.DESKTOP_SIZE)
+        check(desktopInfo.logicalDensityDpi == base.logicalDensityDpi &&
+            desktopInfo.supportedModes.single().refreshRate == base.supportedModes.single().refreshRate)
+        val desktop = HostedLogicalDisplay(desktopInfo, object : HostedLogicalDisplay.Output {
+            override fun configure(transaction: SurfaceControl.Transaction,
+                projection: HostedLogicalDisplay.Projection) {
+                // Identity input geometry even though the physical compositor
+                // target remains bounded. Task output projections are separate.
+                check(projection.viewport == Rect(0, 0, TaskGeometry.DESKTOP_SIZE, TaskGeometry.DESKTOP_SIZE))
+                check(projection.frame == projection.viewport && projection.rotation == 0)
+            }
+        }, {}, {})
+        check(desktop.getStableDisplaySize() == Point(TaskGeometry.DESKTOP_SIZE, TaskGeometry.DESKTOP_SIZE))
+        SurfaceControl.Transaction().use { desktop.performTraversal(it) }
     }
 }

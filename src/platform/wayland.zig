@@ -380,7 +380,13 @@ pub const Session = struct {
     }
 
     pub fn createWindow(self: *Session, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !*Window {
-        return Window.initInSession(self, width, height, title, fullscreen);
+        return self.createWindowWithAppId(width, height, title, "org.androlinzberg", fullscreen);
+    }
+
+    /// Compositors apply application rules at first map, before later metadata
+    /// updates. Install the Android task's identity before the initial commit.
+    pub fn createWindowWithAppId(self: *Session, width: i32, height: i32, title: [:0]const u8, app_id: [:0]const u8, fullscreen: bool) !*Window {
+        return Window.initInSession(self, width, height, title, app_id, fullscreen);
     }
 
     /// Dispatch the shared connection and consume eventfd notifications owned by
@@ -870,7 +876,7 @@ pub const Window = struct {
         return window;
     }
 
-    fn initInSession(session: *Session, width: i32, height: i32, title: [:0]const u8, fullscreen: bool) !*Window {
+    fn initInSession(session: *Session, width: i32, height: i32, title: [:0]const u8, app_id: [:0]const u8, fullscreen: bool) !*Window {
         const gpa = session.gpa;
         const self = try gpa.create(Window);
         errdefer gpa.destroy(self);
@@ -908,7 +914,7 @@ pub const Window = struct {
         self.xdg_surface.setListener(*Window, xdgSurfaceListener, self);
         self.toplevel.setListener(*Window, toplevelListener, self);
         self.toplevel.setTitle(title);
-        self.toplevel.setAppId("org.androlinzberg");
+        self.toplevel.setAppId(app_id);
         if (fullscreen) self.toplevel.setFullscreen(null);
 
         // xdg-shell requires the initial configure to be acknowledged before

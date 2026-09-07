@@ -55,12 +55,29 @@ class SurfaceFlingerDisplayOutput private constructor() : HostedLogicalDisplay.O
     }
 
     companion object {
+        /** LogicalDisplay.updateLocked normally obtains dimensions and modes from
+         * a DisplayDevice. Our desktop device is a synthetic coordinate plane;
+         * SF's bounded primary output only supplies timing/color capabilities.
+         * Private task outputs allocate their own buffers, never a plane-sized
+         * framebuffer. Publishing this before WMS starts avoids a global resize
+         * of already running applications.
+         */
+        internal fun taskDisplayInfo(compositor: DisplayInfo): DisplayInfo = DisplayInfo(compositor).apply {
+            logicalWidth = TaskGeometry.DESKTOP_SIZE; appWidth = logicalWidth
+            logicalHeight = TaskGeometry.DESKTOP_SIZE; appHeight = logicalHeight
+            supportedModes = compositor.supportedModes.map { mode ->
+                Display.Mode(mode.modeId, logicalWidth, logicalHeight, mode.refreshRate,
+                    mode.vsyncRate, mode.alternativeRefreshRates, mode.supportedHdrTypes)
+            }.toTypedArray()
+        }
+
         fun createService(context: Context, handler: Handler): HostedSessionDisplayService {
             val output = SurfaceFlingerDisplayOutput()
             // Like LocalDisplayDevice.requestDisplayStateLocked, power the physical
             // compositor output before publishing its ON state to framework clients.
             SurfaceControl.setDisplayPowerMode(output.token, SurfaceControl.POWER_MODE_NORMAL)
-            return HostedSessionDisplayService(context, handler, output.info, output,
+            val info = if (System.getenv("AZK_TASK_WINDOWS") == "1") taskDisplayInfo(output.info) else output.info
+            return HostedSessionDisplayService(context, handler, info, output,
                 SurfaceControl.getCompositionColorSpaces()[1].id, SurfaceControl.getOverlaySupport(),
                 output.staticInfo.installOrientation)
         }

@@ -43,6 +43,46 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Multiple task desktop checkpoint (2026-09-07)
+
+Regression 118 passes both `-Dstock-window-clients=true stock-task-wayland-test`
+and `stock-task-desktop-test`. Two stock APK tasks share display 0 and one
+Wayland connection, with independent SF outputs, disjoint synthetic bounds and
+distinct verified pixels. A second activity launched into the selected task
+changes that toplevel's content without creating another task. Removing the
+sibling preserves the first task and process; removing the final task records
+Android's remove-task exit reason and releases all presenter buffers.
+
+The logical display publishes a 16,384-square coordinate plane before WMS boots.
+Freeform launch policy bounds initial app sizes; the gate verifies the primary
+SF mode remains 1280x720. Density and timing remain stable. The shell reconciles
+external bounds changes through WCT and retains the compositor's current output
+size. Capacity admission now precedes native output allocation; unpresentable
+new tasks request Android removal, and already created outputs wait for vanish.
+
+`tools/shot.sh` supports `SHOT_COMPOSITOR=labwc` using the same session and
+artifact conventions as Cage. It isolates compositor configuration and preserves
+client failure status. The desktop fixture controls placement only in the
+compositor; Android origins remain independent. The test exposed an app-ID
+ordering bug: identity must be sent before first map for compositor rules to
+work. Both task screenshots and the grouped-activity desktop image were visually
+inspected. Artifacts: `zig-out/test-results/stock-wayland-task-{cage,labwc}/`,
+with retained copies at `/tmp/wayland-stock-task-grouping-118-{cage,labwc}/`.
+
+Regression 119 passes task-shell policy, default framework module/native/graph
+checks and all 15 APK integration tests (46 steps, no runtime issues). The input
+adapter also passes InputEvent-boundary checks for transforms, focus ownership,
+button ordering, key cancellation, multitouch IDs and stale task generations;
+it is not yet connected to the production presenter. Log:
+`/tmp/wayland-task-boundaries-119.log`.
+
+The grouping test initially compared against provisional launch bounds, before
+the second task rendered. Regression 117's trace showed the shell had already
+placed it correctly; the gate now snapshots its rendered bounds before testing
+activity grouping. This checkpoint does not complete task restoration,
+decoration fallback, input, output/configuration policy, desktop bridges or the
+default launcher migration.
+
 ## Session task presenter checkpoint (2026-09-07)
 
 The system process now owns a TaskOrganizer independently of APK launchers.

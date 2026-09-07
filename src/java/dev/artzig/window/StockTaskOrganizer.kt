@@ -76,7 +76,8 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         return WaylandTaskShell.Info(info.taskId, info.token.asBinder(), appId, title,
             bounds.width().coerceAtLeast(1), bounds.height().coerceAtLeast(1), info.isResizeable,
             info.displayId == Display.DEFAULT_DISPLAY &&
-                info.activityType == WindowConfiguration.ACTIVITY_TYPE_STANDARD && appId.isNotEmpty())
+                info.activityType == WindowConfiguration.ACTIVITY_TYPE_STANDARD && appId.isNotEmpty(),
+            bounds.left, bounds.top)
     }
 
     override fun configure(token: IBinder, leash: SurfaceControl, window: WaylandTaskShell.Window,
@@ -106,18 +107,19 @@ internal class StockTaskOrganizer(private val handler: Handler) :
                 if (!handler.post {
                     transaction.use {
                         val live = registered && tasks[token]?.taskId == info.taskId && outputs[leash] === output
-                        if (live) {
-                            output.configure(it, bounds, size.width, size.height)
-                            // WindowContainer.updateSurfacePositionNonOrganized deliberately
-                            // leaves an organized task's leash to its organizer.
-                            // Move/crop the task container, preserving all WMS
-                            // window and buffer-child input transforms underneath.
-                            it.setPosition(leash, (bounds.left - parentX).toFloat(),
-                                (bounds.top - parentY).toFloat())
-                                .setWindowCrop(leash, bounds.width, bounds.height).show(leash)
-                            it.addTransactionCommittedListener(executor) { committed(true) }
-                        }
-                        it.apply()
+                        try {
+                            if (live) {
+                                output.configure(it, bounds, size.width, size.height)
+                                // WindowContainer.updateSurfacePositionNonOrganized deliberately
+                                // leaves an organized task's leash to its organizer.
+                                // Move/crop the task container, preserving all WMS
+                                // window and buffer-child input transforms underneath.
+                                it.setPosition(leash, (bounds.left - parentX).toFloat(),
+                                    (bounds.top - parentY).toFloat())
+                                    .setWindowCrop(leash, bounds.width, bounds.height).show(leash)
+                                it.addTransactionCommittedListener(executor) { committed(true) }
+                            }
+                        } finally { it.apply() }
                         if (!live) committed(false)
                     }
                 }) {
@@ -131,6 +133,12 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         checkThread()
         val task = tasks[token] ?: return
         check(ActivityTaskManager.getService().removeTask(task.taskId)) { "Android rejected task removal" }
+    }
+
+    override fun reject(token: IBinder, reason: TaskGeometry.Rejection) {
+        checkThread()
+        android.util.Log.w("WaylandTaskShell", "Removing unpresentable task ${tasks[token]?.taskId}: $reason")
+        remove(token)
     }
 
     override fun release(leash: SurfaceControl) {

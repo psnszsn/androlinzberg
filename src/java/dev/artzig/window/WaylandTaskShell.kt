@@ -9,11 +9,12 @@ package dev.artzig.window
 internal class WaylandTaskShell<Token : Any, Leash : Any>(
     private val android: Android<Token, Leash>,
     private val presenter: Presenter,
-    private val geometry: TaskGeometry = TaskGeometry(16384, 16384),
+    private val geometry: TaskGeometry = TaskGeometry(TaskGeometry.DESKTOP_SIZE, TaskGeometry.DESKTOP_SIZE),
 ) : AutoCloseable {
     data class Info<Token>(val id: Int, val token: Token, val appId: String,
         val title: String, val width: Int, val height: Int,
-        val resizable: Boolean = true, val application: Boolean = true)
+        val resizable: Boolean = true, val application: Boolean = true,
+        val left: Int = 0, val top: Int = 0)
     data class Appeared<Token, Leash>(val info: Info<Token>, val leash: Leash)
     data class Size(val width: Int, val height: Int) {
         init { require(width in 1..16384 && height in 1..16384) }
@@ -32,6 +33,8 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
             change: TaskGeometry.Proposal.Change, size: Size, committed: (Boolean) -> Unit)
         /** Request Android lifecycle teardown; vanish remains authoritative. */
         fun remove(token: Token)
+        /** Reject an unpresentable task through Android's removal lifecycle. */
+        fun reject(token: Token, reason: TaskGeometry.Rejection)
     }
     interface Presenter {
         fun open(task: TaskGeometry.Task, appId: String, title: String, size: Size,
@@ -51,6 +54,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         var window: Window? = null
         var pending: TaskGeometry.Proposal.Change? = null
         var desired: Size? = null
+        var presentationSize: Size? = null
         var closing = false
     }
     private val entries = linkedMapOf<Int, Entry>()
@@ -101,6 +105,11 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         if (previous != null) retire(previous)
         check(generation < Long.MAX_VALUE) { "Task generation exhausted" }
         val entry = Entry(TaskGeometry.Task(info.id, ++generation), info, task.leash)
+        val rejected = geometry.reserve(entry.key)
+        if (rejected != null) {
+            try { android.reject(info.token, rejected) } finally { android.release(task.leash) }
+            return
+        }
         entries[info.id] = entry
         try {
             val initial = Size(info.width, info.height)
@@ -129,11 +138,21 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         if (!info.application) { retire(entry); return }
         entry.info = info
         entry.window?.metadata(info.appId, info.title)
+        val bounds = geometry.bounds(entry.key)
+        if (bounds != null && entry.pending == null && !entry.closing &&
+            (bounds.left != info.left || bounds.top != info.top ||
+                bounds.width != info.width || bounds.height != info.height)) {
+            // Stock ActivityStarter/LaunchParams can change a reused task's
+            // bounds when another activity starts inside it. Reconcile through
+            // the same WCT path; the compositor still owns the output size.
+            resize(entry, checkNotNull(entry.presentationSize))
+        }
     }
 
     private fun current(entry: Entry): Boolean = !closed && entries[entry.key.id] === entry
 
     private fun resize(entry: Entry, size: Size) {
+        entry.presentationSize = size
         entry.desired = size
         val window = entry.window ?: return
         if (entry.pending != null) return // Coalesce a configure storm behind one Android sync.
@@ -142,7 +161,12 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         val proposal = geometry.prepare(entry.key, width, height)
         if (proposal is TaskGeometry.Proposal.Rejected) {
             window.rejected(proposal.reason)
-            if (geometry.bounds(entry.key) == null) retire(entry)
+            if (geometry.bounds(entry.key) == null) {
+                entry.closing = true
+                android.reject(entry.info.token, proposal.reason)
+                // Android still owns destruction. Keep its output alive until
+                // the matching vanish callback, as with a desktop close.
+            }
             return
         }
         val change = proposal as TaskGeometry.Proposal.Change
