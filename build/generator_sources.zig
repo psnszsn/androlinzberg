@@ -9,8 +9,60 @@ pub const SourcePath = struct { source: Source, path: []const u8 };
 // satisfies javac; the audit forbids runtime use.
 pub const javadoc_headers = .{
     .archive = "prebuilts/sdk/current/public/android.jar",
-    .classes = [_][]const u8{ "android/media/MediaPlayer" },
+    .classes = [_][]const u8{"android/media/MediaPlayer"},
 };
+// external/cronet/Android.bp selects stable unless enable_cronet_tot is set.
+// These declarations follow stable/Android.bp's enum, version and C-preprocessor rules.
+pub const cronet = .{
+    .root = "external/cronet/stable",
+    .copyright_year = "2025", // Pinned Android 16 release; independent of the build clock.
+    .support = &[_][]const u8{
+        "build/action_helpers.py",
+        "build/android/gyp/java_cpp_enum.py",
+        "build/android/gyp/util/__init__.py",
+        "build/android/gyp/util/build_utils.py",
+        "build/android/gyp/util/java_cpp_utils.py",
+        "build/gn_helpers.py",
+        "build/zip_helpers.py",
+        "build/util/version.py",
+        "build/util/android_chrome_version.py",
+        "build/util/LASTCHANGE",
+        "chrome/VERSION",
+        "components/cronet/android/api/src/org/chromium/net/ApiVersion.template",
+        "build/android/java/templates/BuildConfig.template",
+        "net/android/java/NetError.template",
+        "net/base/net_error_list.h",
+    },
+    .enum_headers = &[_][]const u8{
+        "base/android/application_status_listener.h",
+        "base/android/task_scheduler/task_runner_android.h",
+        "base/android/task_scheduler/task_traits_android.h",
+        "base/task/task_traits.h",
+        "components/cronet/android/url_request_close_source.h",
+        "net/nqe/effective_connection_type.h",
+        "net/base/idempotency.h",
+        "net/base/request_priority.h",
+        "net/nqe/network_quality.h",
+    },
+    .enum_outputs = &[_][]const u8{
+        "org/chromium/base/ApplicationState.java",
+        "org/chromium/base/task/TaskRunnerType.java",
+        "org/chromium/base/task/TaskTraits.java",
+        "org/chromium/base/task/TaskPriority.java",
+        "org/chromium/net/ConnectionCloseSource.java",
+        "org/chromium/net/EffectiveConnectionType.java",
+        "org/chromium/net/Idempotency.java",
+        "org/chromium/net/RequestPriority.java",
+        "org/chromium/net/RttThroughputValues.java",
+    },
+    .api_version_output = "org/chromium/net/ApiVersion.java",
+    .api_level = "API_LEVEL=34",
+    .templates = &.{
+        .{ .input = "build/android/java/templates/BuildConfig.template", .output = "org/chromium/build/BuildConfig.java", .flags = &[_][]const u8{ "-D_DISABLE_DEBUG_LOGS", "-D_IS_CRONET_BUILD", "-D_LOGTAG_PREFIX=cn_", "-D_MIN_SDK_VERSION=23", "-D_VERSION_CODE=1" } },
+        .{ .input = "net/android/java/NetError.template", .output = "org/chromium/net/NetError.java", .flags = &[_][]const u8{} },
+    },
+};
+
 pub const incremental_sysprop = .{
     .input = SourcePath{ .source = .aosp, .path = "system/incremental_delivery/sysprop/IncrementalProperties.sysprop" },
     .header = "IncrementalProperties.sysprop.h",
@@ -2523,6 +2575,9 @@ test "generator declarations map typed inputs to unique Java outputs" {
     var outputs: std.StringHashMapUnmanaged(void) = .empty;
     defer outputs.deinit(std.testing.allocator);
 
+    for (cronet.enum_outputs) |output| try expectUniqueOutput(&outputs, output);
+    try expectUniqueOutput(&outputs, cronet.api_version_output);
+    inline for (cronet.templates) |entry| try expectUniqueOutput(&outputs, entry.output);
     for (hidl) |entry| {
         try std.testing.expect(std.mem.indexOfScalar(u8, entry.fqname, '@') != null);
         try std.testing.expect(entry.outputs.len != 0);

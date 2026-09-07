@@ -28,6 +28,22 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- The AppOps/process-initialization closure now has the pinned Cronet generators
+  for nine Java enums, ApiVersion, BuildConfig and NetError. The build uses the
+  original enum parser, version script and C-preprocessor templates, with declared
+  inputs and outputs and a fixed release copyright year. Generated classes are
+  covered by the source audit; handwritten replacements are rejected. The closure
+  tool now selects the stable Cronet module from the pinned Android.bp instead of
+  mixing it with the optional tip-of-tree variant. All 12 generated classes are in
+  the live framework jar. Build-tool tests, JVM/system, native/Binder and build checks
+  pass; all 11 APK tests pass (39 steps, zero structured runtime issues). All 24 added
+  archive inputs are byte-verified after rebuilding and repinning AOSP; ART's checksum
+  remains unchanged. The inventory remains 28 stubs (16 pending, 12 survivors).
+  AppOps itself is still adapted: protobuf messages, JNI bindings, HttpEngine preload
+  generation and the WebView dependency closure are subsequent work. This batch adds
+  no native HTTP engine or WebView provider and changes none of the excluded backends.
+
+
 - VirtualDeviceManager, VirtualDeviceParams, their Binder protocol and CameraManager
   now compile verbatim with the stock virtual input/audio/sensor/camera and camera2
   dependency closure. Context exposes both managers. The hosted virtual-device service

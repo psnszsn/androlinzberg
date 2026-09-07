@@ -905,6 +905,49 @@ fn mimeResources(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
     return result;
 }
 
+fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
+    const inputs = b.addWriteFiles();
+    inline for (.{ declarations.cronet.support, declarations.cronet.enum_headers }) |paths| {
+        for (paths) |path| _ = inputs.addCopyFile(aosp.path(b.fmt("{s}/{s}", .{ declarations.cronet.root, path })), path);
+    }
+    const root = inputs.getDirectory();
+    var files: std.ArrayList(LazyPath) = .empty;
+    const enums = b.addSystemCommand(&.{ "python3", "-B" });
+    enums.addFileArg(b.path("tools/cronet-java-enums.py"));
+    enums.addArgs(&.{ declarations.cronet.copyright_year, "--srcjar" });
+    const archive = enums.addOutputFileArg("cronet-enums.srcjar");
+    enums.addArgs(declarations.cronet.enum_headers);
+    enums.setCwd(root);
+    enums.setName("generate stock Cronet Java enums");
+    const extract = b.addSystemCommand(&.{ "python3", "-B", "-m", "zipfile", "-e" });
+    extract.addFileArg(archive);
+    const enum_root = extract.addOutputDirectoryArg("cronet-enums");
+    extract.setName("extract Cronet enum sources");
+    for (declarations.cronet.enum_outputs) |output| files.append(b.allocator, enum_root.path(b, output)) catch @panic("OOM");
+
+    const version = b.addSystemCommand(&.{ "python3", "-B" });
+    version.addFileArg(root.path(b, "build/util/version.py"));
+    version.addArgs(&.{ "--official", "-f", "chrome/VERSION", "-f", "build/util/LASTCHANGE", "-e", declarations.cronet.api_level, "-o" });
+    const api_version = version.addOutputFileArg(declarations.cronet.api_version_output);
+    version.addArg("components/cronet/android/api/src/org/chromium/net/ApiVersion.template");
+    version.setCwd(root);
+    version.setName("generate stock Cronet API version");
+    files.append(b.allocator, api_version) catch @panic("OOM");
+    inline for (declarations.cronet.templates) |entry| {
+        const run = b.addSystemCommand(&.{ "cc", "-E", "-P", "-x", "c++", "-DANDROID", "-I", "." });
+        run.addArgs(entry.flags);
+        run.addArg(entry.input);
+        run.addArg("-o");
+        const output = run.addOutputFileArg(entry.output);
+        run.setCwd(root);
+        run.setName(b.fmt("generate stock {s}", .{entry.output}));
+        files.append(b.allocator, output) catch @panic("OOM");
+    }
+    const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
+    _ = exposePaths(b, "gen-cronet", "Generate pinned Cronet enums and configuration", result);
+    return result;
+}
+
 pub fn build(b: *std.Build, o: Options) Result {
     const runner = hostTool(b, "aosp-tool-runner", "tools/aosp-tool-runner.zig");
     const filter = hostTool(b, "filter-flagged-api", "tools/filter-flagged-api.zig");
@@ -930,6 +973,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const graphics_sources = graphics.addOutputDirectoryArg("binder-graphics-sources");
     graphics.addFileArg(o.aosp.path(declarations.binder_graphics_aidl));
     graphics.setName("generate graphics Binder test interface");
+    const cronet_java = cronetJava(b, o.aosp);
     const logtags_java = logtagsJava(b, o.aosp);
     const aconfig_java = aconfigJava(b, o.aosp, runner);
     const sysprop_java = syspropJava(b, o.aosp, o.sysprop_tool);
@@ -945,7 +989,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const fixtures = fixtureApks(b, o.aosp, res.apk);
     const mime_resources = mimeResources(b, o.aosp);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
+    inline for (.{ cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
     java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");

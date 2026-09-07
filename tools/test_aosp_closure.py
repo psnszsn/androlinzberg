@@ -17,6 +17,19 @@ SPEC.loader.exec_module(aosp_closure)
 
 
 class SourceIndexTest(unittest.TestCase):
+    def test_cronet_uses_the_pinned_stable_module_without_mixing_tot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for variant, names in (("stable", ("Engine",)), ("tot", ("Engine", "FutureEngine"))):
+                for name in names:
+                    path = root / f"external/cronet/{variant}/java/org/chromium/net/{name}.java"
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(f"package org.chromium.net; public class {name} {{}}")
+            index = aosp_closure.SourceIndex(root, None)
+            self.assertEqual({"java": ["external/cronet/stable/java/org/chromium/net/Engine.java"]},
+                             index.lookup("org.chromium.net.Engine"))
+            self.assertEqual({}, index.lookup("org.chromium.net.FutureEngine"))
+
     def test_khronos_apis_are_not_assumed_to_be_boot_classes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

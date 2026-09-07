@@ -132,6 +132,18 @@ STAGED_AIDL = {
 ACONFIG_CLASSES = {"Flags", "FeatureFlags", "FeatureFlagsImpl", "CustomFeatureFlags", "FakeFeatureFlagsImpl"}
 
 KNOWN_GENERATED = {
+    "org.chromium.base.ApplicationState": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.base.task.TaskRunnerType": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.base.task.TaskTraits": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.base.task.TaskPriority": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.net.ConnectionCloseSource": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.net.EffectiveConnectionType": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.net.Idempotency": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.net.RequestPriority": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.net.RttThroughputValues": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.net.ApiVersion": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.build.BuildConfig": "pinned Cronet generator (build/generator_sources.zig)",
+    "org.chromium.net.NetError": "pinned Cronet generator (build/generator_sources.zig)",
     "com.android.internal.pm.SystemFeaturesMetadata": "system feature annotation processor (build/generator_sources.zig)",
     "com.android.internal.pm.RoSystemFeatures": "system feature generator (build/generator_sources.zig)",
     "android.aconfig.DeviceProtos": "aconfig device paths template (build/generator_sources.zig)",
@@ -273,7 +285,12 @@ class SourceIndex:
         self.by_fqn = {k: dict(v) for k, v in by_fqn.items()}
 
     def lookup(self, fqn: str) -> dict[str, list[str]]:
-        sources = self.by_fqn.get(fqn, {})
+        # The pinned external/cronet/Android.bp defaults to stable. Never mix
+        # its classes with the optional tip-of-tree implementation, including
+        # types that only exist in that alternative module variant.
+        sources = {kind: [path for path in paths if not path.startswith("external/cronet/tot/")]
+                   for kind, paths in self.by_fqn.get(fqn, {}).items()}
+        sources = {kind: paths for kind, paths in sources.items() if paths}
         # Frozen AIDL API dumps describe historical ABIs, not the source to
         # compile. Retain them only for modules without a live declaration.
         aidl = sources.get("aidl", [])
