@@ -23,7 +23,7 @@
 using namespace android;
 using namespace std::chrono_literals;
 constexpr uint32_t EXCHANGE = 1, NESTED = 2, GRAPHICS = 3;
-constexpr uint32_t HOLD_WORKER = 8, MONITOR_POOL = 9;
+constexpr uint32_t HOLD_WORKER = 8, MONITOR_POOL = 9, BLOB_ROUND_TRIP = 10;
 constexpr int POOL_WORKERS = 32;
 static void pass(const char *s) { std::cout << "PASS " << s << std::endl; }
 struct Listener final : gui::BnFpsListener {
@@ -110,7 +110,7 @@ struct Service final : BBinder {
       bytes[0] = 93;
       return out->writeStrongBinder(IInterface::asBinder(memory));
     }
-    if (code == 6) {
+    if (code == BLOB_ROUND_TRIP) {
       const int32_t size = in.readInt32();
       assert(size > 16 * 1024);
       Parcel::ReadableBlob blob;
@@ -413,7 +413,7 @@ int main(int argc, char **argv) {
     auto *bytes = static_cast<uint8_t *>(writer.data());
     for (int i = 0; i < size; ++i) bytes[i] = uint8_t(i);
     assert(request.dataSize() < 128 && request.hasFileDescriptors());
-    assert(server->transact(6, request, &response) == OK);
+    assert(server->transact(BLOB_ROUND_TRIP, request, &response) == OK);
     assert(bytes[0] == (mutableCopy ? 93 : 0));
     writer.release();
     request.freeData();

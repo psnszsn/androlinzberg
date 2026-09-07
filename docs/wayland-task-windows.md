@@ -43,6 +43,29 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Main rebase and shared dispatcher verification (2026-09-07)
+
+Rebased onto main `7e2ad4c`, incorporating stock MediaStore/HTTP clients,
+virtual-device local contracts, service registration and Parcel blob/descriptor
+ownership. The combined package 69 contains 55,363 sources and 76 patches:
+`N-V-__8AALvo6U2g5DBWmiWCv2ON7jDp7frrFYZFBqdSstO4`, archive SHA-256
+`2e1a402befdc38d040891a02f512485c405c5043b7090e4420ab5381b8426ec2`.
+The audit has 21 stubs: 13 pending and 8 survivors; the pending budget is 13.
+
+Regression 86 passes the stock service launch gates, JVM/system, broker/session,
+graph and 15 APK tests (48 diagnostic steps, no runtime issues), but exposes an
+intermittent std.Io batched-receive cancellation panic in the new dispatcher.
+The pinned Threaded backend leaves immediately completed socket receives linked
+in its submitted list. The dispatcher now uses its readiness-batched zero-byte
+file read, preserving all libwayland bytes/descriptors. It requires an owner
+notification file so both operations participate in the readiness batch.
+Regression 87 passes all five Cage surface scenarios and native checks. Main's
+new blob test reused the transaction code of our ParcelFileDescriptor test;
+assigning a distinct test code preserves both. Regression 88 passes the complete
+C++ Binder facade gate, including descriptor/blob transport and pool monitoring.
+The closure-tool unit suite passes 13 tests. The task presenter is still being
+connected; none of these checks completes the remaining M7–M11 gates.
+
 ## Shared Wayland session checkpoint (2026-09-07)
 
 `wayland.Session` owns one connection, registry, seat, keyboard map, compositor
@@ -52,7 +75,7 @@ pointer/keyboard focus and touch contacts; destroying a shared window leaves
 its peers and connection alive. Partial initialization releases acquired globals
 and window resources. Keymaps and DMA-BUF tables use bounded std.Io reads.
 
-The session dispatcher uses std.Io batched socket peeking and eventfd reads.
+The session dispatcher uses std.Io batched socket readiness and eventfd reads.
 libwayland retains ownership of wire bytes and descriptor transfer. Cancellation
 collects completed notifications, and window events remain queued until consumed.
 Only congested flushes use a bounded retry timer. The legacy single-window API

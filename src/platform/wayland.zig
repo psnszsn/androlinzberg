@@ -388,7 +388,7 @@ pub const Session = struct {
     /// The caller must inspect every ready slot even when a Wayland event also
     /// arrives. Files are borrowed for this call; libwayland retains its socket.
     pub fn dispatch(self: *Session, wakes: []const std.Io.File, ready: []bool, timeout_ms: i32) !void {
-        if (wakes.len > 64 or ready.len != wakes.len) return error.InvalidWakeSources;
+        if (wakes.len == 0 or wakes.len > 64 or ready.len != wakes.len) return error.InvalidWakeSources;
         @memset(ready, false);
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         var timeout = timeout_ms;
@@ -420,17 +420,16 @@ pub const Session = struct {
         var storage: [65]std.Io.Operation.Storage = undefined;
         var batch = std.Io.Batch.init(storage[0 .. wakes.len + 1]);
         defer batch.cancel(self.io);
-        var message: std.Io.net.IncomingMessage = .init;
-        var peek: [1]u8 = undefined;
-        batch.addAt(0, .{
-            .net_receive = .{
-                .socket_handle = self.display.getFd(),
-                .message_buffer = (&message)[0..1],
-                .data_buffer = &peek,
-                // Preserve both bytes and SCM_RIGHTS for wl_display_read_events.
-                .flags = .{ .peek = true },
-            },
-        });
+        // The pinned std.Io.Threaded batches file operations behind readiness,
+        // including a zero-byte read. This borrows the libwayland socket without
+        // consuming its wire bytes or SCM_RIGHTS. Avoid net_receive(MSG_PEEK):
+        // this Zig version leaves an immediately completed receive linked in
+        // Batch.submitted, corrupting cancellation when bytes are already ready.
+        const borrowed: std.Io.File = .{
+            .handle = self.display.getFd(), .flags = .{ .nonblocking = true },
+        };
+        var empty: [0]u8 = .{};
+        batch.addAt(0, .{ .file_read_streaming = .{ .file = borrowed, .data = &.{&empty} } });
         var counters: [64]u64 = undefined;
         var vectors: [64][1][]u8 = undefined;
         for (wakes, 0..) |file, index| {
@@ -454,9 +453,7 @@ pub const Session = struct {
         var readable = false;
         while (batch.next()) |completion| {
             if (completion.index == 0) {
-                const failure, const count = completion.result.net_receive;
-                if (failure) |err| return err;
-                if (count == 0 or message.data.len == 0) return error.CompositorDisconnected;
+                _ = try completion.result.file_read_streaming;
                 readable = true;
             } else {
                 const count = try completion.result.file_read_streaming;
