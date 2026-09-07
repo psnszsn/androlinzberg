@@ -95,7 +95,7 @@ class HostedPackageState(
     override fun getPageSizeCompatWarningMessage(context: Context?): String? = null
     override fun getCpuAbiOverride(): String? = null
     override fun getLastModifiedTime(): Long = 0
-    override fun getLastPackageUsageTime(): LongArray = LongArray(8)
+    override fun getLastPackageUsageTime(): LongArray = setting.transientState.lastPackageUsageTimeInMills
     override fun getLastUpdateTime(): Long = 0
     override fun getVersionCode(): Long = pkg.longVersionCode
     override fun getMimeGroups(): Map<String, Set<String>> = emptyMap()

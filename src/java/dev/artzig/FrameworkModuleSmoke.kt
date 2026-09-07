@@ -1250,6 +1250,20 @@ internal object FrameworkModuleSmoke {
         local.setSystemReady()
         check(internal.isSystemReady)
         check(internal.getUidProcessState(12345) == ActivityManager.PROCESS_STATE_NONEXISTENT)
+        check(internal.getActivityInfoForUser(null, 0) == null)
+        val original = android.content.pm.ActivityInfo().apply {
+            name = "FixtureActivity"
+            applicationInfo = android.content.pm.ApplicationInfo().apply {
+                packageName = "org.example.permissions"
+                uid = 10001
+                initForUser(0)
+            }
+        }
+        check(internal.getActivityInfoForUser(original, 0) === original)
+        val remapped = internal.getActivityInfoForUser(original, 2)
+        check(remapped !== original && remapped.applicationInfo !== original.applicationInfo)
+        check(remapped.name == original.name && remapped.applicationInfo.uid == UserHandle.getUid(2, 10001))
+        check(original.applicationInfo.uid == 10001 && remapped.applicationInfo.dataDir != original.applicationInfo.dataDir)
         check(internal.handleIncomingUser(1, 10001, 0, false, 2, "test", null) == 0)
         check(internal.handleIncomingUser(1, 0, UserHandle.USER_ALL, true, 2, "test", null) == UserHandle.USER_ALL)
         check(runCatching { internal.handleIncomingUser(1, 0, UserHandle.USER_ALL, false, 2, "test", null) }
@@ -2642,6 +2656,7 @@ internal object FrameworkModuleSmoke {
             HostContexts.systemContext(frameworkResources, 200, 200, 120, 0),
             "org.example.permissions",
         )
+        check(java.io.File(checkNotNull(base.applicationInfo.nativeLibraryDir)).isAbsolute)
         val wrapped = ContextWrapper(base)
         check(base.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)
         check(wrapped.checkSelfPermission(wakeLock) == PackageManager.PERMISSION_GRANTED)

@@ -187,6 +187,8 @@ internal object SystemServices {
         imageApps.listFiles()?.filter { it.isFile && it.extension == "apk" }
             ?.sortedBy { it.name }?.forEach { packageManager.installSystemPackage(it.canonicalPath) }
         android.os.ServiceManager.addService("package", packageManager)
+        val permissionPolicy = HostedWindowPermissionPolicy(context, packageManager)
+        LocalServices.addService(com.android.server.policy.PermissionPolicyInternal::class.java, permissionPolicy)
         LocalServices.addService(
             com.android.server.pm.permission.LegacyPermissionManagerInternal::class.java,
             HostedLegacyPermissionManagerInternal(packageManager),
@@ -267,6 +269,8 @@ internal object SystemServices {
         // The system process is an attached process of its own activity manager
         // (ActivityManagerService.setSystemProcess) so system services bind app
         // services through the real Context, as JobServiceContext does.
+        // SystemServer initializes the stock package-attribute cache before setSystemProcess.
+        com.android.internal.policy.AttributeCache.init(context)
         activityManager.attachApplication(android.app.ActivityThread.currentActivityThread().applicationThread, 0)
         // Managers over hosted services, phase 1: notification, alarm, job scheduler.
         // Registered before any app can attach, and the notification service
@@ -341,7 +345,13 @@ internal object SystemServices {
         location.packageService = packageManager
         android.os.ServiceManager.addService(Context.LOCATION_SERVICE, location)
         android.os.ServiceManager.addService(Context.LIGHTS_SERVICE, HostedLightsService())
-        android.os.ServiceManager.addService(Context.COLOR_DISPLAY_SERVICE, HostedColorDisplayService())
+        if (stockWindows != null) {
+            // ActivityRecord attaches its per-app color transform to this stock
+            // local service; Binder and LocalServices must share its controller.
+            manager.startService(com.android.server.display.color.ColorDisplayService::class.java)
+        } else {
+            android.os.ServiceManager.addService(Context.COLOR_DISPLAY_SERVICE, HostedColorDisplayService())
+        }
         // Phase 5: telephony and telecom for a device without a radio (no SIM, no modem,
         // no subscriptions, no dialer). The phone count is TelephonyManager's active modem
         // count, exactly as TelephonyRegistry and SubscriptionManagerService compute it.
@@ -395,13 +405,18 @@ internal object SystemServices {
         com.android.server.webkit.HostedWebViewUpdateService(context, hostedPermissions).start()
         manager.startBootPhase(trace, SystemService.PHASE_THIRD_PARTY_APPS_CAN_START)
         userLifecycle.start(object : HostedUserLifecycle.Services {
-            override fun starting(userId: Int) { manager.onUserStarting(trace, userId) }
+            override fun starting(userId: Int) {
+                manager.onUserStarting(trace, userId)
+                permissionPolicy.startUser(userId)
+            }
             override fun unlocking(userId: Int) { manager.onUserUnlocking(userId) }
             override fun unlocked(userId: Int) { manager.onUserUnlocked(userId) }
         })
         val completionHandler = android.os.Handler(android.os.Looper.getMainLooper())
         activityManager.finishBooting {
             check(completionHandler.post {
+                activityManager.booting = false
+                activityManager.booted = true
                 manager.startBootPhase(trace, SystemService.PHASE_BOOT_COMPLETED)
                 // BatteryService publishes its sticky broadcast once the broadcast queue is up.
                 battery.start()

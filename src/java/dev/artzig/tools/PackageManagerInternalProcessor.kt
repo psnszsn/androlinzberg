@@ -19,6 +19,16 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
         val name = method.simpleName.toString()
         val params = method.parameters.map { processingEnv.typeUtils.erasure(it.asType()).toString() }
         return when {
+            name == "isInstantAppInstallerComponent" && params == listOf("android.content.ComponentName") ->
+                "return packages.isInstantAppInstallerComponent(p0);"
+            name == "isPermissionsReviewRequired" && params == listOf("java.lang.String", "int") ->
+                "return packages.isPermissionsReviewRequired(p0, p1);"
+            name == "isInstantApp" && params == listOf("java.lang.String", "int") ->
+                "return packages.isInstantApp(p0, p1);"
+            name == "getDefaultHomeActivity" && params == listOf("int") ->
+                "return packages.getDefaultHomeActivity(p0);"
+            name == "notifyPackageUse" && params == listOf("java.lang.String", "int") ->
+                "packages.notifyPackageUse(p0, p1);"
             name == "resolveIntent" && params == listOf("android.content.Intent", "java.lang.String", "long",
                 "long", "int", "boolean", "int", "int") ->
                 "return packages.resolveIntentInternal(p0, p1, p2, p3, p4, p5, p6, p7);"

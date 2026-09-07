@@ -42,6 +42,47 @@ This work deliberately replaces the window/graphics portions of the fence in
 remains useful for unrelated migration work. Audio/PipeWire and codec behavior
 stay in their existing host modules; their window/buffer integration is in scope.
 
+## Registered application process checkpoint (2026-09-07)
+
+Ordinary process attachment now creates a real WindowProcessController in the
+existing AMS registry, maps it by name/PID in ATMS, and uses stock preBindApplication
+configuration before binding. ATMS attachment waits for Application.onCreate's
+acknowledgement. The shared lock covers binding and publishing the live thread;
+removed-state reads do not invert the AMS/WM lock order. Cleanup removes stock
+process indexes and configuration listeners. UID state and package membership
+are published to ATMS. Activity/service state callbacks remain unfinished.
+
+The registered-app window-session gate passed in
+`/tmp/wayland-stock-window-boot-19.log`. The stronger gate now installs the window
+fixture and attempts actual stock task/activity creation. It remains failing:
+`/tmp/wayland-stock-window-boot-29.log` reaches ActivityRecord configuration, where
+package-property lookup is missing. Stock ColorDisplayService now starts and
+package aspect-ratio state passes its module checks. Package-property support
+imports the stock index and is awaiting validation. A real client window and
+task lifecycle are not yet verified. Source package 64 adds PackageProperty,
+pinned as `N-V-__8AAO5TpE1o7hfJYVcGUFm_im_jkV9mjoPC_JlQU1MN`, archive SHA-256
+`4107f84d2580a020b29fb9e3a22bcc9a290eaedc4c4416fcda8ae849256f3cf5`.
+
+Direct package installs now receive a native-library search path even without
+extracted libraries, as required by stock LoadedApk. The launch resolver uses
+host package policy for instant-app/permission-review checks and home fallback;
+package-use timestamps use stock transient state. PermissionPolicyInternal now
+has a host adapter for launch checks, initialization and task eligibility.
+Legacy notification prompts still diagnose the missing permission flags/overlay
+activity when eligible; automatic legacy prompt integration remains outstanding.
+
+AppOps now uses pinned per-operation defaults instead of allowing every unset
+operation. The platform-signed server fixture explicitly requests background
+activity-start permission and verifies overlay permission remains denied; its
+launch now follows BAL_ALLOW_PERMISSION. This is a server test driver. Ordinary
+APK initial launches still need the desktop task shell's user-launch path.
+The module/system/full APK/graph checks in regression 27 pass: 14 APK tests,
+44 steps, zero runtime issues. Only the expanded stock task-launch gate fails.
+
+Main committed the stock ActivityThread cutover as 3c58b02. The next rebase
+will preserve this branch's process/configuration authority and main's client
+lifecycle work; its newer uncommitted audio changes remain in the main worktree.
+
 ## Stock service boot checkpoint (2026-09-07)
 
 The opt-in stock-window boot gate passes (`/tmp/wayland-stock-window-boot-16.log`),

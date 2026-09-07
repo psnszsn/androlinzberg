@@ -2909,6 +2909,7 @@ F aosp frameworks/base/services/core/java/com/android/server/pm/KnownPackages.ja
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageKeySetData.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageList.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageObserverHelper.java
+F aosp frameworks/base/services/core/java/com/android/server/pm/PackageProperty.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/PackageSignatures.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/RestrictionsSet.java
 F aosp frameworks/base/services/core/java/com/android/server/pm/UserManagerInternal.java

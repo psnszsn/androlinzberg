@@ -24,6 +24,11 @@ object StockOptionalWmServicesSmoke {
 
     fun run(context: Context, apk: String) {
         verifyConfigurationBroadcasts()
+        val appOps = HostedAppOpsService()
+        for (op in listOf(android.app.AppOpsManager.OP_CAMERA, android.app.AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
+                android.app.AppOpsManager.OP_WRITE_SETTINGS, android.app.AppOpsManager.OP_SYSTEM_EXEMPT_FROM_ACTIVITY_BG_START_RESTRICTION)) {
+            check(appOps.checkOperation(op, 10001, "fixture") == android.app.AppOpsManager.opToDefaultMode(op))
+        }
         for (animationFirst in listOf(false, true)) {
             val activityManager = HostedActivityManagerService()
             var completions = 0
@@ -50,12 +55,87 @@ object StockOptionalWmServicesSmoke {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val packageName = verifyPackageObservers(packages, apk)
+        val permissionPolicy = HostedPermissionPolicy(context, packages)
+        check(!permissionPolicy.isInitialized(0))
+        var initialized = 0
+        permissionPolicy.setOnInitializedCallback { user ->
+            check(user == 0 && permissionPolicy.isInitialized(user))
+            initialized++
+        }
+        permissionPolicy.startUser(0)
+        permissionPolicy.startUser(0)
+        check(initialized == 1 && !permissionPolicy.isInitialized(10))
+        permissionPolicy.setOnInitializedCallback { error("Initialization is not replayed") }
+        check(permissionPolicy.checkStartActivity(Intent(Intent.ACTION_MAIN), 10001, packageName))
+        val removed = Intent(android.telecom.TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
+        check(!permissionPolicy.checkStartActivity(removed, 10001, packageName))
+        check(!removed.hasExtra(Intent.EXTRA_CALLING_PACKAGE))
+        val unknown = Intent(android.provider.Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+        check(permissionPolicy.checkStartActivity(unknown, 10001, "fixture.absent"))
+        check(unknown.getStringExtra(Intent.EXTRA_CALLING_PACKAGE) == "fixture.absent")
+        val other = Intent(android.content.pm.PackageManager.ACTION_REQUEST_PERMISSIONS_FOR_OTHER)
+        check(!permissionPolicy.checkStartActivity(other, 10001, packageName))
+        check(!permissionPolicy.checkStartActivity(other, android.os.Process.SYSTEM_UID, packageName))
+        check(permissionPolicy.checkStartActivity(other, android.os.Process.SYSTEM_UID, "android"))
+        check(!permissionPolicy.isIntentToPermissionDialog(other))
+        check(permissionPolicy.isIntentToPermissionDialog(other.setPackage(packages.permissionControllerPackageName)))
+        permissionPolicy.showNotificationPromptIfNeeded(packageName, 0, -1)
+        val launch = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val taskInfo = android.app.ActivityManager.RunningTaskInfo().apply {
+            isFocused = true; isVisible = true; isRunning = true
+            baseIntent = launch
+            baseActivity = ComponentName(packageName, "FixtureActivity")
+            topActivityInfo = android.content.pm.ActivityInfo().apply { name = "FixtureActivity" }
+            numActivities = 1
+        }
+        check(permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, packageName, launch, "FixtureActivity"))
+        taskInfo.isVisible = false
+        check(!permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, packageName, launch, "FixtureActivity"))
+        taskInfo.isVisible = true
+        taskInfo.baseIntent = Intent("fixture.trampoline")
+        check(permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, packageName, taskInfo.baseIntent, "FixtureActivity"))
+        check(!permissionPolicy.shouldShowNotificationDialogForTask(taskInfo, packageName, "other", taskInfo.baseIntent, "FixtureActivity"))
         val deniedCleanup = HostedActivityManagerService(context).apply { packageService = packages }
         check(runCatching { deniedCleanup.killAllBackgroundProcessesExcept(-1, -1) }.exceptionOrNull()
             is SecurityException)
         val uid = packages.getPackageUid(packageName, 0L, 0)
         check(uid >= android.os.Process.FIRST_APPLICATION_UID)
         val state = packages.getPackageStateInternal(packageName) as HostedPackageState
+        val applicationProperty = checkNotNull(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName, null, 0))
+        check(applicationProperty.isBoolean && applicationProperty.boolean)
+        val serviceProperty = checkNotNull(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName,
+            "android.inputmethodservice.InputMethodService", 0))
+        check(serviceProperty.isBoolean && !serviceProperty.boolean)
+        check(packages.getPropertyAsUser("dev.artzig.fixture.integer", packageName, null, 0)!!.integer == 42)
+        check(packages.getPropertyAsUser("dev.artzig.fixture.resource", packageName,
+            "android.inputmethodservice.InputMethodService", 0)!!.resourceId != 0)
+        check(packages.getPropertyAsUser("fixture.absent", packageName, null, 0) == null)
+        check(packages.getPropertyAsUser("dev.artzig.fixture.integer", packageName,
+            "android.inputmethodservice.InputMethodService", 0) == null)
+        check(packages.queryProperty("dev.artzig.fixture.property", android.content.pm.PackageManager.TYPE_APPLICATION).list.single().boolean)
+        check(!packages.queryProperty("dev.artzig.fixture.property", android.content.pm.PackageManager.TYPE_SERVICE).list.single().boolean)
+        check(packages.queryProperty("dev.artzig.fixture.property", -1).list.isEmpty())
+        check(runCatching { packages.getPropertyAsUser(null, packageName, null, 0) }.exceptionOrNull() is NullPointerException)
+        check(runCatching { packages.getPropertyAsUser("fixture", packageName, null, 10) }.exceptionOrNull() is SecurityException)
+        state.userState.setInstalled(false)
+        check(packages.getPropertyAsUser("dev.artzig.fixture.property", packageName, null, 0) == null)
+        check(packages.queryProperty("dev.artzig.fixture.property", android.content.pm.PackageManager.TYPE_APPLICATION).list.isEmpty())
+        state.userState.setInstalled(true)
+        check(packages.getUserMinAspectRatio(packageName, 0) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
+        check(packages.getUserMinAspectRatio("fixture.absent", 0) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
+        check(packages.getUserMinAspectRatio(packageName, 10) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
+        check(runCatching { packages.setUserMinAspectRatio(packageName, 0, android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_16_9) }
+            .exceptionOrNull() is SecurityException)
+        // In-memory package authority supplies a caller granted INSTALL_PACKAGES,
+        // exercising the setter through its Android permission/ownership contract.
+        check(state.grantedPermissions.add(android.Manifest.permission.INSTALL_PACKAGES))
+        try {
+            packages.setUserMinAspectRatio(packageName, 0, android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_16_9)
+            check(packages.getUserMinAspectRatio(packageName, 0) == android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_16_9)
+            packages.setUserMinAspectRatio(packageName, 0, android.content.pm.PackageManager.USER_MIN_ASPECT_RATIO_UNSET)
+            check(runCatching { packages.setUserMinAspectRatio("android", 0, 0) }.exceptionOrNull() is SecurityException)
+            check(runCatching { packages.setUserMinAspectRatio(packageName, 10, 0) }.exceptionOrNull() is SecurityException)
+        } finally { state.grantedPermissions.remove(android.Manifest.permission.INSTALL_PACKAGES) }
         val grammar = HostedGrammaticalInflectionService(HostedActivityManagerService(context),
             HostedPermissions(packages)).localService
         check(grammar.getSystemGrammaticalGender(0) == android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
@@ -121,6 +201,21 @@ object StockOptionalWmServicesSmoke {
         try {
             check(snapshot.packageNames == listOf("android"))
             val name = packages.installPackage(apk)
+            check(!internal.isInstantApp(name, 0))
+            check(!internal.isInstantAppInstallerComponent(HostedPermissionController.component))
+            check(!internal.isPermissionsReviewRequired(name, 0))
+            check(internal.getDefaultHomeActivity(0) == null)
+            check(internal.getDefaultHomeActivity(10) == null)
+            val state = checkNotNull(packages.getPackageStateInternal(name))
+            check(state.lastPackageUsageTime.all { it == 0L })
+            val beforeUse = System.currentTimeMillis()
+            internal.notifyPackageUse(name, android.content.pm.PackageManager.NOTIFY_PACKAGE_USE_ACTIVITY)
+            check(state.lastPackageUsageTime[android.content.pm.PackageManager.NOTIFY_PACKAGE_USE_ACTIVITY] >= beforeUse)
+            val used = state.lastPackageUsageTime.clone()
+            internal.notifyPackageUse(name, -1)
+            internal.notifyPackageUse(name, android.content.pm.PackageManager.NOTIFY_PACKAGE_USE_REASONS_COUNT)
+            internal.notifyPackageUse("fixture.missing", 0)
+            check(state.lastPackageUsageTime.contentEquals(used))
             val explicit = Intent().setComponent(HostedPermissionController.component)
             check(internal.resolveIntent(explicit, null, 0L, 0L, 0, true,
                 android.os.Binder.getCallingUid(), android.os.Process.myPid())?.activityInfo?.name ==

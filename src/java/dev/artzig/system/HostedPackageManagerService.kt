@@ -91,6 +91,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
             intArrayOf(userId), intArrayOf(), null, com.android.internal.os.BackgroundThread.getHandler())
     }
     private val packages = LinkedHashMap<String, HostedPackageState>()
+    private val packageProperties = com.android.server.pm.HostedPackageProperties()
     /** Broker uid -> package state, bound at process attach. */
     private val packagesByUid = HashMap<Int, HostedPackageState>()
     private val componentResolver =
@@ -166,12 +167,15 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
         if (parsed.classLoaderName == null) {
             (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setClassLoaderName("dev.artzig.HostedApkClassLoader")
         }
-        // PackageAbiHelperImpl derives a non-null library search directory even
-        // for an APK without JNI libraries. App installs supply the launcher's
-        // extraction directory; image APKs use the bundle's per-package location.
-        // LoadedApk passes this entry to DexPathList.addNativePath.
-        (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setNativeLibraryDir(
-            nativeLibraryDir ?: File(file.parentFile, "lib/${parsed.packageName}").absolutePath)
+        // PackageAbiHelperImpl.deriveNativeLibraryPaths always supplies a native
+        // search path, even for an APK without native code. The launcher supplies
+        // its extracted ABI directory when present; direct installs get the host's
+        // per-package app-lib path. This does not claim to extract missing libraries.
+        val nativePath = nativeLibraryDir ?: File(file.parentFile, "lib/${parsed.packageName}").absolutePath
+        (parsed as com.android.internal.pm.parsing.pkg.PackageImpl)
+            .setNativeLibraryDir(nativePath)
+            .setNativeLibraryRootDir(nativePath)
+            .setNativeLibraryRootRequiresIsa(false)
         val pkg = parsed.hideAsFinal()
         createDataDirectories(pkg as PackageImpl, system)
         val app = callingUid != Process.SYSTEM_UID && callingUid != Process.ROOT_UID
@@ -322,6 +326,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
                     (platformSigning != null && platformSigning.signaturesMatchExactly(installed.signingDetails)))
         }
         componentResolver.addAllComponents(pkg, false, null, this)
+        packageProperties.installed(pkg)
         // A package installed before its permission's definer was denied that
         // permission at its own install (the definition did not exist yet).
         // Now that this package may contribute new definitions, reconsider
@@ -1119,6 +1124,34 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
     override fun checkPackageStartable(packageName: String?, userId: Int) {}
     override fun isProtectedBroadcast(actionName: String?): Boolean = false
     override fun isInstantApp(packageName: String?, userId: Int): Boolean = false
+    // PackageManagerInternalBase compares against the configured instant-app
+    // installer. This session installs full packages and has no such component.
+    fun isInstantAppInstallerComponent(component: ComponentName?): Boolean = false
+
+    // PermissionService.isPermissionsReviewRequired tests LEGACY_GRANTED/IMPLICIT
+    // runtime grants. The hosted permission authority never creates either grant:
+    // dangerous permissions start denied and its flag-mutation API is unsupported.
+    fun isPermissionsReviewRequired(packageName: String?, userId: Int): Boolean {
+        requireNotNull(packageName) { "packageName cannot be null" }
+        return false
+    }
+
+    /** ComputerEngine.getDefaultHomeActivity's fallback when ROLE_HOME has no holder. */
+    fun getDefaultHomeActivity(userId: Int): ComponentName? {
+        if (userId != UserHandle.USER_SYSTEM) return null
+        val candidates = queryActivitiesInternal(Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_HOME).addCategory(Intent.CATEGORY_DEFAULT), null,
+            PackageManager.GET_META_DATA.toLong(), userId)
+        var priority = Int.MIN_VALUE
+        var component: ComponentName? = null
+        for (candidate in candidates) {
+            if (candidate.priority > priority) {
+                component = candidate.activityInfo.componentName
+                priority = candidate.priority
+            } else if (candidate.priority == priority) component = null
+        }
+        return component
+    }
     override fun getInstallerPackageName(packageName: String?): String? = null
     /** The system features this host declares: app-widget hosting (the hosted IAppWidgetService). */
     override fun hasSystemFeature(name: String?, version: Int): Boolean = name in hostFeatures && version <= 0
@@ -1131,7 +1164,11 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
     override fun isStorageLow(): Boolean = false
     override fun currentToCanonicalPackageNames(names: Array<String>?): Array<String>? = names
     override fun canonicalToCurrentPackageNames(names: Array<String>?): Array<String>? = names
-    override fun notifyPackageUse(packageName: String?, reason: Int) {}
+    /** PMS.notifyPackageUseInternal, retaining the stock transient per-reason timestamps. */
+    override fun notifyPackageUse(packageName: String?, reason: Int) {
+        val now = System.currentTimeMillis()
+        synchronized(lock) { packages[packageName]?.transientState?.setLastPackageUsageTimeInMills(reason, now) }
+    }
     override fun notifyDexLoad(
         loadingPackageName: String?,
         classLoaderContextMap: MutableMap<String, String>?,
@@ -1145,11 +1182,60 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
     override fun getPrivateFlagsForUid(uid: Int): Int = 0
     override fun getFlagsForUid(uid: Int): Int = 0
     override fun getUidForSharedUser(sharedUserName: String?): Int = -1
+    /** IPackageManagerBase.getPropertyAsUser / PMS.queryProperty: filter the
+     * installed package before consulting the unchanged stock property index. */
+    override fun getPropertyAsUser(propertyName: String?, packageName: String?, className: String?, userId: Int): PackageManager.Property? {
+        if (propertyName == null || packageName == null) throw NullPointerException()
+        enforcePackageUser(userId, "getPropertyAsUser")
+        if (userId != UserHandle.USER_SYSTEM) return null
+        return synchronized(lock) {
+            if (packages[packageName]?.userState?.isInstalled != true) null
+            else packageProperties.getProperty(propertyName, packageName, className)
+        }
+    }
+
+    override fun queryProperty(propertyName: String?, componentType: Int): ParceledListSlice<PackageManager.Property> {
+        if (propertyName == null) throw NullPointerException()
+        val userId = UserHandle.getCallingUserId()
+        return synchronized(lock) {
+            ParceledListSlice(packageProperties.queryProperty(propertyName, componentType) { name ->
+                userId != UserHandle.USER_SYSTEM || packages[name]?.userState?.isInstalled != true
+            } ?: emptyList())
+        }
+    }
+
+    /** PMS.get/setUserMinAspectRatio uses installed package user state. Reading
+     * an absent package returns UNSET; writes require INSTALL_PACKAGES and ownership. */
+    override fun getUserMinAspectRatio(packageName: String?, userId: Int): Int {
+        if (userId != UserHandle.USER_SYSTEM) return PackageManager.USER_MIN_ASPECT_RATIO_UNSET
+        return synchronized(lock) {
+            packages[packageName]?.userState?.takeIf { it.isInstalled }?.minAspectRatio
+                ?: PackageManager.USER_MIN_ASPECT_RATIO_UNSET
+        }
+    }
+
+    override fun setUserMinAspectRatio(packageName: String?, userId: Int, aspectRatio: Int) {
+        HostedPermissions(this).enforce(android.Manifest.permission.INSTALL_PACKAGES, "setUserMinAspectRatio")
+        enforcePackageUser(userId, "setUserMinAspectRatio")
+        val uid = Binder.getCallingUid()
+        if (UserHandle.getAppId(uid) != Process.SYSTEM_UID) {
+            if (getPackagesForUid(uid)?.contains(packageName) != true)
+                throw SecurityException("Calling uid $uid does not own package $packageName")
+            if (getPackageInfo(packageName, 0L, UserHandle.getUserId(uid)) == null)
+                throw IllegalArgumentException("Unknown package $packageName on user ${UserHandle.getUserId(uid)}")
+        }
+        if (userId != UserHandle.USER_SYSTEM) return
+        synchronized(lock) {
+            val state = packages[packageName]?.userState?.takeIf { it.isInstalled } ?: return
+            if (state.minAspectRatio != aspectRatio) state.setMinAspectRatio(aspectRatio)
+        }
+    }
+
     // AOSP PackageManagerService.get/setSplashScreenTheme: cross-user access,
     // owner-only writes, then the installed package's user-state value. This
     // service currently installs packages only for the hosted user (0).
     override fun getSplashScreenTheme(packageName: String?, userId: Int): String? {
-        enforceSplashThemeUser(userId, "getSplashScreenTheme")
+        enforcePackageUser(userId, "getSplashScreenTheme")
         if (userId != UserHandle.USER_SYSTEM) return null
         return synchronized(lock) { packages[packageName]?.userState?.splashScreenTheme }
     }
@@ -1158,7 +1244,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
     // Binder API pass null to clear the theme. Preserve that upstream operation.
     @Suppress("ARGUMENT_TYPE_MISMATCH", "NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
     override fun setSplashScreenTheme(packageName: String?, themeName: String?, userId: Int) {
-        enforceSplashThemeUser(userId, "setSplashScreenTheme")
+        enforcePackageUser(userId, "setSplashScreenTheme")
         val callingUid = Binder.getCallingUid()
         if (UserHandle.getAppId(callingUid) != Process.SYSTEM_UID &&
             getPackagesForUid(callingUid)?.contains(packageName) != true
@@ -1169,7 +1255,7 @@ class HostedPackageManagerService(desktopWindows: Boolean = false) : PackageMana
         synchronized(lock) { packages[packageName]?.userState?.setSplashScreenTheme(themeName) }
     }
 
-    private fun enforceSplashThemeUser(userId: Int, operation: String) {
+    private fun enforcePackageUser(userId: Int, operation: String) {
         require(userId >= 0) { "Invalid userId $userId" }
         val uid = Binder.getCallingUid()
         if (UserHandle.getUserId(uid) == userId || uid == Process.SYSTEM_UID || uid == Process.ROOT_UID) return

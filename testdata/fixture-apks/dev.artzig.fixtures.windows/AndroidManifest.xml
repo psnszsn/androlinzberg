@@ -1,5 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="dev.artzig.fixtures.windows" android:versionCode="1" android:versionName="1">
+    <!-- This platform-signed fixture also drives the stock server gate before
+         a desktop launcher owns initial task starts. It uses Android's explicit
+         background-start permission; ordinary APK launch belongs to the task shell. -->
+    <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND" />
     <application android:label="Window contracts" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".WindowFixtureActivity" android:exported="true" android:resizeableActivity="true">
             <intent-filter>

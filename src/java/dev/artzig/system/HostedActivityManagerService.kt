@@ -62,9 +62,10 @@ class HostedActivityManagerService(private val context: android.content.Context?
     ) : IBinder.DeathRecipient {
         val packageDependencies = HashSet<String>()
         var ready = false
+        @Volatile var removed = false
         // Legacy attachment currently reports TOP; the stock process listener will
         // update this same authority as activity/service state changes.
-        var reportedProcState = android.app.ActivityManager.PROCESS_STATE_TOP
+        @Volatile var reportedProcState = android.app.ActivityManager.PROCESS_STATE_TOP
         val binder: IBinder = thread.asBinder()
         var exitReason = android.app.ApplicationExitInfo.REASON_UNKNOWN
         var exitDescription: String? = null
@@ -139,6 +140,8 @@ class HostedActivityManagerService(private val context: android.content.Context?
     )
 
     private val lock = Any()
+    @Volatile internal var booting = true
+    @Volatile internal var booted = false
     private var bootAnimationFinished = false
     private var bootCompletionRequested = false
     private var bootCompletion: (() -> Unit)? = null
@@ -151,6 +154,14 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (bootCompletionRequested) return
             bootCompletionRequested = true
             if (bootAnimationFinished) complete else { bootCompletion = complete; null }
+        }
+        action?.invoke()
+    }
+
+    internal fun finishBooting() {
+        val action = synchronized(lock) {
+            if (!bootAnimationFinished) return
+            bootCompletion.also { bootCompletion = null }
         }
         action?.invoke()
     }
@@ -425,46 +436,68 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** Activity/task ownership is separate in AOSP; this is the host seam between AMS and ATMS. */
     @Volatile internal var activityTaskManager: HostedActivityTaskManagerService? = null
 
+    private var stockTasks: com.android.server.wm.ActivityTaskManagerService? = null
+    private val stockTaskLocal: com.android.server.wm.ActivityTaskManagerInternal
+        get() = checkNotNull(com.android.server.LocalServices.getService(
+            com.android.server.wm.ActivityTaskManagerInternal::class.java))
+    private val cpuTracker by lazy { com.android.internal.os.ProcessCpuTracker(false) }
+
     /**
-     * AMS.setSystemProcess / ProcessList.MyProcessMap: the already attached system
-     * process must be present in ATMS before DisplayContent registers its UI context.
-     * This is the persistent system process, not an application activity host.
-     * Application process callbacks are connected during the stock task cutover.
+     * AMS.setSystemProcess / ProcessList.MyProcessMap: use the same process record
+     * for AMS and stock ATMS. Host process attachment replaces zygote/ProcessList;
+     * WPC owns configuration and activity membership, including the system UI context.
      */
     internal fun attachSystemWindowProcess(tasks: com.android.server.wm.ActivityTaskManagerService) {
         synchronized(lock) {
+            check(stockTasks == null)
+            check(activityTaskManager == null) { "Competing task authorities" }
+            stockTasks = tasks
             val record = checkNotNull(processes.values.singleOrNull {
                 it.pid == android.os.Process.myPid() && it.uid == android.os.Process.SYSTEM_UID
             }) { "System process must attach to AMS before WMS startup" }
-            check(record.windowProcess == null)
-            val local = checkNotNull(com.android.server.LocalServices.getService(
-                com.android.server.wm.ActivityTaskManagerInternal::class.java))
-            val info = checkNotNull(packageService?.getApplicationInfo(record.packageName, 0L,
-                UserHandle.USER_SYSTEM))
-            val listener = object : com.android.server.wm.WindowProcessListener by unsupported<com.android.server.wm.WindowProcessListener>() {
-                override fun isRemoved(): Boolean = synchronized(lock) { processes[record.binder] !== record }
-                override fun isCached(): Boolean = false // AOSP's persistent system process.
-                override fun getCpuTime(): Long = android.os.Process.getElapsedCpuTime()
-                override fun appDied(reason: String) {
-                    record.exitDescription = reason
-                    handleProcessDied(record)
-                }
-                override fun setRunningRemoteAnimation(running: Boolean) {
-                    Log.wtf(TAG, "system can't run remote animation")
-                }
-            }
-            val controller = com.android.server.wm.WindowProcessController(tasks, info,
-                record.processName, record.uid, UserHandle.USER_SYSTEM, record, listener)
-            local.onProcessAdded(controller)
-            controller.setPersistent(true)
-            controller.setPid(record.pid)
-            controller.setCurrentProcState(android.app.ActivityManager.PROCESS_STATE_PERSISTENT)
-            controller.setReportedProcState(android.app.ActivityManager.PROCESS_STATE_PERSISTENT)
-            record.reportedProcState = android.app.ActivityManager.PROCESS_STATE_PERSISTENT
-            controller.setThread(record.thread)
-            local.onProcessMapped(record.pid, controller)
-            record.windowProcess = controller
+            attachWindowProcessLocked(record)
+            record.windowProcess!!.setThread(record.thread)
         }
+    }
+
+    /** Called with the AMS lock, following AMS -> ATMS lock order. */
+    private fun attachWindowProcessLocked(record: ProcessRecord) {
+        val tasks = stockTasks ?: return
+        check(record.windowProcess == null)
+        val info = checkNotNull(packageService?.getApplicationInfo(record.packageName, 0L,
+            UserHandle.getUserId(record.uid)))
+        val persistent = record.pid == android.os.Process.myPid() &&
+            record.uid == android.os.Process.SYSTEM_UID
+        val listener = object : com.android.server.wm.WindowProcessListener by unsupported<com.android.server.wm.WindowProcessListener>() {
+            override fun isRemoved(): Boolean = record.removed
+            override fun isCached(): Boolean =
+                record.reportedProcState >= android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY
+            override fun getCpuTime(): Long = synchronized(cpuTracker) { cpuTracker.getCpuTimeForPid(record.pid) }
+            override fun appDied(reason: String) {
+                synchronized(lock) { record.exitDescription = reason }
+                handleProcessDied(record)
+            }
+            override fun setRunningRemoteAnimation(running: Boolean) {
+                if (persistent) Log.wtf(TAG, "system can't run remote animation")
+                else unsupported<com.android.server.wm.WindowProcessListener>().setRunningRemoteAnimation(running)
+            }
+        }
+        val controller = com.android.server.wm.WindowProcessController(tasks, info,
+            record.processName, record.uid, UserHandle.getUserId(record.uid), record, listener)
+        record.windowProcess = controller
+        controller.addPackage(record.packageName)
+        stockTaskLocal.onProcessAdded(controller)
+        controller.setPersistent(persistent)
+        controller.setPid(record.pid)
+        record.reportedProcState = if (persistent) android.app.ActivityManager.PROCESS_STATE_PERSISTENT
+            else android.app.ActivityManager.PROCESS_STATE_CACHED_EMPTY
+        controller.setCurrentProcState(record.reportedProcState)
+        controller.setReportedProcState(record.reportedProcState)
+        stockTaskLocal.onProcessMapped(record.pid, controller)
+        val uidProcesses = processes.values.filter { it.uid == record.uid && it.windowProcess != null }
+        val uidState = uidProcesses.minOf { it.reportedProcState }
+        if (uidProcesses.size == 1) stockTaskLocal.onUidActive(record.uid, uidState)
+        else stockTaskLocal.onUidProcStateChanged(record.uid, uidState)
     }
 
     // ------------------------------------------------------------- attach
@@ -500,6 +533,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         // Insert before linking so a death in the window between the two runs
         // handleProcessDied against a record that is actually registered.
         synchronized(lock) {
+            if (stockTasks != null && processes.values.any {
+                    it.pid == record.pid || (it.uid == record.uid && it.processName == record.processName)
+                }) throw IllegalStateException("Process is already attached: ${record.processName}/${record.pid}")
             processes[record.binder] = record
             HostActivityManagerAccess.attached(record.pid, record.binder,
                 packageService?.getPackage(packageName)?.processes?.get(processName)?.deniedPermissions)
@@ -520,10 +556,16 @@ class HostedActivityManagerService(private val context: android.content.Context?
         // before ATMS launch transactions or pending service/broadcast work.
         val identity = Binder.clearCallingIdentity()
         try {
-            if (record.uid != android.os.Process.SYSTEM_UID || record.pid != android.os.Process.myPid()) {
-                bindApplication(record, announcement)
-            } else {
-                completeApplicationAttachment(record)
+            // AMS holds its lock across the oneway bind and makeActive. A fast
+            // finishAttachApplication cannot release component work between them.
+            synchronized(lock) {
+                if (processes[record.binder] !== record) return
+                attachWindowProcessLocked(record)
+                if (record.uid != android.os.Process.SYSTEM_UID || record.pid != android.os.Process.myPid()) {
+                    bindApplication(record, announcement)
+                } else {
+                    completeApplicationAttachment(record)
+                }
             }
         } catch (e: Exception) {
             handleProcessDied(record)
@@ -561,6 +603,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 addAll(pendingByProcess.remove(record.packageName to record.processName) ?: emptyList())
             }
         }
+        if (record.windowProcess != null) {
+            synchronized(lock) {
+                if (processes[record.binder] !== record) return
+                stockTaskLocal.attachApplication(record.windowProcess!!)
+            }
+        }
         replayConfigurationOverrides(record)
         activityTaskManager?.onProcessAttached(
             record.thread,
@@ -591,8 +639,14 @@ class HostedActivityManagerService(private val context: android.content.Context?
             android.content.pm.PackageManager.MATCH_DIRECT_BOOT_AUTO
         val providers = packages.queryContentProviders(record.processName, record.uid,
             providerFlags.toLong(), null).list
-        val configuration = Configuration(announcement.configuration ?: checkNotNull(context).resources.configuration)
-        val compatibility = android.content.res.CompatibilityInfo(appInfo,
+        // Stock preBindApplication selects pending activity overrides before the
+        // first client configuration. Never let a launcher geometry override ATMS.
+        val preBind = synchronized(lock) {
+            record.windowProcess?.let { stockTaskLocal.preBindApplication(it, appInfo) }
+        }
+        val configuration = preBind?.configuration ?: Configuration(
+            announcement.configuration ?: checkNotNull(context).resources.configuration)
+        val compatibility = preBind?.compatibilityInfo ?: android.content.res.CompatibilityInfo(appInfo,
             configuration.screenLayout, configuration.smallestScreenWidthDp, false)
         platformCompat?.resetReporting(appInfo)
         record.thread.bindApplication(
@@ -604,12 +658,16 @@ class HostedActivityManagerService(private val context: android.content.Context?
             null, null, platformCompat?.getDisabledChanges(appInfo),
             platformCompat?.getLoggableChanges(appInfo), null, null,
             android.os.SystemClock.elapsedRealtime(), android.os.SystemClock.uptimeMillis())
+        synchronized(lock) {
+            if (processes[record.binder] === record) record.windowProcess?.setThread(record.thread)
+        }
     }
 
     private fun handleProcessDied(record: ProcessRecord) {
         val notify = ArrayList<Pair<ConnectionRecord, ServiceRecord>>()
         synchronized(lock) {
             if (processes[record.binder] !== record) return
+            record.removed = true
             processes.remove(record.binder)
             processHistory.died(record.binder, android.app.ApplicationExitInfo().apply {
                 pid = record.pid
@@ -622,11 +680,26 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 reason = record.exitReason
                 description = record.exitDescription
                 timestamp = System.currentTimeMillis()
-                // Matches the process state currently reported by this host's
-                // getRunningAppProcesses. Stock WPC attachment replaces that state.
-                importance = android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                importance = android.app.ActivityManager.RunningAppProcessInfo.procStateToImportance(record.reportedProcState)
             })
             HostActivityManagerAccess.died(record.pid, record.binder)
+            // AMS.cleanUpApplicationRecordLocked / handleAppDiedLocked: make
+            // the thread inactive, remove both process indexes (which destroys
+            // configuration listeners), then let stock task records handle death.
+            record.windowProcess?.let { controller ->
+                controller.setThread(null)
+                stockTaskLocal.onProcessRemoved(record.processName, record.uid)
+                stockTaskLocal.clearHeavyWeightProcessIfEquals(controller)
+                stockTaskLocal.onCleanUpApplicationRecord(controller)
+                stockTaskLocal.onProcessUnMapped(record.pid)
+                stockTaskLocal.handleAppDied(controller, false, Runnable {
+                    error("Instrumentation was not registered for ${record.processName}")
+                })
+                record.windowProcess = null
+                val remaining = processes.values.filter { it.uid == record.uid && it.windowProcess != null }
+                if (remaining.isEmpty()) stockTaskLocal.onUidInactive(record.uid)
+                else stockTaskLocal.onUidProcStateChanged(record.uid, remaining.minOf { it.reportedProcState })
+            }
             // Services hosted by the dead process: tell every connection (ActiveServices.killServicesLocked).
             val dead = servicesByComponent.values.filter { it.app === record }
             for (service in dead) {

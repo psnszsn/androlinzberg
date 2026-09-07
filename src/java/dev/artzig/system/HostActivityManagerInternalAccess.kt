@@ -26,11 +26,23 @@ class HostActivityManagerInternalAccess internal constructor(
     fun unregisterProcessObserver(observer: android.app.IProcessObserver) =
         activities.unregisterProcessObserver(observer)
 
+    fun setBooting(value: Boolean) { activities.booting = value }
+    fun isBooting(): Boolean = activities.booting
+    fun setBooted(value: Boolean) { activities.booted = value }
+    fun isBooted(): Boolean = activities.booted
+    fun finishBooting() = activities.finishBooting()
     fun setSystemReady() { ready.set(true) }
     fun isSystemReady(): Boolean = ready.get()
     fun isPendingTopUid(uid: Int): Boolean = false
     fun isTempAllowlistedForFgsWhileInUse(uid: Int): Boolean = false
     fun getInstrumentationSourceUid(uid: Int): Int = Process.INVALID_UID
+    // ActivityManagerConstants: read the same hosted Settings/DeviceConfig keys.
+    fun isActivityStartsLoggingEnabled(): Boolean = android.provider.Settings.Global.getInt(
+        (android.app.ActivityThread.currentActivityThread().systemContext as android.content.Context).contentResolver,
+        android.provider.Settings.Global.ACTIVITY_STARTS_LOGGING_ENABLED, 1) == 1
+    fun isBackgroundActivityStartsEnabled(): Boolean = android.provider.DeviceConfig.getBoolean(
+        android.provider.DeviceConfig.NAMESPACE_ACTIVITY_MANAGER,
+        "default_background_activity_starts_enabled", false)
     fun broadcastGlobalConfigurationChanged(changes: Int, initLocale: Boolean) =
         activities.broadcastGlobalConfigurationChanged(changes, initLocale, ready.get())
     fun killAllBackgroundProcessesExcept(minTargetSdk: Int, maxProcState: Int) =
@@ -51,6 +63,10 @@ class HostActivityManagerInternalAccess internal constructor(
     fun isCurrentProfile(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
     fun hasStartedUserState(userId: Int): Boolean = userId == UserHandle.USER_SYSTEM
     fun isUserRunning(userId: Int, flags: Int): Boolean = users.isRunning(userId, flags)
+    // UserController.shouldConfirmCredentials returns false for absent user state
+    // or a user without credentials shared with a parent. The host has only its
+    // full system user, and no credential-sharing profiles.
+    fun shouldConfirmCredentials(userId: Int): Boolean = false
     fun addCreatorToken(intent: Intent?, creatorPackage: String?) =
         activities.addCreatorToken(intent, creatorPackage)
     fun enforceCallingPermission(permission: String, operation: String) =
@@ -59,6 +75,15 @@ class HostActivityManagerInternalAccess internal constructor(
         activities.checkProviderUriPermissionFromHost(uri, userId, callingUid, modeFlags)
 
     fun getUidProcessState(uid: Int): Int = activities.uidProcessState(uid)
+
+    /** AMS.getActivityInfoForUser: preserve the same-user identity, otherwise
+     * copy the package values and let stock ApplicationInfo remap the user paths. */
+    fun getActivityInfoForUser(info: android.content.pm.ActivityInfo?, userId: Int): android.content.pm.ActivityInfo? {
+        if (info == null || (userId < 1 && info.applicationInfo.uid < UserHandle.PER_USER_RANGE)) return info
+        return android.content.pm.ActivityInfo(info).apply {
+            applicationInfo = android.content.pm.ApplicationInfo(info.applicationInfo).apply { initForUser(userId) }
+        }
+    }
 
     // User resolution does not create users. Services that need an existing user
     // consult UserManagerInternal, whose lifecycle owns the configured system user.

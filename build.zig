@@ -1118,6 +1118,7 @@ pub fn build(b: *std.Build) void {
     setApplicationEnvironment(stock_window_boot, application_tree);
     stock_window_boot.addFileArg(application_tree.path(b, "bin/androlinzberg"));
     stock_window_boot.addArg("--javatest");
+    stock_window_boot.addFileArg(window_fixture.apk);
     stock_window_boot.setEnvironment("AZK_TEST_CLASS", "dev.artzig.window.StockWindowBootSmoke");
     stock_window_boot.setEnvironment("AZK_WINDOW_BACKEND", "stock");
     stock_window_boot.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
