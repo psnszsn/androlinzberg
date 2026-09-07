@@ -9,6 +9,12 @@
 package android.app;
 
 import android.content.Context;
+import android.annotation.NonNull;
+import android.os.IBinder;
+import android.app.ContextImpl.ServiceInitializationState;
+import android.os.ServiceManager;
+import com.android.internal.util.Preconditions;
+import java.util.Objects;
 import android.os.ServiceManager.ServiceNotFoundException;
 import android.util.ArrayMap;
 import android.util.Slog;
@@ -20,43 +26,142 @@ public final class SystemServiceRegistry {
     private static final ArrayMap<String, ServiceFetcher<?>> SYSTEM_SERVICE_FETCHERS = new ArrayMap<>();
     private static final ArrayMap<String, String> SYSTEM_SERVICE_CLASS_NAMES = new ArrayMap<>();
     private static int sServiceCacheSize;
+    private static volatile boolean sInitializing;
+    public static boolean sEnableServiceNotFoundWtf = false;
 
     private SystemServiceRegistry() {}
 
-    /** AOSP ServiceFetcher: creates the service on demand. */
+    // Verbatim pinned SystemServiceRegistry fetchers: own construction gates,
+    // publication, retry and interrupt restoration while host registrations remain below.
     static abstract interface ServiceFetcher<T> {
         T getService(ContextImpl ctx);
+
+        /**
+         * Should this service fetcher support being fetched via {@link #getSystemService(String)},
+         * without a Context?
+         *
+         * This means that the service cannot depend on a Context in future!
+         *
+         * @return true if this is supported for this service.
+         */
+        default boolean supportsFetchWithoutContext() {
+            return false;
+        }
     }
 
-    /** AOSP CachedServiceFetcher: one instance per ContextImpl (its service cache slot). */
     static abstract class CachedServiceFetcher<T> implements ServiceFetcher<T> {
         private final int mCacheIndex;
-        CachedServiceFetcher() { mCacheIndex = sServiceCacheSize++; }
-        @Override @SuppressWarnings("unchecked")
+
+        CachedServiceFetcher() {
+            // Note this class must be instantiated only by the static initializer of the
+            // outer class (SystemServiceRegistry), which already does the synchronization,
+            // so bare access to sServiceCacheSize is okay here.
+            mCacheIndex = sServiceCacheSize++;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
         public final T getService(ContextImpl ctx) {
             final Object[] cache = ctx.mServiceCache;
-            synchronized (cache) {
-                T service = (T) cache[mCacheIndex];
-                if (service != null) return service;
+            final int[] gates = ctx.mServiceInitializationStateArray;
+            boolean interrupted = false;
+
+            T ret = null;
+
+            for (;;) {
+                boolean doInitialize = false;
+                synchronized (cache) {
+                    // Return it if we already have a cached instance.
+                    T service = (T) cache[mCacheIndex];
+                    if (service != null) {
+                        ret = service;
+                        break; // exit the for (;;)
+                    }
+
+                    // If we get here, there's no cached instance.
+
+                    // Grr... if gate is STATE_READY, then this means we initialized the service
+                    // once but someone cleared it.
+                    // We start over from STATE_UNINITIALIZED.
+                    // Similarly, if the previous attempt returned null, we'll retry again.
+                    if (gates[mCacheIndex] == ContextImpl.STATE_READY
+                            || gates[mCacheIndex] == ContextImpl.STATE_NOT_FOUND) {
+                        gates[mCacheIndex] = ContextImpl.STATE_UNINITIALIZED;
+                    }
+
+                    // It's possible for multiple threads to get here at the same time, so
+                    // use the "gate" to make sure only the first thread will call createService().
+
+                    // At this point, the gate must be either UNINITIALIZED or INITIALIZING.
+                    if (gates[mCacheIndex] == ContextImpl.STATE_UNINITIALIZED) {
+                        doInitialize = true;
+                        gates[mCacheIndex] = ContextImpl.STATE_INITIALIZING;
+                    }
+                }
+
+                if (doInitialize) {
+                    // Only the first thread gets here.
+
+                    T service = null;
+                    @ServiceInitializationState int newState = ContextImpl.STATE_NOT_FOUND;
+                    try {
+                        // This thread is the first one to get here. Instantiate the service
+                        // *without* the cache lock held.
+                        service = createService(ctx);
+                        newState = ContextImpl.STATE_READY;
+
+                    } catch (ServiceNotFoundException e) {
+                        onServiceNotFound(e);
+
+                    } finally {
+                        synchronized (cache) {
+                            cache[mCacheIndex] = service;
+                            gates[mCacheIndex] = newState;
+                            cache.notifyAll();
+                        }
+                    }
+                    ret = service;
+                    break; // exit the for (;;)
+                }
+                // The other threads will wait for the first thread to call notifyAll(),
+                // and go back to the top and retry.
+                synchronized (cache) {
+                    // Repeat until the state becomes STATE_READY or STATE_NOT_FOUND.
+                    // We can't respond to interrupts here; just like we can't in the "doInitialize"
+                    // path, so we remember the interrupt state here and re-interrupt later.
+                    while (gates[mCacheIndex] < ContextImpl.STATE_READY) {
+                        try {
+                            // Clear the interrupt state.
+                            interrupted |= Thread.interrupted();
+                            cache.wait();
+                        } catch (InterruptedException e) {
+                            // This shouldn't normally happen, but if someone interrupts the
+                            // thread, it will.
+                            Slog.w(TAG, "getService() interrupted");
+                            interrupted = true;
+                        }
+                    }
+                }
             }
-            T service = null;
-            try {
-                service = createService(ctx);
-            } catch (ServiceNotFoundException e) {
-                onServiceNotFound(e);
+            if (interrupted) {
+                Thread.currentThread().interrupt();
             }
-            synchronized (cache) {
-                if (cache[mCacheIndex] == null) cache[mCacheIndex] = service;
-                return (T) cache[mCacheIndex];
-            }
+            return ret;
         }
+
         public abstract T createService(ContextImpl ctx) throws ServiceNotFoundException;
+
+        // Services that explicitly use a Context can never be fetched without one.
+        public final boolean supportsFetchWithoutContext() {
+            return false;
+        }
     }
 
-    /** AOSP StaticServiceFetcher: one instance per process. */
     static abstract class StaticServiceFetcher<T> implements ServiceFetcher<T> {
         private T mCachedInstance;
-        @Override public final T getService(ContextImpl ctx) {
+
+        @Override
+        public final T getService(ContextImpl ctx) {
             synchronized (StaticServiceFetcher.this) {
                 if (mCachedInstance == null) {
                     try {
@@ -68,7 +173,15 @@ public final class SystemServiceRegistry {
                 return mCachedInstance;
             }
         }
+
         public abstract T createService() throws ServiceNotFoundException;
+
+        // Services that do not need a Context can potentially be fetched without one, but the
+        // default is false, so that the service can require one in future without this being a
+        // breaking change.
+        public boolean supportsFetchWithoutContext() {
+            return false;
+        }
     }
 
     /** One instance per fetch (AOSP registrations that `new` on every call). */
@@ -85,6 +198,8 @@ public final class SystemServiceRegistry {
     }
 
     static {
+        sInitializing = true;
+        try {
         android.os.StatsFrameworkInitializer.registerServiceWrappers();
         registerService(Context.LAYOUT_INFLATER_SERVICE, android.view.LayoutInflater.class,
                 new CachedServiceFetcher<android.view.LayoutInflater>() {
@@ -506,6 +621,86 @@ public final class SystemServiceRegistry {
                         ctx.getOuterContext(),
                         android.app.admin.IDevicePolicyManager.Stub.asInterface(binder));
             }});
+        } finally {
+            sInitializing = false;
+        }
+    }
+
+    private static void ensureInitializing(String methodName) {
+        Preconditions.checkState(sInitializing, "Internal error: %s"
+                + " can only be called during class initialization.", methodName);
+    }
+
+    public interface StaticServiceProducerWithBinder<TServiceClass> {
+        /**
+         * Return a new service wrapper of type {@code TServiceClass} backed by a given
+         * service binder object.
+         */
+        @NonNull
+        TServiceClass createService(@NonNull IBinder serviceBinder);
+    }
+
+    public interface StaticServiceProducerWithoutBinder<TServiceClass> {
+        /**
+         * Return a new service wrapper of type {@code TServiceClass}.
+         */
+        @NonNull
+        TServiceClass createService();
+    }
+
+    public static <TServiceClass> void registerForeverStaticService(
+            @NonNull String serviceName, @NonNull Class<TServiceClass> serviceWrapperClass,
+            @NonNull StaticServiceProducerWithBinder<TServiceClass> serviceProducer) {
+        ensureInitializing("registerStaticService");
+        Preconditions.checkStringNotEmpty(serviceName);
+        Objects.requireNonNull(serviceWrapperClass);
+        Objects.requireNonNull(serviceProducer);
+
+        registerService(serviceName, serviceWrapperClass,
+                new StaticServiceFetcher<TServiceClass>() {
+                    @Override
+                    public TServiceClass createService() throws ServiceNotFoundException {
+                        return serviceProducer.createService(
+                                ServiceManager.getServiceOrThrow(serviceName));
+                    }
+
+                    @Override
+                    public boolean supportsFetchWithoutContext() {
+                        return true;
+                    }});
+    }
+
+    public static <TServiceClass> void registerStaticService(
+            @NonNull String serviceName, @NonNull Class<TServiceClass> serviceWrapperClass,
+            @NonNull StaticServiceProducerWithBinder<TServiceClass> serviceProducer) {
+        ensureInitializing("registerStaticService");
+        Preconditions.checkStringNotEmpty(serviceName);
+        Objects.requireNonNull(serviceWrapperClass);
+        Objects.requireNonNull(serviceProducer);
+
+        registerService(serviceName, serviceWrapperClass,
+                new StaticServiceFetcher<TServiceClass>() {
+                    @Override
+                    public TServiceClass createService() throws ServiceNotFoundException {
+                        return serviceProducer.createService(
+                                ServiceManager.getServiceOrThrow(serviceName));
+                    }});
+    }
+
+    public static <TServiceClass> void registerStaticService(
+            @NonNull String serviceName, @NonNull Class<TServiceClass> serviceWrapperClass,
+            @NonNull StaticServiceProducerWithoutBinder<TServiceClass> serviceProducer) {
+        ensureInitializing("registerStaticService");
+        Preconditions.checkStringNotEmpty(serviceName);
+        Objects.requireNonNull(serviceWrapperClass);
+        Objects.requireNonNull(serviceProducer);
+
+        registerService(serviceName, serviceWrapperClass,
+                new StaticServiceFetcher<TServiceClass>() {
+                    @Override
+                    public TServiceClass createService() {
+                        return serviceProducer.createService();
+                    }});
     }
 
     /** AOSP ContextAwareServiceProducerWithBinder / WithoutBinder (the framework initializers' API). */
@@ -520,6 +715,10 @@ public final class SystemServiceRegistry {
     public static <TServiceClass> void registerContextAwareService(String serviceName,
             Class<TServiceClass> serviceWrapperClass,
             ContextAwareServiceProducerWithBinder<TServiceClass> serviceProducer) {
+        ensureInitializing("registerContextAwareService");
+        Preconditions.checkStringNotEmpty(serviceName);
+        Objects.requireNonNull(serviceWrapperClass);
+        Objects.requireNonNull(serviceProducer);
         registerService(serviceName, serviceWrapperClass, new CachedServiceFetcher<TServiceClass>() {
             @Override public TServiceClass createService(ContextImpl ctx) throws ServiceNotFoundException {
                 return serviceProducer.createService(ctx.getOuterContext(),
@@ -530,6 +729,10 @@ public final class SystemServiceRegistry {
     public static <TServiceClass> void registerContextAwareService(String serviceName,
             Class<TServiceClass> serviceWrapperClass,
             ContextAwareServiceProducerWithoutBinder<TServiceClass> serviceProducer) {
+        ensureInitializing("registerContextAwareService");
+        Preconditions.checkStringNotEmpty(serviceName);
+        Objects.requireNonNull(serviceWrapperClass);
+        Objects.requireNonNull(serviceProducer);
         registerService(serviceName, serviceWrapperClass, new CachedServiceFetcher<TServiceClass>() {
             @Override public TServiceClass createService(ContextImpl ctx) {
                 return serviceProducer.createService(ctx.getOuterContext());
@@ -539,9 +742,37 @@ public final class SystemServiceRegistry {
     /** AOSP createServiceCache: the per-ContextImpl slot array for CachedServiceFetchers. */
     public static Object[] createServiceCache() { return new Object[sServiceCacheSize]; }
 
+    private static ServiceFetcher<?> getSystemServiceFetcher(String name) {
+        if (name == null) {
+            return null;
+        }
+        final ServiceFetcher<?> fetcher = SYSTEM_SERVICE_FETCHERS.get(name);
+        if (fetcher == null) {
+            if (sEnableServiceNotFoundWtf) {
+                Slog.wtf(TAG, "Unknown manager requested: " + name);
+            }
+            return null;
+        }
+        return fetcher;
+    }
+
+    public static Object getSystemServiceWithNoContext(@NonNull String name) {
+        final ServiceFetcher<?> fetcher = getSystemServiceFetcher(name);
+        if (fetcher == null) {
+            return null;
+        }
+
+        if (!fetcher.supportsFetchWithoutContext()) {
+            throw new IllegalArgumentException(
+                    "Manager cannot be fetched without a context: " + name);
+        }
+
+        return fetcher.getService(null);
+    }
+
     public static Object getSystemService(ContextImpl ctx, String name) {
         if (name == null) return null;
-        final ServiceFetcher<?> fetcher = SYSTEM_SERVICE_FETCHERS.get(name);
+        final ServiceFetcher<?> fetcher = getSystemServiceFetcher(name);
         return fetcher != null ? fetcher.getService(ctx) : null;
     }
 

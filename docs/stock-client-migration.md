@@ -27,6 +27,20 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- The hosted service registry now reuses the pinned AOSP service fetchers, including
+  per-context construction gates, publication, retry and waiter interrupt restoration.
+  Concurrent lookups no longer run duplicate manager constructors. Stock static service
+  registration and context-free lookup APIs now preserve explicit opt-in and reject
+  registration after class initialization. ART tests use stock WifiManager construction
+  through real Context lookups to check concurrency, per-context identity, interrupt
+  preservation and retry after a constructor exception. The two obsolete ViewRootImpl
+  functor declarations are copied verbatim from AOSP, where both are explicitly no-ops;
+  these remove linkage blockers for WebViewDelegate without changing presentation.
+  JVM/system, native/Binder and build checks pass; all 11 APK tests pass (36 steps,
+  zero structured runtime issues). No archive inputs changed. The registry's service
+  table and ViewRootImpl remain hosted adaptations, and the broader migration is unfinished.
+
+
 
 - MediaStore now compiles verbatim with CloudMediaProviderContract, its parcelable
   requests/errors and three provider callback/cancellation AIDL interfaces. The former

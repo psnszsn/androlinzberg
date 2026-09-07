@@ -12,6 +12,7 @@ import android.window.ActivityWindowInfo;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.os.Message;
+import android.os.Build;
 import android.util.SparseArray;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.graphics.Rect;
@@ -39,6 +40,22 @@ import android.view.accessibility.AccessibilityNodeProvider;
 import static android.view.accessibility.Flags.reduceWindowContentChangedEventThrottle;
 
 public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
+    // Verbatim pinned AOSP legacy WebView compatibility declarations.
+    /**
+     * Does nothing; Here only because of @UnsupportedAppUsage
+     */
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R,
+            publicAlternatives = "Use {@link android.webkit.WebView} instead")
+    public void detachFunctor(long functor) { }
+
+    /**
+     * Does nothing; Here only because of @UnsupportedAppUsage
+     */
+    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R,
+            publicAlternatives = "Use {@link android.webkit.WebView} instead")
+    public static void invokeFunctor(long functor, boolean waitForCompletion) { }
+
+
     private static final boolean TRACE_SLOW_FRAMES =
             System.getenv("ARTZIG_SLOW_FRAME_TRACE") != null;
     private static boolean sProtoLogInitialized;
