@@ -6627,3 +6627,7 @@ F aosp frameworks/av/media/ndk/include/media/NdkMediaFormat.h
 F aosp frameworks/av/media/ndk/include/media/NdkMediaError.h
 F aosp frameworks/av/include/media/NdkMediaFormatPriv.h
 F aosp frameworks/av/media/libmedia/NdkMediaFormatPriv.cpp
+
+# Stock Linux filesystem notifications used by provider clients.
+F aosp frameworks/base/core/java/android/os/FileObserver.java
+F aosp frameworks/base/core/jni/android_util_FileObserver.cpp

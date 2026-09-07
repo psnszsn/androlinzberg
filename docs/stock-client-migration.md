@@ -27,6 +27,19 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- FileObserver now compiles verbatim with its original Linux inotify JNI.
+  Apps and provider code receive real filesystem events through AOSP's observer
+  thread and weak listener registry. Tests exercise create/write/move/delete events
+  across two directories, callback thread identity, directory-self deletion,
+  idempotent start/stop, restart and paths missing when watching begins. JVM/system,
+  native/Binder and build checks pass; all 11 APK tests pass (39 steps, zero structured
+  runtime issues). AOSP is rebuilt and repinned; both added sources are byte-verified.
+  ART is unchanged. The inventory remains 19 stubs (11 pending, 8 survivors).
+  The pinned DownloadProvider project is now available for reuse analysis; this
+  closes its filesystem-observer prerequisite, while the legacy DRM client,
+  provider integration and stock DownloadManager replacement remain outstanding.
+
+
 - SystemSensorManager and its SensorEventCallback/SensorEventListener2 closure
   now compile verbatim; the hosted Java manager is deleted. Its 19 JNI entries
   preserve discovery and failure behavior at the absent sensorservice boundary.

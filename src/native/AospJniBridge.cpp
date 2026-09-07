@@ -145,6 +145,7 @@ extern int register_com_android_internal_os_ApplicationSharedMemory(JNIEnv*);
 extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv*);
 extern int register_android_os_SELinux(JNIEnv*);
 extern int register_android_os_NativeHandle(JNIEnv*);
+extern int register_android_os_FileObserver(JNIEnv*);
 extern jlong com_android_internal_os_ZygoteCommandBuffer_getNativeBuffer(JNIEnv*, jclass, jint);
 extern void com_android_internal_os_ZygoteCommandBuffer_freeNativeBuffer(JNIEnv*, jclass, jlong);
 extern void com_android_internal_os_ZygoteCommandBuffer_insert(JNIEnv*, jclass, jlong, jstring);
@@ -387,6 +388,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_com_google_android_gles_jni_GLImpl),
             E(android::register_android_os_SELinux),
             E(android::register_android_os_NativeHandle),
+            E(android::register_android_os_FileObserver),
             E(android::register_android_os_HidlMemory),
             E(registerStockHidlMemorySmoke),
             E(registerHostedZygoteCommandBuffer),

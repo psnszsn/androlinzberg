@@ -247,6 +247,7 @@ pub const core_jni_srcs = [_][]const u8{
     "android_util_AssetManager.cpp",
     "android_content_res_ApkAssets.cpp",
     "android_util_XmlBlock.cpp",
+    "android_util_FileObserver.cpp",
     "android_util_StringBlock.cpp",
     "android_view_MotionEvent.cpp",
     "android_view_KeyEvent.cpp",

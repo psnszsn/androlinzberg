@@ -1750,6 +1750,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/SystemProperties.java");
     try c.file("$CJ/android/os/SharedMemory.java");
     try c.file("$CJ/android/os/MemoryFile.java");
+    try c.file("$CJ/android/os/FileObserver.java");
     try c.file("$CJ/android/os/NativeHandle.java");
     try c.file("$CJ/android/os/HidlMemory.java");
     // Real AOSP binder stack (natives from libbinder_ndk via framework_jni.zig),
