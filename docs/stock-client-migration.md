@@ -27,6 +27,20 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- SystemServerInitThreadPool's empty shutdown stub is replaced by the pinned
+  implementation. Hosted system startup starts the pool; stock SystemServiceManager
+  shuts it down at boot completion. Task submission, pending-work tracking, shutdown
+  waits and failure behavior remain AOSP. A small server diagnostics patch replaces
+  Android's debuggerd/watchdog dump request with the hosted process's ART thread dump.
+  Tests cover startup and duplicate-start rejection, pending-work diagnostics, waiting
+  for tasks during shutdown, post-shutdown rejection and restart. JVM/system,
+  native/Binder and build checks pass; all 11 APK tests pass (37 steps, zero structured
+  runtime issues). AOSP is rebuilt and repinned; the source and exact diagnostics patch
+  are byte-verified. ART is unchanged. The inventory is 20 stubs (11 pending,
+  9 survivors). This closes the server boot-pool placeholder; the remaining client
+  and Chromium-provider work is still outstanding.
+
+
 - WebChromeClient now compiles verbatim with JsPromptResult and PermissionRequest;
   the narrow callback stub is deleted. The complete AOSP callback surface supplies
   default web-permission denial, quota responses, legacy file-chooser cancellation,

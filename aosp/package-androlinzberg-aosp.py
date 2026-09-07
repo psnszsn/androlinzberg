@@ -49,6 +49,7 @@ framework_patches = tuple(
         (32, "-legacy-GLES-retain-JNI-array-bases-and-typed-buffer-bounds.patch"),
         (33, "-camera-metadata-use-hosted-vendor-service-boundary.patch"),
         (34, "-permission-service-use-hosted-policy-at-startup.patch"),
+        (35, "-init-thread-pool-use-hosted-failure-diagnostics.patch"),
     )
 )
 

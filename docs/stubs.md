@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 12 (budget 12). Survivors: 9. Total: 21.
+Pending: 11 (budget 11). Survivors: 9. Total: 20.
 
 ## Survivors
 
@@ -60,7 +60,6 @@ Pending: 12 (budget 12). Survivors: 9. Total: 21.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/SystemServerInitThreadPool.java` | blocked | frameworks/base/services/core/java/com/android/server/SystemServerInitThreadPool.java (2780 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper |
 | `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2780 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
 
 ### webkit
@@ -79,43 +78,43 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `android.media.Ringtone` | 8 | 1 |
-| `android.media.MediaPlayer` | 8 | 2 |
-| `android.media.SubtitleController` | 8 | 3 |
-| `android.widget.VideoView` | 8 | 3 |
-| `android.media.AudioMix` | 7 | 1 |
-| `android.media.MediaExtractor` | 7 | 1 |
-| `android.media.AudioMixMatchCriterion` | 7 | 2 |
-| `android.media.MediaCas` | 7 | 2 |
-| `android.os.IHwBinder` | 7 | 2 |
-| `android.hardware.cas.IMediaCasService` | 7 | 3 |
-| `android.media.MediaCasException` | 7 | 3 |
-| `android.media.tv.TvInputService.PriorityHintUseCaseType` | 7 | 3 |
-| `android.os.HwParcel` | 7 | 3 |
-| `android.hardware.cas.IDescrambler` | 7 | 4 |
-| `android.media.tv.AdBuffer` | 7 | 4 |
-| `android.media.tv.TvInputHardwareInfo` | 7 | 4 |
-| `android.media.MediaCodec.BufferFlag` | 7 | 5 |
-| `android.media.MediaDescrambler` | 7 | 6 |
-| `com.android.internal.app.ResolverActivity` | 6 | 1 |
-| `com.android.server.Watchdog` | 6 | 1 |
-| `com.android.server.art.DexUseManagerLocal` | 6 | 1 |
-| `com.android.server.input.InputManagerService` | 6 | 1 |
-| `com.android.server.pm.AppDataHelper` | 6 | 1 |
-| `com.android.server.pm.AppsFilterImpl` | 6 | 1 |
-| `com.android.server.pm.BroadcastHelper` | 6 | 1 |
-| `com.android.server.pm.DexOptHelper` | 6 | 1 |
-| `com.android.server.pm.PackageDexOptimizer` | 6 | 1 |
-| `com.android.server.pm.PackageInstallerService` | 6 | 1 |
-| `com.android.server.pm.PackageInstallerSession` | 6 | 1 |
-| `com.android.server.sdksandbox.SdkSandboxManagerLocal` | 6 | 1 |
-| `android.security.AndroidKeyStoreMaintenance` | 6 | 2 |
-| `com.android.internal.os.ProcessCpuTracker` | 6 | 2 |
-| `com.android.server.PackageWatchdog` | 6 | 2 |
-| `com.android.server.StorageManagerService` | 6 | 2 |
-| `com.android.server.am.ActivityManagerService` | 6 | 2 |
-| `com.android.server.art.ArtManagerLocal` | 6 | 2 |
-| `com.android.server.art.GlobalInjector` | 6 | 2 |
-| `com.android.server.art.IArtd` | 6 | 2 |
-| `com.android.server.art.model.DexoptParams` | 6 | 2 |
-| `com.android.server.criticalevents.CriticalEventLog` | 6 | 2 |
+| `android.media.Ringtone` | 7 | 1 |
+| `android.media.MediaPlayer` | 7 | 2 |
+| `android.media.SubtitleController` | 7 | 3 |
+| `android.widget.VideoView` | 7 | 3 |
+| `android.media.AudioMix` | 6 | 1 |
+| `android.media.MediaExtractor` | 6 | 1 |
+| `android.media.AudioMixMatchCriterion` | 6 | 2 |
+| `android.media.MediaCas` | 6 | 2 |
+| `android.os.IHwBinder` | 6 | 2 |
+| `android.hardware.cas.IMediaCasService` | 6 | 3 |
+| `android.media.MediaCasException` | 6 | 3 |
+| `android.media.tv.TvInputService.PriorityHintUseCaseType` | 6 | 3 |
+| `android.os.HwParcel` | 6 | 3 |
+| `android.hardware.cas.IDescrambler` | 6 | 4 |
+| `android.media.tv.AdBuffer` | 6 | 4 |
+| `android.media.tv.TvInputHardwareInfo` | 6 | 4 |
+| `android.media.MediaCodec.BufferFlag` | 6 | 5 |
+| `android.media.MediaDescrambler` | 6 | 6 |
+| `com.android.internal.app.ResolverActivity` | 5 | 1 |
+| `com.android.server.Watchdog` | 5 | 1 |
+| `com.android.server.art.DexUseManagerLocal` | 5 | 1 |
+| `com.android.server.input.InputManagerService` | 5 | 1 |
+| `com.android.server.pm.AppDataHelper` | 5 | 1 |
+| `com.android.server.pm.AppsFilterImpl` | 5 | 1 |
+| `com.android.server.pm.BroadcastHelper` | 5 | 1 |
+| `com.android.server.pm.DexOptHelper` | 5 | 1 |
+| `com.android.server.pm.PackageDexOptimizer` | 5 | 1 |
+| `com.android.server.pm.PackageInstallerService` | 5 | 1 |
+| `com.android.server.pm.PackageInstallerSession` | 5 | 1 |
+| `com.android.server.sdksandbox.SdkSandboxManagerLocal` | 5 | 1 |
+| `android.security.AndroidKeyStoreMaintenance` | 5 | 2 |
+| `com.android.internal.os.ProcessCpuTracker` | 5 | 2 |
+| `com.android.server.PackageWatchdog` | 5 | 2 |
+| `com.android.server.StorageManagerService` | 5 | 2 |
+| `com.android.server.am.ActivityManagerService` | 5 | 2 |
+| `com.android.server.art.ArtManagerLocal` | 5 | 2 |
+| `com.android.server.art.GlobalInjector` | 5 | 2 |
+| `com.android.server.art.IArtd` | 5 | 2 |
+| `com.android.server.art.model.DexoptParams` | 5 | 2 |
+| `com.android.server.criticalevents.CriticalEventLog` | 5 | 2 |

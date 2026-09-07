@@ -134,6 +134,7 @@ internal object SystemServices {
 
     @JvmStatic
     fun start(context: Context) {
+        com.android.server.HostedBootTasks.start()
         // Auto-spawned service hosts must not outlive the session. Each host
         // also exits on broker disconnect (HostedBinderRuntime), but destroy
         // any survivors when the system process itself goes down.

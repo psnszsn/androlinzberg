@@ -311,6 +311,7 @@ internal object FrameworkModuleSmoke {
             testHostedAudioCapabilities()
             testAsyncMediaCodecFlushRestartsOnePump()
             testMediaMetricsContracts()
+            StockBootTasksSmoke.run()
             testWebViewCallbackContracts()
             testAlertDialogContracts()
             testDialogLifecycleAndStateContracts()

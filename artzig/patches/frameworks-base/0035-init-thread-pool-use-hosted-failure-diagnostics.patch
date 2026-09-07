@@ -1,0 +1,31 @@
+From: Artzig contributors
+Subject: [PATCH] SystemServerInitThreadPool: use hosted failure diagnostics
+
+Keep the original executor, pending-task tracking and shutdown behavior. The
+host has no debuggerd, /data/anr mount or Android watchdog daemon set. Delegate
+failure diagnostics to the hosted system process's ART thread dump instead.
+
+--- a/services/core/java/com/android/server/SystemServerInitThreadPool.java
++++ b/services/core/java/com/android/server/SystemServerInitThreadPool.java
+@@ -27,3 +27,2 @@
+ import com.android.internal.util.Preconditions;
+-import com.android.server.am.StackTracesDumpHelper;
+ import com.android.server.utils.TimingsTraceAndSlog;
+@@ -34,3 +33,2 @@
+ import java.util.Objects;
+-import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.ExecutorService;
+@@ -193,10 +191,5 @@
+     private static void dumpStackTraces() {
+-        final ArrayList<Integer> pids = new ArrayList<>();
+-        pids.add(Process.myPid());
+-        StackTracesDumpHelper.dumpStackTraces(pids,
+-                /* processCpuTracker= */null, /* lastPids= */null,
+-                CompletableFuture.completedFuture(Watchdog.getInterestingNativePids()),
+-                /* logExceptionCreatingFile= */null, /* subject= */null,
+-                /* criticalEventSection= */null, /* extraHeaders= */ null,
+-                Runnable::run, /* latencyTracker= */null);
++        // Host adaptation: debuggerd and Android's watched native daemons are absent.
++        // Keep failure diagnostics below the stock pool's shutdown/error handling.
++        HostedBootTasks.dumpInitThreads();
+     }
