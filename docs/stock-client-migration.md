@@ -27,6 +27,25 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- MediaRouter2 now compiles verbatim with MediaRouter2Manager, the legacy MediaRouter,
+  MediaRoute2ProviderService and their route/session models. The hosted Binder service
+  exposes the existing desktop speaker as one fixed-volume system route. It owns
+  registrations and Binder death, forwards discovery/listing preferences and device
+  suggestions, validates package identity and privileged scanning/control requests,
+  and preserves the persistent system session. The stock clients provide feature and
+  provider filtering, executor callbacks and controller lifecycle behavior. Legacy
+  routing now initializes through Context services and the stock unavailable-Wi-Fi-display
+  status. AudioManager's public policy entry points follow pinned AOSP control flow;
+  AudioManager itself remains adapted. There is no remote route-provider discovery,
+  output-picker UI or framework master-volume implementation in this batch, and no
+  Wayland, PipeWire or FFmpeg backend changes. Public-client and Binder tests cover
+  filtering, suggestions, callback dispatch, duplicate registration, invalid requests,
+  denied permissions and the persistent fixed-volume output. JVM/system, native/Binder
+  and build checks pass; all 11 APK tests pass (39 steps, zero structured runtime issues).
+  The inventory is 32 stubs: 19 pending and 13 survivors. The rebuilt AOSP archive is
+  repinned, with all 21 new Java/AIDL inputs byte-verified; ART's checksum is unchanged.
+
+
 - Spatializer and LoudnessCodecController now compile verbatim with their stock
   callback helpers. Hosted audio Binder policy follows AOSP's absent-spatializer
   behavior, including permissions, listener registration and effect-parameter errors.

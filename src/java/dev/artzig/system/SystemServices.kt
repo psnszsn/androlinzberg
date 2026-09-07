@@ -294,6 +294,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.DEVICE_IDLE_CONTROLLER, HostedDeviceIdleController())
         // Audio capability/session policy and media services; rendering stays in the native backend.
         android.os.ServiceManager.addService(Context.AUDIO_SERVICE, HostedAudioService(android.os.PermissionEnforcer.fromContext(context)))
+        android.os.ServiceManager.addService(Context.MEDIA_ROUTER_SERVICE, HostedMediaRouterService(context, packageManager))
         val mediaSessions = HostedMediaSessionService()
         mediaSessions.packageService = packageManager
         android.os.ServiceManager.addService(Context.MEDIA_SESSION_SERVICE, mediaSessions)

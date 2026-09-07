@@ -17,6 +17,19 @@ import java.util.Objects
 internal class HostedAudioService(enforcer: PermissionEnforcer) : IAudioService.Stub(enforcer),
     IAudioService by unsupported<IAudioService>() {
     override fun asBinder(): IBinder = this
+    // AudioDeviceInventory.startWatchingRoutes: a snapshot plus listener ownership. There is
+    // one speaker output, no Bluetooth route, and no framework master gain on this backend.
+    private val routeCallbacks = RemoteCallbackList<IAudioRoutesObserver>()
+    override fun startWatchingRoutes(observer: IAudioRoutesObserver?): AudioRoutesInfo {
+        routeCallbacks.register(nonNull(observer))
+        return AudioRoutesInfo()
+    }
+    override fun isBluetoothA2dpOn(): Boolean = false
+    override fun getStreamVolume(streamType: Int): Int { require(streamType in 0..11); return 10 }
+    override fun getStreamMaxVolume(streamType: Int): Int { require(streamType in 0..11); return 15 }
+    override fun setStreamVolumeWithAttribution(streamType: Int, index: Int, flags: Int, callingPackage: String?, attributionTag: String?) {
+        // AudioService.setStreamVolume returns before validation when mUseFixedVolume is true.
+    }
     private val stateCallbacks = RemoteCallbackList<ISpatializerCallback>()
     private val trackingCallbacks = RemoteCallbackList<ISpatializerHeadTrackingModeCallback>()
     private val trackerCallbacks = RemoteCallbackList<ISpatializerHeadTrackerAvailableCallback>()

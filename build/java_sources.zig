@@ -2662,6 +2662,15 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/LoudnessCodecDispatcher.java");
     try c.file("$FB/media/java/android/media/CallbackUtil.java");
     try c.file("$FB/media/java/android/media/MediaRoute2Info.java");
+    try c.file("$FB/media/java/android/media/MediaRoute2ProviderInfo.java");
+    try c.file("$FB/media/java/android/media/MediaRoute2ProviderService.java");
+    try c.file("$FB/media/java/android/media/MediaRouter.java");
+    try c.file("$FB/media/java/android/media/MediaRouter2.java");
+    try c.file("$FB/media/java/android/media/MediaRouter2Manager.java");
+    try c.file("$FB/media/java/android/media/MediaRouterClientState.java");
+    try c.file("$FB/media/java/android/media/RouteListingPreference.java");
+    try c.file("$FB/media/java/android/media/RoutingSessionInfo.java");
+    try c.file("$FB/media/java/android/media/SuggestedDeviceInfo.java");
     try c.file("$FB/media/java/android/media/MediaRouter2Utils.java");
     try c.file("$CJ/android/permission/PermissionGroupUsage.java");
     try c.file("$CJ/android/media/Image.java");

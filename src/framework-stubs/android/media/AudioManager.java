@@ -12,6 +12,12 @@ import android.media.audiopolicy.*;
 import android.media.projection.MediaProjection;
 import java.util.*;
 public class AudioManager {
+    // Pinned AudioManager broadcast names used by the stock legacy router.
+    public static final String VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION";
+    public static final String EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE";
+    public static final String EXTRA_VOLUME_STREAM_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE";
+    public static final String EXTRA_PREV_VOLUME_STREAM_VALUE = "android.media.EXTRA_PREV_VOLUME_STREAM_VALUE";
+
     /** Pinned AudioSystem.AUDIO_SESSION_ALLOCATE value. */
     public static final int AUDIO_SESSION_ID_GENERATE = 0;
     /** AOSP IntDef markers for the volume flag parameters. */
@@ -134,7 +140,7 @@ public class AudioManager {
     public void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags) {}
     public void handleKeyDown(android.view.KeyEvent event, int stream) {}
     public void handleKeyUp(android.view.KeyEvent event, int stream) {}
-    public boolean isVolumeFixed() { return false; }
+    public boolean isVolumeFixed() { return true; }
     public void dispatchMediaKeyEvent(android.view.KeyEvent keyEvent) {}
     public void preDispatchKeyEvent(android.view.KeyEvent event, int stream) {}
     public interface OnModeChangedListener { void onModeChanged(int mode); }
@@ -175,6 +181,23 @@ public class AudioManager {
         sService = IAudioService.Stub.asInterface(b);
         return sService;
     }
+    // Verbatim pinned AudioManager public policy entry points.
+    public int registerAudioPolicy(@NonNull AudioPolicy policy) {
+        return registerAudioPolicyStatic(policy);
+    }
+
+    public void unregisterAudioPolicy(@NonNull AudioPolicy policy) {
+        com.android.internal.util.Preconditions.checkNotNull(policy, "Illegal null AudioPolicy argument");
+        final IAudioService service = getService();
+        try {
+            policy.invalidateCaptorsAndInjectors();
+            service.unregisterAudioPolicy(policy.cb());
+            policy.reset();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     static int registerAudioPolicyStatic(@NonNull AudioPolicy policy) {
         if (policy == null) {
             throw new IllegalArgumentException("Illegal null AudioPolicy argument");

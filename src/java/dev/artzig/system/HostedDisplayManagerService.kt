@@ -19,8 +19,8 @@ import android.view.DisplayInfo
  * Source note: follows `com.android.server.display.DisplayManagerService.BinderService`
  * for the queries `DisplayManagerGlobal` makes; there is exactly one logical
  * display here — this process's Wayland window, whose bounds live in
- * [ArtzigDisplay]. Wifi display, HDR, brightness and virtual displays are not
- * hosted; calls to those methods fail through the shared unsupported Binder
+ * [ArtzigDisplay]. Wifi display status reports an unavailable adapter. HDR, brightness and virtual displays
+ * are not hosted; calls to those methods fail through the shared unsupported Binder
  * delegate.
  */
 internal class HostedDisplayManagerService :
@@ -39,6 +39,10 @@ internal class HostedDisplayManagerService :
 
     override fun getDisplayInfo(displayId: Int): DisplayInfo? =
         if (displayId == Display.DEFAULT_DISPLAY) ArtzigDisplay.displayInfo() else null
+
+    // DisplayManagerService.getWifiDisplayStatusInternal with no WifiDisplayAdapter.
+    override fun getWifiDisplayStatus(): android.hardware.display.WifiDisplayStatus =
+        android.hardware.display.WifiDisplayStatus()
 
     override fun getDisplayIds(includeDisabled: Boolean): IntArray = intArrayOf(Display.DEFAULT_DISPLAY)
 

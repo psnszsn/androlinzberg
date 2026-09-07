@@ -294,6 +294,7 @@ internal object FrameworkModuleSmoke {
         com.android.server.uri.StockUriPermissionSmoke.withService {
             testHostedActivityTaskServiceTransactions()
             StockAudioPolicyClientsSmoke.run()
+            StockMediaRouterSmoke.run(::drainMainQueue)
             testHostedAudioCapabilities()
             testAsyncMediaCodecFlushRestartsOnePump()
             testMediaMetricsContracts()

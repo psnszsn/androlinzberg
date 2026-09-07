@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 20 (budget 20). Survivors: 13. Total: 33.
+Pending: 19 (budget 19). Survivors: 13. Total: 32.
 
 ## Survivors
 
@@ -49,7 +49,6 @@ Pending: 20 (budget 20). Survivors: 13. Total: 33.
 | Stub | Audit | Closure |
 |---|---|---|
 | `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (217 to add); android.hardware.cas.AidlCasPluginDescriptor: AIDL outside the configured include roots (via AidlCasPluginDescriptor < MediaCas < MediaExtractor < AudioManager); android.hardware.cas.DestinationBuffer: AIDL outside the configur |
-| `android/media/MediaRouter2.java` | blocked | frameworks/base/media/java/android/media/MediaRouter2.java (16 to add), not vendored; android.media.MediaRouter2: existing stub android.app.AppOpsManager lacks member OPSTR_MEDIA_ROUTING_CONTROL (via MediaRouter2); android.media.MediaRouter: existing stub android.media.AudioManager lacks member EXTR |
 | `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (42 to add), not vendored; android.media.MediaDrm: JNI natives (via MediaDrm < MediaPlayer < Ringtone < RingtoneManager); android.media.MediaHTTPConnection: JNI natives (via MediaHTTPConnection < MediaHTTPService < MediaPlayer < Ringtone  |
 
 ### autofill

@@ -121,6 +121,11 @@ public final class SystemServiceRegistry {
             @Override public DownloadManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new DownloadManager(ctx.getOuterContext()); }});
         registerService(Context.AUDIO_SERVICE, android.media.AudioManager.class, new NewServiceFetcher<android.media.AudioManager>() {
             @Override public android.media.AudioManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.media.AudioManager(); }});
+        registerService(Context.MEDIA_ROUTER_SERVICE, android.media.MediaRouter.class,
+                new CachedServiceFetcher<android.media.MediaRouter>() {
+            @Override public android.media.MediaRouter createService(ContextImpl ctx) {
+                return new android.media.MediaRouter(ctx);
+            }});
         // AOSP creation expressions: the real managers over the hosted
         // INotificationManager / IAlarmManager services.
         registerService(Context.NOTIFICATION_SERVICE, NotificationManager.class,
