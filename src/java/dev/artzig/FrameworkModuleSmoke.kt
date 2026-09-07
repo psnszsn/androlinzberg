@@ -3159,9 +3159,21 @@ internal object FrameworkModuleSmoke {
         val callingUid = Binder.getCallingUid()
         packages.bindPackageUid(callerPackage, callingUid)
         activityManager.noteProcessPackage(callingUid, callerPackage, processOne)
-        activityManager.attachApplication(threadOne, 0)
+        activityManager.attachApplication(threadOne, 41)
+        var readyCallbacks = 0
+        check(activityManager.attachedProcessForPackage(callerPackage, processOne) == null)
+        check(activityManager.withApplicationThread(callerPackage, processOne, false) { readyCallbacks++ })
+        check(readyCallbacks == 0 && threadOne.transactions.isEmpty())
+        check(runCatching { activityManager.finishAttachApplication(42, 0) }
+            .exceptionOrNull() is SecurityException)
+        check(readyCallbacks == 0)
+        activityManager.finishAttachApplication(41, 0)
+        check(readyCallbacks == 1)
+        activityManager.finishAttachApplication(41, 0)
+        check(readyCallbacks == 1) { "duplicate attach acknowledgement replayed component work" }
         activityManager.noteProcessPackage(callingUid, callerPackage, processTwo)
         activityManager.attachApplication(threadTwo, 0)
+        activityManager.finishAttachApplication(0, 0)
         check(threadOne.boundProcessName == processOne && threadTwo.boundProcessName == processTwo)
         check(threadOne.boundPackageName == callerPackage && threadTwo.boundPackageName == callerPackage)
         val controller = service.activityClientController
@@ -3470,8 +3482,10 @@ internal object FrameworkModuleSmoke {
         val raceThreadTwo = CapturingApplicationThread()
         raceActivityManager.noteProcessPackage(callingUid, callerPackage, processOne)
         raceActivityManager.attachApplication(raceThreadOne, 0)
+        raceActivityManager.finishAttachApplication(0, 0)
         raceActivityManager.noteProcessPackage(callingUid, callerPackage, processTwo)
         raceActivityManager.attachApplication(raceThreadTwo, 0)
+        raceActivityManager.finishAttachApplication(0, 0)
         fun raceLaunch(name: String): Int = raceService.startActivity(
             null,
             callerPackage,
@@ -3642,6 +3656,7 @@ internal object FrameworkModuleSmoke {
             for ((thread, process) in threads.zip(listOf("task-reuse:one", "task-reuse:two"))) {
                 am.noteProcessPackage(uid, pkg, process)
                 am.attachApplication(thread, 0)
+                am.finishAttachApplication(0, 0)
             }
             val controller = service.activityClientController
             val observed = ArrayList<android.app.servertransaction.ClientTransactionItem>()

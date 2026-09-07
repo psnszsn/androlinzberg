@@ -27,6 +27,14 @@ in force.
 
 Follow-up changes in the current tree:
 
+- Application attachment now waits for the stock finishAttachApplication handshake
+  before releasing activity/service work. The service checks caller identity and start
+  sequence, rejects mismatched acknowledgements and prevents duplicate work replay.
+  The module regression exercises queued launches, rejection and one-shot completion;
+  JVM/system and all 11 APK tests pass (36 steps, zero structured runtime issues).
+  This is a prerequisite for selecting stock ActivityThread, not that selection itself.
+  Neither tarball changes.
+
 - Preserved-window rebuilds now update the root's resource/layout-direction cache,
   resume a stopped root and report its next submitted frame. ViewTreeObserver frame
   callbacks are captured before drawing, retained per root and delivered on its UI

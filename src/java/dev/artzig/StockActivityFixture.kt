@@ -103,6 +103,7 @@ internal class StockActivityFixture(apk: String, private val pump: () -> Unit) :
         activityManager.noteProcessPackage(Process.myUid(), PACKAGE, PACKAGE,
             android.content.res.Configuration(context.resources.configuration))
         activityManager.attachApplication(transport, 0)
+        activityManager.finishAttachApplication(0, 0)
         packageField.set(null, fixturePackages)
         for (source in listOfNotNull(context, ActivityThread.currentApplication())) {
             var base: Context = source

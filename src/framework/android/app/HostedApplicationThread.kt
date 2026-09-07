@@ -62,7 +62,10 @@ internal class HostedApplicationThread : UnsupportedApplicationThread() {
         data.contentCaptureOptions = contentCaptureOptions
         data.startRequestedElapsedTime = startRequestedElapsedTime
         data.startRequestedUptime = startRequestedUptime
-        handler.post { thread.handleBindApplication(data) }
+        handler.post {
+            thread.handleBindApplication(data)
+            ActivityManager.getService().finishAttachApplication(0, System.nanoTime())
+        }
     }
 
     // Pinned ActivityThread.ApplicationThread.scheduleRegisteredReceiver. The

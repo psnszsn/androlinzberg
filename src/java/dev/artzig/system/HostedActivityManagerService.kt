@@ -46,7 +46,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val uid: Int,
         val packageName: String,
         val processName: String,
+        val startSeq: Long,
     ) : IBinder.DeathRecipient {
+        var ready = false
         val binder: IBinder = thread.asBinder()
         var exitReason = android.app.ApplicationExitInfo.REASON_UNKNOWN
         var exitDescription: String? = null
@@ -361,17 +363,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val packageName = announcement.packageName
         val processName = announcement.processName
         val record = ProcessRecord(
-            thread, Binder.getCallingPid(), callingUid, packageName, processName,
+            thread, Binder.getCallingPid(), callingUid, packageName, processName, startSeq,
         )
-        val drained: List<() -> Unit>
         // Insert before linking so a death in the window between the two runs
         // handleProcessDied against a record that is actually registered.
         synchronized(lock) {
             processes[record.binder] = record
-            drained = buildList {
-                addAll(pendingByPackage.remove(packageName) ?: emptyList())
-                addAll(pendingByProcess.remove(packageName to processName) ?: emptyList())
-            }
         }
         try {
             record.binder.linkToDeath(record, 0)
@@ -387,12 +384,43 @@ class HostedActivityManagerService(private val context: android.content.Context?
         try {
             if (record.uid != android.os.Process.SYSTEM_UID || record.pid != android.os.Process.myPid()) {
                 bindApplication(record, announcement)
+            } else {
+                completeApplicationAttachment(record)
             }
         } catch (e: Exception) {
             handleProcessDied(record)
             throw e
         } finally {
             Binder.restoreCallingIdentity(identity)
+        }
+    }
+
+    /** Pinned AMS.finishAttachApplication: launch components only after Application.onCreate.
+     * The host has no process-group supervisor; a stale or unauthenticated acknowledgement
+     * is rejected without releasing work or signalling an unrelated desktop process. */
+    override fun finishAttachApplication(startSeq: Long, timestampApplicationOnCreateNs: Long) {
+        val pid = Binder.getCallingPid()
+        val uid = Binder.getCallingUid()
+        if (pid == android.os.Process.myPid() && uid == android.os.Process.SYSTEM_UID) return
+        val record = synchronized(lock) {
+            processes.values.lastOrNull { it.pid == pid && it.uid == uid && it.startSeq == startSeq }
+        } ?: throw SecurityException("finishAttachApplication has no matching process/start sequence")
+        val identity = Binder.clearCallingIdentity()
+        try {
+            completeApplicationAttachment(record)
+        } finally {
+            Binder.restoreCallingIdentity(identity)
+        }
+    }
+
+    private fun completeApplicationAttachment(record: ProcessRecord) {
+        val drained = synchronized(lock) {
+            if (processes[record.binder] !== record || record.ready) return
+            record.ready = true
+            buildList {
+                addAll(pendingByPackage.remove(record.packageName) ?: emptyList())
+                addAll(pendingByProcess.remove(record.packageName to record.processName) ?: emptyList())
+            }
         }
         replayConfigurationOverrides(record)
         activityTaskManager?.onProcessAttached(
@@ -402,7 +430,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             record.packageName,
             record.processName,
         )
-        if (callingUid != android.os.Process.SYSTEM_UID) processObserver?.invoke(packageName, callingUid, true)
+        if (record.uid != android.os.Process.SYSTEM_UID) processObserver?.invoke(record.packageName, record.uid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
         for (op in drained) op()
@@ -507,7 +535,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         processName: String? = null,
     ): AttachedProcess? = synchronized(lock) {
         val record = processes.values.firstOrNull {
-            it.packageName == packageName && (processName == null || it.processName == processName)
+            it.ready && it.packageName == packageName && (processName == null || it.processName == processName)
         }
             ?: return@synchronized null
         AttachedProcess(record.thread, record.pid, record.uid, record.packageName, record.processName)
@@ -529,12 +557,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
                 it.packageName == packageName &&
                     (processName == null || it.processName == processName)
             }
-            if (record != null) {
+            if (record?.ready == true) {
                 attached = AttachedProcess(
                     record.thread, record.pid, record.uid, record.packageName, record.processName,
                 )
                 true
-            } else if (!spawnIfMissing) {
+            } else if (!spawnIfMissing && record == null) {
                 // The production launcher starts service-only, windowless app processes. An
                 // activity start must not report success after routing its target to that host.
                 false
@@ -549,7 +577,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
                     pendingByProcess.getOrPut(packageName to processName) { ArrayList() }
                 }
                 pending.add(replay)
-                if (bringUpProcessLocked(packageName)) {
+                if (record != null || bringUpProcessLocked(packageName)) {
                     true
                 } else {
                     pending.remove(replay)
@@ -598,7 +626,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
      * then finds the attached process hosting that package. */
     private fun resolveServiceLocked(service: Intent, callingPackage: String?): Pair<ProcessRecord, android.content.pm.ServiceInfo>? {
         val info = packageService?.resolveServiceInfo(service) ?: return null
-        val process = processes.values.firstOrNull { it.packageName == info.packageName } ?: return null
+        val process = processes.values.firstOrNull { it.ready && it.packageName == info.packageName } ?: return null
         return process to info
     }
 
@@ -675,7 +703,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     ): PostStart {
         val resolved = resolveServiceLocked(service, callingPackage) ?: run {
             val pkg = targetPackageForLocked(service)
-            if (allowSpawn && pkg != null && bringUpProcessLocked(pkg)) {
+            if (allowSpawn && pkg != null && (processes.values.any { it.packageName == pkg } || bringUpProcessLocked(pkg))) {
                 pendingByPackage.getOrPut(pkg) { ArrayList() }.add {
                     // allowSpawn=false on replay: the process has attached, so a
                     // still-unresolved service is genuinely absent, not un-spawned.
@@ -784,7 +812,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             // the spawned process attaches.
             val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE) != 0
             val pkg = targetPackageForLocked(service)
-            if (allowSpawn && autoCreate && pkg != null && bringUpProcessLocked(pkg)) {
+            if (allowSpawn && autoCreate && pkg != null && (processes.values.any { it.packageName == pkg } || bringUpProcessLocked(pkg))) {
                 Log.i(TAG, "bindService: spawning host for " + pkg)
                 pendingByPackage.getOrPut(pkg) { ArrayList() }.add {
                     // allowSpawn=false on replay (process now attached).
