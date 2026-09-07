@@ -4911,6 +4911,15 @@ internal object FrameworkModuleSmoke {
             root.doTraversal()
             check(ArtzigAccessibilityBridge.revision() > drawMark) { "draw-only activity must reset the idle cursor" }
             check(org.json.JSONObject(ArtzigAccessibilityBridge.snapshot()).getJSONArray("nodes").toString() == beforeDraw)
+            check(ArtzigAccessibilityBridge.perform(drawMark, window, button.accessibilityViewId,
+                android.view.accessibility.AccessibilityNodeProvider.HOST_VIEW_ID,
+                android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null)) {
+                "A paint-only redraw invalidated an unchanged accessibility target"
+            }
+            check(clicks == 2)
+            check(!ArtzigAccessibilityBridge.perform(drawMark, window, button.accessibilityViewId,
+                android.view.accessibility.AccessibilityNodeProvider.HOST_VIEW_ID,
+                android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
             repeat(140) { ArtzigAccessibilityBridge.markChanged("bounded:$it") }
             val bounded = org.json.JSONObject(ArtzigAccessibilityBridge.diagnostics(0))
             check(bounded.getJSONArray("events").length() == 128)

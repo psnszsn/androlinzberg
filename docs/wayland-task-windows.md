@@ -91,8 +91,8 @@ still null then, and using it incorrectly reported the new dialog as idle.
 Regression 158 passes the stock activity/dialog action and bounds gate, native
 checks and all seven Surface scenarios. Regression 159 passes the default module,
 native and complete 15-APK suite. Logs: `/tmp/wayland-desktop-launcher-158.log`
-and `/tmp/wayland-stock-accessibility-159.log`. This is process-local inspection;
-session aggregation and task selectors are still being implemented.
+and `/tmp/wayland-stock-accessibility-159.log`. This gate covers process-local inspection; subsequent checkpoints below add
+session aggregation and task selectors.
 
 The development APK command now selects DesktopLauncher when AZK_TASK_WINDOWS=1
 and stock clients/services are enabled. The session owner installs and starts
@@ -101,8 +101,8 @@ window; its lifetime follows the session's application tasks. Regression 158's
 stock-desktop-launcher-test verifies a separate app PID, actual labwc pixels,
 compositor close, pause/stop/destroy and zero retained presenter buffers.
 Screenshot inspected; artifacts: `/tmp/wayland-desktop-launcher-158-artifacts/`.
-Default launcher selection remains legacy. Task-window test-control and initial
-fullscreen/frame-limit options reject explicitly until their adapters are wired;
+Default launcher selection remains legacy. Initial fullscreen/frame-limit options reject explicitly until their adapters are
+wired; task-window test-control is available to the session owner as described below;
 ordinary joined-launch authorization still needs its regression gate.
 
 Regressions 160–164 add system-authorized process inspection. Applications
@@ -122,9 +122,60 @@ passes the full JVM and 15-APK suites (45 steps, no issues), including journal
 merge/overflow/atomic-page checks. Regression 164 passes stock boot, cold launch,
 both task compositor gates and desktop launcher. Logs:
 `/tmp/wayland-process-inspection-{160,161,162,163,164}.log`.
-Cross-process observation is available over Binder; session-wide window IDs,
-Varlink aggregation, compositor input selection and native-process journal
-coverage remain in progress.
+These gates cover cross-process observation over Binder. Subsequent checkpoints
+below add session window IDs and Varlink aggregation; compositor input selection
+and native-process journal coverage remain in progress.
+
+Session observations now assign stable global window IDs, rewrite accessibility
+node relationships and retain task/process generation identity. Repeated local
+IDs from separate apps cannot collide; stale actions, process replacement and
+removed windows reject. Temporary observation failure preserves a live window's
+ID. Regressions 165–166 pass the model and real cold/compositor registry gates.
+
+Inspection also follows AMS.finishAttachApplication: while Application startup
+is pending, the registry reads the thread-safe runtime journal and reports an
+explicit starting state without queueing a request behind the app main thread.
+Regression 167 holds provider startup and verifies responsive observations,
+rejected actions, no false idle/failure, then normal attachment in cold launch
+and both compositor gates. The Varlink/Kotlin selectors now accept task_id,
+window_id, pid and process_generation; explicit identities select independently
+of default desktop focus and conflicting identities never broaden a match.
+Regression 168 passes full JVM/native/testkit and all 15 APK tests (46 diagnostic
+steps, no runtime issues). Logs: `/tmp/wayland-session-observation-{165,166}.log`,
+`/tmp/wayland-inspection-startup-167.log`, `/tmp/wayland-session-selectors-168.log`.
+
+Regression 169 connects the owner DesktopLauncher to the existing native Varlink
+server through a main-thread JNI poll. Accessibility and diagnostics come from
+SessionObservation; NMS supplies all session notifications, including those
+retained after their posting process exits. Private system-authorized presenter
+queries pace test rounds with real Wayland frame callbacks. These are callback
+acknowledgements, not claims of scanout/presentation timestamps. Task membership
+changes invalidate a pending round rather than acknowledging a removed task.
+
+The existing labwc harness runs three `azk-test step` actions against task/window
+selectors: increment, show an attached dialog, and close that dialog. All steps
+have empty runtime issue lists; the resulting counter screenshot was inspected.
+Artifacts: `zig-out/test-results/stock-desktop-launcher/`; log:
+`/tmp/wayland-controller-varlink-169.log`. Physical compositor action selection,
+joined controller access, native-process diagnostics and the default cutover
+remain pending. The current adapter explicitly reports input unavailable for
+physical actions, while stock semantic actions are routed to the selected app.
+
+Regression 170 passes full JVM/native and 15 APK tests (47 steps, no issues).
+Regression 171 passes stock boot/cold, both task compositors and all seven
+Surface scenarios, but catches a stale dialog action in the new launcher gate.
+Paint-only redraws advanced the observation cursor between the controller's
+preflight query and the app's action. App-main validation now distinguishes
+paint activity from action-relevant accessibility/tree mutations; paint still
+resets visual-idle waits. The session resolves its published window identity
+and lets the app validate atomically, without an extra preflight query.
+
+Regression 172 passes the same launcher actions and stock boot/cold gates.
+Regression 173 passes full JVM/native and 15 APK tests (47 steps, no issues),
+including a draw-only action test and rejection after an actual mutation/action.
+The failed 171 artifacts remain at `/tmp/wayland-controller-failure-171/`.
+Logs: `/tmp/wayland-controller-regressions-170.log`,
+`/tmp/wayland-controller-stock-171.log`, `/tmp/wayland-controller-repaint-{172,173}.log`.
 
 Run stock Android window clients, WMS and ATMS on one hosted Android display.
 Present each application task as a separate Wayland `xdg_toplevel`. Multiple

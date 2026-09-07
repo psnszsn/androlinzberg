@@ -25,6 +25,7 @@ object ArtzigAccessibilityBridge {
     private const val MAX_EVENTS = 128
     private var activityRoot: ViewRootImpl? = null
     private var currentRevision = 1L
+    private var actionRevision = 1L
     private var eventsDroppedThrough = 0L
     private val events = ArrayDeque<EventRecord>()
     private val windowIds = WeakHashMap<ViewRootImpl, Long>()
@@ -65,6 +66,9 @@ object ArtzigAccessibilityBridge {
 
     @JvmStatic @Synchronized fun markChanged(reason: String?) {
         currentRevision++
+        // Repaints reset visual-idle waits but do not invalidate an unchanged
+        // accessibility target. observeTree still detects mutation at dispatch.
+        if (reason != "draw") actionRevision = currentRevision
         if (events.size == MAX_EVENTS) eventsDroppedThrough = events.removeFirst().revision
         events.addLast(EventRecord(currentRevision, reason ?: "changed"))
     }
@@ -115,7 +119,7 @@ object ArtzigAccessibilityBridge {
         expectedRevision: Long, windowId: Long, viewId: Int, virtualId: Int, action: Int, text: String?,
     ): Boolean {
         observeTree()
-        if (expectedRevision != currentRevision) return false
+        if (expectedRevision < actionRevision || expectedRevision > currentRevision) return false
         val root = collectWindows().firstOrNull { it.id == windowId }?.root ?: return false
         val view = root.view?.findViewByAccessibilityIdTraversal<View>(viewId) ?: return false
         val arguments = if (action == AccessibilityNodeInfo.ACTION_SET_TEXT) Bundle().apply {

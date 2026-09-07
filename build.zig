@@ -630,7 +630,7 @@ pub fn build(b: *std.Build) void {
     const testkit = @import("build/testkit.zig").build(b, aosp_dep);
     const window_fixture = @import("build/window_fixtures.zig").build(b, aosp_dep, java);
     const testkit_jars = testkit.jars.all();
-    const testkit_bundle = b.addWriteFiles();
+    const testkit_tree = b.addWriteFiles();
     inline for (.{
         .{ testkit.jars.testkit, "azk-test/testkit.jar" },
         .{ testkit.jars.tests, "azk-test/tests.jar" },
@@ -643,7 +643,7 @@ pub fn build(b: *std.Build) void {
         .{ testkit.jars.kotlin_test_junit, "azk-test/kotlin-test-junit.jar" },
     }) |entry| {
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(entry[0], .lib, entry[1]).step);
-        _ = testkit_bundle.addCopyFile(entry[0], std.fs.path.basename(entry[1]));
+        _ = testkit_tree.addCopyFile(entry[0], std.fs.path.basename(entry[1]));
     }
     b.installBinFile("tools/azk-test", "azk-test");
 
@@ -1206,7 +1206,9 @@ pub fn build(b: *std.Build) void {
     const launcher_artifacts = b.pathResolve(&.{"zig-out/test-results/stock-desktop-launcher"});
     desktop_launcher.addArgs(&.{ b.pathResolve(&.{ launcher_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
     desktop_launcher.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
-    desktop_launcher.addArgs(&.{ "--launcher", "--seat" });
+    desktop_launcher.addArgs(&.{ "--launcher", "--testkit" });
+    desktop_launcher.addDirectoryArg(testkit_tree.getDirectory());
+    desktop_launcher.addArg("--seat");
     desktop_launcher.addFileArg(surface_server.getEmittedBin());
     desktop_launcher.addArgs(&.{ "--output", launcher_artifacts, "--" });
     desktop_launcher.addFileArg(application_tree.path(b, "bin/androlinzberg"));
@@ -1246,7 +1248,7 @@ pub fn build(b: *std.Build) void {
     const webview_ui = @import("build/command.zig").create(b);
     setApplicationEnvironment(webview_ui, application_tree);
     webview_ui.setEnvironment("WLR_RENDERER", "gles2");
-    webview_ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_bundle.getDirectory());
+    webview_ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
     webview_ui.addArg("bash");
     webview_ui.addFileArg(b.path("tools/shot.sh"));
     webview_ui.addArg("zig-out/test-results/webview/screenshot.png");

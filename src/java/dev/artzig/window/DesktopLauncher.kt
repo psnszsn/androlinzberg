@@ -39,6 +39,8 @@ object DesktopLauncher {
         val listener = object : TaskStackListener() {
             override fun onTaskStackChanged() { changed.set(true) }
         }
+        val testControl = owner && System.getenv("AZK_TEST_SOCKET") != null
+        if (testControl) dev.artzig.testing.SessionTestControl.start()
         if (owner) tasks.registerTaskStackListener(listener)
         try {
             val result = tasks.startActivity(null, if (owner) "android" else packageName, null,
@@ -50,6 +52,7 @@ object DesktopLauncher {
             var observedTask = false
             val deadline = SystemClock.uptimeMillis() + 15_000
             while (true) {
+                if (testControl) dev.artzig.testing.SessionTestControl.tick()
                 if (changed.getAndSet(false)) {
                     val live = tasks.getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY)
                         .any { it.baseActivity != null && it.numActivities > 0 &&

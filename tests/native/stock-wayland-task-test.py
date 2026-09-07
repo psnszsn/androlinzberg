@@ -12,9 +12,11 @@ import re
 import select
 import subprocess
 import time
+import tempfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--launcher', action='store_true')
+parser.add_argument('--testkit', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
 parser.add_argument('command', nargs=argparse.REMAINDER)
@@ -25,7 +27,23 @@ resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 command = args.command[1:] if args.command[0] == '--' else args.command
 result = {'passed': False}
 desktop = os.environ.get('SHOT_COMPOSITOR') == 'labwc'
-with (out / 'app.log').open('wb') as log:
+with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as control_dir, (out / 'app.log').open('wb') as log:
+    environment = os.environ.copy()
+    if args.launcher:
+        assert args.testkit is not None
+        environment.update(AZK_TEST_SOCKET=str(Path(control_dir) / 'control.sock'),
+                           AZK_TESTKIT_ROOT=str(args.testkit.resolve()),
+                           AZK_TEST_RAW_LOG=str(out / 'app.log'),
+                           AZK_TEST_STEP_LOG=str(out / 'steps.jsonl'))
+        (out / 'steps.jsonl').write_text('')
+    def control(*arguments):
+        completed = subprocess.run([str(Path(__file__).resolve().parents[2] / 'tools/azk-test'), *arguments],
+                                   env=environment, capture_output=True, text=True, timeout=30)
+        if completed.returncode != 0:
+            (out / 'control-failure.txt').write_text(completed.stdout + completed.stderr)
+            raise RuntimeError(f'azk-test {arguments}: {completed.returncode}: {completed.stderr}')
+        return json.loads(completed.stdout)
+
     with subprocess.Popen([str(args.seat.resolve()), '--keyboard-seat'],
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log) as seat:
         if not select.select([seat.stdout], [], [], 10)[0]:
@@ -33,7 +51,7 @@ with (out / 'app.log').open('wb') as log:
             raise RuntimeError('virtual keyboard startup timed out')
         if seat.stdout.readline() != b'ready\n':
             raise RuntimeError('virtual keyboard startup failed')
-        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log)
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log, env=environment)
         try:
             def verify_pixels(marker, center, name):
                 deadline = time.monotonic() + 60
@@ -98,6 +116,36 @@ with (out / 'app.log').open('wb') as log:
                     time.sleep(0.05)
                 subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 result['launcher'] = {'pid': process.pid, 'app_pid': app_pid, 'size': [width, height]}
+                control('wait', 'ready')
+                control('wait', 'idle')
+                observed = control('observe', '--tree')['observation']
+                tree = observed['tree']
+                (out / 'a11y-before.json').write_text(json.dumps(observed, indent=2))
+                windows = tree['windows']
+                assert len(windows) == 1 and windows[0]['pid'] == app_pid
+                task = str(windows[0]['task_id'])
+                window = str(windows[0]['id'])
+                def label(value):
+                    return next(node['text'] for node in tree['nodes'] if (node.get('text') or '').lower() == value.lower())
+                control('step', 'click', '--task-id', task, '--window-id', window,
+                        '--text', label('Increment counter'), '--via', 'semantic', '--settle', 'idle')
+                control('wait', 'exists', '--task-id', task, '--text', 'Counter: 1')
+                control('step', 'click', '--task-id', task, '--text', label('Show attached dialog'),
+                        '--via', 'semantic', '--settle', 'idle')
+                dialog = control('observe', '--tree')['observation']['tree']
+                assert len(dialog['windows']) == 2
+                assert {str(w['task_id']) for w in dialog['windows']} == {task}
+                close = next(node for node in dialog['nodes'] if (node.get('text') or '').lower() == 'close dialog')
+                control('step', 'click', '--window-id', str(close['window_id']), '--text', close['text'],
+                        '--via', 'semantic', '--settle', 'idle')
+                after = control('observe', '--tree')['observation']
+                assert len(after['tree']['windows']) == 1
+                assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
+                (out / 'a11y.json').write_text(json.dumps(after, indent=2))
+                steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
+                assert len(steps) == 3 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
+                subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 seat.stdin.write(b'c')
                 seat.stdin.flush()
                 if process.wait(timeout=30) != 0:
@@ -119,6 +167,11 @@ with (out / 'app.log').open('wb') as log:
             result['passed'] = True
         except BaseException as error:
             result['error'] = str(error)
+            if args.launcher:
+                try:
+                    (out / 'failure.json').write_text(json.dumps(control('diagnose'), indent=2))
+                except Exception:
+                    pass
             subprocess.run(['grim', str(out / 'screenshot.png')], timeout=3, check=False)
             raise
         finally:

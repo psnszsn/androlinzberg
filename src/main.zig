@@ -265,7 +265,8 @@ pub fn main(init: std.process.Init) !void {
     try ensureSession(init, &binder, join_dir);
     if (apk != null and std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TASK_WINDOWS") orelse "", "1")) {
         if (frames_limit != null or fullscreen) return error.TaskWindowPresentationOptionsUnavailable;
-        if (init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null) return error.TaskWindowTestControlNotAttached;
+        const test_address = init.minimal.environ.getPosix("AZK_TEST_SOCKET");
+        if (test_address != null and binder == null) return error.TaskWindowTestControllerRequiresSessionOwner;
         const arena = init.arena.allocator();
         const path = if (std.fs.path.isAbsolute(apk.?)) apk.? else try std.fs.path.join(arena, &.{ init.minimal.environ.getPosix("PWD") orelse ".", apk.? });
         _ = setenv("ARTZIG_APK", try arena.dupeSentinel(u8, path, 0), 1);
@@ -277,6 +278,15 @@ pub fn main(init: std.process.Init) !void {
         var headless = try bootHeadlessApk(init, path);
         defer headless.rt.releaseProcessState();
         if (binder) |*session| try session.awaitSystemReady();
+        var desktop_control: ?test_control.Server = null;
+        defer {
+            @import("desktop_test_control.zig").deinit();
+            if (desktop_control) |*server| server.deinit();
+        }
+        if (test_address) |address| {
+            desktop_control = try test_control.Server.init(init.gpa, address);
+            try @import("desktop_test_control.zig").register(@ptrCast(headless.rt.env), &desktop_control.?);
+        }
         try runFrameworkMain(&headless.rt, "dev.artzig.window.DesktopLauncher", &.{if (binder != null) "owner" else "joined"});
         return;
     }

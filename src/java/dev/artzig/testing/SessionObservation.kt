@@ -154,7 +154,9 @@ class SessionObservation(private val registry: IInspectionRegistry) {
     fun runtimeDiagnostics(afterLog: Long, afterIssue: Long): String = registry.diagnostics(afterLog, afterIssue)
 
     fun perform(expectedRevision: Long, windowId: Long, viewId: Int, virtualId: Int, action: Int, text: String?): Boolean {
-        refresh()
+        // Resolve the published global identity, then let the app atomically
+        // refresh and validate its target on main. A separate preflight observe
+        // adds an IPC race and rejects harmless draws before every action.
         if (expectedRevision != revision) return false
         val window = windowIds.entries.singleOrNull { it.value == windowId }?.key ?: return false
         val peer = peers[window.process] ?: return false

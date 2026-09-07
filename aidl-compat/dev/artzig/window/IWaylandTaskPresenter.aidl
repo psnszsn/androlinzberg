@@ -13,4 +13,7 @@ interface IWaylandTaskPresenter {
     void configurationCommitted(int taskId, long generation, int left, int top,
         int width, int height, int outputWidth, int outputHeight);
     boolean setPointerCapture(int taskId, long generation, boolean enabled, int sequence);
+    /** Private test pacing: submitted/completed rounds over all mapped tasks.
+     * Completion means a Wayland frame callback, not a display scanout timestamp. */
+    long[] observeTestFrames(boolean requestFrame);
 }

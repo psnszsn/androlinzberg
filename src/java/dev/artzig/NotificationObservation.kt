@@ -25,6 +25,17 @@ internal object NotificationObservation {
         } catch (t: Throwable) {
             return JSONArray().put(JSONObject().put("error", t.toString())).toString()
         }
+        return encode(list)
+    }
+
+    /** System-authorized session observation includes notifications retained
+     * after their posting process has exited. NMS owns this state. */
+    fun sessionSnapshot(): String {
+        val service = checkNotNull(NotificationManager.getService())
+        return encode(service.getActiveNotifications("android")?.toList().orEmpty())
+    }
+
+    private fun encode(list: List<*>): String {
         val out = JSONArray()
         for (item in list) {
             val sbn = item as? StatusBarNotification ?: continue

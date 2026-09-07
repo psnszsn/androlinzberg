@@ -53,7 +53,8 @@ object SessionObservationSmoke {
             override fun perform(pid: Int, generation: Long, revision: Long, windowId: Long,
                 viewId: Int, virtualId: Int, action: Int, text: String?): Boolean {
                 val peer = checkNotNull(peers[pid])
-                check(peer.generation == generation && peer.revision == revision)
+                check(peer.generation == generation)
+                if (peer.revision != revision) return false
                 calls += listOf(pid.toLong(), generation, windowId, viewId.toLong())
                 peer.selected = true
                 peer.revision++

@@ -42,6 +42,8 @@ const Entry = struct {
     queue: *Queue,
     events: *Binder,
     bounds: [6]i32 = @splat(0),
+    has_content: bool = false,
+    test_frame_pending: bool = false,
     fn deinit(self: *Entry) void {
         self.window.deinit();
         self.queue.deinit();
@@ -67,6 +69,11 @@ const Server = struct {
     entries: [max_tasks]?Entry = @splat(null),
     owner: ?*Binder = null,
     owner_pid: i32 = 0,
+    inspection_enabled: bool = false,
+    submitted_round: i64 = 0,
+    completed_round: i64 = 0,
+    round_active: bool = false,
+    round_valid: bool = false,
     death: *Death,
     events_class: *Class,
     fn signal(self: *Server) void {
@@ -96,7 +103,46 @@ const Server = struct {
             request.done.set(self.io);
         }
     }
+    fn completeTestRound(self: *Server) void {
+        if (!self.round_active) return;
+        for (self.entries) |slot| if (slot) |entry| {
+            if (entry.test_frame_pending) return;
+        };
+        self.round_active = false;
+        if (self.round_valid) self.completed_round = self.submitted_round;
+    }
+    fn observeTestFrames(self: *Server, request: *Request) !i32 {
+        if (!self.inspection_enabled) return -1;
+        const requested = try readInt(request.input);
+        if (requested != 0 and requested != 1) return error.InvalidBoolean;
+        try end(request.input);
+        self.completeTestRound();
+        if (requested == 1 and !self.round_active) arm: {
+            var count: usize = 0;
+            for (self.entries) |slot| if (slot) |entry| {
+                if (!entry.has_content) break :arm;
+                count += 1;
+            };
+            if (count == 0) break :arm;
+            self.submitted_round += 1;
+            self.round_active = true;
+            self.round_valid = true;
+            for (&self.entries) |*slot| if (slot.*) |*entry| {
+                entry.test_frame_pending = true;
+                try entry.window.requestVsync();
+                try entry.window.present();
+            };
+        }
+        try ok(AParcel_writeInt32(request.output, 0)); // Status::ok
+        try ok(AParcel_writeInt32(request.output, 2)); // long[] length
+        try ok(AParcel_writeInt64(request.output, self.submitted_round));
+        try ok(AParcel_writeInt64(request.output, self.completed_round));
+        return 0;
+    }
     fn handle(self: *Server, request: *Request) !i32 {
+        // This read/test-pacing API is available to the system controller; only
+        // the system-server owner may mutate task identities and geometry.
+        if (request.code == 6) return self.observeTestFrames(request);
         if (self.owner_pid != 0 and self.owner_pid != request.pid) return -1;
         const input = request.input;
         const output = request.output;
@@ -143,12 +189,16 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 1)); // non-null Surface
                 try ok(queue.writeSurface(output));
                 try ok(AParcel_writeInt32Array(output, &.{ window.width, window.height }, 2));
+                // Membership changes invalidate an in-flight round. Remaining
+                // callbacks still drain, but cannot acknowledge the new topology.
+                self.round_valid = false;
                 slot.* = .{ .key = key, .window = window, .queue = queue, .events = callback };
             },
             2 => {
                 try end(input);
                 for (&self.entries) |*slot| if (slot.*) |*entry| {
                     if (std.meta.eql(entry.key, key)) {
+                        self.round_valid = false;
                         entry.deinit();
                         slot.* = null;
                         break;
@@ -219,7 +269,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 5) return -38;
+    if (code < 1 or code > 6) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -340,6 +390,8 @@ fn run(init: std.process.Init) !void {
     const death = AIBinder_DeathRecipient_new(onDeath);
     defer AIBinder_DeathRecipient_delete(death);
     server = .{ .gpa = init.gpa, .io = io, .session = session, .wake = wake, .death = death, .events_class = AIBinder_Class_define("dev.artzig.window.IWaylandTaskEvents", null, null, null) };
+    server.inspection_enabled = init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null or
+        std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1");
     const class = AIBinder_Class_define("dev.artzig.window.IWaylandTaskPresenter", null, null, transact);
     const binder = AIBinder_new(class, null);
     defer AIBinder_decStrong(binder);
@@ -376,13 +428,16 @@ fn run(init: std.process.Init) !void {
         try session.dispatch(files[0..count], ready[0..count], -1);
         // Consume existing windows before requests can destroy/reuse a slot.
         for (entries[0 .. count - 1], 1..) |entry, index| {
-            if (ready[index]) _ = try entry.queue.presentNotified(entry.window);
+            if (ready[index] and try entry.queue.presentNotified(entry.window) > 0) entry.has_content = true;
         }
         for (session.ordered_events.?.take()) |item| {
             const entry = for (entries[0 .. count - 1]) |candidate| {
                 if (candidate.window == item.window) break candidate;
             } else continue;
             switch (item.event) {
+                .frame_done => {
+                    entry.test_frame_pending = false;
+                },
                 .configure => |size| try send(entry, 1, .{ size.width, size.height }),
                 .close => try send(entry, 2, .{}),
                 .keyboard_modifiers => |meta| try send(entry, 11, .{ meta.effective, meta.persistent }),
@@ -404,6 +459,7 @@ fn run(init: std.process.Init) !void {
                 else => {},
             }
         }
+        server.completeTestRound();
         if (ready[0]) server.drain(!disconnected.load(.acquire));
     }
 }
