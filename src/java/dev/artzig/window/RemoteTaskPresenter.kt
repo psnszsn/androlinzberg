@@ -11,6 +11,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val taskForToken: (android.os.IBinder) -> Int?,
     acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
+    @Volatile private var queuedTestInput = 0L
+    fun testInputQueued(sequence: Long): Boolean = sequence > 0 && queuedTestInput >= sequence
     private val capture = WaylandPointerCapture(object : WaylandPointerCapture.Host {
         override fun task(token: android.os.IBinder) = taskForToken(token)?.let { windows[it]?.task }
         override fun request(task: TaskGeometry.Task, enabled: Boolean, sequence: Int): Boolean {
@@ -70,6 +72,11 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             deliver(taskId, generation) { capture.changed(it.task, enabled, sequence) }
         override fun relativePointer(taskId: Int, generation: Long, dx: Float, dy: Float) =
             deliver(taskId, generation) { it.seat.relativePointer(dx, dy) }
+        override fun testInputBarrier(taskId: Int, generation: Long, sequence: Long) =
+            deliver(taskId, generation) {
+                check(sequence > queuedTestInput) { "Test input sequence rewound" }
+                queuedTestInput = sequence
+            }
         override fun modifiers(taskId: Int, generation: Long, metaState: Int, persistentMetaState: Int) =
             deliver(taskId, generation) { input.modifiers(metaState, persistentMetaState) }
         override fun keyboardLayout(taskId: Int, generation: Long, layoutGeneration: Int, characters: IntArray, symbols: IntArray) =

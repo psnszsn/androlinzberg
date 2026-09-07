@@ -47,6 +47,9 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
     }
     fun displayRemoved(displayId: Int) = nativeDisplayRemoved(handle, displayId)
     fun removeInputChannel(token: IBinder) = nativeRemoveInputChannel(handle, token)
+    /** Pinned dispatcher wait: bounded to 100 ms, including pending channel acknowledgements. */
+    fun waitForIdle(): Boolean = nativeWaitForIdle(handle)
+    private external fun nativeWaitForIdle(handle: Long): Boolean
     fun isPointerInWindow(token: IBinder, displayId: Int, deviceId: Int, pointerId: Int): Boolean =
         nativeIsPointerInWindow(handle, token, displayId, deviceId, pointerId)
     fun setFocusedApplication(displayId: Int, application: InputApplicationHandle?) =

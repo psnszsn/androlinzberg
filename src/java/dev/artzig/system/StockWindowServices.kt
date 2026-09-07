@@ -43,7 +43,9 @@ internal class StockWindowServices private constructor() {
     private lateinit var tasks: ActivityTaskManagerService
     private lateinit var windows: WindowManagerService
     private lateinit var input: HostInputManagerBridge
-    private var shell: dev.artzig.window.SessionTaskShell.Controller? = null
+    @Volatile private var shell: dev.artzig.window.SessionTaskShell.Controller? = null
+
+    fun testInputIdle(sequence: Long): Boolean = shell?.testInputQueued(sequence) == true && input.waitForIdle()
 
     fun attachContext(value: Context) { context.bind(value) }
 

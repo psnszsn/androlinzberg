@@ -473,6 +473,10 @@ static jboolean pointerInWindow(JNIEnv *env, jclass, jlong handle, jobject token
   return owner && owner->dispatcher.isPointerInWindow(ibinderForJavaObject(env, token),
       ui::LogicalDisplayId{display}, device, pointer);
 }
+static jboolean waitForIdle(JNIEnv *env, jclass, jlong handle) {
+  auto owner = get(env, handle);
+  return owner && owner->dispatcher.waitForIdle();
+}
 static void focusedApplication(JNIEnv *env, jclass, jlong handle, jint display,
                                jobject app) {
   auto owner = get(env, handle);
@@ -748,6 +752,7 @@ int registerNatives(JNIEnv *env) {
        reinterpret_cast<void *>(displayRemoved)},
       {"nativeRemoveInputChannel", "(JLandroid/os/IBinder;)V",
        reinterpret_cast<void *>(removeChannel)},
+      {"nativeWaitForIdle", "(J)Z", reinterpret_cast<void *>(waitForIdle)},
       {"nativeIsPointerInWindow", "(JLandroid/os/IBinder;III)Z",
        reinterpret_cast<void *>(pointerInWindow)},
       {"nativeSetFocusedApplication",

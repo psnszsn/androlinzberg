@@ -228,7 +228,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService("hosted_installer", HostedInstallerService(packageManager, activityManager))
         if (dev.artzig.testing.ProcessInspection.enabled) {
             android.os.ServiceManager.addService(dev.artzig.testing.ProcessInspection.SERVICE,
-                HostedInspectionRegistry(activityManager) { token, uid, pid ->
+                HostedInspectionRegistry(activityManager, { sequence -> stockWindows?.testInputIdle(sequence) == true }) { token, uid, pid ->
                     stockWindows?.taskForObservedWindow(token, uid, pid)
                 })
         }

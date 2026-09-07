@@ -187,7 +187,11 @@ object HostInputDispatcherSmoke {
                     0, 0, 7, 28, 0, InputDevice.SOURCE_KEYBOARD)
                 dispatcher.dispatchDesktopEvent(event)
             }
+            // The receiver looper has not consumed these events yet. A frame
+            // or shell callback cannot acknowledge unfinished channel delivery.
+            check(!dispatcher.waitForIdle()) { "Dispatcher claimed idle with unacknowledged keys" }
             await("focused key delivery") { "key:0:1:66" in observed }
+            await("input channel acknowledgements") { dispatcher.waitForIdle() }
             check("queue:0" in observed && "dispatch:0" in observed && "close:reentrant-rejected" in observed)
             // The filter owns its input copy and may reinject asynchronously. A detached
             // host must stop injecting before uninstall is delivered to the old filter.

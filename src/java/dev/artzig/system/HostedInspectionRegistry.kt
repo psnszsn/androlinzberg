@@ -14,6 +14,7 @@ import org.json.JSONObject
  * holds its registry lock or WMS lock while calling into an application. */
 class HostedInspectionRegistry(
     private val activityManager: HostedActivityManagerService,
+    private val inputSettled: (Long) -> Boolean = { false },
     private val windowTask: (IBinder, Int, Int) -> Int?,
 ) : IInspectionRegistry.Stub() {
     private class Entry(val process: HostedActivityManagerService.AttachedProcess,
@@ -23,6 +24,14 @@ class HostedInspectionRegistry(
     private var nextGeneration = 1L
     private val journal = SessionJournal()
     private val systemSource = SessionJournal.Source(Process.myPid(), 0, Process.SYSTEM_UID, "system_server")
+
+    override fun inputIdle(sequence: Long): Boolean {
+        enforceSystem()
+        require(sequence > 0)
+        // Binder worker waits outside registry/WM locks; the serial shell and
+        // app loopers must remain free to finish the preceding input callbacks.
+        return inputSettled(sequence)
+    }
 
     private fun source(entry: Entry) = SessionJournal.Source(entry.process.pid, entry.generation,
         entry.process.uid, entry.process.processName)

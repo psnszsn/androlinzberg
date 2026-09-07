@@ -11,4 +11,5 @@ interface IInspectionRegistry {
     boolean perform(int pid, long generation, long revision, long windowId, int viewId, int virtualId, int action, @nullable String text);
     String diagnostics(long afterLog, long afterIssue);
     int validateInputTarget(int pid, long generation, long revision, long windowId);
+    boolean inputIdle(long sequence);
 }

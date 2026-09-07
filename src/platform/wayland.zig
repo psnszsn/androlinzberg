@@ -1906,7 +1906,9 @@ pub const Window = struct {
     fn verifyTestPointer(self: *Window, local: [2]u32) !void {
         // Roundtrip only the motion. Inspect the compositor's actual hit target
         // and surface coordinates before emitting any button edge.
+        const size = [2]i32{ self.width, self.height };
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (size[0] != self.width or size[1] != self.height) return error.InputPlacementChanged;
         if (self.session.pointer_focus != self) return error.InputTargetOccluded;
         if (@abs(self.pointer_x - @as(f64, @floatFromInt(local[0]))) > 1 or
             @abs(self.pointer_y - @as(f64, @floatFromInt(local[1]))) > 1) return error.InputPlacementChanged;

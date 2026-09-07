@@ -18,7 +18,8 @@ interface IWaylandTaskPresenter {
     long[] observeTestFrames(boolean requestFrame);
     /** Private harness geometry: generation, six committed bounds, actual size, fullscreen. */
     long[] testWindow(int taskId);
-    boolean injectTestInput(int taskId, long generation, in int[] geometry,
+    /** Positive ordered input sequence; zero is rejection, negative is unknown completion. */
+    long injectTestInput(int taskId, long generation, in int[] geometry,
         int kind, in int[] points, String text);
     boolean setPointerIcon(int taskId, long generation, int type);
 }

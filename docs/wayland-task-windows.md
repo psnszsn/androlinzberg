@@ -53,11 +53,31 @@ IME service returns the stock no-bound-method result for software keyboard
 visibility requests. XKB terminal control characters no longer become editable
 text: Backspace/Delete/Escape retain editing identities and Enter maps to newline.
 
-This checkpoint does not complete input or IME support. Input acknowledgement
-before test idle, cross-task focus acknowledgement, full seat/device publication,
+This checkpoint does not complete input or IME support. Cross-task focus
+acknowledgement, full seat/device publication,
 custom cursor bitmaps, text-input composition and the remaining M9–M11 work are
 still pending. The no-software-IME branch is the keyboard-only fallback, not the
 future compositor text-input bridge.
+
+Regressions 181–182 add an ordered test-input barrier: a compositor roundtrip
+precedes a sequence callback behind the seat events on their shared Binder
+endpoint. The shell records the sequence after enqueuing those events. The
+controller then uses stock InputDispatcher.waitForIdle outside WM/registry locks
+before observing the app and applying the existing stable-tree/frame criteria.
+This waits for processing and channel acknowledgements; it does not claim that
+every physical event must be accepted by Android policy. Expected UI state remains
+part of the test. A failed input roundtrip reports unknown completion rather than
+promising that nothing was sent.
+
+Regression 182 passes the dispatcher gate with deliberately unacknowledged keys,
+then successful idle after receiver completion. Its seven-step desktop gate
+checks counter/editor contents immediately after settling, without a later wait
+masking delayed input. Native checks pass. Logs:
+`/tmp/wayland-input-barrier-181.log` and
+`/tmp/wayland-input-completion-182.log`; dispatcher evidence:
+`zig-out/test-results/task-output-jvm/run/client.log`.
+Regression 183 passes the full JVM/native and all 15 APK tests (47 steps, zero
+runtime issues): `/tmp/wayland-input-completion-regressions-183.log`.
 
 ## Pointer capture and accepted resize checkpoint (2026-09-07)
 

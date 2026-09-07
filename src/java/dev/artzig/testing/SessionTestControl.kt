@@ -9,15 +9,18 @@ import org.json.JSONObject
  * observes apps over Binder; it has no application ViewRootImpl of its own. */
 object SessionTestControl {
     private lateinit var observation: SessionObservation
+    private lateinit var registry: IInspectionRegistry
     private lateinit var presenter: IWaylandTaskPresenter
     private var nextPoll = 0L
     private var needFrames = true
+    private var pendingInput = 0L
     private data class SelectedInput(val target: SessionObservation.InputTarget, val generation: Long, val geometry: IntArray)
     private var selectedInput: SelectedInput? = null
 
     fun start() {
-        observation = SessionObservation(IInspectionRegistry.Stub.asInterface(
-            checkNotNull(ServiceManager.checkService(ProcessInspection.SERVICE))))
+        registry = IInspectionRegistry.Stub.asInterface(
+            checkNotNull(ServiceManager.checkService(ProcessInspection.SERVICE)))
+        observation = SessionObservation(registry)
         presenter = IWaylandTaskPresenter.Stub.asInterface(
             checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")))
     }
@@ -26,6 +29,7 @@ object SessionTestControl {
         val now = SystemClock.uptimeMillis()
         if (now < nextPoll) return
         nextPoll = now + 20
+        if (pendingInput > 0 && registry.inputIdle(pendingInput)) pendingInput = 0
         observation.refresh()
         val frames = presenter.observeTestFrames(needFrames)
         check(frames.size == 2 && frames[0] >= frames[1] && frames[1] >= 0)
@@ -45,8 +49,12 @@ object SessionTestControl {
     @JvmStatic fun injectInput(kind: Int, x1: Int, y1: Int, x2: Int, y2: Int, text: String): Boolean {
         val selected = selectedInput ?: return false
         if (!observation.validateInputTarget(selected.target)) return false
-        return presenter.injectTestInput(selected.target.taskId, selected.generation,
+        val sequence = presenter.injectTestInput(selected.target.taskId, selected.generation,
             selected.geometry, kind, intArrayOf(x1, y1, x2, y2), text)
+        check(sequence >= 0) { "Compositor input completion is unknown; do not retry this action" }
+        if (sequence == 0L) return false
+        pendingInput = sequence
+        return true
     }
 
     @JvmStatic fun inputFullscreen(): Boolean {
@@ -61,7 +69,7 @@ object SessionTestControl {
     @JvmStatic private external fun poll(frameSequence: Long, presentedFrameSequence: Long): Boolean
     @JvmStatic fun accessibilitySnapshot(): String = observation.snapshot()
     @JvmStatic fun accessibilityRevision(): Long = observation.revision()
-    @JvmStatic fun accessibilityIdle(): Boolean = observation.idle()
+    @JvmStatic fun accessibilityIdle(): Boolean = pendingInput == 0L && observation.idle()
     @JvmStatic fun accessibilityDiagnostics(afterRevision: Long): String = observation.diagnostics(afterRevision)
     @JvmStatic fun accessibilityPerform(revision: Long, windowId: Long, viewId: Int, virtualId: Int,
         action: Int, text: String?): Boolean = observation.perform(revision, windowId, viewId, virtualId, action, text)

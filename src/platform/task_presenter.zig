@@ -81,6 +81,7 @@ const Server = struct {
     round_active: bool = false,
     round_valid: bool = false,
     test_placement: ?TestPlacement = null,
+    test_input_sequence: i64 = 0,
     death: *Death,
     events_class: *Class,
     fn signal(self: *Server) void {
@@ -108,6 +109,37 @@ const Server = struct {
                 break :status -22;
             } else -32;
             request.done.set(self.io);
+        }
+    }
+    fn dispatchEvents(self: *Server) !void {
+        for (self.session.ordered_events.?.take()) |item| {
+            const entry = for (&self.entries) |*slot| {
+                if (slot.*) |*candidate| if (candidate.window == item.window) break candidate;
+            } else continue;
+            switch (item.event) {
+                .frame_done => {
+                    entry.test_frame_pending = false;
+                },
+                .configure => |size| try send(entry, 1, .{ size.width, size.height }),
+                .close => try send(entry, 2, .{}),
+                .keyboard_modifiers => |meta| try send(entry, 11, .{ meta.effective, meta.persistent }),
+                .keyboard_layout => |layout| try sendLayout(entry, layout),
+                .keyboard_focus => |focused| try sendFocus(entry, focused),
+                .keyboard_reset => try send(entry, 3, .{ false, @as([]const i32, &.{}) }),
+                .pointer_motion => |p| try send(entry, 4, .{ 0, 0, false, p.x, p.y }),
+                .pointer_enter => |p| try send(entry, 4, .{ 1, 0, false, p.x, p.y }),
+                .pointer_leave => |p| try send(entry, 4, .{ 2, 0, false, p.x, p.y }),
+                .pointer_button => |p| try send(entry, 4, .{ 3, p.button, p.pressed, p.x, p.y }),
+                .pointer_cancel => try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 }),
+                .pointer_capture_changed => |capture| try send(entry, 12, .{ capture.enabled, capture.sequence }),
+                .pointer_relative => |motion| try send(entry, 13, .{ motion.dx, motion.dy }),
+                .pointer_axis => |axis| try send(entry, 5, .{ axis.x, axis.y, axis.horizontal, axis.vertical }),
+                .key => |key| try send(entry, 6, .{ key.keycode, key.pressed, key.repeatable }),
+                .touch => |touch| try send(entry, 7, .{ @backingInt(touch.action), touch.id, touch.x, touch.y, touch.major, touch.minor, touch.orientation }),
+                .touch_cancel => try send(entry, 8, .{}),
+                .keyboard_repeat_configuration => |configuration| try send(entry, 9, .{ configuration.rate, configuration.delay_ms }),
+                else => {},
+            }
         }
     }
     fn completeTestRound(self: *Server) void {
@@ -164,7 +196,7 @@ const Server = struct {
         }
         return 0;
     }
-    fn injectTestInput(self: *Server, request: *Request) !bool {
+    fn injectTestInput(self: *Server, request: *Request) !i64 {
         const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
         var geometry: [8]i32 = undefined;
         if (try readInt(request.input) != geometry.len) return error.InvalidGeometry;
@@ -176,14 +208,14 @@ const Server = struct {
         var text: Text = .{};
         try text.read(request.input);
         try end(request.input);
-        const entry = self.find(key) orelse return false;
-        if (!entry.matchesInputGeometry(geometry)) return false;
+        const entry = self.find(key) orelse return 0;
+        if (!entry.matchesInputGeometry(geometry)) return 0;
         try entry.window.prepareTestInput();
         // Seat roundtrips can receive a configure; reject its old geometry too.
-        if (!entry.matchesInputGeometry(geometry)) return false;
+        if (!entry.matchesInputGeometry(geometry)) return 0;
         switch (kind) {
             0, 1 => {
-                const placement = self.test_placement orelse return false;
+                const placement = self.test_placement orelse return 0;
                 const from = try placement.point(entry.bounds[0..4].*, .{ entry.window.width, entry.window.height }, points[0], points[1]);
                 const extent = [2]u32{ @intCast(placement.output_width), @intCast(placement.output_height) };
                 const local = [2]u32{ from[0] - @as(u32, @intCast(placement.left)), from[1] - @as(u32, @intCast(placement.top)) };
@@ -193,12 +225,19 @@ const Server = struct {
                 }
             },
             2, 3 => {
-                if (self.session.keyboard_focus != entry.window) return false;
+                if (self.session.keyboard_focus != entry.window) return 0;
                 if (kind == 2) try entry.window.testType(text.slice()) else try entry.window.testKey(text.slice());
             },
-            else => return false,
+            else => return 0,
         }
-        return true;
+        // Drain the compositor's events before sending the barrier on the same
+        // ordered Binder callback used by the entire seat. Shell receipt means
+        // preceding events have reached InputDispatcher, not that the app drew.
+        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        try self.dispatchEvents();
+        self.test_input_sequence = try std.math.add(i64, self.test_input_sequence, 1);
+        try send(entry, 14, .{self.test_input_sequence});
+        return self.test_input_sequence;
     }
     fn handle(self: *Server, request: *Request) !i32 {
         // This read/test-pacing API is available to the system controller; only
@@ -208,13 +247,13 @@ const Server = struct {
         if (request.code == 8) {
             if (!self.inspection_enabled) return -1;
             const injected = self.injectTestInput(request) catch |failure| {
-                std.log.warn("test input rejected: {s}", .{@errorName(failure)});
+                std.log.warn("test input failed; completion unknown: {s}", .{@errorName(failure)});
                 try ok(AParcel_writeInt32(request.output, 0));
-                try ok(AParcel_writeInt32(request.output, 0));
+                try ok(AParcel_writeInt64(request.output, -1));
                 return 0;
             };
             try ok(AParcel_writeInt32(request.output, 0));
-            try ok(AParcel_writeInt32(request.output, @intFromBool(injected)));
+            try ok(AParcel_writeInt64(request.output, injected));
             return 0;
         }
         if (self.owner_pid != 0 and self.owner_pid != request.pid) return -1;
@@ -445,7 +484,10 @@ fn send(entry: *Entry, code: u32, values: anytype) !void {
     defer if (output) |parcel| AParcel_delete(parcel);
     inline for (values) |value| switch (@typeInfo(@TypeOf(value))) {
         .bool => try ok(AParcel_writeInt32(input.?, @intFromBool(value))),
-        .int, .comptime_int => try ok(AParcel_writeInt32(input.?, @intCast(value))),
+        .int, .comptime_int => if (@TypeOf(value) == i64)
+            try ok(AParcel_writeInt64(input.?, value))
+        else
+            try ok(AParcel_writeInt32(input.?, @intCast(value))),
         .float, .comptime_float => try ok(AParcel_writeFloat(input.?, @floatCast(value))),
         .pointer => |pointer| {
             if (pointer.size != .slice or pointer.child != i32) @compileError("Unsupported task callback array");
@@ -519,35 +561,7 @@ fn run(init: std.process.Init) !void {
         for (entries[0 .. count - 1], 1..) |entry, index| {
             if (ready[index] and try entry.queue.presentNotified(entry.window) > 0) entry.has_content = true;
         }
-        for (session.ordered_events.?.take()) |item| {
-            const entry = for (entries[0 .. count - 1]) |candidate| {
-                if (candidate.window == item.window) break candidate;
-            } else continue;
-            switch (item.event) {
-                .frame_done => {
-                    entry.test_frame_pending = false;
-                },
-                .configure => |size| try send(entry, 1, .{ size.width, size.height }),
-                .close => try send(entry, 2, .{}),
-                .keyboard_modifiers => |meta| try send(entry, 11, .{ meta.effective, meta.persistent }),
-                .keyboard_layout => |layout| try sendLayout(entry, layout),
-                .keyboard_focus => |focused| try sendFocus(entry, focused),
-                .keyboard_reset => try send(entry, 3, .{ false, @as([]const i32, &.{}) }),
-                .pointer_motion => |p| try send(entry, 4, .{ 0, 0, false, p.x, p.y }),
-                .pointer_enter => |p| try send(entry, 4, .{ 1, 0, false, p.x, p.y }),
-                .pointer_leave => |p| try send(entry, 4, .{ 2, 0, false, p.x, p.y }),
-                .pointer_button => |p| try send(entry, 4, .{ 3, p.button, p.pressed, p.x, p.y }),
-                .pointer_cancel => try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 }),
-                .pointer_capture_changed => |capture| try send(entry, 12, .{ capture.enabled, capture.sequence }),
-                .pointer_relative => |motion| try send(entry, 13, .{ motion.dx, motion.dy }),
-                .pointer_axis => |axis| try send(entry, 5, .{ axis.x, axis.y, axis.horizontal, axis.vertical }),
-                .key => |key| try send(entry, 6, .{ key.keycode, key.pressed, key.repeatable }),
-                .touch => |touch| try send(entry, 7, .{ @backingInt(touch.action), touch.id, touch.x, touch.y, touch.major, touch.minor, touch.orientation }),
-                .touch_cancel => try send(entry, 8, .{}),
-                .keyboard_repeat_configuration => |configuration| try send(entry, 9, .{ configuration.rate, configuration.delay_ms }),
-                else => {},
-            }
-        }
+        try server.dispatchEvents();
         server.completeTestRound();
         if (ready[0]) server.drain(!disconnected.load(.acquire));
     }

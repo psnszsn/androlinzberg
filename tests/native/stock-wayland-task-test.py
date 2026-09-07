@@ -135,6 +135,13 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 window = str(windows[0]['id'])
                 def label(value):
                     return next(node['text'] for node in tree['nodes'] if (node.get('text') or '').lower() == value.lower())
+                def settled_text(value, description=None):
+                    # Observe immediately: a subsequent wait would conceal a
+                    # step that settled before its input reached the app.
+                    current = control('observe', '--tree')['observation']['tree']
+                    assert any(node.get('text') == value and str(node.get('task_id')) == task
+                               and (description is None or node.get('content_description') == description)
+                               for node in current['nodes']), (value, current)
                 control('step', 'click', '--task-id', task, '--window-id', window,
                         '--text', label('Increment counter'), '--via', 'semantic', '--settle', 'idle')
                 control('wait', 'exists', '--task-id', task, '--text', 'Counter: 1')
@@ -148,14 +155,15 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         '--via', 'semantic', '--settle', 'idle')
                 control('step', 'click', '--task-id', task, '--text', label('Increment counter'),
                         '--via', 'wayland', '--settle', 'idle')
-                control('wait', 'exists', '--task-id', task, '--text', 'Counter: 2')
+                settled_text('Counter: 2')
                 control('step', 'click', '--task-id', task, '--description', 'Fixture editor',
                         '--via', 'wayland', '--settle', 'idle')
                 control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'abc',
                         '--via', 'wayland', '--settle', 'idle')
+                settled_text('abc', 'Fixture editor')
                 control('step', 'key', '--task-id', task, '--description', 'Fixture editor', 'Backspace',
                         '--via', 'wayland', '--settle', 'idle')
-                control('wait', 'exists', '--task-id', task, '--description', 'Fixture editor', '--text', 'ab')
+                settled_text('ab', 'Fixture editor')
                 after = control('observe', '--tree')['observation']
                 assert len(after['tree']['windows']) == 1
                 assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
