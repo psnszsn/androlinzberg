@@ -130,6 +130,7 @@ platform/packages/modules/Uwb
 platform/packages/modules/Wifi
 platform/packages/modules/common
 platform/packages/modules/vndk
+platform/packages/providers/DownloadProvider
 platform/packages/providers/MediaProvider
 platform/packages/services/Telecomm
 platform/prebuilts/build-tools
