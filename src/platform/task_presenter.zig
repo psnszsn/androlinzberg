@@ -189,12 +189,16 @@ const Server = struct {
                     }
                 },
                 .frame_done => {
+                    entry.queue.requestPresentation();
                     // A covered task may receive no frame callbacks. Progress
                     // belongs to actual callbacks, not an all-window barrier.
                     if (entry.test_frame_pending) self.completed_round += 1;
                     entry.test_frame_pending = false;
                 },
                 .configure => |size| {
+                    // Release any paced frame from the obsolete geometry even
+                    // when no further producer notification or callback arrives.
+                    entry.queue.requestPresentation();
                     // Cancel before the Android bounds transaction, including
                     // active gestures whose physical release arrives later.
                     try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
@@ -207,6 +211,7 @@ const Server = struct {
                 },
                 .suspended_changed => |suspended| {
                     entry.suspended = suspended;
+                    entry.queue.requestPresentation();
                     if (suspended) {
                         try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
                         try send(entry, 8, .{});
@@ -457,6 +462,7 @@ const Server = struct {
                 const window = try self.session.createWindowWithAppId(width, height, title.slice(), app_id.slice(), false);
                 errdefer window.deinit();
                 const queue = try Queue.init(self.gpa, self.io, @intCast(window.width), @intCast(window.height));
+                queue.pace_frames = true;
                 errdefer queue.deinit();
                 // Hold the first callback independently of its window. Its
                 // process death terminates this owner generation and all queues.
@@ -540,6 +546,7 @@ const Server = struct {
                     return error.InvalidOutputConfiguration;
                 if (entry.pending_queue != null) return error.OutputConfigurationPending;
                 const queue = try Queue.init(self.gpa, self.io, @intCast(width), @intCast(height));
+                queue.pace_frames = true;
                 errdefer queue.deinit();
                 queue.expected_size = .{ @intCast(width), @intCast(height) };
                 try ok(AParcel_writeInt32(output, 0));
@@ -552,6 +559,7 @@ const Server = struct {
                 try send(entry, 8, .{});
                 try send(entry, 19, .{@as(i32, -1)});
                 entry.pending_queue = queue;
+                entry.queue.requestPresentation();
                 entry.pending_output_generation = output_generation;
                 entry.pending_configuration_generation = configuration_generation;
             },

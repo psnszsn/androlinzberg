@@ -494,8 +494,9 @@ pub fn build(b: *std.Build) void {
     surface_producer.root_module.linkLibrary(binder_ndk);
     const surface_test_step = b.step("surface-wayland-test", "Present stock Surface frames in Cage and verify resize, teardown and peer loss");
     const surface_fence_step = b.step("surface-fence-test", "Verify delayed GPU acquire fences without blocking Wayland dispatch");
+    const surface_pacing_step = b.step("surface-pacing-test", "Verify bounded frame submission paced by real compositor callbacks");
     var previous_surface_run: ?*std.Build.Step = null;
-    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout" }) |scenario| {
+    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout", "paced" }) |scenario| {
         const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
         const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
         if (std.mem.eql(u8, scenario, "pointer-capture")) {
@@ -518,7 +519,9 @@ pub fn build(b: *std.Build) void {
         surface_run.addArgs(&.{ "--output", output });
         surface_run.has_side_effects = true;
         surface_run.addArgs(&.{ "--scenario", scenario });
-        if (std.mem.eql(u8, scenario, "delayed-fence") or std.mem.startsWith(u8, scenario, "fence-")) {
+        if (std.mem.eql(u8, scenario, "paced")) {
+            surface_pacing_step.dependOn(&surface_run.step);
+        } else if (std.mem.eql(u8, scenario, "delayed-fence") or std.mem.startsWith(u8, scenario, "fence-")) {
             surface_fence_step.dependOn(&surface_run.step);
         } else {
             if (previous_surface_run) |previous| surface_run.step.dependOn(previous);

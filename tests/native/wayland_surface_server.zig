@@ -105,6 +105,9 @@ fn run(init: std.process.Init) !void {
     if (AServiceManager_addService(producer, "dev.artzig.surface.v1") != 0) return error.PublishFailed;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const unavailable = args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture-unavailable");
+    const paced = args.len > 1 and std.mem.eql(u8, args[1], "--paced");
+    queue.pace_frames = paced;
+    var callbacks: usize = 0;
     const capture = unavailable or (args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture"));
     var captured = false;
     const cursor = args.len > 1 and std.mem.eql(u8, args[1], "--cursor-animation");
@@ -123,12 +126,20 @@ fn run(init: std.process.Init) !void {
             var message: [100]u8 = undefined;
             try Io.File.stdout().writeStreamingAll(io, try std.fmt.bufPrint(&message, "owner responsive frames={d} pendingFence={d}\n", .{ frames, queue.waitingFrame() }));
         }
-        for (window.takeEvents()) |event| if (event == .close) return;
+        for (window.takeEvents()) |event| switch (event) {
+            .close => return,
+            .frame_done => {
+                callbacks += 1;
+                if (paced) queue.requestPresentation();
+            },
+            else => {},
+        };
         if (ready[0]) {
             if (stop.hold.load(.acquire)) {
                 continue;
             }
             frames += try queue.presentNotified(window);
+            if (paced) frames = @intCast(queue.presented_number);
             var buffer: [80]u8 = undefined;
             const line = try std.fmt.bufPrint(&buffer, "presented {d}\n", .{frames});
             try Io.File.stdout().writeStreamingAll(io, line);
@@ -143,6 +154,13 @@ fn run(init: std.process.Init) !void {
                 try Io.File.stdout().writeStreamingAll(io, "cursor animation ready\n");
             }
         }
+    }
+    if (paced) {
+        if (queue.presented_number != 12 or queue.deferred_frames == 0 or
+            queue.submitted_frames > callbacks + 1 or queue.submitted_frames + queue.coalesced_frames != 12)
+            return error.InvalidFramePacing;
+        var message: [150]u8 = undefined;
+        try Io.File.stdout().writeStreamingAll(io, try std.fmt.bufPrint(&message, "paced submissions={d} deferred={d} coalesced={d} callbacks={d}\n", .{ queue.submitted_frames, queue.deferred_frames, queue.coalesced_frames, callbacks }));
     }
 }
 

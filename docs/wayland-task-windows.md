@@ -22,6 +22,42 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Task frame pacing checkpoint (2026-09-08)
+
+Stock task output submission now follows each toplevel's compositor frame
+callbacks. The queue retains at most one completed pending frame within its
+existing two-lease budget and coalesces newer completed frames into that slot.
+Callbacks wake only the corresponding queue. A new configuration's first image
+can replace retained content without waiting on an older covered-window callback.
+Configuration retirement and suspension explicitly wake the queue to release
+pending images even when no further producer frame or callback arrives.
+
+Submission, frame callbacks and buffer release remain separate operations:
+callbacks permit another submission; only wl_buffer.release permits reuse of
+compositor-owned storage. Pinned SF's asynchronous virtual-display producer
+returns WOULD_BLOCK under pressure, allowing other outputs to keep composing.
+The worker also stops acquiring after any lease abandons its stock consumer,
+while continuing to drain returns until shutdown. This removes an intermittent
+attempt to acquire from an already abandoned consumer during teardown.
+
+`surface-pacing-test`, also included in `surface-wayland-test`, sends a burst of
+12 GPU frames without producer sleeps. It verifies deferred submissions, at most
+one submission per callback after the initial image, monotonic frame order,
+the final frame's pixels, and complete buffer cleanup. Regression 313 observes
+12 submissions and callbacks with 11 deferred attempts. It also passes the
+running SF stalled-output isolation gate and stock desktop/launcher interactions.
+Regression 314 passes all 7071 Wayland/native build steps and 28 tests, including
+suspension, legacy protocol fallback, tablet, mixed outputs and all 12 surface
+scenarios. Regression 316 verifies the final consumer-retirement fix against
+pacing, delayed fences, suspension and mixed outputs.
+
+The complete JVM suite passes in regressions 315 and 317. Regression 315's APK
+failure is the retained NewPipe live-feed parsing error before fullscreen setup,
+with no runtime issues; regression 317 passes the unchanged full 15-test APK suite.
+Artifacts: `/tmp/wayland-pacing-{314,315,317}-artifacts/`; logs:
+`/tmp/wayland-{311,313,314,315,316,317}.log`. Actual presentation-time feedback,
+remaining output policy and the other M8–M11 gates remain unfinished.
+
 ## Mixed-output task checkpoint (2026-09-08)
 
 `stock-task-output-test` now places two stock APK tasks on separate labwc

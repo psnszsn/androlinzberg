@@ -74,7 +74,8 @@ int main(int argc, char **argv) {
       }
     }
     std::cout << "queued " << frame + 1 << std::endl;
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    if (!(argc == 2 && std::string(argv[1]) == "--paced"))
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   assert(!pressure || observedPressure);
   std::cout << "READY_SCREENSHOT" << std::endl;

@@ -18,7 +18,7 @@ p.add_argument('--server', type=Path, required=True)
 p.add_argument('--producer', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout'], default='normal')
+p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout', 'paced'], default='normal')
 a = p.parse_args()
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -63,14 +63,15 @@ try:
                                       '--prop-area', env['AZK_PROP_AREA']))
     assert line(broker).startswith('ready')
     pressure = a.scenario == 'backpressure'
+    paced = a.scenario == 'paced'
     delayed = a.scenario == 'delayed-fence' or a.scenario.startswith('fence-')
     early = False
-    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') or a.scenario == 'cursor-animation' else ())
+    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') or a.scenario == 'cursor-animation' or paced else ())
     assert line(server) == 'ready'
     env.pop('AZK_BINDER_SYSTEM_COOKIE')
     env['AZK_BINDER_PACKAGE'] = 'dev.artzig.surface.producer'
     expect_death = a.scenario in ('consumer-crash', 'broker-loss')
-    producer = spawn(a.producer, 'producer', ('--expect-death',) if expect_death else ('--pressure',) if pressure else ('--' + a.scenario,) if delayed else ())
+    producer = spawn(a.producer, 'producer', ('--expect-death',) if expect_death else ('--pressure',) if pressure else ('--' + a.scenario,) if delayed or paced else ())
     presented = 0
     for frame in range(1, 13):
         value = line(producer)
@@ -187,6 +188,15 @@ try:
             assert producer.wait(timeout=5) == 0
         if a.scenario != 'consumer-crash':
             server.stdin.close()
+            if paced:
+                record = line(server)
+                while record == 'presented 12': record = line(server)
+                match = re.fullmatch(r'paced submissions=(\d+) deferred=(\d+) coalesced=(\d+) callbacks=(\d+)', record)
+                assert match, 'Missing pacing counters'
+                result['pacing'] = dict(zip(['submissions', 'deferred', 'coalesced', 'callbacks'], map(int, match.groups())))
+                counts = result['pacing']
+                assert counts['submissions'] + counts['coalesced'] == 12 and counts['deferred'] > 0
+                assert counts['submissions'] <= counts['callbacks'] + 1
             assert line(server) == 'released all buffers'
             assert server.wait(timeout=5) == 0
             result['live_buffers_after_shutdown'] = 0
@@ -195,10 +205,14 @@ try:
         assert broker.wait(timeout=5) == 0
     frames = re.findall(r'surface-frame number=(\d+) buffer=(\d+) width=(\d+) height=(\d+)',
                         (out / 'server.log').read_text())
-    expected_frames = 6 if early else 12
+    expected_frames = result['pacing']['submissions'] if paced else 6 if early else 12
     assert len(frames) == expected_frames, frames
-    assert [int(x[0]) for x in frames] == list(range(1, expected_frames + 1))
-    assert [tuple(map(int, x[2:])) for x in frames] == [(320, 240)] * 6 + ([(480, 360)] * 6 if not early else [])
+    numbers = [int(x[0]) for x in frames]
+    if paced:
+        assert numbers == sorted(set(numbers)) and numbers[-1] == 12
+    else:
+        assert numbers == list(range(1, expected_frames + 1))
+    assert [tuple(map(int, x[2:])) for x in frames] == [(320, 240) if n <= 6 else (480, 360) for n in numbers]
     result['frames'] = frames
     if delayed:
         result['gpu_device'] = re.search(r'GPU fence device: (.+)', (out / 'producer.log').read_text()).group(1)
