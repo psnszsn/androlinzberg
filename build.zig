@@ -1203,11 +1203,12 @@ pub fn build(b: *std.Build) void {
     suspension_compositor.addArg("--out-link");
     const suspension_labwc = suspension_compositor.addOutputChildArg("suspension-compositor", "labwc");
     suspension_compositor.run.setName("build pinned labwc suspension protocol fixture");
-    for ([_][]const u8{ "cage", "labwc", "labwc-suspension", "labwc-legacy", "labwc-tablet" }) |scenario| {
+    for ([_][]const u8{ "cage", "labwc", "labwc-suspension", "labwc-legacy", "labwc-tablet", "labwc-outputs" }) |scenario| {
         const legacy_shell = std.mem.eql(u8, scenario, "labwc-legacy");
+        const mixed_outputs = std.mem.eql(u8, scenario, "labwc-outputs");
         const tablet_fixture = std.mem.eql(u8, scenario, "labwc-tablet");
         const suspension_fixture = std.mem.eql(u8, scenario, "labwc-suspension") or tablet_fixture;
-        const compositor = if (legacy_shell or suspension_fixture) "labwc" else scenario;
+        const compositor = if (legacy_shell or suspension_fixture or mixed_outputs) "labwc" else scenario;
         const task_artifacts = b.pathResolve(&.{b.fmt("zig-out/test-results/stock-wayland-task-{s}", .{scenario})});
         const stock_task_wayland = @import("build/command.zig").create(b);
         setApplicationEnvironment(stock_task_wayland, application_tree);
@@ -1217,13 +1218,17 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
         stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", compositor);
         stock_task_wayland.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
+        if (mixed_outputs) {
+            stock_task_wayland.setEnvironment("WLR_HEADLESS_OUTPUTS", "2");
+            stock_task_wayland.setEnvironment("AZK_TEST_MIXED_OUTPUTS", "1");
+        }
         if (tablet_fixture) stock_task_wayland.setEnvironment("AZK_TEST_TABLET", "1");
         if (legacy_shell) stock_task_wayland.setEnvironment("AZK_TEST_XDG_SHELL_VERSION", "2");
         if (legacy_shell or suspension_fixture)
             stock_task_wayland.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
         stock_task_wayland.setEnvironment("AZK_TEST_SUSPENSION_EXPECTED", if (suspension_fixture) "1" else "0");
         if (std.mem.eql(u8, compositor, "labwc"))
-            stock_task_wayland.setEnvironment("SHOT_LABWC_CONFIG", b.pathResolve(&.{"testdata/wayland/task-desktop.xml"}));
+            stock_task_wayland.setEnvironment("SHOT_LABWC_CONFIG", b.pathResolve(&.{if (mixed_outputs) "testdata/wayland/task-outputs.xml" else "testdata/wayland/task-desktop.xml"}));
         stock_task_wayland.addFileArg(b.path("tools/shot.sh"));
         stock_task_wayland.addArgs(&.{ b.pathResolve(&.{ task_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
         stock_task_wayland.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
@@ -1239,7 +1244,7 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-task-presenter"));
         stock_task_wayland.run.has_side_effects = true;
         stock_task_wayland.run.setName("verify stock APK task pixels through session Wayland presenter");
-        b.step(if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
+        b.step(if (mixed_outputs) "stock-task-output-test" else if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
     }
     const desktop_launcher = @import("build/command.zig").create(b);

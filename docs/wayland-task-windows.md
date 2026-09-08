@@ -22,6 +22,34 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Mixed-output task checkpoint (2026-09-08)
+
+`stock-task-output-test` now places two stock APK tasks on separate labwc
+outputs, scales only the second monitor to 1.25, and removes that monitor.
+Screenshot checks verify each task's five color markers independently, including
+the 550×375 scaled buffer and its 440×300 logical presentation after evacuation.
+The private presenter snapshots prove stable task identity, synthetic geometry,
+shared density and the first task's output generation. Grouped activity launch,
+sibling removal and complete buffer teardown still pass after unplug.
+
+The compositor retains the second task's fractional preference after evacuation;
+the existing viewport correctly presents its retained 550×375 buffer at the
+surviving monitor's 440×300 logical size. The test accepts that protocol behavior
+and validates pixels instead of inventing a new scale hint. Screenshot placement
+coordinates stay inside the harness and never become Android global positions.
+
+An initial fixture used MoveTo without selecting the monitor. Pinned labwc's
+view_move_resize saves placement before its later output discovery, a race noted
+in that source. A layout change consequently moved the first task to the other
+monitor. The fixture now explicitly uses MoveToOutput before MoveTo; the sibling
+isolation assertion remains intact. Protocol trace: regression 308.
+
+Regression 309 passes the focused gate; its screenshots and state log are in
+`/tmp/wayland-output-309-artifacts/`. Regression 310 passes all 6991 build steps
+covering the new gate, existing Cage and desktop stock tasks, and graph audit.
+Logs: `/tmp/wayland-{307,308,309,310}.log`. Frame pacing and the remaining M8–M11
+gates remain unfinished.
+
 ## GPU fence checkpoint (2026-09-08)
 
 The surface worker now normalizes the pinned libsync `-ETIME` timeout to the

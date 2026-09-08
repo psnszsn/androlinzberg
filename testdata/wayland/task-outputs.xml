@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <keyboard><default /></keyboard>
+  <focus><followMouse>no</followMouse></focus>
+  <windowRules>
+    <windowRule identifier="dev.artzig.fixtures.windows" serverDecoration="no" />
+    <windowRule identifier="dev.artzig.fixtures.windows" title="Cyan task">
+      <action name="MoveToOutput" output="HEADLESS-1" />
+      <action name="ResizeTo" width="440" height="300" />
+      <action name="MoveTo" x="30" y="30" />
+    </windowRule>
+    <windowRule identifier="dev.artzig.fixtures.windows" title="Magenta task">
+      <action name="MoveToOutput" output="HEADLESS-2" />
+      <action name="ResizeTo" width="440" height="300" />
+      <action name="MoveTo" x="1780" y="100" />
+    </windowRule>
+  </windowRules>
+</labwc_config>

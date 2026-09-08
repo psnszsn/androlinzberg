@@ -29,10 +29,16 @@ resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 command = args.command[1:] if args.command[0] == '--' else args.command
 result = {'passed': False}
 desktop = os.environ.get('SHOT_COMPOSITOR') == 'labwc'
+mixed_outputs = os.environ.get('AZK_TEST_MIXED_OUTPUTS') == '1'
+second_output, second_scale = 'HEADLESS-2', 1
 with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as control_dir, (out / 'app.log').open('wb') as log:
     environment = os.environ.copy()
-    if desktop and not args.launcher:
+    if desktop and not args.launcher and not mixed_outputs:
         environment['AZK_TEST_DESKTOP_CONFIGURATIONS'] = '1'
+    if mixed_outputs:
+        subprocess.run(['wlr-randr', '--output', 'HEADLESS-1', '--pos', '0,0', '--scale', '1',
+                        '--output', 'HEADLESS-2', '--pos', '1280,0', '--scale', '1'],
+                       check=True, capture_output=True, timeout=5)
     if args.launcher:
         assert args.testkit is not None
         # Exercise the v1-only creation request against the real compositor.
@@ -68,6 +74,37 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             raise RuntimeError('virtual keyboard startup failed')
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log, env=environment)
         try:
+            def output_pixels(output_name, color, size):
+                # Discover placement only inside the compositor screenshot;
+                # these coordinates never enter Android task geometry.
+                ppm = subprocess.check_output(['grim', '-o', output_name, '-t', 'ppm', '-'], timeout=3)
+                magic, dimensions, maximum, data = ppm.split(b'\n', 3)
+                assert magic == b'P6' and maximum == b'255'
+                width, height = map(int, dimensions.split())
+                needle = bytes(color)
+                rows = []
+                for y in range(height):
+                    row = data[y * width * 3:(y + 1) * width * 3]
+                    left = row.find(needle)
+                    while left >= 0 and left % 3: left = row.find(needle, left + 1)
+                    right = row.rfind(needle)
+                    while right >= 0 and right % 3: right = row.rfind(needle, 0, right + 2)
+                    if left >= 0 and right >= left: rows.append((y, left // 3, right // 3))
+                if not rows: return None
+                left, top = min(r[1] for r in rows), rows[0][0]
+                w, h = max(r[2] for r in rows) - left + 1, rows[-1][0] - top + 1
+                if (w, h) != size: return None
+                inset = min(w, h) // 16
+                points = [(w // 2, h // 2), (inset, inset), (w - inset - 1, inset),
+                          (inset, h - inset - 1), (w - inset - 1, h - inset - 1)]
+                actual = [tuple(data[((top + y) * width + left + x) * 3:
+                                     ((top + y) * width + left + x) * 3 + 3]) for x, y in points]
+                expected = [color, (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
+                if not all(all(abs(a - b) <= 2 for a, b in zip(pixel, want))
+                           for pixel, want in zip(actual, expected)): return None
+                return dict(output=output_name, output_size=[width, height],
+                            compositor_bounds=[left, top, w, h], colors=actual)
+
             def verify_pixels(marker, center, name, fullscreen=False, scale=1):
                 deadline = time.monotonic() + 60
                 while marker not in (out / 'app.log').read_text(errors='replace'):
@@ -77,6 +114,28 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         raise RuntimeError(f'{marker} timeout')
                     time.sleep(0.05)
                 deadline = time.monotonic() + 15
+                if mixed_outputs:
+                    sibling = name in ('second-task', 'grouped-activity', 'mixed-scaled', 'mixed-unplugged')
+                    wanted = []
+                    # Evacuation placement belongs to the compositor and may
+                    # overlap the first task; verify it fully again after removal.
+                    if not sibling or second_output != 'HEADLESS-1':
+                        wanted.append(('HEADLESS-1', (0, 255, 255), (440, 300)))
+                    if sibling:
+                        wanted.append((second_output, center, (int(440 * second_scale), int(300 * second_scale))))
+                    while True:
+                        states = [output_pixels(*spec) for spec in wanted]
+                        if all(states): break
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError(f'{name} output pixels did not match {wanted}: {states}; exit={process.poll()}')
+                        time.sleep(.05)
+                    result[name] = states
+                    for state in states:
+                        subprocess.run(['grim', '-o', state['output'], str(out / f"{name}-{state['output']}.png")],
+                                       check=True, timeout=3)
+                    process.stdin.write(b'continue\n')
+                    process.stdin.flush()
+                    return
                 while True:
                     ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
                     magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
@@ -348,7 +407,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 text = (out / 'app.log').read_text(errors='replace')
             else:
                 verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
-                if desktop:
+                if desktop and not mixed_outputs:
                     physical_pointer('RESIZE_POINTER_PRESS_READY', b'b')
                     for marker, name, fullscreen in [
                             ('PENDING_FULLSCREEN_TASK_WINDOW_READY', 'pending-fullscreen', True),
@@ -385,6 +444,23 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                                           ('POINTER_DEVICE_RECREATE', b'p')]:
                     change_pointer(marker, operation)
                 verify_pixels('SECOND_TASK_WINDOW_READY', (255, 0, 255), 'second-task')
+                if mixed_outputs:
+                    for requested, marker, name, arguments in [
+                            ('MIXED_OUTPUT_SCALE_REQUESTED', 'MIXED_OUTPUT_SCALED_READY', 'mixed-scaled', ['--scale', '1.25']),
+                            ('MIXED_OUTPUT_UNPLUG_REQUESTED', 'MIXED_OUTPUT_UNPLUGGED_READY', 'mixed-unplugged', ['--off'])]:
+                        deadline = time.monotonic() + 15
+                        while requested not in (out / 'app.log').read_text(errors='replace'):
+                            if process.poll() is not None or time.monotonic() >= deadline:
+                                raise RuntimeError(f'{requested} timeout/exit: {process.poll()}')
+                            time.sleep(.02)
+                        subprocess.run(['wlr-randr', '--output', 'HEADLESS-2', *arguments],
+                                       check=True, capture_output=True, timeout=5)
+                        (out / f'{name}-outputs.json').write_bytes(
+                            subprocess.check_output(['wlr-randr', '--json'], timeout=5))
+                        second_output, second_scale = ('HEADLESS-2', 1.25) if name == 'mixed-scaled' else ('HEADLESS-1', 1)
+                        process.stdin.write(b'changed\n')
+                        process.stdin.flush()
+                        verify_pixels(marker, (255, 0, 255), name)
                 if environment.get('AZK_TEST_TABLET') == '1':
                     verify_tablet_pixels()
                 verify_pixels('GROUPED_ACTIVITY_WINDOW_READY', (255, 127, 0), 'grouped-activity')
@@ -398,6 +474,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 text = (out / 'app.log').read_text(errors='replace')
                 assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
                 assert 'Stock Wayland pointer: absence and compositor capability lifecycle passed' in text
+                if mixed_outputs:
+                    assert 'Stock task mixed outputs: scale and unplug preserve logical geometry, density, sibling output and pixels' in text
                 if environment.get('AZK_TEST_TABLET') == '1':
                     assert 'Stock Wayland tablet: pen, eraser, axes, task coordinates, buttons, pixels and removal passed' in text
             if args.launcher:

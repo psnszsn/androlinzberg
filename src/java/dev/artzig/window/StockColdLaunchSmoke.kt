@@ -477,6 +477,8 @@ object StockColdLaunchSmoke {
         }
         val second = live.single { it.taskId != task.taskId }
         pixels("SECOND_TASK_WINDOW_READY", second.taskId)
+        if (System.getenv("AZK_TEST_MIXED_OUTPUTS") == "1")
+            verifyMixedOutputs(task.taskId, second.taskId, commands, ::pixels)
         if (System.getenv("AZK_TEST_TABLET") == "1") verifyTablet(packageName, second.taskId, ::pixels)
         // The pre-presentation snapshot may still contain ActivityStarter's
         // provisional placement. Compare against the actual rendered geometry.
@@ -614,6 +616,75 @@ object StockColdLaunchSmoke {
         check(removed.none { it.getInt("device") == eraserId && it.getInt("action") == android.view.MotionEvent.ACTION_UP })
         check(tasks.focusedRootTaskInfo.taskId == focused) { "Tablet proximity changed keyboard focus" }
         println("Stock Wayland tablet: pen, eraser, axes, task coordinates, buttons, pixels and removal passed")
+    }
+
+    private fun verifyMixedOutputs(firstId: Int, secondId: Int, commands: java.io.BufferedReader,
+        pixels: (String, Int) -> Unit) {
+        val presenter = IWaylandTaskPresenter.Stub.asInterface(
+            android.os.ServiceManager.getService("dev.artzig.window.presenter"))
+        val tasks = ActivityTaskManager.getService()
+        val density = ActivityManager.getService().configuration.densityDpi
+        fun ready(id: Int, accepts: (LongArray) -> Boolean = { true }): LongArray {
+            val deadline = SystemClock.uptimeMillis() + 10_000
+            do {
+                val state = presenter.testWindow(id)
+                if (state.size == 16 && state[10] == state[11] && state[12] > 0 &&
+                    state[12] == state[13] && accepts(state)) return state
+                SystemClock.sleep(5)
+            } while (SystemClock.uptimeMillis() < deadline)
+            error("Mixed-output task $id did not present: ${presenter.testWindow(id).contentToString()}")
+        }
+        val first = ready(firstId)
+        val second = ready(secondId)
+        val resources = presenter.testResources()
+        fun checkGeometry(id: Int, initial: LongArray): LongArray {
+            val state = ready(id)
+            check(state.sliceArray(0..8).contentEquals(initial.sliceArray(0..8))) {
+                "Output change altered task identity or logical geometry: ${state.contentToString()}"
+            }
+            val task = tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY)
+                .single { it.taskId == id }
+            check(task.displayId == android.view.Display.DEFAULT_DISPLAY)
+            check(task.configuration.windowConfiguration.bounds == android.graphics.Rect(
+                state[1].toInt(), state[2].toInt(), (state[1] + state[3]).toInt(), (state[2] + state[4]).toInt()))
+            check(ActivityManager.getService().configuration.densityDpi == density) {
+                "A physical output changed shared Android density"
+            }
+            return state
+        }
+        fun request(marker: String) {
+            println(marker)
+            System.out.flush()
+            check(commands.readLine() == "changed")
+        }
+        request("MIXED_OUTPUT_SCALE_REQUESTED")
+        val scaled = ready(secondId) {
+            it[10] > second[10] && it[12] > second[12] &&
+                it[14] == (it[7] * 5 + 3) / 4 && it[15] == (it[8] * 5 + 3) / 4
+        }
+        checkGeometry(secondId, second)
+        check(checkGeometry(firstId, first).contentEquals(first)) {
+            "Scaling the second monitor reconfigured the first task"
+        }
+        pixels("MIXED_OUTPUT_SCALED_READY", secondId)
+        request("MIXED_OUTPUT_UNPLUG_REQUESTED")
+        // The runner waits for real pixels on the surviving output. A retained
+        // fractional preference is legal until the compositor sends a new one.
+        pixels("MIXED_OUTPUT_UNPLUGGED_READY", secondId)
+        val evacuated = checkGeometry(secondId, second)
+        check(evacuated[14] == second[14] && evacuated[15] == second[15] ||
+            evacuated[14] == scaled[14] && evacuated[15] == scaled[15])
+        check(checkGeometry(firstId, first).contentEquals(first)) {
+            "Unplugging the second monitor reconfigured the first task"
+        }
+        val after = presenter.testResources()
+        check(after.size == 5 && after[0] == 2L && after[1] in 2L..4L && after[2] <= 4L &&
+            after[3] <= resources[3] + 8L && after[4] <= resources[4] + 16L) {
+            "Mixed-output resources grew unexpectedly: ${resources.contentToString()} -> ${after.contentToString()}"
+        }
+        println("Stock task mixed outputs: scale and unplug preserve logical geometry, density, sibling output and pixels; " +
+            "initial=${second.contentToString()} scaled=${scaled.contentToString()} evacuated=${evacuated.contentToString()} " +
+            "resources=${after.contentToString()}")
     }
 
     private fun verifyDesktopConfigurations(taskId: Int, commands: java.io.BufferedReader,
