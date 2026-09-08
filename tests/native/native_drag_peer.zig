@@ -227,6 +227,7 @@ const Destination = struct {
     payload: ?*Queue.Clipboard.Payload = null,
     dropped: bool = false,
     finished: bool = false,
+    terminal: bool = false,
     failure: ?anyerror = null,
     fn event(context: *anyopaque, value: Queue.Clipboard.DragOffer.Event) void {
         const self: *Destination = @ptrCast(@alignCast(context));
@@ -240,7 +241,10 @@ const Destination = struct {
                 self.payload = payload.value;
             },
             .dropped => self.dropped = true,
-            .ended => |ended| self.finished = ended.consumed,
+            .ended => |ended| {
+                self.finished = ended.consumed;
+                self.terminal = true;
+            },
             .motion => {},
         }
     }
@@ -251,7 +255,10 @@ const Destination = struct {
 };
 
 pub fn destination(init: std.process.Init, args: []const [:0]const u8) !void {
-    if (args.len != 3) return error.ExpectedDestinationResultPath;
+    if (args.len != 4) return error.ExpectedDestinationResultPath;
+    const consumed = std.mem.eql(u8, args[3], "accept");
+    const cancel = std.mem.eql(u8, args[3], "cancel");
+    if (!consumed and !cancel and !std.mem.eql(u8, args[3], "reject")) return error.InvalidDestinationOutcome;
     var state: Destination = .{};
     defer if (state.payload) |payload| payload.destroy();
     defer {
@@ -266,12 +273,12 @@ pub fn destination(init: std.process.Init, args: []const [:0]const u8) !void {
         defer init.gpa.free(report);
         Io.Dir.cwd().writeFile(init.io, .{ .sub_path = args[2], .data = report }) catch {};
     }
-    receiveAndroid(init, &state, args[2]) catch |failure| {
+    receiveAndroid(init, &state, args[2], consumed, cancel) catch |failure| {
         state.failure = failure;
         return failure;
     };
 }
-fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8) !void {
+fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8, consumed: bool, cancel: bool) !void {
     const session = try Queue.Session.initWithOptions(init.gpa, init.io, .{ .clipboard = true });
     defer session.deinit();
     const window = try session.createWindowWithAppId(320, 480, "Native drag destination", "dev.artzig.drag-peer", false);
@@ -290,7 +297,7 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8)
     var accepted = false;
     var accepted_at: i64 = 0;
     var finished = false;
-    while (!state.finished) {
+    while (!state.terminal) {
         const now = Io.Clock.awake.now(init.io).toMilliseconds();
         if (now - begin > 9000) return error.AndroidSourceTimedOut;
         var ready: [0]bool = .{};
@@ -303,7 +310,7 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8)
             moved = true;
         }
         if (state.payload != null and !accepted) {
-            if (!clipboard.native_drag.?.accept(state.token, true)) return error.AndroidOfferCannotAccept;
+            if (!clipboard.native_drag.?.accept(state.token, consumed or cancel)) return error.AndroidOfferCannotAccept;
             accepted = true;
             accepted_at = now;
         }
@@ -317,6 +324,7 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8)
             const screenshot = try std.fmt.allocPrint(init.gpa, "{s}.ppm", .{path});
             defer init.gpa.free(screenshot);
             try Io.Dir.cwd().writeFile(init.io, .{ .sub_path = screenshot, .data = snapshot.stdout });
+            if (cancel) try window.testPointerAtOutput(.{ 1150, 600 }, .{ 1280, 720 }, null, false);
             try Queue.Window.releaseTestPointer(session);
             released = true;
         }
@@ -325,7 +333,7 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8)
             finished = true;
         }
     }
-    if (!moved or !released or !finished or state.payload == null) return error.AndroidSourceWasNotDelivered;
+    if (!moved or !released or finished != consumed or state.finished != consumed or state.payload == null) return error.AndroidSourceWasNotDelivered;
     // Flush finish before disconnecting this destination client.
     if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 }

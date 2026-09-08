@@ -46,6 +46,11 @@ JVM suite and all 16 APK integration tests with 48 clean steps. Artifacts:
 (four clean steps), both drag-icon protocol versions, all three GPU-fence gates
 and C++/graph audits; artifacts: `/tmp/wayland-outgoing-467-artifacts/`.
 
+Regression 468 expands the drag gate to 17 clean steps: a native recipient
+refuses the offer, then a subsequent accepted offer is left before DROP. Both
+produce Android source cancellation, and a fresh file drag still succeeds.
+Artifacts: `/tmp/wayland-outgoing-468-artifacts/stock-drag/`.
+
 Cross-task desktop placement, the complete capability/death/timeout matrix,
 fallback shadow presentation, and the remaining M8–M11 acceptance and production
 cutover work remain unfinished.

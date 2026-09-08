@@ -458,14 +458,15 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     native_drag('rejected', 'text/plain;charset=utf-8', 'Rejected native drag', 'Drag rejected', False)
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
                     native_drag('cancelled', 'text/plain;charset=utf-8', 'Cancelled native drag', 'Drag cancelled', False, True)
-                    def export_drag(name, expected):
+                    def export_drag(name, expected, outcome="accept"):
                         report = out / ('android-drag-' + name + '.json')
                         report.unlink(missing_ok=True)
                         control('step', 'exec', '--wait', 'exists', '--task-id', task,
-                                '--text', 'Drag exported', '--', str(args.seat), '--native-drag-destination', str(report))
+                                '--text', 'Drag exported' if outcome == 'accept' else 'Drag cancelled', '--',
+                                str(args.seat), '--native-drag-destination', str(report), outcome)
                         state = json.loads(report.read_text())
-                        assert state['failure'] is None and state['dropped'] and state['finished'], state
-                        if name == 'text': assert state['text'] == expected, state
+                        assert state['failure'] is None and state['dropped'] == (outcome == 'accept') and state['finished'] == (outcome == 'accept'), state
+                        if name != 'file': assert state['text'] == expected, state
                         else:
                             from urllib.parse import urlparse, unquote
                             paths = [Path(unquote(urlparse(uri).path)) for uri in state['uris'].splitlines()]
@@ -486,6 +487,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         assert sum(all(channel > 120 for channel in pixel(x, y))
                                    for y in range(230, 248) for x in range(774, 824)) > 20, 'Stock DRAG text is absent'
                     export_drag('text', 'Android drag 😀 café')
+                    export_drag('rejected', 'Android drag 😀 café', 'reject')
+                    export_drag('cancelled', 'Android drag 😀 café', 'cancel')
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
                     export_drag('file', 'Android file 😀 café')
                     for _ in range(16):
@@ -498,7 +501,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                         time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 15 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 17 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']

@@ -46,7 +46,7 @@ class DragFixtureActivity : Activity() {
             }
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 if (event.actionMasked == MotionEvent.ACTION_DOWN && event.x < width / 2f) {
-                    events.clear(); received = null
+                    events.clear(); received = null; status.text = "Drag started"
                     val data = if (files) ClipData.newUri(contentResolver, "Drag file", ClipboardFileProvider.URI)
                         else ClipData.newPlainText("Drag text", "Android drag 😀 café")
                     val shadow = object : DragShadowBuilder(this) {
