@@ -77,6 +77,8 @@ fn run(init: std.process.Init) !void {
     const unavailable = args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture-unavailable");
     const capture = unavailable or (args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture"));
     var captured = false;
+    const cursor = args.len > 1 and std.mem.eql(u8, args[1], "--cursor-animation");
+    var cursor_ready = false;
     const hold = args.len > 1 and std.mem.eql(u8, args[1], "--hold-presentation");
     var stop: Stop = .{ .io = io, .queue = queue, .hold = .init(hold) };
     var group: Io.Group = .init;
@@ -101,8 +103,29 @@ fn run(init: std.process.Init) !void {
                 captured = true;
                 try Io.File.stdout().writeStreamingAll(io, if (unavailable) "pointer capture unavailable passed\n" else "pointer capture passed\n");
             }
+            if (cursor and !cursor_ready and frames >= 12) {
+                try startCursorAnimation(session, window, io, queue.notify_file);
+                cursor_ready = true;
+                try Io.File.stdout().writeStreamingAll(io, "cursor animation ready\n");
+            }
         }
     }
+}
+
+fn startCursorAnimation(session: *Queue.Session, window: *Queue.Window, io: Io, wake: Io.File) !void {
+    try window.prepareTestInput();
+    try window.testTap(@divTrunc(window.bufferWidth(), 2), @divTrunc(window.bufferHeight(), 2));
+    const deadline = Io.Clock.awake.now(io).toMilliseconds() + 5000;
+    while (session.pointer_focus != window) {
+        if (Io.Clock.awake.now(io).toMilliseconds() > deadline) return error.CursorFocusTimeout;
+        var ready = [_]bool{false};
+        try session.dispatch(&.{wake}, &ready, 100);
+        _ = window.takeEvents();
+    }
+    var pixels: [32 * 32 * 2]i32 = undefined;
+    @memset(pixels[0 .. 32 * 32], @bitCast(@as(u32, 0xffff0000)));
+    @memset(pixels[32 * 32 ..], @bitCast(@as(u32, 0xff00ff00)));
+    if (!try window.setCursorImage(32, 32, 4, 5, 250, &pixels)) return error.CursorRejected;
 }
 
 fn verifyCapture(session: *Queue.Session, window: *Queue.Window, io: Io, wake: Io.File, unavailable: bool) !void {

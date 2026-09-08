@@ -24,6 +24,7 @@ extern "c" fn AIBinder_unlinkToDeath(*Binder, *Death, ?*anyopaque) i32;
 extern "c" fn AServiceManager_addService(*Binder, [*:0]const u8) i32;
 extern "c" fn AParcel_readInt32(*const Parcel, *i32) i32;
 extern "c" fn AParcel_readInt64(*const Parcel, *i64) i32;
+extern "c" fn AParcel_readInt32Array(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, *?[*]i32) callconv(.c) bool) i32;
 extern "c" fn AParcel_getDataPosition(*const Parcel) i32;
 extern "c" fn AParcel_getDataSize(*const Parcel) i32;
 extern "c" fn AParcel_readString(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, *?[*]u8) callconv(.c) bool) i32;
@@ -524,6 +525,23 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 0));
                 try ok(AParcel_writeInt32(output, @intFromBool(applied)));
             },
+            15 => {
+                const width = try readInt(input);
+                const height = try readInt(input);
+                const hotspot_x = try readInt(input);
+                const hotspot_y = try readInt(input);
+                const frame_ms = try readInt(input);
+                var pixels: CursorPixels = .{ .gpa = self.gpa };
+                defer if (pixels.values) |values| self.gpa.free(values);
+                try ok(AParcel_readInt32Array(input, &pixels, CursorPixels.allocate));
+                try end(input);
+                const entry = self.find(key) orelse return error.StaleTask;
+                const values = pixels.values orelse return error.InvalidCursorImage;
+                const applied = try entry.window.setCursorImage(width, height, hotspot_x, hotspot_y, frame_ms, values);
+                if (applied and self.inspection_enabled) std.log.info("task bitmap cursor task={d} size={d}x{d} frames={d} hotspot={d},{d}", .{ key.id, width, height, values.len / @as(usize, @intCast(width * height)), hotspot_x, hotspot_y });
+                try ok(AParcel_writeInt32(output, 0));
+                try ok(AParcel_writeInt32(output, @intFromBool(applied)));
+            },
             else => return -38,
         }
         return 0;
@@ -548,7 +566,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 14) return -38;
+    if (code < 1 or code > 15) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -566,6 +584,17 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
 fn ok(status: i32) !void {
     if (status != 0) return error.BinderOperationFailed;
 }
+const CursorPixels = struct {
+    gpa: std.mem.Allocator,
+    values: ?[]i32 = null,
+    fn allocate(context: ?*anyopaque, count: i32, destination: *?[*]i32) callconv(.c) bool {
+        const self: *CursorPixels = @ptrCast(@alignCast(context.?));
+        if (count < 1 or count > 128 * 1024 or self.values != null) return false;
+        self.values = self.gpa.alloc(i32, @intCast(count)) catch return false;
+        destination.* = self.values.?.ptr;
+        return true;
+    }
+};
 fn readInt(parcel: *const Parcel) !i32 {
     var value: i32 = undefined;
     try ok(AParcel_readInt32(parcel, &value));
@@ -681,10 +710,15 @@ fn run(init: std.process.Init) !void {
         try std.fmt.parseInt(u32, init.minimal.environ.getPosix("AZK_TEST_VIRTUAL_POINTER_VERSION") orelse "2", 10)
     else
         2;
-    const session = try Queue.Session.initWithOptions(init.gpa, io, .{ .virtual_pointer_max_version = pointer_version });
+    const cursor_shape = !inspection_enabled or !std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_CURSOR_SHAPE") orelse "1", "0");
+    const session = try Queue.Session.initWithOptions(init.gpa, io, .{
+        .virtual_pointer_max_version = pointer_version,
+        .cursor_shape = cursor_shape,
+    });
     if (inspection_enabled) {
         const version = if (session.virtual_pointer_manager) |manager| manager.getVersion() else 0;
         std.log.info("task virtual pointer protocol version={d}", .{version});
+        std.log.info("task cursor shape protocol available={any}", .{session.cursor_shape_manager != null});
     }
     session.ordered_events = .{};
     session.generate_key_repeats = false; // Stock InputDispatcher owns the timer.

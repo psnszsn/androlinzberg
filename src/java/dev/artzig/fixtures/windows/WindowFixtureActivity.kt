@@ -39,14 +39,21 @@ open class WindowFixtureActivity : Activity() {
             setSingleLine(true)
         }
         content.addView(editor)
-        fun button(label: String, action: () -> Unit) {
-            content.addView(Button(this).apply {
+        fun button(label: String, action: () -> Unit): Button {
+            val widget = Button(this).apply {
                 text = label
                 setOnClickListener { action() }
-            })
+            }
+            content.addView(widget)
+            return widget
         }
         button("Finish this activity") { finish() }
-        button("Increment counter") { counter++; updateCounter(); journal("increment") }
+        button("Increment counter") { counter++; updateCounter(); journal("increment") }.apply {
+            val bitmap = android.graphics.Bitmap.createBitmap(32, 32, android.graphics.Bitmap.Config.ARGB_8888)
+            val pixels = IntArray(32 * 32) { if (it % 32 < 16) Color.MAGENTA else Color.CYAN }
+            bitmap.setPixels(pixels, 0, 32, 0, 0, 32, 32)
+            pointerIcon = android.view.PointerIcon.create(bitmap, 2f, 3f)
+        }
         button("Next activity in this task") { startActivity(Intent(this, SecondActivity::class.java)) }
         button("Open independent task") {
             startActivity(Intent(this, IndependentTaskActivity::class.java)

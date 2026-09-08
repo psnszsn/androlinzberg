@@ -38,4 +38,7 @@ interface IWaylandTaskPresenter {
     boolean testHoldOutput(int taskId, long generation, boolean hold);
     /** Inspection-only accounting: tasks, queues, Wayland imports, graphics buffers, descriptors. */
     long[] testResources();
+    /** Immutable premultiplied ARGB cursor frames; caller and pointer-window ownership are checked. */
+    boolean setCursorImage(int taskId, long generation, int width, int height,
+        int hotspotX, int hotspotY, int frameMillis, in int[] pixels);
 }

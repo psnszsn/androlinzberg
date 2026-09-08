@@ -556,7 +556,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_region.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.buffer_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_canvas.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_canvas.cpp", "apex/android_paint.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.surface_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/properties.cpp"}, &.{apex_inc}, &.{});
     const texture_inc = o.aosp.path(b, "frameworks/native/libs/nativedisplay/include");

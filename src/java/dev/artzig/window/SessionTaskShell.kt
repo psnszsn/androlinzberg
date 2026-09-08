@@ -8,6 +8,7 @@ internal object SessionTaskShell {
     class Controller(private val presenter: RemoteTaskPresenter, private val input: WaylandTaskInput, private val cleanup: () -> Unit) : AutoCloseable {
         fun pointerCapture(token: android.os.IBinder?, sequence: Int) = presenter.pointerCapture(token, sequence)
         fun pointerIcon(token: android.os.IBinder, type: Int): Boolean = presenter.pointerIcon(token, type)
+        fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image): Boolean = presenter.cursorImage(token, image)
         fun testInputQueued(sequence: Long): Boolean = presenter.testInputQueued(sequence)
         fun keyCodeState(deviceId: Int, sourceMask: Int, code: Int) = input.keyCodeState(deviceId, sourceMask, code)
         fun scanCodeState(deviceId: Int, sourceMask: Int, scan: Int) = input.scanCodeState(deviceId, sourceMask, scan)

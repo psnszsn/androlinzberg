@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
         # Exercise the v1-only creation request against the real compositor.
         # Physical pointer steps below use the presenter's virtual pointer.
         environment['AZK_TEST_VIRTUAL_POINTER_VERSION'] = '1'
+        environment['AZK_TEST_CURSOR_SHAPE'] = '0'
 
         environment.update(AZK_TEST_SOCKET=str(Path(control_dir) / 'control.sock'),
                            AZK_TESTKIT_ROOT=str(args.testkit.resolve()),
@@ -196,6 +197,27 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 control('step', 'click', '--task-id', task, '--text', label('Increment counter'),
                         '--via', 'wayland', '--settle', 'idle')
                 settled_text('Counter: 2')
+                # The semantic target and explicit origin placement determine
+                # this cursor position; no global desktop coordinates are inferred.
+                bounds = next(node['bounds'] for node in tree['nodes']
+                              if (node.get('text') or '').lower() == 'increment counter')
+                cursor_x = (bounds['left'] + bounds['right']) // 2 - 2
+                cursor_y = (bounds['top'] + bounds['bottom']) // 2 - 3
+                deadline = time.monotonic() + 10
+                while True:
+                    ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
+                    _, dimensions, _, rgba = ppm.split(b'\n', 3)
+                    cursor_width, _ = map(int, dimensions.split())
+                    colors = [tuple(rgba[((cursor_y + 8) * cursor_width + cursor_x + x) * 3:
+                                         ((cursor_y + 8) * cursor_width + cursor_x + x) * 3 + 3])
+                              for x in (8, 24)]
+                    if colors == [(255, 0, 255), (0, 255, 255)]:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f'Custom Android cursor pixels/hotspot differ: {colors}')
+                    time.sleep(.02)
+                subprocess.run(['grim', '-c', str(out / 'custom-cursor.png')], check=True, timeout=3)
+                result['custom_cursor'] = dict(hotspot=[2, 3], colors=colors)
                 control('step', 'click', '--task-id', task, '--description', 'Fixture editor',
                         '--via', 'wayland', '--settle', 'idle')
                 control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'abc',
@@ -233,6 +255,9 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 (out / 'a11y.json').write_text(json.dumps(after, indent=2))
                 steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
                 assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                cursor_log = (out / 'app.log').read_text(errors='replace')
+                assert 'task cursor shape protocol available=false' in cursor_log
+                assert 'task bitmap cursor task=' in cursor_log, 'Missing stock bitmap cursor fallback'
                 result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
                 subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 seat.stdin.write(b'c')

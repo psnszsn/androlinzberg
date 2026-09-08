@@ -22,6 +22,26 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Bitmap cursor checkpoint (2026-09-08)
+
+Stock pointer icons now fall back to immutable Wayland SHM cursor surfaces when
+cursor-shape is unavailable or the application supplies a bitmap. Loading uses
+the pinned PointerIcon resources, animation frames and HWUI shadow filter. The
+host seam preserves source bitmap ownership, converts straight alpha to native
+premultiplied ARGB and bounds dimensions, frame count and total transfer size.
+Only the pointer-focused task can apply an icon. Animation advances on the
+session timer even while the application produces no frames.
+
+Regressions 263–265 pass stock cold launch, Cage/labwc task presentation, the
+desktop launcher, native tests, graph audit and eight surface scenarios. The
+launcher forces cursor-shape off and verifies custom cursor colors and hotspot
+in a compositor screenshot; the surface gate observes both animation frames.
+Regression 266 passes the complete JVM and APK suites, native/surface tests and
+graph audit (7091 build steps; 15 APK tests, 46 interaction steps, zero runtime
+issues). Logs: `/tmp/wayland-cursor-{263,264,265,266}.log` and
+`/tmp/wayland-cursor-266-summary.log`. Remaining M8–M11 work includes production
+input during pending configures, tablet input and desktop interoperability.
+
 ## Resize pressure checkpoint (2026-09-08)
 
 The labwc gate now sends 64 alternating maximize/restore requests while holding

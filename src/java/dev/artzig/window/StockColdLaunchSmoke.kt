@@ -21,6 +21,7 @@ object StockColdLaunchSmoke {
         val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
             320, 240, 120, 0)
         dev.artzig.StockReadbackSmoke.verifyGeometry()
+        WaylandCursorSmoke.run(context)
         StockClientServiceSmoke.run()
         val manager = context.getSystemService(ActivityManager::class.java)
         val pkg = "dev.artzig.fixtures.windows"

@@ -8,6 +8,7 @@ const xdg = wayland.client.xdg;
 const wp = wayland.client.wp;
 const zwp = wayland.client.zwp;
 const zwlr = wayland.client.zwlr;
+const CursorImage = @import("cursor_image.zig");
 
 const drm_format_nv12: u32 = 0x3231564e;
 const drm_format_p010: u32 = 0x30313050;
@@ -588,6 +589,7 @@ pub const Session = struct {
         virtual_pointer_max_version: u32 = 2,
         compositor_max_version: u32 = 6,
         fractional_scale: bool = true,
+        cursor_shape: bool = true,
     };
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Session {
@@ -632,6 +634,10 @@ pub const Session = struct {
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         if (self.output_failure) |failure| return failure;
         var timeout = timeout_ms;
+        if (self.pointer_focus) |window| {
+            const cursor_timeout = window.updateCursorAnimation();
+            if (cursor_timeout >= 0) timeout = if (timeout < 0) cursor_timeout else @min(timeout, cursor_timeout);
+        }
         if (self.ordered_events) |*events| {
             if (events.failed) return error.SeatEventQueueOverflow;
             if (events.pending.items.len != 0) timeout = 0;
@@ -1032,7 +1038,7 @@ pub const Session = struct {
                     } else {
                         self.dmabuf.?.setListener(*Session, dmabufListener, self);
                     }
-                } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
+                } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq and self.protocol_options.cursor_shape) {
                     self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwlr.VirtualPointerManagerV1.interface.name) == .eq) {
                     self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, self.protocol_options.virtual_pointer_max_version)) catch return;
@@ -1275,6 +1281,7 @@ pub const Window = struct {
     pointer_enter_serial: u32 = 0,
     cursor_hidden: bool = false,
     cursor_shape: u32 = 0, // last applied wp_cursor_shape_device_v1.shape (0 = none)
+    cursor_image: ?CursorImage = null,
 
     surface: *wl.Surface = undefined,
     viewport: *wp.Viewport = undefined,
@@ -1607,6 +1614,8 @@ pub const Window = struct {
                 // re-apply our cursor on every enter (the compositor resets it)
                 if (self.cursor_hidden) {
                     pointer.setCursor(self.pointer_enter_serial, null, 0, 0);
+                } else if (self.cursor_image) |*cursor| {
+                    cursor.apply(self.io, pointer, self.pointer_enter_serial);
                 } else {
                     const shape = if (self.cursor_shape != 0) self.cursor_shape else 1; // default
                     self.cursor_shape = 0;
@@ -2108,18 +2117,46 @@ pub const Window = struct {
         if (self.session.pointer_focus != self or self.pointer_enter_serial == 0) return false;
         if (icon == 0) {
             pointer.setCursor(self.pointer_enter_serial, null, 0, 0);
+            self.clearCursorImage();
             self.cursor_hidden = true;
             _ = self.session.display.flush();
             return true;
         }
         const shape = @import("cursor_shape.zig").fromAndroid(icon) orelse return false;
         if (self.session.cursor_shape_manager == null) return false;
+        self.clearCursorImage();
         if (self.cursor_hidden) {
             self.cursor_hidden = false;
             self.cursor_shape = 0;
         }
         self.setCursorShape(shape);
         return self.cursor_shape == shape;
+    }
+
+    fn clearCursorImage(self: *Window) void {
+        if (self.cursor_image) |*cursor| cursor.deinit();
+        self.cursor_image = null;
+    }
+
+    pub fn setCursorImage(self: *Window, width: i32, height: i32, hotspot_x: i32, hotspot_y: i32, frame_ms: i32, pixels: []const i32) !bool {
+        const pointer = self.session.pointer orelse return false;
+        if (self.session.pointer_focus != self or self.pointer_enter_serial == 0) return false;
+        var cursor = try CursorImage.init(self.io, self.session.compositor.?, self.session.shm.?, width, height, hotspot_x, hotspot_y, frame_ms, pixels);
+        cursor.apply(self.io, pointer, self.pointer_enter_serial);
+        self.clearCursorImage();
+        self.cursor_image = cursor;
+        self.cursor_hidden = false;
+        self.cursor_shape = 0;
+        return true;
+    }
+
+    fn updateCursorAnimation(self: *Window) i32 {
+        if (self.hasPointerCapture()) return -1;
+        if (!self.cursor_hidden) if (self.cursor_image) |*cursor| {
+            cursor.tick(self.io);
+            return cursor.timeout(self.io);
+        };
+        return -1;
     }
 
     /// Ask the compositor to enter or leave xdg-shell fullscreen mode. The
@@ -2407,6 +2444,7 @@ pub const Window = struct {
     /// Release all client-side resources before the process disconnects from
     /// the compositor. Video layers must be destroyed before calling this.
     pub fn deinit(self: *Window) void {
+        self.clearCursorImage();
         if (self.frame_cb) |callback| callback.destroy();
         self.frame_cb = null;
         self.setPointerCapture(false) catch unreachable;

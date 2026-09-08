@@ -136,7 +136,17 @@ internal class StockWindowServices private constructor() {
             // Revalidate after crossing to the shell thread; hover may have left
             // this input window while the Binder request was queued.
             if (!input.isPointerInWindow(token, displayId, deviceId, pointerId)) false
-            else shell?.pointerIcon(token, icon.type) == true
+            else if (shell?.pointerIcon(token, icon.type) == true) true
+            else {
+                val image = try { dev.artzig.window.WaylandCursor.load(context, icon) }
+                catch (failure: IllegalArgumentException) {
+                    android.util.Log.w("WaylandSeat", "Cursor cannot be represented: ${failure.message}",
+                        dev.artzig.ArtzigTestDiagnostics.unsupported("WaylandSeat", "setPointerIcon",
+                            failure.message ?: "Cursor exceeds host representation limits"))
+                    null
+                }
+                image != null && shell?.cursorImage(token, image) == true
+            }
         })
         if (Looper.myLooper() == handler.looper) work.run() else check(handler.post(work))
         try { return work.get(3, java.util.concurrent.TimeUnit.SECONDS) }

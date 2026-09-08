@@ -18,7 +18,7 @@ p.add_argument('--server', type=Path, required=True)
 p.add_argument('--producer', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable'], default='normal')
+p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation'], default='normal')
 a = p.parse_args()
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -63,7 +63,7 @@ try:
                                       '--prop-area', env['AZK_PROP_AREA']))
     assert line(broker).startswith('ready')
     pressure = a.scenario == 'backpressure'
-    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') else ())
+    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') or a.scenario == 'cursor-animation' else ())
     assert line(server) == 'ready'
     env.pop('AZK_BINDER_SYSTEM_COOKIE')
     env['AZK_BINDER_PACKAGE'] = 'dev.artzig.surface.producer'
@@ -100,6 +100,22 @@ try:
     actual = tuple(pixels[offset:offset + 3])
     assert all(abs(x - y) <= 2 for x, y in zip(actual, (171, 120, 52))), actual
     result.update(presented=presented, screenshot_size=[width, height], center_rgb=actual)
+    if a.scenario == 'cursor-animation':
+        assert line(server) == 'cursor animation ready'
+        colors = set()
+        deadline = time.monotonic() + 3
+        while len(colors) < 2 and time.monotonic() < deadline:
+            ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
+            _, dimensions, _, data = ppm.split(b'\n', 3)
+            w, h = map(int, dimensions.split())
+            x, y = w // 2 - 4 + 16, h // 2 - 5 + 16
+            color = tuple(data[(y * w + x) * 3:(y * w + x) * 3 + 3])
+            if color in ((255, 0, 0), (0, 255, 0)):
+                colors.add(color)
+            time.sleep(.03)
+        assert colors == {(255, 0, 0), (0, 255, 0)}, colors
+        subprocess.run(['grim', '-c', str(out / 'cursor.png')], check=True, timeout=3)
+        result['animated_cursor_colors'] = sorted(colors)
     if a.scenario == 'consumer-crash':
         server.kill()
         assert server.wait(timeout=5) == -9

@@ -88,6 +88,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/window/TaskGeometry.kt",
     "src/java/dev/artzig/window/WaylandTaskShell.kt",
     "src/java/dev/artzig/window/WaylandTaskInput.kt",
+    "src/java/dev/artzig/window/WaylandCursor.kt",
+    "src/java/dev/artzig/window/WaylandCursorSmoke.kt",
     "src/java/dev/artzig/window/WaylandPointerCapture.kt",
     "src/java/dev/artzig/window/WaylandPointerCaptureSmoke.kt",
     "src/java/com/android/server/wm/HostedTaskInputTargets.kt",

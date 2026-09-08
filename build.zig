@@ -491,7 +491,7 @@ pub fn build(b: *std.Build) void {
     surface_producer.root_module.linkLibrary(binder_ndk);
     const surface_test_step = b.step("surface-wayland-test", "Present stock Surface frames in Cage and verify resize, teardown and peer loss");
     var previous_surface_run: ?*std.Build.Step = null;
-    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture" }) |scenario| {
+    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation" }) |scenario| {
         const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
         const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
         if (std.mem.eql(u8, scenario, "pointer-capture")) {

@@ -49,6 +49,12 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         val window = taskForToken(token)?.let(windows::get) ?: return false
         return remote.setPointerIcon(window.task.id, window.task.generation, type)
     }
+    fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image): Boolean {
+        check(Looper.myLooper() === handler.looper)
+        val window = taskForToken(token)?.let(windows::get) ?: return false
+        return remote.setCursorImage(window.task.id, window.task.generation, image.width, image.height,
+            image.hotspotX, image.hotspotY, image.frameMillis, image.pixels)
+    }
     fun pointerCapture(token: android.os.IBinder?, sequence: Int) {
         check(Looper.myLooper() === handler.looper)
         capture.request(token, sequence)
