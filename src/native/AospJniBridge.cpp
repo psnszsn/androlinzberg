@@ -56,7 +56,45 @@ int android::AndroidRuntime::registerNativeMethods(JNIEnv* env, const char* clas
     return jniRegisterNativeMethods(env, className, gMethods, numMethods);
 }
 
+// Pinned android_util_Binder::binder_report_exception. The main Binder JNI is hosted
+// separately, so resolve its Java collaborators here instead of using that TU's globals.
 namespace android {
+void binder_report_exception(JNIEnv* env, jthrowable exception, const char* message) {
+    env->ExceptionClear();
+    ScopedLocalRef<jclass> log(env, env->FindClass("android/util/Log"));
+    ScopedLocalRef<jstring> tag(env, env->NewStringUTF("JavaBinder"));
+    ScopedLocalRef<jstring> text(env, env->NewStringUTF(message));
+    if (log != nullptr && tag != nullptr && text != nullptr) {
+        jmethodID report = env->GetStaticMethodID(log.get(), "e",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I");
+        if (report != nullptr) env->CallStaticIntMethod(log.get(), report, tag.get(), text.get(), exception);
+    }
+    env->ExceptionClear();
+    ScopedLocalRef<jclass> error(env, env->FindClass("java/lang/Error"));
+    if (error == nullptr) { env->ExceptionClear(); return; }
+    if (!env->IsInstanceOf(exception, error.get())) return;
+    ScopedLocalRef<jclass> threadClass(env, env->FindClass("java/lang/Thread"));
+    if (threadClass != nullptr) {
+        jmethodID current = env->GetStaticMethodID(threadClass.get(), "currentThread", "()Ljava/lang/Thread;");
+        jmethodID dispatch = env->GetMethodID(threadClass.get(), "dispatchUncaughtException", "(Ljava/lang/Throwable;)V");
+        if (current != nullptr && dispatch != nullptr) {
+            ScopedLocalRef<jobject> thread(env, env->CallStaticObjectMethod(threadClass.get(), current));
+            if (thread != nullptr) env->CallVoidMethod(thread.get(), dispatch, exception);
+        }
+    }
+    env->ExceptionClear();
+    env->Throw(exception);
+    env->ExceptionDescribe();
+    env->FatalError("java.lang.Error thrown during hwbinder transaction");
+}
+} // namespace android
+
+namespace android {
+int register_android_os_HidlSupport(JNIEnv*);
+int register_android_os_HwBinder(JNIEnv*);
+int register_android_os_HwRemoteBinder(JNIEnv*);
+int register_android_os_HwBlob(JNIEnv*);
+int register_android_os_HwParcel(JNIEnv*);
 int register_com_android_net_module_util_BpfMap(JNIEnv*, const char*);
 }
 // The pinned legacy DRM JNI owns its complete registration table. Rename its
@@ -400,6 +438,11 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_os_FileObserver),
             E(registerLegacyDrm),
             E(android::register_android_os_HidlMemory),
+            E(android::register_android_os_HidlSupport),
+            E(android::register_android_os_HwBinder),
+            E(android::register_android_os_HwRemoteBinder),
+            E(android::register_android_os_HwBlob),
+            E(android::register_android_os_HwParcel),
             E(registerStockHidlMemorySmoke),
             E(registerHostedZygoteCommandBuffer),
             E(registerPerfettoTrace),

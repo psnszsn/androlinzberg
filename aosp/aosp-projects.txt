@@ -154,7 +154,9 @@ platform/system/extras
 platform/system/hardware/interfaces
 platform/system/incremental_delivery
 platform/system/libbase
+platform/system/libfmq
 platform/system/libhidl
+platform/system/libhwbinder
 platform/system/libprocinfo
 platform/system/libsysprop
 platform/system/libvintf

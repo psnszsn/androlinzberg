@@ -28,6 +28,26 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- The HIDL transport now uses the original eight Java runtime classes, five JNI
+  translation units, libhidlbase and libhwbinder. The build generates 86 Java
+  outputs for HIDL base/manager, CAS and GNSS protocols, plus the seven C++
+  base/manager protocol sources and their headers. The hand-written GNSS
+  measurement callback constants are deleted. Android's Binder UAPI header is
+  isolated from host libc headers; shared Binder exception reporting follows the
+  pinned logging and fatal-Error path. Stock HwNoService and native service
+  discovery report the absence of a hardware service manager. This supplies real
+  serialization and protocol code; it does not install GNSS/CAS hardware services.
+  Tests exercise native scalar/vector/string blobs, bounds and array capacity,
+  generated proxy transactions through HwNoService, service absence and deep
+  equality/hash behavior. JVM, system, native, Binder/C++ Binder and build checks
+  pass; all 11 APK tests pass with 37 captured steps and zero structured runtime
+  issues. AOSP is rebuilt and repinned, all 133 added archive file inputs are
+  byte-verified, and ART is unchanged and verified. Inventory: 16 stubs (9 pending,
+  7 survivors). The remaining AudioManager/focus closure, including the original
+  HardeningEnforcer, is 80 source nodes, 48 AIDL inputs and 18 blockers; 13 of those
+  blockers are CAS AIDL include-root entries for the next bulk import.
+
+
 - RingtoneManager and AccessibilityShortcutController now compile verbatim with
   their shared 39-file media, subtitle, widget and shortcut-dialog closure. The
   two placeholders and the compile-only MediaPlayer SDK header are removed.

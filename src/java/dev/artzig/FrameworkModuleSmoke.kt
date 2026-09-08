@@ -273,6 +273,7 @@ internal object FrameworkModuleSmoke {
         StockAudioTransportSmoke.run()
         StockAudioClientPrerequisitesSmoke.run()
         StockRingtoneShortcutSmoke.run(::drainMainQueue)
+        StockHidlTransportSmoke.run()
         StockAudioFoundationSmoke.run()
         StockVoiceTypesSmoke.run()
         StockMainlineTypesSmoke.run()

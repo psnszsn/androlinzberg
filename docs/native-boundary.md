@@ -47,6 +47,15 @@ zig build -j10 cpp-audit
   Ravenwood no-op shape: no tag enabled, emitters empty), and
   `ClassLoaderFactory.createClassloaderNamespace` (null: the bionic bridge has
   no linker namespaces, loaders search their library path directly).
+- HIDL uses the pinned Java runtime, JNI, libhidlbase and libhwbinder inside
+  `libandroid_platform.so`. Java and C++ base/manager protocols, plus Java CAS/GNSS
+  interfaces, are generated from the original HAL declarations. Hardware Binder
+  retains its own protocol and AOSP's `HwNoService`/`NoHwServiceManager` fallback;
+  no HIDL hardware service manager is installed on the host. Native blob and
+  parcel ownership and validation stay in AOSP. The Binder UAPI header is isolated
+  with the other Android kernel headers. `AospJniBridge.cpp` supplies the pinned
+  Binder exception-reporting flow because the main Binder JNI registration and
+  its Java logging globals belong to the hosted Binder bridge.
 - `src/binder/debug_jni.zig` registers the stock `android.os.Debug` natives.
   `process_memory.zig` retains pinned Android heap classification and reads
   Linux procfs/sysfs through `std.Io`. Allocator reports use the host allocator's

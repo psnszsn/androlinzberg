@@ -1,13 +1,13 @@
 //! Explicit repository-owned JVM source declarations.
 //! Add new sources here so graph membership changes with this Zig file.
 pub const framework = [_][]const u8{
+    "src/java/dev/artzig/StockHidlTransportSmoke.kt",
     "src/java/dev/artzig/HostedRenderer.kt",
     "src/java/dev/artzig/HostedHardwareSnapshot.kt",
     "src/java/dev/artzig/StockRendererSmoke.kt",
     "src/java/dev/artzig/StockSplashScreenSmoke.kt",
 
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
-    "src/framework-stubs/android/hardware/gnss/V2_1/IGnssMeasurementCallback.java",
     "src/framework-stubs/android/media/AudioManager.java",
     "src/framework-stubs/android/media/ToneGenerator.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",

@@ -17,6 +17,8 @@ pub const Options = struct {
     art: *std.Build.Module,
     aidl_header_roots: []const std.Build.LazyPath,
     aidl_source_roots: []const std.Build.LazyPath,
+    hidl_header_roots: []const std.Build.LazyPath,
+    hidl_sources: []const std.Build.LazyPath,
     aconfig_header_roots: []const std.Build.LazyPath,
     incremental_sysprop_headers: std.Build.LazyPath,
     incremental_sysprop_source: std.Build.LazyPath,
@@ -125,6 +127,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     // Isolate the pinned ashmem UAPI header from the rest of bionic's libc headers.
     const ashmem_headers = b.addWriteFiles();
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/ashmem.h"), "linux/ashmem.h");
+    // libhwbinder needs Android's scheduling/security extensions to the Binder UAPI.
+    _ = ashmem_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/android/binder.h"), "linux/android/binder.h");
     // Every HWUI translation unit must see the real Fence layout. Preserve the
     // other hostgraphics headers while overriding only ui/Fence.h.
     _ = ashmem_headers.addCopyFile(o.aosp.path(b, "frameworks/native/libs/ui/include/ui/Fence.h"), "ui/Fence.h");
@@ -137,6 +141,12 @@ pub fn build(b: *std.Build, o: Options) Result {
     common_includes.append(b.allocator, b.path("src/native/input-compat")) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aidl_header_roots) catch @panic("oom");
     common_includes.appendSlice(b.allocator, o.aconfig_header_roots) catch @panic("oom");
+    common_includes.appendSlice(b.allocator, o.hidl_header_roots) catch @panic("oom");
+    common_includes.appendSlice(b.allocator, &.{
+        o.aosp.path(b, "system/libhwbinder/include"),
+        o.aosp.path(b, "system/libhidl/transport/include"),
+        o.aosp.path(b, "system/libfmq/base"),
+    }) catch @panic("oom");
     common_includes.appendSlice(b.allocator, &.{
         o.aosp.path(b, "frameworks/av/camera/include"),
         o.aosp.path(b, "system/media/camera/include"),
@@ -266,7 +276,30 @@ pub fn build(b: *std.Build, o: Options) Result {
         "-ffunction-sections",
         "-fdata-sections",
     });
-    g.add(o.aosp.path(b, "system/libhidl/base"), &.{ "HidlSupport.cpp", "HidlInternal.cpp" }, &.{}, &.{});
+    // Stock libhidlbase host build, including its original no-hwservicemanager path.
+    g.add(o.aosp.path(b, "system/libhidl/base"), &.{ "HidlSupport.cpp", "HidlInternal.cpp", "Status.cpp", "TaskRunner.cpp" }, &.{}, &.{});
+    g.add(o.aosp.path(b, "system/libhidl/transport"), &.{
+        "HidlBinderSupport.cpp",    "HidlLazyUtils.cpp",      "HidlPassthroughSupport.cpp",
+        "HidlTransportSupport.cpp", "HidlTransportUtils.cpp", "LegacySupport.cpp",
+        "ServiceManagement.cpp",    "Static.cpp",
+    }, &.{}, &.{});
+    g.add(o.aosp.path(b, "system/libhwbinder"), &.{
+        "Binder.cpp",     "BpHwBinder.cpp",     "BufferedTextOutput.cpp", "Debug.cpp",
+        "IInterface.cpp", "IPCThreadState.cpp", "Parcel.cpp",             "ProcessState.cpp",
+        "Static.cpp",     "TextOutput.cpp",     "Utils.cpp",
+    }, &.{}, &.{});
+    var hidl_source_index: usize = 0;
+    for (@import("generator_sources.zig").hidl_cpp) |entry| {
+        for (entry.sources) |name| {
+            const source = o.hidl_sources[hidl_source_index];
+            g.add(source.dirname(), &.{std.fs.path.basename(name)}, &.{}, &.{});
+            hidl_source_index += 1;
+        }
+    }
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{
+        "android_os_HidlSupport.cpp", "android_os_HwBinder.cpp", "android_os_HwRemoteBinder.cpp",
+        "android_os_HwBlob.cpp",      "android_os_HwParcel.cpp",
+    }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_MediaHTTPConnection.cpp"}, &.{ o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
     // Android's host-capable camera metadata library and C++ value containers.
     g.add(o.aosp.path(b, "frameworks/av/camera"), &.{ "CameraMetadata.cpp", "VendorTagDescriptor.cpp" }, &.{}, &.{});

@@ -322,6 +322,121 @@ pub const aconfig_device_paths = .{
 /// HIDL Java is generated from the pinned .hal declarations, matching Soong's
 /// hidl_interface backend. Only outputs required by framework clients are compiled.
 pub const hidl = [_]Hidl{
+    .{ .fqname = "android.hidl.base@1.0", .language = .java, .outputs = &.{
+        "android/hidl/base/V1_0/DebugInfo.java",
+        "android/hidl/base/V1_0/IBase.java",
+    } },
+    .{ .fqname = "android.hidl.manager@1.0", .language = .java, .outputs = &.{
+        "android/hidl/manager/V1_0/IServiceManager.java",
+        "android/hidl/manager/V1_0/IServiceNotification.java",
+    } },
+    .{ .fqname = "android.hidl.manager@1.1", .language = .java, .outputs = &.{
+        "android/hidl/manager/V1_1/IServiceManager.java",
+    } },
+    .{ .fqname = "android.hidl.manager@1.2", .language = .java, .outputs = &.{
+        "android/hidl/manager/V1_2/IClientCallback.java",
+        "android/hidl/manager/V1_2/IServiceManager.java",
+    } },
+    .{ .fqname = "android.hardware.cas@1.0", .language = .java, .outputs = &.{
+        "android/hardware/cas/V1_0/HidlCasPluginDescriptor.java",
+        "android/hardware/cas/V1_0/ICas.java",
+        "android/hardware/cas/V1_0/ICasListener.java",
+        "android/hardware/cas/V1_0/IDescramblerBase.java",
+        "android/hardware/cas/V1_0/IMediaCasService.java",
+        "android/hardware/cas/V1_0/Status.java",
+    } },
+    .{ .fqname = "android.hardware.cas@1.1", .language = .java, .outputs = &.{
+        "android/hardware/cas/V1_1/ICas.java",
+        "android/hardware/cas/V1_1/ICasListener.java",
+        "android/hardware/cas/V1_1/IMediaCasService.java",
+    } },
+    .{ .fqname = "android.hardware.cas@1.2", .language = .java, .outputs = &.{
+        "android/hardware/cas/V1_2/ICas.java",
+        "android/hardware/cas/V1_2/ICasListener.java",
+        "android/hardware/cas/V1_2/IMediaCasService.java",
+        "android/hardware/cas/V1_2/ScramblingMode.java",
+        "android/hardware/cas/V1_2/SessionIntent.java",
+        "android/hardware/cas/V1_2/Status.java",
+        "android/hardware/cas/V1_2/StatusEvent.java",
+    } },
+    .{ .fqname = "android.hardware.gnss@1.0", .language = .java, .outputs = &.{
+        "android/hardware/gnss/V1_0/GnssConstellationType.java",
+        "android/hardware/gnss/V1_0/GnssLocation.java",
+        "android/hardware/gnss/V1_0/GnssLocationFlags.java",
+        "android/hardware/gnss/V1_0/GnssMax.java",
+        "android/hardware/gnss/V1_0/IAGnss.java",
+        "android/hardware/gnss/V1_0/IAGnssCallback.java",
+        "android/hardware/gnss/V1_0/IAGnssRil.java",
+        "android/hardware/gnss/V1_0/IAGnssRilCallback.java",
+        "android/hardware/gnss/V1_0/IGnss.java",
+        "android/hardware/gnss/V1_0/IGnssBatching.java",
+        "android/hardware/gnss/V1_0/IGnssBatchingCallback.java",
+        "android/hardware/gnss/V1_0/IGnssCallback.java",
+        "android/hardware/gnss/V1_0/IGnssConfiguration.java",
+        "android/hardware/gnss/V1_0/IGnssDebug.java",
+        "android/hardware/gnss/V1_0/IGnssGeofenceCallback.java",
+        "android/hardware/gnss/V1_0/IGnssGeofencing.java",
+        "android/hardware/gnss/V1_0/IGnssMeasurement.java",
+        "android/hardware/gnss/V1_0/IGnssMeasurementCallback.java",
+        "android/hardware/gnss/V1_0/IGnssNavigationMessage.java",
+        "android/hardware/gnss/V1_0/IGnssNavigationMessageCallback.java",
+        "android/hardware/gnss/V1_0/IGnssNi.java",
+        "android/hardware/gnss/V1_0/IGnssNiCallback.java",
+        "android/hardware/gnss/V1_0/IGnssXtra.java",
+        "android/hardware/gnss/V1_0/IGnssXtraCallback.java",
+    } },
+    .{ .fqname = "android.hardware.gnss@1.1", .language = .java, .outputs = &.{
+        "android/hardware/gnss/V1_1/IGnss.java",
+        "android/hardware/gnss/V1_1/IGnssCallback.java",
+        "android/hardware/gnss/V1_1/IGnssConfiguration.java",
+        "android/hardware/gnss/V1_1/IGnssMeasurement.java",
+        "android/hardware/gnss/V1_1/IGnssMeasurementCallback.java",
+    } },
+    .{ .fqname = "android.hardware.gnss@2.0", .language = .java, .outputs = &.{
+        "android/hardware/gnss/V2_0/ElapsedRealtime.java",
+        "android/hardware/gnss/V2_0/ElapsedRealtimeFlags.java",
+        "android/hardware/gnss/V2_0/GnssConstellationType.java",
+        "android/hardware/gnss/V2_0/GnssLocation.java",
+        "android/hardware/gnss/V2_0/IAGnss.java",
+        "android/hardware/gnss/V2_0/IAGnssCallback.java",
+        "android/hardware/gnss/V2_0/IAGnssRil.java",
+        "android/hardware/gnss/V2_0/IGnss.java",
+        "android/hardware/gnss/V2_0/IGnssBatching.java",
+        "android/hardware/gnss/V2_0/IGnssBatchingCallback.java",
+        "android/hardware/gnss/V2_0/IGnssCallback.java",
+        "android/hardware/gnss/V2_0/IGnssConfiguration.java",
+        "android/hardware/gnss/V2_0/IGnssDebug.java",
+        "android/hardware/gnss/V2_0/IGnssMeasurement.java",
+        "android/hardware/gnss/V2_0/IGnssMeasurementCallback.java",
+    } },
+    .{ .fqname = "android.hardware.gnss@2.1", .language = .java, .outputs = &.{
+        "android/hardware/gnss/V2_1/GnssSignalType.java",
+        "android/hardware/gnss/V2_1/IGnss.java",
+        "android/hardware/gnss/V2_1/IGnssAntennaInfo.java",
+        "android/hardware/gnss/V2_1/IGnssAntennaInfoCallback.java",
+        "android/hardware/gnss/V2_1/IGnssCallback.java",
+        "android/hardware/gnss/V2_1/IGnssConfiguration.java",
+        "android/hardware/gnss/V2_1/IGnssMeasurement.java",
+        "android/hardware/gnss/V2_1/IGnssMeasurementCallback.java",
+    } },
+    .{ .fqname = "android.hardware.gnss.measurement_corrections@1.0", .language = .java, .outputs = &.{
+        "android/hardware/gnss/measurement_corrections/V1_0/GnssSingleSatCorrectionFlags.java",
+        "android/hardware/gnss/measurement_corrections/V1_0/IMeasurementCorrections.java",
+        "android/hardware/gnss/measurement_corrections/V1_0/IMeasurementCorrectionsCallback.java",
+        "android/hardware/gnss/measurement_corrections/V1_0/MeasurementCorrections.java",
+        "android/hardware/gnss/measurement_corrections/V1_0/ReflectingPlane.java",
+        "android/hardware/gnss/measurement_corrections/V1_0/SingleSatCorrection.java",
+    } },
+    .{ .fqname = "android.hardware.gnss.measurement_corrections@1.1", .language = .java, .outputs = &.{
+        "android/hardware/gnss/measurement_corrections/V1_1/IMeasurementCorrections.java",
+        "android/hardware/gnss/measurement_corrections/V1_1/MeasurementCorrections.java",
+        "android/hardware/gnss/measurement_corrections/V1_1/SingleSatCorrection.java",
+    } },
+    .{ .fqname = "android.hardware.gnss.visibility_control@1.0", .language = .java, .outputs = &.{
+        "android/hardware/gnss/visibility_control/V1_0/IGnssVisibilityControl.java",
+        "android/hardware/gnss/visibility_control/V1_0/IGnssVisibilityControlCallback.java",
+    } },
+
     .{ .fqname = "android.hardware.usb@1.0", .language = .java_constants, .outputs = &.{"android/hardware/usb/V1_0/Constants.java"} },
     .{ .fqname = "android.hardware.health@1.0", .language = .java_constants, .outputs = &.{
         "android/hardware/health/V1_0/Constants.java",
@@ -331,6 +446,30 @@ pub const hidl = [_]Hidl{
     } },
     .{ .fqname = "android.hardware.vibrator@1.3", .language = .java, .outputs = &.{
         "android/hardware/vibrator/V1_3/Effect.java",
+    } },
+};
+
+pub const HidlCpp = struct {
+    fqname: []const u8,
+    sources: []const []const u8,
+};
+
+/// Soong libhidlbase's generated C++ protocol sources and headers.
+pub const hidl_cpp = [_]HidlCpp{
+    .{ .fqname = "android.hidl.base@1.0", .sources = &.{
+        "android/hidl/base/1.0/BaseAll.cpp",
+        "android/hidl/base/1.0/types.cpp",
+    } },
+    .{ .fqname = "android.hidl.manager@1.0", .sources = &.{
+        "android/hidl/manager/1.0/ServiceManagerAll.cpp",
+        "android/hidl/manager/1.0/ServiceNotificationAll.cpp",
+    } },
+    .{ .fqname = "android.hidl.manager@1.1", .sources = &.{
+        "android/hidl/manager/1.1/ServiceManagerAll.cpp",
+    } },
+    .{ .fqname = "android.hidl.manager@1.2", .sources = &.{
+        "android/hidl/manager/1.2/ClientCallbackAll.cpp",
+        "android/hidl/manager/1.2/ServiceManagerAll.cpp",
     } },
 };
 

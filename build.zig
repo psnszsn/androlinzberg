@@ -359,6 +359,8 @@ pub fn build(b: *std.Build) void {
         .art = art_mod,
         .aidl_header_roots = generated.native.aidl_header_roots,
         .aidl_source_roots = generated.native.aidl_source_roots,
+        .hidl_header_roots = generated.native.hidl_header_roots,
+        .hidl_sources = generated.native.hidl_sources,
         .aconfig_header_roots = generated.native.aconfig_header_roots,
         .incremental_sysprop_headers = generated.native.incremental_sysprop_headers,
         .incremental_sysprop_source = generated.native.incremental_sysprop_source,

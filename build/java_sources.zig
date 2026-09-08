@@ -122,6 +122,16 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    // Original HIDL transport and no-service behavior shared by legacy hardware clients.
+    try c.file("$CJ/android/os/HidlSupport.java");
+    try c.file("$CJ/android/os/HwBinder.java");
+    try c.file("$CJ/android/os/HwBlob.java");
+    try c.file("$CJ/android/os/HwNoService.java");
+    try c.file("$CJ/android/os/HwParcel.java");
+    try c.file("$CJ/android/os/HwRemoteBinder.java");
+    try c.file("$CJ/android/os/IHwBinder.java");
+    try c.file("$CJ/android/os/IHwInterface.java");
+
     // Stock ringtone, shortcut UI and their shared media/subtitle dependency closure.
     try c.file("$CJ/android/provider/SettingsStringUtil.java");
     try c.file("$CJ/android/widget/MediaController.java");

@@ -39,6 +39,8 @@ pub const GeneratedNative = struct {
     incremental_sysprop_source: LazyPath,
     aidl_header_roots: []const LazyPath,
     aidl_source_roots: []const LazyPath,
+    hidl_header_roots: []const LazyPath,
+    hidl_sources: []const LazyPath,
     aconfig_header_roots: []const LazyPath,
     binder_graphics_headers: LazyPath,
     binder_graphics_sources: LazyPath,
@@ -364,6 +366,40 @@ fn hidlJava(
     }
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
     _ = exposePaths(b, "gen-hidl", "Generate framework HIDL Java sources", result);
+    return result;
+}
+
+const HidlCppResult = struct { headers: []const LazyPath, sources: []const LazyPath };
+
+fn hidlCpp(b: *std.Build, aosp: *std.Build.Dependency, runner: *std.Build.Step.Compile) HidlCppResult {
+    var headers: std.ArrayList(LazyPath) = .empty;
+    var sources: std.ArrayList(LazyPath) = .empty;
+    for (declarations.hidl_cpp, 0..) |entry, index| {
+        inline for (.{ "c++-headers", "c++-sources" }) |language| {
+            const run = b.addRunArtifact(runner);
+            run.addArg("--library-dir");
+            run.addDirectoryArg(aosp.path("prebuilts/build-tools/linux-x86/lib64"));
+            run.addFileArg(aosp.path("prebuilts/build-tools/linux-x86/bin/hidl-gen"));
+            run.addArgs(&.{ "-L" ++ language, "-R" });
+            run.addPrefixedDirectoryArg("-randroid.hardware:", aosp.path("hardware/interfaces"));
+            run.addPrefixedDirectoryArg("-randroid.hidl:", aosp.path("system/libhidl/transport"));
+            run.addArg("-o");
+            const output = run.addOutputDirectoryArg(b.fmt("hidl-{s}-{d}", .{ language, index }));
+            run.addArg(entry.fqname);
+            run.setName(b.fmt("generate HIDL {s} {s}", .{ language, entry.fqname }));
+            if (comptime std.mem.eql(u8, language, "c++-headers")) {
+                headers.append(b.allocator, output) catch @panic("OOM");
+            } else {
+                for (entry.sources) |path| sources.append(b.allocator, output.path(b, path)) catch @panic("OOM");
+            }
+        }
+    }
+    const result = HidlCppResult{
+        .headers = headers.toOwnedSlice(b.allocator) catch @panic("OOM"),
+        .sources = sources.toOwnedSlice(b.allocator) catch @panic("OOM"),
+    };
+    const step = exposePaths(b, "gen-hidl-cpp", "Generate pinned HIDL C++ protocols", result.sources);
+    for (result.headers) |path| path.addStepDependencies(step);
     return result;
 }
 
@@ -1037,6 +1073,7 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     const aidl_java = aidlJava(b, o.aosp, runner);
     const hidl_java = hidlJava(b, o.aosp, runner);
+    const hidl_cpp = hidlCpp(b, o.aosp, runner);
     const aidl_cpp = aidlCpp(b, o.aosp, runner);
     const graphics = b.addRunArtifact(runner);
     graphics.addFileArg(o.aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
@@ -1074,6 +1111,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aggregate = b.step("generators", "Generate all framework sources, resources, and fixture APKs");
     for (java_files.items) |path| path.addStepDependencies(aggregate);
     for (aidl_cpp.headers) |path| path.addStepDependencies(aggregate);
+    for (hidl_cpp.headers) |path| path.addStepDependencies(aggregate);
+    for (hidl_cpp.sources) |path| path.addStepDependencies(aggregate);
     for (aconfig_java.cpp_headers) |path| path.addStepDependencies(aggregate);
     res.apk.addStepDependencies(aggregate);
     mime_resources.addStepDependencies(aggregate);
@@ -1092,6 +1131,8 @@ pub fn build(b: *std.Build, o: Options) Result {
         .native = .{
             .aidl_header_roots = aidl_cpp.headers,
             .aidl_source_roots = aidl_cpp.sources,
+            .hidl_header_roots = hidl_cpp.headers,
+            .hidl_sources = hidl_cpp.sources,
             .aconfig_header_roots = aconfig_java.cpp_headers,
             .binder_graphics_headers = graphics_headers,
             .binder_graphics_sources = graphics_sources,
