@@ -126,6 +126,7 @@ pub fn testTarget(b: *std.Build, target: std.Build.ResolvedTarget, aosp: std.Bui
     flags.appendSlice(b.allocator, cppFlags(b)) catch @panic("oom");
     flags.append(b.allocator, "-UNDEBUG") catch @panic("oom");
     if (gpu) {
+        mod.linkSystemLibrary("vulkan", .{});
         mod.addCSourceFile(.{ .file = b.path("tests/native/SurfaceFlingerCompositionTest.cpp"), .flags = flags.items });
     } else {
         mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/services/surfaceflinger/tests/unittests"), .files = &.{ "LayerHierarchyTest.cpp", "LayerLifecycleManagerTest.cpp" }, .flags = flags.items });

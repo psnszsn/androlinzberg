@@ -74,7 +74,8 @@ public:
     azk_graphics_egl_terminate(display);
   }
   android::sp<android::Fence>
-  render(const android::sp<android::GraphicBuffer> &buffer, uint32_t rgba) {
+  render(const android::sp<android::GraphicBuffer> &buffer, uint32_t rgba,
+         const android::sp<android::Fence>& gate = android::Fence::NO_FENCE) {
     AzkGraphicsBufferInfo info{};
     assert(azk_graphics_describe(buffer->handle, &info) == 0);
     const EGLint attrs[] = {EGL_WIDTH,
@@ -107,6 +108,16 @@ public:
                            texture, 0);
     assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
     glViewport(0, 0, info.width, info.height);
+    if (gate->isValid()) {
+      auto wait = reinterpret_cast<PFNEGLWAITSYNCKHRPROC>(eglGetProcAddress("eglWaitSyncKHR"));
+      assert(wait);
+      const EGLint attrs[] = {EGL_SYNC_NATIVE_FENCE_FD_ANDROID, gate->dup(), EGL_NONE};
+      EGLSyncKHR blocked = createSync(display, EGL_SYNC_NATIVE_FENCE_ANDROID, attrs);
+      assert(blocked != EGL_NO_SYNC_KHR);
+      wait(display, blocked, 0);
+      assert(eglGetError() == EGL_SUCCESS);
+      destroySync(display, blocked);
+    }
     glClearColor((rgba & 255) / 255.f, ((rgba >> 8) & 255) / 255.f,
                  ((rgba >> 16) & 255) / 255.f, ((rgba >> 24) & 255) / 255.f);
     glClear(GL_COLOR_BUFFER_BIT);

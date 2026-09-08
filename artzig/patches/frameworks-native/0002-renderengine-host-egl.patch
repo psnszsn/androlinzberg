@@ -200,3 +200,24 @@ Correct two verbose DependencyMonitor log arguments exposed by the debug build.
  
      for (auto& accessCompletion : accessCompletions) {
          const nsecs_t accessCompletionTime = accessCompletion.fence->getCachedSignalTime();
+
+--- a/libs/renderengine/skia/SkiaRenderEngine.cpp
++++ b/libs/renderengine/skia/SkiaRenderEngine.cpp
+@@ -1060,6 +1060,5 @@
+             validateInputBufferUsage(layer.source.buffer.buffer->getBuffer());
+             const auto& item = layer.source.buffer;
+-            auto imageTextureRef = getOrCreateBackendTexture(item.buffer->getBuffer(), false);
+
+             // if the layer's buffer has a fence, then we must respect the fence prior to using
+             // the buffer.
+@@ -1067,6 +1066,10 @@
+                 waitFence(context, layer.source.buffer.fence->get());
+             }
+
++            // The host imports DMA-BUF/EGL images, whose driver import can
++            // access storage. Order that work after the producer's fence too.
++            auto imageTextureRef = getOrCreateBackendTexture(item.buffer->getBuffer(), false);
++
+             // isOpaque means we need to ignore the alpha in the image,
+             // replacing it with the alpha specified by the LayerSettings. See
+             // https://developer.android.com/reference/android/view/SurfaceControl.Builder#setOpaque(boolean)

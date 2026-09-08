@@ -13,15 +13,17 @@ and the work needed to make task windows the normal APK presentation path.
 
 ## Native incoming drag and rendering lifetime (2026-09-08)
 
-Regression 419 passes 12 stock drag steps: Android text/file/rejection plus a
+Regression 421 passes 12 stock drag steps: Android text/file/rejection plus a
 separate native Wayland source sending Unicode text, HTML and a local file,
 observing rejection, and cancelling by leaving the destination. The native
 source uses a real held pointer serial and checks COPY negotiation and the
 terminal source event. The file recipient takes and releases stock
-DragAndDropPermissions. Both coloured drop regions remain visible in the
-compositor screenshot. Video (four steps), clipboard (19), desktop (13),
-Wayland ownership tests and C++/graph audits also pass. Artifacts:
-`/tmp/wayland-native-drag-419-artifacts/`.
+DragAndDropPermissions. Sixteen consecutive compositor captures preserve both
+drag regions, and the final PNG contains the expected pixels. An earlier visual
+inspection incorrectly classified the saved screenshot as missing content;
+decoding its pixels and reopening it confirmed the complete frame. Video (four
+steps), clipboard (19), desktop (13), Wayland ownership tests and C++/graph audits
+also pass. Artifacts: `/tmp/wayland-native-drag-421-artifacts/`.
 
 `HostedNativeDrag` adopts a stock WMS DragState for an external source, retaining
 recipient validation, URI grants, drop results and timeout. InputDispatcher's
@@ -37,11 +39,16 @@ staging budget. A file lease survives an attempted DROP because an app may hold
 its stock drag permissions beyond the gesture; the shared session storage limit
 still applies. Cancellation before DROP releases unpublished staging.
 
-The pixel gate exposed an HWUI lifetime error: imported EGL rendering objects
-were released after exporting completion and publishing the buffer. Their
-cleanup now precedes the exported fence, including the cancellation path, so
-the consumer waits for all producer work. Diagnostic readback and CPU waits
-were removed; regression 419 uses the asynchronous fence path.
+HWUI now releases imported EGL rendering objects before exporting completion
+and publishing the buffer, including cancellation. RenderEngine orders its
+producer-fence wait before creating a DMA-BUF backend texture. Diagnostic
+readbacks and CPU waits are absent. The native composition regression holds
+producer writes behind a real unsignalled GPU fence on both first import and
+buffer reuse: composition completion remains unsignalled until release, then
+both mirrored outputs have the expected crop, alpha and secure-layer pixels.
+Regression 422 passes this gate and the full JVM suite. Its APK suite has one
+reproducible desktop fullscreen timeout, under investigation; it is not a
+passing full-suite checkpoint.
 
 The combined package now contains 90 patches. This checkpoint covers incoming
 native COPY drags; outbound/cross-task drags, Android drag icons and the broader

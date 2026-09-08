@@ -8,6 +8,7 @@
 #include <renderengine/RenderEngine.h>
 #include <renderengine/impl/ExternalTexture.h>
 #include "GpuBufferRenderer.h"
+#include "DelayedGpuFence.h"
 #include <array>
 #include <cassert>
 #include <chrono>
@@ -138,8 +139,14 @@ int main() {
         const unsigned index = frame % 2;
         const unsigned intensity = 255 - (frame / 2) * 64;
         const bool secure = frame >= 4;
+        // A real unsignalled sync_file delays the producer's write. Composition
+        // must not publish completion while it can still read old pixels.
+        std::unique_ptr<DelayedGpuFence> delayed;
+        if (frame == 0 || frame == 2) delayed = std::make_unique<DelayedGpuFence>();
         auto ready = producer.render(
-            inputs[index], 0xff000000 | (index ? intensity << 8 : intensity));
+            inputs[index], 0xff000000 | (index ? intensity << 8 : intensity),
+            delayed ? delayed->fence() : Fence::NO_FENCE);
+        if (delayed) assert(ready->wait(0) == -ETIME);
         setBuffer(manager, 11 + index, textures[index], ready, frame + 1);
         scene.setFlags(11 + index, layer_state_t::eLayerSecure,
                        secure ? layer_state_t::eLayerSecure : 0);
@@ -203,6 +210,11 @@ int main() {
                std::future_status::ready);
         auto result = future.get();
         assert(result.ok() && result.value()->isValid());
+        if (delayed) {
+          assert(result.value()->wait(0) == -ETIME);
+          delayed->release();
+          assert(!delayed->timedOut());
+        }
         assert(result.value()->wait(3000) == OK);
         expected[index] =
             secure  ? std::array<unsigned, 4>{0, 0, 0, 255}
