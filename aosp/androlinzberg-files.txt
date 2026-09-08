@@ -9056,3 +9056,16 @@ F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflecti
 F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionService.java
 F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionShellCommand.java
 F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionUtils.java
+
+# Stock night-mode and dream policy.
+F aosp frameworks/base/core/java/android/os/BatteryManagerInternal.java
+F aosp frameworks/base/core/java/android/service/dreams/DreamManagerInternal.java
+F aosp frameworks/base/core/java/com/android/internal/app/DisableCarModeActivity.java
+F aosp frameworks/base/services/core/java/com/android/server/UiModeManagerInternal.java
+F aosp frameworks/base/services/core/java/com/android/server/UiModeManagerService.java
+F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamController.java
+F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamManagerService.java
+F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamShellCommand.java
+F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamUiEventLogger.java
+F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamUiEventLoggerImpl.java
+F aosp frameworks/base/services/core/java/com/android/server/dreams/flags.aconfig

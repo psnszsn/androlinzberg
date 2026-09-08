@@ -22,6 +22,40 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Stock night configuration checkpoint (2026-09-08)
+
+Stock task sessions now start the pinned UiModeManagerService and
+DreamManagerService. Application night-mode changes use the real ATMS package
+updater and persistence, and global changes use ATMS configuration delivery.
+The legacy backend retains its UI-mode adapter until the final cutover.
+
+Dream policy reads the existing battery authority through BatteryManagerInternal.
+InputManagerInternal forwards supported operations to the existing seat and
+InputDispatcher bridge; pulse-gesture configuration follows AOSP's no-control-file
+behavior. Unhosted local operations retain structured unsupported diagnostics.
+The single-user UserManager seam preserves the stock caller-identity check used
+by UI-mode policy. Dream flags come from the pinned aconfig declaration.
+
+The cold-process test verifies application/activity/WPC configuration agreement,
+night-mode relaunch ordering and saved-state restore, handled `uiMode` callbacks,
+global changes preserving an app override, and clearing the override to inherit
+global configuration. These assertions also pass in Cage and labwc task windows.
+
+Regression 231 passes stock boot/cold launch; 232 passes Cage, labwc, the desktop
+launcher (13 steps, zero runtime issues) and native input dispatch. Regression
+233 passes the full JVM/native suite, all 15 APK tests (47 steps, zero runtime
+issues), seven Surface/Wayland scenarios and build audits. Logs are
+`/tmp/wayland-stock-night-{231,232}.log` and
+`/tmp/wayland-stock-night-regressions-233.log`; UI artifacts are retained under
+`/tmp/wayland-stock-night-232-artifacts/`. Regression 230 exposed and was fixed for
+package-private service startup and a test using the wrong Binder getter.
+
+Package 77 adds ten unchanged AOSP sources and one generated flag declaration;
+archive SHA-256 is
+`c32ff652e594de2a006beb1eb790aec0935a72a54841e3015e5f5e2351b865d0`.
+The audit remains 15 stubs, ten pending and five survivors. Output/configuration
+generations, mixed-scale output handling and the remaining M8–M11 gates remain.
+
 ## Stock grammatical configuration checkpoint (2026-09-08)
 
 Stock task sessions now start the pinned GrammaticalInflectionService and its

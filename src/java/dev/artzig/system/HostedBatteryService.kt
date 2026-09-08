@@ -72,6 +72,12 @@ class HostedBatteryService(private val activityManager: HostedActivityManagerSer
         synchronized(lock) { executor.execute { activityUsage.processCpu(processName, uid, userMs, systemMs) } }
     }
 
+    /** BatteryService.isPoweredLocked: unknown status counts as powered. */
+    fun isPowered(plugTypeSet: Int): Boolean = synchronized(lock) {
+        snapshot.status == BatteryManager.BATTERY_STATUS_UNKNOWN ||
+            snapshot.plugged and plugTypeSet != 0
+    }
+
     private fun isOnBattery(value: Snapshot): Boolean = value.plugged == 0 &&
         value.status != BatteryManager.BATTERY_STATUS_UNKNOWN
 

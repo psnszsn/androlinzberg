@@ -14,6 +14,26 @@ import android.os.UserManager
  * local service and SystemServiceManager boot callbacks.
  */
 internal class HostedUserManagerService(private val lifecycle: HostedUserLifecycle) : IUserManager.Stub() {
+    companion object {
+        /** UserManagerService.enforceCurrentUserIfVisibleBackgroundEnabled, using
+         * this host's single-user profile policy. The full service requires PMS
+         * and Android per-user storage; caller identity and rejection stay stock. */
+        @JvmStatic fun enforceCurrentUserIfVisibleBackgroundEnabled() {
+            if (!UserManager.isVisibleBackgroundUsersEnabled()) return
+            val callingUser = UserHandle.getCallingUserId()
+            val identity = android.os.Binder.clearCallingIdentity()
+            try {
+                val currentUser = android.app.ActivityManager.getCurrentUser()
+                if (callingUser != UserHandle.USER_SYSTEM && callingUser != currentUser) {
+                    throw SecurityException("Invalid calling user on devices that enable visible background users. " +
+                        "callingUserId=$callingUser currentUserId=$currentUser")
+                }
+            } finally {
+                android.os.Binder.restoreCallingIdentity(identity)
+            }
+        }
+    }
+
     private fun user(): UserInfo = UserInfo(
         UserHandle.USER_SYSTEM,
         "host",

@@ -18,6 +18,7 @@ private object ColdLifecycle {
     @Volatile var activity = java.lang.ref.WeakReference<Activity>(null)
     @Volatile var frameCommitted = false
     @Volatile var activityGender = android.content.res.Configuration.GRAMMATICAL_GENDER_UNDEFINED
+    @Volatile var activityUiMode = 0
     @Volatile var restoredState = false
     @Synchronized fun record(event: String, owner: Activity? = null) {
         events.add(event)
@@ -32,6 +33,7 @@ private object ColdLifecycle {
         putString("activityClass", activity.get()?.javaClass?.simpleName)
         putBoolean("frameCommitted", frameCommitted)
         putInt("activityGender", activityGender)
+        putInt("activityUiMode", activityUiMode)
         putBoolean("restoredState", restoredState)
     }
 }
@@ -42,6 +44,7 @@ open class ColdProcessActivity : Activity() {
         ColdLifecycle.record("create", this)
         ColdLifecycle.frameCommitted = false
         ColdLifecycle.activityGender = resources.configuration.grammaticalGender
+        ColdLifecycle.activityUiMode = resources.configuration.uiMode
         ColdLifecycle.restoredState = savedInstanceState?.getBoolean("cold-state", false) == true
         setTaskDescription(android.app.ActivityManager.TaskDescription.Builder()
             .setLabel(intent.getStringExtra("title") ?: "Cyan task").build())
@@ -75,11 +78,15 @@ open class ColdProcessActivity : Activity() {
         super.onResume()
         ColdLifecycle.activity = java.lang.ref.WeakReference(this)
         ColdLifecycle.activityGender = resources.configuration.grammaticalGender
+        ColdLifecycle.activityUiMode = resources.configuration.uiMode
         ColdLifecycle.record("resume", this)
     }
     override fun onConfigurationChanged(configuration: android.content.res.Configuration) {
         super.onConfigurationChanged(configuration)
-        if (ColdLifecycle.activity.get() === this) ColdLifecycle.activityGender = configuration.grammaticalGender
+        if (ColdLifecycle.activity.get() === this) {
+            ColdLifecycle.activityGender = configuration.grammaticalGender
+            ColdLifecycle.activityUiMode = configuration.uiMode
+        }
         ColdLifecycle.record("configuration", this)
     }
     override fun onPause() { ColdLifecycle.record("pause", this); super.onPause() }
@@ -110,8 +117,20 @@ open class ColdProcessProvider : ContentProvider() {
             check(android.os.Handler(android.os.Looper.getMainLooper()).post { current.finish() })
             return Bundle()
         }
+        if (method == "night") {
+            // A provider retains its caller's Binder identity. Exercise the API
+            // as this application, just as an Activity's UiModeManager call does.
+            val identity = android.os.Binder.clearCallingIdentity()
+            try {
+                checkNotNull(context).getSystemService(android.app.UiModeManager::class.java)
+                    .setApplicationNightMode(checkNotNull(arg).toInt())
+            } finally { android.os.Binder.restoreCallingIdentity(identity) }
+            return Bundle()
+        }
         require(method == "snapshot")
         return ColdLifecycle.snapshot().apply {
+            putInt("applicationUiMode", checkNotNull(context).resources.configuration.uiMode)
+            putInt("reportedUiMode", android.app.ActivityManager.getService().configuration.uiMode)
             putInt("applicationGender", checkNotNull(context).resources.configuration.grammaticalGender)
             putInt("reportedGender", android.app.ActivityManager.getService().configuration.grammaticalGender)
         }

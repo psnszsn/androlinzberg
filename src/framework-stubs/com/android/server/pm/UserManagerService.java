@@ -17,6 +17,10 @@ public final class UserManagerService {
 
     private UserManagerService() {}
 
+    public static void enforceCurrentUserIfVisibleBackgroundEnabled() {
+        dev.artzig.system.HostedUserManagerService.enforceCurrentUserIfVisibleBackgroundEnabled();
+    }
+
     public static UserManagerService getInstance() { return INSTANCE; }
 
     public boolean exists(int userId) { return userId == 0; }

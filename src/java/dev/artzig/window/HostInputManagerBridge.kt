@@ -94,6 +94,11 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
         dispatcher.connectSurfaceFlinger()
     }
 
+    /** InputManagerService.LocalService.setPulseGestureEnabled does nothing when
+     * config_doubleTouchGestureEnableFile is empty. The compositor owns the
+     * Wayland seat; it exposes no kernel double-tap control file to this client. */
+    fun setPulseGestureEnabled(enabled: Boolean) {}
+
     fun createInputChannel(name: String): InputChannel = dispatcher.createInputChannel(name)
     fun removeInputChannel(token: IBinder) = dispatcher.removeInputChannel(token)
     fun monitorInput(name: String, displayId: Int): InputChannel =

@@ -309,6 +309,10 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.VIBRATOR_MANAGER_SERVICE, HostedVibratorManagerService())
         val battery = HostedBatteryService(activityManager)
         activityManager.batteryService = battery
+        LocalServices.addService(android.os.BatteryManagerInternal::class.java,
+            Class.forName("android.os.HostedBatteryManagerInternal")
+                .getConstructor(HostedBatteryService::class.java)
+                .newInstance(battery) as android.os.BatteryManagerInternal)
         android.os.ServiceManager.addService("batteryproperties", battery.registrar)
         android.os.ServiceManager.addService(android.os.BatteryStats.SERVICE_NAME, battery.batteryStats)
         android.os.ServiceManager.addService(Context.CONNECTIVITY_SERVICE, HostedConnectivityService(context, packageManager))
@@ -380,11 +384,13 @@ internal object SystemServices {
         // search, dropbox, overlays, domain verification, wallpaper, credentials, shortcuts,
         // launcher apps, app widgets) for a device with no launcher, lock screen or providers.
         val hostedPermissions = HostedPermissions(packageManager)
-        android.os.ServiceManager.addService(Context.UI_MODE_SERVICE, HostedUiModeManagerService(context, activityManager, hostedPermissions))
         if (stockWindows != null) {
+            manager.startService(com.android.server.dreams.DreamManagerService::class.java)
+            manager.startService("com.android.server.UiModeManagerService")
             // ATMS owns package overrides, configuration delivery and persistence.
             manager.startService(com.android.server.grammaticalinflection.GrammaticalInflectionService::class.java)
         } else {
+            android.os.ServiceManager.addService(Context.UI_MODE_SERVICE, HostedUiModeManagerService(context, activityManager, hostedPermissions))
             val grammaticalInflection = HostedGrammaticalInflectionService(activityManager, hostedPermissions)
             android.os.ServiceManager.addService(Context.GRAMMATICAL_INFLECTION_SERVICE, grammaticalInflection)
             LocalServices.addService(com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal::class.java,

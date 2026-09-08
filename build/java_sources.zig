@@ -217,6 +217,16 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/AudioMetadata.java");
     try c.file("$FB/media/java/android/media/AudioMetadataMap.java");
     try c.file("$FB/media/java/android/media/AudioMetadataReadMap.java");
+    try c.file("$CJ/android/os/BatteryManagerInternal.java");
+    try c.file("$CJ/android/service/dreams/DreamManagerInternal.java");
+    try c.file("$CJ/com/android/internal/app/DisableCarModeActivity.java");
+    try c.file("$FB/services/core/java/com/android/server/UiModeManagerInternal.java");
+    try c.file("$FB/services/core/java/com/android/server/UiModeManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/dreams/DreamController.java");
+    try c.file("$FB/services/core/java/com/android/server/dreams/DreamManagerService.java");
+    try c.file("$FB/services/core/java/com/android/server/dreams/DreamShellCommand.java");
+    try c.file("$FB/services/core/java/com/android/server/dreams/DreamUiEventLogger.java");
+    try c.file("$FB/services/core/java/com/android/server/dreams/DreamUiEventLoggerImpl.java");
     try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionBackupHelper.java");
     try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionService.java");
     try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionShellCommand.java");

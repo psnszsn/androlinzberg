@@ -2437,6 +2437,7 @@ pub const aconfig = [_]Aconfig{
     .{ .package = "android.app.job", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/apex/jobscheduler/framework/aconfig/job.aconfig"} },
     .{ .package = "android.app.usage", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/app/usage/flags.aconfig"} },
     .{ .package = "android.service.controls.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/controls/flags/flags.aconfig"} },
+    .{ .package = "com.android.server.dreams", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/services/core/java/com/android/server/dreams/flags.aconfig"} },
     .{ .package = "android.service.dreams", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/core/java/android/service/dreams/flags.aconfig"} },
     .{ .package = "com.android.media.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/media_better_together.aconfig"} },
     .{ .package = "com.android.media.performance.flags", .container = "system", .source = .aosp, .declarations = &.{"frameworks/base/media/java/android/media/flags/performance.aconfig"} },

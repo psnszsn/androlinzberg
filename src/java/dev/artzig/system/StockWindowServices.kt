@@ -71,6 +71,10 @@ internal class StockWindowServices private constructor() {
         activities.attachSystemWindowProcess(tasks)
         manager.startService(com.android.server.devicestate.DeviceStateManagerService::class.java)
         input = HostInputManagerBridge(context, BootstrapSeat())
+        LocalServices.addService(com.android.server.input.InputManagerInternal::class.java,
+            Class.forName("com.android.server.input.HostedInputManagerInternal")
+                .getConstructor(HostInputManagerBridge::class.java)
+                .newInstance(input) as com.android.server.input.InputManagerInternal)
         val policy = Class.forName("com.android.server.policy.HostedDesktopWindowManagerPolicy")
             .getConstructor(HostedDesktopWindowPolicy::class.java)
             .newInstance(HostedDesktopWindowPolicy()) as WindowManagerPolicy

@@ -280,6 +280,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/WindowManagerInternalProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/DisplayManagerInternalProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/PowerManagerInternalProcessor.kt"));
+    package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/InputManagerInternalProcessor.kt"));
+    package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/BatteryManagerInternalProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/UsageStatsInternalProcessor.kt"));
     package_manager_internal_processor.addFileArg(b.path("src/java/dev/artzig/tools/DesktopWindowPolicyProcessor.kt"));
     package_manager_internal_processor.run.setName("compile local-service adapter processors");
@@ -388,7 +390,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     });
     javac.addArgs(&.{
         "-processor",
-        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor,dev.artzig.tools.ActivityManagerInternalProcessor,dev.artzig.tools.WindowManagerInternalProcessor,dev.artzig.tools.DisplayManagerInternalProcessor,dev.artzig.tools.PowerManagerInternalProcessor,dev.artzig.tools.UsageStatsInternalProcessor,dev.artzig.tools.DesktopWindowPolicyProcessor," ++ @import("generator_sources.zig").system_features.processor_class ++ "," ++ compat_declaration.processor_class,
+        "android.app.appsearch.safeparcel.SafeParcelProcessor,android.processor.property_cache.CachedPropertyProcessor,dev.artzig.tools.PackageManagerInternalProcessor,dev.artzig.tools.ActivityManagerInternalProcessor,dev.artzig.tools.WindowManagerInternalProcessor,dev.artzig.tools.DisplayManagerInternalProcessor,dev.artzig.tools.PowerManagerInternalProcessor,dev.artzig.tools.InputManagerInternalProcessor,dev.artzig.tools.BatteryManagerInternalProcessor,dev.artzig.tools.UsageStatsInternalProcessor,dev.artzig.tools.DesktopWindowPolicyProcessor," ++ @import("generator_sources.zig").system_features.processor_class ++ "," ++ compat_declaration.processor_class,
     });
     javac.addArg("-d");
     const java_classes = javac.addOutputDirectoryArg("java-classes");

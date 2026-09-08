@@ -96,6 +96,7 @@ object StockColdLaunchSmoke {
         }
         check(events == arrayListOf("provider", "create", "start", "resume")) { "Cold callbacks: $events" }
         verifyGrammaticalConfiguration(context, pkg, grammar)
+        verifyNightConfiguration(context, pkg)
         if (android.view.HostedRootFrames.stockClients) {
             check(frameCommitted) { "Stock ViewRootImpl never committed an APK frame" }
             if (System.getenv("AZK_TASK_WINDOWS") == "1") verifyWaylandTask(pkg, running.pid, manager)
@@ -190,6 +191,85 @@ object StockColdLaunchSmoke {
                 (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
         }
         println("Stock grammatical configuration: cold override, WPC getter, relaunch/saved state, handled callback and clearing passed")
+    }
+
+    private fun verifyNightConfiguration(context: Context, pkg: String) {
+        val uri = android.net.Uri.parse("content://$pkg.cold")
+        val ui = android.app.IUiModeManager.Stub.asInterface(
+            android.os.ServiceManager.getService(Context.UI_MODE_SERVICE))
+        fun snapshot() = checkNotNull(context.contentResolver.call(uri, "snapshot", null, null))
+        fun appMode(mode: Int) { context.contentResolver.call(uri, "night", mode.toString(), null) }
+        fun matches(state: android.os.Bundle, night: Int) =
+            listOf("applicationUiMode", "reportedUiMode", "activityUiMode").all {
+                state.getInt(it) and android.content.res.Configuration.UI_MODE_NIGHT_MASK == night
+            }
+        fun awaitState(description: String, ready: (android.os.Bundle) -> Boolean): android.os.Bundle {
+            val end = SystemClock.uptimeMillis() + 10_000
+            do {
+                val next = snapshot()
+                if (ready(next)) return next
+                SystemClock.sleep(5)
+            } while (SystemClock.uptimeMillis() < end)
+            error("$description: ${snapshot()}")
+        }
+        val day = android.content.res.Configuration.UI_MODE_NIGHT_NO
+        val night = android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val originalMode = ui.nightMode
+        ui.setNightMode(android.app.UiModeManager.MODE_NIGHT_NO)
+        awaitState("Global day configuration did not reach the application") { matches(it, day) }
+        val before = snapshot().getStringArrayList("events").orEmpty().size
+        appMode(android.app.UiModeManager.MODE_NIGHT_YES)
+        val relaunched = awaitState("Application night mode did not relaunch through ATMS") {
+            val callbacks = it.getStringArrayList("events").orEmpty().drop(before)
+            matches(it, night) && it.getBoolean("restoredState") &&
+                callbacks.lastIndexOf("resume") > callbacks.lastIndexOf("create") &&
+                callbacks.contains("create") &&
+                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+        }
+        val callbacks = relaunched.getStringArrayList("events").orEmpty().drop(before)
+        check(callbacks.indexOf("pause") >= 0 && callbacks.indexOf("save") > callbacks.indexOf("pause") &&
+            callbacks.indexOf("destroy") > callbacks.indexOf("save") &&
+            callbacks.indexOf("create") > callbacks.indexOf("destroy")) { "Night relaunch ordering: $callbacks" }
+        val tasks = ActivityTaskManager.getService()
+        val taskId = tasks.getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY)
+            .single { it.baseActivity?.packageName == pkg }.taskId
+        val options = android.app.ActivityOptions.makeBasic().apply { setLaunchTaskId(taskId) }
+        check(tasks.startActivity(null, "android", null,
+            Intent().setClassName(pkg, "$pkg.ColdHandledConfigurationActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), null, null, null, -1, 0, null,
+            options.toBundle()) == ActivityManager.START_SUCCESS)
+        val handledStart = awaitState("Night-mode handled activity did not resume") {
+            it.getString("activityClass") == "ColdHandledConfigurationActivity" && matches(it, night)
+        }.getStringArrayList("activityEvents").orEmpty().size
+        appMode(android.app.UiModeManager.MODE_NIGHT_NO)
+        val handled = awaitState("Handled night configuration was not delivered") {
+            matches(it, day) && it.getStringArrayList("activityEvents").orEmpty().drop(handledStart)
+                .contains("ColdHandledConfigurationActivity:configuration")
+        }
+        check(handled.getStringArrayList("activityEvents").orEmpty().drop(handledStart)
+            .filter { it.startsWith("ColdHandledConfigurationActivity:") } ==
+            listOf("ColdHandledConfigurationActivity:configuration")) { "Handled night mode lifecycle: $handled" }
+        ui.setNightMode(android.app.UiModeManager.MODE_NIGHT_YES)
+        val systemDeadline = SystemClock.uptimeMillis() + 10_000
+        while (ActivityManager.getService().configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK != night &&
+            SystemClock.uptimeMillis() < systemDeadline) SystemClock.sleep(5)
+        check(ActivityManager.getService().configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK == night)
+        check(matches(snapshot(), day)) { "Global night mode replaced the application's day override" }
+        appMode(android.app.UiModeManager.MODE_NIGHT_AUTO)
+        awaitState("Clearing application mode did not inherit global night mode") { matches(it, night) }
+        context.contentResolver.call(uri, "finish", null, null)
+        awaitState("Original activity did not restore after night configuration") {
+            it.getString("activityClass") == "ColdProcessActivity" && matches(it, night) &&
+                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+        }
+        ui.setNightMode(android.app.UiModeManager.MODE_NIGHT_NO)
+        awaitState("Cleared application override did not follow global day mode") {
+            matches(it, day) && (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+        }
+        ui.setNightMode(originalMode)
+        println("Stock night configuration: application override, WPC getter, relaunch/saved state, handled callback, global inheritance and clearing passed")
     }
 
     private fun inspectionProcesses(registry: dev.artzig.testing.IInspectionRegistry): List<android.os.Bundle> =
