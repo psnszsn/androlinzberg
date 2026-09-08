@@ -751,3 +751,26 @@ test "hardware buffer formats map to the expected byte widths" {
 comptime {
     _ = @import("legacy_gles.zig");
 }
+
+// bionic android_dlopen_ext: ordinary shared objects use the host ELF loader.
+// Android namespace/FD/RELRO extensions have no host equivalent and fail explicitly.
+// No descriptor is borrowed or consumed when rejecting an extension.
+extern "c" fn dlopen(filename: ?[*:0]const u8, flags: c_int) ?*anyopaque;
+const AndroidDlextInfo = extern struct {
+    flags: u64,
+    reserved_addr: ?*anyopaque,
+    reserved_size: usize,
+    relro_fd: c_int,
+    library_fd: c_int,
+    library_fd_offset: i64,
+    library_namespace: ?*anyopaque,
+};
+pub export fn android_dlopen_ext(filename: ?[*:0]const u8, flags: c_int, info: ?*const AndroidDlextInfo) callconv(.c) ?*anyopaque {
+    if (info) |extension| {
+        if (extension.flags != 0) {
+            __errno_location().* = @backingInt(std.os.linux.E.OPNOTSUPP);
+            return null;
+        }
+    }
+    return dlopen(filename, flags);
+}

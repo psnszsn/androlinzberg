@@ -89,7 +89,7 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      */
     public void setSurfaceLifecycle(int lifecycleStrategy) {
         mRequestedSurfaceLifecycleStrategy = lifecycleStrategy;
-        updateSurfaceLifecycle();
+        updateSurface();
     }
 
     @Override protected void onAttachedToWindow() {
@@ -97,18 +97,18 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         mAttachedToWindow = true;
         mWindowStopped = false;
         getViewRootImpl().addSurfaceChangedCallback(this);
-        updateSurfaceLifecycle();
+        updateSurface();
         updateRect();
     }
 
     @Override public void setVisibility(int visibility) {
         super.setVisibility(visibility);
-        updateSurfaceLifecycle();
+        updateSurface();
     }
 
     @Override protected void onWindowVisibilityChanged(int visibility) {
         super.onWindowVisibilityChanged(visibility);
-        updateSurfaceLifecycle();
+        updateSurface();
     }
 
     @Override protected void onDetachedFromWindow() {
@@ -119,7 +119,7 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         mAttachedToWindow = false;
         ViewRootImpl root = getViewRootImpl();
         if (root != null) root.removeSurfaceChangedCallback(this);
-        updateSurfaceLifecycle();
+        updateSurface();
         super.onDetachedFromWindow();
     }
 
@@ -165,7 +165,9 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         }
     }
 
-    private void updateSurfaceLifecycle() {
+    // Pinned protected updateSurface entry point; the existing hosted lifecycle owns
+    // allocation, callbacks, geometry and release until SurfaceControl is available.
+    protected void updateSurface() {
         boolean followsAttachment = mRequestedSurfaceLifecycleStrategy
                 == SURFACE_LIFECYCLE_FOLLOWS_ATTACHMENT;
         boolean shouldExist = mAttachedToWindow && !mWindowStopped && (followsAttachment
@@ -205,12 +207,12 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
     // independently of the requested visibility/attachment lifecycle strategy.
     @Override public void surfaceCreated(SurfaceControl.Transaction transaction) {
         mWindowStopped = false;
-        updateSurfaceLifecycle();
+        updateSurface();
     }
 
     @Override public void surfaceDestroyed() {
         mWindowStopped = true;
-        updateSurfaceLifecycle();
+        updateSurface();
     }
 
     @Override public void surfaceReplaced(SurfaceControl.Transaction transaction) {

@@ -13,6 +13,17 @@ zig build -j10 cpp-audit
 
 - `src/platform/audio.zig` implements AudioTrack behavior and PipeWire state.
 - `src/codec/jni.zig` connects MediaCodec JNI to the FFmpeg decoder.
+- MediaExtractor uses original AOSP Java/JNI, NuMediaExtractor, the native
+  MediaExtractorService and its Binder protocols, data sources, metadata, and
+  WAV/MP3/AAC parsers. The hosted system process publishes `media.extractor`.
+  A factory patch registers linked original plugin entry points and recognizes
+  factory ownership without requiring Android's dedicated extractor daemon UID.
+  JNI Binder conversions retain shared object ownership in both directions.
+  Native PermissionCache/IPermissionController resolve the hosted `permission`
+  service, which delegates to the same permission, package and AppOps services
+  as Java clients. No new decoding or audio presentation backend is introduced.
+  MediaDescrambler JNI uses the original CAS protocols and service discovery;
+  the host does not supply a CAS hardware service.
 - `src/platform/host_renderer.zig` manages the Wayland render target.
 - `src/native/platform_abi.zig` supplies HardwareBuffer, GBM, SQLite, and POSIX
   compatibility interfaces.

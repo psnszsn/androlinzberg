@@ -316,6 +316,70 @@ pub fn build(b: *std.Build, o: Options) Result {
         "ItemSerialize-ByteString.cpp", "ItemSerialize-Parcel.cpp", "MediaMetrics.cpp", "MediaMetricsItem.cpp",
     }, metrics_includes, &.{"-D__BIONIC_CAST(kind,type,value)=kind<type>(value)"});
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_MediaMetricsJNI.cpp"}, metrics_includes, &.{});
+    // Stock media extractor client/service, descrambler and their native data types.
+    // Keep Android's loader declarations separate from the host libc headers.
+    const extractor_headers = b.addWriteFiles();
+    _ = extractor_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/android/dlext.h"), "android/dlext.h");
+    const extractor_includes = &.{
+        o.aosp.path(b, "frameworks/av/media/module/extractors/wav/include"),
+        o.aosp.path(b, "frameworks/av/media/module/extractors/mp3/include"),
+        o.aosp.path(b, "frameworks/av/media/module/extractors/aac/include"),
+        o.aosp.path(b, "frameworks/av/media/module/id3/include"),
+
+        extractor_headers.getDirectory(),
+        o.aosp.path(b, "frameworks/base/media/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/av/include"),
+        o.aosp.path(b, "frameworks/av/media/libmedia/include"),
+        o.aosp.path(b, "frameworks/av/media/libstagefright/include"),
+        o.aosp.path(b, "frameworks/av/media/libstagefright"),
+        o.aosp.path(b, "frameworks/av/media/libdatasource/include"),
+        o.aosp.path(b, "frameworks/av/media/module/foundation/include"),
+        o.aosp.path(b, "frameworks/av/media/module/foundation/include/media/stagefright/foundation"),
+        o.aosp.path(b, "frameworks/av/media/module/esds/include"),
+        o.aosp.path(b, "frameworks/av/media/module/metadatautils/include"),
+        o.aosp.path(b, "frameworks/av/media/ndk/include"),
+        o.aosp.path(b, "frameworks/av/media/libmediametrics/include"),
+        o.aosp.path(b, "frameworks/av/media/libaudioclient/include"),
+        o.aosp.path(b, "frameworks/av/media/libaudiofoundation/include"),
+        o.aosp.path(b, "frameworks/av/media/audioaidlconversion/include"),
+        o.aosp.path(b, "frameworks/av/media/libmediaplayerservice/include"),
+        o.aosp.path(b, "frameworks/native/headers/media_plugin"),
+        o.aosp.path(b, "system/media/audio/include"),
+        o.aosp.path(b, "system/media/audio_utils/include"),
+        o.aosp.path(b, "system/libhidl/transport/token/1.0/utils/include"),
+        o.aosp.path(b, "system/libhidl/transport/allocator/1.0/utils/include"),
+        o.aosp.path(b, "system/libhwbinder/include"),
+        o.aosp.path(b, "system/libhidl/transport/include"),
+        o.aosp.path(b, "system/libfmq/base"),
+        o.aosp.path(b, "art/libnativeloader/include"),
+        o.aosp.path(b, "frameworks/av/services/mediaextractor"),
+        o.aosp.path(b, "frameworks/native/headers/media_plugin/media/openmax"),
+        o.aosp.path(b, "frameworks/av/media/libmediahelper/include"),
+        o.aosp.path(b, "frameworks/av/media/liberror/include"),
+        o.aosp.path(b, "external/piex"),
+    };
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{ "android_media_MediaExtractor.cpp", "android_media_MediaDescrambler.cpp", "android_media_MediaDataSource.cpp" }, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_Streams.cpp"}, extractor_includes, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
+    g.add(o.aosp.path(b, "frameworks/av/media/libdatasource"), &.{"DataURISource.cpp"}, extractor_includes, &.{ "-include", "log/log.h" });
+    g.add(o.aosp.path(b, "frameworks/av/media/libdatasource"), &.{ "DataSourceFactory.cpp", "FileSource.cpp", "HTTPBase.cpp", "MediaHTTP.cpp", "NuCachedSource2.cpp" }, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/libmedia"), &.{ "IMediaExtractor.cpp", "IMediaSource.cpp", "IDataSource.cpp", "IMediaHTTPService.cpp", "IMediaHTTPConnection.cpp", "NdkMediaErrorPriv.cpp" }, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/libstagefright"), &.{ "NuMediaExtractor.cpp", "InterfaceUtils.cpp", "CallbackDataSource.cpp", "CallbackMediaSource.cpp", "RemoteMediaExtractor.cpp", "RemoteMediaSource.cpp", "MediaSource.cpp", "MediaTrack.cpp", "MediaExtractor.cpp", "MediaExtractorFactory.cpp", "HevcUtils.cpp" }, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/libstagefright"), &.{"Utils.cpp"}, extractor_includes, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
+    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{ "MetaData.cpp", "MetaDataBase.cpp" }, extractor_includes, &.{"-D__ANDROID__"});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &.{ "MediaBuffer.cpp", "MediaBufferBase.cpp", "MediaBufferGroup.cpp", "MediaDefs.cpp", "AudioPresentationInfo.cpp", "FoundationUtils.cpp", "avc_utils.cpp", "OpusHeader.cpp", "base64.cpp", "ByteUtils.cpp", "ABitReader.cpp", "ColorUtils.cpp", "ColorUtils_fill.cpp" }, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/metadatautils"), &.{"MetaDataUtils.cpp"}, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "system/libhidl/transport/token/1.0/utils"), &.{"HybridInterface.cpp"}, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "system/libhidl/transport/allocator/1.0/utils"), &.{"FrameworkUtils.cpp"}, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/services/mediaextractor"), &.{"MediaExtractorService.cpp"}, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/esds"), &.{"ESDS.cpp"}, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/wav"), &.{"WAVExtractor.cpp"}, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_wav_extractor_def"});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/mp3"), &.{ "MP3Extractor.cpp", "VBRISeeker.cpp", "XINGSeeker.cpp" }, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_mp3_extractor_def"});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/aac"), &.{"AACExtractor.cpp"}, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_aac_extractor_def"});
+    g.add(o.aosp.path(b, "frameworks/av/media/module/id3"), &.{"ID3.cpp"}, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "system/media/audio_utils"), &.{"primitives.c"}, extractor_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/native/libs/binder"), &.{ "PermissionCache.cpp", "IPermissionController.cpp" }, extractor_includes, &.{});
     // Android's host-capable camera metadata library and C++ value containers.
     g.add(o.aosp.path(b, "frameworks/av/camera"), &.{ "CameraMetadata.cpp", "VendorTagDescriptor.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/media/camera/src"), &.{"camera_metadata.c"}, &.{}, &.{});
@@ -348,7 +412,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "system/incremental_delivery/incfs"), &.{ "incfs_ndk.c", "incfs.cpp", "MountRegistry.cpp", "path.cpp" }, &.{}, &.{"-D_FILE_OFFSET_BITS=64"});
     g.add(o.incremental_sysprop_source.dirname(), &.{"IncrementalProperties.sysprop.cpp"}, &.{}, &.{});
     for (o.aidl_source_roots, @import("generator_sources.zig").cpp_aidl) |root, entry| {
-        if (entry.output) |output| g.add(root, &.{output}, &.{}, &.{});
+        if (entry.output) |output| g.add(root, &.{output}, extractor_includes, &.{});
     }
     g.add(o.aosp.path(b, "frameworks/native/libs/input"), &gen.input_srcs, &.{ fn_inc, o.aosp.path(b, "frameworks/native/libs/input"), input_compat_inc, binder_inc }, &.{aidl_inc});
     g.add(o.aosp.path(b, "frameworks/native/libs/attestation"), &gen.attestation_srcs, &.{fn_inc}, &.{});
@@ -367,7 +431,10 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
-    g.add(b.path(""), &our_srcs, &.{ o.aosp.path(b, "frameworks/av/media/libmediametrics/include"), o.aosp.path(b, "frameworks/base/media/jni"), hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }, &.{});
+    var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
+    bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
+    bridge_includes.appendSlice(b.allocator, &.{ o.aosp.path(b, "frameworks/av/include"), o.aosp.path(b, "frameworks/av/media/libstagefright/include"), o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/av/services/mediaextractor"), o.aosp.path(b, "frameworks/av/media/libmedia/include"), o.aosp.path(b, "frameworks/av/media/libmediametrics/include"), o.aosp.path(b, "frameworks/base/media/jni"), hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }) catch @panic("OOM");
+    g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_PublicFormatUtils.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
 

@@ -1,4 +1,7 @@
 #include "android_media_MediaMetricsJNI.h"
+#include "MediaExtractorService.h"
+#include <binder/PermissionCache.h>
+namespace android { jobject javaObjectForIBinder(JNIEnv*, const sp<IBinder>&); }
 #include "com_android_internal_os_Zygote.h"
 #include <android-base/stringprintf.h>
 #include <nativehelper/ScopedUtfChars.h>
@@ -120,6 +123,8 @@ extern int register_android_graphics_RuntimeXfermode(JNIEnv*);
 extern int register_android_graphics_Camera(JNIEnv*);
 extern int register_android_hardware_camera2_CameraMetadata(JNIEnv*);
 extern int register_android_media_MediaHTTPConnection(JNIEnv*);
+extern int register_android_media_MediaExtractor(JNIEnv*);
+extern int register_android_media_Descrambler(JNIEnv*);
 
 namespace {
 jobject nativeBundle(JNIEnv* env, jobject) {
@@ -132,6 +137,29 @@ jobject nativeBundle(JNIEnv* env, jobject) {
     value.putPersistableBundle(android::String16("nested"), nested);
     return android::MediaMetricsJNI::nativeToJavaPersistableBundle(env, &value);
 }
+}
+
+// Bootstrap only: the service implementation and generated Binder protocol are AOSP.
+static jobject nativeCreateMediaExtractorService(JNIEnv* env, jobject) {
+    return android::javaObjectForIBinder(env, android::sp<android::MediaExtractorService>::make());
+}
+extern "C" int azk_register_media_extractor_service(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"nativeCreateMediaExtractorService", "()Landroid/os/IBinder;", reinterpret_cast<void*>(nativeCreateMediaExtractorService)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/system/SystemServices", methods, 1);
+}
+
+static jboolean nativePermission(JNIEnv* env, jobject, jstring permission, jint pid, jint uid) {
+    ScopedUtfChars name(env, permission);
+    if (!name.c_str()) return JNI_FALSE;
+    return android::PermissionCache::checkPermission(android::String16(name.c_str()), pid, uid);
+}
+extern "C" int azk_register_audio_manager_smoke(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"nativePermission", "(Ljava/lang/String;II)Z", reinterpret_cast<void*>(nativePermission)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/StockAudioManagerSmoke", methods, 1);
 }
 
 extern "C" int azk_register_media_metrics_smoke(JNIEnv* env) {
@@ -468,6 +496,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_os_HwParcel),
             E(android::register_android_media_MediaMetrics),
             E(azk_register_media_metrics_smoke),
+            E(azk_register_media_extractor_service),
+            E(azk_register_audio_manager_smoke),
             E(registerStockHidlMemorySmoke),
             E(registerHostedZygoteCommandBuffer),
             E(registerPerfettoTrace),
@@ -497,6 +527,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_graphics_Camera),
             E(register_android_hardware_camera2_CameraMetadata),
             E(register_android_media_MediaHTTPConnection),
+            E(register_android_media_MediaExtractor),
+            E(register_android_media_Descrambler),
             E(register_android_graphics_CreateJavaOutputStreamAdaptor),
             E(android::register_android_graphics_CanvasProperty),
             E(android::register_android_graphics_ColorFilter),
@@ -691,6 +723,10 @@ extern "C" jint azk_camera_setup_vendor_tags(JNIEnv *env) {
 // Pinned android_util_Binder::javaObjectForIBinder conversion over the shared
 // Java/NDK Binder transport. The original bridge assumes kernel libbinder.
 namespace android {
+sp<IBinder> ibinderForJavaObject(JNIEnv* env, jobject object) {
+    if (!object) return nullptr;
+    return IBinder::fromNative(AIBinder_fromJavaBinder(env, object));
+}
 jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& binder) {
     if (!binder) return nullptr;
     AIBinder* native = binder->acquireNative();

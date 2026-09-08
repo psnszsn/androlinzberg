@@ -95,6 +95,7 @@ public class AudioTrack implements AudioRouting {
         private AudioFormat mFmt = new AudioFormat.Builder().build();
         private int mBufferSize = 65536;
         private int mSessionId = 0;
+        private int mCallRedirectionMode = AudioManager.CALL_REDIRECT_NONE;
         public Builder() {}
         public Builder setAudioAttributes(AudioAttributes attributes) { mAttrs = attributes; return this; }
         public Builder setAudioFormat(AudioFormat format) { mFmt = format; return this; }
@@ -103,7 +104,24 @@ public class AudioTrack implements AudioRouting {
         public Builder setSessionId(int sessionId) { mSessionId = sessionId; return this; }
         public Builder setPerformanceMode(int performanceMode) { return this; }
         public Builder setOffloadedPlayback(boolean offload) { return this; }
-        public AudioTrack build() { return new AudioTrack(mAttrs, mFmt, mBufferSize, MODE_STREAM, mSessionId); }
+        // Pinned Builder.setCallRedirectionMode validation. Call injection requires
+        // the native audio-policy route, which the existing PCM backend does not own.
+        public Builder setCallRedirectionMode(int callRedirectionMode) {
+            switch (callRedirectionMode) {
+                case AudioManager.CALL_REDIRECT_NONE:
+                case AudioManager.CALL_REDIRECT_PSTN:
+                case AudioManager.CALL_REDIRECT_VOIP:
+                    mCallRedirectionMode = callRedirectionMode;
+                    break;
+                default:
+                    throw new IllegalArgumentException("Invalid call redirection mode " + callRedirectionMode);
+            }
+            return this;
+        }
+        public AudioTrack build() {
+            dev.artzig.HostedAudioArrayWrites.checkCallRedirection(mCallRedirectionMode);
+            return new AudioTrack(mAttrs, mFmt, mBufferSize, MODE_STREAM, mSessionId);
+        }
     }
 
     public static int getMinBufferSize(int sampleRateInHz, int channelConfig, int audioFormat) {

@@ -27,6 +27,33 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- AudioManager now compiles verbatim with 65 shared media, TV, picture-profile and
+  audio-focus Java dependencies; the 614-line placeholder is deleted. The hosted
+  audio service delegates focus ordering, delayed grants and Binder death to the
+  original MediaFocusControl and FocusRequester, with the original HardeningEnforcer
+  behind the AudioService permission boundary. Players receive AOSP's focus-loss
+  callback fallback when server ducking/fading is unavailable. Existing PCM output
+  remains fixed-volume and reports its speaker route and absence of direct/offload
+  profiles. MediaExtractor uses the original Java/JNI client, native Binder service,
+  data sources, metadata and WAV/MP3/AAC parsers. A packaging patch registers the
+  statically linked original extractors and accounts for their hosted service UID;
+  selection, sniffing and sample parsing remain AOSP. Original native permission
+  cache/controller clients reach the same hosted permission and AppOps services as
+  Java callers. The batch generates 35 Java and 102 native AIDL declarations, with
+  native protocols mostly consumed as headers, and adds the HIDL token protocol.
+  MediaDescrambler JNI and CAS clients retain real service discovery; no CAS hardware
+  service is added. MediaCodec's nested crypto values now follow the pinned Java
+  implementation, while the outer codec and AudioTrack remain hosted adaptations.
+  JVM/native tests cover focus callbacks across processes, permission checks, crypto
+  ownership, WAV sample bytes/seek/EOS, and MP3/AAC sample framing. The framing fixtures
+  do not test compressed-audio decoding. System, Binder/C++ Binder and build checks
+  pass. All 11 APK tests pass with 37 captured steps
+  and zero structured runtime issues. AOSP is rebuilt and repinned; all 341 added
+  regular archive inputs match the checkout plus declared patches. ART is unchanged
+  and verified. Inventory: 15 stubs (8 pending, 7 survivors). The AudioTrack/MediaCodec
+  Java closure is now two sources with JNI blockers; WebView/provider, inline surfaces,
+  the remaining server contracts and broader backend-dependent work are unfinished.
+
 
 - MediaMetrics now uses verbatim AOSP Java, the original native serialization
   library and Binder client, and the original native PersistableBundle. Its JNI

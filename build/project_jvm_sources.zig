@@ -2,6 +2,7 @@
 //! Add new sources here so graph membership changes with this Zig file.
 pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockMediaMetricsSmoke.kt",
+    "src/java/dev/artzig/StockAudioManagerSmoke.kt",
     "src/java/dev/artzig/StockHidlTransportSmoke.kt",
     "src/java/dev/artzig/HostedRenderer.kt",
     "src/java/dev/artzig/HostedHardwareSnapshot.kt",
@@ -9,7 +10,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockSplashScreenSmoke.kt",
 
     "src/framework-stubs/android/widget/inline/InlineContentView.java",
-    "src/framework-stubs/android/media/AudioManager.java",
     "src/framework-stubs/android/media/ToneGenerator.java",
     "src/framework-stubs/android/service/wallpaper/WallpaperService.java",
     "src/framework-stubs/android/view/SurfaceControl.java",
@@ -221,6 +221,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedLockSettingsService.kt",
     "src/java/dev/artzig/system/HostedMediaMetricsService.kt",
     "src/java/dev/artzig/system/HostedAudioService.kt",
+    "src/java/dev/artzig/system/HostedAudioFocus.kt",
+    "src/java/dev/artzig/system/HostedNativePermissionController.kt",
     "src/java/dev/artzig/system/HostedMediaRouterService.kt",
     "src/java/dev/artzig/system/HostedMediaSessionService.kt",
     "src/java/dev/artzig/system/HostedNotificationManagerService.kt",

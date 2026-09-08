@@ -102,6 +102,7 @@ fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
         "aidl-compat/",
         "frameworks/base/core/java/",
         "frameworks/base/graphics/java/",
+        "frameworks/base/media/java/android/media/tv/tunerresourcemanager/aidl/",
         "frameworks/base/media/java/",
         "frameworks/base/media/aidl/",
         "frameworks/av/aidl/",
@@ -207,6 +208,7 @@ fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat
         "packages/modules/Media/apex/aidl/stable",
         "packages/providers/MediaProvider/apex/framework/java",
         "packages/modules/Connectivity/framework-t/src",
+        "frameworks/base/media/java/android/media/tv/tunerresourcemanager/aidl",
         "frameworks/base/media/java",
         "frameworks/base/media/aidl",
         "frameworks/av/aidl",
@@ -422,6 +424,13 @@ fn aidlCpp(
         run.addFileArg(aosp.path("prebuilts/sdk/tools/linux/bin/aidl"));
         run.addArgs(&.{ b.fmt("--lang={s}", .{@tagName(entry.backend)}), "-I" });
         run.addDirectoryArg(root);
+        // Native interfaces import types owned by other selected AIDL packages.
+        var include_roots: std.StringHashMapUnmanaged(void) = .empty;
+        include_roots.put(b.allocator, entry.root, {}) catch @panic("OOM");
+        for (declarations.cpp_aidl) |dependency| {
+            const found = include_roots.getOrPut(b.allocator, dependency.root) catch @panic("OOM");
+            if (!found.found_existing) run.addPrefixedDirectoryArg("-I", aosp.path(dependency.root));
+        }
         if (entry.vintf_stable) run.addArgs(&.{ "--structured", "--stability=vintf" });
         run.addArg("-h");
         const headers = run.addOutputDirectoryArg(b.fmt("aidl-cpp-headers-{d}", .{index}));

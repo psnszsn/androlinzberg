@@ -1,0 +1,61 @@
+Subject: [PATCH] Namespace Binder assertion macro to avoid host libc collisions
+
+The host assert.h undefines __assert on repeated inclusion. Keep the same
+fatal checks under a Binder-specific macro and preserve bionic forwarding.
+
+--- a/libs/binder/ndk/include_ndk/android/binder_status.h
++++ b/libs/binder/ndk/include_ndk/android/binder_status.h
+@@ -33,10 +33,14 @@
+ 
+ #if !defined(__BIONIC__) && defined(BINDER_ENABLE_LIBLOG_ASSERT)
+ #include <log/log.h>
+-#define __assert(file, line, message) LOG_ALWAYS_FATAL(file ":" #line ": " message)
++#define __android_binder_assert(file, line, message) LOG_ALWAYS_FATAL(file ":" #line ": " message)
+ #endif
+ 
+ __BEGIN_DECLS
++
++#ifdef __BIONIC__
++#define __android_binder_assert(file, line, message) __assert(file, line, message)
++#endif
+ 
+ #ifndef __BIONIC__
+ 
+@@ -44,8 +48,8 @@
+ #define __INTRODUCED_IN(n)
+ #endif
+ 
+-#ifndef __assert
+-#define __assert(a, b, c)          \
++#ifndef __android_binder_assert
++#define __android_binder_assert(a, b, c)          \
+     do {                           \
+         syslog(LOG_ERR, a ": " c); \
+         abort();                   \
+--- a/libs/binder/ndk/include_cpp/android/binder_auto_utils.h
++++ b/libs/binder/ndk/include_cpp/android/binder_auto_utils.h
+@@ -91,7 +91,7 @@
+         AIBinder* old = *const_cast<AIBinder* volatile*>(&mBinder);
+         if (old != nullptr) AIBinder_decStrong(old);
+         if (old != *const_cast<AIBinder* volatile*>(&mBinder)) {
+-            __assert(__FILE__, __LINE__, "Race detected.");
++            __android_binder_assert(__FILE__, __LINE__, "Race detected.");
+         }
+         mBinder = binder;
+     }
+--- a/libs/binder/ndk/include_cpp/android/binder_interface_utils.h
++++ b/libs/binder/ndk/include_cpp/android/binder_interface_utils.h
+@@ -64,11 +64,11 @@
+     SharedRefBase() {}
+     virtual ~SharedRefBase() {
+         std::call_once(mFlagThis, [&]() {
+-            __assert(__FILE__, __LINE__, "SharedRefBase: no ref created during lifetime");
++            __android_binder_assert(__FILE__, __LINE__, "SharedRefBase: no ref created during lifetime");
+         });
+ 
+         if (ref() != nullptr) {
+-            __assert(__FILE__, __LINE__,
++            __android_binder_assert(__FILE__, __LINE__,
+                      "SharedRefBase: destructed but still able to lock weak_ptr. Is this object "
+                      "double-owned?");
+         }

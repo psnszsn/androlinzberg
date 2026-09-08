@@ -7,6 +7,14 @@ import android.media.AudioTrack
  * The current PCM byte-ring adapter has no typed-array/blocking-write contract. Keep the
  * unavailable submission at this host boundary until AudioTrack's JNI client is migrated. */
 object HostedAudioArrayWrites {
+    /** AudioTrack.Builder call injection requires AudioPolicy routes absent from this PCM backend. */
+    @JvmStatic fun checkCallRedirection(mode: Int) {
+        if (mode != android.media.AudioManager.CALL_REDIRECT_NONE) {
+            throw ArtzigTestDiagnostics.unsupported("android.media.AudioTrack.Builder", "build",
+                "Call redirection requires a native audio-policy injection route")
+        }
+    }
+
     private fun arguments(length: Int?, offset: Int, size: Int, mode: Int): Boolean =
         (mode == AudioTrack.WRITE_BLOCKING || mode == AudioTrack.WRITE_NON_BLOCKING) &&
             length != null && offset >= 0 && size >= 0 && offset.toLong() + size <= length

@@ -35,6 +35,28 @@ internal class HostedPlaybackRegistry(private val enforcer: PermissionEnforcer) 
     private val dispatchLock = Any()
     private val players = LinkedHashMap<Int, Entry>()
     private val callbacks = RemoteCallbackList<IPlaybackConfigDispatcher>()
+    private val callMutedPlayers = ArrayList<Int>()
+
+    // Pinned PlaybackActivityMonitor.mutePlayersForCall/unmutePlayersForCall: apply the
+    // player's framework volume multiplier through its original PlayerProxy/IPlayer.
+    fun muteForCall(usages: IntArray) = synchronized(lock) {
+        for ((id, entry) in players) {
+            if (entry.config.audioAttributes.usage !in usages) continue
+            try {
+                entry.config.playerProxy.setVolume(0f)
+                callMutedPlayers.add(id)
+            } catch (error: Exception) { android.util.Log.e("HostedPlaybackRegistry", "call: error muting player $id", error) }
+        }
+    }
+    fun unmuteForCall() = synchronized(lock) {
+        for (id in callMutedPlayers) {
+            val config = players[id]?.config ?: continue
+            try { config.playerProxy.setVolume(1f) }
+            catch (error: Exception) { android.util.Log.e("HostedPlaybackRegistry", "call: error unmuting player $id", error) }
+        }
+        callMutedPlayers.clear()
+    }
+
 
     fun track(card: PlayerBase.PlayerIdCard): Int {
         validateUsage(card.mAttributes)

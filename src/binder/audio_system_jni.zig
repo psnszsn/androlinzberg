@@ -224,9 +224,22 @@ const AudioSystem = struct {
         unsupported(env, "android.media.AudioSystem", "getMasterMute");
         return 0;
     }
-    fn getDevicesForAttributes(env: Env, _: jni.jclass, _: jni.jobject, _: jni.jobjectArray, _: jni.jboolean) callconv(.c) jni.jint {
-        unsupported(env, "android.media.AudioSystem", "getDevicesForAttributes");
-        return 0;
+    fn getDevicesForAttributes(env: Env, _: jni.jclass, attributes: jni.jobject, devices: jni.jobjectArray, _: jni.jboolean) callconv(.c) jni.jint {
+        // Pinned AudioSystem JNI array validation and device conversion. The existing
+        // host PCM output is the sole route, with the same native type/address as listAudioPorts.
+        if (devices == null or env.*.*.GetArrayLength.?(env, devices) == 0 or attributes == null) return -2;
+        const cls = env.*.*.FindClass.?(env, "android/media/AudioDeviceAttributes") orelse return -1;
+        defer env.*.*.DeleteLocalRef.?(env, cls);
+        const constructor = env.*.*.GetMethodID.?(env, cls, "<init>", "(ILjava/lang/String;Ljava/lang/String;)V") orelse return -1;
+        const address = env.*.*.NewStringUTF.?(env, "") orelse return -1;
+        defer env.*.*.DeleteLocalRef.?(env, address);
+        const name = env.*.*.NewStringUTF.?(env, "artzig") orelse return -1;
+        defer env.*.*.DeleteLocalRef.?(env, name);
+        const args = [_]jni.jvalue{ .{ .i = capability(3) }, .{ .l = address }, .{ .l = name } };
+        const device = env.*.*.NewObjectA.?(env, cls, constructor, &args) orelse return -1;
+        defer env.*.*.DeleteLocalRef.?(env, device);
+        env.*.*.SetObjectArrayElement.?(env, devices, 0, device);
+        return if (env.*.*.ExceptionCheck.?(env) != 0) -1 else 0;
     }
     fn getMasterMono(env: Env, _: jni.jclass) callconv(.c) jni.jboolean {
         unsupported(env, "android.media.AudioSystem", "getMasterMono");
@@ -468,8 +481,14 @@ const AudioSystem = struct {
         unsupported(env, "android.media.AudioSystem", "nativeGetSoundDose");
         return null;
     }
-    fn getDirectProfilesForAttributes(env: Env, _: jni.jclass, _: jni.jobject, _: jni.jobject) callconv(.c) jni.jint {
-        unsupported(env, "android.media.AudioSystem", "getDirectProfilesForAttributes");
+    fn getDirectProfilesForAttributes(env: Env, _: jni.jclass, attributes: jni.jobject, profiles: jni.jobject) callconv(.c) jni.jint {
+        // Pinned android_media_AudioSystem_getDirectProfilesForAttributes validates
+        // the arguments and appends supported profiles. The existing PCM mixer
+        // has no direct/offload profiles, so a valid caller's list stays intact.
+        if (attributes == null or profiles == null) return -2;
+        const cls = env.*.*.FindClass.?(env, "java/util/ArrayList") orelse return -1;
+        defer env.*.*.DeleteLocalRef.?(env, cls);
+        if (env.*.*.IsInstanceOf.?(env, profiles, cls) == 0) return -2;
         return 0;
     }
     fn getSupportedMixerAttributes(env: Env, _: jni.jclass, _: jni.jint, _: jni.jobject) callconv(.c) jni.jint {

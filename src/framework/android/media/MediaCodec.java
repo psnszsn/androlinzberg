@@ -6,6 +6,12 @@
 package android.media;
 
 import android.view.Surface;
+import android.annotation.IntDef;
+import android.annotation.NonNull;
+import android.annotation.Nullable;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.util.Arrays;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -34,11 +40,32 @@ public final class MediaCodec {
     public static final int BUFFER_FLAG_SYNC_FRAME = 1;
     public static final int BUFFER_FLAG_CODEC_CONFIG = 2;
     public static final int BUFFER_FLAG_END_OF_STREAM = 4;
+
+    // Pinned MediaCodec buffer metadata declarations used by stock TV clients.
+    public static final int BUFFER_FLAG_PARTIAL_FRAME = 8;
+    public static final int BUFFER_FLAG_MUXER_DATA = 16;
+    public static final int BUFFER_FLAG_DECODE_ONLY = 32;
+    /** @hide */
+    @IntDef(
+        flag = true,
+        value = {
+            BUFFER_FLAG_SYNC_FRAME,
+            BUFFER_FLAG_KEY_FRAME,
+            BUFFER_FLAG_CODEC_CONFIG,
+            BUFFER_FLAG_END_OF_STREAM,
+            BUFFER_FLAG_PARTIAL_FRAME,
+            BUFFER_FLAG_MUXER_DATA,
+            BUFFER_FLAG_DECODE_ONLY,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface BufferFlag {}
     public static final int CONFIGURE_FLAG_ENCODE = 1;
     public static final int INFO_TRY_AGAIN_LATER = -1;
     public static final int INFO_OUTPUT_FORMAT_CHANGED = -2;
     public static final int INFO_OUTPUT_BUFFERS_CHANGED = -3;
     public static final int CRYPTO_MODE_UNENCRYPTED = 0;
+    public static final int CRYPTO_MODE_AES_CTR = 1;
+    public static final int CRYPTO_MODE_AES_CBC = 2;
 
     private static final int NUM_INPUT = 8;
     private static final int NUM_OUTPUT = 8;
@@ -102,9 +129,169 @@ public final class MediaCodec {
         }
     }
 
-    public static class CryptoException extends RuntimeException {
-        public CryptoException(int errorCode, String detailMessage) { super(detailMessage); }
-        public int getErrorCode() { return 0; }
+    // Verbatim pinned MediaCodec.CryptoException; native extractor/descrambler metadata.
+    public final static class CryptoException extends RuntimeException
+            implements MediaDrmThrowable {
+        public CryptoException(int errorCode, @Nullable String detailMessage) {
+            this(detailMessage, errorCode, 0, 0, 0, null);
+        }
+
+        /**
+         * @hide
+         */
+        public CryptoException(String message, int errorCode, int vendorError, int oemError,
+                int errorContext, @Nullable CryptoInfo cryptoInfo) {
+            super(message);
+            mErrorCode = errorCode;
+            mVendorError = vendorError;
+            mOemError = oemError;
+            mErrorContext = errorContext;
+            mCryptoInfo = cryptoInfo;
+        }
+
+        /**
+         * This indicates that the requested key was not found when trying to
+         * perform a decrypt operation.  The operation can be retried after adding
+         * the correct decryption key.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_NO_KEY}.
+         */
+        public static final int ERROR_NO_KEY = MediaDrm.ErrorCodes.ERROR_NO_KEY;
+
+        /**
+         * This indicates that the key used for decryption is no longer
+         * valid due to license term expiration.  The operation can be retried
+         * after updating the expired keys.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_KEY_EXPIRED}.
+         */
+        public static final int ERROR_KEY_EXPIRED = MediaDrm.ErrorCodes.ERROR_KEY_EXPIRED;
+
+        /**
+         * This indicates that a required crypto resource was not able to be
+         * allocated while attempting the requested operation.  The operation
+         * can be retried if the app is able to release resources.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_RESOURCE_BUSY}
+         */
+        public static final int ERROR_RESOURCE_BUSY = MediaDrm.ErrorCodes.ERROR_RESOURCE_BUSY;
+
+        /**
+         * This indicates that the output protection levels supported by the
+         * device are not sufficient to meet the requirements set by the
+         * content owner in the license policy.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_INSUFFICIENT_OUTPUT_PROTECTION}
+         */
+        public static final int ERROR_INSUFFICIENT_OUTPUT_PROTECTION =
+                MediaDrm.ErrorCodes.ERROR_INSUFFICIENT_OUTPUT_PROTECTION;
+
+        /**
+         * This indicates that decryption was attempted on a session that is
+         * not opened, which could be due to a failure to open the session,
+         * closing the session prematurely, or the session being reclaimed
+         * by the resource manager.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_SESSION_NOT_OPENED}
+         */
+        public static final int ERROR_SESSION_NOT_OPENED =
+                MediaDrm.ErrorCodes.ERROR_SESSION_NOT_OPENED;
+
+        /**
+         * This indicates that an operation was attempted that could not be
+         * supported by the crypto system of the device in its current
+         * configuration.  It may occur when the license policy requires
+         * device security features that aren't supported by the device,
+         * or due to an internal error in the crypto system that prevents
+         * the specified security policy from being met.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_UNSUPPORTED_OPERATION}
+         */
+        public static final int ERROR_UNSUPPORTED_OPERATION =
+                MediaDrm.ErrorCodes.ERROR_UNSUPPORTED_OPERATION;
+
+        /**
+         * This indicates that the security level of the device is not
+         * sufficient to meet the requirements set by the content owner
+         * in the license policy.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_INSUFFICIENT_SECURITY}
+         */
+        public static final int ERROR_INSUFFICIENT_SECURITY =
+                MediaDrm.ErrorCodes.ERROR_INSUFFICIENT_SECURITY;
+
+        /**
+         * This indicates that the video frame being decrypted exceeds
+         * the size of the device's protected output buffers. When
+         * encountering this error the app should try playing content
+         * of a lower resolution.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_FRAME_TOO_LARGE}
+         */
+        public static final int ERROR_FRAME_TOO_LARGE = MediaDrm.ErrorCodes.ERROR_FRAME_TOO_LARGE;
+
+        /**
+         * This error indicates that session state has been
+         * invalidated. It can occur on devices that are not capable
+         * of retaining crypto session state across device
+         * suspend/resume. The session must be closed and a new
+         * session opened to resume operation.
+         * @deprecated Please use {@link MediaDrm.ErrorCodes#ERROR_LOST_STATE}
+         */
+        public static final int ERROR_LOST_STATE = MediaDrm.ErrorCodes.ERROR_LOST_STATE;
+
+        /** @hide */
+        @IntDef({
+            MediaDrm.ErrorCodes.ERROR_NO_KEY,
+            MediaDrm.ErrorCodes.ERROR_KEY_EXPIRED,
+            MediaDrm.ErrorCodes.ERROR_RESOURCE_BUSY,
+            MediaDrm.ErrorCodes.ERROR_INSUFFICIENT_OUTPUT_PROTECTION,
+            MediaDrm.ErrorCodes.ERROR_SESSION_NOT_OPENED,
+            MediaDrm.ErrorCodes.ERROR_UNSUPPORTED_OPERATION,
+            MediaDrm.ErrorCodes.ERROR_INSUFFICIENT_SECURITY,
+            MediaDrm.ErrorCodes.ERROR_FRAME_TOO_LARGE,
+            MediaDrm.ErrorCodes.ERROR_LOST_STATE,
+            MediaDrm.ErrorCodes.ERROR_GENERIC_OEM,
+            MediaDrm.ErrorCodes.ERROR_GENERIC_PLUGIN,
+            MediaDrm.ErrorCodes.ERROR_LICENSE_PARSE,
+            MediaDrm.ErrorCodes.ERROR_MEDIA_FRAMEWORK,
+            MediaDrm.ErrorCodes.ERROR_ZERO_SUBSAMPLES
+        })
+        @Retention(RetentionPolicy.SOURCE)
+        public @interface CryptoErrorCode {}
+
+        /**
+         * Returns error code associated with this {@link CryptoException}.
+         * <p>
+         * Please refer to {@link MediaDrm.ErrorCodes} for the general error
+         * handling strategy and details about each possible return value.
+         *
+         * @return an error code defined in {@link MediaDrm.ErrorCodes}.
+         */
+        @CryptoErrorCode
+        public int getErrorCode() {
+            return mErrorCode;
+        }
+
+        /**
+         * Returns CryptoInfo associated with this {@link CryptoException}
+         * if any
+         *
+         * @return CryptoInfo object if any. {@link MediaCodec.CryptoException}
+         */
+        public @Nullable CryptoInfo getCryptoInfo() {
+            return mCryptoInfo;
+        }
+
+        @Override
+        public int getVendorError() {
+            return mVendorError;
+        }
+
+        @Override
+        public int getOemError() {
+            return mOemError;
+        }
+
+        @Override
+        public int getErrorContext() {
+            return mErrorContext;
+        }
+
+        private final int mErrorCode, mVendorError, mOemError, mErrorContext;
+        private CryptoInfo mCryptoInfo;
     }
 
     public static class CodecException extends IllegalStateException {
@@ -115,23 +302,163 @@ public final class MediaCodec {
         public String getDiagnosticInfo() { return getMessage(); }
     }
 
-    public static final class CryptoInfo {
+    // Verbatim pinned MediaCodec.CryptoInfo; native extractor/descrambler metadata.
+    public final static class CryptoInfo {
+        /**
+         * The number of subSamples that make up the buffer's contents.
+         */
         public int numSubSamples;
+        /**
+         * The number of leading unencrypted bytes in each subSample. If null, all bytes are treated
+         * as encrypted and {@link #numBytesOfEncryptedData} must be specified.
+         */
         public int[] numBytesOfClearData;
+        /**
+         * The number of trailing encrypted bytes in each subSample. If null, all bytes are treated
+         * as clear and {@link #numBytesOfClearData} must be specified.
+         */
         public int[] numBytesOfEncryptedData;
+        /**
+         * A 16-byte key id
+         */
         public byte[] key;
+        /**
+         * A 16-byte initialization vector
+         */
         public byte[] iv;
+        /**
+         * The type of encryption that has been applied,
+         * see {@link #CRYPTO_MODE_UNENCRYPTED}, {@link #CRYPTO_MODE_AES_CTR}
+         * and {@link #CRYPTO_MODE_AES_CBC}
+         */
         public int mode;
-        public void set(int newNumSubSamples, int[] newNumBytesOfClearData,
-                int[] newNumBytesOfEncryptedData, byte[] newKey, byte[] newIV, int newMode) {}
-        public void setPattern(Pattern newPattern) {}
-        public static final class Pattern {
-            public Pattern(int blocksToEncrypt, int blocksToSkip) { set(blocksToEncrypt, blocksToSkip); }
-            public void set(int blocksToEncrypt, int blocksToSkip) {}
-            public int getEncryptBlocks() { return 0; }
-            public int getSkipBlocks() { return 0; }
+
+        /**
+         * Metadata describing an encryption pattern for the protected bytes in a subsample.  An
+         * encryption pattern consists of a repeating sequence of crypto blocks comprised of a
+         * number of encrypted blocks followed by a number of unencrypted, or skipped, blocks.
+         */
+        public final static class Pattern {
+            /**
+             * Number of blocks to be encrypted in the pattern. If both this and
+             * {@link #mSkipBlocks} are zero, pattern encryption is inoperative.
+             */
+            private int mEncryptBlocks;
+
+            /**
+             * Number of blocks to be skipped (left clear) in the pattern. If both this and
+             * {@link #mEncryptBlocks} are zero, pattern encryption is inoperative.
+             */
+            private int mSkipBlocks;
+
+            /**
+             * Construct a sample encryption pattern given the number of blocks to encrypt and skip
+             * in the pattern. If both parameters are zero, pattern encryption is inoperative.
+             */
+            public Pattern(int blocksToEncrypt, int blocksToSkip) {
+                set(blocksToEncrypt, blocksToSkip);
+            }
+
+            /**
+             * Set the number of blocks to encrypt and skip in a sample encryption pattern. If both
+             * parameters are zero, pattern encryption is inoperative.
+             */
+            public void set(int blocksToEncrypt, int blocksToSkip) {
+                mEncryptBlocks = blocksToEncrypt;
+                mSkipBlocks = blocksToSkip;
+            }
+
+            /**
+             * Return the number of blocks to skip in a sample encryption pattern.
+             */
+            public int getSkipBlocks() {
+                return mSkipBlocks;
+            }
+
+            /**
+             * Return the number of blocks to encrypt in a sample encryption pattern.
+             */
+            public int getEncryptBlocks() {
+                return mEncryptBlocks;
+            }
+        };
+
+        private static final Pattern ZERO_PATTERN = new Pattern(0, 0);
+
+        /**
+         * The pattern applicable to the protected data in each subsample.
+         */
+        private Pattern mPattern = ZERO_PATTERN;
+
+        /**
+         * Set the subsample count, clear/encrypted sizes, key, IV and mode fields of
+         * a {@link MediaCodec.CryptoInfo} instance.
+         */
+        public void set(
+                int newNumSubSamples,
+                @NonNull int[] newNumBytesOfClearData,
+                @NonNull int[] newNumBytesOfEncryptedData,
+                @NonNull byte[] newKey,
+                @NonNull byte[] newIV,
+                int newMode) {
+            numSubSamples = newNumSubSamples;
+            numBytesOfClearData = newNumBytesOfClearData;
+            numBytesOfEncryptedData = newNumBytesOfEncryptedData;
+            key = newKey;
+            iv = newIV;
+            mode = newMode;
+            mPattern = ZERO_PATTERN;
         }
-    }
+
+        /**
+         * Returns the {@link Pattern encryption pattern}.
+         */
+        public @NonNull Pattern getPattern() {
+            return new Pattern(mPattern.getEncryptBlocks(), mPattern.getSkipBlocks());
+        }
+
+        /**
+         * Set the encryption pattern on a {@link MediaCodec.CryptoInfo} instance.
+         * See {@link Pattern}.
+         */
+        public void setPattern(Pattern newPattern) {
+            if (newPattern == null) {
+                newPattern = ZERO_PATTERN;
+            }
+            setPattern(newPattern.getEncryptBlocks(), newPattern.getSkipBlocks());
+        }
+
+        // Accessed from android_media_MediaExtractor.cpp.
+        private void setPattern(int blocksToEncrypt, int blocksToSkip) {
+            mPattern = new Pattern(blocksToEncrypt, blocksToSkip);
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder builder = new StringBuilder();
+            builder.append(numSubSamples + " subsamples, key [");
+            String hexdigits = "0123456789abcdef";
+            for (int i = 0; i < key.length; i++) {
+                builder.append(hexdigits.charAt((key[i] & 0xf0) >> 4));
+                builder.append(hexdigits.charAt(key[i] & 0x0f));
+            }
+            builder.append("], iv [");
+            for (int i = 0; i < iv.length; i++) {
+                builder.append(hexdigits.charAt((iv[i] & 0xf0) >> 4));
+                builder.append(hexdigits.charAt(iv[i] & 0x0f));
+            }
+            builder.append("], clear ");
+            builder.append(Arrays.toString(numBytesOfClearData));
+            builder.append(", encrypted ");
+            builder.append(Arrays.toString(numBytesOfEncryptedData));
+            builder.append(", pattern (encrypt: ");
+            builder.append(mPattern.mEncryptBlocks);
+            builder.append(", skip: ");
+            builder.append(mPattern.mSkipBlocks);
+            builder.append(")");
+            return builder.toString();
+        }
+    };
 
     private MediaCodec(String name, String ffmpegName) {
         mName = name;

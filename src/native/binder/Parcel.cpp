@@ -6,6 +6,19 @@
 #include <unistd.h>
 #include <cerrno>
 namespace android {
+// Pinned Parcel's byte-array wire format and exception-header decoding.
+status_t Parcel::writeByteArray(size_t len, const uint8_t* val) {
+  if (len > INT32_MAX) return BAD_VALUE;
+  if (!val) return writeInt32(-1);
+  status_t ret = writeInt32(static_cast<uint32_t>(len));
+  if (ret == NO_ERROR) ret = write(val, len * sizeof(*val));
+  return ret;
+}
+int32_t Parcel::readExceptionCode() const {
+  binder::Status status;
+  status.readFromParcel(*this);
+  return status.exceptionCode();
+}
 // Pinned Parcel.cpp Blob lifecycle and wire format. Only mAllowFds is mapped
 // to the shared Zig Parcel accessor; descriptor transfer remains in writeFileDescriptor.
 // ashmem-host.cpp is the original AOSP host backing for descriptor-sized blobs.

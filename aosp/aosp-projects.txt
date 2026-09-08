@@ -81,6 +81,7 @@ platform/external/okio
 platform/external/ow2-asm
 platform/external/pcre
 platform/external/perfetto
+platform/external/piex
 platform/external/protobuf
 platform/external/python/cpython3
 platform/external/python/six

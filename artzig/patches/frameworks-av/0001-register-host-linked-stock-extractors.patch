@@ -1,0 +1,42 @@
+Subject: [PATCH] Register host-linked original media extractors
+
+The hosted service shares the system process. Use initialized factory ownership
+instead of the Android extractor daemon UID to avoid service recursion.
+
+--- a/media/libstagefright/MediaExtractorFactory.cpp
++++ b/media/libstagefright/MediaExtractorFactory.cpp
+@@ -38,6 +38,12 @@
+ #include <dlfcn.h>
+ 
+ namespace android {
++
++// Hosted packaging: original extractor entry points are linked into the native island.
++// Registration, version selection, sniff confidence and plugin lifetime stay in AOSP.
++extern "C" ExtractorDef azk_wav_extractor_def();
++extern "C" ExtractorDef azk_mp3_extractor_def();
++extern "C" ExtractorDef azk_aac_extractor_def();
+ 
+ // static
+ sp<IMediaExtractor> MediaExtractorFactory::Create(
+@@ -285,6 +291,11 @@
+ 
+     std::shared_ptr<std::list<sp<ExtractorPlugin>>> newList(new std::list<sp<ExtractorPlugin>>());
+ 
++    for (auto getDef : {azk_wav_extractor_def, azk_mp3_extractor_def, azk_aac_extractor_def}) {
++        String8 path("host-linked AOSP extractor");
++        RegisterExtractor(new ExtractorPlugin(getDef(), nullptr, path), *newList);
++    }
++
+     android_namespace_t *mediaNs = android_get_exported_namespace("com_android_media");
+     if (mediaNs != NULL) {
+         const android_dlextinfo dlextinfo = {
+@@ -333,7 +344,8 @@
+ 
+ // static
+ std::vector<std::string> MediaExtractorFactory::getSupportedTypes() {
+-    if (getuid() == AID_MEDIA_EX) {
++    // The hosted system process owns the extractor service without Android's dedicated UID.
++    if (gPluginsRegistered) {
+         return gSupportedExtensions;
+     }
+     ALOGV("get service manager");

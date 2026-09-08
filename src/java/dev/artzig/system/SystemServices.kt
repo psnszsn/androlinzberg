@@ -23,6 +23,7 @@ import com.android.server.utils.TimingsTraceAndSlog
  */
 internal object SystemServices {
     private const val TAG = "SystemServer"
+    private external fun nativeCreateMediaExtractorService(): android.os.IBinder
 
     /** Single hosted user; `SystemServiceManager` asks for it on user start. */
     private class HostedUserManagerInternal(private val context: Context) : UserManagerInternal() {
@@ -231,6 +232,7 @@ internal object SystemServices {
             HostedSensorPrivacyService(context))
         val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
         activityManager.appOps = appOps
+        android.os.ServiceManager.addService("permission", HostedNativePermissionController(context, activityManager, appOps))
         LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
             HostedPermissionPolicy(packageManager))
         com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())
@@ -308,12 +310,13 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.DEVICE_IDLE_CONTROLLER, HostedDeviceIdleController())
         // Audio capability/session policy and media services; rendering stays in the native backend.
         android.os.ServiceManager.addService(HostedAudioIds.SERVICE, HostedAudioIdService())
-        android.os.ServiceManager.addService(Context.AUDIO_SERVICE, HostedAudioService(android.os.PermissionEnforcer.fromContext(context)))
+        android.os.ServiceManager.addService(Context.AUDIO_SERVICE, HostedAudioService(android.os.PermissionEnforcer.fromContext(context), context))
         android.os.ServiceManager.addService(Context.MEDIA_ROUTER_SERVICE, HostedMediaRouterService(context, packageManager))
         val mediaSessions = HostedMediaSessionService()
         mediaSessions.packageService = packageManager
         android.os.ServiceManager.addService(Context.MEDIA_SESSION_SERVICE, mediaSessions)
         android.os.ServiceManager.addService(Context.MEDIA_METRICS_SERVICE, HostedMediaMetricsService())
+        android.os.ServiceManager.addService("media.extractor", nativeCreateMediaExtractorService())
         // Phase 4: location (no providers), lights (none), color display (no transforms);
         // sensors are the in-process SystemSensorManager seam, input-device managers ride
         // the hosted input service.

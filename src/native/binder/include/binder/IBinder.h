@@ -6,6 +6,12 @@ struct AIBinder_Weak;
 #include <utils/Errors.h>
 #include <utils/RefBase.h>
 #include <utils/String16.h>
+#include <utils/Vector.h>
+// Pinned IBinder's transaction-code packing, also used by original HIDL adapters.
+#ifndef B_PACK_CHARS
+#define B_PACK_CHARS(c1, c2, c3, c4) \
+    ((((c1)<<24)) | (((c2)<<16)) | (((c3)<<8)) | (c4))
+#endif
 namespace android {
 class Parcel;
 class IInterface;

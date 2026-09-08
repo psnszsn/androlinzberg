@@ -21,7 +21,7 @@ object HostedInputDispatcher {
      */
     class EventQueue(private val root: ViewRootImpl) {
         private val handler = android.os.Handler.createAsync(root.handler.looper)
-        private class Pending(val event: InputEvent, val unhandled: Boolean)
+        private class Pending(val event: InputEvent, val unhandled: Boolean, val receiver: InputEventReceiver?)
         private val events = java.util.ArrayDeque<Pending>()
         private var scheduled = false
         private val drain = Runnable {
@@ -33,11 +33,12 @@ object HostedInputDispatcher {
                     }
                 }
                 val event = pending.event
+                var handled = false
                 try {
                     if (root.view != null) {
                         if (pending.unhandled) {
                             root.processUnhandledInputEvent(event)
-                        } else when (event) {
+                        } else handled = when (event) {
                             is KeyEvent -> root.dispatchKeyEvent(event)
                             is MotionEvent -> {
                                 if (event.isFromSource(InputDevice.SOURCE_CLASS_POINTER)) {
@@ -45,28 +46,34 @@ object HostedInputDispatcher {
                                 } else if (root.hasPointerCapture()) {
                                     root.dispatchCapturedPointerEvent(event)
                                 } else {
-                                    root.view?.dispatchGenericMotionEvent(event)
+                                    root.view?.dispatchGenericMotionEvent(event) ?: false
                                 }
                             }
+                            else -> false
                         }
                     }
                 } finally {
-                    event.recycleIfNeededAfterDispatch()
+                    if (pending.receiver != null) pending.receiver.finishInputEvent(event, handled)
+                    else event.recycleIfNeededAfterDispatch()
                 }
             }
         }
 
         fun enqueue(event: InputEvent) {
-            enqueue(event, false)
+            enqueue(event, false, null)
         }
 
         fun enqueueUnhandled(event: InputEvent) {
-            enqueue(event, true)
+            enqueue(event, true, null)
         }
 
-        private fun enqueue(event: InputEvent, unhandled: Boolean) {
+        fun enqueue(event: InputEvent, receiver: InputEventReceiver?) {
+            enqueue(event, false, receiver)
+        }
+
+        private fun enqueue(event: InputEvent, unhandled: Boolean, receiver: InputEventReceiver?) {
             synchronized(events) {
-                events.addLast(Pending(event, unhandled))
+                events.addLast(Pending(event, unhandled, receiver))
                 if (!scheduled) {
                     scheduled = true
                     handler.post(drain)
@@ -77,7 +84,11 @@ object HostedInputDispatcher {
         fun clear() {
             synchronized(events) {
                 handler.removeCallbacks(drain)
-                while (events.isNotEmpty()) events.removeFirst().event.recycleIfNeededAfterDispatch()
+                while (events.isNotEmpty()) {
+                    val pending = events.removeFirst()
+                    if (pending.receiver != null) pending.receiver.finishInputEvent(pending.event, false)
+                    else pending.event.recycleIfNeededAfterDispatch()
+                }
                 scheduled = false
             }
         }

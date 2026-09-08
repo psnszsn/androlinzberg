@@ -49,6 +49,13 @@ internal object StockMediaDrmSmoke {
         val unsafe = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe")
             .apply { isAccessible = true }.get(null) as sun.misc.Unsafe
         val failed = unsafe.allocateInstance(MediaDrm::class.java) as MediaDrm
+        // Unsafe skips Java field initializers as well as native setup. Reconstruct the
+        // constructor's cleanup fields so the stock finalizer can release this failed object.
+        for ((name, value) in listOf(
+            "mCloseGuard" to dalvik.system.CloseGuard.get(),
+            "mClosed" to java.util.concurrent.atomic.AtomicBoolean(),
+            "mPlaybackComponentMap" to java.util.concurrent.ConcurrentHashMap<Any, Any>(),
+        )) MediaDrm::class.java.getDeclaredField(name).apply { isAccessible = true }.set(failed, value)
         repeat(2) { failed.native_release() }
         val setup = MediaDrm::class.java.getDeclaredMethod("native_setup",
             Any::class.java, ByteArray::class.java, String::class.java).apply { isAccessible = true }

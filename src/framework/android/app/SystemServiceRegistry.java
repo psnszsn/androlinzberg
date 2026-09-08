@@ -246,7 +246,7 @@ public final class SystemServiceRegistry {
         registerService(Context.DOWNLOAD_SERVICE, DownloadManager.class, new CachedServiceFetcher<DownloadManager>() {
             @Override public DownloadManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new DownloadManager(ctx.getOuterContext()); }});
         registerService(Context.AUDIO_SERVICE, android.media.AudioManager.class, new NewServiceFetcher<android.media.AudioManager>() {
-            @Override public android.media.AudioManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.media.AudioManager(); }});
+            @Override public android.media.AudioManager createService(ContextImpl ctx) throws ServiceNotFoundException { return new android.media.AudioManager(ctx.getOuterContext()); }});
         registerService(Context.MEDIA_ROUTER_SERVICE, android.media.MediaRouter.class,
                 new CachedServiceFetcher<android.media.MediaRouter>() {
             @Override public android.media.MediaRouter createService(ContextImpl ctx) {

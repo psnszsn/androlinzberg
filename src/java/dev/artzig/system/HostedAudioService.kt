@@ -14,10 +14,31 @@ import java.util.Objects
  * LoudnessCodecHelper. The host has no native spatializer or AudioPolicy device loudness
  * model. Preserve their absent-effect/absent-route results, listener ownership and session
  * transitions here; decoding and PCM presentation remain in the existing native backend. */
-internal class HostedAudioService(enforcer: PermissionEnforcer) : IAudioService.Stub(enforcer),
+internal class HostedAudioService(private val enforcer: PermissionEnforcer, context: android.content.Context? = null) : IAudioService.Stub(enforcer),
     IAudioService by unsupported<IAudioService>() {
     override fun asBinder(): IBinder = this
     private val playback = HostedPlaybackRegistry(enforcer)
+    private val focus by lazy {
+        // AudioService constructs focus state under its own identity. Preserve that when
+        // lazy initialization is first reached from an application Binder request.
+        val identity = Binder.clearCallingIdentity()
+        try { HostedAudioFocus(checkNotNull(context) { "Audio focus requires a service context" }, playback) }
+        finally { Binder.restoreCallingIdentity(identity) }
+    }
+    override fun requestAudioFocus(attributes: AudioAttributes?, gain: Int, token: IBinder?,
+        dispatcher: IAudioFocusDispatcher?, client: String?, packageName: String?, attributionTag: String?,
+        flags: Int, policy: android.media.audiopolicy.IAudioPolicyCallback?, sdk: Int): Int =
+        focus.request(attributes, gain, token, dispatcher, client, packageName, attributionTag, flags, sdk)
+    override fun abandonAudioFocus(dispatcher: IAudioFocusDispatcher?, client: String?, attributes: AudioAttributes?, packageName: String?): Int =
+        focus.abandon(dispatcher, client, attributes, packageName)
+    override fun unregisterAudioFocusClient(client: String?) = focus.unregister(client)
+    override fun getCurrentAudioFocus(): Int = focus.current()
+    override fun setMultiAudioFocusEnabled(enabled: Boolean) {
+        setMultiAudioFocusEnabled_enforcePermission()
+        focus.setMultiFocus(enabled)
+    }
+    override fun isVolumeFixed(): Boolean = true
+
     override fun trackPlayer(card: PlayerBase.PlayerIdCard): Int = playback.track(card)
     override fun playerAttributes(id: Int, attributes: AudioAttributes) = playback.attributes(id, attributes)
     override fun playerSessionId(id: Int, session: Int) {
@@ -53,9 +74,29 @@ internal class HostedAudioService(enforcer: PermissionEnforcer) : IAudioService.
         routeCallbacks.register(nonNull(observer))
         return AudioRoutesInfo()
     }
+    // AudioService's public route query maps the native policy result to stock device values.
+    // The existing backend has one logical speaker; its address matches listAudioPorts.
+    override fun getDevicesForAttributesUnprotected(attributes: AudioAttributes?): List<AudioDeviceAttributes> =
+        AudioSystem.getDevicesForAttributes(nonNull(attributes), false)
+    override fun getDevicesForAttributes(attributes: AudioAttributes?): List<AudioDeviceAttributes> {
+        try { enforcer.enforcePermission(android.Manifest.permission.MODIFY_AUDIO_ROUTING, Binder.getCallingPid(), Binder.getCallingUid()) }
+        catch (_: SecurityException) {
+            try { enforcer.enforcePermission(android.Manifest.permission.QUERY_AUDIO_STATE, Binder.getCallingPid(), Binder.getCallingUid()) }
+            catch (_: SecurityException) { throw SecurityException("Missing MODIFY_AUDIO_ROUTING or QUERY_AUDIO_STATE permissions") }
+        }
+        return getDevicesForAttributesUnprotected(attributes)
+    }
     override fun isBluetoothA2dpOn(): Boolean = false
     override fun getStreamVolume(streamType: Int): Int { require(streamType in 0..11); return 10 }
     override fun getStreamMaxVolume(streamType: Int): Int { require(streamType in 0..11); return 15 }
+    override fun getStreamMinVolume(streamType: Int): Int { require(streamType in 0..11); return 0 }
+    override fun isStreamMute(streamType: Int): Boolean { require(streamType in 0..11); return false }
+    // The original AudioService exits these adjustments before stream/direction validation
+    // under its fixed-volume policy. The host mixer retains ownership of master gain.
+    override fun adjustStreamVolume(streamType: Int, direction: Int, flags: Int, callingPackage: String?) {}
+    override fun adjustStreamVolumeWithAttribution(streamType: Int, direction: Int, flags: Int, callingPackage: String?, attributionTag: String?) {}
+    override fun setStreamVolume(streamType: Int, index: Int, flags: Int, callingPackage: String?) {}
+
     override fun setStreamVolumeWithAttribution(streamType: Int, index: Int, flags: Int, callingPackage: String?, attributionTag: String?) {
         // AudioService.setStreamVolume returns before validation when mUseFixedVolume is true.
     }

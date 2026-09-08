@@ -2356,7 +2356,12 @@ public class ViewRootImpl implements ViewParent, AttachedSurfaceControl {
     public void applyViewBoundsSandboxingIfNeeded(android.graphics.Rect outRect) {}
     public int getWidth() { return mWidth; }
     public int getHeight() { return mHeight; }
-    public void dispatchInputEvent(InputEvent event) { enqueueInputEvent(event); }
+    public void dispatchInputEvent(InputEvent event) { dispatchInputEvent(event, null); }
+    // Pinned dispatchInputEvent retains the receiver through asynchronous delivery.
+    public void dispatchInputEvent(InputEvent event, InputEventReceiver receiver) {
+        if (mInputEventQueue == null) mInputEventQueue = new HostedInputDispatcher.EventQueue(this);
+        mInputEventQueue.enqueue(event, receiver);
+    }
     public boolean injectBackKeyEvents(boolean preImeOnly) { return false; }
     public void dispatchBlurRegions(float[][] blurRegions, long frameNumber) {}
     public com.android.internal.graphics.drawable.BackgroundBlurDrawable createBackgroundBlurDrawable() { return null; }

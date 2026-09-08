@@ -65,6 +65,8 @@ public:
   AParcel *native() const { return mParcel; }
   static Parcel *forNative(AParcel *);
   status_t writeNoException();
+  int32_t readExceptionCode() const;
+  status_t writeByteArray(size_t len, const uint8_t* val);
   size_t dataPosition() const { return AParcel_getDataPosition(mParcel); }
   size_t dataSize() const { return AParcel_getDataSize(mParcel); }
   size_t dataAvail() const {
@@ -235,7 +237,22 @@ public:
   status_t readString16(String16 *) const;
   status_t readString16(std::optional<String16> *) const;
   status_t writeUtf8AsUtf16(const std::string &s);
+  status_t writeUtf8AsUtf16(const std::optional<std::string> &s) {
+    return s ? writeUtf8AsUtf16(*s) : writeInt32(-1);
+  }
   status_t readUtf8FromUtf16(std::string *s) const;
+  status_t readUtf8FromUtf16(std::optional<std::string> *s) const {
+    // Pinned readData(nullable): a missing length preserves the destination;
+    // null resets it, and a present string is reconstructed before conversion.
+    const size_t start = dataPosition();
+    int32_t length;
+    status_t status = readInt32(&length);
+    if (status != OK) return status;
+    if (length == -1) { s->reset(); return OK; }
+    s->emplace(std::string());
+    setDataPosition(start);
+    return readUtf8FromUtf16(&**s);
+  }
   status_t writeCString(const char *s) {
     return s ? write(s, strlen(s) + 1) : BAD_VALUE;
   }
@@ -250,6 +267,10 @@ public:
     return dataAvail() == 0 ? OK : BAD_VALUE;
   }
   status_t writeStrongBinder(const sp<IBinder> &);
+  template <class T, std::enable_if_t<std::is_base_of_v<IInterface, T>, bool> = true>
+  status_t writeStrongBinder(const sp<T> &value) {
+    return writeStrongBinder(T::asBinder(value));
+  }
   status_t readNullableStrongBinder(sp<IBinder> *) const;
   status_t readStrongBinder(sp<IBinder> *b) const {
     auto s = readNullableStrongBinder(b);

@@ -58,6 +58,14 @@ packager.SOURCE_MANIFEST = HERE / "androlinzberg-files.txt"
 packager.PACKAGE_NAME = "androlinzberg"
 packager.PATCH_SERIES = framework_patches + (
     (
+        "frameworks/av",
+        patch_root / "frameworks-av/0001-register-host-linked-stock-extractors.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native/0001-namespace-native-binder-assertion-macro.patch",
+    ),
+    (
         "packages/providers/DownloadProvider",
         patch_root / "packages/providers/DownloadProvider/0001-classify-hosted-external-volume-paths.patch",
     ),
