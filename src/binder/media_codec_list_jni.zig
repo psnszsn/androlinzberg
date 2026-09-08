@@ -44,8 +44,10 @@ fn name(env: Env, _: jni.jclass, index: jni.jint) callconv(.c) jni.jstring {
     return env.*.*.NewStringUTF.?(env, entry.name.ptr);
 }
 fn attributes(env: Env, _: jni.jclass, index: jni.jint) callconv(.c) jni.jint {
-    _ = entryAt(env, index) orelse return 0;
-    return 1 << 2; // MediaCodecInfo.FLAG_IS_SOFTWARE_ONLY, as in the previous catalogue.
+    const entry = entryAt(env, index) orelse return 0;
+    // Pinned MediaCodecInfo attribute bits: video requires VA-API, while the
+    // audio decoder executes in software. Codec names do not imply this flag.
+    return if (std.mem.startsWith(u8, entry.mime, "video/")) 1 << 3 else 1 << 2;
 }
 fn types(env: Env, _: jni.jclass, index: jni.jint) callconv(.c) jni.jobjectArray {
     const entry = entryAt(env, index) orelse return null;
@@ -145,12 +147,12 @@ fn capabilities(env: Env, _: jni.jclass, index: jni.jint, mime: jni.jstring) cal
         env.*.*.SetObjectArrayElement.?(env, profiles, @intCast(i), object);
         if (env.*.*.ExceptionCheck.?(env) != 0) return null;
     }
-    // The old adapter advertised these formats only for AVC and VP9.
-    const has_colors = video and entry.profiles.len != 0;
-    const colors = env.*.*.NewIntArray.?(env, if (has_colors) 2 else 0) orelse return null;
+    // The hosted decoder exports opaque GPU buffers through a Surface. It does
+    // not provide application-readable YUV ByteBuffer output for any video MIME.
+    const colors = env.*.*.NewIntArray.?(env, if (video) 1 else 0) orelse return null;
     defer env.*.*.DeleteLocalRef.?(env, colors);
-    if (has_colors) {
-        const formats = [_]jni.jint{ 0x7f420888, 19 }; // YUV420Flexible, YUV420Planar.
+    if (video) {
+        const formats = [_]jni.jint{0x7f000789}; // COLOR_FormatSurface.
         env.*.*.SetIntArrayRegion.?(env, colors, 0, formats.len, &formats);
         if (env.*.*.ExceptionCheck.?(env) != 0) return null;
     }

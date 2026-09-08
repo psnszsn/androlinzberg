@@ -429,6 +429,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     drag('Drag received=Android file 😀 café')
                     def native_drag(name, mime, payload, expected, consumed=True, cancel=False):
                         report = out / ('native-drag-' + name + '.json')
+                        report.unlink(missing_ok=True)
                         control('step', 'exec', '--wait', 'exists', '--task-id', task,
                                 '--text', expected, '--', str(args.seat), '--native-drag-source',
                                 mime, payload, str(report), 'cancel' if cancel else 'accept' if consumed else 'reject')
@@ -447,13 +448,15 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     native_drag('rejected', 'text/plain;charset=utf-8', 'Rejected native drag', 'Drag rejected', False)
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
                     native_drag('cancelled', 'text/plain;charset=utf-8', 'Cancelled native drag', 'Drag cancelled', False, True)
-                    ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
-                    magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
-                    screen_width, screen_height = map(int, dimensions.split())
-                    for x, y, expected in [(50, 200, (220, 235, 255)), (400, 200, (210, 250, 220))]:
-                        offset = (y * screen_width + x) * 3
-                        actual = tuple(pixels[offset:offset + 3])
-                        assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
+                    for _ in range(16):
+                        ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
+                        magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
+                        screen_width, screen_height = map(int, dimensions.split())
+                        for x, y, expected in [(50, 200, (220, 235, 255)), (400, 200, (210, 250, 220))]:
+                            offset = (y * screen_width + x) * 3
+                            actual = tuple(pixels[offset:offset + 3])
+                            assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
+                        time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
                     assert len(steps) == 12 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
@@ -514,6 +517,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     control('step', 'click', '--task-id', task, '--text', label('Show decoded video'),
                             '--via', 'semantic', '--settle', 'idle')
                     control('wait', 'exists', '--task-id', task, '--text', 'Surface video queued')
+                    control('wait', 'exists', '--task-id', task, '--text', 'Surface rendered callback verified')
 
                     def video_pixels(name, minimum_cyan, require_overlay=False):
                         # This harness places the one task at output origin, at scale 1.
@@ -540,14 +544,15 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         result[name] = {'cyan_pixels': cyan, 'red_pixels': red}
 
                     video_pixels('surface-video', 25000, True)
-                    for action, expected, area in [
-                        ('MOVE VIDEO TO TEXTURE', 'Texture video pixels verified', 25000),
-                        ('RESIZE VIDEO', 'Resized video pixels verified', 45000),
-                        ('REMOVE VIDEO', 'Video surfaces released', 0),
+                    for action, expected, callback, area in [
+                        ('MOVE VIDEO TO TEXTURE', 'Texture video pixels verified', 'Texture rendered callback verified', 25000),
+                        ('RESIZE VIDEO', 'Resized video pixels verified', 'Resized rendered callback verified', 45000),
+                        ('REMOVE VIDEO', 'Video surfaces released', 'Released callbacks cancelled', 0),
                     ]:
                         control('step', 'click', '--task-id', task, '--text', action,
                                 '--via', 'semantic', '--settle', 'idle')
                         control('wait', 'exists', '--task-id', task, '--text', expected)
+                        control('wait', 'exists', '--task-id', task, '--text', callback)
                         if area: video_pixels(expected.split()[0].lower() + '-video', area)
                     diagnostics = control('diagnose', '--since', json.dumps(video_mark))
                     (out / 'video-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))

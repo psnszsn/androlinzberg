@@ -29,12 +29,19 @@ class VideoFixtureActivity : Activity() {
     private var removed = false
     private var windowReadbackGeneration = -1
     private lateinit var status: TextView
+    private lateinit var callbackStatus: TextView
+    // Decoder-thread-owned callback expectations. Each listener generation owns
+    // a separate set, so an old queued frame cannot be relabelled after a switch.
+    private var listenerGeneration = 0
+    private val expectedFrames = HashMap<Long, Pair<Long, Long>>()
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         status = TextView(this).apply { text = "Waiting for video" }
         content.addView(status)
+        callbackStatus = TextView(this).apply { text = "Waiting for rendered callbacks" }
+        content.addView(callbackStatus)
         val frame = FrameLayout(this)
         val surface = SurfaceView(this).apply { contentDescription = "Decoded SurfaceView" }
         frame.addView(surface, FrameLayout.LayoutParams(-1, -1))
@@ -51,6 +58,13 @@ class VideoFixtureActivity : Activity() {
                         configure(MediaFormat.createVideoFormat("video/avc", 128, 96), holder.surface, null, 0)
                         start()
                     }
+                    // Hold the listener looper in this decode operation while
+                    // frames queue, then replace it before it can run.
+                    checkNotNull(codec).setOnFrameRenderedListener({ _, _, _ ->
+                        error("Superseded rendered listener invoked")
+                    }, decode)
+                    renderFrames()
+                    installRenderedListener("Surface", intermediate = false, defaultHandler = true)
                     renderFrames()
                     status.post { status.text = "Surface video queued" }
                 }
@@ -63,7 +77,10 @@ class VideoFixtureActivity : Activity() {
                 textureSurface = Surface(value)
             }
             override fun onSurfaceTextureSizeChanged(value: SurfaceTexture, width: Int, height: Int) {
-                if (moved) decode.post { renderFrames() }
+                if (moved) decode.post {
+                    installRenderedListener("Resized", intermediate = true, defaultHandler = true)
+                    renderFrames()
+                }
             }
             override fun onSurfaceTextureUpdated(value: SurfaceTexture) {
                 val generation = if (resized) 1 else 0
@@ -119,6 +136,12 @@ class VideoFixtureActivity : Activity() {
                 moved = true
                 decode.post {
                     checkNotNull(codec).setOutputSurface(target)
+                    installRenderedListener("Texture", intermediate = true, defaultHandler = false)
+                    renderFrames()
+                    // Keep the same listener: flush must invalidate already
+                    // queued callbacks, and synchronous decoding resumes without start.
+                    checkNotNull(codec).flush()
+                    expectedFrames.clear()
                     renderFrames()
                 }
             }
@@ -136,17 +159,35 @@ class VideoFixtureActivity : Activity() {
             setOnClickListener {
                 removed = true
                 decode.post {
+                    renderFrames() // Pending callbacks must be invalidated by release.
+                    listenerGeneration++
                     codec?.release()
                     codec = null
-                    status.post {
-                        content.removeView(frame)
-                        content.removeView(texture)
-                        status.text = "Video surfaces released"
-                    }
+                    decode.postDelayed({
+                        status.post {
+                            content.removeView(frame)
+                            content.removeView(texture)
+                            status.text = "Video surfaces released"
+                            callbackStatus.text = "Released callbacks cancelled"
+                        }
+                    }, 200)
                 }
             }
         })
         setContentView(content)
+    }
+
+    private fun installRenderedListener(phase: String, intermediate: Boolean, defaultHandler: Boolean) {
+        val generation = ++listenerGeneration
+        expectedFrames.clear()
+        checkNotNull(codec).setOnFrameRenderedListener({ owner, pts, rendered ->
+            check(android.os.Looper.myLooper() === worker.looper) { "Rendered callback on wrong looper" }
+            check(owner === codec && generation == listenerGeneration) { "Stale rendered callback" }
+            val (requested, queued) = checkNotNull(expectedFrames.remove(pts)) { "Unknown rendered PTS: $pts" }
+            if (intermediate) check(rendered == requested) { "Intermediate surface changed queue timestamp" }
+            else check(rendered >= queued && rendered <= System.nanoTime()) { "Invalid display render timestamp: $rendered" }
+            callbackStatus.post { callbackStatus.text = "$phase rendered callback verified" }
+        }, if (defaultHandler) null else decode)
     }
 
     private fun renderFrames() {
@@ -175,7 +216,9 @@ class VideoFixtureActivity : Activity() {
                         format.getInteger(MediaFormat.KEY_CROP_BOTTOM) == 79)
                 }
                 if (index >= 0) {
-                    if (frame % 2 == 0) output.releaseOutputBuffer(index, System.nanoTime())
+                    val timestamp = if (frame % 2 == 0) System.nanoTime() else info.presentationTimeUs * 1000
+                    expectedFrames[info.presentationTimeUs] = timestamp to System.nanoTime()
+                    if (frame % 2 == 0) output.releaseOutputBuffer(index, timestamp)
                     else output.releaseOutputBuffer(index, true)
                     break
                 }
@@ -187,6 +230,7 @@ class VideoFixtureActivity : Activity() {
 
     override fun onDestroy() {
         decode.post {
+            listenerGeneration++
             codec?.release()
             codec = null
             worker.quitSafely()

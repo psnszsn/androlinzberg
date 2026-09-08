@@ -11,6 +11,34 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Rendered video callbacks (2026-09-08)
+
+`MediaCodec.setOnFrameRenderedListener` now forwards to the hosted codec output
+owner. Stock Surface supplies frame numbers and timestamps. Following pinned
+`CCodecBufferChannel`, BLAST display queues report an observed present time (or
+latch time where present fences are unavailable), with its 100 ms grace and
+scheduling clamp. Intermediate TextureView queues report successful queue
+completion with the original media PTS and requested render timestamp. Missing
+or dropped display samples never become fabricated presentation callbacks.
+
+One handler poll and 128 native records bound pending work. Listener replacement,
+flush, output changes, stop and release invalidate pending records and callbacks.
+Application callbacks execute outside the output ownership lock, on the requested
+handler or the codec creation looper; codecs created without a looper own a
+callback thread that is retired at release.
+
+Regression 426 passes the native BufferQueue ownership/pressure suite, stock
+video APK and C++/graph audits. The APK checks real SurfaceView timestamps,
+TextureView queue timestamps, both explicit/default callback handlers, listener
+replacement, surface switching, resize, release cancellation and decoded pixels
+under an Android UI overlay. Four steps have no structured runtime issues.
+Artifacts: `/tmp/wayland-video-426-artifacts/`. Regression 427 adds a passing
+synchronous-flush gate without replacing the listener or restarting the codec.
+The catalogue now reports video as hardware accelerated with Surface output;
+audio remains software decoded. Regression 428 passes the full default JVM suite
+and all 16 APK tests with 52 clean steps. Artifacts:
+`/tmp/wayland-video-428-artifacts/`. Full M10/M11 acceptance remains unfinished.
+
 ## Native incoming drag and rendering lifetime (2026-09-08)
 
 Regression 421 passes 12 stock drag steps: Android text/file/rejection plus a
@@ -47,8 +75,11 @@ producer writes behind a real unsignalled GPU fence on both first import and
 buffer reuse: composition completion remains unsignalled until release, then
 both mirrored outputs have the expected crop, alpha and secure-layer pixels.
 Regression 422 passes this gate and the full JVM suite. Its APK suite has one
-reproducible desktop fullscreen timeout, under investigation; it is not a
-passing full-suite checkpoint.
+reproducible desktop fullscreen timeout. Tracing showed NewPipe had requested
+LAYOUT_* flags while its visible controls kept the bars shown. The regression
+now finishes the expanded-player layout and hides controls before requiring
+host fullscreen; layout flags alone retain their Android meaning. Regression
+428 passes the entire suite with that correction.
 
 The combined package now contains 90 patches. This checkpoint covers incoming
 native COPY drags; outbound/cross-task drags, Android drag icons and the broader
@@ -333,9 +364,10 @@ tests, with 51 clean steps. Artifacts: `/tmp/wayland-video-356-artifacts/`; log:
 `/tmp/wayland-356.log`. Main remains at `f79fbb3`; no newer framework work was
 available to rebase during this checkpoint.
 
-This is an M10 checkpoint, not media or desktop cutover completion. Rendered-frame listener delivery,
-codec capability reporting, broader HDR policy, IME, clipboard, drag-and-drop and
-M11 remain unfinished; unsupported HDR conversion is currently rejected.
+At this checkpoint rendered-frame delivery and codec capability reporting were
+unfinished; the newer checkpoint above covers that follow-up. Broader HDR policy,
+desktop interoperability and M11 remain open; unsupported HDR conversion is
+currently rejected.
 
 ## Presentation feedback checkpoint (2026-09-08)
 

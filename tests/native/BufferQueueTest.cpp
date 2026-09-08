@@ -267,6 +267,8 @@ void videoSurfaceTests() {
     assert(video && status == OK);
     auto duplicate = azk::VideoSurface::connect(surface, &status);
     assert(!duplicate && status != OK); // Failed connect must not disconnect the owner.
+    video->setFrameTracking(true);
+    assert(video->drainRenderedFrames().count == 0);
     std::array<sp<GraphicBuffer>, 64> slots;
     for (unsigned frame = 0; frame < 24; ++frame) {
       const unsigned width = frame < 12 ? 48 : 64;
@@ -288,7 +290,14 @@ void videoSurfaceTests() {
       assert(video->configure(angles[frame % 6], scaling) == OK);
       assert(video->configure(0, 0) == BAD_VALUE); // Failed mode preserves prior settings.
       const int64_t timestamp = 123456789000LL + frame * 16666667LL;
-      assert(video->queue(source, timestamp) == OK);
+      const int64_t pts = 77000 + frame * 33000;
+      assert(video->queue(source, timestamp, pts) == OK);
+      // An intermediate BufferQueue reports queue completion, with the media
+      // PTS distinct from the requested render timestamp (CCodecBufferChannel).
+      const auto rendered = video->drainRenderedFrames();
+      assert(rendered.count == 1 && rendered.pending == 0);
+      assert(rendered.frames[0].presentationTimeUs == pts &&
+             rendered.frames[0].renderTimeNs == timestamp);
       original.clear(); // No exporter object or FD survives until acquire.
       BufferItem item;
       assert(consumer->acquireBuffer(&item, 0) == OK);
@@ -307,6 +316,37 @@ void videoSurfaceTests() {
       assert(buffer->unlock() == OK);
       assert(consumer->releaseBuffer(item.mSlot, item.mFrameNumber, Fence::NO_FENCE) == OK);
       assert(azk_graphics_live_buffers() <= baseline + 5);
+    }
+    {
+      auto original = sp<GraphicBuffer>::make(48, 32, PIXEL_FORMAT_RGBA_8888,
+                                               1, usage, "video-callback-pressure");
+      AzkGraphicsBufferInfo source{};
+      assert(azk_graphics_describe(original->handle, &source) == OK);
+      auto consume = [&] {
+        BufferItem item;
+        assert(consumer->acquireBuffer(&item, 0) == OK);
+        if (item.mGraphicBuffer) slots[item.mSlot] = item.mGraphicBuffer;
+        assert(consumer->releaseBuffer(item.mSlot, item.mFrameNumber, Fence::NO_FENCE) == OK);
+      };
+      for (size_t i = 0; i < azk::VideoSurface::kMaxTrackedFrames; ++i) {
+        assert(video->queue(source, 9000 + i, 8000 + i) == OK);
+        consume();
+      }
+      const auto buffers = azk_graphics_live_buffers();
+      assert(video->queue(source, 1, 2) == WOULD_BLOCK);
+      assert(azk_graphics_live_buffers() == buffers);
+      const auto rendered = video->drainRenderedFrames();
+      assert(rendered.count == azk::VideoSurface::kMaxTrackedFrames && rendered.pending == 0);
+      for (size_t i = 0; i < rendered.count; ++i)
+        assert(rendered.frames[i].presentationTimeUs == 8000 + i &&
+               rendered.frames[i].renderTimeNs == 9000 + i);
+      assert(video->queue(source, 10, 20) == OK);
+      consume();
+      video->setFrameTracking(false); // Listener removal/flush discards old records.
+      assert(video->drainRenderedFrames().count == 0);
+      assert(video->queue(source, 30, 40) == OK);
+      consume();
+      assert(video->drainRenderedFrames().count == 0);
     }
     {
       auto original = sp<GraphicBuffer>::make(48, 32, PIXEL_FORMAT_RGBA_8888,
@@ -339,12 +379,14 @@ void videoSurfaceTests() {
     video.reset();
     video = azk::VideoSurface::connect(surface, &status);
     assert(video && status == OK);
+    video->setFrameTracking(true);
     assert(consumer->consumerDisconnect() == OK);
     auto buffer = sp<GraphicBuffer>::make(48, 32, PIXEL_FORMAT_RGBA_8888,
                                             1, usage, "video-abandoned");
     AzkGraphicsBufferInfo source{};
     assert(azk_graphics_describe(buffer->handle, &source) == OK);
     assert(video->queue(source, 0) != OK);
+    assert(video->drainRenderedFrames().count == 0);
   }
   assert(azk_graphics_live_buffers() == baseline && openFiles() == files);
   std::cout << "PASS stock video Surface preserves foreign GPU pixels, timestamps, "

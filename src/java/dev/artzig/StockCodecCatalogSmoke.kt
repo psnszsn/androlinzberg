@@ -24,12 +24,15 @@ internal object StockCodecCatalogSmoke {
             check(MediaCodecList.getCodecInfoAt(index) === info)
             check(MediaCodecList.getInfoFor(info.name) === info)
             check(info.name == info.canonicalName && !info.isAlias && !info.isEncoder)
-            check(info.isSoftwareOnly && !info.isHardwareAccelerated && !info.isVendor)
             val type = info.supportedTypes.single()
+            val isVideo = type.startsWith("video/")
+            check(info.isSoftwareOnly != isVideo && info.isHardwareAccelerated == isVideo && !info.isVendor)
             val returnedTypes = info.supportedTypes
             returnedTypes[0] = "invalid/type"
             check(info.supportedTypes.single() == type)
             val caps = info.getCapabilitiesForType(type)
+            check(caps.colorFormats.contentEquals(if (isVideo)
+                intArrayOf(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) else intArrayOf()))
             check(caps.mimeType == type && caps.defaultFormat.getString(MediaFormat.KEY_MIME) == type)
             check(caps.maxSupportedInstances == 32 && caps.encoderCapabilities == null)
             check(!caps.isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_SecurePlayback))
@@ -89,7 +92,7 @@ internal object StockCodecCatalogSmoke {
         avc.colorFormats[0] = -1
         avc.profileLevels[0] = MediaCodecInfo.CodecProfileLevel()
         val next = avcInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        check(next.colorFormats[0] == MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+        check(next.colorFormats[0] == MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
         check(next.profileLevels[0].profile == MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
 
         rejects<IllegalArgumentException> { MediaCodecList.getCodecInfoAt(-1) }

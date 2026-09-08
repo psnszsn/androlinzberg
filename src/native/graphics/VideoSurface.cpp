@@ -1,5 +1,6 @@
 #include <azk/VideoSurface.h>
 #include <system/window.h>
+#include <utils/Timers.h>
 
 namespace azk {
 using namespace android;
@@ -42,7 +43,56 @@ status_t VideoSurface::configure(int rotationDegrees, int scalingMode) {
     return status;
 }
 
-status_t VideoSurface::queue(const AzkGraphicsBufferInfo& source, int64_t timestampNs) {
+void VideoSurface::setFrameTracking(bool enabled) {
+    mTrackedFrames.clear();
+    mFrameTracking = enabled;
+    mSurfaceToDisplay = false;
+    mHasPresentTimes = false;
+    if (enabled) {
+        // Query the producer directly: BLAST overrides this query. Surface's
+        // historical authentication fallback requires an unrelated SF call for
+        // an intermediate queue and ultimately also reports false.
+        int display = 0;
+        if (mSurface->getIGraphicBufferProducer()->query(
+                NATIVE_WINDOW_QUEUES_TO_WINDOW_COMPOSER, &display) == OK)
+            mSurfaceToDisplay = display == 1;
+        if (mSurfaceToDisplay) {
+            auto* window = static_cast<ANativeWindow*>(mSurface.get());
+            int present = 0;
+            if (window->query(window, NATIVE_WINDOW_FRAME_TIMESTAMPS_SUPPORTS_PRESENT,
+                              &present) == OK) mHasPresentTimes = present == 1;
+        }
+    }
+    mSurface->enableFrameTimestamps(enabled && mSurfaceToDisplay);
+}
+
+VideoSurface::RenderedFrames VideoSurface::drainRenderedFrames() {
+    RenderedFrames result{};
+    const int64_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+    while (!mTrackedFrames.empty()) {
+        const auto frame = mTrackedFrames.front();
+        if (mSurfaceToDisplay && frame.checkTimeNs > now) break;
+        mTrackedFrames.pop_front();
+        nsecs_t rendered = frame.desiredTimeNs;
+        if (mSurfaceToDisplay) {
+            rendered = NATIVE_WINDOW_TIMESTAMP_INVALID;
+            const auto status = mSurface->getFrameTimestamps(frame.number,
+                    nullptr, nullptr, mHasPresentTimes ? nullptr : &rendered,
+                    nullptr, nullptr, nullptr, mHasPresentTimes ? &rendered : nullptr,
+                    nullptr, nullptr);
+            // Pinned CCodecBufferChannel::processRenderedFrames drops samples
+            // still unobserved after its 100 ms grace. Never invent scanout time.
+            if (status != OK || rendered < 0) continue;
+        }
+        result.frames[result.count++] = {frame.presentationTimeUs, rendered};
+    }
+    result.pending = mTrackedFrames.size();
+    return result;
+}
+
+status_t VideoSurface::queue(const AzkGraphicsBufferInfo& source, int64_t timestampNs,
+                            int64_t presentationTimeUs) {
+    if (mFrameTracking && mTrackedFrames.size() == kMaxTrackedFrames) return WOULD_BLOCK;
     // The codec seam supplies RGBX/RGBA/BGRA only, after vaSyncSurface. Do not
     // misinterpret YUV, HDR, protected storage, or a pending decode fence.
     if (source.format != PIXEL_FORMAT_RGBA_8888 &&
@@ -70,8 +120,17 @@ status_t VideoSurface::queue(const AzkGraphicsBufferInfo& source, int64_t timest
     if (status == OK) status = mSurface->attachBuffer(buffer->getNativeBuffer());
     if (status != OK) return status;
     auto* window = static_cast<ANativeWindow*>(mSurface.get());
+    const uint64_t number = mSurface->getNextFrameNumber();
     status = window->queueBuffer(window, buffer->getNativeBuffer(), -1);
     if (status != OK) window->cancelBuffer(window, buffer->getNativeBuffer(), -1);
+    if (status == OK && mFrameTracking) {
+        const int64_t now = systemTime(SYSTEM_TIME_MONOTONIC);
+        // Match CCodecBufferChannel::trackReleasedFrame's SF scheduling clamp.
+        const int64_t desired = timestampNs < now || timestampNs > now + 1000000000LL
+                ? now : timestampNs;
+        mTrackedFrames.push_back({number, presentationTimeUs, timestampNs,
+                                  desired + 100000000LL});
+    }
     return status;
 }
 }

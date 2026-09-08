@@ -114,16 +114,7 @@ class NewPipeDesktopTest {
         // A playing live stream keeps drawing; wait for presentation instead of global idleness.
         click(description = "Play video, duration:", settle = WaitKind.FRAME_PRESENTED)
         revealPlayerControls()
-        click(description = "Toggle screen orientation", settle = WaitKind.NOW)
-        waitForFullscreen(true)
-
-        // The controls may still be showing after the switch (their auto-hide is
-        // timing-dependent); a tap on the surface hides them deterministically,
-        // as fullscreenButtonExitsAndRestoresVideoDetails does.
-        if (isVisible(description = "Toggle screen orientation")) {
-            tapPlayerSurface()
-        }
-        waitFor(description = "Toggle screen orientation", absent = true)
+        enterPlayerFullscreen()
         assertFullscreenVideoVisible(screenshot("fullscreen-video.png"))
         tapPlayerSurface()
         assertFullscreenRemains(true, durationMillis = 2_000)
@@ -148,14 +139,7 @@ class NewPipeDesktopTest {
         // A playing live stream keeps drawing; wait for presentation instead of global idleness.
         click(description = "Play video, duration:", settle = WaitKind.FRAME_PRESENTED)
         revealPlayerControls()
-        click(description = "Toggle screen orientation", settle = WaitKind.NOW)
-
-        waitForFullscreen(true)
-        waitFor(description = "Comments", absent = true)
-        if (isVisible(description = "Toggle screen orientation")) {
-            tapPlayerSurface()
-        }
-        waitFor(description = "Toggle screen orientation", absent = true)
+        enterPlayerFullscreen()
 
         tapPlayerSurface()
         waitFor(description = "Toggle screen orientation")
@@ -183,8 +167,7 @@ class NewPipeDesktopTest {
         revealPlayerControls()
         // Exercise presentation changes without continuous video frames to poll them.
         pausePlayer()
-        click(description = "Toggle screen orientation", settle = WaitKind.NOW)
-        waitForFullscreen(true)
+        enterPlayerFullscreen()
     }
 }
 
@@ -327,6 +310,18 @@ private fun AppSession.revealPlayerControls() {
         Thread.sleep(700)
     }
     waitFor(description = "Toggle screen orientation")
+}
+
+/** NewPipe's visible controls can retain only LAYOUT_* flags when the player
+ * expands. Finish that layout transition before tapping its new bounds, then
+ * hide controls so the app actually requests hidden bars. Layout flags alone
+ * are not an Android fullscreen request. This also works while playback is paused. */
+private fun AppSession.enterPlayerFullscreen() {
+    click(description = "Toggle screen orientation", settle = WaitKind.NOW)
+    waitFor(description = "Comments", absent = true)
+    if (isVisible(description = "Toggle screen orientation")) tapPlayerSurface()
+    waitFor(description = "Toggle screen orientation", absent = true)
+    waitForFullscreen(true)
 }
 
 private fun AppSession.pausePlayer() {

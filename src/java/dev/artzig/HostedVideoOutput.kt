@@ -2,6 +2,9 @@ package dev.artzig
 
 import android.view.ArtzigVideoLayer
 import android.view.Surface
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
 import dev.artzig.window.WindowBackend
 
 /** ACodec native-window ownership at the FFmpeg host seam. The stock codec
@@ -12,6 +15,88 @@ class HostedVideoOutput : AutoCloseable {
     private var connection = 0L
     private var rotation = 0
     private var scalingMode = 1
+    private val creationLooper = Looper.myLooper()
+    private var ownedThread: HandlerThread? = null
+    private var listener: FrameListener? = null
+    private var callbackHandler: Handler? = null
+    private var executing = false
+    private var epoch = Any()
+    private var pendingPoll: Runnable? = null
+
+    fun interface FrameListener {
+        fun rendered(presentationTimeUs: Long, nanoTime: Long)
+    }
+
+    /** Pinned MediaCodec.setOnFrameRenderedListener's handler and replacement
+     * contract, with CCodecBufferChannel's timestamps supplied by stock Surface.
+     * One poll and 128 native records bound work even when an app handler stalls. */
+    @Synchronized fun setFrameListener(value: FrameListener?, handler: Handler?) {
+        invalidateCallbacks()
+        listener = value
+        callbackHandler = if (value == null) null else handler ?: Handler(creationLooper ?: run {
+            val thread = ownedThread ?: HandlerThread("Hosted codec frames").apply {
+                start()
+                ownedThread = this
+            }
+            thread.looper
+        })
+        updateTracking()
+    }
+
+    @Synchronized fun start() {
+        executing = true
+        invalidateCallbacks()
+        updateTracking()
+    }
+
+    /** Synchronous codecs remain executing across flush; async codecs require start. */
+    @Synchronized fun flush(asynchronous: Boolean) {
+        if (asynchronous) executing = false
+        invalidateCallbacks()
+        updateTracking()
+    }
+
+    private fun invalidateCallbacks() {
+        epoch = Any()
+        pendingPoll?.let { callbackHandler?.removeCallbacks(it) }
+        pendingPoll = null
+    }
+    private fun updateTracking() {
+        if (connection != 0L) nativeSetFrameTracking(connection, executing && listener != null)
+    }
+    private fun schedulePoll(delayMs: Long) {
+        if (pendingPoll != null || connection == 0L || !executing || listener == null) return
+        val generation = epoch
+        val poll = Runnable { pollRenderedFrames(generation) }
+        pendingPoll = poll
+        if (callbackHandler?.postDelayed(poll, delayMs) != true) {
+            // A quit application looper cannot receive informational callbacks.
+            // Disable tracking so it cannot permanently fill the native queue.
+            pendingPoll = null
+            listener = null
+            updateTracking()
+        }
+    }
+    private fun pollRenderedFrames(generation: Any) {
+        val frames = synchronized(this) {
+            if (epoch !== generation || connection == 0L || !executing) return
+            pendingPoll = null
+            nativeDrainRenderedFrames(connection).also {
+                if (it[0] > 0) schedulePoll(10)
+            }
+        }
+        var index = 1
+        while (index < frames.size) {
+            val callback = synchronized(this) {
+                if (epoch !== generation || !executing) return
+                listener ?: return
+            }
+            // Application callbacks can replace the listener, flush or release.
+            // No native ownership lock is held while calling application code.
+            callback.rendered(frames[index], frames[index + 1])
+            index += 2
+        }
+    }
 
     @Synchronized fun configure(value: Surface?, rotationDegrees: Int) {
         close()
@@ -33,28 +118,44 @@ class HostedVideoOutput : AutoCloseable {
         val next = if (WindowBackend.stock && value != null) nativeConnect(value) else 0L
         if (next != 0L) try { nativeConfigure(next, rotation, scalingMode) }
         catch (failure: RuntimeException) { nativeDisconnect(next); throw failure }
+        invalidateCallbacks()
         if (connection != 0L) nativeDisconnect(connection)
         connection = next
         surface = value
+        updateTracking()
     }
 
     /** Consumes the frame on every return, including a queue failure. */
-    @Synchronized fun queue(frame: Long, timestampNs: Long): Int {
+    @Synchronized fun queue(frame: Long, timestampNs: Long, presentationTimeUs: Long): Int {
         if (frame == 0L) return 0
         val target = surface
         if (target == null) {
             releaseHardware(frame)
             return -19
         }
-        if (WindowBackend.stock) return nativeQueue(connection, frame, timestampNs)
+        if (WindowBackend.stock) {
+            val status = nativeQueue(connection, frame, timestampNs, presentationTimeUs)
+            if (status == 0) schedulePoll(0)
+            return status
+        }
         ArtzigVideoLayer.pushHardware(target, frame)
         return 0
     }
 
     @Synchronized override fun close() {
+        executing = false
+        invalidateCallbacks()
         if (connection != 0L) nativeDisconnect(connection)
         connection = 0L
         surface = null
+    }
+
+    @Synchronized fun release() {
+        close()
+        listener = null
+        callbackHandler = null
+        ownedThread?.quitSafely()
+        ownedThread = null
     }
 
     companion object {
@@ -64,7 +165,9 @@ class HostedVideoOutput : AutoCloseable {
         @JvmStatic private external fun nativeConnect(surface: Surface): Long
         @JvmStatic private external fun nativeDisconnect(connection: Long)
         @JvmStatic private external fun nativeConfigure(connection: Long, rotation: Int, scalingMode: Int)
-        @JvmStatic private external fun nativeQueue(connection: Long, frame: Long, timestampNs: Long): Int
+        @JvmStatic private external fun nativeQueue(connection: Long, frame: Long, timestampNs: Long, presentationTimeUs: Long): Int
+        @JvmStatic private external fun nativeSetFrameTracking(connection: Long, enabled: Boolean)
+        @JvmStatic private external fun nativeDrainRenderedFrames(connection: Long): LongArray
         @JvmStatic private external fun nativeRelease(frame: Long)
     }
 }
