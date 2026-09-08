@@ -28,8 +28,14 @@ internal object StockTaskShellSmoke {
             try {
                 await("initial task output") { windows.size == 1 && windows.single().committed && windows.single().colored }
             } catch (failure: Throwable) {
-                java.io.FileOutputStream("/tmp/wayland-stock-shell-${android.os.Process.myPid()}.sf.txt").use {
-                    android.os.ServiceManager.getService("SurfaceFlinger").dump(it.fd, emptyArray())
+                val prefix = "/tmp/wayland-stock-shell-${android.os.Process.myPid()}"
+                for ((suffix, service, args) in listOf(
+                        Triple("sf", "SurfaceFlinger", emptyArray<String>()),
+                        Triple("frontend", "SurfaceFlinger", arrayOf("--frontend")),
+                        Triple("wm", "window", arrayOf("-a")))) {
+                    java.io.FileOutputStream("$prefix.$suffix.txt").use {
+                        android.os.ServiceManager.getService(service).dump(it.fd, args)
+                    }
                 }
                 throw IllegalStateException("Task outputs: ${windows.map { "id=${it.task.id} committed=${it.committed} colored=${it.colored} closed=${it.closed} frames=${it.frames} colors=${it.colors}" }}", failure)
             }

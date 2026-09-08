@@ -16,8 +16,14 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         val resizable: Boolean = true, val application: Boolean = true,
         val left: Int = 0, val top: Int = 0)
     data class Appeared<Token, Leash>(val info: Info<Token>, val leash: Leash)
-    data class Size(val width: Int, val height: Int) {
-        init { require(width in 1..16384 && height in 1..16384) }
+    data class Size(val width: Int, val height: Int,
+        val bufferWidth: Int = width, val bufferHeight: Int = height,
+        val configurationGeneration: Long = 0, val serial: Long = 0) {
+        init {
+            require(width in 1..16384 && height in 1..16384 &&
+                bufferWidth in 1..16384 && bufferHeight in 1..16384)
+            require(configurationGeneration >= 0 && serial in 0..0xffffffffL)
+        }
     }
     interface Events<Token, Leash> {
         fun appeared(task: Appeared<Token, Leash>)

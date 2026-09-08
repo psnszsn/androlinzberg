@@ -69,8 +69,17 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 if (window != null && window.task.generation == generation) action(window)
             })
         }
-        override fun configure(taskId: Int, generation: Long, width: Int, height: Int) =
-            deliver(taskId, generation) { it.events.configure(WaylandTaskShell.Size(width, height)) }
+        override fun configure(taskId: Int, generation: Long, width: Int, height: Int,
+            bufferWidth: Int, bufferHeight: Int, configurationGeneration: Long, serial: Long) =
+            deliver(taskId, generation) {
+                // createWindow returns the latest snapshot after its initial
+                // roundtrips. Older callbacks queued during creation are covered.
+                if (configurationGeneration > it.size.configurationGeneration) {
+                    it.size = WaylandTaskShell.Size(width, height, bufferWidth, bufferHeight,
+                        configurationGeneration, serial)
+                    it.events.configure(it.size)
+                }
+            }
         override fun closeRequested(taskId: Int, generation: Long) =
             deliver(taskId, generation) { it.events.closeRequested() }
         override fun keyboardFocus(taskId: Int, generation: Long, gained: Boolean, heldScanCodes: IntArray) =
@@ -108,14 +117,15 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     override fun open(task: TaskGeometry.Task, appId: String, title: String,
         size: WaylandTaskShell.Size, events: WaylandTaskShell.WindowEvents): WaylandTaskShell.Window {
         check(Looper.myLooper() === handler.looper)
-        val configuration = IntArray(2)
+        val configuration = LongArray(6)
         check(windows[task.id] == null) { "Presenter task already exists" }
         val window = Window(task, events)
         windows[task.id] = window
         try {
             window.surface = remote.createWindow(task.id, task.generation, size.width, size.height,
                 appId, title, callback, configuration)
-            window.size = WaylandTaskShell.Size(configuration[0], configuration[1])
+            window.size = WaylandTaskShell.Size(configuration[0].toInt(), configuration[1].toInt(),
+                configuration[2].toInt(), configuration[3].toInt(), configuration[4], configuration[5])
             return window
         } catch (failure: Throwable) {
             try { window.close() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
@@ -129,13 +139,24 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override lateinit var size: WaylandTaskShell.Size
         val seat = input.open(task)
         private var closed = false
+        private var outputGeneration = 0L
+        override fun prepare(size: WaylandTaskShell.Size): Surface {
+            check(!closed && outputGeneration < Long.MAX_VALUE)
+            val replacement = remote.prepareOutput(task.id, task.generation, ++outputGeneration,
+                size.configurationGeneration, size.bufferWidth, size.bufferHeight)
+            val previous = surface
+            surface = replacement
+            previous.release()
+            return replacement
+        }
         override fun metadata(appId: String, title: String) {
             if (!closed) remote.setMetadata(task.id, task.generation, appId, title)
         }
         override fun committed(bounds: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
             if (!closed) {
                 remote.configurationCommitted(task.id, task.generation, bounds.left, bounds.top,
-                    bounds.width, bounds.height, size.width, size.height)
+                    bounds.width, bounds.height, size.width, size.height,
+                    outputGeneration, size.configurationGeneration)
                 seat.committed(bounds, size)
             }
         }

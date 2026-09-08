@@ -406,6 +406,9 @@ object StockColdLaunchSmoke {
         // The Cage runner inspects actual compositor pixels before releasing
         // this gate. The driver owns no organizer or presentation surface.
         pixels("TASK_WINDOW_READY", task.taskId)
+        if (System.getenv("AZK_TEST_DESKTOP_CONFIGURATIONS") == "1")
+            verifyDesktopConfigurations(task.taskId, commands, ::pixels)
+
         if (dev.artzig.testing.ProcessInspection.enabled) verifyInspection(pid,
             manager.runningAppProcesses.orEmpty().single { it.pid == pid }.uid, packageName)
         val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
@@ -542,6 +545,77 @@ object StockColdLaunchSmoke {
         println("Stock Wayland keyboard: layout changes survive removal of every task window")
         println("Stock Wayland seat: capability updates survive removal of every task window")
         println("Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed")
+    }
+
+    private fun verifyDesktopConfigurations(taskId: Int, commands: java.io.BufferedReader,
+        pixels: (String, Int) -> Unit) {
+        val presenter = IWaylandTaskPresenter.Stub.asInterface(
+            android.os.ServiceManager.getService("dev.artzig.window.presenter"))
+        val displayBefore = android.content.res.Configuration(ActivityManager.getService().configuration)
+        fun awaitGeometry(description: String, presented: Boolean = true, ready: (LongArray) -> Boolean): LongArray {
+            val deadline = SystemClock.uptimeMillis() + 10_000
+            do {
+                val state = presenter.testWindow(taskId)
+                if (state.size == 16 && state[10] == state[11] && state[12] > 0 &&
+                    (!presented || state[12] == state[13]) && ready(state)) return state
+                SystemClock.sleep(5)
+            } while (SystemClock.uptimeMillis() < deadline)
+            error("$description: ${presenter.testWindow(taskId).contentToString()}")
+        }
+        val initial = awaitGeometry("Initial output generation did not present") { true }
+        var previous = initial
+        for ((requested, marker) in listOf(1 to "FULLSCREEN_TASK_WINDOW_READY",
+                0 to "FULLSCREEN_RESTORED_TASK_WINDOW_READY", 2 to "MAXIMIZED_TASK_WINDOW_READY",
+                0 to "MAXIMIZE_RESTORED_TASK_WINDOW_READY")) {
+            if (requested == 1) check(presenter.testHoldOutput(taskId, initial[0], true))
+            check(presenter.testWindowState(taskId, initial[0], requested))
+            if (requested == 1) {
+                awaitGeometry("New output did not commit while its frames were delayed", presented = false) {
+                    it[9] == 1L && it[10] > initial[10] && it[12] > initial[12] && it[13] == initial[13]
+                }
+                // The previous producer has been retired. Its committed image
+                // must remain valid on the compositor while the replacement is held.
+                pixels("PENDING_FULLSCREEN_TASK_WINDOW_READY", taskId)
+                check(presenter.testHoldOutput(taskId, initial[0], false))
+            }
+            val next = awaitGeometry("Window state $requested did not produce a new configuration") {
+                it[9] == requested.toLong() && it[10] > previous[10] && it[12] > previous[12] &&
+                    (requested != 0 || (it[7] == initial[7] && it[8] == initial[8]))
+            }
+            if (requested == 0) {
+                check(next.sliceArray(1..8).contentEquals(initial.sliceArray(1..8))) {
+                    "Restore did not return to identical Android and Wayland geometry"
+                }
+                // All dimensions and synthetic bounds match again. Only the
+                // configuration generation can reject this pre-resize target.
+                check(presenter.injectTestInput(taskId, initial[0], initial[10],
+                    IntArray(8) { initial[it + 1].toInt() }, 0, intArrayOf(10, 10, 0, 0), "") == 0L) {
+                    "Input from before an A-B-A resize was accepted"
+                }
+            }
+            pixels(marker, taskId)
+            previous = next
+        }
+        println("SCALE_TASK_WINDOW_REQUESTED")
+        System.out.flush()
+        check(commands.readLine() == "scaled")
+        val scaled = awaitGeometry("Fractional scale did not reach the private SF output") {
+            it[10] > previous[10] && it[12] > previous[12] &&
+                it[7] == initial[7] && it[8] == initial[8] &&
+                it[14] == (it[7] * 3 + 1) / 2 && it[15] == (it[8] * 3 + 1) / 2
+        }
+        check(ActivityManager.getService().configuration.densityDpi == displayBefore.densityDpi) {
+            "A task's presentation scale changed the shared Android density"
+        }
+        pixels("SCALED_TASK_WINDOW_READY", taskId)
+        println("RESTORE_TASK_SCALE_REQUESTED")
+        System.out.flush()
+        check(commands.readLine() == "scaled")
+        awaitGeometry("Scale restore did not present its own output generation") {
+            it[10] > scaled[10] && it[12] > scaled[12] && it[14] == initial[14] && it[15] == initial[15]
+        }
+        pixels("SCALE_RESTORED_TASK_WINDOW_READY", taskId)
+        println("Stock task configuration generations: delayed replacement, fullscreen, maximize, restore, A-B-A stale input and fractional composition passed")
     }
 
     /** Inspect the task leash that a desktop organizer will present. This

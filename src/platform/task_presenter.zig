@@ -42,17 +42,27 @@ const Entry = struct {
     window: *Queue.Window,
     queue: *Queue,
     events: *Binder,
+    pending_queue: ?*Queue = null,
+    pending_output_generation: i64 = 0,
+    pending_configuration_generation: i64 = 0,
+    output_generation: i64 = 0,
+    configuration_generation: i64 = 0,
+    presented_output_generation: i64 = 0,
     bounds: [6]i32 = @splat(0),
     has_content: bool = false,
+    hold_output: bool = false,
     test_frame_pending: bool = false,
     cursor_icon: ?i32 = null,
-    fn matchesInputGeometry(self: *const Entry, geometry: [8]i32) bool {
-        return self.has_content and std.mem.eql(i32, geometry[0..6], &self.bounds) and
+    fn matchesInputGeometry(self: *const Entry, geometry: [8]i32, configuration_generation: i64) bool {
+        return self.has_content and configuration_generation == self.configuration_generation and
+            configuration_generation == self.window.configuration_generation and
+            self.presented_output_generation == self.output_generation and std.mem.eql(i32, geometry[0..6], &self.bounds) and
             geometry[6] == self.window.width and geometry[7] == self.window.height;
     }
     fn deinit(self: *Entry) void {
         self.window.deinit();
         self.queue.deinit();
+        if (self.pending_queue) |queue| queue.deinit();
         AIBinder_decStrong(self.events);
     }
 };
@@ -158,7 +168,10 @@ const Server = struct {
                     if (entry.test_frame_pending) self.completed_round += 1;
                     entry.test_frame_pending = false;
                 },
-                .configure => |size| try send(entry, 1, .{ size.width, size.height }),
+                .configure => |size| try send(entry, 1, .{
+                    size.width,      size.height,           size.buffer_width, size.buffer_height,
+                    size.generation, @as(i64, size.serial),
+                }),
                 .close => try send(entry, 2, .{}),
                 .keyboard_focus => |focused| try sendFocus(entry, focused),
                 .keyboard_reset => try send(entry, 3, .{ false, @as([]const i32, &.{}) }),
@@ -208,18 +221,21 @@ const Server = struct {
             if (slot.*) |*entry| if (entry.key.id == id) break entry;
         } else null;
         try ok(AParcel_writeInt32(request.output, 0));
-        try ok(AParcel_writeInt32(request.output, if (entry != null) 10 else 0));
+        try ok(AParcel_writeInt32(request.output, if (entry != null) 16 else 0));
         if (entry) |value| {
             try ok(AParcel_writeInt64(request.output, value.key.generation));
             for (value.bounds) |number| try ok(AParcel_writeInt64(request.output, number));
             try ok(AParcel_writeInt64(request.output, value.window.width));
             try ok(AParcel_writeInt64(request.output, value.window.height));
-            try ok(AParcel_writeInt64(request.output, @intFromBool(value.window.isFullscreen())));
+            try ok(AParcel_writeInt64(request.output, @as(i64, @intFromBool(value.window.isFullscreen())) | (@as(i64, @intFromBool(value.window.maximized)) << 1)));
+            for ([_]i64{ value.window.configuration_generation, value.configuration_generation, value.output_generation, value.presented_output_generation, value.queue.presented_width, value.queue.presented_height }) |number|
+                try ok(AParcel_writeInt64(request.output, number));
         }
         return 0;
     }
     fn injectTestInput(self: *Server, request: *Request) !i64 {
         const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
+        const configuration_generation = try readLong(request.input);
         var geometry: [8]i32 = undefined;
         if (try readInt(request.input) != geometry.len) return error.InvalidGeometry;
         for (&geometry) |*number| number.* = try readInt(request.input);
@@ -231,10 +247,10 @@ const Server = struct {
         try text.read(request.input);
         try end(request.input);
         const entry = self.find(key) orelse return 0;
-        if (!entry.matchesInputGeometry(geometry)) return 0;
+        if (!entry.matchesInputGeometry(geometry, configuration_generation)) return 0;
         try entry.window.prepareTestInput();
         // Seat roundtrips can receive a configure; reject its old geometry too.
-        if (!entry.matchesInputGeometry(geometry)) return 0;
+        if (!entry.matchesInputGeometry(geometry, configuration_generation)) return 0;
         if (kind == 2 or kind == 4) try Queue.Window.validateTestText(text.slice());
         switch (kind) {
             0, 1, 4, 5 => {
@@ -257,7 +273,7 @@ const Server = struct {
         if (kind >= 2 and kind <= 5) {
             // Tap plus key/text is one validated operation. Its own focus
             // and selection events may legitimately change accessibility.
-            if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry)) {
+            if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry, configuration_generation)) {
                 if (kind >= 4) return error.InputTargetChanged;
                 return 0;
             }
@@ -269,7 +285,7 @@ const Server = struct {
                 var offset: usize = 0;
                 while (offset < value.len) {
                     const limit = @min(offset + 128, value.len);
-                    if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry))
+                    if (self.session.keyboard_focus != entry.window or !entry.matchesInputGeometry(geometry, configuration_generation))
                         return error.InputTargetChanged;
                     try entry.window.testType(value[offset..limit]);
                     if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
@@ -293,6 +309,32 @@ const Server = struct {
         if (request.code == 10) return self.connectSeat(request);
         if (request.code == 6) return self.observeTestFrames(request);
         if (request.code == 7) return self.testWindow(request);
+        if (request.code == 13) {
+            if (!self.inspection_enabled) return -1;
+            const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
+            const hold = try readInt(request.input);
+            try end(request.input);
+            if (hold != 0 and hold != 1) return error.InvalidBoolean;
+            const entry = self.find(key) orelse return error.StaleTask;
+            entry.hold_output = hold != 0;
+            if (!entry.hold_output) entry.queue.requestPresentation();
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, 1));
+            return 0;
+        }
+        if (request.code == 12) {
+            if (!self.inspection_enabled) return -1;
+            const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
+            const state = try readInt(request.input);
+            try end(request.input);
+            const entry = self.find(key) orelse return error.StaleTask;
+            if (state < 0 or state > 2) return error.InvalidWindowState;
+            entry.window.setFullscreen(state == 1);
+            if (state == 2) entry.window.toplevel.setMaximized() else entry.window.toplevel.unsetMaximized();
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, 1));
+            return 0;
+        }
         if (request.code == 8) {
             if (!self.inspection_enabled) return -1;
             const injected = self.injectTestInput(request) catch |failure| {
@@ -324,7 +366,7 @@ const Server = struct {
                 const callback = events orelse return error.MissingCallback;
                 errdefer AIBinder_decStrong(callback);
                 if (!AIBinder_associateClass(callback, self.events_class)) return error.InvalidCallback;
-                if (try readInt(input) != 2) return error.InvalidConfigurationArray;
+                if (try readInt(input) != 6) return error.InvalidConfigurationArray;
                 try end(input);
                 var free: ?*?Entry = null;
                 for (&self.entries) |*slot| {
@@ -350,7 +392,9 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 0)); // Status::ok
                 try ok(AParcel_writeInt32(output, 1)); // non-null Surface
                 try ok(queue.writeSurface(output));
-                try ok(AParcel_writeInt32Array(output, &.{ window.width, window.height }, 2));
+                try ok(AParcel_writeInt32(output, 6)); // out long[] snapshot
+                for ([_]i64{ window.width, window.height, window.bufferWidth(), window.bufferHeight(), window.configuration_generation, window.configure_serial }) |value|
+                    try ok(AParcel_writeInt64(output, value));
                 slot.* = .{ .key = key, .window = window, .queue = queue, .events = callback };
             },
             2 => {
@@ -378,14 +422,54 @@ const Server = struct {
             4 => {
                 var bounds: [6]i32 = undefined;
                 for (&bounds) |*value| value.* = try readInt(input);
+                const output_generation = try readLong(input);
+                const configuration_generation = try readLong(input);
                 try end(input);
                 if (bounds[0] < 0 or bounds[1] < 0 or !dimension(bounds[2]) or !dimension(bounds[3]) or
                     !dimension(bounds[4]) or !dimension(bounds[5]) or
                     @as(i64, bounds[0]) + bounds[2] > 16384 or @as(i64, bounds[1]) + bounds[3] > 16384)
                     return error.InvalidBounds;
                 const entry = self.find(key) orelse return error.StaleTask;
+                const pending = entry.pending_queue orelse return error.OutputNotPrepared;
+                if (entry.pending_output_generation != output_generation or
+                    entry.pending_configuration_generation != configuration_generation)
+                    return error.StaleOutputConfiguration;
+                // SF's transaction has disconnected the old producer. Keep its
+                // compositor image until a new buffer arrives, but abandon its
+                // queue so no late same-sized frame can enter this generation.
+                entry.window.retireUiProducer();
+                entry.queue.deinit();
+                entry.queue = pending;
+                entry.pending_queue = null;
+                entry.output_generation = output_generation;
+                entry.configuration_generation = configuration_generation;
+                entry.has_content = false;
                 entry.bounds = bounds;
+                // Pending producers can finish a fence before the transaction
+                // commits. Their eventfd was not watched; wake the active loop.
+                entry.queue.requestPresentation();
                 try ok(AParcel_writeInt32(output, 0));
+            },
+            11 => {
+                const output_generation = try readLong(input);
+                const configuration_generation = try readLong(input);
+                const width = try readInt(input);
+                const height = try readInt(input);
+                try end(input);
+                const entry = self.find(key) orelse return error.StaleTask;
+                if (!dimension(width) or !dimension(height) or output_generation <= entry.output_generation or
+                    configuration_generation <= 0 or configuration_generation > entry.window.configuration_generation)
+                    return error.InvalidOutputConfiguration;
+                if (entry.pending_queue != null) return error.OutputConfigurationPending;
+                const queue = try Queue.init(self.gpa, self.io, @intCast(width), @intCast(height));
+                errdefer queue.deinit();
+                queue.expected_size = .{ @intCast(width), @intCast(height) };
+                try ok(AParcel_writeInt32(output, 0));
+                try ok(AParcel_writeInt32(output, 1)); // non-null stock Surface
+                try ok(queue.writeSurface(output));
+                entry.pending_queue = queue;
+                entry.pending_output_generation = output_generation;
+                entry.pending_configuration_generation = configuration_generation;
             },
             5 => {
                 const enabled_value = try readInt(input);
@@ -439,7 +523,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 10) return -38;
+    if (code < 1 or code > 13) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -623,9 +707,16 @@ fn run(init: std.process.Init) !void {
         try session.dispatch(files[0..count], ready[0..count], -1);
         // Consume existing windows before requests can destroy/reuse a slot.
         for (entries[0 .. count - 1], 1..) |entry, index| {
-            if (ready[index] and try entry.queue.presentNotified(entry.window) > 0) entry.has_content = true;
+            if (ready[index] and !entry.hold_output and try entry.queue.presentConfiguration(entry.window, entry.configuration_generation == entry.window.configuration_generation) > 0) {
+                entry.has_content = true;
+                entry.presented_output_generation = entry.output_generation;
+            }
         }
         try server.dispatchEvents();
+        // Configure/viewport transactions must progress without waiting for a
+        // producer frame. Retained content fills the acknowledged geometry
+        // while Android draws the new configuration.
+        for (entries[0 .. count - 1]) |entry| try entry.window.present();
         if (ready[0]) server.drain(!disconnected.load(.acquire));
     }
 }

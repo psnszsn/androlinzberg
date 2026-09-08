@@ -213,6 +213,27 @@ object WaylandTaskShellSmoke {
         tinyAndroid.events.vanished(21, oversized.info.token)
         check(tinyDesktop.windows.single().closes == 1 && oversized.leash.releases == 1)
         tiny.close()
+        val scaleAndroid = Android()
+        val scaleDesktop = Desktop()
+        scaleAndroid.initial = listOf(task(31))
+        val scaleShell = WaylandTaskShell(scaleAndroid, scaleDesktop, TaskGeometry(300, 300))
+        scaleShell.start()
+        scaleAndroid.configurations.single().done(true)
+        val scaleWindow = scaleDesktop.windows.single()
+        val originalBounds = scaleWindow.commits.single().first
+        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 150, 120, 1, 10))
+        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 200, 160, 2, 11))
+        scaleWindow.events.configure(WaylandTaskShell.Size(100, 80, 100, 80, 3, 12))
+        check(scaleAndroid.configurations.size == 2)
+        scaleAndroid.configurations[1].done(true)
+        check(scaleAndroid.configurations.size == 3)
+        val coalesced = scaleAndroid.configurations.last()
+        check(coalesced.size.configurationGeneration == 3L && coalesced.size.bufferWidth == 100 &&
+            coalesced.change.after == originalBounds)
+        coalesced.done(true)
+        check(scaleWindow.commits.last().second.configurationGeneration == 3L)
+        check(scaleWindow.commits.all { it.first == originalBounds })
+        scaleShell.close()
         println("WaylandTaskShell: initial tasks, deduplication, generations, resize coalescing, Android close and cleanup passed")
     }
 }

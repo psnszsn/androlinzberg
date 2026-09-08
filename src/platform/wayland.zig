@@ -277,7 +277,14 @@ pub const KeyboardFocus = struct {
 pub const Event = union(enum) {
     seat_capabilities: struct { generation: i32, mask: i32 },
     close,
-    configure: struct { width: i32, height: i32 },
+    configure: struct {
+        width: i32,
+        height: i32,
+        buffer_width: i32 = 0,
+        buffer_height: i32 = 0,
+        generation: i64 = 0,
+        serial: u32 = 0,
+    },
     fullscreen_changed: bool,
     pointer_motion: struct { x: f64, y: f64 },
     pointer_enter: struct { x: f64, y: f64 },
@@ -1295,6 +1302,14 @@ pub const Window = struct {
     preferred_transform: wl.Output.Transform = .normal,
     fullscreen: FullscreenState = .{},
     configured: bool = false,
+    configuration_generation: i64 = 0,
+    configure_serial: u32 = 0,
+    pending_toplevel: bool = false,
+    pending_width: i32 = 0,
+    pending_height: i32 = 0,
+    pending_fullscreen: bool = false,
+    pending_maximized: bool = false,
+    maximized: bool = false,
     base_attached: bool = false,
     ui_initialized: bool = false,
     presentation_dirty: bool = false,
@@ -1432,13 +1447,49 @@ pub const Window = struct {
         return false;
     }
 
-    fn xdgSurfaceListener(s: *xdg.Surface, event: xdg.Surface.Event, self: *Window) void {
+    fn publishConfiguration(self: *Window) void {
+        if (self.configuration_generation == std.math.maxInt(i64)) {
+            self.session.output_failure = error.ConfigurationGenerationExhausted;
+            return;
+        }
+        self.configuration_generation += 1;
+        self.push(.{ .configure = .{
+            .width = self.width,
+            .height = self.height,
+            .buffer_width = self.bufferWidth(),
+            .buffer_height = self.bufferHeight(),
+            .generation = self.configuration_generation,
+            .serial = self.configure_serial,
+        } });
+    }
+
+    fn xdgSurfaceListener(surface: *xdg.Surface, event: xdg.Surface.Event, self: *Window) void {
         switch (event) {
-            .configure => |c| {
-                s.ackConfigure(c.serial);
+            .configure => |configure| {
+                // xdg_toplevel.configure is pending state until this serial.
+                // Acknowledge and publish one coherent geometry snapshot.
+                surface.ackConfigure(configure.serial);
+                self.configure_serial = configure.serial;
+                const old_width = self.width;
+                const old_height = self.height;
+                if (self.pending_toplevel) {
+                    if (self.pending_width > 0) self.width = self.pending_width;
+                    if (self.pending_height > 0) self.height = self.pending_height;
+                    self.maximized = self.pending_maximized;
+                    if (self.fullscreen.configure(self.pending_fullscreen))
+                        self.push(.{ .fullscreen_changed = self.pending_fullscreen });
+                    self.pending_toplevel = false;
+                }
+                const changed = !self.configured or old_width != self.width or old_height != self.height;
                 self.configured = true;
-                // Apply parent viewport and sibling stacking changes only
-                // after acknowledging the configure that supplied them.
+                if (changed) {
+                    self.updateViewport();
+                    self.updateWindowGeometry();
+                    self.updateOpaqueRegion();
+                    self.publishConfiguration();
+                }
+                // State-only configures need acknowledgment, but do not retire
+                // valid same-geometry content or restart Android draw lifecycles.
                 if (self.base_attached) self.presentation_dirty = true;
             },
         }
@@ -1461,7 +1512,7 @@ pub const Window = struct {
         self.scale_120 = scale;
         self.updateViewport();
         self.presentation_dirty = true;
-        self.push(.{ .configure = .{ .width = self.width, .height = self.height } });
+        if (self.configured) self.publishConfiguration();
     }
 
     // Children use the toplevel's logical geometry and chosen buffer mapping.
@@ -1505,26 +1556,15 @@ pub const Window = struct {
 
     fn toplevelListener(_: *xdg.Toplevel, event: xdg.Toplevel.Event, self: *Window) void {
         switch (event) {
-            .configure => |c| {
-                var fullscreen = false;
-                for (c.states.*.slice(u32)) |state| {
-                    if (state == @backingInt(xdg.Toplevel.State.fullscreen)) {
-                        fullscreen = true;
-                        break;
-                    }
-                }
-                if (self.fullscreen.configure(fullscreen)) {
-                    self.push(.{ .fullscreen_changed = fullscreen });
-                }
-                if (c.width > 0 and c.height > 0) {
-                    if (c.width != self.width or c.height != self.height) {
-                        self.width = c.width;
-                        self.height = c.height;
-                        self.updateViewport();
-                        self.updateWindowGeometry();
-                        self.updateOpaqueRegion();
-                        self.push(.{ .configure = .{ .width = c.width, .height = c.height } });
-                    }
+            .configure => |configure| {
+                self.pending_toplevel = true;
+                self.pending_width = configure.width;
+                self.pending_height = configure.height;
+                self.pending_fullscreen = false;
+                self.pending_maximized = false;
+                for (configure.states.*.slice(u32)) |state| {
+                    if (state == @backingInt(xdg.Toplevel.State.fullscreen)) self.pending_fullscreen = true;
+                    if (state == @backingInt(xdg.Toplevel.State.maximized)) self.pending_maximized = true;
                 }
             },
             .close => self.push(.close),
@@ -1877,7 +1917,13 @@ pub const Window = struct {
     fn updateViewport(self: *Window) void {
         if (self.width > 0 and self.height > 0) {
             self.viewport.setDestination(self.width, self.height);
-            if (self.ui_initialized) self.ui_viewport.setDestination(self.width, self.height);
+            if (self.ui_initialized) {
+                self.ui_viewport.setDestination(self.width, self.height);
+                // Viewport state belongs to the child commit. Cache the new
+                // destination for the next synchronized parent transaction,
+                // including while SF has not produced a replacement buffer.
+                self.ui_surface.commit();
+            }
         }
     }
 
@@ -1988,6 +2034,19 @@ pub const Window = struct {
         self.ui_surface.commit();
         self.ui_initialized = true;
         self.presentation_dirty = true;
+    }
+
+    /// Retire a producer after SF disconnected it. Keep the committed image on
+    /// the server until its replacement arrives: destroying a wl_buffer proxy
+    /// does not detach the surface. Abandonment prevents Android from reusing
+    /// storage while the compositor retains its own DMA-BUF references.
+    pub fn retireUiProducer(self: *Window) void {
+        for (self.ui_dmabuf_buffers.items) |state| {
+            state.wl_buffer.destroy();
+            state.frame.abandon();
+            self.gpa.destroy(state);
+        }
+        self.ui_dmabuf_buffers.clearRetainingCapacity();
     }
 
     /// Register a callback to pace the next application-window transaction.

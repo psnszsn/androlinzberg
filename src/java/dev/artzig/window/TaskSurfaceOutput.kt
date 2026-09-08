@@ -16,7 +16,7 @@ import com.android.server.display.DisplayControl
 internal class TaskSurfaceOutput(
     name: String,
     leash: SurfaceControl,
-    surface: Surface,
+    private val surface: Surface,
     private val layerStack: Int,
 ) : AutoCloseable {
     private var display: IBinder? = null
@@ -36,8 +36,7 @@ internal class TaskSurfaceOutput(
             val rootSurface = checkNotNull(root)
             check(mirrorSurface.isValid)
             SurfaceControl.Transaction().use { transaction ->
-                transaction.setDisplaySurface(display, surface)
-                    .setDisplayLayerStack(display, layerStack)
+                transaction.setDisplayLayerStack(display, layerStack)
                     .setLayerStack(rootSurface, layerStack)
                     .reparent(mirrorSurface, rootSurface)
                     .apply()
@@ -60,6 +59,7 @@ internal class TaskSurfaceOutput(
         outputWidth: Int,
         outputHeight: Int,
         viewport: Rect = Rect(0, 0, outputWidth, outputHeight),
+        surface: Surface = this.surface,
     ) {
         val token = checkNotNull(display) { "Task output is closed" }
         val mirrorSurface = checkNotNull(mirror)
@@ -69,7 +69,12 @@ internal class TaskSurfaceOutput(
         require(!viewport.isEmpty && viewport.left >= 0 && viewport.top >= 0 &&
             viewport.right <= outputWidth && viewport.bottom <= outputHeight)
         val content = Rect(0, 0, bounds.width, bounds.height)
-        transaction.setPosition(mirrorSurface, -bounds.left.toFloat(), -bounds.top.toFloat())
+        // SurfaceFlinger.processDisplayChanged disconnects the previous
+        // producer and recreates its private display when this binder changes.
+        // Bind the producer only with the synchronized bounds/projection; an
+        // early bind could enqueue a frame from the preceding configuration.
+        transaction.setDisplaySurface(token, surface)
+            .setPosition(mirrorSurface, -bounds.left.toFloat(), -bounds.top.toFloat())
             .setWindowCrop(rootSurface, content.width(), content.height())
             .show(rootSurface).show(mirrorSurface)
             .setDisplaySize(token, outputWidth, outputHeight)

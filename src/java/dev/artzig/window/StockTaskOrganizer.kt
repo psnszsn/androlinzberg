@@ -24,7 +24,11 @@ import java.util.concurrent.Executor
  */
 internal class StockTaskOrganizer(private val handler: Handler) :
     WaylandTaskShell.Android<IBinder, SurfaceControl> {
-    interface SurfaceWindow : WaylandTaskShell.Window { val surface: Surface }
+    interface SurfaceWindow : WaylandTaskShell.Window {
+        val surface: Surface
+        /** In-memory adapters can keep their consumer; Wayland rotates producers. */
+        fun prepare(size: WaylandTaskShell.Size): Surface = surface
+    }
     private val executor = Executor { command -> check(handler.post(command)) }
     private var events: WaylandTaskShell.Events<IBinder, SurfaceControl>? = null
     private val tasks = mutableMapOf<IBinder, ActivityManager.RunningTaskInfo>()
@@ -60,6 +64,13 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         try {
             val initial = organizer.registerOrganizer()
             registered = true
+            // TaskOrganizerController.removeTask migrates a previous owner's
+            // leashes in WM's pending animation transaction. Drain that handover
+            // before submitting our first independently synchronized transform;
+            // otherwise its old position can overwrite our committed bounds.
+            // The stock WMS barrier waits for animations/pending surface work
+            // and the resulting input-window publication together.
+            checkNotNull(android.view.WindowManagerGlobal.getWindowManagerService()).syncInputTransactions(true)
             android.util.Log.i("WaylandTaskShell", "initial tasks=${initial.map { it.taskInfo }}")
             return initial.map { task ->
                 val info = task.taskInfo
@@ -86,10 +97,11 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         val info = checkNotNull(tasks[token]) { "Task vanished before bounds synchronization" }
         android.util.Log.i("WaylandTaskShell", "configure task=${info.taskId} bounds=${change.after} output=$size")
         val target = window as SurfaceWindow
+        val surface = target.prepare(size)
         val output = outputs[leash] ?: run {
             check(layerStack < Int.MAX_VALUE) { "Private layer stack IDs exhausted" }
             TaskSurfaceOutput("Task ${change.task.id}/${change.task.generation}", leash,
-                target.surface, layerStack++).also { outputs[leash] = it }
+                surface, layerStack++).also { outputs[leash] = it }
         }
         val bounds = change.after
         val oldBounds = info.configuration.windowConfiguration.bounds
@@ -109,7 +121,7 @@ internal class StockTaskOrganizer(private val handler: Handler) :
                         val live = registered && tasks[token]?.taskId == info.taskId && outputs[leash] === output
                         try {
                             if (live) {
-                                output.configure(it, bounds, size.width, size.height)
+                                output.configure(it, bounds, size.bufferWidth, size.bufferHeight, surface = surface)
                                 // WindowContainer.updateSurfacePositionNonOrganized deliberately
                                 // leaves an organized task's leash to its organizer.
                                 // Move/crop the task container, preserving all WMS

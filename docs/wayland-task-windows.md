@@ -22,6 +22,52 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Configure generation checkpoint (2026-09-08)
+
+The presenter now acknowledges each xdg-surface serial before publishing the
+associated logical size, pixel size and a monotonic configuration generation.
+Task configuration remains in Android logical coordinates with stable shared
+density. Fractional preferences change the private SurfaceFlinger output size.
+State-only configures retain valid same-geometry content.
+
+Each synchronized task configuration prepares a fresh bounded consumer queue.
+The stock SurfaceControl transaction changes its private display producer with
+bounds/projection; SurfaceFlinger disconnects the previous producer. The
+presenter switches queues after that transaction commits. At most one active
+and one pending queue exist per task, with two acquired leases per queue.
+Old-generation frames are released without attaching, including an A-B-A resize
+whose dimensions match again. Inspection input carries its captured generation
+and is rejected when it no longer matches committed/presented content.
+
+While Android's new frame is pending, the previous committed image remains on
+the compositor and scales to the acknowledged window geometry. Producer
+retirement abandons Android reuse without detaching that image. Child viewport
+commits and parent configure-only transactions progress independently of new
+buffers. Acquire-fence waits retain the one-second limit but check shutdown in
+10 ms slices. Private queues validate actual buffer dimensions; inspection
+reports the dimensions of the buffer presented, not merely the desired size.
+
+Regression 252 verifies actual labwc pixels while replacement frames are held,
+then fullscreen/maximize/restore, A-B-A stale input rejection, and 1.5x SF output
+(440x300 logical, 660x450 buffer) without changing shared Android density.
+Regression 254 passes Cage, the desktop launcher, cold launch, input dispatch,
+task-shell coalescing, native tests, seven Surface scenarios, output lifecycle
+and graph audit. Regression 255 passes the JVM suite and all 15 APK tests
+(46 steps, zero runtime issues). Logs: `/tmp/wayland-generations-{252,254,255}.log`.
+
+Repeated cold launch exposed an organizer-handover race: pinned
+TaskOrganizerController removes the prior organizer by migrating its leashes in
+WM's pending animation transaction. A later application of that old position
+can overwrite the new organizer's already-committed transform. Failure 256's
+WM and SF dumps show Android bounds at (0,0) with the SF task still at (453,27).
+The new organizer now uses the stock WMS animation/surface/input synchronization
+barrier before submitting its first independent transform. Regression 258 passes
+cold launch, Cage, labwc and the desktop launcher with that fix; six additional
+consecutive cold handovers pass in `/tmp/wayland-cold-handover-258-{0..5}.log`.
+Artifacts and the before-fix WM/SF dumps are retained under
+`/tmp/wayland-generations-258-artifacts/`. Resize storms, delayed GPU fences and
+the remaining M8–M11 gates are still pending.
+
 ## Wayland output discovery checkpoint (2026-09-08)
 
 The shared session now tracks up to 64 output records with stable storage,

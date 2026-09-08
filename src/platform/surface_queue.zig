@@ -44,6 +44,11 @@ return_storage: [4]Return = undefined,
 ready: Io.Queue(*Frame),
 returns: Io.Queue(Return),
 in_flight: usize = 0, // Worker-owned; stricter than AOSP's extra-acquire allowance.
+// Owner-thread state. Private SF outputs fix their size for one generation;
+// legacy consumers may resize their producer without replacing the queue.
+expected_size: ?[2]u32 = null,
+presented_width: u32 = 0,
+presented_height: u32 = 0,
 
 pub fn init(gpa: std.mem.Allocator, io: Io, width: u32, height: u32) !*Self {
     const raw = std.os.linux.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK);
@@ -134,7 +139,22 @@ fn worker(self: *Self) void {
                 self.signalOwner();
                 break;
             }
-            const waited = c.azk_surface_frame_wait(native.?, 1000);
+            // A retired output must not hold the Wayland owner in deinit for
+            // an entire acquire-fence timeout. AOSP still owns the fence; poll
+            // it in bounded slices while retaining the original one-second limit.
+            const deadline = Io.Clock.awake.now(self.io).toMilliseconds() + 1000;
+            const wait_result: ?i32 = waiting: {
+                while (true) {
+                    if (self.stopping.load(.acquire)) {
+                        c.azk_surface_frame_discard(native.?);
+                        break :waiting null;
+                    }
+                    const result = c.azk_surface_frame_wait(native.?, 10);
+                    if (result != -110 or Io.Clock.awake.now(self.io).toMilliseconds() >= deadline)
+                        break :waiting result;
+                }
+            };
+            const waited = wait_result orelse break;
             if (waited != 0) {
                 std.log.err("surface queue acquire fence failed: {d}", .{waited});
                 c.azk_surface_frame_discard(native.?);
@@ -185,12 +205,28 @@ pub fn presentReady(self: *Self, window: *wayland.Window) !usize {
 
 /// Session.dispatch already consumed this queue's eventfd notification.
 pub fn presentNotified(self: *Self, window: *wayland.Window) !usize {
+    return self.presentConfiguration(window, true);
+}
+
+/// An obsolete compositor generation may release its completed buffers but may
+/// never attach them, even when a later configure returned to the same size.
+pub fn presentConfiguration(self: *Self, window: *wayland.Window, accepted: bool) !usize {
     if (self.failure.load(.acquire) != 0) return error.SurfaceQueueFailed;
     var frames: [2]*Frame = undefined;
     const count = try self.ready.get(self.io, &frames, 0);
     for (frames[0..count], 0..) |frame, index| {
         errdefer for (frames[index + 1 .. count]) |pending| returnFrame(pending, true);
+        if (!accepted) {
+            returnFrame(frame, false);
+            continue;
+        }
         const info = frame.info;
+        if (self.expected_size) |size| {
+            if (info.width != size[0] or info.height != size[1]) {
+                returnFrame(frame, false);
+                return error.InvalidOutputBufferSize;
+            }
+        }
         std.log.info("surface-frame number={d} buffer={d} width={d} height={d}", .{ frame.number, info.id, info.width, info.height });
         try window.pushUiDmabuf(.{
             .context = frame,
@@ -206,6 +242,8 @@ pub fn presentNotified(self: *Self, window: *wayland.Window) !usize {
             .modifiers = .{ info.modifier, 0, 0, 0 },
         });
         try window.present();
+        self.presented_width = info.width;
+        self.presented_height = info.height;
     }
-    return count;
+    return if (accepted) count else 0;
 }

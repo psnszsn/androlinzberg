@@ -31,6 +31,8 @@ result = {'passed': False}
 desktop = os.environ.get('SHOT_COMPOSITOR') == 'labwc'
 with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as control_dir, (out / 'app.log').open('wb') as log:
     environment = os.environ.copy()
+    if desktop and not args.launcher:
+        environment['AZK_TEST_DESKTOP_CONFIGURATIONS'] = '1'
     if args.launcher:
         assert args.testkit is not None
         # Exercise the v1-only creation request against the real compositor.
@@ -65,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             raise RuntimeError('virtual keyboard startup failed')
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log, env=environment)
         try:
-            def verify_pixels(marker, center, name):
+            def verify_pixels(marker, center, name, fullscreen=False, scale=1):
                 deadline = time.monotonic() + 60
                 while marker not in (out / 'app.log').read_text(errors='replace'):
                     if process.poll() is not None:
@@ -80,8 +82,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert magic == b'P6' and maximum == b'255'
                     width, height = map(int, dimensions.split())
                     regions = [(0, 0, width, height, center)]
-                    if desktop:
-                        regions = [(30, 30, 440, 300, (0, 255, 255))]
+                    if desktop and not fullscreen:
+                        regions = [(int(30 * scale), int(30 * scale), int(440 * scale), int(300 * scale), (0, 255, 255))]
                         if name in ('second-task', 'grouped-activity'):
                             regions.append((500, 100, 440, 300, center))
                     points, expected = [], []
@@ -240,6 +242,28 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 text = (out / 'app.log').read_text(errors='replace')
             else:
                 verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
+                if desktop:
+                    for marker, name, fullscreen in [
+                            ('PENDING_FULLSCREEN_TASK_WINDOW_READY', 'pending-fullscreen', True),
+                            ('FULLSCREEN_TASK_WINDOW_READY', 'fullscreen', True),
+                            ('FULLSCREEN_RESTORED_TASK_WINDOW_READY', 'fullscreen-restored', False),
+                            ('MAXIMIZED_TASK_WINDOW_READY', 'maximized', True),
+                            ('MAXIMIZE_RESTORED_TASK_WINDOW_READY', 'maximize-restored', False)]:
+                        verify_pixels(marker, (0, 255, 255), name, fullscreen=fullscreen)
+                    for requested, marker, factor, name in [
+                            ('SCALE_TASK_WINDOW_REQUESTED', 'SCALED_TASK_WINDOW_READY', 1.5, 'scaled'),
+                            ('RESTORE_TASK_SCALE_REQUESTED', 'SCALE_RESTORED_TASK_WINDOW_READY', 1, 'scale-restored')]:
+                        deadline = time.monotonic() + 10
+                        while requested not in (out / 'app.log').read_text(errors='replace'):
+                            if process.poll() is not None or time.monotonic() >= deadline:
+                                raise RuntimeError(f'{requested} timeout/exit: {process.poll()}')
+                            time.sleep(.02)
+                        subprocess.run(['wlr-randr', '--output', 'HEADLESS-1', '--scale', str(factor)],
+                                       check=True, capture_output=True, timeout=5)
+                        process.stdin.write(b'scaled\n')
+                        process.stdin.flush()
+                        verify_pixels(marker, (0, 255, 255), name, scale=factor)
+
                 for marker, operation in [('POINTER_DEVICE_CREATE', b'p'),
                                           ('POINTER_DEVICE_REMOVE', b'r'),
                                           ('POINTER_DEVICE_RECREATE', b'p')]:
