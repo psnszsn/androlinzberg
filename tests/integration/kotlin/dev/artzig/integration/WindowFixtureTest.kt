@@ -57,6 +57,20 @@ class WindowFixtureTest {
         assertLog("TextureFixture", "surface released after detach")
     }
 
+    @Test
+    fun frameCallbacksFollowSubmissionAndResume() = app.run {
+        click(text = "SHOW FRAME CALLBACKS")
+        expectVisible(text = "Frame callbacks verified")
+        assertLog("FrameFixture", "commit order=first,second,fromDraw; unattached callback not submitted")
+        assertColorArea(screenshot("frame-committed-blue.png"), 0xff0000ff.toInt(), 40_000)
+        click(text = "COVER FRAME WINDOW")
+        expectVisible(text = "RETURN TO FRAME WINDOW")
+        click(text = "RETURN TO FRAME WINDOW")
+        expectVisible(text = "Resumed frame committed")
+        assertLog("FrameFixture", "stop,resume,commit; callbacks completed once on main")
+        assertColorArea(screenshot("frame-resumed-cyan.png"), 0xff00ffff.toInt(), 40_000)
+    }
+
     private fun assertColorArea(path: java.nio.file.Path, color: Int, minimumPixels: Int) {
         val image = javax.imageio.ImageIO.read(path.toFile())
         var pixels = 0

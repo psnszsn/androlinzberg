@@ -25,7 +25,6 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Size
 import android.view.ThreadedRenderer
-import android.view.ViewRootImpl
 import java.security.KeyStore
 import java.util.ArrayList
 import java.util.HashMap
@@ -435,10 +434,6 @@ public final class FrameworkCompatSmoke {
                 notificationIntent.getParcelableArrayListExtra<android.os.Parcelable>("notification-items") ===
                     notificationItems,
                 "Intent parcelable array list extra",
-            )
-            require(
-                !ViewRootImpl(null).getWindowInsets(false).isConsumed(),
-                "host zero window insets propagate to descendants",
             )
             require(
                 android.content.res.HostedConfigurationController.resolveLandscape(

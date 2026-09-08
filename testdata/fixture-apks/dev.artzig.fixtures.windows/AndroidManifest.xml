@@ -14,6 +14,8 @@
             </intent-filter>
         </activity>
         <activity android:name=".TextureFixtureActivity" android:resizeableActivity="true" />
+        <activity android:name=".FrameFixtureActivity" android:resizeableActivity="true" />
+        <activity android:name=".FrameCoverActivity" android:resizeableActivity="true" />
         <activity android:name=".VideoFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".ImeFixtureActivity" android:resizeableActivity="true" />
         <provider android:name=".ClipboardFileProvider" android:exported="false" android:grantUriPermissions="true"

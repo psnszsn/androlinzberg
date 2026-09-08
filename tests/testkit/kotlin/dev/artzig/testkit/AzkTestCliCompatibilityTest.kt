@@ -83,7 +83,7 @@ class AzkTestCliCompatibilityTest {
         val mark = markJson()
         withServer(listOf("""{"parameters":{"observation":{"mark":$mark}}}""" + '\u0000')) { socket, _ ->
             val result = runCli(arrayOf("mark"), mapOf("AZK_TEST_SOCKET" to socket.toString()))
-            assertEquals(0, result.status)
+            assertEquals(0, result.status, result.errors)
             assertEquals("epoch", JsonParser.parseString(result.output).asJsonObject["mark"].asJsonObject["epoch"].asString)
         }
 
@@ -95,7 +95,7 @@ class AzkTestCliCompatibilityTest {
                     arrayOf("diagnose", "--since", "@${markFile}"),
                     mapOf("AZK_TEST_SOCKET" to socket.toString()),
                 )
-                assertEquals(0, result.status)
+                assertEquals(0, result.status, result.errors)
                 assertEquals("epoch", requests.single()["parameters"].asJsonObject["since"].asJsonObject["epoch"].asString)
             }
         } finally {
@@ -133,7 +133,7 @@ class AzkTestCliCompatibilityTest {
                         "AZK_TEST_STEP_LOG" to stepLog.toString(),
                     ),
                 )
-                assertEquals(0, result.status)
+                assertEquals(0, result.status, result.errors)
                 assertTrue(JsonParser.parseString(result.output).asJsonObject["ok"].asBoolean)
                 assertEquals(2, Files.readAllLines(stepLog).size)
             }
@@ -205,9 +205,12 @@ class AzkTestCliCompatibilityTest {
         val directory = Files.createTempDirectory("azk-cli-server")
         val socket = directory.resolve("control.sock")
         val requests = mutableListOf<JsonObject>()
+        // bind() creates the socket path before its listen() call completes.
+        // Publish readiness by returning from bind, not by observing that path.
+        val listener = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        listener.bind(UnixDomainSocketAddress.of(socket))
         val server = thread(start = true) {
-            ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { listener ->
-                listener.bind(UnixDomainSocketAddress.of(socket))
+            listener.use {
                 for (response in responses) {
                     listener.accept().use { connection ->
                         val bytes = mutableListOf<Byte>()
@@ -237,9 +240,9 @@ class AzkTestCliCompatibilityTest {
             }
         }
         try {
-            while (!Files.exists(socket)) Thread.sleep(5)
             block(socket, requests)
         } finally {
+            listener.close()
             server.join(2_000)
             Files.deleteIfExists(socket)
             Files.deleteIfExists(directory)

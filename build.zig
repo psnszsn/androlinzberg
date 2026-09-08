@@ -1404,8 +1404,11 @@ pub fn build(b: *std.Build) void {
     // monitor off the developer's real desktop clipboard (empty falls back
     // to wayland-0).
     framework_compat_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    framework_compat_smoke.setEnvironment("AZK_TASK_WINDOWS", "0");
     framework_compat_smoke.run.setName("run framework compatibility smoke");
     jvm_test_step.dependOn(&framework_compat_smoke.run.step);
+    b.step("framework-compat-test", "Verify framework contracts independently of the window client selection")
+        .dependOn(&framework_compat_smoke.run.step);
     const connectivity_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(connectivity_smoke, application_tree);
     connectivity_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

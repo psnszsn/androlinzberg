@@ -97,11 +97,8 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     for (project_sources.framework) |path| {
         if (stock_window_clients and (std.mem.eql(u8, path, "src/framework/android/view/ViewRootImpl.java") or
             std.mem.eql(u8, path, "src/framework/android/view/SurfaceView.java") or
-            // These exercise the legacy offscreen root directly. They remain
-            // in the default build while the stock APK/session gates replace it.
-            std.mem.eql(u8, path, "src/java/dev/artzig/FrameworkModuleSmoke.kt") or
-            std.mem.eql(u8, path, "src/java/dev/artzig/FrameworkCompatSmoke.kt") or
-            std.mem.eql(u8, path, "src/java/dev/artzig/FrameCommitProbe.kt"))) continue;
+            // Remaining legacy root assertions are migrating to APK fixtures.
+            std.mem.eql(u8, path, "src/java/dev/artzig/FrameworkModuleSmoke.kt"))) continue;
         framework.files.addFile(project_root, path);
     }
     framework.files.addFile(project_root, if (stock_window_clients)

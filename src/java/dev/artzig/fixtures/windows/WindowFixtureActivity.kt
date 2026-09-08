@@ -95,6 +95,7 @@ open class WindowFixtureActivity : Activity() {
             permissionState = permissionNames.map(::checkSelfPermission).toIntArray()
             requestPermissions(permissionNames, 71)
         }
+        button("Show frame callbacks") { startActivity(Intent(this, FrameFixtureActivity::class.java)) }
         setContentView(android.widget.ScrollView(this).apply { addView(content) })
     }
 

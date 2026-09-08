@@ -11,6 +11,36 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Frame callbacks through stock APK windows (2026-09-08)
+
+The window-contracts APK now tests frame callback registration order, callbacks
+registered during drawing, unattached callbacks, and a submitted frame after
+stop/resume. It verifies the empty but unconsumed root-insets snapshot through
+`View.getRootWindowInsets`, and checks committed blue/cyan compositor pixels.
+The old manual `FrameCommitProbe` is removed. `FrameworkCompatSmoke` now also
+compiles with stock window clients; its focused headless target explicitly
+suppresses task presentation. `FrameworkModuleSmoke` still contains legacy-root
+assertions that must migrate before the default cutover.
+
+Regression 525 passes the stock frame fixture, compatibility smoke, 22 testkit
+unit tests and source audits. Regression 526 passes the full default JVM suite
+and all 17 APK cases with 52 clean steps. Artifacts:
+`/tmp/wayland-frame-insets-525-artifacts/` and
+`/tmp/wayland-frame-default-526-artifacts/`. The testkit mock socket now binds on
+the caller before publishing readiness; filesystem pathname existence alone did
+not guarantee that the worker had reached listen.
+
+Regression 527 passes the new stock frame case, compatibility smoke, sixteen
+repeated drag rounds (116 steps), and all four service-loss checks. Its full
+stock APK suite passes 16 of 17 cases: a WebView renderer again reports ART
+`pthread_getattr_np` EPERM during startup/shutdown, before any test action. The
+same-process serial-worker lifetime fix is insufficient for all attachment
+paths; fresh death/property callback threads are under investigation. The
+startup journal has no structured issue, but the raw fatal correctly fails the
+test. Retained logs, diagnosis and inspected screenshot:
+`/tmp/wayland-stock-matrix-527-artifacts/`. Both this attachment failure and the
+earlier intermittent drag traversal stall remain open.
+
 ## Repeated drag and failure capture (2026-09-08)
 
 `stock-drag-pressure-test` repeats the text/file drag and subsequent UI update
