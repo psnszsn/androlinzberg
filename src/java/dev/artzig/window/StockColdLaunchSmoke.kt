@@ -697,6 +697,45 @@ object StockColdLaunchSmoke {
         println("Stock task resize storm: 64 acknowledged configures with held frames; " +
             "resources before=${resourcesBefore.contentToString()} peak=${peaks.contentToString()} after=${resourcesAfter.contentToString()}")
         println("Stock task configuration generations: delayed replacement, fullscreen, maximize, restore, A-B-A stale input and fractional composition passed")
+        fun lifecycle() = checkNotNull(context.contentResolver.call(
+            android.net.Uri.parse("content://dev.artzig.fixtures.windows.cold"),
+            "snapshot", null, null)).getStringArrayList("events")!!.toList()
+        fun taskVisible() = ActivityTaskManager.getService().getTasks(10, false, true,
+            android.view.Display.DEFAULT_DISPLAY).single { it.taskId == taskId }.isVisible
+        fun awaitLifecycle(description: String, condition: () -> Boolean) {
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (!condition()) {
+                check(SystemClock.uptimeMillis() < deadline) { "$description: ${lifecycle()} visible=${taskVisible()}" }
+                SystemClock.sleep(5)
+            }
+        }
+        val beforeSuspension = lifecycle().size
+        println("SUSPEND_DESKTOP_READY"); System.out.flush()
+        val suspensionHint = checkNotNull(commands.readLine()) == "hint"
+        if (suspensionHint) {
+            awaitGeometry("Compositor did not suspend the minimized task") { it[9] and 4L != 0L }
+            awaitLifecycle("Stock WM did not stop its explicitly suspended task") {
+                !taskVisible() && "stop" in lifecycle().drop(beforeSuspension)
+            }
+            val callbacks = lifecycle().drop(beforeSuspension)
+            check(callbacks.indexOf("pause") in 0 until callbacks.indexOf("stop")) { "Suspension ordering: $callbacks" }
+        } else {
+            SystemClock.sleep(250)
+            check(taskVisible() && presenter.testWindow(taskId)[9] and 4L == 0L)
+            check(lifecycle().drop(beforeSuspension).none { it == "pause" || it == "stop" })
+        }
+        physicalInput("SUSPENDED_TASK_READY")
+        awaitGeometry("Compositor did not resume its minimized task") { it[9] and 4L == 0L }
+        awaitLifecycle("Stock WM did not restore its visible task") {
+            taskVisible() && (!suspensionHint || lifecycle().drop(beforeSuspension).lastOrNull() == "resume")
+        }
+        if (suspensionHint) {
+            val callbacks = lifecycle().drop(beforeSuspension)
+            check("create" !in callbacks && callbacks.indexOf("stop") < callbacks.lastIndexOf("start") &&
+                callbacks.lastIndexOf("start") < callbacks.lastIndexOf("resume")) { "Resumption ordering: $callbacks" }
+        }
+        pixels("RESUMED_TASK_WINDOW_READY", taskId)
+        println("Stock Wayland suspension: hint=$suspensionHint, lifecycle ordering and resumed pixels passed")
     }
 
     /** Inspect the task leash that a desktop organizer will present. This

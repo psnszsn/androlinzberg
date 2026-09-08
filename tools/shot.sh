@@ -9,6 +9,7 @@
 # <out>.a11y.json, <out>.log, and <out>.steps.jsonl beside the screenshot.
 # SHOT_COMPOSITOR=labwc selects a stacking desktop instead of Cage's kiosk.
 # SHOT_LABWC_CONFIG optionally supplies an isolated compositor configuration.
+# SHOT_LABWC_BINARY selects a protocol fixture binary for labwc test variants.
 set -euo pipefail
 OUT=$(realpath -m "$1"); shift
 TEST_EXECUTABLE=
@@ -75,7 +76,7 @@ SESSION
       chmod +x "$COMPOSITOR_DIR/session"
       local session_command compositor_status=0
       printf -v session_command '%q' "$COMPOSITOR_DIR/session"
-      labwc --config-dir "$COMPOSITOR_DIR/config" --session "$session_command" || compositor_status=$?
+      "${SHOT_LABWC_BINARY:-labwc}" --config-dir "$COMPOSITOR_DIR/config" --session "$session_command" || compositor_status=$?
       if [[ ! -f $SHOT_SESSION_STATUS ]]; then
         echo "shot.sh: labwc session exited without a client result ($compositor_status)" >&2
         return 1

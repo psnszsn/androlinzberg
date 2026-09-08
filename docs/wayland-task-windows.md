@@ -22,6 +22,36 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Compositor suspension checkpoint (2026-09-08)
+
+The task presenter negotiates xdg-shell up to v6 and applies the optional
+suspended state only after its xdg-surface configure is acknowledged. Explicit
+suspension cancels pointer/touch/key streams, revokes pointer capture, suppresses
+new input and cursor animation, and returns completed producer frames without
+attaching them. The last compositor image remains retained. A private callback
+sets the stock TaskOrganizer WCT hidden flag; pinned WMS owns visibility,
+reordering and activity pause/stop/start/resume. Resumption restores only actual
+seat keyboard focus, with a maintained held-key snapshot. Unknown occlusion and
+minimization remain conservatively visible to Android.
+
+Advertising v6 does not guarantee a compositor sends this optional hint. Pinned
+labwc 0.20.1's `xdg_toplevel_view_minimize` is a no-op. The existing shot.sh
+harness therefore supports a test-only labwc binary whose small source patch
+emits the standard suspended configure. Its Nix build uses artzig's locked
+nixpkgs and is a dependency only of the two protocol-fixture targets.
+
+Regression 275 verifies real minimized/resumed pixels and Android lifecycle
+ordering in three cases: ordinary labwc v6 without hints, the fixture with v6
+hints, and the same fixture forced to v2. Explicit suspension stops the activity
+and resumes the same instance; the two unknown cases retain Android visibility.
+Task-shell tests cover duplicate and stale visibility callbacks. Regression 276
+passes Cage, cold launch, desktop launcher, all eight surface scenarios, both
+output lifecycle scenarios, native tests and graph audit. Regression 277 passes
+all 7091 JVM/APK/native/surface/graph build steps, including 15 APK tests with 47
+interaction steps and zero runtime issues. Logs:
+`/tmp/wayland-suspension-{273,274,275,276,277}.log`; retained artifacts:
+`/tmp/wayland-suspension-277-artifacts/`.
+
 ## Keyboard layout pressure checkpoint (2026-09-08)
 
 The ordered seat queue retains at most 16 XKB layout snapshots and charges at

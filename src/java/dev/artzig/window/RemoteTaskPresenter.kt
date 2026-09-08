@@ -86,6 +86,8 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                     it.events.configure(it.size)
                 }
             }
+        override fun suspended(taskId: Int, generation: Long, suspended: Boolean) =
+            deliver(taskId, generation) { it.events.suspended(suspended) }
         override fun closeRequested(taskId: Int, generation: Long) =
             deliver(taskId, generation) { it.events.closeRequested() }
         override fun keyboardFocus(taskId: Int, generation: Long, gained: Boolean, heldScanCodes: IntArray) =

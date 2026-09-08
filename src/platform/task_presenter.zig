@@ -52,10 +52,11 @@ const Entry = struct {
     bounds: [6]i32 = @splat(0),
     has_content: bool = false,
     hold_output: bool = false,
+    suspended: bool = false,
     test_frame_pending: bool = false,
     cursor_icon: ?i32 = null,
     fn inputGeometryReady(self: *const Entry) bool {
-        return self.has_content and self.pending_queue == null and self.configuration_generation == self.window.configuration_generation and
+        return self.has_content and !self.suspended and !self.window.suspended and self.pending_queue == null and self.configuration_generation == self.window.configuration_generation and
             self.presented_output_generation == self.output_generation;
     }
     fn matchesInputGeometry(self: *const Entry, geometry: [8]i32, configuration_generation: i64) bool {
@@ -188,8 +189,26 @@ const Server = struct {
                         size.generation, @as(i64, size.serial),
                     });
                 },
+                .suspended_changed => |suspended| {
+                    entry.suspended = suspended;
+                    if (suspended) {
+                        try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
+                        try send(entry, 8, .{});
+                        try send(entry, 3, .{ false, @as([]const i32, &.{}) });
+                        try entry.window.setPointerCapture(false);
+                    }
+                    // WCT owns Android visibility/lifecycle; publish it before
+                    // restoring focus or coordinates on compositor resumption.
+                    try send(entry, 16, .{suspended});
+                    if (!suspended) {
+                        if (self.session.keyboard_focus == entry.window)
+                            try sendFocus(entry, self.session.keyboard_state);
+                        if (entry.inputGeometryReady() and self.session.pointer_focus == entry.window)
+                            try send(entry, 4, .{ 1, 0, false, entry.window.pointer_x, entry.window.pointer_y });
+                    }
+                },
                 .close => try send(entry, 2, .{}),
-                .keyboard_focus => |focused| try sendFocus(entry, focused),
+                .keyboard_focus => |focused| if (!focused.active or (!entry.suspended and !entry.window.suspended)) try sendFocus(entry, focused),
                 .keyboard_reset => try send(entry, 3, .{ false, @as([]const i32, &.{}) }),
                 .pointer_motion => |p| try send(entry, 4, .{ 0, 0, false, p.x, p.y }),
                 .pointer_enter => |p| try send(entry, 4, .{ 1, 0, false, p.x, p.y }),
@@ -199,7 +218,7 @@ const Server = struct {
                 .pointer_capture_changed => |capture| try send(entry, 12, .{ capture.enabled, capture.sequence }),
                 .pointer_relative => |motion| try send(entry, 13, .{ motion.dx, motion.dy }),
                 .pointer_axis => |axis| try send(entry, 5, .{ axis.x, axis.y, axis.horizontal, axis.vertical }),
-                .key => |key| try send(entry, 6, .{ key.keycode, key.pressed, key.repeatable }),
+                .key => |key| if (!entry.suspended and !entry.window.suspended) try send(entry, 6, .{ key.keycode, key.pressed, key.repeatable }),
                 .touch => |touch| try send(entry, 7, .{ @backingInt(touch.action), touch.id, touch.x, touch.y, touch.major, touch.minor, touch.orientation }),
                 .touch_cancel => try send(entry, 8, .{}),
                 else => {},
@@ -243,7 +262,7 @@ const Server = struct {
             for (value.bounds) |number| try ok(AParcel_writeInt64(request.output, number));
             try ok(AParcel_writeInt64(request.output, value.window.width));
             try ok(AParcel_writeInt64(request.output, value.window.height));
-            try ok(AParcel_writeInt64(request.output, @as(i64, @intFromBool(value.window.isFullscreen())) | (@as(i64, @intFromBool(value.window.maximized)) << 1)));
+            try ok(AParcel_writeInt64(request.output, @as(i64, @intFromBool(value.window.isFullscreen())) | (@as(i64, @intFromBool(value.window.maximized)) << 1) | (@as(i64, @intFromBool(value.window.suspended)) << 2)));
             for ([_]i64{ value.window.configuration_generation, value.configuration_generation, value.output_generation, value.presented_output_generation, value.queue.presented_width, value.queue.presented_height }) |number|
                 try ok(AParcel_writeInt64(request.output, number));
         }
@@ -734,11 +753,16 @@ fn run(init: std.process.Init) !void {
     const session = try Queue.Session.initWithOptions(init.gpa, io, .{
         .virtual_pointer_max_version = pointer_version,
         .cursor_shape = cursor_shape,
+        .xdg_shell_max_version = if (inspection_enabled)
+            try std.fmt.parseInt(u32, init.minimal.environ.getPosix("AZK_TEST_XDG_SHELL_VERSION") orelse "6", 10)
+        else
+            6,
     });
     if (inspection_enabled) {
         const version = if (session.virtual_pointer_manager) |manager| manager.getVersion() else 0;
         std.log.info("task virtual pointer protocol version={d}", .{version});
         std.log.info("task cursor shape protocol available={any}", .{session.cursor_shape_manager != null});
+        std.log.info("task xdg shell protocol version={d}", .{session.wm_base.?.getVersion()});
     }
     session.ordered_events = .{};
     session.generate_key_repeats = false; // Stock InputDispatcher owns the timer.
@@ -790,7 +814,7 @@ fn run(init: std.process.Init) !void {
         try server.dispatchEvents();
         // Consume existing windows before requests can destroy/reuse a slot.
         for (entries[0 .. count - 1], 1..) |entry, index| {
-            if (ready[index] and !entry.hold_output and try entry.queue.presentConfiguration(entry.window, entry.pending_queue == null and entry.configuration_generation == entry.window.configuration_generation) > 0) {
+            if (ready[index] and !entry.hold_output and try entry.queue.presentConfiguration(entry.window, !entry.suspended and !entry.window.suspended and entry.pending_queue == null and entry.configuration_generation == entry.window.configuration_generation) > 0) {
                 const restore_hover = !entry.inputGeometryReady();
                 entry.has_content = true;
                 entry.presented_output_generation = entry.output_generation;

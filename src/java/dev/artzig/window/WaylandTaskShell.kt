@@ -39,6 +39,8 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
             change: TaskGeometry.Proposal.Change, size: Size, committed: (Boolean) -> Unit)
         /** Request Android lifecycle teardown; vanish remains authoritative. */
         fun remove(token: Token)
+        /** Explicit compositor suspension; unknown occlusion remains visible. */
+        fun suspended(token: Token, suspended: Boolean)
         /** Reject an unpresentable task through Android's removal lifecycle. */
         fun reject(token: Token, reason: TaskGeometry.Rejection)
     }
@@ -49,6 +51,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
     interface WindowEvents {
         fun configure(size: Size)
         fun closeRequested()
+        fun suspended(suspended: Boolean)
     }
     interface Window : AutoCloseable {
         val size: Size
@@ -62,6 +65,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         var desired: Size? = null
         var presentationSize: Size? = null
         var closing = false
+        var suspended = false
     }
     private val entries = linkedMapOf<Int, Entry>()
     private var generation = 0L
@@ -123,6 +127,11 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
                 object : WindowEvents {
                     override fun configure(size: Size) {
                         if (current(entry) && !entry.closing) resize(entry, size)
+                    }
+                    override fun suspended(suspended: Boolean) {
+                        if (!current(entry) || entry.closing || entry.suspended == suspended) return
+                        android.suspended(entry.info.token, suspended)
+                        entry.suspended = suspended
                     }
                     override fun closeRequested() {
                         if (!current(entry) || entry.closing) return

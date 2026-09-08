@@ -19,4 +19,5 @@ oneway interface IWaylandTaskEvents {
     /** Follows the compositor roundtrip and all preceding seat callbacks. */
     void testInputBarrier(int taskId, long generation, long sequence);
     void seatCapabilities(int sourceGeneration, int capabilities);
+    void suspended(int taskId, long generation, boolean suspended);
 }

@@ -1,5 +1,9 @@
 <?xml version="1.0"?>
 <labwc_config>
+  <keyboard>
+    <default />
+    <keybind key="F9"><action name="ToggleShowDesktop" /></keybind>
+  </keyboard>
   <focus><followMouse>no</followMouse></focus>
   <windowRules>
     <windowRule identifier="dev.artzig.fixtures.windows" serverDecoration="no" />

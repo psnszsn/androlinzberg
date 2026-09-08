@@ -141,6 +141,16 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         })
     }
 
+    override fun suspended(token: IBinder, suspended: Boolean) {
+        checkThread()
+        val task = tasks[token] ?: return
+        // Pinned WindowOrganizerController.applyTaskChanges sets
+        // FLAG_FORCE_HIDDEN_FOR_TASK_ORG and applies lifecycle effects.
+        // Task.setForceHidden owns reordering and stock pause/stop/resume;
+        // repaint suspension is the host policy input, not keyboard focus.
+        organizer.applyTransaction(WindowContainerTransaction().setHidden(task.token, suspended))
+    }
+
     override fun remove(token: IBinder) {
         checkThread()
         val task = tasks[token] ?: return

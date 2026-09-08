@@ -28,6 +28,7 @@ object WaylandTaskShellSmoke {
         var initial = emptyList<WaylandTaskShell.Appeared<Token, Leash>>()
         val configurations = mutableListOf<Pending>()
         val removes = mutableListOf<Token>()
+        val suspensions = mutableListOf<Pair<Token, Boolean>>()
         val rejections = mutableListOf<Pair<Token, TaskGeometry.Rejection>>()
         var unregisters = 0
         class Pending(val change: TaskGeometry.Proposal.Change, val size: WaylandTaskShell.Size,
@@ -42,6 +43,7 @@ object WaylandTaskShellSmoke {
             configurations.add(Pending(change, size, committed))
         }
         override fun remove(token: Token) { removes.add(token) }
+        override fun suspended(token: Token, suspended: Boolean) { suspensions.add(token to suspended) }
         override fun reject(token: Token, reason: TaskGeometry.Rejection) {
             rejections.add(token to reason); remove(token)
         }
@@ -64,6 +66,10 @@ object WaylandTaskShellSmoke {
         check(android.configurations.size == 2)
         val one = desktop.windows[0]
         val two = desktop.windows[1]
+        one.events.suspended(true)
+        one.events.suspended(true)
+        one.events.suspended(false)
+        check(android.suspensions == listOf(first.info.token to true, first.info.token to false))
         val firstBounds = android.configurations[0].change.after
         val secondBounds = android.configurations[1].change.after
         check(firstBounds.right < secondBounds.left || secondBounds.right < firstBounds.left ||
@@ -98,6 +104,8 @@ object WaylandTaskShellSmoke {
         check(one.closes == 1 && first.leash.releases == 1 && two.closes == 0)
         one.events.configure(WaylandTaskShell.Size(400, 400))
         one.events.closeRequested()
+        one.events.suspended(true)
+        check(android.suspensions.size == 2)
         check(android.removes.size == 2)
 
         val replacement = task(1, token = 11, resizable = false)

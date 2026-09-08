@@ -105,7 +105,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 8);
     scanner.generate("wl_output", 4);
-    scanner.generate("xdg_wm_base", 2);
+    scanner.generate("xdg_wm_base", 6);
     scanner.generate("wl_subcompositor", 1);
     scanner.generate("wp_viewporter", 1);
     scanner.generate("wp_fractional_scale_manager_v1", 1);
@@ -1185,8 +1185,20 @@ pub fn build(b: *std.Build) void {
     stock_cold_launch.run.setName("verify install-time uid and stock ATMS first-process launch");
     b.step("stock-cold-launch-test", "Install an APK and launch its first process through stock ATMS")
         .dependOn(&stock_cold_launch.run.step);
-    for ([_][]const u8{ "cage", "labwc" }) |compositor| {
-        const task_artifacts = b.pathResolve(&.{b.fmt("zig-out/test-results/stock-wayland-task-{s}", .{compositor})});
+    const suspension_compositor = @import("build/command.zig").create(b);
+    suspension_compositor.addArgs(&.{ "nix", "build", "--impure", "--cores", "6", "--max-jobs", "1", "--file" });
+    suspension_compositor.addFileArg(b.path("testdata/wayland/labwc-suspension.nix"));
+    suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-suspension.patch"));
+    suspension_compositor.run.addFileInput(artzig_dep.path("flake.nix"));
+    suspension_compositor.run.addFileInput(artzig_dep.path("flake.lock"));
+    suspension_compositor.addArg("--out-link");
+    const suspension_labwc = suspension_compositor.addOutputChildArg("suspension-compositor", "labwc");
+    suspension_compositor.run.setName("build pinned labwc suspension protocol fixture");
+    for ([_][]const u8{ "cage", "labwc", "labwc-suspension", "labwc-legacy" }) |scenario| {
+        const legacy_shell = std.mem.eql(u8, scenario, "labwc-legacy");
+        const suspension_fixture = std.mem.eql(u8, scenario, "labwc-suspension");
+        const compositor = if (legacy_shell or suspension_fixture) "labwc" else scenario;
+        const task_artifacts = b.pathResolve(&.{b.fmt("zig-out/test-results/stock-wayland-task-{s}", .{scenario})});
         const stock_task_wayland = @import("build/command.zig").create(b);
         setApplicationEnvironment(stock_task_wayland, application_tree);
         stock_task_wayland.setEnvironment("AZK_WINDOW_BACKEND", "stock");
@@ -1195,6 +1207,10 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
         stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", compositor);
         stock_task_wayland.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
+        if (legacy_shell) stock_task_wayland.setEnvironment("AZK_TEST_XDG_SHELL_VERSION", "2");
+        if (legacy_shell or suspension_fixture)
+            stock_task_wayland.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
+        stock_task_wayland.setEnvironment("AZK_TEST_SUSPENSION_EXPECTED", if (suspension_fixture) "1" else "0");
         if (std.mem.eql(u8, compositor, "labwc"))
             stock_task_wayland.setEnvironment("SHOT_LABWC_CONFIG", b.pathResolve(&.{"testdata/wayland/task-desktop.xml"}));
         stock_task_wayland.addFileArg(b.path("tools/shot.sh"));
@@ -1212,7 +1228,7 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-task-presenter"));
         stock_task_wayland.run.has_side_effects = true;
         stock_task_wayland.run.setName("verify stock APK task pixels through session Wayland presenter");
-        b.step(if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
+        b.step(if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
     }
     const desktop_launcher = @import("build/command.zig").create(b);

@@ -137,6 +137,32 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 process.stdin.write(b'input sent\n')
                 process.stdin.flush()
 
+            def suspend_desktop():
+                protocol_version = int(re.search(r'task xdg shell protocol version=(\d+)',
+                    (out / 'app.log').read_text(errors='replace')).group(1))
+                expected_hint = environment.get('AZK_TEST_SUSPENSION_EXPECTED') == '1'
+                assert protocol_version == 2 if environment.get('AZK_TEST_XDG_SHELL_VERSION') == '2' else protocol_version >= 6
+                for marker in ('SUSPEND_DESKTOP_READY', 'SUSPENDED_TASK_READY'):
+                    deadline = time.monotonic() + 15
+                    while marker not in (out / 'app.log').read_text(errors='replace'):
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError(f'{marker} timeout/exit: {process.poll()}')
+                        time.sleep(.02)
+                    if marker == 'SUSPENDED_TASK_READY':
+                        ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
+                        pixels = ppm.split(b'\n', 3)[3]
+                        assert not any(pixels[i:i+3] == b'\x00\xff\xff' for i in range(0, len(pixels), 3)), 'Minimized task remains visible'
+                        subprocess.run(['grim', str(out / 'suspended.png')], check=True, timeout=3)
+                    seat.stdin.write(b'h')
+                    seat.stdin.flush()
+                    if not select.select([seat.stdout], [], [], 3)[0]:
+                        raise RuntimeError(f'{marker} compositor command timed out')
+                    assert seat.stdout.readline() == b'compositor state changed\n'
+                    process.stdin.write((b'hint\n' if expected_hint else b'unknown\n') if marker == 'SUSPEND_DESKTOP_READY' else b'toggled\n')
+                    process.stdin.flush()
+                result['suspension'] = dict(hint=expected_hint, protocol_version=protocol_version)
+                verify_pixels('RESUMED_TASK_WINDOW_READY', (0, 255, 255), 'resumed')
+
             def change_keyboard(marker, operation):
                 deadline = time.monotonic() + 15
                 while marker not in (out / 'app.log').read_text(errors='replace'):
@@ -311,6 +337,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         verify_pixels(marker, (0, 255, 255), name, scale=factor)
                     verify_pixels('STORM_PENDING_TASK_WINDOW_READY', (0, 255, 255), 'storm-pending')
                     verify_pixels('STORM_TASK_WINDOW_READY', (0, 255, 255), 'storm-restored')
+                    suspend_desktop()
 
                 for marker, operation in [('POINTER_DEVICE_CREATE', b'p'),
                                           ('POINTER_DEVICE_REMOVE', b'r'),

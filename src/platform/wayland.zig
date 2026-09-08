@@ -288,6 +288,7 @@ pub const Event = union(enum) {
         serial: u32 = 0,
     },
     fullscreen_changed: bool,
+    suspended_changed: bool,
     pointer_motion: struct { x: f64, y: f64 },
     pointer_enter: struct { x: f64, y: f64 },
     pointer_leave: struct { x: f64, y: f64 },
@@ -604,6 +605,7 @@ pub const Session = struct {
     xkb_keymap_source_bytes: usize = 0,
     xkb_state: ?*xkb.State = null,
     keyboard_group: u32 = 0,
+    keyboard_state: KeyboardFocus = .{ .active = false },
     keyboard_layout_generation: i32 = 0,
     keyboard_repeat_rate: i32 = 0,
     keyboard_repeat_delay_ms: i32 = 0,
@@ -613,6 +615,7 @@ pub const Session = struct {
     pub const ProtocolOptions = struct {
         virtual_pointer_max_version: u32 = 2,
         compositor_max_version: u32 = 6,
+        xdg_shell_max_version: u32 = 6,
         fractional_scale: bool = true,
         cursor_shape: bool = true,
     };
@@ -814,11 +817,20 @@ pub const Session = struct {
             .enter => |entered| {
                 if (self.keyboard_focus) |old| old.push(.keyboard_reset);
                 self.keyboard_focus = self.surfaceWindow(entered.surface);
-                if (self.keyboard_focus) |window| window.push(.{ .keyboard_focus = KeyboardFocus.entered(entered.keys.*.slice(u32)) });
+                self.keyboard_state = KeyboardFocus.entered(entered.keys.*.slice(u32));
+                if (self.keyboard_focus) |window| window.push(.{ .keyboard_focus = self.keyboard_state });
             },
             .leave => {
                 if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window);
                 self.keyboard_focus = null;
+                self.keyboard_state = .{ .active = false };
+            },
+            .key => |key| {
+                if (key.key < 768) {
+                    const mask = @as(u64, 1) << @intCast(key.key % 64);
+                    if (key.state == .pressed) self.keyboard_state.held[key.key / 64] |= mask else self.keyboard_state.held[key.key / 64] &= ~mask;
+                }
+                if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window);
             },
             .repeat_info => |repeat| {
                 self.keyboard_repeat_rate = repeat.rate;
@@ -828,7 +840,6 @@ pub const Session = struct {
                 };
                 self.queueRepeat();
             },
-            else => if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window),
         }
     }
 
@@ -975,6 +986,7 @@ pub const Session = struct {
         if (self.keyboard) |keyboard| keyboard.release();
         self.keyboard = null;
         self.keyboard_focus = null;
+        self.keyboard_state = .{ .active = false };
     }
 
     fn releaseTouch(self: *Session) void {
@@ -1078,7 +1090,7 @@ pub const Session = struct {
                     self.relative_pointer_manager = registry.bind(g.name, zwp.RelativePointerManagerV1, 1) catch return;
                     self.relative_pointer_global_name = g.name;
                 } else if (std.mem.orderZ(u8, g.interface, xdg.WmBase.interface.name) == .eq) {
-                    self.wm_base = registry.bind(g.name, xdg.WmBase, 2) catch return;
+                    self.wm_base = registry.bind(g.name, xdg.WmBase, @min(g.version, self.protocol_options.xdg_shell_max_version)) catch return;
                     self.wm_base.?.setListener(*Session, wmBaseListener, self);
                 } else if (std.mem.orderZ(u8, g.interface, wl.Seat.interface.name) == .eq and self.seat == null) {
                     if (g.version < 8)
@@ -1343,6 +1355,8 @@ pub const Window = struct {
     pending_height: i32 = 0,
     pending_fullscreen: bool = false,
     pending_maximized: bool = false,
+    pending_suspended: bool = false,
+    suspended: bool = false,
     maximized: bool = false,
     base_attached: bool = false,
     ui_initialized: bool = false,
@@ -1510,6 +1524,11 @@ pub const Window = struct {
                     if (self.pending_width > 0) self.width = self.pending_width;
                     if (self.pending_height > 0) self.height = self.pending_height;
                     self.maximized = self.pending_maximized;
+                    if (self.suspended != self.pending_suspended) {
+                        self.suspended = self.pending_suspended;
+                        if (self.suspended) self.key_repeat = null;
+                        self.push(.{ .suspended_changed = self.suspended });
+                    }
                     if (self.fullscreen.configure(self.pending_fullscreen))
                         self.push(.{ .fullscreen_changed = self.pending_fullscreen });
                     self.pending_toplevel = false;
@@ -1596,12 +1615,15 @@ pub const Window = struct {
                 self.pending_height = configure.height;
                 self.pending_fullscreen = false;
                 self.pending_maximized = false;
+                self.pending_suspended = false;
                 for (configure.states.*.slice(u32)) |state| {
                     if (state == @backingInt(xdg.Toplevel.State.fullscreen)) self.pending_fullscreen = true;
                     if (state == @backingInt(xdg.Toplevel.State.maximized)) self.pending_maximized = true;
+                    if (state == @backingInt(xdg.Toplevel.State.suspended)) self.pending_suspended = true;
                 }
             },
             .close => self.push(.close),
+            .configure_bounds, .wm_capabilities => {},
         }
     }
 
@@ -2178,7 +2200,7 @@ pub const Window = struct {
     }
 
     fn updateCursorAnimation(self: *Window) i32 {
-        if (self.hasPointerCapture()) return -1;
+        if (self.suspended or self.hasPointerCapture()) return -1;
         if (!self.cursor_hidden) if (self.cursor_image) |*cursor| {
             cursor.tick(self.io);
             return cursor.timeout(self.io);

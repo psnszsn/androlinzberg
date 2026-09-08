@@ -1,0 +1,15 @@
+--- a/src/xdg.c
++++ b/src/xdg.c
+@@ -692,7 +692,11 @@
+ static void
+ xdg_toplevel_view_minimize(struct view *view, bool minimized)
+ {
+-	/* noop */
++	uint32_t serial = wlr_xdg_toplevel_set_suspended(
++		xdg_toplevel_from_view(view), minimized);
++	if (serial > 0) {
++		set_pending_configure_serial(view, serial);
++	}
+ }
+ 
+ static struct wlr_xdg_toplevel *
