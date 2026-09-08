@@ -3127,6 +3127,7 @@ fn collectStatic(c: *StaticCollector) !void {
     // Stock AudioManager, audio focus and the shared extractor/CAS/TV closure.
     try c.file("$FB/media/java/android/media/AudioDeviceVolumeManager.java");
     try c.file("$FB/media/java/android/media/AudioManager.java");
+    try c.file("$FB/media/java/android/media/AudioTrack.java");
     try c.file("$FB/media/java/android/media/DrmInitData.java");
     try c.file("$FB/media/java/android/media/MediaCas.java");
     try c.file("$FB/media/java/android/media/MediaCasException.java");

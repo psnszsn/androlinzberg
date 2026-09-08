@@ -230,7 +230,7 @@ fn nativeRelease(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.
 
 pub fn register(io: std.Io, env: [*c]jni.JNIEnv) !void {
     g_io = io;
-    const cls = env.*.*.FindClass.?(env, "android/media/AudioTrack") orelse return error.NoClass;
+    const cls = env.*.*.FindClass.?(env, "dev/artzig/HostedPcmStream") orelse return error.NoClass;
     const methods = [_]jni.JNINativeMethod{
         .{ .name = "nativeOpen", .signature = "(II)J", .fnPtr = @ptrCast(@constCast(&nativeOpen)) },
         .{ .name = "nativeWrite", .signature = "(JLjava/nio/ByteBuffer;II)I", .fnPtr = @ptrCast(@constCast(&nativeWrite)) },

@@ -7263,3 +7263,6 @@ F aosp frameworks/native/libs/binder/IPermissionController.cpp
 F aosp frameworks/native/libs/binder/include/binder/IPermissionController.h
 F aosp frameworks/base/core/java/android/os/IPermissionController.aidl
 F aosp hardware/interfaces/cas/aidl/aidl_api/android.hardware.cas/1/.hash
+
+# Stock AudioTrack client over the existing hosted PCM stream.
+F aosp frameworks/base/media/java/android/media/AudioTrack.java

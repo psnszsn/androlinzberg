@@ -11,7 +11,16 @@ zig build -j10 cpp-audit
 
 ## Zig-owned code
 
-- `src/platform/audio.zig` implements AudioTrack behavior and PipeWire state.
+- `src/platform/audio.zig` retains the PCM ring, PipeWire state and timing operations,
+  registered on `dev.artzig.HostedPcmStream`. Verbatim AudioTrack Java calls the
+  pinned 54-method interface in `src/binder/audio_track_jni.zig`, which checks all
+  Kotlin bridge descriptors at startup. `HostedAudioTrackBackend` owns stream
+  lifetime, client queue allocation, blocking/nonblocking writes, PCM conversion,
+  drain/flush and position accounting. The Java client owns public validation and
+  PlayerBase registration. Reported latency is allocated frames divided by sample
+  rate; downstream host-device latency is not measured. Native features outside the
+  existing stream's capabilities retain explicit unsupported diagnostics or pinned
+  failure results. The PipeWire backend implementation is unchanged.
 - `src/codec/jni.zig` connects MediaCodec JNI to the FFmpeg decoder.
 - MediaExtractor uses original AOSP Java/JNI, NuMediaExtractor, the native
   MediaExtractorService and its Binder protocols, data sources, metadata, and

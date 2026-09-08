@@ -27,6 +27,30 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- AudioTrack now compiles verbatim; the 344-line Java adaptation and its separate
+  typed-write placeholder are deleted. All 54 pinned JNI entry points are registered
+  and their Kotlin bridge descriptors checked at startup. HostedAudioTrackBackend
+  owns PCM stream lifetime, bounded client queues, blocking/nonblocking submission,
+  stop draining, flush/position resets, timestamp queries and partial playback-parameter
+  updates. The existing platform/audio.zig backend changes only its JNI registration
+  class name. Short and float arrays now submit PCM through that same backend, with
+  PCM8/float conversion into PCM16 at the JNI boundary. Original Java owns public
+  validation, buffer-position mutation, PlayerBase registration and lifecycle calls.
+  Latency follows the native allocated-frame-count formula; downstream host-device
+  latency is not measured. Client allocations are bounded by the existing one-second
+  stream ring. Static/offload tracks, rate changes, independent-channel gain, marker
+  callbacks, volume shaping and additional audio-policy operations remain unavailable;
+  this is stock-client migration, not full audio-platform parity. Tests cover buffer
+  limits, typed writes, playback progress, flush/release, released-object queries,
+  partial parameter updates, latency and release interrupting a blocked writer.
+  JVM/system/native/Binder and build checks pass. All 11 APK tests pass with 37 captured
+  steps and zero structured runtime issues, including fullscreen playback and exit.
+  The retained fullscreen frame shows video rendering. AOSP is rebuilt and repinned;
+  the added AudioTrack source matches the pinned checkout verbatim. ART is unchanged
+  and verified. Inventory remains 15 stubs (8 pending, 7 survivors), since AudioTrack
+  was an adaptation outside the stub inventory. MediaCodec's remaining closure is
+  one Java source and its JNI boundary; WebView/provider and window/server work remain.
+
 - AudioManager now compiles verbatim with 65 shared media, TV, picture-profile and
   audio-focus Java dependencies; the 614-line placeholder is deleted. The hosted
   audio service delegates focus ordering, delayed grants and Binder death to the
