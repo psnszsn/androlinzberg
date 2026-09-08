@@ -491,6 +491,7 @@ pub const Session = struct {
     cursor_shape_manager: ?*wp.CursorShapeManagerV1 = null,
     cursor_device: ?*wp.CursorShapeDeviceV1 = null,
     virtual_pointer_manager: ?*zwlr.VirtualPointerManagerV1 = null,
+    virtual_pointer_max_version: u32 = 2,
     virtual_pointer: ?*zwlr.VirtualPointerV1 = null,
     virtual_keyboard_manager: ?*zwp.VirtualKeyboardManagerV1 = null,
     virtual_keyboard: ?*zwp.VirtualKeyboardV1 = null,
@@ -505,11 +506,18 @@ pub const Session = struct {
     ordered_events: ?OrderedEvents = null,
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Session {
+        return initWithVirtualPointerVersion(gpa, io, 2);
+    }
+
+    /// Protocol-cap gate for the existing headless harness. Production binds
+    /// the highest supported version; tests can exercise a compositor's v1 API.
+    pub fn initWithVirtualPointerVersion(gpa: std.mem.Allocator, io: std.Io, version: u32) !*Session {
+        if (version < 1 or version > 2) return error.InvalidVirtualPointerVersion;
         const self = try gpa.create(Session);
         errdefer gpa.destroy(self);
         const display = try wl.Display.connect(null);
         errdefer display.disconnect();
-        self.* = .{ .gpa = gpa, .io = io, .display = display, .registry = try display.getRegistry() };
+        self.* = .{ .gpa = gpa, .io = io, .display = display, .registry = try display.getRegistry(), .virtual_pointer_max_version = version };
         errdefer self.destroyGlobals();
         self.registry.setListener(*Session, registryListener, self);
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
@@ -940,7 +948,7 @@ pub const Session = struct {
                 } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
                     self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwlr.VirtualPointerManagerV1.interface.name) == .eq) {
-                    self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, 2)) catch return;
+                    self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, self.virtual_pointer_max_version)) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.VirtualKeyboardManagerV1.interface.name) == .eq) {
                     self.virtual_keyboard_manager = registry.bind(g.name, zwp.VirtualKeyboardManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.PointerConstraintsV1.interface.name) == .eq and self.pointer_constraints == null) {
@@ -1085,8 +1093,10 @@ pub const Session = struct {
         if (self.virtual_pointer) |pointer| return pointer;
         const seat = self.seat orelse return error.VirtualPointerUnavailable;
         const manager = self.virtual_pointer_manager orelse return error.VirtualPointerUnavailable;
-        self.virtual_pointer = if (self.output) |output|
-            try manager.createVirtualPointerWithOutput(seat, output)
+        // create_virtual_pointer_with_output was introduced in version 2.
+        // Version 1 lets the compositor choose the output for the seat.
+        self.virtual_pointer = if (manager.getVersion() >= 2 and self.output != null)
+            try manager.createVirtualPointerWithOutput(seat, self.output.?)
         else
             try manager.createVirtualPointer(seat);
         return self.virtual_pointer.?;

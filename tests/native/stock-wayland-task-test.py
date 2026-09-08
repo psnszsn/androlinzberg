@@ -33,6 +33,10 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
     environment = os.environ.copy()
     if args.launcher:
         assert args.testkit is not None
+        # Exercise the v1-only creation request against the real compositor.
+        # Physical pointer steps below use the presenter's virtual pointer.
+        environment['AZK_TEST_VIRTUAL_POINTER_VERSION'] = '1'
+
         environment.update(AZK_TEST_SOCKET=str(Path(control_dir) / 'control.sock'),
                            AZK_TESTKIT_ROOT=str(args.testkit.resolve()),
                            AZK_TEST_RAW_LOG=str(out / 'app.log'),
@@ -252,6 +256,9 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 text = (out / 'app.log').read_text(errors='replace')
                 assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
                 assert 'Stock Wayland pointer: absence and compositor capability lifecycle passed' in text
+            if args.launcher:
+                assert 'task virtual pointer protocol version=1' in text
+                result['virtual_pointer_version'] = 1
             assert 'task presenter released all buffers' in text
             for fatal in ['Native thread exited without calling DetachCurrentThread',
                           'FATAL EXCEPTION', 'Unhandled exception', 'panic:']:

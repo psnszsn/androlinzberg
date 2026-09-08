@@ -22,6 +22,18 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Virtual-pointer v1 checkpoint (2026-09-08)
+
+The presenter now issues `create_virtual_pointer_with_output` only when the
+negotiated manager version is at least two. Version one uses the original
+seat-based creation request. The existing desktop harness caps negotiation at
+version one and verifies the actual version before accepting its thirteen
+physical input steps. Production still negotiates the highest supported version.
+Regression 234 passes this gate with zero runtime issues, plus the Cage and
+labwc task tests at their normal protocol version. Artifacts are retained in
+`/tmp/wayland-pointer-v1-234-artifacts/`; log:
+`/tmp/wayland-pointer-v1-234.log`.
+
 ## Stock night configuration checkpoint (2026-09-08)
 
 Stock task sessions now start the pinned UiModeManagerService and

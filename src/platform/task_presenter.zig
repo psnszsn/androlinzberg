@@ -566,15 +566,24 @@ fn run(init: std.process.Init) !void {
     if (std.os.linux.errno(raw) != .SUCCESS) return error.EventfdFailed;
     const wake: Io.File = .{ .handle = @intCast(raw), .flags = .{ .nonblocking = true } };
     defer wake.close(io);
-    const session = try Queue.Session.init(init.gpa, io);
+    const inspection_enabled = init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null or
+        std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1");
+    const pointer_version: u32 = if (inspection_enabled)
+        try std.fmt.parseInt(u32, init.minimal.environ.getPosix("AZK_TEST_VIRTUAL_POINTER_VERSION") orelse "2", 10)
+    else
+        2;
+    const session = try Queue.Session.initWithVirtualPointerVersion(init.gpa, io, pointer_version);
+    if (inspection_enabled) {
+        const version = if (session.virtual_pointer_manager) |manager| manager.getVersion() else 0;
+        std.log.info("task virtual pointer protocol version={d}", .{version});
+    }
     session.ordered_events = .{};
     session.generate_key_repeats = false; // Stock InputDispatcher owns the timer.
     defer session.deinit();
     const death = AIBinder_DeathRecipient_new(onDeath);
     defer AIBinder_DeathRecipient_delete(death);
     server = .{ .gpa = init.gpa, .io = io, .session = session, .wake = wake, .death = death, .events_class = AIBinder_Class_define("dev.artzig.window.IWaylandTaskEvents", null, null, null) };
-    server.inspection_enabled = init.minimal.environ.getPosix("AZK_TEST_SOCKET") != null or
-        std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_INSPECTION") orelse "", "1");
+    server.inspection_enabled = inspection_enabled;
     if (server.inspection_enabled) if (init.minimal.environ.getPosix("AZK_TEST_WINDOW_PLACEMENT")) |placement| {
         server.test_placement = try TestPlacement.parse(placement);
     };
