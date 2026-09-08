@@ -883,10 +883,11 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .imports = &.{.{ .name = "art", .module = art_mod }},
+            .imports = &.{ .{ .name = "art", .module = art_mod }, .{ .name = "event_fd", .module = event_fd_mod } },
         }),
     });
     const run_test_control = b.addRunArtifact(test_control_check);
+    b.step("test-control-test", "Verify bounded test-control socket ownership and framing").dependOn(&run_test_control.step);
     const platform_abi_test_mod = b.createModule(.{
         .root_source_file = b.path("src/native/platform_abi.zig"),
         .target = target,

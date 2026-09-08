@@ -11,6 +11,28 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Test-control descriptor ownership and pressure (2026-09-08)
+
+The Varlink server now uses explicit std.Io ownership for sockets, reads,
+writes, clocks, path permissions and cleanup. One cancellable accept task hands
+a descriptor to the ART main thread through a one-slot queue and eventfd. Tree
+reads and Android actions remain on the existing main-thread loop. Partial
+requests and blocked replies have a five-second deadline; requests are bounded
+to 1 MiB and queued replies to 16 MiB. Complete Android settle requests keep
+their own timeout.
+
+Socket publication binds inside a private staging directory, applies mode 0600,
+then atomically renames without replacement. Binding through the owned directory
+descriptor preserves long endpoint paths. Nine native tests cover selectors,
+fragmented/pipelined messages, reconnects, duplicate endpoints, long paths,
+cancelled blocked accepts, descriptor counts and nonreading/partial peers.
+
+Regression 439 passes all 12 stock/native drag steps through this transport.
+Regression 441 passes its native tests, C++/graph audits and all 16 APK tests
+with 49 clean steps. Artifacts: `/tmp/wayland-control-439-artifacts/` and
+`/tmp/wayland-control-441-artifacts/`. This closes the raw test-control I/O item;
+the broader recovery/pressure and default-cutover work remains in M11.
+
 ## Stock MediaCodec rebase and clipboard ordering (2026-09-08)
 
 Rebased onto main `84b3907b`, incorporating stock AudioManager, AudioTrack,

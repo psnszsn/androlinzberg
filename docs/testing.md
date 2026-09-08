@@ -26,6 +26,22 @@ Run the testkit tests:
 zig build -j10 testkit-test
 ```
 
+Run the native test-control transport tests without booting ART:
+
+```sh
+zig build -j10 test-control-test
+```
+
+These exercise fragmented and pipelined Varlink messages, reconnects, blocked
+accept cancellation, descriptor cleanup, private socket publication, long Unix
+paths and stalled peers. The transport accepts one client at a time through a
+bounded `std.Io` accept task. Android actions and observations remain on the ART
+main thread. Requests are limited to 1 MiB and queued replies to 16 MiB;
+incomplete requests and blocked replies have a five-second transfer deadline.
+Complete Android wait requests retain their requested settle timeout. Socket
+publication sets mode 0600 before exposing the requested path and never replaces
+an existing endpoint.
+
 Run the multi-process hosted Binder tests. `native-test` already covers the
 broker with in-process Zig peers; this target starts the broker and three ART
 processes that talk through it:

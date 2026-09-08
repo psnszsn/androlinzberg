@@ -2,17 +2,18 @@
 //!
 //! The module is deliberately polled from the existing render loop. That keeps
 //! every Android tree read and action on the ART main thread while the socket
-//! remains non-blocking and adds no worker-thread/JNI lifetime rules.
+//! remains non-blocking. A bounded std.Io accept task only hands owned sockets
+//! to this thread; it never enters ART.
 const std = @import("std");
 const art = @import("art");
-const linux = std.os.linux;
+const Io = std.Io;
+const Acceptor = @import("test_control_acceptor.zig");
 
 const interface_name = "dev.artzig.androlinzberg.test1";
 const interface_description = @embedFile("test_control.varlink");
 const max_message_size = 1024 * 1024;
-
-extern "c" fn chmod(path: [*:0]const u8, mode: c_uint) c_int;
-extern "c" fn unlink(path: [*:0]const u8) c_int;
+const max_response_size = 16 * 1024 * 1024;
+const transfer_timeout_ms = 5000;
 
 pub const Android = struct {
     env: [*c]art.jni.JNIEnv,
@@ -233,11 +234,14 @@ const Pending = struct {
 
 pub const Server = struct {
     gpa: std.mem.Allocator,
-    socket_path: [:0]u8,
-    listener: i32,
-    client: i32 = -1,
+    io: Io,
+    socket_path: []u8,
+    listener: *Acceptor,
+    client: ?Io.File = null,
     input: std.ArrayList(u8) = .empty,
     output: std.ArrayList(u8) = .empty,
+    input_deadline: ?i64 = null,
+    output_deadline: ?i64 = null,
     pending: ?Pending = null,
     epoch_buf: [64]u8 = undefined,
     epoch_len: usize = 0,
@@ -247,42 +251,28 @@ pub const Server = struct {
     presented_frame_seq: u64 = 0,
     ui_input: ?Input = null,
 
-    pub fn init(gpa: std.mem.Allocator, address: []const u8) !Server {
+    pub fn init(gpa: std.mem.Allocator, io: Io, address: []const u8) !Server {
         const path = if (std.mem.startsWith(u8, address, "unix:")) address[5..] else address;
         if (path.len == 0 or path.len >= 108) return error.InvalidSocketPath;
-        const path_z = try gpa.dupeSentinel(u8, path, 0);
-        errdefer gpa.free(path_z);
-
-        const socket_rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC, 0);
-        if (linux.errno(socket_rc) != .SUCCESS) return error.SocketFailed;
-        const listener: i32 = @intCast(socket_rc);
-        errdefer _ = linux.close(listener);
-
-        var addr: linux.sockaddr.un = .{ .path = @splat(0) };
-        @memcpy(addr.path[0..path.len], path);
-        const bind_rc = linux.bind(listener, @ptrCast(&addr), @sizeOf(linux.sockaddr.un));
-        if (linux.errno(bind_rc) != .SUCCESS) return error.BindFailed;
-        if (chmod(path_z.ptr, 0o600) != 0) return error.ChmodFailed;
-        const listen_rc = linux.listen(listener, 4);
-        if (linux.errno(listen_rc) != .SUCCESS) return error.ListenFailed;
-
-        var result = Server{
-            .gpa = gpa,
-            .socket_path = path_z,
-            .listener = listener,
-        };
-        result.epoch_len = (std.fmt.bufPrint(&result.epoch_buf, "{x}-{x}", .{
-            @as(u64, @intCast(linux.getpid())),
-            @as(u64, @bitCast(monotonicMs())),
-        }) catch return error.OutOfMemory).len;
+        const owned_path = try gpa.dupe(u8, path);
+        errdefer gpa.free(owned_path);
+        const listener = try Acceptor.init(gpa, io, path);
+        var result = Server{ .gpa = gpa, .io = io, .socket_path = owned_path, .listener = listener };
+        // A process/restart epoch is opaque; random bytes avoid PID reuse and
+        // remove any dependency on raw process or clock syscalls.
+        var nonce: [16]u8 = undefined;
+        io.random(&nonce);
+        const hex = std.fmt.bytesToHex(nonce, .lower);
+        @memcpy(result.epoch_buf[0..hex.len], &hex);
+        result.epoch_len = hex.len;
         return result;
     }
 
     pub fn deinit(self: *Server) void {
         if (self.pending) |pending| self.gpa.free(pending.message);
-        if (self.client >= 0) _ = linux.close(self.client);
-        _ = linux.close(self.listener);
-        _ = unlink(self.socket_path.ptr);
+        if (self.client) |file| file.close(self.io);
+        self.listener.deinit();
+        Io.Dir.cwd().deleteFile(self.io, self.socket_path) catch {};
         self.input.deinit(self.gpa);
         self.output.deinit(self.gpa);
         self.gpa.free(self.socket_path);
@@ -300,21 +290,24 @@ pub const Server = struct {
     /// make progress accidentally because the UI rendered continuously; an on-demand renderer
     /// must instead wake explicitly when a client connects or sends another request.
     pub fn listenerFd(self: *const Server) std.posix.fd_t {
-        return self.listener;
+        return self.listener.wake.fd();
     }
 
     pub fn clientFd(self: *const Server) ?std.posix.fd_t {
-        return if (self.client >= 0) self.client else null;
+        return if (self.client) |file| file.handle else null;
     }
 
     pub fn clientWantsWrite(self: *const Server) bool {
-        return self.client >= 0 and self.output.items.len != 0;
+        return self.client != null and self.output.items.len != 0;
     }
 
-    /// Time until a pending request must be evaluated for timeout.
+    /// Pending Android waits and stalled socket transfers share the owner wake.
     pub fn waitTimeoutMs(self: *const Server) i32 {
-        const pending = self.pending orelse return -1;
-        const remaining = pending.deadline_ms - monotonicMs();
+        var deadline: ?i64 = if (self.pending) |pending| pending.deadline_ms else null;
+        for ([_]?i64{ self.input_deadline, self.output_deadline }) |candidate| {
+            if (candidate) |value| deadline = if (deadline) |old| @min(old, value) else value;
+        }
+        const remaining = (deadline orelse return -1) - monotonicMs(self.io);
         if (remaining <= 0) return 0;
         return @intCast(@min(remaining, std.math.maxInt(i32)));
     }
@@ -334,10 +327,17 @@ pub const Server = struct {
     ) void {
         self.frame_seq = frame_seq;
         self.presented_frame_seq = presented_frame_seq;
+        const now = monotonicMs(self.io);
+        for ([_]?i64{ self.input_deadline, self.output_deadline }) |deadline| {
+            if (deadline) |value| if (now >= value) {
+                self.closeClient();
+                return;
+            };
+        }
         self.acceptClient();
         self.readClient();
         self.flushOutput();
-        if (self.client < 0) return;
+        if (self.client == null) return;
 
         if (self.pending != null) {
             self.evaluatePending(android) catch |err| self.internalFailure(err);
@@ -348,77 +348,75 @@ pub const Server = struct {
     }
 
     fn acceptClient(self: *Server) void {
-        if (self.client >= 0) return;
-        const rc = linux.accept4(self.listener, null, null, linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC);
-        switch (linux.errno(rc)) {
-            .SUCCESS => {
-                self.client = @intCast(rc);
-                self.input.clearRetainingCapacity();
-                self.output.clearRetainingCapacity();
-            },
-            .AGAIN => {},
-            else => {},
-        }
+        if (self.client != null) return;
+        const result = self.listener.take() orelse return;
+        self.client = result catch |err| {
+            std.log.err("test control listener stopped: {s}", .{@errorName(err)});
+            return;
+        };
+        self.input.clearRetainingCapacity();
+        self.output.clearRetainingCapacity();
     }
 
     fn closeClient(self: *Server) void {
-        if (self.client >= 0) _ = linux.close(self.client);
-        self.client = -1;
+        if (self.client) |file| file.close(self.io);
+        self.client = null;
         self.input.clearRetainingCapacity();
         self.output.clearRetainingCapacity();
         if (self.pending) |pending| self.gpa.free(pending.message);
         self.pending = null;
+        self.input_deadline = null;
+        self.output_deadline = null;
+        self.listener.again();
     }
 
     fn readClient(self: *Server) void {
-        if (self.client < 0) return;
+        const file = self.client orelse return;
         var buf: [8192]u8 = undefined;
         while (true) {
-            const rc = linux.recvfrom(self.client, &buf, buf.len, 0, null, null);
-            switch (linux.errno(rc)) {
-                .SUCCESS => {
-                    if (rc == 0) {
-                        self.closeClient();
-                        return;
-                    }
-                    if (self.input.items.len + rc > max_message_size) {
-                        self.closeClient();
-                        return;
-                    }
-                    self.input.appendSlice(self.gpa, buf[0..rc]) catch {
-                        self.closeClient();
-                        return;
-                    };
-                },
-                .AGAIN => return,
-                .INTR => continue,
+            const count = file.readStreaming(self.io, &.{&buf}) catch |err| switch (err) {
+                error.WouldBlock => return,
                 else => {
                     self.closeClient();
                     return;
                 },
+            };
+            if (count == 0) return;
+            if (count > max_message_size - self.input.items.len) {
+                self.closeClient();
+                return;
+            }
+            self.input.appendSlice(self.gpa, buf[0..count]) catch {
+                self.closeClient();
+                return;
+            };
+            // A complete NUL-delimited message may wait for an Android result;
+            // only an incomplete tail has a transport deadline. A trickling
+            // peer cannot extend the lifetime of that partial message.
+            if (std.mem.lastIndexOfScalar(u8, buf[0..count], 0)) |last| {
+                self.input_deadline = if (last + 1 == count) null else monotonicMs(self.io) + transfer_timeout_ms;
+            } else if (self.input_deadline == null) {
+                self.input_deadline = monotonicMs(self.io) + transfer_timeout_ms;
             }
         }
     }
 
     fn flushOutput(self: *Server) void {
-        if (self.client < 0) return;
+        const file = self.client orelse return;
         while (self.output.items.len != 0) {
-            const rc = linux.sendto(self.client, self.output.items.ptr, self.output.items.len, linux.MSG.NOSIGNAL, null, 0);
-            switch (linux.errno(rc)) {
-                .SUCCESS => {
-                    if (rc == 0) return;
-                    const remaining = self.output.items.len - rc;
-                    std.mem.copyForwards(u8, self.output.items[0..remaining], self.output.items[rc..]);
-                    self.output.items.len = remaining;
-                },
-                .AGAIN => return,
-                .INTR => continue,
+            const count = file.writeStreaming(self.io, &.{}, &.{self.output.items}, 1) catch |err| switch (err) {
+                error.WouldBlock => return,
                 else => {
                     self.closeClient();
                     return;
                 },
-            }
+            };
+            if (count == 0) return;
+            const remaining = self.output.items.len - count;
+            std.mem.copyForwards(u8, self.output.items[0..remaining], self.output.items[count..]);
+            self.output.items.len = remaining;
         }
+        self.output_deadline = null;
     }
 
     fn processOne(self: *Server, android: *const Android) !void {
@@ -488,7 +486,7 @@ pub const Server = struct {
             .message = try self.gpa.dupe(u8, message),
             .method = method,
             .wait_kind = wait.kind,
-            .deadline_ms = monotonicMs() + wait.timeout_ms,
+            .deadline_ms = monotonicMs(self.io) + wait.timeout_ms,
             .stable_required = wait.stable_frames,
             .last_revision = try android.revision(),
             .last_presented = self.presented_frame_seq,
@@ -665,7 +663,7 @@ pub const Server = struct {
             self.gpa.free(message);
             return;
         }
-        if (monotonicMs() >= pending.deadline_ms) {
+        if (monotonicMs(self.io) >= pending.deadline_ms) {
             if (!pending.oneway) try self.interfaceErrorBool("Timeout", "applied", pending.applied);
             const message = pending.message;
             self.pending = null;
@@ -950,6 +948,8 @@ pub const Server = struct {
     }
 
     fn queue(self: *Server, bytes: []const u8) !void {
+        if (bytes.len >= max_response_size - self.output.items.len) return error.ResponseTooLarge;
+        if (self.output.items.len == 0) self.output_deadline = monotonicMs(self.io) + transfer_timeout_ms;
         try self.output.appendSlice(self.gpa, bytes);
         try self.output.append(self.gpa, 0);
     }
@@ -1116,10 +1116,8 @@ fn arrayField(value: std.json.Value, name: []const u8) ?[]const std.json.Value {
     };
 }
 
-fn monotonicMs() i64 {
-    var ts: linux.timespec = undefined;
-    _ = linux.clock_gettime(.MONOTONIC, &ts);
-    return ts.sec * 1000 + @divTrunc(ts.nsec, 1_000_000);
+fn monotonicMs(io: Io) i64 {
+    return Io.Clock.awake.now(io).toMilliseconds();
 }
 
 test "structured selectors default to the active window" {
@@ -1141,13 +1139,13 @@ test "structured selectors default to the active window" {
 
 test "control server advertises pending nonblocking output" {
     var server: Server = undefined;
-    server.client = 7;
+    server.client = .{ .handle = 7, .flags = .{ .nonblocking = true } };
     server.output = .empty;
     defer server.output.deinit(std.testing.allocator);
     try std.testing.expect(!server.clientWantsWrite());
     try server.output.append(std.testing.allocator, 1);
     try std.testing.expect(server.clientWantsWrite());
-    server.client = -1;
+    server.client = null;
     try std.testing.expect(!server.clientWantsWrite());
 }
 
@@ -1198,5 +1196,171 @@ test "task selectors preserve identity across duplicate labels and focus" {
         try selectNodes(std.testing.allocator, snapshot.value, selector.value, &matches);
         try std.testing.expectEqual(@as(usize, case[1]), matches.items.len);
         if (case[1] != 0) try std.testing.expectEqual(@as(i64, 1), intField(matches.items[0], "window_id").?);
+    }
+}
+
+test "control transport frames fragmented and pipelined requests across reconnects" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var nonce: [12]u8 = undefined;
+    io.random(&nonce);
+    var path_buffer: [96]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "/tmp/azk-control-{s}.sock", .{std.fmt.bytesToHex(nonce, .lower)});
+    var server = try Server.init(gpa, io, path);
+    defer server.deinit();
+    // Failed initialization must preserve an existing endpoint and close the
+    // unpublished listener; the original server must remain usable below.
+    const descriptors = try controlTestDescriptorCount(io);
+    try std.testing.expectError(error.PathAlreadyExists, Server.init(gpa, io, path));
+    try std.testing.expectEqual(descriptors, try controlTestDescriptorCount(io));
+    const address = try Io.net.UnixAddress.init(path);
+    const android: Android = undefined; // Varlink introspection must not enter ART.
+    const request = "{\"method\":\"org.varlink.service.GetInfo\"}\x00";
+    for (0..16) |_| {
+        const stream = try address.connect(io);
+        const peer = try Acceptor.nonblocking(io, .{ .handle = stream.socket.handle, .flags = .{ .nonblocking = false } });
+        defer peer.close(io);
+        try peer.writeStreamingAll(io, request[0..12]);
+        for (0..3) |_| {
+            server.tick(&android, 0, 0);
+            try io.sleep(.fromMilliseconds(1), .awake);
+        }
+        var buffer: [2048]u8 = undefined;
+        try std.testing.expectError(error.WouldBlock, peer.readStreaming(io, &.{&buffer}));
+        try peer.writeStreamingAll(io, request[12..]);
+        try peer.writeStreamingAll(io, request);
+        var replies: std.ArrayList(u8) = .empty;
+        defer replies.deinit(gpa);
+        const deadline = monotonicMs(io) + 3000;
+        while (std.mem.count(u8, replies.items, "\x00") < 2) {
+            try std.testing.expect(monotonicMs(io) < deadline);
+            server.tick(&android, 0, 0);
+            const n = peer.readStreaming(io, &.{&buffer}) catch |err| switch (err) {
+                error.WouldBlock => {
+                    try io.sleep(.fromMilliseconds(1), .awake);
+                    continue;
+                },
+                else => return err,
+            };
+            try replies.appendSlice(gpa, buffer[0..n]);
+        }
+        var framed = std.mem.splitScalar(u8, replies.items, 0);
+        for (0..2) |_| {
+            var response = try std.json.parseFromSlice(std.json.Value, gpa, framed.next().?, .{});
+            defer response.deinit();
+            const parameters = valueField(response.value, "parameters").?;
+            const interfaces = arrayField(parameters, "interfaces").?;
+            const found = for (interfaces) |value| {
+                if (std.mem.eql(u8, value.string, interface_name)) break true;
+            } else false;
+            try std.testing.expect(found);
+        }
+    }
+    // The final defer cancels an accept or demand wait and closes every queued
+    // descriptor. Repeated reconnects above also cover EOF retirement/rearming.
+}
+
+fn controlTestDescriptorCount(io: Io) !usize {
+    var dir = try Io.Dir.cwd().openDir(io, "/proc/self/fd", .{ .iterate = true });
+    defer dir.close(io);
+    var iterator = dir.iterate();
+    var count: usize = 0;
+    while (try iterator.next(io)) |_| count += 1;
+    return count;
+}
+
+test "control shutdown cancels blocked accept and releases sockets and paths" {
+    const io = std.testing.io;
+    const before = try controlTestDescriptorCount(io);
+    var nonce: [12]u8 = undefined;
+    io.random(&nonce);
+    var path_buffer: [96]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "/tmp/azk-control-stop-{s}.sock", .{std.fmt.bytesToHex(nonce, .lower)});
+    for (0..16) |_| {
+        var server = try Server.init(std.testing.allocator, io, path);
+        const stat = try Io.Dir.cwd().statFile(io, path, .{});
+        try std.testing.expectEqual(@as(u32, 0o600), stat.permissions.toMode() & 0o777);
+        // Leave the accept worker blocked with no connecting peer. Cancellation
+        // must join it before either the listener or its wake descriptor closes.
+        try io.sleep(.fromMilliseconds(2), .awake);
+        server.deinit();
+        try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().statFile(io, path, .{}));
+    }
+    try std.testing.expectEqual(before, try controlTestDescriptorCount(io));
+}
+
+test "control socket staging preserves endpoints near the Unix path limit" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var nonce: [12]u8 = undefined;
+    io.random(&nonce);
+    var directory_buffer: [100]u8 = undefined;
+    const directory = try std.fmt.bufPrint(&directory_buffer, "/tmp/azk-control-{s}-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz", .{std.fmt.bytesToHex(nonce, .lower)});
+    try Io.Dir.cwd().createDir(io, directory, .fromMode(0o700));
+    defer Io.Dir.cwd().deleteDir(io, directory) catch {};
+    const path = try std.fs.path.join(gpa, &.{ directory, "socket" });
+    defer gpa.free(path);
+    try std.testing.expect(path.len < 108 and directory.len + 24 >= 108);
+    var server = try Server.init(gpa, io, path);
+    defer server.deinit();
+    const address = try Io.net.UnixAddress.init(path);
+    const peer = try address.connect(io);
+    defer peer.close(io);
+}
+
+test "control retires partial senders and nonreading peers without starving reconnection" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    const android: Android = undefined;
+    var nonce: [12]u8 = undefined;
+    io.random(&nonce);
+    var path_buffer: [96]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "/tmp/azk-control-pressure-{s}.sock", .{std.fmt.bytesToHex(nonce, .lower)});
+    var server = try Server.init(gpa, io, path);
+    defer server.deinit();
+    const address = try Io.net.UnixAddress.init(path);
+    for ([_]bool{ false, true }) |nonreading| {
+        const stream = try address.connect(io);
+        const peer = try Acceptor.nonblocking(io, .{ .handle = stream.socket.handle, .flags = .{ .nonblocking = false } });
+        defer peer.close(io);
+        var requests: std.ArrayList(u8) = .empty;
+        defer requests.deinit(gpa);
+        if (nonreading) {
+            const request = "{\"method\":\"org.varlink.service.GetInterfaceDescription\",\"parameters\":{\"interface\":\"" ++ interface_name ++ "\"}}\x00";
+            for (0..300) |_| try requests.appendSlice(gpa, request);
+        } else try requests.appendSlice(gpa, "{");
+        try peer.writeStreamingAll(io, requests.items);
+        const deadline = monotonicMs(io) + transfer_timeout_ms + 3000;
+        var connected = false;
+        var observed_write_pressure = false;
+        while (true) {
+            try std.testing.expect(monotonicMs(io) < deadline);
+            server.tick(&android, 0, 0);
+            if (server.clientFd() != null) connected = true;
+            if (nonreading and server.clientWantsWrite()) observed_write_pressure = true;
+            if (connected and server.clientFd() == null) break;
+            try io.sleep(.fromMilliseconds(1), .awake);
+        }
+        if (nonreading) try std.testing.expect(observed_write_pressure);
+    }
+    // A fresh client can still use the public protocol after either timeout.
+    const stream = try address.connect(io);
+    const peer = try Acceptor.nonblocking(io, .{ .handle = stream.socket.handle, .flags = .{ .nonblocking = false } });
+    defer peer.close(io);
+    try peer.writeStreamingAll(io, "{\"method\":\"org.varlink.service.GetInfo\"}\x00");
+    var buffer: [2048]u8 = undefined;
+    const deadline = monotonicMs(io) + 3000;
+    while (true) {
+        try std.testing.expect(monotonicMs(io) < deadline);
+        server.tick(&android, 0, 0);
+        const count = peer.readStreaming(io, &.{&buffer}) catch |err| switch (err) {
+            error.WouldBlock => {
+                try io.sleep(.fromMilliseconds(1), .awake);
+                continue;
+            },
+            else => return err,
+        };
+        try std.testing.expect(std.mem.indexOf(u8, buffer[0..count], interface_name) != null);
+        break;
     }
 }

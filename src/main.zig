@@ -284,7 +284,7 @@ pub fn main(init: std.process.Init) !void {
             if (desktop_control) |*server| server.deinit();
         }
         if (test_address) |address| {
-            desktop_control = try test_control.Server.init(init.gpa, address);
+            desktop_control = try test_control.Server.init(init.gpa, init.io, address);
             try @import("desktop_test_control.zig").register(@ptrCast(headless.rt.env), &desktop_control.?);
         }
         try runFrameworkMain(&headless.rt, "dev.artzig.window.DesktopLauncher", &.{if (binder != null) "owner" else "joined"});
@@ -715,7 +715,7 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
     var control_server: ?test_control.Server = null;
     if (init.minimal.environ.getPosix("AZK_TEST_SOCKET")) |address| {
         control_android = try test_control.Android.init(env, cls);
-        control_server = try test_control.Server.init(gpa, address);
+        control_server = try test_control.Server.init(gpa, init.io, address);
         std.debug.print("azk test control: {s}\n", .{address});
     }
     defer if (control_server) |*server| server.deinit();
