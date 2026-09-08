@@ -113,6 +113,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("zwp_pointer_constraints_v1", 1);
     scanner.generate("zwp_relative_pointer_manager_v1", 1);
     scanner.generate("wp_cursor_shape_manager_v1", 1);
+    scanner.generate("zwp_tablet_manager_v2", 1);
     scanner.generate("zwlr_virtual_pointer_manager_v1", 2);
     scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
     // --- embedded artzig runtime (ART) module
@@ -1189,14 +1190,16 @@ pub fn build(b: *std.Build) void {
     suspension_compositor.addArgs(&.{ "nix", "build", "--impure", "--cores", "6", "--max-jobs", "1", "--file" });
     suspension_compositor.addFileArg(b.path("testdata/wayland/labwc-suspension.nix"));
     suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-suspension.patch"));
+    suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-tablet.patch"));
     suspension_compositor.run.addFileInput(artzig_dep.path("flake.nix"));
     suspension_compositor.run.addFileInput(artzig_dep.path("flake.lock"));
     suspension_compositor.addArg("--out-link");
     const suspension_labwc = suspension_compositor.addOutputChildArg("suspension-compositor", "labwc");
     suspension_compositor.run.setName("build pinned labwc suspension protocol fixture");
-    for ([_][]const u8{ "cage", "labwc", "labwc-suspension", "labwc-legacy" }) |scenario| {
+    for ([_][]const u8{ "cage", "labwc", "labwc-suspension", "labwc-legacy", "labwc-tablet" }) |scenario| {
         const legacy_shell = std.mem.eql(u8, scenario, "labwc-legacy");
-        const suspension_fixture = std.mem.eql(u8, scenario, "labwc-suspension");
+        const tablet_fixture = std.mem.eql(u8, scenario, "labwc-tablet");
+        const suspension_fixture = std.mem.eql(u8, scenario, "labwc-suspension") or tablet_fixture;
         const compositor = if (legacy_shell or suspension_fixture) "labwc" else scenario;
         const task_artifacts = b.pathResolve(&.{b.fmt("zig-out/test-results/stock-wayland-task-{s}", .{scenario})});
         const stock_task_wayland = @import("build/command.zig").create(b);
@@ -1207,6 +1210,7 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.setEnvironment("WLR_RENDERER", "gles2");
         stock_task_wayland.setEnvironment("SHOT_COMPOSITOR", compositor);
         stock_task_wayland.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
+        if (tablet_fixture) stock_task_wayland.setEnvironment("AZK_TEST_TABLET", "1");
         if (legacy_shell) stock_task_wayland.setEnvironment("AZK_TEST_XDG_SHELL_VERSION", "2");
         if (legacy_shell or suspension_fixture)
             stock_task_wayland.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
@@ -1228,7 +1232,7 @@ pub fn build(b: *std.Build) void {
         stock_task_wayland.addFileArg(application_tree.path(b, "bin/azk-task-presenter"));
         stock_task_wayland.run.has_side_effects = true;
         stock_task_wayland.run.setName("verify stock APK task pixels through session Wayland presenter");
-        b.step(if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
+        b.step(if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
     }
     const desktop_launcher = @import("build/command.zig").create(b);

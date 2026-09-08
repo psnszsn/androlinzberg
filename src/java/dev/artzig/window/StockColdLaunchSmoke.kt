@@ -477,6 +477,7 @@ object StockColdLaunchSmoke {
         }
         val second = live.single { it.taskId != task.taskId }
         pixels("SECOND_TASK_WINDOW_READY", second.taskId)
+        if (System.getenv("AZK_TEST_TABLET") == "1") verifyTablet(packageName, second.taskId, ::pixels)
         // The pre-presentation snapshot may still contain ActivityStarter's
         // provisional placement. Compare against the actual rendered geometry.
         val secondBounds = android.graphics.Rect(applicationTasks().single { it.taskId == second.taskId }
@@ -546,6 +547,73 @@ object StockColdLaunchSmoke {
         println("Stock Wayland keyboard: layout changes survive removal of every task window")
         println("Stock Wayland seat: capability updates survive removal of every task window")
         println("Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed")
+    }
+
+    private fun verifyTablet(packageName: String, taskId: Int, pixels: (String, Int) -> Unit) {
+        val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
+            320, 240, 120, 0)
+        val uri = android.net.Uri.parse("content://$packageName.cold")
+        val input = android.hardware.input.IInputManager.Stub.asInterface(
+            android.os.ServiceManager.getService(Context.INPUT_SERVICE))
+        val tasks = ActivityTaskManager.getService()
+        val bounds = tasks.getTasks(10, false, true, android.view.Display.DEFAULT_DISPLAY)
+            .single { it.taskId == taskId }.configuration.windowConfiguration.bounds
+        val focused = tasks.focusedRootTaskInfo.taskId
+        fun command(value: String) { context.contentResolver.call(uri, "tablet-command", value, null) }
+        fun events(): List<android.os.Bundle> = checkNotNull(context.contentResolver.call(uri,
+            "snapshot", null, null)).getParcelableArrayList("tabletEvents", android.os.Bundle::class.java).orEmpty()
+        fun await(description: String, ready: (List<android.os.Bundle>) -> Boolean): List<android.os.Bundle> {
+            val deadline = SystemClock.uptimeMillis() + 10_000
+            do {
+                val current = events()
+                if (ready(current)) return current
+                SystemClock.sleep(5)
+            } while (SystemClock.uptimeMillis() < deadline)
+            error("$description: ${events()}")
+        }
+        fun near(actual: Float, expected: Float) { check(kotlin.math.abs(actual - expected) < .01f) { "$actual != $expected" } }
+        command("pen-down")
+        val penEvents = await("Tablet pen contact/button did not reach APK") { list ->
+            list.any { it.getInt("action") == android.view.MotionEvent.ACTION_BUTTON_PRESS } }
+        val down = penEvents.single { it.getInt("action") == android.view.MotionEvent.ACTION_DOWN }
+        val penId = down.getInt("device")
+        check(down.getInt("tool") == android.view.MotionEvent.TOOL_TYPE_STYLUS)
+        near(down.getFloat("x"), 50f); near(down.getFloat("y"), 60f)
+        near(down.getFloat("rawX"), bounds.left + 50f); near(down.getFloat("rawY"), bounds.top + 60f)
+        near(down.getFloat("pressure"), .6f)
+        near(down.getFloat("tilt"), kotlin.math.acos(kotlin.math.cos(Math.toRadians(30.0)) * kotlin.math.cos(Math.toRadians(-15.0))).toFloat())
+        near(down.getFloat("orientation"), kotlin.math.atan2(-kotlin.math.sin(Math.toRadians(30.0)), kotlin.math.sin(Math.toRadians(-15.0))).toFloat())
+        val pen = checkNotNull(input.getInputDevice(penId))
+        check(pen.isExternal && pen.supportsSource(android.view.InputDevice.SOURCE_STYLUS))
+        check(pen.getMotionRange(android.view.MotionEvent.AXIS_PRESSURE).max == 1f)
+        check(pen.getMotionRange(android.view.MotionEvent.AXIS_TILT) != null)
+        check(penEvents.any { it.getInt("buttons") and android.view.MotionEvent.BUTTON_STYLUS_PRIMARY != 0 })
+        pixels("TABLET_PEN_RENDERED", taskId)
+        command("pen-up")
+        await("Tablet pen release did not reach APK") { list ->
+            list.any { it.getInt("action") == android.view.MotionEvent.ACTION_UP } &&
+                list.any { it.getInt("action") == android.view.MotionEvent.ACTION_BUTTON_RELEASE } }
+        command("eraser-down")
+        val eraserEvents = await("Tablet eraser contact did not reach APK") { list -> list.any {
+            it.getInt("action") == android.view.MotionEvent.ACTION_DOWN && it.getInt("tool") == android.view.MotionEvent.TOOL_TYPE_ERASER } }
+        val eraserDown = eraserEvents.single { it.getInt("action") == android.view.MotionEvent.ACTION_DOWN &&
+            it.getInt("tool") == android.view.MotionEvent.TOOL_TYPE_ERASER }
+        val eraserId = eraserDown.getInt("device")
+        check(eraserId != penId)
+        near(eraserDown.getFloat("x"), 70f); near(eraserDown.getFloat("y"), 80f)
+        near(eraserDown.getFloat("pressure"), .25f)
+        val eraser = checkNotNull(input.getInputDevice(eraserId))
+        check(eraser.descriptor != pen.descriptor && eraser.getMotionRange(android.view.MotionEvent.AXIS_TILT) == null)
+        pixels("TABLET_ERASER_RENDERED", taskId)
+        command("remove")
+        val removed = await("Tablet removal did not cancel the active contact") { list -> list.any {
+            it.getInt("device") == eraserId && it.getInt("action") == android.view.MotionEvent.ACTION_CANCEL } &&
+                input.getInputDevice(penId) == null && input.getInputDevice(eraserId) == null }
+        check(removed.single { it.getInt("device") == eraserId && it.getInt("action") == android.view.MotionEvent.ACTION_CANCEL }
+            .getInt("flags") and android.view.MotionEvent.FLAG_CANCELED != 0)
+        check(removed.none { it.getInt("device") == eraserId && it.getInt("action") == android.view.MotionEvent.ACTION_UP })
+        check(tasks.focusedRootTaskInfo.taskId == focused) { "Tablet proximity changed keyboard focus" }
+        println("Stock Wayland tablet: pen, eraser, axes, task coordinates, buttons, pixels and removal passed")
     }
 
     private fun verifyDesktopConfigurations(taskId: Int, commands: java.io.BufferedReader,

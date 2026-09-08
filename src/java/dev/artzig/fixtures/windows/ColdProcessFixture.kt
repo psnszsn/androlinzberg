@@ -16,6 +16,19 @@ private object ColdLifecycle {
     private val events = ArrayList<String>()
     private val activityEvents = ArrayList<String>()
     private val pointerEvents = ArrayList<Int>()
+    private val tabletEvents = ArrayList<Bundle>()
+    @Synchronized fun tablet(event: android.view.MotionEvent) {
+        if (!event.isFromSource(android.view.InputDevice.SOURCE_STYLUS)) return
+        tabletEvents.add(Bundle().apply {
+            putInt("action", event.actionMasked); putInt("tool", event.getToolType(0))
+            putInt("device", event.deviceId); putInt("buttons", event.buttonState)
+            putInt("flags", event.flags); putFloat("x", event.x); putFloat("y", event.y)
+            putFloat("rawX", event.rawX); putFloat("rawY", event.rawY)
+            putFloat("pressure", event.pressure)
+            putFloat("tilt", event.getAxisValue(android.view.MotionEvent.AXIS_TILT))
+            putFloat("orientation", event.orientation)
+        })
+    }
     @Synchronized fun pointer(action: Int) { pointerEvents.add(action) }
     @Volatile var activity = java.lang.ref.WeakReference<Activity>(null)
     @Volatile var frameCommitted = false
@@ -33,6 +46,7 @@ private object ColdLifecycle {
         putStringArrayList("events", ArrayList(events))
         putStringArrayList("activityEvents", ArrayList(activityEvents))
         putIntArray("pointerEvents", pointerEvents.toIntArray())
+        putParcelableArrayList("tabletEvents", ArrayList(tabletEvents))
         putString("activityClass", activity.get()?.javaClass?.simpleName)
         putBoolean("frameCommitted", frameCommitted)
         putInt("activityGender", activityGender)
@@ -44,7 +58,13 @@ private object ColdLifecycle {
 open class ColdProcessActivity : Activity() {
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
         ColdLifecycle.pointer(event.actionMasked)
+        ColdLifecycle.tablet(event)
         super.dispatchTouchEvent(event)
+        return true
+    }
+    override fun dispatchGenericMotionEvent(event: android.view.MotionEvent): Boolean {
+        ColdLifecycle.tablet(event)
+        super.dispatchGenericMotionEvent(event)
         return true
     }
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,6 +78,31 @@ open class ColdProcessActivity : Activity() {
             .setLabel(intent.getStringExtra("title") ?: "Cyan task").build())
         setContentView(object : TextView(this) {
             private val marker = android.graphics.Paint()
+            private fun tabletCursor(color: Int): android.view.PointerIcon {
+                val bitmap = android.graphics.Bitmap.createBitmap(16, 16, android.graphics.Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(color)
+                return android.view.PointerIcon.create(bitmap, 2f, 3f)
+            }
+            private val penCursor by lazy { tabletCursor(android.graphics.Color.GREEN) }
+            private val eraserCursor by lazy { tabletCursor(android.graphics.Color.BLUE) }
+            override fun onResolvePointerIcon(event: android.view.MotionEvent, pointerIndex: Int): android.view.PointerIcon? {
+                if (event.isFromSource(android.view.InputDevice.SOURCE_STYLUS))
+                    return if (event.getToolType(pointerIndex) == android.view.MotionEvent.TOOL_TYPE_ERASER) eraserCursor else penCursor
+                return super.onResolvePointerIcon(event, pointerIndex)
+            }
+            private var tabletX = -1f
+            private var tabletY = -1f
+            private var tabletColor = android.graphics.Color.WHITE
+            override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+                if (event.isFromSource(android.view.InputDevice.SOURCE_STYLUS)) {
+                    tabletX = event.x; tabletY = event.y
+                    tabletColor = if (event.getToolType(0) == android.view.MotionEvent.TOOL_TYPE_ERASER)
+                        android.graphics.Color.BLACK else android.graphics.Color.WHITE
+                    invalidate()
+                    return true
+                }
+                return super.onTouchEvent(event)
+            }
             override fun onDraw(canvas: android.graphics.Canvas) {
                 super.onDraw(canvas)
                 val side = minOf(width, height) / 8f
@@ -69,6 +114,10 @@ open class ColdProcessActivity : Activity() {
                 canvas.drawRect(0f, height - side, side, height.toFloat(), marker)
                 marker.color = android.graphics.Color.YELLOW
                 canvas.drawRect(width - side, height - side, width.toFloat(), height.toFloat(), marker)
+                if (tabletX >= 0) {
+                    marker.color = tabletColor
+                    canvas.drawCircle(tabletX, tabletY, 6f, marker)
+                }
             }
         }.apply {
             text = "Cold process activity"
@@ -120,6 +169,16 @@ open class ColdProcessProvider : ContentProvider() {
         return true
     }
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
+        if (method == "tablet-command") {
+            val current = checkNotNull(ColdLifecycle.activity.get())
+            val command = checkNotNull(arg)
+            require(command in listOf("pen-down", "pen-up", "eraser-down", "remove"))
+            current.runOnUiThread {
+                current.setTaskDescription(android.app.ActivityManager.TaskDescription.Builder()
+                    .setLabel("AZK tablet:$command").build())
+            }
+            return Bundle()
+        }
         if (method == "finish") {
             val current = checkNotNull(ColdLifecycle.activity.get())
             check(android.os.Handler(android.os.Looper.getMainLooper()).post { current.finish() })

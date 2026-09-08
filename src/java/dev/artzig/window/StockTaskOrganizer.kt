@@ -35,6 +35,23 @@ internal class StockTaskOrganizer(private val handler: Handler) :
     private val outputs = IdentityHashMap<SurfaceControl, TaskSurfaceOutput>()
     private var layerStack = 1
     private var registered = false
+    private var descriptionsRegistered = false
+    // Pinned Task.updateTaskDescription sends TaskStackListener immediately,
+    // but queues TaskOrganizer info until layout/animation. An idle desktop
+    // still needs title updates. Keep organizer geometry and replace metadata
+    // only, so an older description callback cannot roll back task bounds.
+    private val descriptions = object : android.app.TaskStackListener() {
+        override fun onTaskDescriptionChanged(info: ActivityManager.RunningTaskInfo) {
+            check(handler.post {
+                val token = info.token?.asBinder()
+                val current = tasks[token]
+                if (registered && current != null && current.taskId == info.taskId) {
+                    current.taskDescription = info.taskDescription
+                    events?.changed(snapshot(current))
+                }
+            })
+        }
+    }
     private val organizer = object : TaskOrganizer(null, executor) {
         override fun onTaskAppeared(info: ActivityManager.RunningTaskInfo, leash: SurfaceControl) {
             val listener = events
@@ -62,6 +79,8 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         check(!registered)
         this.events = events
         try {
+            ActivityTaskManager.getService().registerTaskStackListener(descriptions)
+            descriptionsRegistered = true
             val initial = organizer.registerOrganizer()
             registered = true
             // TaskOrganizerController.removeTask migrates a previous owner's
@@ -77,7 +96,11 @@ internal class StockTaskOrganizer(private val handler: Handler) :
                 tasks[info.token.asBinder()] = info
                 WaylandTaskShell.Appeared(snapshot(info), task.leash)
             }
-        } catch (failure: Throwable) { this.events = null; throw failure }
+        } catch (failure: Throwable) {
+            this.events = null
+            try { unregister() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+            throw failure
+        }
     }
 
     private fun snapshot(info: ActivityManager.RunningTaskInfo): WaylandTaskShell.Info<IBinder> {
@@ -173,7 +196,11 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         checkThread()
         events = null
         try { if (registered) organizer.unregisterOrganizer() }
-        finally { registered = false; tasks.clear() }
+        finally {
+            registered = false; tasks.clear()
+            try { if (descriptionsRegistered) ActivityTaskManager.getService().unregisterTaskStackListener(descriptions) }
+            finally { descriptionsRegistered = false }
+        }
         // WaylandTaskShell releases its owned leashes after unregistering.
     }
 }

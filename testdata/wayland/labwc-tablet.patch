@@ -1,0 +1,115 @@
+--- a/src/xdg.c
++++ b/src/xdg.c
+@@ -1,6 +1,9 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ 
+ #include <assert.h>
++#include <string.h>
++#include <wlr/interfaces/wlr_tablet_tool.h>
++#include <wlr/types/wlr_tablet_v2.h>
+ #include <wlr/types/wlr_cursor.h>
+ #include <wlr/types/wlr_fractional_scale_v1.h>
+ #include <wlr/types/wlr_scene.h>
+@@ -585,6 +588,94 @@
+ 	}
+ }
+ 
++
++/* Test-only tablet-v2 source. Commands arrive through the fixture APK's public
++ * task description; the production compositor and application have no hook. */
++static void
++azk_tablet_cursor(struct wl_listener *listener, void *data)
++{
++    struct wlr_tablet_v2_event_cursor *event = data;
++    wlr_cursor_set_surface(server.seat.cursor, event->surface,
++        event->hotspot_x, event->hotspot_y);
++}
++
++static void
++azk_tablet_command(struct wlr_xdg_toplevel *toplevel)
++{
++	static struct wlr_tablet tablet;
++    static struct wl_listener pen_cursor, eraser_cursor;
++    static char previous[32];
++	static struct wlr_tablet_tool pen, eraser;
++	static struct wlr_tablet_v2_tablet *tablet_v2;
++	static struct wlr_tablet_v2_tablet_tool *pen_v2, *eraser_v2;
++	static const struct wlr_tablet_impl impl = {0};
++	const char *title = toplevel->title;
++	if (!title || strncmp(title, "AZK tablet:", 11)) {
++		return;
++	}
++	const char *command = title + 11;
++    if (!strcmp(previous, command) || strlen(command) >= sizeof(previous)) return;
++    strcpy(previous, command);
++	if (!tablet_v2 && !strcmp(command, "pen-down")) {
++		wlr_tablet_init(&tablet, &impl, "AZK protocol fixture");
++		tablet_v2 = wlr_tablet_create(server.tablet_manager,
++			server.seat.wlr_seat, &tablet.base);
++		pen.type = WLR_TABLET_TOOL_TYPE_PEN;
++		pen.pressure = true;
++		pen.tilt = true;
++		wl_signal_init(&pen.events.destroy);
++		pen_v2 = wlr_tablet_tool_create(server.tablet_manager,
++			server.seat.wlr_seat, &pen);
++		eraser.type = WLR_TABLET_TOOL_TYPE_ERASER;
++		eraser.pressure = true;
++		wl_signal_init(&eraser.events.destroy);
++		eraser_v2 = wlr_tablet_tool_create(server.tablet_manager,
++			server.seat.wlr_seat, &eraser);
++	}
++    if (pen_v2 && pen_cursor.notify == NULL) {
++        pen_cursor.notify = azk_tablet_cursor;
++        eraser_cursor.notify = azk_tablet_cursor;
++        wl_signal_add(&pen_v2->events.set_cursor, &pen_cursor);
++        wl_signal_add(&eraser_v2->events.set_cursor, &eraser_cursor);
++    }
++	if (!tablet_v2) {
++		return;
++	}
++	if (!strcmp(command, "pen-down")) {
++		wlr_tablet_v2_tablet_tool_notify_proximity_in(pen_v2,
++			tablet_v2, toplevel->base->surface);
++		wlr_cursor_warp_closest(server.seat.cursor, NULL, 550, 160);
++		wlr_tablet_v2_tablet_tool_notify_down(pen_v2);
++		wlr_tablet_v2_tablet_tool_notify_motion(pen_v2, 50, 60);
++		wlr_tablet_v2_tablet_tool_notify_pressure(pen_v2, .6);
++		wlr_tablet_v2_tablet_tool_notify_tilt(pen_v2, 30, -15);
++		wlr_tablet_v2_tablet_tool_notify_button(pen_v2, 0x14b,
++			ZWP_TABLET_PAD_V2_BUTTON_STATE_PRESSED);
++	} else if (!strcmp(command, "pen-up")) {
++		wlr_tablet_v2_tablet_tool_notify_button(pen_v2, 0x14b,
++			ZWP_TABLET_PAD_V2_BUTTON_STATE_RELEASED);
++		wlr_tablet_v2_tablet_tool_notify_pressure(pen_v2, 0);
++		wlr_tablet_v2_tablet_tool_notify_up(pen_v2);
++		wlr_tablet_v2_tablet_tool_notify_proximity_out(pen_v2);
++	} else if (!strcmp(command, "eraser-down")) {
++		wlr_tablet_v2_tablet_tool_notify_proximity_in(eraser_v2,
++			tablet_v2, toplevel->base->surface);
++		wlr_cursor_warp_closest(server.seat.cursor, NULL, 570, 180);
++		wlr_tablet_v2_tablet_tool_notify_down(eraser_v2);
++		wlr_tablet_v2_tablet_tool_notify_motion(eraser_v2, 70, 80);
++		wlr_tablet_v2_tablet_tool_notify_pressure(eraser_v2, .25);
++	} else if (!strcmp(command, "remove")) {
++        wl_list_remove(&pen_cursor.link);
++        wl_list_remove(&eraser_cursor.link);
++        pen_cursor.notify = eraser_cursor.notify = NULL;
++		wl_signal_emit_mutable(&pen.events.destroy, &pen);
++		wl_signal_emit_mutable(&eraser.events.destroy, &eraser);
++		wlr_tablet_finish(&tablet);
++		tablet_v2 = NULL;
++		pen_v2 = eraser_v2 = NULL;
++	}
++}
++
+ static void
+ handle_set_title(struct wl_listener *listener, void *data)
+ {
+@@ -592,6 +683,7 @@
+ 	struct wlr_xdg_toplevel *toplevel = xdg_toplevel_from_view(view);
+ 
+ 	view_set_title(view, toplevel->title);
++	azk_tablet_command(toplevel);
+ }
+ 
+ static void

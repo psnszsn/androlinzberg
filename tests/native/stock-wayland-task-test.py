@@ -105,6 +105,47 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 process.stdin.write(b'continue\n')
                 process.stdin.flush()
 
+            def verify_tablet_pixels():
+                for marker, name, x, y, color in [
+                        ('TABLET_PEN_RENDERED', 'tablet-pen', 550, 160, (255, 255, 255)),
+                        ('TABLET_ERASER_RENDERED', 'tablet-eraser', 570, 180, (0, 0, 0))]:
+                    deadline = time.monotonic() + 20
+                    while marker not in (out / 'app.log').read_text(errors='replace'):
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError(f'{marker} timeout/exit: {process.poll()}')
+                        time.sleep(.02)
+                    while True:
+                        ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
+                        _, dimensions, _, data = ppm.split(b'\n', 3)
+                        width, height = map(int, dimensions.split())
+                        actual = tuple(data[(y * width + x) * 3:(y * width + x) * 3 + 3])
+                        if actual == color:
+                            break
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(f'{name} pixel {actual}, expected {color}')
+                        time.sleep(.02)
+                    subprocess.run(['grim', str(out / f'{name}.png')], check=True, timeout=3)
+                    # The source fixture accepts the tablet tool's set_cursor,
+                    # and moves the compositor cursor to the surface-local point.
+                    cursor_color = (0, 255, 0) if name == 'tablet-pen' else (0, 0, 255)
+                    while True:
+                        ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
+                        _, dimensions, _, data = ppm.split(b'\n', 3)
+                        width, height = map(int, dimensions.split())
+                        def pixel(px, py):
+                            return tuple(data[(py * width + px) * 3:(py * width + px) * 3 + 3])
+                        # (2,3) hotspot gives this exact 16x16 immutable bitmap.
+                        correct = all(pixel(px, py) == cursor_color for px, py in
+                            [(x - 2, y - 3), (x + 13, y - 3), (x - 2, y + 12), (x + 13, y + 12)])
+                        if correct: break
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(f'{name} tablet cursor/hotspot not rendered')
+                        time.sleep(.02)
+                    subprocess.run(['grim', '-c', str(out / f'{name}-cursor.png')], check=True, timeout=3)
+                    result[name] = dict(point=[x, y], color=actual, cursor=cursor_color, hotspot=[2, 3])
+                    process.stdin.write(b'continue\n')
+                    process.stdin.flush()
+
             def change_pointer(marker, operation):
                 deadline = time.monotonic() + 15
                 while marker not in (out / 'app.log').read_text(errors='replace'):
@@ -344,6 +385,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                                           ('POINTER_DEVICE_RECREATE', b'p')]:
                     change_pointer(marker, operation)
                 verify_pixels('SECOND_TASK_WINDOW_READY', (255, 0, 255), 'second-task')
+                if environment.get('AZK_TEST_TABLET') == '1':
+                    verify_tablet_pixels()
                 verify_pixels('GROUPED_ACTIVITY_WINDOW_READY', (255, 127, 0), 'grouped-activity')
                 verify_pixels('SURVIVING_TASK_WINDOW_READY', (0, 255, 255), 'screenshot')
                 change_pointer('WINDOWLESS_POINTER_REMOVE', b'r')
@@ -355,6 +398,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 text = (out / 'app.log').read_text(errors='replace')
                 assert 'Stock Wayland task: two tasks, grouped activities, one synthetic display, independent pixels and removal passed' in text
                 assert 'Stock Wayland pointer: absence and compositor capability lifecycle passed' in text
+                if environment.get('AZK_TEST_TABLET') == '1':
+                    assert 'Stock Wayland tablet: pen, eraser, axes, task coordinates, buttons, pixels and removal passed' in text
             if args.launcher:
                 assert 'task virtual pointer protocol version=1' in text
                 result['virtual_pointer_version'] = 1

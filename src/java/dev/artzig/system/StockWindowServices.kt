@@ -114,7 +114,7 @@ internal class StockWindowServices private constructor() {
         if (System.getenv("AZK_TASK_WINDOWS") == "1") {
             check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
             shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap,
-                devices::publishSeatCapabilities,
+                devices::publishSeatCapabilities, devices::publishTabletDevice,
                 { id -> com.android.server.wm.HostedTaskInputTargets.taskToken(windows, id) }) { token ->
                 com.android.server.wm.HostedTaskInputTargets.taskId(windows, token)
             }
@@ -130,13 +130,14 @@ internal class StockWindowServices private constructor() {
 
     private fun setPointerIcon(icon: android.view.PointerIcon, displayId: Int, deviceId: Int,
         pointerId: Int, token: IBinder?): Boolean {
-        if (token == null || displayId != Display.DEFAULT_DISPLAY || deviceId != 0 || pointerId != 0 ||
+        if (token == null || displayId != Display.DEFAULT_DISPLAY || (deviceId != 0 && deviceId !in dev.artzig.window.WaylandTabletInput.FIRST_DEVICE until
+                dev.artzig.window.WaylandTabletInput.FIRST_DEVICE + dev.artzig.window.WaylandTabletInput.MAX_TOOLS) || pointerId != 0 ||
             !input.isPointerInWindow(token, displayId, deviceId, pointerId)) return false
         val work = java.util.concurrent.FutureTask(java.util.concurrent.Callable {
             // Revalidate after crossing to the shell thread; hover may have left
             // this input window while the Binder request was queued.
             if (!input.isPointerInWindow(token, displayId, deviceId, pointerId)) false
-            else if (shell?.pointerIcon(token, icon.type) == true) true
+            else if (shell?.pointerIcon(token, icon.type, deviceId) == true) true
             else {
                 val image = try { dev.artzig.window.WaylandCursor.load(context, icon) }
                 catch (failure: IllegalArgumentException) {
@@ -145,7 +146,7 @@ internal class StockWindowServices private constructor() {
                             failure.message ?: "Cursor exceeds host representation limits"))
                     null
                 }
-                image != null && shell?.cursorImage(token, image) == true
+                image != null && shell?.cursorImage(token, image, deviceId) == true
             }
         })
         if (Looper.myLooper() == handler.looper) work.run() else check(handler.post(work))

@@ -9,6 +9,7 @@ const wp = wayland.client.wp;
 const zwp = wayland.client.zwp;
 const zwlr = wayland.client.zwlr;
 const CursorImage = @import("cursor_image.zig");
+pub const TabletSeat = @import("tablet_seat.zig");
 
 const drm_format_nv12: u32 = 0x3231564e;
 const drm_format_p010: u32 = 0x30313050;
@@ -313,6 +314,7 @@ pub const Event = union(enum) {
         orientation: f64,
     },
     touch_cancel,
+    tablet: TabletSeat.Event,
     frame_done: struct { time_ms: u32 },
 };
 
@@ -589,6 +591,11 @@ pub const Session = struct {
     pointer: ?*wl.Pointer = null,
     keyboard: ?*wl.Keyboard = null,
     touch_device: ?*wl.Touch = null,
+    tablet_manager: ?*zwp.TabletManagerV2 = null,
+    tablet_manager_global: ?u32 = null,
+    tablets: ?*TabletSeat = null,
+    tablet_generation: i32 = 0,
+    tablet_failure: ?anyerror = null,
     pointer_constraints: ?*zwp.PointerConstraintsV1 = null,
     relative_pointer_manager: ?*zwp.RelativePointerManagerV1 = null,
     seat_global_name: ?u32 = null,
@@ -616,6 +623,7 @@ pub const Session = struct {
         virtual_pointer_max_version: u32 = 2,
         compositor_max_version: u32 = 6,
         xdg_shell_max_version: u32 = 6,
+        tablet: bool = true,
         fractional_scale: bool = true,
         cursor_shape: bool = true,
     };
@@ -639,6 +647,8 @@ pub const Session = struct {
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
         self.requireGlobals();
         if (self.output_failure) |failure| return failure;
+        if (self.tablet_failure) |failure| return failure;
+        if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         return self;
     }
 
@@ -661,6 +671,8 @@ pub const Session = struct {
         @memset(ready, false);
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         if (self.output_failure) |failure| return failure;
+        if (self.tablet_failure) |failure| return failure;
+        if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         var timeout = timeout_ms;
         if (self.pointer_focus) |window| {
             const cursor_timeout = window.updateCursorAnimation();
@@ -671,6 +683,8 @@ pub const Session = struct {
             if (events.pending.items.len != 0) timeout = 0;
         }
         for (self.windows.items) |window| {
+            const tablet_cursor_timeout = window.updateTabletCursorAnimations();
+            if (tablet_cursor_timeout >= 0) timeout = if (timeout < 0) tablet_cursor_timeout else @min(timeout, tablet_cursor_timeout);
             _ = window.emitKeyRepeatIfDue();
             if (window.events.items.len != 0) timeout = 0;
             const repeat = window.keyRepeatTimeoutMs();
@@ -679,6 +693,8 @@ pub const Session = struct {
         while (!self.display.prepareRead()) {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
             if (self.output_failure) |failure| return failure;
+            if (self.tablet_failure) |failure| return failure;
+            if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
             timeout = 0;
         }
         var read_prepared = true;
@@ -746,6 +762,8 @@ pub const Session = struct {
             if (self.display.readEvents() != .SUCCESS) return error.DispatchFailed;
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
             if (self.output_failure) |failure| return failure;
+            if (self.tablet_failure) |failure| return failure;
+            if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         }
         for (self.windows.items) |window| _ = window.emitKeyRepeatIfDue();
         if (self.ordered_events) |*events| if (events.failed) return error.SeatEventQueueOverflow;
@@ -761,6 +779,7 @@ pub const Session = struct {
     }
 
     fn removeWindow(self: *Session, window: *Window) void {
+        if (self.tablets) |tablets| tablets.detachTarget(window);
         if (self.ordered_events) |*events| events.removeWindow(window);
         if (self.pointer_focus == window) self.pointer_focus = null;
         if (self.keyboard_focus == window) self.keyboard_focus = null;
@@ -1007,6 +1026,10 @@ pub const Session = struct {
     }
 
     fn destroyGlobals(self: *Session) void {
+        if (self.tablets) |tablets| tablets.deinit();
+        self.tablets = null;
+        if (self.tablet_manager) |manager| manager.destroy();
+        self.tablet_manager = null;
         self.releasePointer();
         self.releaseKeyboard();
         self.releaseTouch();
@@ -1077,6 +1100,9 @@ pub const Session = struct {
                     } else {
                         self.dmabuf.?.setListener(*Session, dmabufListener, self);
                     }
+                } else if (std.mem.orderZ(u8, g.interface, zwp.TabletManagerV2.interface.name) == .eq and self.protocol_options.tablet) {
+                    self.tablet_manager = registry.bind(g.name, zwp.TabletManagerV2, 1) catch return;
+                    self.tablet_manager_global = g.name;
                 } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq and self.protocol_options.cursor_shape) {
                     self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwlr.VirtualPointerManagerV1.interface.name) == .eq) {
@@ -1123,6 +1149,15 @@ pub const Session = struct {
                     }
                     break;
                 }
+                if (self.tablet_manager_global == removed.name or self.seat_global_name == removed.name) {
+                    if (self.tablets) |tablets| tablets.deinit();
+                    self.tablets = null;
+                }
+                if (self.tablet_manager_global == removed.name) {
+                    if (self.tablet_manager) |manager| manager.destroy();
+                    self.tablet_manager = null;
+                    self.tablet_manager_global = null;
+                }
                 if (self.seat_global_name == removed.name) {
                     self.releasePointer();
                     self.releaseKeyboard();
@@ -1149,7 +1184,22 @@ pub const Session = struct {
                 }
             },
         }
+        if (self.tablets == null) if (self.tablet_manager) |manager| if (self.seat) |seat| {
+            self.tablets = TabletSeat.init(self.gpa, manager, seat, &self.tablet_generation, .{ .context = self, .target = tabletTarget, .emit = tabletEvent }) catch |err| failed: {
+                self.tablet_failure = err;
+                break :failed null;
+            };
+        };
         self.publishSeatCapabilities();
+    }
+    fn tabletTarget(context: *anyopaque, surface: *wl.Surface) ?*anyopaque {
+        const self: *Session = @ptrCast(@alignCast(context));
+        return self.surfaceWindow(surface);
+    }
+    fn tabletEvent(context: *anyopaque, target: ?*anyopaque, event: TabletSeat.Event) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        const window: ?*Window = if (target) |value| @ptrCast(@alignCast(value)) else null;
+        if (self.ordered_events) |*events| events.push(self.gpa, window, .{ .tablet = event });
     }
 
     fn dmabufListener(_: *zwp.LinuxDmabufV1, event: zwp.LinuxDmabufV1.Event, self: *Session) void {
@@ -1822,6 +1872,7 @@ pub const Window = struct {
         };
         if (actual == self.pointer_capture_actual) return;
         self.pointer_capture_actual = actual;
+        if (self.session.tablets) |tablets| tablets.pointerCapture(actual);
         self.push(.{ .pointer_capture_changed = .{ .enabled = actual, .sequence = self.pointer_capture_sequence } });
     }
 
@@ -1858,6 +1909,7 @@ pub const Window = struct {
             self.relative_pointer = null;
             if (self.pointer_capture_actual) {
                 self.pointer_capture_actual = false;
+                if (self.session.tablets) |tablets| tablets.pointerCapture(false);
                 self.push(.{ .pointer_capture_changed = .{ .enabled = false, .sequence = self.pointer_capture_sequence } });
             }
             return;
@@ -2199,6 +2251,29 @@ pub const Window = struct {
         return true;
     }
 
+    pub fn setTabletPointerIcon(self: *Window, device: i32, generation: i32, icon: i32) bool {
+        const tablets = self.session.tablets orelse return false;
+        const tool = tablets.findTool(self, device, generation) orelse return false;
+        const applied = tool.setPointerIcon(self.session.cursor_shape_manager, icon);
+        if (applied) _ = self.session.display.flush();
+        return applied;
+    }
+    pub fn setTabletCursorImage(self: *Window, device: i32, generation: i32, width: i32, height: i32, hotspot_x: i32, hotspot_y: i32, frame_ms: i32, pixels: []const i32) !bool {
+        const tablets = self.session.tablets orelse return false;
+        const tool = tablets.findTool(self, device, generation) orelse return false;
+        return tool.setCursorImage(self.io, self.session.compositor.?, self.session.shm.?, width, height, hotspot_x, hotspot_y, frame_ms, pixels);
+    }
+    fn updateTabletCursorAnimations(self: *Window) i32 {
+        if (self.suspended) return -1;
+        const tablets = self.session.tablets orelse return -1;
+        var timeout: i32 = -1;
+        for (tablets.tools) |slot| if (slot) |tool| {
+            if (tool.target != @as(*anyopaque, self)) continue;
+            const next = tool.updateCursorAnimation(self.io);
+            if (next >= 0) timeout = if (timeout < 0) next else @min(timeout, next);
+        };
+        return timeout;
+    }
     fn updateCursorAnimation(self: *Window) i32 {
         if (self.suspended or self.hasPointerCapture()) return -1;
         if (!self.cursor_hidden) if (self.cursor_image) |*cursor| {

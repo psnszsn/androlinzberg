@@ -32,12 +32,22 @@ internal class WaylandTaskInput(private val android: Android,
         var major: Float, var minor: Float, var orientation: Float)
     private val windows = mutableMapOf<Int, Window>()
     private val keys = linkedMapOf<Int, Pressed>()
+    private val tablets = WaylandTabletInput(object : WaylandTabletInput.Android {
+        override fun point(task: TaskGeometry.Task, x: Float, y: Float) =
+            windows[task.id]?.takeIf { it.task == task }?.tabletPoint(x, y)
+        override fun metaState() = this@WaylandTaskInput.metaState()
+        override fun dispatch(event: MotionEvent) = android.dispatch(event)
+        override fun dispatchKey(event: KeyEvent, task: TaskGeometry.Task) = android.dispatch(event, false, task)
+    }, clock)
+    fun tabletDeviceGeneration(id: Int): Int? = tablets.deviceGeneration(id)
+    fun tabletDevice(device: WaylandTabletInput.Device, present: Boolean) = tablets.device(device, present)
     // Physical state outlives a delivered stream's cancellation (layout/repeat
     // updates), and includes keys pressed before this client's keyboard enter.
     private val physicalKeys = linkedMapOf<Int, Int>()
     private var persistentMeta = 0
     private val contacts = linkedMapOf<Int, Contact>()
     private var focus: Window? = null
+    private var captureOwner: Window? = null
     private var lockedMeta = 0
     private var compositorMeta: Int? = null
 
@@ -128,6 +138,7 @@ internal class WaylandTaskInput(private val android: Android,
             if (bounds != value || output != size) {
                 cancelPointer()
                 cancelTouches()
+                cancelTablet()
             }
             bounds = value; output = size
             if (focus === this) android.focusTask(task.id)
@@ -168,6 +179,10 @@ internal class WaylandTaskInput(private val android: Android,
             val py = b.top + y * (b.height.toFloat() / s.height)
             return if (px.isFinite() && py.isFinite()) px to py else null
         }
+
+        fun tabletPoint(x: Float, y: Float) = point(x, y)
+        fun tablet(sample: WaylandTabletInput.Sample) { if (live()) tablets.sample(task, sample) }
+        fun cancelTablet(deviceId: Int = -1) = tablets.cancel(task, deviceId)
 
         fun pointer(kind: Int, button: Int, pressed: Boolean, x: Float, y: Float) {
             if (kind == POINTER_CANCEL) { cancelPointer(); return }
@@ -239,6 +254,8 @@ internal class WaylandTaskInput(private val android: Android,
             // InputReader resets the outgoing source before changing mode.
             cancelPointer()
             captured = enabled
+            if (enabled) captureOwner = this else if (captureOwner === this) captureOwner = null
+            tablets.pointerCapture(captureOwner != null)
             pointerX = 0f; pointerY = 0f
         }
 
@@ -401,6 +418,8 @@ internal class WaylandTaskInput(private val android: Android,
             cancelPointer()
             releaseKeys()
             cancelTouches()
+            cancelTablet()
+            if (captureOwner === this) { captureOwner = null; tablets.pointerCapture(false) }
             if (focus === this) {
                 focus = null
                 physicalKeys.clear()

@@ -41,4 +41,8 @@ interface IWaylandTaskPresenter {
     /** Immutable premultiplied ARGB cursor frames; caller and pointer-window ownership are checked. */
     boolean setCursorImage(int taskId, long generation, int width, int height,
         int hotspotX, int hotspotY, int frameMillis, in int[] pixels);
+    /** Tablet cursors use that tool's current proximity serial and source generation. */
+    boolean setTabletPointerIcon(int taskId, long generation, int deviceId, int deviceGeneration, int type);
+    boolean setTabletCursorImage(int taskId, long generation, int deviceId, int deviceGeneration,
+        int width, int height, int hotspotX, int hotspotY, int frameMillis, in int[] pixels);
 }

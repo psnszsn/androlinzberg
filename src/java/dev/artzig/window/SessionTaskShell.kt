@@ -7,8 +7,8 @@ import android.os.ServiceManager
 internal object SessionTaskShell {
     class Controller(private val presenter: RemoteTaskPresenter, private val input: WaylandTaskInput, private val cleanup: () -> Unit) : AutoCloseable {
         fun pointerCapture(token: android.os.IBinder?, sequence: Int) = presenter.pointerCapture(token, sequence)
-        fun pointerIcon(token: android.os.IBinder, type: Int): Boolean = presenter.pointerIcon(token, type)
-        fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image): Boolean = presenter.cursorImage(token, image)
+        fun pointerIcon(token: android.os.IBinder, type: Int, deviceId: Int): Boolean = presenter.pointerIcon(token, type, deviceId)
+        fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image, deviceId: Int): Boolean = presenter.cursorImage(token, image, deviceId)
         fun testInputQueued(sequence: Long): Boolean = presenter.testInputQueued(sequence)
         fun keyCodeState(deviceId: Int, sourceMask: Int, code: Int) = input.keyCodeState(deviceId, sourceMask, code)
         fun scanCodeState(deviceId: Int, sourceMask: Int, scan: Int) = input.scanCodeState(deviceId, sourceMask, scan)
@@ -17,6 +17,7 @@ internal object SessionTaskShell {
     fun start(handler: Handler, dispatcher: HostInputManagerBridge,
         publishKeyboard: (android.view.KeyCharacterMap, IntArray, android.view.KeyCharacterMap) -> Unit,
         publishCapabilities: (Int, Int) -> Unit,
+        publishTablet: (WaylandTabletInput.Device, Boolean) -> Unit,
         resolveTask: (Int) -> android.os.IBinder?,
         taskForToken: (android.os.IBinder) -> Int?): Controller {
         val binder = checkNotNull(ServiceManager.checkService("dev.artzig.window.presenter")) {
@@ -49,7 +50,7 @@ internal object SessionTaskShell {
         // synthesize repeats. The presenter sends physical key edges only.
         dispatcher.setKeyRepeatConfiguration(500, 50, false)
         dispatcher.setHostedKeyboardFocus(null)
-        val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, publishCapabilities, dispatcher::notifyPointerCaptureChanged)
+        val presenter = RemoteTaskPresenter(remote, handler, input, taskForToken, publishCapabilities, publishTablet, dispatcher::notifyPointerCaptureChanged)
         presenter.connect()
         val shell = WaylandTaskShell(StockTaskOrganizer(handler), presenter)
         val death = android.os.IBinder.DeathRecipient {

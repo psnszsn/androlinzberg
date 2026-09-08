@@ -10,6 +10,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val handler: Handler, private val input: WaylandTaskInput,
     private val taskForToken: (android.os.IBinder) -> Int?,
     private val publishCapabilities: (Int, Int) -> Unit,
+    private val publishTablet: (WaylandTabletInput.Device, Boolean) -> Unit,
     acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
     @Volatile private var queuedTestInput = 0L
@@ -44,16 +45,23 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                     "Compositor pointer constraints or relative pointer capability unavailable"))
         }
     })
-    fun pointerIcon(token: android.os.IBinder, type: Int): Boolean {
+    fun pointerIcon(token: android.os.IBinder, type: Int, deviceId: Int): Boolean {
         check(Looper.myLooper() === handler.looper)
         val window = taskForToken(token)?.let(windows::get) ?: return false
-        return remote.setPointerIcon(window.task.id, window.task.generation, type)
+        return if (deviceId == 0) remote.setPointerIcon(window.task.id, window.task.generation, type)
+        else input.tabletDeviceGeneration(deviceId)?.let {
+            remote.setTabletPointerIcon(window.task.id, window.task.generation, deviceId, it, type)
+        } ?: false
     }
-    fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image): Boolean {
+    fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image, deviceId: Int): Boolean {
         check(Looper.myLooper() === handler.looper)
         val window = taskForToken(token)?.let(windows::get) ?: return false
-        return remote.setCursorImage(window.task.id, window.task.generation, image.width, image.height,
+        return if (deviceId == 0) remote.setCursorImage(window.task.id, window.task.generation, image.width, image.height,
             image.hotspotX, image.hotspotY, image.frameMillis, image.pixels)
+        else input.tabletDeviceGeneration(deviceId)?.let {
+            remote.setTabletCursorImage(window.task.id, window.task.generation, deviceId, it, image.width, image.height,
+                image.hotspotX, image.hotspotY, image.frameMillis, image.pixels)
+        } ?: false
     }
     fun pointerCapture(token: android.os.IBinder?, sequence: Int) {
         check(Looper.myLooper() === handler.looper)
@@ -116,6 +124,18 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             }
         override fun seatCapabilities(sourceGeneration: Int, capabilities: Int) =
             deliverSeat { publishCapabilities(sourceGeneration, capabilities) }
+        override fun tabletDevice(deviceId: Int, sourceGeneration: Int, toolType: Int,
+            capabilities: Int, present: Boolean) = deliverSeat {
+                val device = WaylandTabletInput.Device(deviceId, sourceGeneration, toolType, capabilities)
+                input.tabletDevice(device, present)
+                publishTablet(device, present)
+            }
+        override fun tablet(taskId: Int, generation: Long, deviceId: Int, deviceGeneration: Int,
+            action: Int, button: Int, pressed: Boolean, axes: FloatArray) = deliver(taskId, generation) {
+                it.seat.tablet(WaylandTabletInput.Sample(deviceId, deviceGeneration, action, button, pressed, axes))
+            }
+        override fun cancelTablet(taskId: Int, generation: Long, deviceId: Int) =
+            deliver(taskId, generation) { it.seat.cancelTablet(deviceId) }
         override fun modifiers(metaState: Int, persistentMetaState: Int) =
             deliverSeat { input.modifiers(metaState, persistentMetaState) }
         override fun keyboardLayout(layoutGeneration: Int, characters: IntArray, symbols: IntArray) =

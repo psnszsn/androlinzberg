@@ -20,4 +20,8 @@ oneway interface IWaylandTaskEvents {
     void testInputBarrier(int taskId, long generation, long sequence);
     void seatCapabilities(int sourceGeneration, int capabilities);
     void suspended(int taskId, long generation, boolean suspended);
+    void tabletDevice(int deviceId, int sourceGeneration, int toolType, int capabilities, boolean present);
+    void tablet(int taskId, long generation, int deviceId, int deviceGeneration, int action,
+        int button, boolean pressed, in float[] axes);
+    void cancelTablet(int taskId, long generation, int deviceId);
 }

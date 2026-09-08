@@ -17,6 +17,7 @@
 #include "android_view_MotionEvent.h"
 #include "core_jni_helpers.h"
 #include <atomic>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -693,6 +694,17 @@ static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event, jboole
             motion->getSource(), motion->getFlags(), motion->getTransform(),
             *motion->getHistoricalRawPointerCoords(pointer, sample));
       }
+      float cursorX = motion->getXCursorPosition();
+      float cursorY = motion->getYCursorPosition();
+      // Pinned TouchInputMapper.dispatchPointerSimple supplies explicit cursor
+      // coordinates for MOUSE | STYLUS. Java MotionEvent.obtain only computes
+      // them for exactly SOURCE_MOUSE; fill the missing acquisition metadata
+      // at this InputReader substitute, preserving already supplied positions.
+      if (isFromSource(motion->getSource(), AINPUT_SOURCE_MOUSE) &&
+          coords.size() == 1 && std::isnan(cursorX) && std::isnan(cursorY)) {
+        cursorX = coords[0].getAxisValue(AMOTION_EVENT_AXIS_X);
+        cursorY = coords[0].getAxisValue(AMOTION_EVENT_AXIS_Y);
+      }
       owner->dispatcher.notifyMotion(
           NotifyMotionArgs{motion->getId(),
                            motion->getSampleEventTimes()[sample],
@@ -713,8 +725,8 @@ static void notifyEvent(JNIEnv *env, jclass, jlong handle, jobject event, jboole
                            coords.data(),
                            motion->getXPrecision(),
                            motion->getYPrecision(),
-                           motion->getXCursorPosition(),
-                           motion->getYCursorPosition(),
+                           cursorX,
+                           cursorY,
                            motion->getDownTime(),
                            {}});
     }

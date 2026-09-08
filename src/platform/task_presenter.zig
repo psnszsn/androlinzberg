@@ -32,6 +32,7 @@ extern "c" fn AParcel_readStrongBinder(*const Parcel, *?*Binder) i32;
 extern "c" fn AParcel_writeInt32(*Parcel, i32) i32;
 extern "c" fn AParcel_writeInt64(*Parcel, i64) i32;
 extern "c" fn AParcel_writeFloat(*Parcel, f32) i32;
+extern "c" fn AParcel_writeFloatArray(*Parcel, [*]const f32, i32) i32;
 extern "c" fn AParcel_writeInt32Array(*Parcel, [*]const i32, i32) i32;
 extern "c" fn AParcel_delete(*Parcel) void;
 extern "c" fn azk_graphics_live_buffers() u64;
@@ -137,6 +138,7 @@ const Server = struct {
         AIBinder_incStrong(callback);
         self.owner = callback;
         self.owner_pid = request.pid;
+        if (self.session.tablets) |tablets| tablets.replayDevices();
         try ok(AParcel_writeInt32(request.output, 0));
         try ok(AParcel_writeInt32Array(request.output, &snapshot, snapshot.len));
         return 0;
@@ -147,6 +149,11 @@ const Server = struct {
             switch (item.event) {
                 .seat_capabilities => |caps| {
                     if (self.owner) |callback| try sendGlobal(callback, 15, .{ caps.generation, caps.mask });
+                    continue;
+                },
+                .tablet => |tablet| if (tablet == .device) {
+                    const device = tablet.device;
+                    if (self.owner) |callback| try sendGlobal(callback, 17, .{ device.id, device.generation, device.kind, device.capabilities, device.present });
                     continue;
                 },
                 .keyboard_layout => |layout| {
@@ -173,6 +180,14 @@ const Server = struct {
                 else => {},
             };
             switch (item.event) {
+                .tablet => |tablet| {
+                    const sample = tablet.sample;
+                    if (sample.action == .cancel) {
+                        try send(entry, 19, .{sample.id});
+                    } else if (entry.inputGeometryReady()) {
+                        try send(entry, 18, .{ sample.id, sample.generation, @backingInt(sample.action), sample.button, sample.pressed, @as([]const f32, &sample.axes) });
+                    }
+                },
                 .frame_done => {
                     // A covered task may receive no frame callbacks. Progress
                     // belongs to actual callbacks, not an all-window barrier.
@@ -184,6 +199,7 @@ const Server = struct {
                     // active gestures whose physical release arrives later.
                     try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
                     try send(entry, 8, .{});
+                    try send(entry, 19, .{@as(i32, -1)});
                     try send(entry, 1, .{
                         size.width,      size.height,           size.buffer_width, size.buffer_height,
                         size.generation, @as(i64, size.serial),
@@ -194,6 +210,7 @@ const Server = struct {
                     if (suspended) {
                         try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
                         try send(entry, 8, .{});
+                        try send(entry, 19, .{@as(i32, -1)});
                         try send(entry, 3, .{ false, @as([]const i32, &.{}) });
                         try entry.window.setPointerCapture(false);
                     }
@@ -448,6 +465,7 @@ const Server = struct {
                     AIBinder_incStrong(callback);
                     self.owner = callback;
                     self.owner_pid = request.pid;
+                    if (self.session.tablets) |tablets| tablets.replayDevices();
                 }
                 try ok(AParcel_writeInt32(output, 0)); // Status::ok
                 try ok(AParcel_writeInt32(output, 1)); // non-null Surface
@@ -532,6 +550,7 @@ const Server = struct {
                 // input windows, and hold input until this producer presents.
                 try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
                 try send(entry, 8, .{});
+                try send(entry, 19, .{@as(i32, -1)});
                 entry.pending_queue = queue;
                 entry.pending_output_generation = output_generation;
                 entry.pending_configuration_generation = configuration_generation;
@@ -552,11 +571,16 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 0));
                 try ok(AParcel_writeInt32(output, @intFromBool(supported)));
             },
-            9 => {
+            9, 16 => {
+                const device = if (request.code == 16) try readInt(input) else 0;
+                const device_generation = if (request.code == 16) try readInt(input) else 0;
                 const icon = try readInt(input);
                 try end(input);
                 const entry = self.find(key) orelse return error.StaleTask;
-                const applied = entry.inputGeometryReady() and entry.window.setPointerIcon(icon);
+                const applied = entry.inputGeometryReady() and (if (request.code == 16)
+                    entry.window.setTabletPointerIcon(device, device_generation, icon)
+                else
+                    entry.window.setPointerIcon(icon));
                 if (applied and entry.cursor_icon != icon) {
                     entry.cursor_icon = icon;
                     if (self.inspection_enabled) std.log.info("task cursor task={d} type={d} applied=true", .{ key.id, icon });
@@ -564,7 +588,9 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 0));
                 try ok(AParcel_writeInt32(output, @intFromBool(applied)));
             },
-            15 => {
+            15, 17 => {
+                const device = if (request.code == 17) try readInt(input) else 0;
+                const device_generation = if (request.code == 17) try readInt(input) else 0;
                 const width = try readInt(input);
                 const height = try readInt(input);
                 const hotspot_x = try readInt(input);
@@ -576,7 +602,10 @@ const Server = struct {
                 try end(input);
                 const entry = self.find(key) orelse return error.StaleTask;
                 const values = pixels.values orelse return error.InvalidCursorImage;
-                const applied = entry.inputGeometryReady() and try entry.window.setCursorImage(width, height, hotspot_x, hotspot_y, frame_ms, values);
+                const applied = entry.inputGeometryReady() and (if (request.code == 17)
+                    try entry.window.setTabletCursorImage(device, device_generation, width, height, hotspot_x, hotspot_y, frame_ms, values)
+                else
+                    try entry.window.setCursorImage(width, height, hotspot_x, hotspot_y, frame_ms, values));
                 if (applied and self.inspection_enabled) std.log.info("task bitmap cursor task={d} size={d}x{d} frames={d} hotspot={d},{d}", .{ key.id, width, height, values.len / @as(usize, @intCast(width * height)), hotspot_x, hotspot_y });
                 try ok(AParcel_writeInt32(output, 0));
                 try ok(AParcel_writeInt32(output, @intFromBool(applied)));
@@ -605,7 +634,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 15) return -38;
+    if (code < 1 or code > 17) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -723,8 +752,8 @@ fn writeValues(parcel: *Parcel, values: anytype) !void {
             try ok(AParcel_writeInt32(parcel, @intCast(value))),
         .float, .comptime_float => try ok(AParcel_writeFloat(parcel, @floatCast(value))),
         .pointer => |pointer| {
-            if (pointer.size != .slice or pointer.child != i32) @compileError("Unsupported task callback array");
-            try ok(AParcel_writeInt32Array(parcel, value.ptr, @intCast(value.len)));
+            if (pointer.size != .slice) @compileError("Unsupported task callback array");
+            if (pointer.child == i32) try ok(AParcel_writeInt32Array(parcel, value.ptr, @intCast(value.len))) else if (pointer.child == f32) try ok(AParcel_writeFloatArray(parcel, value.ptr, @intCast(value.len))) else @compileError("Unsupported task callback array element");
         },
         else => @compileError("Unsupported task callback field"),
     };

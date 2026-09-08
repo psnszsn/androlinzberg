@@ -46,6 +46,9 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
     private var keyboardDevice: InputDevice? = null
     private var pointerDevice: InputDevice? = null
     private var touchDevice: InputDevice? = null
+    private val tabletDescriptions = mutableMapOf<Int, dev.artzig.window.WaylandTabletInput.Device>()
+    private val tabletGenerations = IntArray(dev.artzig.window.WaylandTabletInput.MAX_TOOLS)
+    private var tabletDevices = emptyList<InputDevice>()
     private var seatGeneration = 0
     private var seatCapabilities = 0
 
@@ -72,11 +75,48 @@ internal class HostedInputManagerService(private val handler: Handler = Handler(
         .setKeyCharacterMap(KeyCharacterMap.obtainEmptyMap(id))
         .setAssociatedDisplayId(android.view.Display.DEFAULT_DISPLAY).build()
 
-    private fun currentDevices(): List<InputDevice> = listOfNotNull(virtualKeyboard, pointerDevice, keyboardDevice, touchDevice)
+    private fun currentDevices(): List<InputDevice> =
+        listOfNotNull(virtualKeyboard, pointerDevice, keyboardDevice, touchDevice) + tabletDevices
+
+    fun publishTabletDevice(device: dev.artzig.window.WaylandTabletInput.Device, present: Boolean) = synchronized(deviceLock) {
+        val slot = device.id - dev.artzig.window.WaylandTabletInput.FIRST_DEVICE
+        if (device.generation < tabletGenerations[slot]) return@synchronized
+        val old = tabletDescriptions[device.id]
+        if (present && device.generation == tabletGenerations[slot]) {
+            if (old != null) check(old == device) { "Tablet device generation changed contents" }
+            return@synchronized
+        }
+        if (!present && old?.generation != device.generation) return@synchronized
+        tabletGenerations[slot] = device.generation
+        if (present) tabletDescriptions[device.id] = device else tabletDescriptions.remove(device.id)
+        advanceGeneration()
+    }
+
+    private fun tabletDevice(device: dev.artzig.window.WaylandTabletInput.Device): InputDevice {
+        val builder = InputDevice.Builder().setId(device.id).setGeneration(generation)
+            .setName("artzig Wayland tablet tool ${device.id}").setDescriptor("artzig-wayland-tablet-${device.id}")
+            .setExternal(true).setAssociatedDisplayId(android.view.Display.DEFAULT_DISPLAY)
+            .setSources(device.source).setKeyboardType(InputDevice.KEYBOARD_TYPE_NONE)
+            .setKeyCharacterMap(KeyCharacterMap.obtainEmptyMap(device.id))
+        fun axis(id: Int, min: Float, max: Float) { builder.addMotionRange(id, device.source, min, max, 0f, 0f, 0f) }
+        axis(android.view.MotionEvent.AXIS_X, 0f, dev.artzig.window.TaskGeometry.DESKTOP_SIZE.toFloat())
+        axis(android.view.MotionEvent.AXIS_Y, 0f, dev.artzig.window.TaskGeometry.DESKTOP_SIZE.toFloat())
+        axis(android.view.MotionEvent.AXIS_PRESSURE, 0f, 1f)
+        if (device.capabilities and 2 != 0) axis(android.view.MotionEvent.AXIS_DISTANCE, 0f, 1f)
+        if (device.capabilities and 4 != 0) {
+            axis(android.view.MotionEvent.AXIS_ORIENTATION, -Math.PI.toFloat(), Math.PI.toFloat())
+            axis(android.view.MotionEvent.AXIS_TILT, 0f, (Math.PI / 2).toFloat())
+        }
+        if (device.capabilities and 8 != 0) axis(android.view.MotionEvent.AXIS_RZ, 0f, (Math.PI * 2).toFloat())
+        if (device.capabilities and 16 != 0) axis(android.view.MotionEvent.AXIS_GENERIC_1, -1f, 1f)
+        if (device.capabilities and 32 != 0) axis(android.view.MotionEvent.AXIS_VSCROLL, -1f, 1f)
+        return builder.build()
+    }
 
     private fun advanceGeneration() {
         check(generation < Int.MAX_VALUE) { "Input device generation exhausted" }
         generation++
+        tabletDevices = tabletDescriptions.values.sortedBy { it.id }.map(::tabletDevice)
         virtualKeyboard = keyboard(keyboardMap)
         keyboardDevice = if (seatCapabilities and 2 == 0) null else InputDevice.Builder()
             .setId(HostedInputDispatcher.HOST_KEYBOARD_DEVICE_ID).setGeneration(generation)

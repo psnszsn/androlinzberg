@@ -51,7 +51,7 @@ pub fn deinit(self: *Self) void {
     for (self.buffers[0..self.count]) |buffer| buffer.destroy();
 }
 
-pub fn apply(self: *Self, io: std.Io, pointer: *wl.Pointer, serial: u32) void {
+pub fn apply(self: *Self, io: std.Io, pointer: anytype, serial: u32) void {
     self.index = 0;
     self.next_ms = std.Io.Clock.awake.now(io).toMilliseconds() + self.frame_ms;
     pointer.setCursor(serial, self.surface, self.hotspot_x, self.hotspot_y);

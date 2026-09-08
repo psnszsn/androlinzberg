@@ -22,6 +22,59 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Tablet input checkpoint (2026-09-08)
+
+The shared Wayland session now owns tablet-v2 discovery and bounded tool, tablet
+and pad proxy lifetimes. Up to 16 logical tools receive generation-checked Android
+input devices. Frame assembly preserves enter/contact/button/leave ordering and
+uses the final coordinates/pressure from each protocol frame, including when
+DOWN precedes axis updates. Pen and eraser identity, pressure, distance, tilt,
+barrel rotation, slider and wheel values cross the Zig Binder transport. Stock
+InputDispatcher retains routing, modal-window checks and keyboard focus.
+Pad controls are not advertised as Android stylus tools; their bounded protocol
+object descriptions are consumed and released.
+
+Drawing tablets advertise the pinned InputReader's MOUSE | STYLUS source while
+retaining their pen/eraser tool type. The native acquisition adapter supplies
+cursor coordinates absent from Java-created combined-source MotionEvents.
+Tablet mouse/lens tools preserve mouse button ordering and Back/Forward keys.
+Resize, suspension, removal and pointer capture cancel active streams; capture
+suppresses absolute tablet input until the compositor releases the lock. Stale
+tool generations cannot revive devices or complete an earlier contact.
+
+Per-tool cursor requests retain the stock input-window ownership check and also
+require the current task generation, device generation and proximity serial.
+Cursor-shape and bounded immutable SHM bitmap/animation paths share the existing
+cursor implementation. Capture hides tablet cursors; proximity loss and tool
+removal release their images.
+
+The stock task organizer also consumes TaskStackListener description changes.
+Pinned WMS queues ordinary TaskOrganizer updates until layout/animation, so that
+stream alone leaves an idle desktop title stale. Description callbacks update
+metadata while retaining organizer-owned geometry.
+
+A test-only source in the pinned labwc fixture drives tablet-v2 through the
+existing shot.sh harness. The stock APK gate checks pen/eraser axes, local/raw
+coordinates in the second task, button ordering, distinct rendered marks,
+custom cursor colors/hotspots, focus preservation and cancellation on removal.
+No tablet commands or fixture package checks enter production framework code.
+Regression 289 passes this gate and input-channel JNI tests; 292 passes the
+Android input smoke including capture and tablet mouse keys. Native regression
+291 passes all 25 tests, including frame pressure and cursor ownership (its JVM
+failure exposed a missing key display ID, fixed and verified by 292).
+Regression 293 passes all 7026 stock task, desktop launcher, surface and output
+build steps; the launcher's 13 interaction steps have no runtime issues.
+Artifacts: `/tmp/wayland-tablet-293-artifacts/`; logs:
+`/tmp/wayland-tablet-{289,291,292,293}.log`.
+
+Regression 294 passes the complete JVM suite. Its APK run and repeat 296 each
+encountered a transient NewPipe live-feed extraction error before fullscreen
+setup, with zero runtime issues. The integration setup now performs one normal,
+recorded RETRY action only for that exact error and retains its screenshot.
+Regression 297 passes all 15 APK tests (46 interaction steps, zero runtime
+issues) and all 7000 integration build steps. Artifacts:
+`/tmp/wayland-tablet-297-artifacts/`; logs `/tmp/wayland-tablet-{294,295,296,297}.log`.
+
 ## Compositor suspension checkpoint (2026-09-08)
 
 The task presenter negotiates xdg-shell up to v6 and applies the optional
@@ -38,7 +91,7 @@ Advertising v6 does not guarantee a compositor sends this optional hint. Pinned
 labwc 0.20.1's `xdg_toplevel_view_minimize` is a no-op. The existing shot.sh
 harness therefore supports a test-only labwc binary whose small source patch
 emits the standard suspended configure. Its Nix build uses artzig's locked
-nixpkgs and is a dependency only of the two protocol-fixture targets.
+nixpkgs and is a dependency only of the protocol-fixture targets.
 
 Regression 275 verifies real minimized/resumed pixels and Android lifecycle
 ordering in three cases: ordinary labwc v6 without hints, the fixture with v6
