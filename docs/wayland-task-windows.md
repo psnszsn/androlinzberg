@@ -22,6 +22,33 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Stock grammatical configuration checkpoint (2026-09-08)
+
+Stock task sessions now start the pinned GrammaticalInflectionService and its
+three helper classes. Package overrides use the stock ATMS package updater,
+WindowProcessController, activity configuration and PackageConfigPersister. The
+legacy window backend retains its adapter until the final cutover.
+
+The cold-process gate sets a package override before the first launch and checks
+application resources, activity resources and AMS's ATMS-backed configuration
+getter. A subsequent unhandled change must pause/save/destroy/create/resume and
+restore instance state. A second activity declaring `grammaticalGender` must
+receive exactly its configuration callback without recreation. Closing it restores
+the original activity, and clearing the override restores inherited configuration.
+These checks also execute inside the Cage and labwc task-window gates.
+
+Regression 227 passes stock boot and cold launch. Regression 228 passes Cage,
+labwc, the desktop launcher (13 steps, zero runtime issues) and JNI input dispatch.
+Regression 229 passes the complete JVM/native suite, all 15 APK tests (47 steps,
+zero runtime issues), seven Surface/Wayland scenarios and build audits. Logs are
+`/tmp/wayland-stock-grammar-{227,228}.log` and
+`/tmp/wayland-stock-grammar-regressions-229.log`; retained UI artifacts are in
+`/tmp/wayland-stock-grammar-228-artifacts/`.
+
+Package 76 adds four unchanged AOSP sources; archive SHA-256 is
+`e9b8aea3c702be40547289adb9d9f03e73d97f4b93de8bac57ae3ae51191c642`.
+Stock night-mode integration and the remaining M8–M11 gates are still pending.
+
 ## Permission/AppOps framework rebase checkpoint (2026-09-08)
 
 Rebased onto main `f55fd3e`, retaining its stock AppOps, permission manager,

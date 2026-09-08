@@ -381,10 +381,15 @@ internal object SystemServices {
         // launcher apps, app widgets) for a device with no launcher, lock screen or providers.
         val hostedPermissions = HostedPermissions(packageManager)
         android.os.ServiceManager.addService(Context.UI_MODE_SERVICE, HostedUiModeManagerService(context, activityManager, hostedPermissions))
-        val grammaticalInflection = HostedGrammaticalInflectionService(activityManager, hostedPermissions)
-        android.os.ServiceManager.addService(Context.GRAMMATICAL_INFLECTION_SERVICE, grammaticalInflection)
-        LocalServices.addService(com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal::class.java,
-            grammaticalInflection.localService)
+        if (stockWindows != null) {
+            // ATMS owns package overrides, configuration delivery and persistence.
+            manager.startService(com.android.server.grammaticalinflection.GrammaticalInflectionService::class.java)
+        } else {
+            val grammaticalInflection = HostedGrammaticalInflectionService(activityManager, hostedPermissions)
+            android.os.ServiceManager.addService(Context.GRAMMATICAL_INFLECTION_SERVICE, grammaticalInflection)
+            LocalServices.addService(com.android.server.grammaticalinflection.GrammaticalInflectionManagerInternal::class.java,
+                grammaticalInflection.localService)
+        }
         android.os.ServiceManager.addService(Context.TRUST_SERVICE, HostedTrustManagerService(hostedPermissions))
         android.os.ServiceManager.addService("lock_settings", HostedLockSettingsService(hostedPermissions))
         android.os.ServiceManager.addService(Context.SEARCH_SERVICE, HostedSearchManagerService(context, packageManager))

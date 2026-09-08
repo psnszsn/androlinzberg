@@ -9050,3 +9050,9 @@ F aosp frameworks/base/core/java/android/view/ViewRootImpl.java
 
 # Stock evdev layout for the Wayland keyboard mapper.
 F aosp frameworks/base/data/keyboards/Generic.kl
+
+# Stock package/global grammatical configuration through ATMS.
+F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionBackupHelper.java
+F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionService.java
+F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionShellCommand.java
+F aosp frameworks/base/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionUtils.java

@@ -217,6 +217,10 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/AudioMetadata.java");
     try c.file("$FB/media/java/android/media/AudioMetadataMap.java");
     try c.file("$FB/media/java/android/media/AudioMetadataReadMap.java");
+    try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionBackupHelper.java");
+    try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionService.java");
+    try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionShellCommand.java");
+    try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionUtils.java");
     try c.file("$FB/media/java/android/media/VolumeAutomation.java");
     try c.file("$FB/media/java/android/media/MediaHTTPConnection.java");
     try c.file("$FB/media/java/android/media/MediaHTTPService.java");

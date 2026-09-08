@@ -55,6 +55,10 @@ object StockColdLaunchSmoke {
         val info = checkNotNull(packages.getApplicationInfo(pkg, 0L, 0))
         check(info.uid in Process.FIRST_APPLICATION_UID..Process.LAST_APPLICATION_UID)
         check(BinderSession.reservePackageUid(pkg) == info.uid)
+        val grammar = android.app.IGrammaticalInflectionManager.Stub.asInterface(
+            android.os.ServiceManager.getService(Context.GRAMMATICAL_INFLECTION_SERVICE))
+        grammar.setRequestedApplicationGrammaticalGender(pkg, 0,
+            android.content.res.Configuration.GRAMMATICAL_GENDER_FEMININE)
         check(manager.runningAppProcesses.orEmpty().none { it.uid == info.uid })
         val startupGate = if (dev.artzig.testing.ProcessInspection.enabled) {
             java.io.File(context.createPackageContext(pkg, 0).filesDir, "inspection-startup-gate").apply {
@@ -91,6 +95,7 @@ object StockColdLaunchSmoke {
             SystemClock.sleep(5)
         }
         check(events == arrayListOf("provider", "create", "start", "resume")) { "Cold callbacks: $events" }
+        verifyGrammaticalConfiguration(context, pkg, grammar)
         if (android.view.HostedRootFrames.stockClients) {
             check(frameCommitted) { "Stock ViewRootImpl never committed an APK frame" }
             if (System.getenv("AZK_TASK_WINDOWS") == "1") verifyWaylandTask(pkg, running.pid, manager)
@@ -101,6 +106,90 @@ object StockColdLaunchSmoke {
             }
         }
         println("Stock first-process launch: installed uid=${info.uid}, attached pid=${running.pid}, resumed activity")
+    }
+
+    private fun verifyGrammaticalConfiguration(context: Context, pkg: String,
+        grammar: android.app.IGrammaticalInflectionManager) {
+        fun snapshot() = checkNotNull(context.contentResolver.call(android.net.Uri.parse("content://$pkg.cold"),
+            "snapshot", null, null))
+        fun matches(state: android.os.Bundle, gender: Int) =
+            state.getInt("applicationGender") == gender && state.getInt("activityGender") == gender &&
+                state.getInt("reportedGender") == gender
+        check(matches(snapshot(), android.content.res.Configuration.GRAMMATICAL_GENDER_FEMININE)) {
+            "The install-time package override did not seed application, activity and ATMS configurations"
+        }
+        grammar.setRequestedApplicationGrammaticalGender(pkg, 0,
+            android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE)
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        var state: android.os.Bundle
+        do {
+            state = snapshot()
+            val callbacks = state.getStringArrayList("events").orEmpty()
+            if (matches(state, android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE) &&
+                state.getBoolean("restoredState") && callbacks.lastIndexOf("resume") > callbacks.lastIndexOf("create") &&
+                (!android.view.HostedRootFrames.stockClients || state.getBoolean("frameCommitted"))) break
+            SystemClock.sleep(5)
+        } while (SystemClock.uptimeMillis() < deadline)
+        check(matches(state, android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE)) {
+            "The running package override bypassed ATMS or activity configuration: $state"
+        }
+        check(state.getBoolean("restoredState")) { "Configuration relaunch lost saved state: $state" }
+        val callbacks = checkNotNull(state.getStringArrayList("events"))
+        val previous = callbacks.indexOf("pause")
+        val saved = callbacks.indexOf("save")
+        val destroyed = callbacks.indexOf("destroy")
+        val created = callbacks.lastIndexOf("create")
+        val resumed = callbacks.lastIndexOf("resume")
+        check(previous >= 0 && saved > previous && destroyed > saved && created > destroyed && resumed > created) {
+            "Grammatical configuration relaunch ordering: $callbacks"
+        }
+        val tasks = ActivityTaskManager.getService()
+        val taskId = tasks.getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY)
+            .single { it.baseActivity?.packageName == pkg }.taskId
+        val options = android.app.ActivityOptions.makeBasic().apply { setLaunchTaskId(taskId) }
+        check(tasks.startActivity(null, "android", null,
+            Intent().setClassName(pkg, "$pkg.ColdHandledConfigurationActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), null, null, null, -1, 0, null,
+            options.toBundle()) == ActivityManager.START_SUCCESS)
+        fun awaitState(description: String, ready: (android.os.Bundle) -> Boolean): android.os.Bundle {
+            val end = SystemClock.uptimeMillis() + 10_000
+            do {
+                val next = snapshot()
+                if (ready(next)) return next
+                SystemClock.sleep(5)
+            } while (SystemClock.uptimeMillis() < end)
+            error("$description: ${snapshot()}")
+        }
+        awaitState("Handled configuration activity did not resume") {
+            it.getString("activityClass") == "ColdHandledConfigurationActivity" &&
+                matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE)
+        }
+        grammar.setRequestedApplicationGrammaticalGender(pkg, 0,
+            android.content.res.Configuration.GRAMMATICAL_GENDER_NEUTRAL)
+        val handled = awaitState("Handled grammatical configuration was not delivered") {
+            matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_NEUTRAL) &&
+                it.getStringArrayList("activityEvents").orEmpty()
+                    .contains("ColdHandledConfigurationActivity:configuration")
+        }
+        check(handled.getStringArrayList("activityEvents").orEmpty()
+            .filter { it.startsWith("ColdHandledConfigurationActivity:") } == listOf(
+                "ColdHandledConfigurationActivity:create", "ColdHandledConfigurationActivity:start",
+                "ColdHandledConfigurationActivity:resume", "ColdHandledConfigurationActivity:configuration")) {
+            "A handled configuration recreated or paused its activity: $handled"
+        }
+        context.contentResolver.call(android.net.Uri.parse("content://$pkg.cold"), "finish", null, null)
+        awaitState("Original activity did not restore after closing the handled activity") {
+            it.getString("activityClass") == "ColdProcessActivity" &&
+                matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_NEUTRAL) &&
+                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+        }
+        grammar.setRequestedApplicationGrammaticalGender(pkg, 0,
+            android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
+        awaitState("Clearing the package gender did not restore the inherited configuration") {
+            matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED) &&
+                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+        }
+        println("Stock grammatical configuration: cold override, WPC getter, relaunch/saved state, handled callback and clearing passed")
     }
 
     private fun inspectionProcesses(registry: dev.artzig.testing.IInspectionRegistry): List<android.os.Bundle> =

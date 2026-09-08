@@ -14,21 +14,35 @@ import android.widget.TextView
  * manifest-selected secondary process as the activity. */
 private object ColdLifecycle {
     private val events = ArrayList<String>()
+    private val activityEvents = ArrayList<String>()
+    @Volatile var activity = java.lang.ref.WeakReference<Activity>(null)
     @Volatile var frameCommitted = false
-    @Synchronized fun record(event: String) { events.add(event) }
+    @Volatile var activityGender = android.content.res.Configuration.GRAMMATICAL_GENDER_UNDEFINED
+    @Volatile var restoredState = false
+    @Synchronized fun record(event: String, owner: Activity? = null) {
+        events.add(event)
+        if (owner != null) activityEvents.add("${owner.javaClass.simpleName}:$event")
+    }
     @Synchronized fun snapshot() = Bundle().apply {
         putInt("pid", Process.myPid())
         putInt("uid", Process.myUid())
         putString("process", Application.getProcessName())
         putStringArrayList("events", ArrayList(events))
+        putStringArrayList("activityEvents", ArrayList(activityEvents))
+        putString("activityClass", activity.get()?.javaClass?.simpleName)
         putBoolean("frameCommitted", frameCommitted)
+        putInt("activityGender", activityGender)
+        putBoolean("restoredState", restoredState)
     }
 }
 
 open class ColdProcessActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        ColdLifecycle.record("create")
+        ColdLifecycle.record("create", this)
+        ColdLifecycle.frameCommitted = false
+        ColdLifecycle.activityGender = resources.configuration.grammaticalGender
+        ColdLifecycle.restoredState = savedInstanceState?.getBoolean("cold-state", false) == true
         setTaskDescription(android.app.ActivityManager.TaskDescription.Builder()
             .setLabel(intent.getStringExtra("title") ?: "Cyan task").build())
         setContentView(object : TextView(this) {
@@ -51,14 +65,30 @@ open class ColdProcessActivity : Activity() {
         })
         window.decorView.viewTreeObserver.registerFrameCommitCallback { ColdLifecycle.frameCommitted = true }
     }
-    override fun onStart() { super.onStart(); ColdLifecycle.record("start") }
-    override fun onResume() { super.onResume(); ColdLifecycle.record("resume") }
-    override fun onPause() { ColdLifecycle.record("pause"); super.onPause() }
-    override fun onStop() { ColdLifecycle.record("stop"); super.onStop() }
-    override fun onDestroy() { ColdLifecycle.record("destroy"); super.onDestroy() }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("cold-state", true)
+        ColdLifecycle.record("save", this)
+        super.onSaveInstanceState(outState)
+    }
+    override fun onStart() { super.onStart(); ColdLifecycle.record("start", this) }
+    override fun onResume() {
+        super.onResume()
+        ColdLifecycle.activity = java.lang.ref.WeakReference(this)
+        ColdLifecycle.activityGender = resources.configuration.grammaticalGender
+        ColdLifecycle.record("resume", this)
+    }
+    override fun onConfigurationChanged(configuration: android.content.res.Configuration) {
+        super.onConfigurationChanged(configuration)
+        if (ColdLifecycle.activity.get() === this) ColdLifecycle.activityGender = configuration.grammaticalGender
+        ColdLifecycle.record("configuration", this)
+    }
+    override fun onPause() { ColdLifecycle.record("pause", this); super.onPause() }
+    override fun onStop() { ColdLifecycle.record("stop", this); super.onStop() }
+    override fun onDestroy() { ColdLifecycle.record("destroy", this); super.onDestroy() }
 }
 
 class ColdGroupedActivity : ColdProcessActivity()
+class ColdHandledConfigurationActivity : ColdProcessActivity()
 
 open class ColdProcessProvider : ContentProvider() {
     override fun onCreate(): Boolean {
@@ -75,8 +105,16 @@ open class ColdProcessProvider : ContentProvider() {
         return true
     }
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle {
+        if (method == "finish") {
+            val current = checkNotNull(ColdLifecycle.activity.get())
+            check(android.os.Handler(android.os.Looper.getMainLooper()).post { current.finish() })
+            return Bundle()
+        }
         require(method == "snapshot")
-        return ColdLifecycle.snapshot()
+        return ColdLifecycle.snapshot().apply {
+            putInt("applicationGender", checkNotNull(context).resources.configuration.grammaticalGender)
+            putInt("reportedGender", android.app.ActivityManager.getService().configuration.grammaticalGender)
+        }
     }
     override fun getType(uri: Uri): String? = null
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
