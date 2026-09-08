@@ -38,6 +38,7 @@ notify_file: Io.File,
 wake: Io.Event = .unset,
 stopping: std.atomic.Value(bool) = .init(false),
 failure: std.atomic.Value(i32) = .init(0),
+waiting_frame: std.atomic.Value(u64) = .init(0),
 group: Io.Group = .init,
 ready_storage: [2]*Frame = undefined,
 return_storage: [4]Return = undefined,
@@ -86,6 +87,12 @@ pub fn writeSurface(self: *Self, parcel: *anyopaque) i32 {
 pub fn requestPresentation(self: *Self) void {
     self.signalOwner();
 }
+/// A frame whose acquire fence is currently owned by the worker. Used by
+/// session diagnostics to distinguish GPU waiting from an unresponsive owner.
+pub fn waitingFrame(self: *const Self) u64 {
+    return self.waiting_frame.load(.acquire);
+}
+
 pub fn drainNotification(self: *Self) !void {
     var counter: u64 = undefined;
     _ = try self.notify_file.readStreaming(self.io, &.{std.mem.asBytes(&counter)});
@@ -144,6 +151,8 @@ fn worker(self: *Self) void {
             // it in bounded slices while retaining the original one-second limit.
             const deadline = Io.Clock.awake.now(self.io).toMilliseconds() + 1000;
             const wait_result: ?i32 = waiting: {
+                self.waiting_frame.store(number, .release);
+                defer self.waiting_frame.store(0, .release);
                 while (true) {
                     if (self.stopping.load(.acquire)) {
                         c.azk_surface_frame_discard(native.?);

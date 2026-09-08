@@ -119,7 +119,10 @@ extern "C" int32_t azk_surface_frame_wait(AzkSurfaceFrame *frame,
                                           int32_t timeout) {
   if (!frame || timeout < 0)
     return BAD_VALUE;
-  return frame->item.mFence->wait(timeout);
+  // Pinned Fence::wait forwards libsync's -ETIME. This private queue API
+  // uses Android TIMED_OUT, matching its bounded worker wait/retry contract.
+  const auto status = frame->item.mFence->wait(timeout);
+  return status == -ETIME ? TIMED_OUT : status;
 }
 extern "C" int32_t azk_surface_frame_release(AzkSurfaceFrame *raw, int32_t fd) {
   auto fence = sp<Fence>::make(fd);

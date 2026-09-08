@@ -23,7 +23,8 @@ void azk_surface_queue_destroy(AzkSurfaceQueue *);
 int32_t azk_surface_queue_acquire(AzkSurfaceQueue *, AzkSurfaceFrame **,
                                   AzkGraphicsBufferInfo *,
                                   uint64_t *frame_number);
-// Worker-only bounded wait on the original producer acquire fence.
+// Worker-only bounded wait on the original producer acquire fence. Pending
+// waits return Android TIMED_OUT (-110), normalizing libsync ETIME.
 int32_t azk_surface_frame_wait(AzkSurfaceFrame *, int32_t timeout_ms);
 // release consumes a compositor release fence FD (-1 after wl_buffer.release
 // with implicit synchronization). The lease is consumed even on failure.

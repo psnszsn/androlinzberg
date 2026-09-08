@@ -22,6 +22,44 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## GPU fence checkpoint (2026-09-08)
+
+The surface worker now normalizes the pinned libsync `-ETIME` timeout to the
+private queue API's Android `TIMED_OUT`. A real pending GPU acquire fence exposed
+the mismatch: the first 10 ms wait previously failed the queue instead of
+retrying within its one-second deadline. Pinned AOSP Fence behavior is unchanged.
+The worker exposes the frame currently waiting on a fence for queue diagnostics.
+
+A hardware Vulkan fixture exports a real sync_file from a submission delayed by
+a host-controlled event. Its bounded release worker prevents a failed harness
+from leaving GPU work waiting indefinitely. It requires Vulkan 1.1 hardware and
+exportable SYNC_FD fences; an absent GPU capability fails the gate. The development
+shell supplies the Vulkan loader. Supply the host Vulkan ICD with `VK_DRIVER_FILES`
+when the loader cannot discover it, alongside the existing EGL/GBM environment.
+
+`surface-fence-test` checks three cases, also included in `surface-wayland-test`:
+frame 7 remains unpresented while the owner loop responds, then all 12 frames
+present with correct pixels after release; shutdown returns all buffers while
+the GPU fence remains pending; and the one-second wait deadline fails explicitly
+with TIMED_OUT and releases resources before the producer is allowed to continue.
+Both retirement cases require further producer calls to return DEAD_OBJECT.
+`gui-test` additionally forces a stock BufferQueue slot to carry a pending GPU
+release fence through the control Parcel and stock producer Bp/Bn transport. The
+dequeued fence remains pending until explicit GPU release.
+
+Regressions 302 and 303 pass these focused gates on the Radeon 8060S/RADV.
+Regression 304 passes all 7012 stock graphics/task build steps, including all 11
+surface scenarios, BufferQueue, both output lifecycle cases, and Cage, labwc and
+tablet APK task presentation. Fence logs and binary/library hashes are retained
+under `/tmp/wayland-fence-304-artifacts/`; build logs are
+`/tmp/wayland-fence-302.log` and `/tmp/wayland-{303,304}.log`.
+Regression 305 passes the complete JVM suite; one APK live-feed setup failed
+with NewPipe's website parsing error even after its existing single retry, with
+no runtime issues. Regression 306 repeats the unchanged full APK suite and passes
+all 15 tests. Both runs retain their integration artifacts under
+`/tmp/wayland-fence-{305,306}-artifacts/`.
+Mixed-output task pixels, output pacing and the remaining M8–M11 gates remain.
+
 ## Tablet input checkpoint (2026-09-08)
 
 The shared Wayland session now owns tablet-v2 discovery and bounded tool, tablet

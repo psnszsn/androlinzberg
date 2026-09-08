@@ -21,6 +21,8 @@
 #include <ui/GraphicBufferAllocator.h>
 #include <system/window.h>
 #include "GpuBufferRenderer.h"
+#include "DelayedGpuFence.h"
+#include <cerrno>
 #include <android/binder_manager.h>
 #include <chrono>
 #include <iostream>
@@ -95,8 +97,10 @@ public:
     }
     if (code == 3) {
       assert(held);
+      auto fence = sp<Fence>::make();
+      assert(in.read(*fence) == OK);
       auto status = consumer->releaseBuffer(held->mSlot, held->mFrameNumber,
-                                            Fence::NO_FENCE);
+                                            fence);
       held.reset();
       return out->writeInt32(status);
     }
@@ -119,8 +123,10 @@ public:
   std::atomic<bool> died = false;
   void binderDied(const wp<IBinder> &) override { died = true; }
 };
-void release(const sp<IBinder> &service) {
+void release(const sp<IBinder> &service,
+             const sp<Fence> &fence = Fence::NO_FENCE) {
   Parcel in, out;
+  assert(in.write(*fence) == OK);
   assert(service->transact(3, in, &out) == OK && out.readInt32() == OK);
 }
 void acquire(const sp<IBinder> &service, uint32_t width, uint32_t height,
@@ -373,11 +379,25 @@ int main(int argc, char **argv) {
                                  PIXEL_FORMAT_RGBA_8888, usage, nullptr,
                                  nullptr) == TIMED_OUT);
   assert(std::chrono::steady_clock::now() - start >= 20ms);
-  release(service);
-  assert(producer->dequeueBuffer(&blockedSlot, &blockedFence, 0, 0,
-                                 PIXEL_FORMAT_RGBA_8888, usage, nullptr,
-                                 nullptr) >= 0);
-  assert(producer->cancelBuffer(blockedSlot, blockedFence) == OK);
+  {
+    // The released slot is the only available slot. Its real GPU release fence
+    // must survive both the control Parcel and stock Bp/Bn producer transport;
+    // dequeuing a slot does not authorize overwriting its pixels before signal.
+    DelayedGpuFence gate;
+    release(service, gate.fence());
+    const auto status = producer->dequeueBuffer(
+        &blockedSlot, &blockedFence, 0, 0, PIXEL_FORMAT_RGBA_8888, usage,
+        nullptr, nullptr);
+    const auto pending = status >= 0 && blockedFence && blockedFence->isValid()
+        ? blockedFence->wait(25) : BAD_VALUE;
+    gate.release();
+    assert(status >= 0 && pending == -ETIME && !gate.timedOut());
+    assert(blockedFence->wait(1000) == OK);
+    assert(producer->cancelBuffer(blockedSlot, blockedFence) == OK);
+    blockedFence.clear();
+  }
+  std::cout << "PASS delayed GPU release fence survives stock BufferQueue and AZKB"
+            << std::endl;
   acquire(service, 96, 72, 0xff000000 | (23 * 0x010203));
   release(service);
   const auto callbackDeadline = std::chrono::steady_clock::now() + 3s;

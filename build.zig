@@ -428,6 +428,7 @@ pub fn build(b: *std.Build) void {
     gui_test.root_module.linkLibrary(binder_cpp);
     gui_test.root_module.linkLibrary(binder_ndk);
     gui_test.root_module.linkSystemLibrary("GLESv2", .{});
+    gui_test.root_module.linkSystemLibrary("vulkan", .{});
     const gui_run = b.addSystemCommand(&.{"python3"});
     gui_run.addFileArg(b.path("tools/binder-facade-test.py"));
     gui_run.addArg("--probe");
@@ -487,12 +488,14 @@ pub fn build(b: *std.Build) void {
     surface_producer.root_module.addCSourceFile(.{ .file = b.path("tests/native/WaylandSurfaceProducer.cpp"), .flags = &.{
         "-std=c++23", "-fno-rtti", "-fno-exceptions", "-UNDEBUG", "-Wno-invalid-specialization", "-Wno-inconsistent-missing-override", "-include", b.pathResolve(&.{"src/native/graphics/include/azk/graphics_compat.h"}),
     } });
+    surface_producer.root_module.linkSystemLibrary("vulkan", .{});
     surface_producer.root_module.linkLibrary(gui_host);
     surface_producer.root_module.linkLibrary(binder_cpp);
     surface_producer.root_module.linkLibrary(binder_ndk);
     const surface_test_step = b.step("surface-wayland-test", "Present stock Surface frames in Cage and verify resize, teardown and peer loss");
+    const surface_fence_step = b.step("surface-fence-test", "Verify delayed GPU acquire fences without blocking Wayland dispatch");
     var previous_surface_run: ?*std.Build.Step = null;
-    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation" }) |scenario| {
+    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout" }) |scenario| {
         const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
         const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
         if (std.mem.eql(u8, scenario, "pointer-capture")) {
@@ -515,8 +518,12 @@ pub fn build(b: *std.Build) void {
         surface_run.addArgs(&.{ "--output", output });
         surface_run.has_side_effects = true;
         surface_run.addArgs(&.{ "--scenario", scenario });
-        if (previous_surface_run) |previous| surface_run.step.dependOn(previous);
-        previous_surface_run = &surface_run.step;
+        if (std.mem.eql(u8, scenario, "delayed-fence") or std.mem.startsWith(u8, scenario, "fence-")) {
+            surface_fence_step.dependOn(&surface_run.step);
+        } else {
+            if (previous_surface_run) |previous| surface_run.step.dependOn(previous);
+            previous_surface_run = &surface_run.step;
+        }
         surface_test_step.dependOn(&surface_run.step);
     }
     const output_lifecycle_step = b.step("wayland-output-test", "Track output scale, transform, removal and reappearance through the real compositor");

@@ -4,12 +4,13 @@ const Io = std.Io;
 extern "c" fn AServiceManager_addService(?*anyopaque, [*:0]const u8) i32;
 extern "c" fn AIBinder_decStrong(?*anyopaque) void;
 extern "c" fn azk_graphics_live_buffers() u64;
-const Stop = struct { io: Io, queue: *Queue, hold: std.atomic.Value(bool), stopped: std.atomic.Value(bool) = .init(false) };
+const Stop = struct { io: Io, queue: *Queue, hold: std.atomic.Value(bool), stopped: std.atomic.Value(bool) = .init(false), probe: std.atomic.Value(bool) = .init(false) };
 fn watchStdin(stop: *Stop) void {
     var bytes: [16]u8 = undefined;
     while (true) {
         const count = Io.File.stdin().readStreaming(stop.io, &.{&bytes}) catch break;
         if (count == 0) break;
+        if (std.mem.indexOfScalar(u8, bytes[0..count], 'p') != null) stop.probe.store(true, .release);
         stop.hold.store(false, .release);
         stop.queue.requestPresentation();
     }
@@ -75,7 +76,11 @@ pub fn main(init: std.process.Init) !void {
         }
         return;
     }
-    try run(init);
+    run(init) catch |failure| {
+        if (azk_graphics_live_buffers() != 0) return error.LeakedGraphicsBuffer;
+        try Io.File.stdout().writeStreamingAll(init.io, "released all buffers after failure\n");
+        return failure;
+    };
     if (azk_graphics_live_buffers() != 0) return error.LeakedGraphicsBuffer;
     try Io.File.stdout().writeStreamingAll(init.io, "released all buffers\n");
 }
@@ -114,6 +119,10 @@ fn run(init: std.process.Init) !void {
     while (!stop.stopped.load(.acquire)) {
         var ready = [_]bool{false};
         try session.dispatch(&.{queue.notify_file}, &ready, 100);
+        if (stop.probe.swap(false, .acq_rel)) {
+            var message: [100]u8 = undefined;
+            try Io.File.stdout().writeStreamingAll(io, try std.fmt.bufPrint(&message, "owner responsive frames={d} pendingFence={d}\n", .{ frames, queue.waitingFrame() }));
+        }
         for (window.takeEvents()) |event| if (event == .close) return;
         if (ready[0]) {
             if (stop.hold.load(.acquire)) {

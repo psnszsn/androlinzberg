@@ -18,7 +18,7 @@ p.add_argument('--server', type=Path, required=True)
 p.add_argument('--producer', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation'], default='normal')
+p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout'], default='normal')
 a = p.parse_args()
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -63,12 +63,15 @@ try:
                                       '--prop-area', env['AZK_PROP_AREA']))
     assert line(broker).startswith('ready')
     pressure = a.scenario == 'backpressure'
+    delayed = a.scenario == 'delayed-fence' or a.scenario.startswith('fence-')
+    early = False
     server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') or a.scenario == 'cursor-animation' else ())
     assert line(server) == 'ready'
     env.pop('AZK_BINDER_SYSTEM_COOKIE')
     env['AZK_BINDER_PACKAGE'] = 'dev.artzig.surface.producer'
     expect_death = a.scenario in ('consumer-crash', 'broker-loss')
-    producer = spawn(a.producer, 'producer', ('--expect-death',) if expect_death else ('--pressure',) if pressure else ())
+    producer = spawn(a.producer, 'producer', ('--expect-death',) if expect_death else ('--pressure',) if pressure else ('--' + a.scenario,) if delayed else ())
+    presented = 0
     for frame in range(1, 13):
         value = line(producer)
         if value == 'BACKPRESSURE':
@@ -79,71 +82,126 @@ try:
             server.stdin.write(b'resume\n')
             producer.stdin.write(b'resume\n')
             value = line(producer)
+        if value == 'FENCE_PENDING':
+            assert delayed and frame == 7
+            pending_started = time.monotonic()
+            while presented < 6:
+                record = line(server)
+                assert record.startswith('presented '), record
+                presented = int(record.split()[1])
+            assert presented == 6
+            server.stdin.write(b'p')
+            while True:
+                record = line(server, timeout=1)
+                if record.startswith('owner responsive '): break
+                assert record == 'presented 6', record
+            assert record == 'owner responsive frames=6 pendingFence=7', record
+            end = time.monotonic() + .15
+            with selectors.DefaultSelector() as selector:
+                selector.register(server.stdout, selectors.EVENT_READ)
+                while time.monotonic() < end and selector.select(end - time.monotonic()):
+                    assert line(server) == 'presented 6', 'Unsignaled frame was presented'
+            result['delayed_fence'] = dict(pending_frame=7, presented_before_release=6,
+                                          owner_responsive=True, withheld_millis=150)
+            if a.scenario in ('fence-shutdown', 'fence-timeout'):
+                shutdown_started = time.monotonic()
+                if a.scenario == 'fence-shutdown':
+                    server.stdin.close()
+                    expected = 'released all buffers'
+                else:
+                    expected = 'released all buffers after failure'
+                # A wake can publish an unchanged presentation count before EOF.
+                while True:
+                    record = line(server, timeout=2)
+                    if record == expected: break
+                    assert record == 'presented 6', record
+                status = server.wait(timeout=2)
+                elapsed = time.monotonic() - shutdown_started
+                if a.scenario == 'fence-shutdown':
+                    assert status == 0 and elapsed < .5, (status, elapsed)
+                else:
+                    assert status != 0 and .75 <= time.monotonic() - pending_started < 1.8
+                    assert 'surface queue acquire fence failed: -110' in (out / 'server.log').read_text()
+                result['live_buffers_after_shutdown'] = 0
+                result['fence_retirement'] = dict(exit=status, elapsed_millis=round(elapsed * 1000),
+                                                 gpu_still_pending=True)
+                # Release GPU work even on the timeout path; the producer then
+                # verifies the queue's dead owner through its stock proxy.
+                producer.stdin.write(b'release\n')
+                assert line(producer) == 'PASS fence consumer loss fails further producer calls'
+                assert producer.wait(timeout=2) == 0
+                early = True
+                break
+            producer.stdin.write(b'release\n')
+            value = line(producer)
         assert value == f'queued {frame}'
-    assert not pressure or result.get('backpressure')
-    assert line(producer) == 'READY_SCREENSHOT'
-    presented = 0
-    while presented < 12:
-        value = line(server)
-        assert value.startswith('presented ')
-        presented = int(value.split()[1])
-    if a.scenario.startswith('pointer-capture'):
-        assert line(server) == ('pointer capture unavailable passed' if a.scenario.endswith('unavailable') else 'pointer capture passed')
-        result['pointer_capture'] = 'unsupported without state/objects' if a.scenario.endswith('unavailable') else 'compositor lock, raw relative motion and unlock acknowledged'
-    time.sleep(0.2)
-    subprocess.run(['grim', str(out / 'screenshot.png')], check=True)
-    ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'])
-    magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
-    assert magic == b'P6' and maximum == b'255'
-    width, height = map(int, dimensions.split())
-    offset = ((height // 2) * width + width // 2) * 3
-    actual = tuple(pixels[offset:offset + 3])
-    assert all(abs(x - y) <= 2 for x, y in zip(actual, (171, 120, 52))), actual
-    result.update(presented=presented, screenshot_size=[width, height], center_rgb=actual)
-    if a.scenario == 'cursor-animation':
-        assert line(server) == 'cursor animation ready'
-        colors = set()
-        deadline = time.monotonic() + 3
-        while len(colors) < 2 and time.monotonic() < deadline:
-            ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
-            _, dimensions, _, data = ppm.split(b'\n', 3)
-            w, h = map(int, dimensions.split())
-            x, y = w // 2 - 4 + 16, h // 2 - 5 + 16
-            color = tuple(data[(y * w + x) * 3:(y * w + x) * 3 + 3])
-            if color in ((255, 0, 0), (0, 255, 0)):
-                colors.add(color)
-            time.sleep(.03)
-        assert colors == {(255, 0, 0), (0, 255, 0)}, colors
-        subprocess.run(['grim', '-c', str(out / 'cursor.png')], check=True, timeout=3)
-        result['animated_cursor_colors'] = sorted(colors)
-    if a.scenario == 'consumer-crash':
-        server.kill()
-        assert server.wait(timeout=5) == -9
-    if a.scenario == 'broker-loss':
-        broker.kill()
-        assert broker.wait(timeout=5) == -9
-    if a.scenario == 'producer-crash':
-        producer.kill()
-        assert producer.wait(timeout=5) == -9
-    else:
-        producer.stdin.close()
-        if expect_death:
-            assert line(producer) == 'PASS owner loss fails further producer calls'
-        assert producer.wait(timeout=5) == 0
-    if a.scenario != 'consumer-crash':
-        server.stdin.close()
-        assert line(server) == 'released all buffers'
-        assert server.wait(timeout=5) == 0
-        result['live_buffers_after_shutdown'] = 0
+    if not early:
+        assert not pressure or result.get('backpressure')
+        assert line(producer) == 'READY_SCREENSHOT'
+        while presented < 12:
+            value = line(server)
+            assert value.startswith('presented ')
+            presented = int(value.split()[1])
+        if a.scenario.startswith('pointer-capture'):
+            assert line(server) == ('pointer capture unavailable passed' if a.scenario.endswith('unavailable') else 'pointer capture passed')
+            result['pointer_capture'] = 'unsupported without state/objects' if a.scenario.endswith('unavailable') else 'compositor lock, raw relative motion and unlock acknowledged'
+        time.sleep(0.2)
+        subprocess.run(['grim', str(out / 'screenshot.png')], check=True)
+        ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'])
+        magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
+        assert magic == b'P6' and maximum == b'255'
+        width, height = map(int, dimensions.split())
+        offset = ((height // 2) * width + width // 2) * 3
+        actual = tuple(pixels[offset:offset + 3])
+        assert all(abs(x - y) <= 2 for x, y in zip(actual, (171, 120, 52))), actual
+        result.update(presented=presented, screenshot_size=[width, height], center_rgb=actual)
+        if a.scenario == 'cursor-animation':
+            assert line(server) == 'cursor animation ready'
+            colors = set()
+            deadline = time.monotonic() + 3
+            while len(colors) < 2 and time.monotonic() < deadline:
+                ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
+                _, dimensions, _, data = ppm.split(b'\n', 3)
+                w, h = map(int, dimensions.split())
+                x, y = w // 2 - 4 + 16, h // 2 - 5 + 16
+                color = tuple(data[(y * w + x) * 3:(y * w + x) * 3 + 3])
+                if color in ((255, 0, 0), (0, 255, 0)):
+                    colors.add(color)
+                time.sleep(.03)
+            assert colors == {(255, 0, 0), (0, 255, 0)}, colors
+            subprocess.run(['grim', '-c', str(out / 'cursor.png')], check=True, timeout=3)
+            result['animated_cursor_colors'] = sorted(colors)
+        if a.scenario == 'consumer-crash':
+            server.kill()
+            assert server.wait(timeout=5) == -9
+        if a.scenario == 'broker-loss':
+            broker.kill()
+            assert broker.wait(timeout=5) == -9
+        if a.scenario == 'producer-crash':
+            producer.kill()
+            assert producer.wait(timeout=5) == -9
+        else:
+            producer.stdin.close()
+            if expect_death:
+                assert line(producer) == 'PASS owner loss fails further producer calls'
+            assert producer.wait(timeout=5) == 0
+        if a.scenario != 'consumer-crash':
+            server.stdin.close()
+            assert line(server) == 'released all buffers'
+            assert server.wait(timeout=5) == 0
+            result['live_buffers_after_shutdown'] = 0
     if a.scenario != 'broker-loss':
         broker.stdin.close()
         assert broker.wait(timeout=5) == 0
     frames = re.findall(r'surface-frame number=(\d+) buffer=(\d+) width=(\d+) height=(\d+)',
                         (out / 'server.log').read_text())
-    assert len(frames) == 12, frames
-    assert [int(x[0]) for x in frames] == list(range(1, 13))
-    assert [tuple(map(int, x[2:])) for x in frames] == [(320, 240)] * 6 + [(480, 360)] * 6
+    expected_frames = 6 if early else 12
+    assert len(frames) == expected_frames, frames
+    assert [int(x[0]) for x in frames] == list(range(1, expected_frames + 1))
+    assert [tuple(map(int, x[2:])) for x in frames] == [(320, 240)] * 6 + ([(480, 360)] * 6 if not early else [])
     result['frames'] = frames
+    if delayed:
+        result['gpu_device'] = re.search(r'GPU fence device: (.+)', (out / 'producer.log').read_text()).group(1)
     result['scenario'] = a.scenario
     result['passed'] = True
 except (AssertionError, RuntimeError, OSError, subprocess.SubprocessError) as error:

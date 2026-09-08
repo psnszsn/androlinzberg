@@ -5,12 +5,18 @@
 #include <ui/GraphicBuffer.h>
 #include <system/window.h>
 #include "GpuBufferRenderer.h"
+#include "DelayedGpuFence.h"
+#include <memory>
+#include <cerrno>
 #include <chrono>
 #include <iostream>
 #include <thread>
 using namespace android;
 int main(int argc, char **argv) {
   const bool pressure = argc == 2 && std::string(argv[1]) == "--pressure";
+  const bool fenceLoss = argc == 2 && (std::string(argv[1]) == "--fence-shutdown" ||
+                                      std::string(argv[1]) == "--fence-timeout");
+  const bool delayed = fenceLoss || (argc == 2 && std::string(argv[1]) == "--delayed-fence");
   bool observedPressure = false;
   auto binder = defaultServiceManager()->waitForService(
       String16("dev.artzig.surface.v1"));
@@ -44,7 +50,29 @@ int main(int argc, char **argv) {
     const uint32_t color =
         frame == 11 ? 0xff3478ab : 0xff000000u | uint32_t(frame * 0x010203);
     auto fence = renderer.render(GraphicBuffer::from(buffer), color);
+    std::unique_ptr<DelayedGpuFence> gate;
+    if (delayed && frame == 6) {
+      gate = std::make_unique<DelayedGpuFence>();
+      fence = Fence::merge("delayed GPU acquire", fence, gate->fence());
+      const auto pending = fence->wait(0);
+      if (pending != -ETIME) gate->release();
+      assert(pending == -ETIME);
+    }
     assert(window->queueBuffer(window, buffer, fence->dup()) == OK);
+    if (gate) {
+      std::cout << "FENCE_PENDING" << std::endl;
+      std::string command;
+      const bool resumed = bool(std::getline(std::cin, command)) && command == "release";
+      gate->release();
+      assert(resumed && !gate->timedOut());
+      assert(fence->wait(1000) == OK);
+      if (fenceLoss) {
+        int width;
+        assert(producer->query(NATIVE_WINDOW_WIDTH, &width) == DEAD_OBJECT);
+        std::cout << "PASS fence consumer loss fails further producer calls" << std::endl;
+        return 0;
+      }
+    }
     std::cout << "queued " << frame + 1 << std::endl;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
