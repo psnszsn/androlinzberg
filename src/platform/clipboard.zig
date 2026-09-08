@@ -3,107 +3,11 @@
 const std = @import("std");
 const wl = @import("wayland").client.wl;
 const Transfers = @import("data_transfers.zig");
-const Stream = @import("data_transfer.zig");
 const Self = @This();
 
-pub const MimeTypes = struct {
-    const max_count = 64;
-    const max_length = 128;
-    values: [max_count][max_length + 1]u8 = undefined,
-    lengths: [max_count]u8 = undefined,
-    count: usize = 0,
-
-    pub fn add(self: *MimeTypes, value: []const u8) !void {
-        if (value.len == 0 or value.len > max_length or std.mem.indexOfScalar(u8, value, 0) != null)
-            return error.InvalidOfferMimeType;
-        if (self.contains(value)) return;
-        if (self.count == max_count) return error.OfferMimeCapacityExceeded;
-        @memcpy(self.values[self.count][0..value.len], value);
-        self.values[self.count][value.len] = 0;
-        self.lengths[self.count] = @intCast(value.len);
-        self.count += 1;
-    }
-    pub fn get(self: *const MimeTypes, index: usize) [:0]const u8 {
-        return self.values[index][0..self.lengths[index] :0];
-    }
-    pub fn contains(self: *const MimeTypes, value: []const u8) bool {
-        for (0..self.count) |i| if (std.mem.eql(u8, self.get(i), value)) return true;
-        return false;
-    }
-    pub fn text(self: *const MimeTypes) ?[:0]const u8 {
-        return self.representation("text/plain", true);
-    }
-    pub fn uris(self: *const MimeTypes) ?[:0]const u8 {
-        return self.representation("text/uri-list", false);
-    }
-    pub fn html(self: *const MimeTypes) ?[:0]const u8 {
-        return self.representation("text/html", false);
-    }
-    fn representation(self: *const MimeTypes, media_type: []const u8, legacy_utf8: bool) ?[:0]const u8 {
-        var best: ?[:0]const u8 = null;
-        var rank: u8 = 0;
-        for (0..self.count) |i| {
-            const value = self.get(i);
-            var candidate: u8 = 0;
-            if (legacy_utf8 and std.mem.eql(u8, value, "UTF8_STRING")) candidate = 2 else {
-                var parts = std.mem.splitScalar(u8, value, ';');
-                if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, parts.next().?, " \t"), media_type)) continue;
-                candidate = 1;
-                while (parts.next()) |parameter| {
-                    const equals = std.mem.indexOfScalar(u8, parameter, '=') orelse continue;
-                    if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, parameter[0..equals], " \t"), "charset")) continue;
-                    const encoding = std.mem.trim(u8, parameter[equals + 1 ..], " \t\"");
-                    if (!std.ascii.eqlIgnoreCase(encoding, "utf-8")) {
-                        candidate = 0;
-                        break;
-                    }
-                    candidate = 3;
-                }
-            }
-            if (candidate > rank) {
-                best = value;
-                rank = candidate;
-            }
-        }
-        return best;
-    }
-};
-
-pub const Payload = struct {
-    gpa: std.mem.Allocator,
-    text: ?[]u8,
-    html: ?[]u8 = null,
-    uris: ?[]u8 = null,
-
-    pub fn init(gpa: std.mem.Allocator, text: ?[]const u8, html: ?[]const u8) !*Payload {
-        return initAll(gpa, text, html, null);
-    }
-    pub fn initAll(gpa: std.mem.Allocator, text: ?[]const u8, html: ?[]const u8, uris: ?[]const u8) !*Payload {
-        if (text == null and html == null and uris == null) return error.EmptyClipboardRepresentations;
-        if (text) |value| try validate(value);
-        if (html) |value| try validate(value);
-        if (uris) |value| try validate(value);
-        const self = try gpa.create(Payload);
-        errdefer gpa.destroy(self);
-        const plain = if (text) |value| try gpa.dupe(u8, value) else null;
-        errdefer if (plain) |bytes| gpa.free(bytes);
-        const rich = if (html) |value| try gpa.dupe(u8, value) else null;
-        errdefer if (rich) |bytes| gpa.free(bytes);
-        self.* = .{ .gpa = gpa, .text = plain, .html = rich, .uris = if (uris) |value| try gpa.dupe(u8, value) else null };
-        return self;
-    }
-    pub fn destroy(self: *Payload) void {
-        if (self.text) |text| self.gpa.free(text);
-        if (self.html) |html| self.gpa.free(html);
-        if (self.uris) |uris| self.gpa.free(uris);
-        self.gpa.destroy(self);
-    }
-    fn validate(bytes: []const u8) !void {
-        if (bytes.len > Transfers.max_bytes) return error.OfferTooLarge;
-        if (!std.unicode.utf8ValidateSlice(bytes) or std.mem.indexOfScalar(u8, bytes, 0) != null)
-            return error.InvalidClipboardText;
-    }
-};
+const DataOffer = @import("data_offer.zig");
+pub const MimeTypes = DataOffer.MimeTypes;
+pub const Payload = DataOffer.Payload;
 
 pub const Hooks = struct {
     context: *anyopaque,
@@ -113,17 +17,7 @@ pub const Hooks = struct {
     failure: *const fn (*anyopaque, anyerror) void,
 };
 pub const Pending = struct { payload: ?*Payload };
-const Offer = struct {
-    owner: *Self,
-    proxy: *wl.DataOffer,
-    token: u64,
-    mimes: MimeTypes = .{},
-    waiting: u3 = 0,
-    received: bool = false,
-    text: ?[]u8 = null,
-    html: ?[]u8 = null,
-    uris: ?[]u8 = null,
-};
+const Offer = DataOffer;
 const Source = struct {
     owner: *Self,
     proxy: *wl.DataSource,
@@ -301,19 +195,12 @@ fn destroySource(self: *Self, source: *Source) void {
     self.removeSource(source).destroy();
 }
 fn destroyOffer(self: *Self, offer: *Offer) void {
-    self.transfers.cancel(offer.token);
-    self.transfers.cancel(offer.token + 1);
-    self.transfers.cancel(offer.token + 2);
-    if (offer.text) |bytes| self.gpa.free(bytes);
-    if (offer.html) |bytes| self.gpa.free(bytes);
-    if (offer.uris) |bytes| self.gpa.free(bytes);
-    offer.proxy.destroy();
     for (&self.offers) |*slot| if (slot.* == offer) {
         slot.* = null;
     };
     if (self.selection == offer) self.selection = null;
     if (self.drag == offer) self.drag = null;
-    self.gpa.destroy(offer);
+    offer.destroy();
 }
 fn find(self: *Self, proxy: *wl.DataOffer) ?*Offer {
     for (self.offers) |slot| if (slot) |offer| if (offer.proxy == proxy) return offer;
@@ -325,18 +212,8 @@ fn newOffer(self: *Self, proxy: *wl.DataOffer) !void {
     const slot = for (&self.offers) |*slot| {
         if (slot.* == null) break slot;
     } else return error.ClipboardOfferCapacityExceeded;
-    const offer = try self.gpa.create(Offer);
-    errdefer self.gpa.destroy(offer);
-    offer.* = .{ .owner = self, .proxy = proxy, .token = try self.token() };
-    proxy.setListener(*Offer, offerListener, offer);
+    const offer = try DataOffer.init(self.gpa, self.io, self.transfers, proxy, try self.token(), self.hooks.context, self.hooks.failure);
     slot.* = offer;
-}
-fn receive(self: *Self, offer: *Offer, mime: [:0]const u8, representation: u2) !void {
-    const pipe = try Stream.Pipe.init();
-    defer pipe.write.close(self.io);
-    try self.transfers.receive(offer.token + representation, pipe.read);
-    offer.proxy.receive(mime, pipe.write.handle);
-    offer.waiting |= @as(u3, 1) << representation;
 }
 fn selected(self: *Self, proxy: ?*wl.DataOffer) !void {
     const replacement = if (proxy) |p| self.find(p) orelse return error.UnknownClipboardOffer else null;
@@ -378,9 +255,9 @@ fn readSelection(self: *Self, offer: *Offer) !void {
         return error.UnsupportedClipboardMimeTypes;
     }
     errdefer self.destroyOffer(offer);
-    if (plain) |mime| try self.receive(offer, mime, 0);
-    if (html) |mime| try self.receive(offer, mime, 1);
-    if (uris) |mime| try self.receive(offer, mime, 2);
+    if (plain) |mime| try offer.receive(mime, 0);
+    if (html) |mime| try offer.receive(mime, 1);
+    if (uris) |mime| try offer.receive(mime, 2);
 }
 
 /// Called by the owner after the worker eventfd wakes. All offer/proxy state
@@ -393,48 +270,15 @@ pub fn drain(self: *Self) void {
             continue;
         }
         const current = offer.?;
-        const bytes = completion.result catch |err| {
+        const payload = current.complete(completion) catch |err| {
             self.destroyOffer(current);
             self.hooks.issue(self.hooks.context, err);
             continue;
         };
-        Payload.validate(bytes) catch |err| {
-            self.gpa.free(bytes);
-            self.destroyOffer(current);
-            self.hooks.issue(self.hooks.context, err);
-            continue;
-        };
-        if (completion.token == current.token) {
-            current.text = bytes;
-            current.waiting &= ~@as(u3, 1);
-        } else if (completion.token == current.token + 1) {
-            current.html = bytes;
-            current.waiting &= ~@as(u3, 2);
-        } else {
-            current.uris = bytes;
-            current.waiting &= ~@as(u3, 4);
-        }
-        if (current.waiting == 0) {
-            const payload = self.gpa.create(Payload) catch |err| {
-                self.destroyOffer(current);
-                self.hooks.issue(self.hooks.context, err);
-                continue;
-            };
-            payload.* = .{ .gpa = self.gpa, .text = current.text, .html = current.html, .uris = current.uris };
-            current.text = null;
-            current.html = null;
-            current.uris = null;
-            self.hooks.changed(self.hooks.context, self.revision, payload);
-        }
+        if (payload) |owned| self.hooks.changed(self.hooks.context, self.revision, owned);
     }
 }
 
-fn offerListener(_: *wl.DataOffer, event: wl.DataOffer.Event, offer: *Offer) void {
-    switch (event) {
-        .offer => |mime| offer.mimes.add(std.mem.span(mime.mime_type)) catch |err| offer.owner.hooks.failure(offer.owner.hooks.context, err),
-        .source_actions, .action => {},
-    }
-}
 fn sourceListener(_: *wl.DataSource, event: wl.DataSource.Event, source: *Source) void {
     const self = source.owner;
     switch (event) {
