@@ -25,7 +25,7 @@ Subject: [PATCH] Clipboard: connect stock access policy to the desktop monitor
              mClipboardMonitor = new EmulatorClipboardMonitor((clip) -> {
                  synchronized (mLock) {
                      Clipboard clipboard = getClipboardLocked(0, DEVICE_ID_DEFAULT);
-@@ -936,7 +949,12 @@
+@@ -936,5 +949,10 @@
      private void setPrimaryClipInternalLocked(
              @Nullable ClipData clip, int uid, int deviceId, @Nullable String sourcePackage) {
          if (deviceId == DEVICE_ID_DEFAULT) {
@@ -37,5 +37,3 @@ Subject: [PATCH] Clipboard: connect stock access policy to the desktop monitor
 +                mClipboardMonitor.accept(clip);
 +            }
          }
- 
-         final int userId = UserHandle.getUserId(uid);

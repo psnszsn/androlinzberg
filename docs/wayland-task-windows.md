@@ -11,6 +11,26 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Main framework rebase (2026-09-08)
+
+Rebased onto main `1f84559`, incorporating its stock ringtone, MediaPlayer,
+subtitle, accessibility shortcut, HIDL transport, HDMI and generator additions.
+The combined AOSP package contains 55,981 sources and 88 patches. The live
+source audit now reports 12 stubs: eight pending and four documented survivors.
+The closure-tool regression suite passes all 17 tests.
+
+Regression 399 passes stock clipboard (19 steps), IME (22 steps), video (four
+steps), Cage task presentation, C++ and graph audits. The desktop launcher
+reaches its final UI state with 13 clean steps; its final assertion accidentally
+used the clipboard test's 19-step count. Correcting that assertion yields a
+passing desktop gate in regression 400. Retained artifacts:
+`/tmp/wayland-rebase-399-artifacts/` and
+`/tmp/wayland-drag-400-artifacts/stock-desktop-launcher/`.
+
+The default JVM and complete APK suite still need rerunning on the combined
+package. Drag-and-drop and the remaining acceptance work are in progress;
+this rebase is not the default launcher cutover.
+
 ## Clipboard file transfers (2026-09-08)
 
 The desktop bridge now stages `text/uri-list` through the separately installed
