@@ -74,6 +74,12 @@ object StockWindowBootSmoke {
         val memory = android.app.ActivityManager.RunningAppProcessInfo()
         android.app.ActivityManager.getMyMemoryState(memory)
         check(memory.processState == android.app.ActivityManager.PROCESS_STATE_CACHED_EMPTY)
+        val appOps = application.getSystemService(android.app.AppOpsManager::class.java)
+        fun audioFocusMode() = appOps.checkOpNoThrow(android.app.AppOpsManager.OP_TAKE_AUDIO_FOCUS,
+            android.os.Process.myUid(), packageName)
+        check(audioFocusMode() == android.app.AppOpsManager.MODE_IGNORED) {
+            "A windowless process retained foreground AppOps access"
+        }
         println("Stock WMS registered application session: $packageName")
         var resumed: android.app.Activity? = null
         val frameCommitted = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -105,9 +111,32 @@ object StockWindowBootSmoke {
         check(resumed!!.taskId > 0)
         android.app.ActivityManager.getMyMemoryState(memory)
         check(memory.processState == android.app.ActivityManager.PROCESS_STATE_TOP)
+        val appOpsDeadline = android.os.SystemClock.uptimeMillis() + 5_000
+        while (audioFocusMode() != android.app.AppOpsManager.MODE_ALLOWED &&
+            android.os.SystemClock.uptimeMillis() < appOpsDeadline) android.os.SystemClock.sleep(5)
+        check(audioFocusMode() == android.app.AppOpsManager.MODE_ALLOWED) {
+            "WM's resumed process state did not reach stock AppOps"
+        }
+        println("Stock AppOps: windowless access rejected, resumed activity access allowed")
         println("Stock ATMS resumed application task: ${resumed!!.taskId}")
         if (android.view.HostedRootFrames.stockClients) verifyAccessibility(resumed!!)
         verifyClientWindow(session, resumed!!)
+        resumed!!.finish()
+        val backgroundDeadline = android.os.SystemClock.uptimeMillis() + 10_000
+        do {
+            val message = android.os.Looper.myQueue().`pollDueMessage$artzig`()
+            if (message == null) android.os.SystemClock.sleep(5)
+            else try { message.target.dispatchMessage(message) }
+            finally { android.os.MessageQueue.`recycleDispatched$artzig`(message) }
+            android.app.ActivityManager.getMyMemoryState(memory)
+        } while ((memory.processState < android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY ||
+                audioFocusMode() != android.app.AppOpsManager.MODE_IGNORED) &&
+            android.os.SystemClock.uptimeMillis() < backgroundDeadline)
+        check(memory.processState >= android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY)
+        check(audioFocusMode() == android.app.AppOpsManager.MODE_IGNORED) {
+            "Finished activity retained foreground AppOps access after the stock settling delay"
+        }
+        println("Stock AppOps: finished activity lost foreground access while its process remained alive")
         verifyColdActivity(application)
         verifyStartupRetry(application)
         println("Stock WMS/ATMS boot: display=${info.displayId} physical=${initial.x}x${initial.y}")

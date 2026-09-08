@@ -3,7 +3,6 @@
  * the hosted service is dev.artzig.system.HostedPackageManagerService). */
 package com.android.server.pm;
 public final class PackageManagerService {
-    public static final String PLATFORM_PACKAGE_NAME = "android";
     // Pinned PMS URI scheme consumed by the stock package-monitor dispatcher.
     static final String PACKAGE_SCHEME = "package";
     static final String TAG = "PackageManager";

@@ -324,7 +324,6 @@ extern int register_com_android_internal_content_om_OverlayManagerImpl(JNIEnv*);
 extern int register_com_android_internal_content_NativeLibraryHelper(JNIEnv*);
 extern int register_android_os_SELinux(JNIEnv*);
 extern int register_android_os_NativeHandle(JNIEnv*);
-extern int register_android_os_FileObserver(JNIEnv*);
 extern jlong com_android_internal_os_ZygoteCommandBuffer_getNativeBuffer(JNIEnv*, jclass, jint);
 extern void com_android_internal_os_ZygoteCommandBuffer_freeNativeBuffer(JNIEnv*, jclass, jlong);
 extern void com_android_internal_os_ZygoteCommandBuffer_insert(JNIEnv*, jclass, jlong, jstring);
@@ -730,7 +729,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_view_Surface),
             E(android::register_android_view_InputDevice),
             E(android::register_android_view_InputChannel),
-            E(android::register_android_os_FileObserver),
             E(android::register_android_view_InputEventReceiver),
             E(android::register_android_view_InputEventSender),
             E(android::register_jni_common),

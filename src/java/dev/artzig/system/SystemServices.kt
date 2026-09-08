@@ -179,14 +179,6 @@ internal object SystemServices {
         // AOSP parser — its manifest is the session's permission source.
         val packageManager = HostedPackageManagerService(desktopWindows = stockWindows != null,
             reservePackageUid = dev.artzig.BinderSession::reservePackageUid)
-        packageManager.installPlatform(
-            checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
-        )
-        // Pinned PMS scans system-image APKs before publishing packages. The host
-        // application bundle places them next to res/, with ordinary package UIDs.
-        val imageApps = java.io.File(java.io.File(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))).parentFile.parentFile, "apps")
-        imageApps.listFiles()?.filter { it.isFile && it.extension == "apk" }
-            ?.sortedBy { it.name }?.forEach { packageManager.installSystemPackage(it.canonicalPath) }
         android.os.ServiceManager.addService("package", packageManager)
         val permissionPolicy = HostedWindowPermissionPolicy(context, packageManager)
         LocalServices.addService(com.android.server.policy.PermissionPolicyInternal::class.java, permissionPolicy)
@@ -210,10 +202,41 @@ internal object SystemServices {
         activityManager.processLauncher = sessionProcessLauncher(activityManager)
         activityManager.packageService = packageManager
         android.os.ServiceManager.addService(Context.ACTIVITY_SERVICE, activityManager)
+        // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
+        android.os.ServiceManager.addService("permission",
+            HostedNativePermissionController(context, activityManager))
         android.os.ServiceManager.addService(Context.WIFI_SERVICE,
             HostedWifiService(HostedPermissions(packageManager)))
         android.os.ServiceManager.addService(Context.COMPANION_DEVICE_SERVICE, HostedCompanionDeviceService(context))
         android.os.ServiceManager.addService(Context.VIRTUAL_DEVICE_SERVICE, HostedVirtualDeviceService(context))
+        val activityManagerAccess = HostActivityManagerInternalAccess(activityManager, packageManager, userLifecycle)
+        val activityManagerInternal = Class.forName("android.app.HostedActivityManagerInternal")
+            .getConstructor(HostActivityManagerInternalAccess::class.java)
+            .newInstance(activityManagerAccess) as android.app.ActivityManagerInternal
+        LocalServices.addService(android.app.ActivityManagerInternal::class.java, activityManagerInternal)
+        com.android.server.LocalManagerRegistry.addManager(
+            com.android.server.pm.PackageManagerLocal::class.java,
+            HostedPackageManagerLocal(packageManager))
+        android.os.ServiceManager.addService(Context.SENSOR_PRIVACY_SERVICE,
+            HostedSensorPrivacyService(context))
+        val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
+        activityManager.appOps = appOps
+        LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
+            HostedPermissionPolicy(packageManager))
+        com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())
+        android.os.ServiceManager.addService(Context.FINGERPRINT_SERVICE,
+            HostedFingerprintService(HostedPermissions(packageManager), appOps))
+        // PMS creates permission services before scanning its packages.
+        // PackageParser2 asks PermissionManager for split permissions even for
+        // framework-res and system-image APKs; publishing later loses that input.
+        packageManager.installPlatform(
+            checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")) { "ARTZIG_FRAMEWORK_RES is not set" },
+        )
+        // Pinned PMS scans system-image APKs before publishing packages. The host
+        // application bundle places them next to res/, with ordinary package UIDs.
+        val imageApps = java.io.File(java.io.File(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES"))).parentFile.parentFile, "apps")
+        imageApps.listFiles()?.filter { it.isFile && it.extension == "apk" }
+            ?.sortedBy { it.name }?.forEach { packageManager.installSystemPackage(it.canonicalPath) }
         if (stockWindows != null) {
             stockWindows.startTasks(manager)
         } else {
@@ -232,26 +255,6 @@ internal object SystemServices {
                     stockWindows?.taskForObservedWindow(token, uid, pid)
                 })
         }
-        val activityManagerAccess = HostActivityManagerInternalAccess(activityManager, packageManager, userLifecycle)
-        val activityManagerInternal = Class.forName("android.app.HostedActivityManagerInternal")
-            .getConstructor(HostActivityManagerInternalAccess::class.java)
-            .newInstance(activityManagerAccess) as android.app.ActivityManagerInternal
-        LocalServices.addService(android.app.ActivityManagerInternal::class.java, activityManagerInternal)
-        com.android.server.LocalManagerRegistry.addManager(
-            com.android.server.pm.PackageManagerLocal::class.java,
-            HostedPackageManagerLocal(packageManager))
-        android.os.ServiceManager.addService(Context.SENSOR_PRIVACY_SERVICE,
-            HostedSensorPrivacyService(context))
-        val appOps = com.android.server.appop.HostedAppOpsBootstrap.create(context)
-        activityManager.appOps = appOps
-        // C++ PermissionCache uses android.os.IPermissionController over these same authorities.
-        android.os.ServiceManager.addService("permission",
-            HostedNativePermissionController(context, activityManager, appOps))
-        LocalServices.addService(com.android.server.pm.permission.PermissionManagerServiceInterface::class.java,
-            HostedPermissionPolicy(packageManager))
-        com.android.server.pm.permission.PermissionManagerService.create(context, android.util.ArrayMap())
-        android.os.ServiceManager.addService(Context.FINGERPRINT_SERVICE,
-            HostedFingerprintService(HostedPermissions(packageManager), appOps))
         // Observer registry and the settings provider, registered before any
         // service that reads settings during startup.
         android.os.ServiceManager.addService("content", HostedContentService())

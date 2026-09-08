@@ -690,8 +690,25 @@ class HostedActivityManagerService(private val context: android.content.Context?
         record.windowProcess?.setReportedProcState(state)
         try { record.thread.setProcessState(state) }
         catch (_: android.os.RemoteException) { handleProcessDied(record); return }
-        stockTaskLocal.onUidProcStateChanged(record.uid,
-            processes.values.filter { it.uid == record.uid }.minOf { it.reportedProcState })
+        val uidState = processes.values.filter { it.uid == record.uid }.minOf { it.reportedProcState }
+        stockTaskLocal.onUidProcStateChanged(record.uid, uidState)
+        publishAppOpsUidState(record.uid, uidState)
+    }
+
+    /** OomAdjuster applies UID state to AppOps after aggregating its processes.
+     * Stock AppOps must see WM transitions, not just process attachment/death.
+     * getDefaultCapability's non-instrumented defaults are sufficient for this
+     * window state update; service-specific while-in-use grants are separate.
+     */
+    private fun publishAppOpsUidState(uid: Int, state: Int) {
+        val capability = when (state) {
+            android.app.ActivityManager.PROCESS_STATE_PERSISTENT,
+            android.app.ActivityManager.PROCESS_STATE_PERSISTENT_UI,
+            android.app.ActivityManager.PROCESS_STATE_TOP -> android.app.ActivityManager.PROCESS_CAPABILITY_ALL
+            android.app.ActivityManager.PROCESS_STATE_BOUND_TOP -> android.app.ActivityManager.PROCESS_CAPABILITY_BFSL
+            else -> android.app.ActivityManager.PROCESS_CAPABILITY_NONE
+        } or android.net.NetworkPolicyManager.getDefaultProcessNetworkCapabilities(state)
+        appOps?.updateUidProcState(uid, state, capability)
     }
 
     /** ActiveServices.updateServiceConnectionActivitiesLocked: only a distinct
@@ -844,8 +861,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
             record.packageName,
             record.processName,
         )
-        appOps?.updateUidProcState(record.uid, android.app.ActivityManager.PROCESS_STATE_TOP,
-            android.app.ActivityManager.PROCESS_CAPABILITY_ALL)
+        publishAppOpsUidState(record.uid, uidProcessState(record.uid))
         if (record.uid != android.os.Process.SYSTEM_UID) processObserver?.invoke(record.packageName, record.uid, true)
         // Replay bind/start operations that were waiting for this process. Each
         // op re-locks internally and performs its Binder callbacks lock-free.
@@ -973,9 +989,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         processObservers.died(record.pid, record.uid)
         activityTaskManager?.onProcessDied(record.binder)
         val remainingState = uidProcessState(record.uid)
-        appOps?.updateUidProcState(record.uid, remainingState,
-            if (remainingState == android.app.ActivityManager.PROCESS_STATE_TOP)
-                android.app.ActivityManager.PROCESS_CAPABILITY_ALL else android.app.ActivityManager.PROCESS_CAPABILITY_NONE)
+        publishAppOpsUidState(record.uid, remainingState)
         processObserver?.invoke(record.packageName, record.uid, false)
     }
 

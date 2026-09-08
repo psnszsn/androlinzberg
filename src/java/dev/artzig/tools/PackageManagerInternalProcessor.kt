@@ -64,10 +64,6 @@ class PackageManagerInternalProcessor : LocalServiceAdapterProcessor() {
             name == "getPackage" && params == listOf("java.lang.String") -> "return packages.getPackage(p0);"
             name == "getPackageStateInternal" && params == listOf("java.lang.String") -> "return packages.getPackageStateInternal(p0);"
             name == "isSystemPackage" -> "var state = packages.getPackageStateInternal(p0); return state != null && state.isSystem();"
-            name == "isPackageSuspended" -> "var state = packages.getPackageStateInternal(p0); return state != null && state.getUserStateOrDefault(p1).isSuspended();"
-            name == "getPackageList" -> "return packages.getPackageList(p0);"
-            name == "removePackageListObserver" -> "packages.removePackageListObserver(p0);"
-            name == "isInstantApp" -> "return false;" // No instant-app install path in this session.
             name == "setExternalSourcesPolicy" -> "packages.setExternalSourcesPolicy(p0);"
             name == "checkUidSignaturesForAllUsers" && params == listOf("int", "int") ->
                 "return packages.checkUidSignatures(p0, p1);"

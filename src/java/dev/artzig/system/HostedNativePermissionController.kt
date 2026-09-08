@@ -1,13 +1,11 @@
 package dev.artzig.system
 
 import android.app.AppOpsManager
-import android.app.IActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.PermissionInfo
 import android.os.IPermissionController
 import android.util.Log
-import com.android.internal.app.IAppOpsService
 
 /**
  * ActivityManagerService.PermissionController over the session's existing AM,
@@ -17,14 +15,13 @@ import com.android.internal.app.IAppOpsService
  */
 class HostedNativePermissionController(
     private val context: Context,
-    private val activities: IActivityManager,
-    private val appOps: IAppOpsService,
+    private val activities: HostedActivityManagerService,
 ) : IPermissionController.Stub() {
     override fun checkPermission(permission: String?, pid: Int, uid: Int): Boolean =
         activities.checkPermission(permission, pid, uid) == PackageManager.PERMISSION_GRANTED
 
     override fun noteOp(op: String?, uid: Int, packageName: String?): Int =
-        checkNotNull(appOps.noteOperation(AppOpsManager.strOpToOp(op ?: throw IllegalArgumentException("Unknown operation string: null")), uid, packageName,
+        checkNotNull(checkNotNull(activities.appOps).noteOperation(AppOpsManager.strOpToOp(op ?: throw IllegalArgumentException("Unknown operation string: null")), uid, packageName,
             null, false, "", false)).opMode
 
     override fun getPackagesForUid(uid: Int): Array<String>? = context.packageManager.getPackagesForUid(uid)

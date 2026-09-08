@@ -22,6 +22,53 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Permission/AppOps framework rebase checkpoint (2026-09-08)
+
+Rebased onto main `f55fd3e`, retaining its stock AppOps, permission manager,
+sensor, media, network validation and bundled DownloadProvider work. The main
+worktree was left untouched. The stock WM permission policy has a separate name
+from the package permission backend, and native PermissionController uses AMS's
+stock AppOps authority. Source/generator/JNI declarations are deduplicated.
+
+Package identities remain assigned at installation, before cold process launch;
+package callbacks and AppOps notifications run after the package lock is released.
+The permission facade and its local dependencies now precede platform/image APK
+scanning, so PackageParser2 obtains split permissions without an early missing
+`permissionmgr` error. Application processes retain their own storage environment.
+
+WM process-state changes now reach stock AppOps, including the aggregate UID
+state on attachment and death. The stock boot gate verifies foreground audio-focus
+access is denied before an activity exists, allowed after resume, and denied again
+after finish while the process remains alive. Default process capabilities follow
+pinned OomAdjuster; foreground-service-specific while-in-use capability grants are
+still a separate service-policy gap.
+
+Package 75 contains 55,852 source files and 84 patches (SHA-256
+`731f52c2534765d205db2714173e1a64b98d10749b3364fd94d4e794c8a80b02`).
+The live stub audit now records 15 stubs: ten pending and five survivors, with a
+pending budget of ten.
+
+Validation:
+
+- Regression 222: framework modules, native tests and graph/C++ audits pass.
+- Regression 224: stock client boot, cold launch, Cage/labwc task windows,
+  desktop launcher and native input/SF integration pass.
+- Regression 225: the corrected permission-before-scan bootstrap passes all
+  stock boot/task gates; the desktop test completes 13 steps with zero issues.
+- Regression 226: full JVM/native tests, all 15 APK tests (47 steps, zero runtime
+  issues), all seven Surface/Wayland scenarios and build audits pass.
+
+Logs are `/tmp/wayland-main13-{222,stock-224,bootstrap-225,regressions-226}.log`;
+stock UI artifacts are retained under `/tmp/wayland-main13-stock-225-artifacts/`.
+The native-input artifacts also remain in the regression-224 copy.
+
+The next M9 closure is now smaller: stock grammatical inflection needs four
+additional sources without a compile blocker. Stock UI mode needs four further
+sources and the pinned current-user check; its dream collaborator has a seven-source
+closure without compile blockers. These services should own configuration changes
+in ATMS/WPC instead of sending client-only deltas. M8–M11 remain incomplete;
+this checkpoint does not enable the stock task path by default.
+
 ## Stock evdev layout checkpoint (2026-09-07)
 
 The manually maintained scan-code switch is replaced by pinned Generic.kl and

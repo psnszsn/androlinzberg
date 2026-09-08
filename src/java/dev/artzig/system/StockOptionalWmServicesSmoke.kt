@@ -39,11 +39,7 @@ object StockOptionalWmServicesSmoke {
         pending.died(10001, 20)
         check(!pending.contains(10001))
         verifyConfigurationBroadcasts()
-        val appOps = HostedAppOpsService()
-        for (op in listOf(android.app.AppOpsManager.OP_CAMERA, android.app.AppOpsManager.OP_SYSTEM_ALERT_WINDOW,
-                android.app.AppOpsManager.OP_WRITE_SETTINGS, android.app.AppOpsManager.OP_SYSTEM_EXEMPT_FROM_ACTIVITY_BG_START_RESTRICTION)) {
-            check(appOps.checkOperation(op, 10001, "fixture") == android.app.AppOpsManager.opToDefaultMode(op))
-        }
+        // Stock AppOps defaults and callbacks are exercised by StockAppOpsSystemSmoke.
         for (animationFirst in listOf(false, true)) {
             val activityManager = HostedActivityManagerService()
             var completions = 0
@@ -74,7 +70,7 @@ object StockOptionalWmServicesSmoke {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val packageName = verifyPackageObservers(packages, apk)
-        val permissionPolicy = HostedPermissionPolicy(context, packages)
+        val permissionPolicy = HostedWindowPermissionPolicy(context, packages)
         check(!permissionPolicy.isInitialized(0))
         var initialized = 0
         permissionPolicy.setOnInitializedCallback { user ->

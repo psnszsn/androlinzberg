@@ -38,7 +38,6 @@ class HostActivityManagerInternalAccess internal constructor(
     fun finishBooting() = activities.finishBooting()
     fun setSystemReady() { ready.set(true) }
     fun isSystemReady(): Boolean = ready.get()
-    fun isPendingTopUid(uid: Int): Boolean = false
     fun isTempAllowlistedForFgsWhileInUse(uid: Int): Boolean = false
     fun getInstrumentationSourceUid(uid: Int): Int = Process.INVALID_UID
     // ActivityManagerConstants: read the same hosted Settings/DeviceConfig keys.

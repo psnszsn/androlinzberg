@@ -1525,7 +1525,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/services/core/java/com/android/server/ResourcePressureUtil.java");
     try c.file("$FB/services/core/java/com/android/server/am/TraceErrorLogger.java");
     try c.file("$FB/services/core/java/com/android/server/am/DropboxRateLimiter.java");
-    try c.file("$FB/core/java/com/android/internal/os/ZygoteConnectionConstants.java");
     try c.file("$FB/services/core/java/com/android/server/criticalevents/CriticalEventLog.java");
     try c.file("$FB/services/core/java/com/android/server/am/HostingRecord.java");
     try c.file("$FB/services/core/java/com/android/server/am/UserState.java");
@@ -1539,7 +1538,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/hardware/devicestate/DeviceStateManagerGlobal.java");
     try c.file("$CJ/android/hardware/devicestate/DeviceStateRequest.java");
     try c.file("$FB/media/java/android/media/projection/MediaProjectionEvent.java");
-    try c.file("$FB/services/core/java/com/android/server/LockGuard.java");
     try c.file("$FB/services/core/java/com/android/server/am/BaseErrorDialog.java");
     try c.file("$FB/services/core/java/com/android/server/wallpaper/WallpaperDefaultDisplayInfo.java");
     try c.file("$FB/services/core/java/com/android/server/wallpaper/WallpaperCropper.java");
@@ -1678,7 +1676,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/service/notification/DeviceEffectsApplier.java");
     try c.file("$CJ/com/android/internal/util/ScreenshotRequest.java");
     try c.file("$FB/services/core/java/android/app/usage/UsageStatsManagerInternal.java");
-    try c.file("$FB/services/core/java/com/android/server/LocalManagerRegistry.java");
     try c.file("$FB/services/core/java/com/android/server/am/MemoryStatUtil.java");
     try c.file("$FB/services/core/java/com/android/server/grammaticalinflection/GrammaticalInflectionManagerInternal.java");
     try c.file("$FB/services/core/java/com/android/server/notification/NotificationManagerInternal.java");
@@ -2154,7 +2151,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/SystemProperties.java");
     try c.file("$CJ/android/os/SharedMemory.java");
     try c.file("$CJ/android/os/MemoryFile.java");
-    try c.file("$CJ/android/os/FileObserver.java");
     try c.file("$A/packages/modules/NetworkStack/common/captiveportal/src/android/net/captiveportal/CaptivePortalProbeResult.java");
     try c.file("$A/packages/modules/NetworkStack/common/captiveportal/src/android/net/captiveportal/CaptivePortalProbeSpec.java");
     try c.file("$CJ/android/net/ConnectivityMetricsEvent.java");
