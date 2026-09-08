@@ -299,6 +299,12 @@ object StockWindowBootSmoke {
             error("Stock accessibility roots did not settle")
         }
         settle()
+        // Core Wayland does not supply a task-spanning PiP placement policy.
+        // Preserve Activity's stock feature-gated false return, without creating
+        // a hidden pinned task or changing the current activity's lifecycle.
+        check(!activity.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE))
+        check(!activity.enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().build()))
+        check(!activity.isInPictureInPictureMode)
         val initial = snapshot()
         check(initial.getJSONArray("windows").length() == 1)
         val initialNodes = initial.getJSONArray("nodes")
@@ -371,6 +377,27 @@ object StockWindowBootSmoke {
         var blast: android.graphics.BLASTBufferQueue? = null
         var surface: android.view.Surface? = null
         try {
+            // These types pass PhoneWindowManager's initial permission check.
+            // The host must reject their missing presentation capability before
+            // creating an input window or validating an unrelated app token.
+            for (type in intArrayOf(android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD,
+                android.view.WindowManager.LayoutParams.TYPE_WALLPAPER,
+                android.view.WindowManager.LayoutParams.TYPE_TOAST,
+                android.view.WindowManager.LayoutParams.TYPE_STATUS_BAR,
+                android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)) {
+                val unsupported = android.view.WindowManager.LayoutParams().apply {
+                    copyFrom(params)
+                    this.type = type
+                }
+                val rejected = session.addToDisplayAsUser(window, unsupported, android.view.View.VISIBLE,
+                    Display.DEFAULT_DISPLAY, activity.userId, android.view.WindowInsets.Type.defaultVisible(),
+                    channel, android.view.InsetsState(), controls, android.graphics.Rect(), floatArrayOf(1f))
+                check(rejected == android.view.WindowManagerGlobal.ADD_INVALID_TYPE) {
+                    "Taskless system window type=$type returned $rejected"
+                }
+                check(channel.token == null) { "Rejected window retained an input channel" }
+            }
+            println("Stock WMS taskless system window rejection: no ghost input channels")
             val add = session.addToDisplayAsUser(window, params, android.view.View.VISIBLE,
                 Display.DEFAULT_DISPLAY, activity.userId, android.view.WindowInsets.Type.defaultVisible(),
                 channel, android.view.InsetsState(), controls, android.graphics.Rect(), floatArrayOf(1f))

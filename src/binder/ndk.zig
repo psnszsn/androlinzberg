@@ -841,6 +841,10 @@ const Runtime = struct {
     // -------------------------------------------------------------- reader
 
     fn readLoop(r: *Runtime) void {
+        // RELEASE can destroy Java-backed objects on this thread. Keep its
+        // attachment until exit, just as the transaction workers do.
+        _ = jniEnv();
+        defer detachCurrentThread();
         const client: Client = .{ .in = &r.conn.reader.interface, .out = undefined };
         while (true) {
             const header = client.receiveMessage() catch break;
@@ -869,7 +873,6 @@ const Runtime = struct {
             if (!keep) break;
         }
         r.onDisconnected();
-        detachCurrentThread();
     }
 
     fn handle(r: *Runtime, header: InHeader, body: []const u8, fds: []fd_t) bool {
@@ -1312,6 +1315,12 @@ const Runtime = struct {
     /// The per-target oneway drain loop: process items in order, park on the
     /// queue's condition when idle, and exit once empty and retired.
     fn serialWorker(r: *Runtime, q: *SerialQueue) void {
+        // Follow AndroidRuntime::javaThreadShell: an owned Binder worker keeps
+        // its JVM attachment until it exits. Detaching after each dispatch
+        // loses Java thread identity and forces a fresh ART stack query after
+        // clients such as WebView have installed their syscall sandbox.
+        _ = jniEnv();
+        defer detachCurrentThread();
         while (true) {
             r.mu.lockUncancelable(g_io);
             while (q.items.items.len == 0 and !q.retired) q.cv.waitUncancelable(g_io, &r.mu);
@@ -1330,7 +1339,6 @@ const Runtime = struct {
         AIBinder_decStrong(q.target);
         q.items.deinit(alloc);
         alloc.destroy(q);
-        detachCurrentThread();
     }
 
     fn maybeRelease(r: *Runtime, id: u64, uses: u64) void {

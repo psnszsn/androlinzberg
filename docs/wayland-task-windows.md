@@ -11,6 +11,46 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Stock APK matrix and worker lifecycle (2026-09-08)
+
+The full APK suite now runs on the actual stock task path: regression 516 passes
+all 16 cases and 45 interaction steps with empty runtime issue lists, using
+`AZK_WINDOW_BACKEND=stock AZK_TASK_WINDOWS=1` and
+`-Dstock-window-clients=true`. This includes desktop video/fullscreen, phone
+navigation and editing, attached dialogs, saved-state recreation, permissions,
+TextureView resize/release, and physical/semantic input. The two former ViewHost
+input cases now launch the real window-contracts APK. Artifacts are under
+`/tmp/wayland-stock-full-516-artifacts/`; the resized TextureView pixels were
+inspected. These explicit flags are still required; default cutover is unfinished.
+
+Regressions 510 and 512 reproduced an ART attachment failure in a WebView
+renderer. Lightweight tracing identified the same one-way Binder worker
+reattaching after Chromium enabled its syscall sandbox. Following pinned
+`AndroidRuntime.javaThreadShell`, owned one-way workers and the Binder reader now
+retain their JVM attachment until thread exit. Nested callbacks still borrow the
+caller's existing attachment. Regression 514 passes native C++/NDK and Java
+multiprocess Binder gates; subsequent stock APK runs have no attachment fatal.
+The fullscreen test also now selects the actual title resource, preserving video
+identity instead of accidentally capturing the playback timestamp.
+
+Process inspection now returns an explicit retired-generation result when a
+process exits between listing and observation. The controller removes that
+process's windows in the same refresh. Live observation failures still enter the
+journal, and retirement retains issues already collected from the process. A
+regression covers retirement during a read, surviving-window input and PID reuse.
+
+Regression 507 passes taskless system-window rejection before WMS token/input
+creation while preserving Android permission/AppOps ordering. PiP remains an
+unadvertised capability and the Activity API returns false. Sixteen desktop
+steps verify physical modal input, outside-click dismissal without activating
+the covered button, and normal input afterward; the IME gate has 22 clean steps.
+Artifacts: `/tmp/wayland-window-policy-507-artifacts/`.
+
+Regression 517 also passes the full default JVM suite (including the inspection
+retirement regression), all 16 APK tests with 52 clean steps, and C++/graph
+audits. Artifacts: `/tmp/wayland-default-full-517-artifacts/`. The earlier drag
+traversal stall and remaining M8–M11 recovery/default-cutover gates remain open.
+
 ## Stock registry and overlay framework rebase (2026-09-08)
 
 Rebased onto main `ba6bbba3`, including the original SystemServiceRegistry,

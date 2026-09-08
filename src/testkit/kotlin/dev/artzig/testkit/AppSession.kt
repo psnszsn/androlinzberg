@@ -375,20 +375,6 @@ class AppSession internal constructor(
             )
         }
 
-        internal fun startViewHost(
-            testId: String,
-            environment: Map<String, String> = System.getenv(),
-            processAdapter: ProcessAdapter = SystemProcessAdapter,
-            launchSize: LaunchSize? = null,
-        ): AppSession = startHosted(
-            apk = null,
-            launcherArguments = listOf("--java"),
-            testId = testId,
-            environment = environment,
-            processAdapter = processAdapter,
-            launchSize = launchSize,
-        )
-
         private fun startHosted(
             apk: ResolvedApk?,
             launcherArguments: List<String>,

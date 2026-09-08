@@ -682,6 +682,30 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     dialog = control('observe', '--tree')['observation']['tree']
                     assert len(dialog['windows']) == 2
                     assert {str(w['task_id']) for w in dialog['windows']} == {task}
+                    # The button center lies inside the dialog's outer frame
+                    # (including its shadow). That click must neither activate the
+                    # covered activity nor count as an outside dismissal.
+                    subprocess.run(['grim', str(out / 'modal-dialog.png')], check=True, timeout=3)
+                    control('step', 'click', '--task-id', task, '--window-id', window,
+                            '--text', label('Increment counter'), '--via', 'wayland', '--settle', 'idle')
+                    covered = control('observe', '--tree')['observation']['tree']
+                    assert len(covered['windows']) == 2, covered
+                    settled_text('Counter: 1')
+                    # The same button extends well beyond the dialog's left
+                    # edge. Its outside click dismisses the modal without also
+                    # invoking the activity button on the same UP.
+                    control('step', 'click', '--task-id', task, '--window-id', window,
+                            '--text', label('Increment counter'), '--from-x', '.05',
+                            '--via', 'wayland', '--settle', 'idle')
+                    control('wait', 'absent', '--task-id', task, '--text', 'Fixture dialog')
+                    settled_text('Counter: 1')
+                    dismissed = control('observe', '--tree')['observation']['tree']
+                    assert len(dismissed['windows']) == 1, dismissed
+                    subprocess.run(['grim', str(out / 'modal-dismissed.png')], check=True, timeout=3)
+                    # Retain the independent semantic close regression.
+                    control('step', 'click', '--task-id', task, '--text', label('Show attached dialog'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    dialog = control('observe', '--tree')['observation']['tree']
                     close = next(node for node in dialog['nodes'] if (node.get('text') or '').lower() == 'close dialog')
                     control('step', 'click', '--window-id', str(close['window_id']), '--text', close['text'],
                             '--via', 'semantic', '--settle', 'idle')
@@ -745,7 +769,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
                     (out / 'a11y.json').write_text(json.dumps(after, indent=2))
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 16 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     cursor_log = (out / 'app.log').read_text(errors='replace')
                     assert 'task cursor shape protocol available=false' in cursor_log
                     assert 'task bitmap cursor task=' in cursor_log, 'Missing stock bitmap cursor fallback'

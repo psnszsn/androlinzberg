@@ -58,6 +58,25 @@ class HostedDesktopWindowPolicy(private val toggleFullscreen: ((android.os.IBind
 
     fun checkAddPermission(type: Int, isRoundedCornerOverlay: Boolean, packageName: String,
         outAppOp: IntArray, displayId: Int): Int {
+        val permission = checkAndroidWindowPermission(type, isRoundedCornerOverlay, packageName,
+            outAppOp, displayId)
+        if (permission != WindowManagerGlobal.ADD_OKAY) return permission
+        // Pinned PhoneWindowManager.checkAddPermission runs before WMS resolves
+        // tokens or creates windows. Preserve its permission/AppOps ordering,
+        // then apply the host's presentation capability at that same boundary.
+        // App windows and attached subwindows belong to a task output. A root
+        // system window has no desktop surface in this host. Accepting it would
+        // leave a live input window whose pixels can never be presented.
+        if (type in FIRST_SYSTEM_WINDOW..LAST_SYSTEM_WINDOW) {
+            android.util.Log.w("HostedDesktopWindowPolicy",
+                "Taskless system window is unavailable: type=$type display=$displayId")
+            return WindowManagerGlobal.ADD_INVALID_TYPE
+        }
+        return permission
+    }
+
+    private fun checkAndroidWindowPermission(type: Int, isRoundedCornerOverlay: Boolean,
+        packageName: String, outAppOp: IntArray, displayId: Int): Int {
         fun permitted(permission: String) =
             context.checkCallingOrSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
         if (isRoundedCornerOverlay && !permitted(INTERNAL_SYSTEM_WINDOW))

@@ -7,6 +7,7 @@ import dev.artzig.testing.IProcessInspection;
 interface IInspectionRegistry {
     long registerProcess(IApplicationThread application, IProcessInspection endpoint);
     Bundle listProcesses();
+    /** Returns {gone: true} when the listed generation retires before this read completes. */
     Bundle observe(int pid, long generation, long afterRevision, long afterLog, long afterIssue);
     boolean perform(int pid, long generation, long revision, long windowId, int viewId, int virtualId, int action, @nullable String text);
     String diagnostics(long afterLog, long afterIssue);

@@ -62,15 +62,21 @@ object HostedDesktopWindowPolicySmoke {
         check(op[0] == 123) // Rounded-corner denial precedes the output initialization.
         check(policy.checkAddPermission(0, false, "android", op, 0) == WindowManagerGlobal.ADD_INVALID_TYPE)
         check(op[0] == android.app.AppOpsManager.OP_NONE)
-        for (type in intArrayOf(TYPE_APPLICATION, TYPE_APPLICATION_PANEL, TYPE_INPUT_METHOD,
-            TYPE_WALLPAPER, TYPE_STATUS_BAR)) {
+        for (type in intArrayOf(TYPE_APPLICATION, TYPE_APPLICATION_PANEL,
+            TYPE_APPLICATION_SUB_PANEL, TYPE_APPLICATION_ABOVE_SUB_PANEL)) {
             check(policy.checkAddPermission(type, false, "android", op, 0) == WindowManagerGlobal.ADD_OKAY)
         }
-        check(policy.checkAddPermission(TYPE_TOAST, false, "android", op, 0) == WindowManagerGlobal.ADD_OKAY)
+        for (type in intArrayOf(TYPE_INPUT_METHOD, TYPE_WALLPAPER, TYPE_STATUS_BAR,
+            TYPE_ACCESSIBILITY_OVERLAY, TYPE_PRESENTATION, TYPE_PRIVATE_PRESENTATION)) {
+            check(policy.checkAddPermission(type, false, "android", op, 0) == WindowManagerGlobal.ADD_INVALID_TYPE)
+        }
+        check(policy.checkAddPermission(TYPE_TOAST, false, "android", op, 0) == WindowManagerGlobal.ADD_INVALID_TYPE)
         check(op[0] == android.app.AppOpsManager.OP_TOAST_WINDOW)
         check(policy.checkAddPermission(TYPE_POINTER, false, "android", op, 0) == WindowManagerGlobal.ADD_PERMISSION_DENIED)
         permitInternal = true
-        check(policy.checkAddPermission(TYPE_POINTER, true, "android", op, 0) == WindowManagerGlobal.ADD_OKAY)
+        check(policy.checkAddPermission(TYPE_POINTER, true, "android", op, 0) == WindowManagerGlobal.ADD_INVALID_TYPE)
+        check(op[0] == android.app.AppOpsManager.OP_NONE)
+        check(policy.checkAddPermission(TYPE_APPLICATION, true, "android", op, 0) == WindowManagerGlobal.ADD_OKAY)
         val config = Configuration().apply {
             keyboard = Configuration.KEYBOARD_NOKEYS
             keyboardHidden = Configuration.KEYBOARDHIDDEN_NO

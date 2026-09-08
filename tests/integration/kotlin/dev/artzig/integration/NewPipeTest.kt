@@ -129,9 +129,10 @@ class NewPipeDesktopTest {
         waitFor(description = "Comments")
         waitFor(text = "Background")
         waitForFullscreen(false)
-        // The first text in the active detail window is its video title. The
-        // live feed changes; preserve that identity across the fullscreen cycle.
-        val title = waitFor(role = "text", index = 0)
+        // Player controls can precede the title in accessibility traversal.
+        // Preserve the actual video's identity across the fullscreen cycle.
+        val titleId = "org.schabi.newpipe:id/detail_video_title_view"
+        val title = waitFor(resourceId = titleId)
             .getAsJsonObject("observation").getAsJsonArray("matches")[0]
             .asJsonObject.get("text").asString
         assertTrue(title.isNotBlank())
@@ -149,7 +150,7 @@ class NewPipeDesktopTest {
         waitForFullscreen(false)
         waitFor(description = "Play video, duration:")
         // Live streams may now provide real comments instead of a disabled message.
-        waitFor(text = title)
+        waitFor(resourceId = titleId, text = title)
         waitFor(description = "Comments")
         waitFor(text = "Background")
     }

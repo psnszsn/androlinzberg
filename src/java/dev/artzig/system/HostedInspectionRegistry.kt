@@ -3,6 +3,7 @@ package dev.artzig.system
 import android.app.IApplicationThread
 import android.os.Binder
 import android.os.Bundle
+import android.os.DeadObjectException
 import android.os.IBinder
 import android.os.Process
 import dev.artzig.testing.IInspectionRegistry
@@ -51,17 +52,7 @@ class HostedInspectionRegistry(
             }
             check(processes.size < 64) { "Process inspection capacity exhausted" }
             val generation = nextGeneration++
-            val death = IBinder.DeathRecipient {
-                val removed = synchronized(lock) {
-                    processes[process.pid]?.takeIf { it.generation == generation }
-                        ?.also { processes.remove(process.pid) }
-                }
-                removed?.let {
-                    it.endpoint.asBinder().unlinkToDeath(it.death, 0)
-                    it.process.thread.asBinder().unlinkToDeath(it.death, 0)
-                    synchronized(journal) { journal.forget(source(it)) }
-                }
-            }
+            val death = IBinder.DeathRecipient { retire(process.pid, generation) }
             observer.asBinder().linkToDeath(death, 0)
             try { process.thread.asBinder().linkToDeath(death, 0) }
             catch (failure: Throwable) {
@@ -85,7 +76,12 @@ class HostedInspectionRegistry(
     }
 
     override fun observe(pid: Int, generation: Long, afterRevision: Long, afterLog: Long, afterIssue: Long): Bundle {
-        val entry = entry(pid, generation)
+        enforceSystem()
+        // listProcesses and observe are separate transactions. Normal service
+        // retirement can invalidate a listed generation before or during this
+        // read; report its lifecycle state instead of inventing an app exception.
+        val entry = synchronized(lock) { processes[pid]?.takeIf { it.generation == generation } }
+            ?: return gone()
         try {
             // Pinned ActivityThread.handleBindApplication calls AMS.finishAttachApplication
             // after Application.onCreate. Before that acknowledgement, collect the
@@ -112,7 +108,17 @@ class HostedInspectionRegistry(
                 journal.ingest(source(entry), JSONObject(checkNotNull(observation.getString("runtime"))))
             }
             return observation
+        } catch (failure: DeadObjectException) {
+            retire(pid, generation)
+            return gone()
         } catch (failure: Exception) {
+            // Death callbacks and AMS detach can win the race with validation
+            // after the endpoint has replied. Live endpoint failures still enter
+            // the journal, and already-ingested runtime issues survive retirement.
+            if (!isCurrent(entry)) {
+                retire(pid, generation)
+                return gone()
+            }
             synchronized(journal) { journal.failure(source(entry), "observe", failure.toString()) }
             throw failure
         }
@@ -152,6 +158,23 @@ class HostedInspectionRegistry(
             journal.ingest(systemSource, JSONObject(dev.artzig.ArtzigTestDiagnostics.snapshot(cursor.logs, cursor.issues)))
             journal.snapshot(afterLog, afterIssue).toString()
         }
+    }
+
+    private fun gone() = Bundle().apply { putBoolean("gone", true) }
+
+    private fun isCurrent(entry: Entry): Boolean {
+        if (!synchronized(lock) { processes[entry.process.pid] === entry }) return false
+        val current = activityManager.attachedProcess(entry.process.thread)
+        return current != null && current.pid == entry.process.pid && current.uid == entry.process.uid
+    }
+
+    private fun retire(pid: Int, generation: Long) {
+        val removed = synchronized(lock) {
+            processes[pid]?.takeIf { it.generation == generation }?.also { processes.remove(pid) }
+        } ?: return
+        removed.endpoint.asBinder().unlinkToDeath(removed.death, 0)
+        removed.process.thread.asBinder().unlinkToDeath(removed.death, 0)
+        synchronized(journal) { journal.forget(source(removed)) }
     }
 
     private fun metadata(entry: Entry) = Bundle().apply {

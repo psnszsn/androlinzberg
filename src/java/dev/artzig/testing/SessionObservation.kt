@@ -38,6 +38,10 @@ class SessionObservation(private val registry: IInspectionRegistry) {
             val peer = peers.getOrPut(key) { event("process-added", key); Peer(metadata) }
             try {
                 val observation = registry.observe(key.pid, key.generation, peer.revision, peer.logCursor, peer.issueCursor)
+                if (observation.getBoolean("gone")) {
+                    current.remove(key)
+                    continue
+                }
                 val runtime = JSONObject(checkNotNull(observation.getString("runtime")))
                 peer.logCursor = runtime.getLong("log_cursor")
                 peer.issueCursor = runtime.getLong("issue_cursor")

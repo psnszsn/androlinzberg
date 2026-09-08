@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 object SessionObservationSmoke {
     private data class Peer(val pid: Int, var generation: Long, val task: Int?,
-        var revision: Long = 1, var selected: Boolean = false, var failed: Boolean = false, var starting: Boolean = false, var malformed: Int = 0)
+        var revision: Long = 1, var selected: Boolean = false, var failed: Boolean = false, var starting: Boolean = false, var malformed: Int = 0, var retireOnObserve: Boolean = false)
 
     fun run() {
         val peers = linkedMapOf(10 to Peer(10, 1, 100), 20 to Peer(20, 2, 200), 30 to Peer(30, 3, null))
@@ -21,6 +21,10 @@ object SessionObservationSmoke {
             override fun observe(pid: Int, generation: Long, afterRevision: Long, afterLog: Long, afterIssue: Long): Bundle {
                 val peer = checkNotNull(peers[pid])
                 check(peer.generation == generation)
+                if (peer.retireOnObserve) {
+                    peers.remove(pid)
+                    return Bundle().apply { putBoolean("gone", true) }
+                }
                 if (peer.failed) error("Application observation timed out")
                 if (peer.starting) return Bundle().apply {
                     putBoolean("starting", true)
@@ -151,6 +155,15 @@ object SessionObservationSmoke {
             observation.refresh()
             check(observation.idle() && window(20) == second && window(10) == first)
         }
+        // Retirement between listProcesses and observe removes the old window
+        // in this refresh. It must not publish an unavailable peer or prevent
+        // another task from receiving input; PID reuse gets a fresh identity.
+        peers.getValue(20).retireOnObserve = true
+        observation.refresh()
+        check(observation.idle() && tree().getJSONArray("unavailable_processes").length() == 0)
+        check(tree().getJSONArray("windows").length() == 1 && window(10) == first)
+        check(!observation.perform(observation.revision(), second, 7, -1, 4, null))
+        check(observation.perform(observation.revision(), first, 7, -1, 4, null))
         peers[20] = Peer(20, 4, 300)
         observation.refresh()
         check(window(20) != second && window(10) == first)
