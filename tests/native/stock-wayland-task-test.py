@@ -331,9 +331,9 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     control('step', 'click', '--task-id', task, '--text', label('Show clipboard'),
                             '--via', 'semantic', '--settle', 'idle')
                     control('wait', 'exists', '--text', 'Clipboard fixture ready')
-                    def clipboard_click(button, expected):
+                    def clipboard_click(button, expected, via='semantic'):
                         control('step', 'click', '--task-id', task, '--text', button,
-                                '--via', 'semantic', '--settle', 'idle')
+                                '--via', via, '--settle', 'idle')
                         control('wait', 'exists', '--task-id', task, '--text', expected)
                     def native_paste(mime, expected):
                         actual = subprocess.check_output(['wl-paste', '--no-newline', '--type', mime],
@@ -375,11 +375,45 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     control('step', 'exec', '--wait', 'exists', '--task-id', task,
                             '--text', 'Clipboard text=After recreation html=none', '--',
                             'wl-copy', '--type', 'text/plain;charset=utf-8', 'After recreation')
+                    clipboard_click('COPY FILE', 'Clipboard files=Android file 😀 café')
+                    # A programmatic copy can carry an obsolete selection serial.
+                    # Real input must republish it with a fresh source and serial.
+                    clipboard_click('READ CLIPBOARD', 'Clipboard files=Android file 😀 café', via='wayland')
+                    # Staging is asynchronous. Read the resulting URI list only
+                    # after its MIME becomes available; this is observation, not
+                    # a repeated application input action.
+                    deadline = time.monotonic() + 10
+                    while True:
+                        offered = subprocess.run(['wl-paste', '--list-types'], env=environment,
+                                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=3)
+                        if b'text/uri-list' in offered.stdout: break
+                        if time.monotonic() >= deadline: raise RuntimeError('Android URI export did not publish')
+                        time.sleep(.02)
+                    from urllib.parse import urlparse, unquote
+                    exported = subprocess.check_output(['wl-paste', '--no-newline', '--type', 'text/uri-list'],
+                                                       env=environment, stdin=subprocess.DEVNULL, timeout=5).decode()
+                    exported_paths = [Path(unquote(urlparse(uri).path)) for uri in exported.splitlines()]
+                    assert len(exported_paths) == 1 and exported_paths[0].read_text() == 'Android file 😀 café'
+                    assert exported_paths[0].name == 'Android café.txt'
+                    (out / 'clipboard-files.json').write_text(json.dumps({'exported': [str(file) for file in exported_paths]}, indent=2))
+                    native_files = [out / 'Native café.txt', out / 'Native second.txt']
+                    native_files[0].write_text('Native file 😀 café')
+                    native_files[1].write_text('Second native file')
+                    uri_list = ''.join(file.resolve().as_uri() + '\r\n' for file in native_files)
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Clipboard files=Native file 😀 café|Second native file', '--',
+                            'wl-copy', '--type', 'text/uri-list', uri_list)
+                    clipboard_click('CHECK FILE PERMISSIONS', 'Clipboard read grant only; control denied')
+                    clipboard_click('CLEAR CLIPBOARD', 'Clipboard is empty')
+                    clipboard_click('CHECK REVOKED FILE', 'Clipboard file grant revoked')
+                    # A native recipient may open the export after ownership
+                    # changed; immutable export leases survive for the session.
+                    assert exported_paths[0].read_text() == 'Android file 😀 café'
                     diagnostics = control('diagnose', '--since', json.dumps(clipboard_mark))
                     (out / 'clipboard-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
                     assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 19 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']
@@ -552,7 +586,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
                     (out / 'a11y.json').write_text(json.dumps(after, indent=2))
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 19 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     cursor_log = (out / 'app.log').read_text(errors='replace')
                     assert 'task cursor shape protocol available=false' in cursor_log
                     assert 'task bitmap cursor task=' in cursor_log, 'Missing stock bitmap cursor fallback'

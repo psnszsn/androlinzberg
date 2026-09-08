@@ -16,6 +16,8 @@
         <activity android:name=".TextureFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".VideoFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".ImeFixtureActivity" android:resizeableActivity="true" />
+        <provider android:name=".ClipboardFileProvider" android:exported="false" android:grantUriPermissions="true"
+            android:authorities="dev.artzig.fixtures.windows.clipboard" />
         <activity android:name=".ClipboardFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".ColdProcessActivity" android:process=":cold" android:resizeableActivity="true" />
         <activity android:name=".ColdGroupedActivity" android:process=":cold" android:resizeableActivity="true" />

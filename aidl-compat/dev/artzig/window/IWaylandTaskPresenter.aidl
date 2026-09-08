@@ -57,6 +57,6 @@ interface IWaylandTaskPresenter {
         int cursor, int anchor, int hint, int purpose, boolean externalChange,
         in int[] cursorBounds);
     boolean clipboardAvailable();
-    /** Bounded UTF-8 representations; null text clears the native selection. */
-    boolean setClipboard(long revision, in @nullable byte[] text, in @nullable byte[] html);
+    /** Bounded UTF-8 representations; all-null clears the native selection. */
+    boolean setClipboard(long revision, in @nullable byte[] text, in @nullable byte[] html, in @nullable byte[] uris);
 }

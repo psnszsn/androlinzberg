@@ -29,6 +29,7 @@ pub const Result = struct {
     fixtures: @import("generators.zig").FixtureApks,
     java_step: *std.Build.Step,
     download_provider: LazyPath,
+    desktop_transfer_provider: LazyPath,
 };
 
 fn extractJarPackage(
@@ -573,5 +574,6 @@ pub fn build(b: *std.Build, o: Options) Result {
         .fixtures = o.generated.fixtures,
         .java_step = java_step,
         .download_provider = download_provider,
+        .desktop_transfer_provider = @import("desktop_transfer_provider.zig").build(b, aosp, classes_jar, core_plus, res_apk),
     };
 }

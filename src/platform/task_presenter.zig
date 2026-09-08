@@ -467,12 +467,15 @@ const Server = struct {
             defer text.deinit();
             var html: ClipboardBytes = .{ .gpa = self.gpa };
             defer html.deinit();
+            var uris: ClipboardBytes = .{ .gpa = self.gpa };
+            defer uris.deinit();
             try ok(AParcel_readByteArray(request.input, &text, ClipboardBytes.allocate));
             try ok(AParcel_readByteArray(request.input, &html, ClipboardBytes.allocate));
+            try ok(AParcel_readByteArray(request.input, &uris, ClipboardBytes.allocate));
             try end(request.input);
             if (text.bytes == null and html.bytes != null) return error.HtmlWithoutClipboardText;
             if (self.session.clipboard) |clipboard| {
-                const payload = if (text.bytes) |bytes| try Queue.Clipboard.Payload.init(self.gpa, bytes, html.bytes) else null;
+                const payload = if (text.bytes != null or html.bytes != null or uris.bytes != null) try Queue.Clipboard.Payload.initAll(self.gpa, text.bytes, html.bytes, uris.bytes) else null;
                 try clipboard.set(revision, payload);
             }
             try ok(AParcel_writeInt32(request.output, 0));
@@ -884,7 +887,8 @@ fn sendClipboard(callback: *Binder, revision: i64, payload: ?*Queue.Clipboard.Pa
     try ok(AParcel_writeInt64(input.?, revision));
     const text: ?[]const u8 = if (payload) |value| value.text else null;
     const html: ?[]const u8 = if (payload) |value| value.html else null;
-    for ([_]?[]const u8{ text, html }) |bytes|
+    const uris: ?[]const u8 = if (payload) |value| value.uris else null;
+    for ([_]?[]const u8{ text, html, uris }) |bytes|
         try ok(AParcel_writeByteArray(input.?, if (bytes) |value| value.ptr else null, if (bytes) |value| @intCast(value.len) else -1));
     try ok(AIBinder_transact(callback, 24, &input, &output, 1));
 }

@@ -957,6 +957,7 @@ pub fn build(b: *std.Build) void {
         .framework_resources = java.resources.apk,
         .download_provider = java.download_provider,
         .webview_provider = aosp.path(b, "external/chromium-webview/133.0.6943.137/x86_64/webview.apk"),
+        .desktop_transfer_provider = java.desktop_transfer_provider,
     });
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{
         .source_dir = application_tree,

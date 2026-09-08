@@ -22,6 +22,8 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     compile.addFileArg(b.path("src/java/dev/artzig/window/WaylandTextContextSmoke.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStarts.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStartsSmoke.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/desktop/DesktopTransferStore.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/desktop/DesktopTransferStoreSmoke.kt"));
     compile.addArg("-d");
     const classes = compile.addOutputFileArg("task-geometry.jar");
     compiler.select(null).addInputs(compile.run);
@@ -45,6 +47,12 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     text.addArg("dev.artzig.window.WaylandTextContextSmoke");
     b.step("text-input-context-test", "Verify Android/Wayland text indices, composition and bounded context").dependOn(&text.run.step);
     parent.dependOn(&text.run.step);
+    const transfers = command.create(b);
+    transfers.addArgs(&.{ "java", "-cp" });
+    transfers.addJoinedPaths(":", &.{ classes, stdlib });
+    transfers.addArg("dev.artzig.desktop.DesktopTransferStoreSmoke");
+    b.step("desktop-transfer-test", "Verify immutable URI staging, budgets, cancellation and lease lifetime").dependOn(&transfers.run.step);
+    parent.dependOn(&transfers.run.step);
     const processes = command.create(b);
     processes.addArgs(&.{ "java", "-cp" });
     processes.addJoinedPaths(":", &.{ classes, stdlib });

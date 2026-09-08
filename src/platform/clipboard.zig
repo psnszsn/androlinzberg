@@ -33,6 +33,9 @@ pub const MimeTypes = struct {
     pub fn text(self: *const MimeTypes) ?[:0]const u8 {
         return self.representation("text/plain", true);
     }
+    pub fn uris(self: *const MimeTypes) ?[:0]const u8 {
+        return self.representation("text/uri-list", false);
+    }
     pub fn html(self: *const MimeTypes) ?[:0]const u8 {
         return self.representation("text/html", false);
     }
@@ -70,21 +73,29 @@ pub const Payload = struct {
     gpa: std.mem.Allocator,
     text: ?[]u8,
     html: ?[]u8 = null,
+    uris: ?[]u8 = null,
 
     pub fn init(gpa: std.mem.Allocator, text: ?[]const u8, html: ?[]const u8) !*Payload {
-        if (text == null and html == null) return error.EmptyClipboardRepresentations;
+        return initAll(gpa, text, html, null);
+    }
+    pub fn initAll(gpa: std.mem.Allocator, text: ?[]const u8, html: ?[]const u8, uris: ?[]const u8) !*Payload {
+        if (text == null and html == null and uris == null) return error.EmptyClipboardRepresentations;
         if (text) |value| try validate(value);
         if (html) |value| try validate(value);
+        if (uris) |value| try validate(value);
         const self = try gpa.create(Payload);
         errdefer gpa.destroy(self);
         const plain = if (text) |value| try gpa.dupe(u8, value) else null;
         errdefer if (plain) |bytes| gpa.free(bytes);
-        self.* = .{ .gpa = gpa, .text = plain, .html = if (html) |value| try gpa.dupe(u8, value) else null };
+        const rich = if (html) |value| try gpa.dupe(u8, value) else null;
+        errdefer if (rich) |bytes| gpa.free(bytes);
+        self.* = .{ .gpa = gpa, .text = plain, .html = rich, .uris = if (uris) |value| try gpa.dupe(u8, value) else null };
         return self;
     }
     pub fn destroy(self: *Payload) void {
         if (self.text) |text| self.gpa.free(text);
         if (self.html) |html| self.gpa.free(html);
+        if (self.uris) |uris| self.gpa.free(uris);
         self.gpa.destroy(self);
     }
     fn validate(bytes: []const u8) !void {
@@ -107,10 +118,11 @@ const Offer = struct {
     proxy: *wl.DataOffer,
     token: u64,
     mimes: MimeTypes = .{},
-    waiting: u2 = 0,
+    waiting: u3 = 0,
     received: bool = false,
     text: ?[]u8 = null,
     html: ?[]u8 = null,
+    uris: ?[]u8 = null,
 };
 const Source = struct {
     owner: *Self,
@@ -137,9 +149,12 @@ drag: ?*Offer = null,
 source: ?*Source = null,
 pending: ?*Payload = null,
 has_pending: bool = false,
+clear_echo: bool = false,
+publication_confirmed: bool = true,
+publication_serial: ?u32 = null,
 serial: ?u32 = null,
 focused: bool = false,
-next_token: u64 = 4,
+next_token: u64 = 8,
 revision: i64 = 0,
 
 pub fn init(gpa: std.mem.Allocator, io: std.Io, manager: *wl.DataDeviceManager, seat: *wl.Seat, hooks: Hooks) !*Self {
@@ -163,9 +178,9 @@ pub fn deinit(self: *Self) void {
 }
 
 fn token(self: *Self) !u64 {
-    if (self.next_token > std.math.maxInt(u64) - 4) return error.ClipboardGenerationExhausted;
+    if (self.next_token > std.math.maxInt(u64) - 8) return error.ClipboardGenerationExhausted;
     const result = self.next_token;
-    self.next_token += 4;
+    self.next_token += 8;
     return result;
 }
 
@@ -177,13 +192,13 @@ pub fn focus(self: *Self, gained: bool, serial: u32) void {
     if (!gained) {
         if (self.selection) |offer| self.destroyOffer(offer);
     }
-    self.publish() catch |err| self.hooks.issue(self.hooks.context, err);
+    self.retryPublication() catch |err| self.hooks.issue(self.hooks.context, err);
     if (gained) if (self.selection) |offer| self.readSelection(offer) catch |err| self.hooks.issue(self.hooks.context, err);
 }
 pub fn inputSerial(self: *Self, serial: u32) void {
     if (!self.focused) return;
     self.serial = serial;
-    self.publish() catch |err| self.hooks.issue(self.hooks.context, err);
+    self.retryPublication() catch |err| self.hooks.issue(self.hooks.context, err);
 }
 
 /// Consumes payload, even if publication fails. Pending requests coalesce;
@@ -203,7 +218,11 @@ pub fn set(self: *Self, revision: i64, payload: ?*Payload) !void {
 
 /// Transfer an unpublished copy/clear across manager or seat replacement.
 pub fn takePending(self: *Self) ?Pending {
-    if (!self.has_pending) return null;
+    if (!self.has_pending) {
+        if (self.publication_confirmed) return null;
+        self.publication_confirmed = true;
+        return .{ .payload = if (self.source) |source| self.removeSource(source) else null };
+    }
     const pending: Pending = .{ .payload = self.pending };
     self.pending = null;
     self.has_pending = false;
@@ -213,6 +232,22 @@ pub fn restorePending(self: *Self, pending: Pending) void {
     std.debug.assert(!self.has_pending);
     self.pending = pending.payload;
     self.has_pending = true;
+}
+
+/// set_selection has no rejection event: a compositor can ignore an old seat
+/// serial after another client copied. Keep an unconfirmed publication and
+/// retry with a NEW data source when real input supplies another serial.
+fn retryPublication(self: *Self) !void {
+    if (!self.has_pending and !self.publication_confirmed and self.focused and
+        self.serial != null and self.serial != self.publication_serial)
+    {
+        self.pending = if (self.source) |source|
+            try Payload.initAll(self.gpa, source.payload.text, source.payload.html, source.payload.uris)
+        else
+            null;
+        self.has_pending = true;
+    }
+    try self.publish();
 }
 
 fn publish(self: *Self) !void {
@@ -237,9 +272,16 @@ fn publish(self: *Self) !void {
             proxy.offer("text/plain");
         }
         if (payload.html != null) proxy.offer("text/html");
+        if (payload.uris != null) proxy.offer("text/uri-list");
         proxy.offer(source.mime());
         replacement = source;
     }
+    // An empty selection has no MIME marker. Consume its own null echo so
+    // an asynchronous Android file export is not cancelled by its preparatory
+    // clear. A subsequent non-null native owner always retires this echo state.
+    self.clear_echo = replacement == null;
+    self.publication_confirmed = false;
+    self.publication_serial = serial;
     self.device.setSelection(if (replacement) |source| source.proxy else null, serial);
     if (self.source) |source| self.destroySource(source);
     self.source = replacement;
@@ -247,18 +289,24 @@ fn publish(self: *Self) !void {
     self.has_pending = false;
 }
 
-fn destroySource(self: *Self, source: *Source) void {
-    self.transfers.cancel(source.token + 2);
+fn removeSource(self: *Self, source: *Source) *Payload {
+    self.transfers.cancel(source.token + 4);
     source.proxy.destroy();
-    source.payload.destroy();
+    const payload = source.payload;
     if (self.source == source) self.source = null;
     self.gpa.destroy(source);
+    return payload;
+}
+fn destroySource(self: *Self, source: *Source) void {
+    self.removeSource(source).destroy();
 }
 fn destroyOffer(self: *Self, offer: *Offer) void {
     self.transfers.cancel(offer.token);
     self.transfers.cancel(offer.token + 1);
+    self.transfers.cancel(offer.token + 2);
     if (offer.text) |bytes| self.gpa.free(bytes);
     if (offer.html) |bytes| self.gpa.free(bytes);
+    if (offer.uris) |bytes| self.gpa.free(bytes);
     offer.proxy.destroy();
     for (&self.offers) |*slot| if (slot.* == offer) {
         slot.* = null;
@@ -283,21 +331,28 @@ fn newOffer(self: *Self, proxy: *wl.DataOffer) !void {
     proxy.setListener(*Offer, offerListener, offer);
     slot.* = offer;
 }
-fn receive(self: *Self, offer: *Offer, mime: [:0]const u8, html: bool) !void {
+fn receive(self: *Self, offer: *Offer, mime: [:0]const u8, representation: u2) !void {
     const pipe = try Stream.Pipe.init();
     defer pipe.write.close(self.io);
-    try self.transfers.receive(offer.token + @as(u64, if (html) 1 else 0), pipe.read);
+    try self.transfers.receive(offer.token + representation, pipe.read);
     offer.proxy.receive(mime, pipe.write.handle);
-    offer.waiting |= if (html) @as(u2, 2) else 1;
+    offer.waiting |= @as(u3, 1) << representation;
 }
 fn selected(self: *Self, proxy: ?*wl.DataOffer) !void {
     const replacement = if (proxy) |p| self.find(p) orelse return error.UnknownClipboardOffer else null;
     if (replacement != null and replacement == self.selection) return;
     if (self.selection) |old| self.destroyOffer(old);
     const offer = replacement orelse {
+        if (self.clear_echo) {
+            self.clear_echo = false;
+            self.publication_confirmed = true;
+            return;
+        }
+        self.publication_confirmed = true;
         if (self.focused and !self.has_pending) self.hooks.changed(self.hooks.context, self.revision, null);
         return;
     };
+    self.clear_echo = false;
     self.selection = offer;
     try self.readSelection(offer);
 }
@@ -306,19 +361,26 @@ fn readSelection(self: *Self, offer: *Offer) !void {
     offer.received = true;
     // Our marker avoids replacing stock ClipData (and its URI grants/metadata)
     // with a native roundtrip of our own source after focus returns.
-    if (self.source) |source| if (offer.mimes.contains(source.mime())) return;
+    if (self.source) |source| if (offer.mimes.contains(source.mime())) {
+        self.publication_confirmed = true;
+        return;
+    };
+    // A delivered foreign selection supersedes an unconfirmed older copy.
+    self.publication_confirmed = true;
     // The new native owner supersedes the old contents immediately. While an
     // asynchronous offer is being read (or if its peer fails), Android must not
     // paste the previous owner's data.
     self.hooks.changed(self.hooks.context, self.revision, null);
     const plain = offer.mimes.text();
     const html = offer.mimes.html();
-    if (plain == null and html == null) {
+    const uris = offer.mimes.uris();
+    if (plain == null and html == null and uris == null) {
         return error.UnsupportedClipboardMimeTypes;
     }
     errdefer self.destroyOffer(offer);
-    if (plain) |mime| try self.receive(offer, mime, false);
-    if (html) |mime| try self.receive(offer, mime, true);
+    if (plain) |mime| try self.receive(offer, mime, 0);
+    if (html) |mime| try self.receive(offer, mime, 1);
+    if (uris) |mime| try self.receive(offer, mime, 2);
 }
 
 /// Called by the owner after the worker eventfd wakes. All offer/proxy state
@@ -326,7 +388,7 @@ fn readSelection(self: *Self, offer: *Offer) !void {
 pub fn drain(self: *Self) void {
     while (self.transfers.take()) |completion| {
         const offer = self.selection;
-        if (offer == null or (completion.token != offer.?.token and completion.token != offer.?.token + 1)) {
+        if (offer == null or (completion.token < offer.?.token or completion.token > offer.?.token + 2)) {
             if (completion.result) |bytes| self.gpa.free(bytes) else |err| self.hooks.issue(self.hooks.context, err);
             continue;
         }
@@ -344,10 +406,13 @@ pub fn drain(self: *Self) void {
         };
         if (completion.token == current.token) {
             current.text = bytes;
-            current.waiting &= ~@as(u2, 1);
-        } else {
+            current.waiting &= ~@as(u3, 1);
+        } else if (completion.token == current.token + 1) {
             current.html = bytes;
-            current.waiting &= ~@as(u2, 2);
+            current.waiting &= ~@as(u3, 2);
+        } else {
+            current.uris = bytes;
+            current.waiting &= ~@as(u3, 4);
         }
         if (current.waiting == 0) {
             const payload = self.gpa.create(Payload) catch |err| {
@@ -355,9 +420,10 @@ pub fn drain(self: *Self) void {
                 self.hooks.issue(self.hooks.context, err);
                 continue;
             };
-            payload.* = .{ .gpa = self.gpa, .text = current.text, .html = current.html };
+            payload.* = .{ .gpa = self.gpa, .text = current.text, .html = current.html, .uris = current.uris };
             current.text = null;
             current.html = null;
+            current.uris = null;
             self.hooks.changed(self.hooks.context, self.revision, payload);
         }
     }
@@ -375,13 +441,16 @@ fn sourceListener(_: *wl.DataSource, event: wl.DataSource.Event, source: *Source
         .send => |request| {
             const file: std.Io.File = .{ .handle = request.fd, .flags = .{ .nonblocking = false } };
             const mime = std.mem.span(request.mime_type);
-            const bytes: ?[]const u8 = if (std.mem.eql(u8, mime, "text/html")) source.payload.html else if (std.mem.eql(u8, mime, "text/plain;charset=utf-8") or std.mem.eql(u8, mime, "text/plain") or std.mem.eql(u8, mime, "UTF8_STRING")) source.payload.text else if (std.mem.eql(u8, mime, source.mime())) "" else null;
-            if (bytes) |value| self.transfers.send(source.token + 2, file, value) catch |err| self.hooks.issue(self.hooks.context, err) else {
+            const bytes: ?[]const u8 = if (std.mem.eql(u8, mime, "text/uri-list")) source.payload.uris else if (std.mem.eql(u8, mime, "text/html")) source.payload.html else if (std.mem.eql(u8, mime, "text/plain;charset=utf-8") or std.mem.eql(u8, mime, "text/plain") or std.mem.eql(u8, mime, "UTF8_STRING")) source.payload.text else if (std.mem.eql(u8, mime, source.mime())) "" else null;
+            if (bytes) |value| self.transfers.send(source.token + 4, file, value) catch |err| self.hooks.issue(self.hooks.context, err) else {
                 file.close(self.io);
                 self.hooks.issue(self.hooks.context, error.UnadvertisedClipboardMimeType);
             }
         },
-        .cancelled => self.destroySource(source),
+        .cancelled => {
+            self.publication_confirmed = true; // Explicit ownership loss retires retries.
+            self.destroySource(source);
+        },
         .target, .action, .dnd_drop_performed, .dnd_finished => {},
     }
 }

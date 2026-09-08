@@ -37,6 +37,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/window/WaylandTextContext.kt",
     "src/java/dev/artzig/window/WaylandInputMethod.kt",
     "src/java/dev/artzig/system/HostedClipboardMonitor.kt",
+    "src/java/dev/artzig/system/HostedDesktopTransfers.kt",
     "src/java/dev/artzig/window/SurfaceFlingerDisplayOutput.kt",
     "src/java/dev/artzig/window/HostedLogicalDisplay.kt",
     "src/java/dev/artzig/window/HostedLogicalDisplaySmoke.kt",

@@ -11,6 +11,48 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Clipboard file transfers (2026-09-08)
+
+The desktop bridge now stages `text/uri-list` through the separately installed
+`dev.artzig.desktop` provider APK. It has an ordinary application UID. Native
+local regular files become opaque, read-only `content://` URIs; stock
+ClipboardService issues and revokes the recipient grants. Android exports use
+temporary grants from ClipboardService's authenticated source UID to the staging
+provider. System UID never impersonates ownership of an app URI. Provider control
+calls require system UID, and stock ContentProvider.Transport enforces reads.
+
+Staging preserves file names and immutable bytes, handles multiple URI items,
+and refuses nonlocal file URIs, devices/FIFOs, final-component symlinks, and
+malformed input. Limits are 16 files, 8 MiB per file, 32 MiB per transfer and
+64 MiB of session storage. Two workers and four queued requests bound provider
+work; file reads have a five-second deadline. A six-second system timeout revokes
+source grants even if an external provider has not returned. Imported leases
+retire when the clipboard changes; existing open descriptors remain readable.
+Exported files remain available for the session because `text/uri-list` has no
+acknowledgement for a native recipient's later file open. Exhausting that storage
+budget is an explicit failure, never silent eviction of an advertised file.
+
+Native publication is confirmed by the source's private MIME marker. A
+compositor may ignore an obsolete seat serial without reporting an error; an
+unconfirmed programmatic copy retries with a fresh data source on subsequent
+real input. Pending copies survive data-device manager replacement. Application
+copy requests coalesce, and independent import generations reject obsolete
+provider completions without overwriting a newer Android or native selection.
+
+`desktop-transfer-test` verifies parsing, immutable leases, cleanup, cancellation,
+deadlines and admission/recovery under pressure. The expanded stock clipboard
+gate passes 19 journal-clean steps, including Android/native file contents,
+Unicode names, native multi-file import, denied writes/control calls, grant
+revocation and retry after real Wayland input. Initial retained passing artifacts:
+`/tmp/wayland-uri-396-artifacts/stock-clipboard/`. The final 398 gate also verifies
+that a descriptor opened before revocation remains readable, with artifacts in
+`/tmp/wayland-uri-398-artifacts/stock-clipboard/`; 397 passes source and graph audits.
+
+Unresponsive-provider process retirement and the broader recovery/pressure matrix
+remain M11 work. Intent clipboard export and heterogeneous URI/non-URI item lists
+are explicitly unsupported. Drag-and-drop and the remaining M10/M11 work remain
+unfinished.
+
 ## Outcome and scope
 
 Rebased onto main `1b8b637` on 2026-09-07, incorporating its camera, media,

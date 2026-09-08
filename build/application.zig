@@ -26,6 +26,7 @@ pub const Options = struct {
     framework_resources: LazyPath,
     download_provider: LazyPath,
     webview_provider: LazyPath,
+    desktop_transfer_provider: LazyPath,
 };
 
 pub const NamedLibrary = struct {
@@ -78,6 +79,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     webview_library.addFileArg(options.webview_provider);
     webview_library.addArg("lib/x86_64/libwebviewchromium.so");
     _ = tree.addCopyFile(webview_library.captureStdOut(.{}), "apps/lib/com.android.webview/libwebviewchromium.so");
+    _ = tree.addCopyFile(options.desktop_transfer_provider, "apps/DesktopTransferProvider.apk");
     _ = tree.addCopyFile(b.path("tools/dexopt-apk.sh"), "share/androlinzberg/dexopt-apk.sh");
     _ = tree.addCopyFile(b.path("src/bionic_translation.cfg"), "share/bionic_translation/cfg.d/bionic_translation.cfg");
     return tree.getDirectory();

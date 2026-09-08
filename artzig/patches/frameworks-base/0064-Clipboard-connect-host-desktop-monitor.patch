@@ -9,14 +9,14 @@ Subject: [PATCH] Clipboard: connect stock access policy to the desktop monitor
          mPermissionOwner = permOwner;
 -        if (Build.IS_EMULATOR) {
 +        if (dev.artzig.system.HostedClipboardMonitor.isEnabled()) {
-+            mClipboardMonitor = new dev.artzig.system.HostedClipboardMonitor((revision, clip) -> {
++            mClipboardMonitor = new dev.artzig.system.HostedClipboardMonitor(getContext(), (token, clip, sourceUid) -> {
 +                synchronized (mLock) {
-+                    if (!dev.artzig.system.HostedClipboardMonitor.isCurrentRevision(revision)) {
++                    if (!dev.artzig.system.HostedClipboardMonitor.isCurrentImport(token)) {
 +                        return;
 +                    }
 +                    Clipboard clipboard = getClipboardLocked(0, DEVICE_ID_DEFAULT);
 +                    if (clipboard != null) {
-+                        setPrimaryClipInternalLocked(clipboard, clip, android.os.Process.SYSTEM_UID,
++                        setPrimaryClipInternalLocked(clipboard, clip, sourceUid,
 +                                null);
 +                    }
 +                }
@@ -25,3 +25,17 @@ Subject: [PATCH] Clipboard: connect stock access policy to the desktop monitor
              mClipboardMonitor = new EmulatorClipboardMonitor((clip) -> {
                  synchronized (mLock) {
                      Clipboard clipboard = getClipboardLocked(0, DEVICE_ID_DEFAULT);
+@@ -936,7 +949,12 @@
+     private void setPrimaryClipInternalLocked(
+             @Nullable ClipData clip, int uid, int deviceId, @Nullable String sourcePackage) {
+         if (deviceId == DEVICE_ID_DEFAULT) {
+-            mClipboardMonitor.accept(clip);
++            if (mClipboardMonitor instanceof dev.artzig.system.HostedClipboardMonitor) {
++                ((dev.artzig.system.HostedClipboardMonitor) mClipboardMonitor)
++                        .acceptFromAndroid(clip, uid);
++            } else {
++                mClipboardMonitor.accept(clip);
++            }
+         }
+ 
+         final int userId = UserHandle.getUserId(uid);

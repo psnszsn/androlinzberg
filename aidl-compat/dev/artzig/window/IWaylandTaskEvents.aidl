@@ -31,6 +31,6 @@ oneway interface IWaylandTaskEvents {
         String preedit, int cursorBegin, int cursorEnd, String committed,
         int beforeBytes, int afterBytes);
     void clipboardAvailability(boolean available);
-    void clipboardChanged(long revision, in @nullable byte[] text, in @nullable byte[] html);
+    void clipboardChanged(long revision, in @nullable byte[] text, in @nullable byte[] html, in @nullable byte[] uris);
     void clipboardIssue(String detail);
 }

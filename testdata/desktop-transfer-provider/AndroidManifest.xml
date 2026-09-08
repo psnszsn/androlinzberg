@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.artzig.desktop">
+    <application android:label="Desktop transfers" android:allowBackup="false" android:hasCode="true">
+        <provider android:name="dev.artzig.desktop.DesktopTransferProvider"
+            android:authorities="dev.artzig.desktop.transfers" android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

@@ -6,7 +6,6 @@ import android.os.Looper
 import com.android.server.LocalServices
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
-import java.util.function.BiConsumer
 import java.util.function.Consumer
 
 /** Host seam following ClipboardService's EmulatorClipboardMonitor integration.
@@ -14,13 +13,20 @@ import java.util.function.Consumer
  * Its lock also protects the final native-import revision check, so an older
  * desktop read cannot overwrite a newer app copy during an asynchronous transfer.
  */
-class HostedClipboardMonitor(private val importer: BiConsumer<Long, ClipData?>) : Consumer<ClipData?> {
+class HostedClipboardMonitor(context: android.content.Context, private val importer: Importer) : Consumer<ClipData?> {
+    fun interface Importer { fun accept(token: Long, clip: ClipData?, sourceUid: Int) }
     interface Publisher {
-        fun publish(revision: Long, text: ByteArray?, html: ByteArray?): Boolean
+        fun publish(revision: Long, text: ByteArray?, html: ByteArray?, uris: ByteArray?): Boolean
     }
-    private data class Packet(val text: ByteArray?, val html: ByteArray?)
+    private data class Packet(val text: ByteArray?, val html: ByteArray?, val uris: ByteArray? = null, val lease: String? = null, var submitted: Boolean = false)
     private val handler = Handler(Looper.getMainLooper())
     private val lock = Any()
+    private val transfers = HostedDesktopTransfers(context, handler)
+    private var operation = 0L
+    private var imported: String? = null
+    private data class Export(val token: Long, val clip: ClipData?, val uid: Int)
+    private var pendingExport: Export? = null
+    private var stagingPosted = false
     private var revision = 0L
     private var packet = Packet(null, null)
     private var dirty = false
@@ -30,21 +36,76 @@ class HostedClipboardMonitor(private val importer: BiConsumer<Long, ClipData?>) 
 
     init { LocalServices.addService(HostedClipboardMonitor::class.java, this) }
 
-    override fun accept(clip: ClipData?) {
-        // Called under ClipboardService's lock. Do not perform Binder/FD I/O or
-        // coerce a content URI here; URI staging belongs in a grant-aware seam.
-        val outgoing = try { encode(clip) }
-        catch (failure: IllegalArgumentException) {
+    override fun accept(clip: ClipData?) = acceptFromAndroid(clip, android.os.Process.SYSTEM_UID)
+
+    fun acceptFromAndroid(clip: ClipData?, sourceUid: Int) {
+        // Called after stock checkDataOwner, under ClipboardService's lock.
+        // Copy metadata here; grant/provider/FD work runs outside that lock.
+        var files: ClipData? = null
+        val outgoing = try {
+            if (clip != null && clip.itemCount in 1..16 &&
+                (0 until clip.itemCount).any { clip.getItemAt(it).uri != null }) {
+                require((0 until clip.itemCount).all {
+                    val item = clip.getItemAt(it)
+                    item.uri?.scheme == "content" && item.intent == null && item.uri.toString().length <= 16 * 1024
+                }) { "Desktop file export requires content URI items" }
+                files = ClipData(clip)
+                Packet(null, null)
+            } else encode(clip)
+        } catch (failure: IllegalArgumentException) {
             issue(failure.message ?: "Unsupported Android clipboard representation")
-            Packet(null, null) // Never leave the previous native content active.
+            Packet(null, null)
         }
+        val pending = files
         synchronized(lock) {
-            check(revision < Long.MAX_VALUE) { "Clipboard revision exhausted" }
+            check(revision < Long.MAX_VALUE && operation < Long.MAX_VALUE)
             revision++
-            packet = outgoing
+            val token = ++operation
+            replacePacketLocked(outgoing)
             dirty = true
+            pendingExport = Export(token, pending, sourceUid)
+            scheduleStagingLocked()
             scheduleLocked()
         }
+    }
+    private fun scheduleStagingLocked() {
+        if (stagingPosted) return
+        stagingPosted = true
+        check(handler.post {
+            val request = synchronized(lock) {
+                stagingPosted = false
+                pendingExport.also { pendingExport = null }
+            } ?: return@post
+            retireImport()
+            if (request.clip != null && isCurrentImport(request.token)) transfers.stage(request.clip, request.uid, null) { result ->
+                result.fold({ staged ->
+                    val current = synchronized(lock) {
+                        if (operation != request.token) false else {
+                            check(revision < Long.MAX_VALUE)
+                            revision++
+                            replacePacketLocked(Packet(null, null, staged.native, staged.token))
+                            dirty = true
+                            scheduleLocked()
+                            true
+                        }
+                    }
+                    transfers.release(staged.token, discard = !current)
+                }, { failure ->
+                    if (isCurrentImport(request.token)) issue(failure.message ?: "Android URI staging failed")
+                })
+            }
+        })
+    }
+    private fun replacePacketLocked(replacement: Packet) {
+        val previous = packet
+        packet = replacement
+        if (!previous.submitted) previous.lease?.let { lease ->
+            check(handler.post { transfers.release(lease, discard = true) })
+        }
+    }
+    private fun retireImport() {
+        imported?.let { transfers.release(it) }
+        imported = null
     }
 
     fun connect(publisher: Publisher, available: Boolean) {
@@ -66,9 +127,12 @@ class HostedClipboardMonitor(private val importer: BiConsumer<Long, ClipData?>) 
             val outgoing = synchronized(lock) {
                 posted = false
                 if (!dirty || !available) return@post
+                // Once admitted to Binder, the native source could expose these
+                // paths even if its acknowledgement is lost. Retain conservatively.
+                packet.submitted = true
                 revision to packet
             }
-            if (publisher!!.publish(outgoing.first, outgoing.second.text, outgoing.second.html)) {
+            if (publisher!!.publish(outgoing.first, outgoing.second.text, outgoing.second.html, outgoing.second.uris)) {
                 synchronized(lock) {
                     if (revision == outgoing.first) dirty = false
                     scheduleLocked()
@@ -77,9 +141,29 @@ class HostedClipboardMonitor(private val importer: BiConsumer<Long, ClipData?>) 
         })
     }
 
-    fun changed(nativeRevision: Long, text: ByteArray?, html: ByteArray?) {
+    fun changed(nativeRevision: Long, text: ByteArray?, html: ByteArray?, uris: ByteArray?) {
         check(Looper.myLooper() === handler.looper)
-        if (!isCurrentRevision(nativeRevision)) return
+        val token = synchronized(lock) {
+            if (nativeRevision != revision) return
+            check(operation < Long.MAX_VALUE)
+            ++operation
+        }
+        retireImport()
+        if (uris != null) {
+            val list = try { decode(uris) } catch (failure: IllegalArgumentException) {
+                issue(failure.message ?: "Invalid desktop URI list")
+                return
+            }
+            transfers.stage(null, android.os.Process.SYSTEM_UID, list) { result ->
+                result.fold({ staged ->
+                    if (isCurrentImport(token)) {
+                        importer.accept(token, staged.clip, staged.uid)
+                        if (isCurrentImport(token)) imported = staged.token else transfers.release(staged.token)
+                    } else transfers.release(staged.token)
+                }, { failure -> if (isCurrentImport(token)) issue(failure.message ?: "Native URI staging failed") })
+            }
+            return
+        }
         val clip = try {
             if (text == null && html == null) null else {
                 val rich = html?.let(::decode)
@@ -93,7 +177,7 @@ class HostedClipboardMonitor(private val importer: BiConsumer<Long, ClipData?>) 
         }
         // The AOSP constructor callback checks the revision again under mLock.
         // This bypasses the outbound monitor, preventing an import/export loop.
-        importer.accept(nativeRevision, clip)
+        importer.accept(token, clip, android.os.Process.SYSTEM_UID)
     }
 
     companion object {
@@ -101,6 +185,10 @@ class HostedClipboardMonitor(private val importer: BiConsumer<Long, ClipData?>) 
         @Volatile private var enabled = false
         @JvmStatic fun enable() { enabled = true }
         @JvmStatic fun isEnabled() = enabled
+        @JvmStatic fun isCurrentImport(token: Long): Boolean {
+            val monitor = LocalServices.getService(HostedClipboardMonitor::class.java) ?: return false
+            return synchronized(monitor.lock) { token == monitor.operation }
+        }
         @JvmStatic fun isCurrentRevision(revision: Long): Boolean {
             val monitor = LocalServices.getService(HostedClipboardMonitor::class.java) ?: return false
             return synchronized(monitor.lock) { revision == monitor.revision }

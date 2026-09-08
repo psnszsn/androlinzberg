@@ -61,7 +61,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         textInput.availability(remote.textInputAvailable())
         dev.artzig.system.HostedClipboardMonitor.current()?.connect(
             object : dev.artzig.system.HostedClipboardMonitor.Publisher {
-                override fun publish(revision: Long, text: ByteArray?, html: ByteArray?) = remote.setClipboard(revision, text, html)
+                override fun publish(revision: Long, text: ByteArray?, html: ByteArray?, uris: ByteArray?) = remote.setClipboard(revision, text, html, uris)
             }, remote.clipboardAvailable())
     }
     private val capture = WaylandPointerCapture(object : WaylandPointerCapture.Host {
@@ -110,10 +110,10 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override fun clipboardAvailability(available: Boolean) = deliverSeat {
             dev.artzig.system.HostedClipboardMonitor.current()?.availability(available)
         }
-        override fun clipboardChanged(revision: Long, text: ByteArray?, html: ByteArray?) {
+        override fun clipboardChanged(revision: Long, text: ByteArray?, html: ByteArray?, uris: ByteArray?) {
             if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
                 throw SecurityException("Only the session presenter may publish clipboard data")
-            require(revision >= 0 && (text?.size ?: 0) <= 256 * 1024 && (html?.size ?: 0) <= 256 * 1024)
+            require(revision >= 0 && (text?.size ?: 0) <= 256 * 1024 && (html?.size ?: 0) <= 256 * 1024 && (uris?.size ?: 0) <= 256 * 1024)
             if (queuedClipboard.incrementAndGet() > 8) {
                 queuedClipboard.decrementAndGet()
                 if (clipboardOverflow.compareAndSet(false, true)) check(handler.post {
@@ -123,7 +123,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 return
             }
             if (!handler.post {
-                try { dev.artzig.system.HostedClipboardMonitor.current()?.changed(revision, text, html) }
+                try { dev.artzig.system.HostedClipboardMonitor.current()?.changed(revision, text, html, uris) }
                 finally { queuedClipboard.decrementAndGet() }
             }) {
                 queuedClipboard.decrementAndGet()
