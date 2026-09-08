@@ -6,5 +6,5 @@ let
   runtime = builtins.getFlake ("path:" + toString ../../artzig);
   pkgs = runtime.inputs.nixpkgs.legacyPackages.x86_64-linux;
 in pkgs.labwc.overrideAttrs (old: {
-  patches = (old.patches or []) ++ [ ./labwc-suspension.patch ./labwc-tablet.patch ];
+  patches = (old.patches or []) ++ [ ./labwc-suspension.patch ./labwc-tablet.patch ./labwc-ime.patch ];
 })

@@ -71,6 +71,7 @@ open class WindowFixtureActivity : Activity() {
             journal("dialog-shown")
         }
         button("Show decoded video") { startActivity(Intent(this, VideoFixtureActivity::class.java)) }
+        button("Show IME editor") { startActivity(Intent(this, ImeFixtureActivity::class.java)) }
         button("Recreate activity") { recreate() }
         button("Show SurfaceView") {
             content.addView(SurfaceView(this).apply {

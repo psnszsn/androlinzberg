@@ -11,6 +11,7 @@ const zwlr = wayland.client.zwlr;
 const CursorImage = @import("cursor_image.zig");
 pub const TabletSeat = @import("tablet_seat.zig");
 pub const PresentationFeedback = @import("presentation_feedback.zig");
+pub const TextInput = @import("text_input.zig");
 
 const drm_format_nv12: u32 = 0x3231564e;
 const drm_format_p010: u32 = 0x30313050;
@@ -281,6 +282,9 @@ pub const KeyboardFocus = struct {
 
 pub const Event = union(enum) {
     seat_capabilities: struct { generation: i32, mask: i32 },
+    text_input_available: bool,
+    text_input_focus: bool,
+    text_input_batch: *TextInput.Batch,
     close,
     configure: struct {
         width: i32,
@@ -331,6 +335,7 @@ pub const OrderedEvents = struct {
     const layout_limit = 16;
     const layout_source_limit = 32 * 1024 * 1024;
     retained_layouts: usize = 0,
+    retained_text_batches: usize = 0,
     retained_layout_source_bytes: usize = 0,
     pending: std.ArrayList(Item) = .empty,
     delivered: std.ArrayList(Item) = .empty,
@@ -340,7 +345,9 @@ pub const OrderedEvents = struct {
         const layout_overflow = event == .keyboard_layout and
             (self.retained_layouts == layout_limit or
                 event.keyboard_layout.source_bytes > layout_source_limit - self.retained_layout_source_bytes);
-        if (self.failed or self.pending.items.len == limit or layout_overflow) {
+        if (self.failed or self.pending.items.len == limit or layout_overflow or
+            (event == .text_input_batch and self.retained_text_batches == 128))
+        {
             self.failed = true;
             release(event);
             return;
@@ -354,6 +361,7 @@ pub const OrderedEvents = struct {
             self.retained_layouts += 1;
             self.retained_layout_source_bytes += event.keyboard_layout.source_bytes;
         }
+        if (event == .text_input_batch) self.retained_text_batches += 1;
     }
 
     fn removeWindow(self: *OrderedEvents, window: *Window) void {
@@ -369,9 +377,11 @@ pub const OrderedEvents = struct {
 
     fn release(event: Event) void {
         if (event == .keyboard_layout) xkb.xkb_keymap_unref(event.keyboard_layout.keymap);
+        if (event == .text_input_batch) event.text_input_batch.destroy();
     }
 
     fn releaseRetained(self: *OrderedEvents, event: Event) void {
+        if (event == .text_input_batch) self.retained_text_batches -= 1;
         if (event == .keyboard_layout) {
             self.retained_layouts -= 1;
             self.retained_layout_source_bytes -= event.keyboard_layout.source_bytes;
@@ -601,6 +611,10 @@ pub const Session = struct {
     tablets: ?*TabletSeat = null,
     tablet_generation: i32 = 0,
     tablet_failure: ?anyerror = null,
+    text_input_manager: ?*zwp.TextInputManagerV3 = null,
+    text_input_manager_global: ?u32 = null,
+    text_input: ?*TextInput = null,
+    text_input_failure: ?anyerror = null,
     pointer_constraints: ?*zwp.PointerConstraintsV1 = null,
     relative_pointer_manager: ?*zwp.RelativePointerManagerV1 = null,
     seat_global_name: ?u32 = null,
@@ -629,6 +643,7 @@ pub const Session = struct {
         compositor_max_version: u32 = 6,
         xdg_shell_max_version: u32 = 6,
         tablet: bool = true,
+        text_input: bool = true,
         fractional_scale: bool = true,
         presentation: bool = true,
         cursor_shape: bool = true,
@@ -654,6 +669,7 @@ pub const Session = struct {
         self.requireGlobals();
         if (self.output_failure) |failure| return failure;
         if (self.tablet_failure) |failure| return failure;
+        if (self.text_input_failure) |failure| return failure;
         if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         return self;
     }
@@ -678,6 +694,7 @@ pub const Session = struct {
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         if (self.output_failure) |failure| return failure;
         if (self.tablet_failure) |failure| return failure;
+        if (self.text_input_failure) |failure| return failure;
         if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         var timeout = timeout_ms;
         if (self.pointer_focus) |window| {
@@ -700,6 +717,7 @@ pub const Session = struct {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
             if (self.output_failure) |failure| return failure;
             if (self.tablet_failure) |failure| return failure;
+            if (self.text_input_failure) |failure| return failure;
             if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
             timeout = 0;
         }
@@ -769,6 +787,7 @@ pub const Session = struct {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
             if (self.output_failure) |failure| return failure;
             if (self.tablet_failure) |failure| return failure;
+            if (self.text_input_failure) |failure| return failure;
             if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         }
         for (self.windows.items) |window| _ = window.emitKeyRepeatIfDue();
@@ -785,6 +804,10 @@ pub const Session = struct {
     }
 
     fn removeWindow(self: *Session, window: *Window) void {
+        if (self.text_input) |input| {
+            if (window.surface_created) input.removeSurface(window.surface);
+            if (window.ui_initialized) input.removeSurface(window.ui_surface);
+        }
         if (self.tablets) |tablets| tablets.detachTarget(window);
         if (self.ordered_events) |*events| events.removeWindow(window);
         if (self.pointer_focus == window) self.pointer_focus = null;
@@ -1032,6 +1055,10 @@ pub const Session = struct {
     }
 
     fn destroyGlobals(self: *Session) void {
+        if (self.text_input) |input| input.deinit();
+        self.text_input = null;
+        if (self.text_input_manager) |manager| manager.destroy();
+        self.text_input_manager = null;
         if (self.tablets) |tablets| tablets.deinit();
         self.tablets = null;
         if (self.tablet_manager) |manager| manager.destroy();
@@ -1111,6 +1138,9 @@ pub const Session = struct {
                     } else {
                         self.dmabuf.?.setListener(*Session, dmabufListener, self);
                     }
+                } else if (std.mem.orderZ(u8, g.interface, zwp.TextInputManagerV3.interface.name) == .eq and self.protocol_options.text_input and self.text_input_manager == null) {
+                    self.text_input_manager = registry.bind(g.name, zwp.TextInputManagerV3, 1) catch return;
+                    self.text_input_manager_global = g.name;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.TabletManagerV2.interface.name) == .eq and self.protocol_options.tablet) {
                     self.tablet_manager = registry.bind(g.name, zwp.TabletManagerV2, 1) catch return;
                     self.tablet_manager_global = g.name;
@@ -1151,6 +1181,16 @@ pub const Session = struct {
                 }
             },
             .global_remove => |removed| {
+                if (self.text_input_manager_global == removed.name or self.seat_global_name == removed.name) {
+                    if (self.text_input) |input| input.deinit();
+                    self.text_input = null;
+                    if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .text_input_available = false });
+                }
+                if (self.text_input_manager_global == removed.name) {
+                    if (self.text_input_manager) |manager| manager.destroy();
+                    self.text_input_manager = null;
+                    self.text_input_manager_global = null;
+                }
                 if (self.presentation_global_name == removed.name) {
                     if (self.presentation) |manager| manager.destroy();
                     self.presentation = null;
@@ -1206,7 +1246,35 @@ pub const Session = struct {
                 break :failed null;
             };
         };
+        if (self.text_input == null) if (self.text_input_manager) |manager| if (self.seat) |seat| {
+            self.text_input = TextInput.init(self.gpa, manager, seat, .{
+                .context = self,
+                .focus = textInputFocus,
+                .batch = textInputBatch,
+                .failure = textInputFailure,
+            }) catch |err| failed: {
+                self.text_input_failure = err;
+                break :failed null;
+            };
+            if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .text_input_available = self.text_input != null });
+        };
         self.publishSeatCapabilities();
+    }
+    fn textInputFocus(context: *anyopaque, surface: *wl.Surface, active: bool) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        if (self.surfaceWindow(surface)) |window| window.push(.{ .text_input_focus = active });
+    }
+    fn textInputBatch(context: *anyopaque, surface: *wl.Surface, batch: *TextInput.Batch) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        if (self.ordered_events) |*events| if (self.surfaceWindow(surface)) |window| {
+            events.push(self.gpa, window, .{ .text_input_batch = batch });
+            return;
+        };
+        batch.destroy();
+    }
+    fn textInputFailure(context: *anyopaque, failure: anyerror) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        self.text_input_failure = failure;
     }
     fn tabletTarget(context: *anyopaque, surface: *wl.Surface) ?*anyopaque {
         const self: *Session = @ptrCast(@alignCast(context));
@@ -3150,4 +3218,29 @@ test "queued keyboard layout source budget and window removal" {
     try std.testing.expectEqual(@as(i32, 3), retained[0].event.keyboard_layout.generation);
     const chars = try retained[0].event.keyboard_layout.characters();
     try std.testing.expectEqual(@as(i32, 'a'), chars[30 * 64]);
+}
+
+test "text input module" {
+    std.testing.refAllDecls(TextInput);
+}
+
+test "text input event budget counts borrowed batches and releases every owner" {
+    const gpa = std.testing.allocator;
+    var events: OrderedEvents = .{};
+    defer events.deinit(gpa);
+    var window: Window = undefined;
+    for (0..128) |_| {
+        const batch = try gpa.create(TextInput.Batch);
+        batch.* = .{ .allocator = gpa };
+        events.push(gpa, &window, .{ .text_input_batch = batch });
+    }
+    try std.testing.expectEqual(@as(usize, 128), events.take().len);
+    const overflow = try gpa.create(TextInput.Batch);
+    overflow.* = .{ .allocator = gpa };
+    events.push(gpa, &window, .{ .text_input_batch = overflow });
+    try std.testing.expect(events.failed);
+    try std.testing.expectEqual(@as(usize, 128), events.retained_text_batches);
+    events.removeWindow(&window);
+    try std.testing.expectEqual(@as(usize, 0), events.retained_text_batches);
+    try std.testing.expectEqual(@as(usize, 0), events.take().len);
 }

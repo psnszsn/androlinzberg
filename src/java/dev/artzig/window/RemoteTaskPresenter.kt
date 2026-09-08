@@ -9,10 +9,35 @@ import android.view.Surface
 internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val handler: Handler, private val input: WaylandTaskInput,
     private val taskForToken: (android.os.IBinder) -> Int?,
+    private val taskForEditor: (android.os.IBinder, Int, Int) -> Int?,
     private val publishCapabilities: (Int, Int) -> Unit,
     private val publishTablet: (WaylandTabletInput.Device, Boolean) -> Unit,
     acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
+    val textInput = WaylandInputMethod(handler, object : WaylandInputMethod.Host {
+        override fun task(window: android.os.IBinder, uid: Int, pid: Int) =
+            taskForEditor(window, uid, pid)?.let { windows[it]?.task }
+        override fun publish(task: TaskGeometry.Task, generation: Long, applied: Long, enabled: Boolean,
+            context: WaylandTextContext.Wire?, hint: Int, purpose: Int, external: Boolean, rectangle: IntArray): Boolean {
+            if (windows[task.id]?.task != task) return false
+            return remote.updateTextInput(task.id, task.generation, generation, applied, enabled,
+                context?.text, context?.cursor ?: 0, context?.anchor ?: 0, hint, purpose, external, rectangle)
+        }
+        override fun cursor(task: TaskGeometry.Task, points: FloatArray): IntArray {
+            val window = windows[task.id]?.takeIf { it.task == task } ?: return intArrayOf()
+            val bounds = window.bounds ?: return intArrayOf()
+            // CursorAnchorInfo's matrix maps to Android's synthetic display.
+            // The compositor expects the task surface's logical coordinates.
+            val x = (minOf(points[0], points[2]) - bounds.left) * window.size.width / bounds.width
+            val y = (minOf(points[1], points[3]) - bounds.top) * window.size.height / bounds.height
+            val right = (maxOf(points[0], points[2]) - bounds.left) * window.size.width / bounds.width
+            val bottom = (maxOf(points[1], points[3]) - bounds.top) * window.size.height / bounds.height
+            if (listOf(x, y, right, bottom).any { !it.isFinite() || it < -16384 || it > 32768 }) return intArrayOf()
+            return intArrayOf(kotlin.math.floor(x).toInt(), kotlin.math.floor(y).toInt(),
+                maxOf(1, kotlin.math.ceil(right).toInt() - kotlin.math.floor(x).toInt()),
+                maxOf(1, kotlin.math.ceil(bottom).toInt() - kotlin.math.floor(y).toInt()))
+        }
+    })
     @Volatile private var queuedTestInput = 0L
     fun testInputQueued(sequence: Long): Boolean = sequence > 0 && queuedTestInput >= sequence
     fun toggleFullscreen(token: android.os.IBinder) {
@@ -33,6 +58,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         input.repeatConfiguration(state[4], state[5])
         input.modifiers(state[6], state[7])
         publishCapabilities(state[1], state[2])
+        textInput.availability(remote.textInputAvailable())
     }
     private val capture = WaylandPointerCapture(object : WaylandPointerCapture.Host {
         override fun task(token: android.os.IBinder) = taskForToken(token)?.let { windows[it]?.task }
@@ -145,6 +171,13 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             deliverSeat { input.modifiers(metaState, persistentMetaState) }
         override fun keyboardLayout(layoutGeneration: Int, characters: IntArray, symbols: IntArray) =
             deliverSeat { input.keyboardLayout(layoutGeneration, characters, symbols) }
+        override fun textInputAvailability(available: Boolean) = deliverSeat { textInput.availability(available) }
+        override fun textInputFocus(taskId: Int, generation: Long, focused: Boolean) =
+            deliver(taskId, generation) { textInput.focus(it.task, focused) }
+        override fun textInputEdit(taskId: Int, generation: Long, editorGeneration: Long, sequence: Long, fields: Int,
+            preedit: String, cursorBegin: Int, cursorEnd: Int, committed: String, beforeBytes: Int, afterBytes: Int) =
+            deliver(taskId, generation) { textInput.edit(it.task, WaylandInputMethod.Edit(editorGeneration, sequence,
+                fields, preedit, cursorBegin, cursorEnd, committed, beforeBytes, afterBytes)) }
     }
 
     override fun open(task: TaskGeometry.Task, appId: String, title: String,
@@ -173,6 +206,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         val seat = input.open(task)
         private var closed = false
         private var outputGeneration = 0L
+        var bounds: TaskGeometry.Bounds? = null
         override fun prepare(size: WaylandTaskShell.Size): Surface {
             check(!closed && outputGeneration < Long.MAX_VALUE)
             val replacement = remote.prepareOutput(task.id, task.generation, ++outputGeneration,
@@ -190,6 +224,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         }
         override fun committed(bounds: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
             if (!closed) {
+                this.bounds = bounds
                 remote.configurationCommitted(task.id, task.generation, bounds.left, bounds.top,
                     bounds.width, bounds.height, size.width, size.height,
                     outputGeneration, size.configurationGeneration)
@@ -202,6 +237,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override fun close() {
             if (closed) return
             closed = true
+            textInput.removed(task)
             capture.closed(task)
             if (windows[task.id] === this) windows.remove(task.id)
             try { seat.close() }

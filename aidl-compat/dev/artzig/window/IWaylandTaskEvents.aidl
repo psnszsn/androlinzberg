@@ -24,4 +24,10 @@ oneway interface IWaylandTaskEvents {
     void tablet(int taskId, long generation, int deviceId, int deviceGeneration, int action,
         int button, boolean pressed, in float[] axes);
     void cancelTablet(int taskId, long generation, int deviceId);
+    void textInputAvailability(boolean available);
+    void textInputFocus(int taskId, long generation, boolean focused);
+    /** One protocol done batch, with UTF-8 offsets and byte deletion lengths. */
+    void textInputEdit(int taskId, long generation, long editorGeneration, long sequence, int fields,
+        String preedit, int cursorBegin, int cursorEnd, String committed,
+        int beforeBytes, int afterBytes);
 }

@@ -17,6 +17,7 @@ import tempfile
 parser = argparse.ArgumentParser()
 parser.add_argument('--launcher', action='store_true')
 parser.add_argument('--video', action='store_true')
+parser.add_argument('--ime', action='store_true')
 parser.add_argument('--testkit', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
@@ -324,7 +325,35 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert any(node.get('text') == value and str(node.get('task_id')) == (task_id or task)
                                and (description is None or node.get('content_description') == description)
                                for node in current['nodes']), (value, current)
-                if args.video:
+                if args.ime:
+                    ime_mark = control('mark')['mark']
+                    control('step', 'click', '--task-id', task, '--text', label('Show IME editor'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('wait', 'exists', '--text', 'IME text=a😀中z select=3:3 composing=-1:-1')
+                    for action, expected in [
+                        ('COMPOSE UNICODE', 'IME text=a😀é拼中z select=4:4 composing=3:5'),
+                        ('HIDE PREEDIT CARET', 'IME text=a😀候中z select=4:4 composing=3:4 caret=hidden'),
+                        ('COMMIT UNICODE', 'IME text=a😀文中z select=4:4 composing=-1:-1'),
+                        ('DELETE UNICODE', 'IME text=a😀éz select=4:4 composing=-1:-1'),
+                        ('FOCUS PASSWORD', 'Password length=14'),
+                        ('VERIFY PASSWORD CONTEXT', 'Password length=15'),
+                        ('FOCUS ORIGINAL EDITOR', 'IME text=a😀éz select=4:4 composing=-1:-1'),
+                        ('COMPOSE THEN LEAVE', 'IME text=a😀éé拼z select=5:5 composing=4:6'),
+                        ('FOCUS PASSWORD', 'Password length=15'),
+                        # Android closes the old InputConnection, finishing its
+                        # composition while retaining text and cursor position.
+                        ('FOCUS ORIGINAL EDITOR', 'IME text=a😀éé拼z select=5:5 composing=-1:-1'),
+                    ]:
+                        control('step', 'click', '--task-id', task, '--text', action,
+                                '--via', 'semantic', '--settle', 'idle')
+                        control('wait', 'exists', '--task-id', task, '--text', expected)
+                    diagnostics = control('diagnose', '--since', json.dumps(ime_mark))
+                    (out / 'ime-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
+                    assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
+                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
+                    assert len(steps) == 11 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    result['test_control'] = {'steps': len(steps), 'task': int(task)}
+                elif args.video:
                     video_mark = control('mark')['mark']
                     control('step', 'click', '--task-id', task, '--text', label('Show decoded video'),
                             '--via', 'semantic', '--settle', 'idle')

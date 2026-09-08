@@ -27,10 +27,11 @@ extern "c" fn AParcel_readInt64(*const Parcel, *i64) i32;
 extern "c" fn AParcel_readInt32Array(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, *?[*]i32) callconv(.c) bool) i32;
 extern "c" fn AParcel_getDataPosition(*const Parcel) i32;
 extern "c" fn AParcel_getDataSize(*const Parcel) i32;
-extern "c" fn AParcel_readString(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, *?[*]u8) callconv(.c) bool) i32;
+extern "c" fn AParcel_readString(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool) i32;
 extern "c" fn AParcel_readStrongBinder(*const Parcel, *?*Binder) i32;
 extern "c" fn AParcel_writeInt32(*Parcel, i32) i32;
 extern "c" fn AParcel_writeInt64(*Parcel, i64) i32;
+extern "c" fn AParcel_writeString(*Parcel, [*]const u8, i32) i32;
 extern "c" fn AParcel_writeFloat(*Parcel, f32) i32;
 extern "c" fn AParcel_writeFloatArray(*Parcel, [*]const f32, i32) i32;
 extern "c" fn AParcel_writeInt32Array(*Parcel, [*]const i32, i32) i32;
@@ -147,6 +148,10 @@ const Server = struct {
         if (self.session.ordered_events.?.failed) return error.SeatEventQueueOverflow;
         for (self.session.ordered_events.?.take()) |item| {
             switch (item.event) {
+                .text_input_available => |available| {
+                    if (self.owner) |callback| try sendGlobal(callback, 20, .{available});
+                    continue;
+                },
                 .seat_capabilities => |caps| {
                     if (self.owner) |callback| try sendGlobal(callback, 15, .{ caps.generation, caps.mask });
                     continue;
@@ -180,6 +185,8 @@ const Server = struct {
                 else => {},
             };
             switch (item.event) {
+                .text_input_focus => |focused| try send(entry, 21, .{focused}),
+                .text_input_batch => |batch| try send(entry, 22, .{ batch.editor, batch.sequence, batch.fields, @as([]const u8, batch.preedit.slice()), batch.cursor_begin, batch.cursor_end, @as([]const u8, batch.commit.slice()), batch.before, batch.after }),
                 .tablet => |tablet| {
                     const sample = tablet.sample;
                     if (sample.action == .cancel) {
@@ -430,11 +437,51 @@ const Server = struct {
             return 0;
         }
         if (self.owner_pid != 0 and self.owner_pid != request.pid) return -1;
+        if (request.code == 19) {
+            try end(request.input);
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, @intFromBool(self.session.text_input != null)));
+            return 0;
+        }
         const input = request.input;
         const output = request.output;
         const key: Key = .{ .id = try readInt(input), .generation = try readLong(input) };
         if (key.id < 0 or key.generation <= 0) return error.InvalidTask;
         switch (request.code) {
+            20 => {
+                const editor = try readLong(input);
+                const applied = try readLong(input);
+                const enabled = try readInt(input);
+                if (enabled != 0 and enabled != 1) return error.InvalidBoolean;
+                var text: InputText = .{};
+                try ok(AParcel_readString(input, &text, InputText.allocate));
+                var state: Queue.TextInput.State = .{
+                    .editor = editor,
+                    .applied = applied,
+                    .enabled = enabled == 1,
+                    .surrounding = if (text.len) |len| try Queue.TextInput.Text.init(text.bytes[0..len]) else null,
+                    .cursor = try readInt(input),
+                    .anchor = try readInt(input),
+                    .hint = @bitCast(try readInt(input)),
+                    .purpose = @bitCast(try readInt(input)),
+                };
+                const external_change = try readInt(input);
+                if (external_change != 0 and external_change != 1) return error.InvalidBoolean;
+                state.external_change = external_change == 1;
+                const bounds_count = try readInt(input);
+                if (bounds_count != 0 and bounds_count != 4) return error.InvalidCursorBounds;
+                if (bounds_count == 4) state.rectangle = .{ try readInt(input), try readInt(input), try readInt(input), try readInt(input) };
+                try end(input);
+                try state.validate();
+                const entry = self.find(key) orelse return error.StaleTask;
+                var accepted = false;
+                if (self.session.text_input) |text_input| if (text_input.surface) |surface| {
+                    if (surface == entry.window.surface or surface == entry.window.ui_surface)
+                        accepted = try text_input.update(surface, &state);
+                };
+                try ok(AParcel_writeInt32(output, 0));
+                try ok(AParcel_writeInt32(output, @intFromBool(accepted)));
+            },
             18 => {
                 const mode = try readInt(input);
                 try end(input);
@@ -651,7 +698,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 18) return -38;
+    if (code < 1 or code > 20) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -699,11 +746,11 @@ fn end(parcel: *const Parcel) !void {
 const Text = struct {
     bytes: [1025]u8 = undefined,
     len: usize = 0,
-    fn allocate(raw: ?*anyopaque, length: i32, out: *?[*]u8) callconv(.c) bool {
+    fn allocate(raw: ?*anyopaque, length: i32, out: ?*?[*]u8) callconv(.c) bool {
         const self: *Text = @ptrCast(@alignCast(raw.?));
         if (length < 1 or length > self.bytes.len) return false;
         self.len = @intCast(length - 1);
-        out.* = &self.bytes;
+        (out orelse return false).* = &self.bytes;
         return true;
     }
     fn read(self: *Text, parcel: *const Parcel) !void {
@@ -713,6 +760,21 @@ const Text = struct {
     }
     fn slice(self: *const Text) [:0]const u8 {
         return self.bytes[0..self.len :0];
+    }
+};
+const InputText = struct {
+    bytes: [Queue.TextInput.max_bytes + 1]u8 = undefined,
+    len: ?usize = null,
+    fn allocate(raw: ?*anyopaque, length: i32, out: ?*?[*]u8) callconv(.c) bool {
+        const self: *InputText = @ptrCast(@alignCast(raw.?));
+        if (length == -1) {
+            self.len = null;
+            return true;
+        }
+        if (length < 1 or length > self.bytes.len) return false;
+        self.len = @intCast(length - 1);
+        (out orelse return false).* = &self.bytes;
+        return true;
     }
 };
 fn sendLayout(callback: *Binder, layout: Queue.KeyboardLayout) !void {
@@ -770,7 +832,7 @@ fn writeValues(parcel: *Parcel, values: anytype) !void {
         .float, .comptime_float => try ok(AParcel_writeFloat(parcel, @floatCast(value))),
         .pointer => |pointer| {
             if (pointer.size != .slice) @compileError("Unsupported task callback array");
-            if (pointer.child == i32) try ok(AParcel_writeInt32Array(parcel, value.ptr, @intCast(value.len))) else if (pointer.child == f32) try ok(AParcel_writeFloatArray(parcel, value.ptr, @intCast(value.len))) else @compileError("Unsupported task callback array element");
+            if (pointer.child == i32) try ok(AParcel_writeInt32Array(parcel, value.ptr, @intCast(value.len))) else if (pointer.child == f32) try ok(AParcel_writeFloatArray(parcel, value.ptr, @intCast(value.len))) else if (pointer.child == u8) try ok(AParcel_writeString(parcel, value.ptr, @intCast(value.len))) else @compileError("Unsupported task callback array element");
         },
         else => @compileError("Unsupported task callback field"),
     };

@@ -48,4 +48,12 @@ interface IWaylandTaskPresenter {
     /** Production task policy: exit=0, enter=1, toggle current compositor state=2.
      * A request is not an acknowledgement; xdg configure remains authoritative. */
     boolean requestFullscreen(int taskId, long generation, int mode);
+    /** Independent of physical seat-device capabilities. */
+    boolean textInputAvailable();
+    /** UTF-8 byte offsets; appliedSequence acknowledges completed app edits.
+     * Empty cursorBounds means unknown; otherwise surface-local x/y/width/height. */
+    boolean updateTextInput(int taskId, long generation, long editorGeneration,
+        long appliedSequence, boolean enabled, @nullable String surrounding,
+        int cursor, int anchor, int hint, int purpose, boolean externalChange,
+        in int[] cursorBounds);
 }

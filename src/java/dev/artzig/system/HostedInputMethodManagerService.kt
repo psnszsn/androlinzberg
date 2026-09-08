@@ -14,12 +14,12 @@ import com.android.internal.inputmethod.IRemoteInputConnection
 import com.android.internal.inputmethod.InputBindResult
 
 /**
- * Hosted input-method service for a device with no software IMEs.
+ * Hosted input-method service with an optional compositor input session.
  *
  * Source note: follows the client-visible empty-device behavior of AOSP
- * `InputMethodManagerService`. Android IME binding/services are absent; physical
- * text is delivered through the host input dispatcher, while
- * stock `InputMethodManager` still performs its normal AIDL registration and queries.
+ * `InputMethodManagerService`. Android IME processes are absent; the desktop
+ * adapter binds the stock client session to Wayland text-input when advertised.
+ * Without it, the empty-IME branch retains physical keyboard input.
  */
 internal class HostedInputMethodManagerService(private val context: android.content.Context) :
     IInputMethodManager.Stub(),
@@ -30,11 +30,13 @@ internal class HostedInputMethodManagerService(private val context: android.cont
     private val clients = linkedMapOf<IBinder, Client>()
     private var focusedWindow: IBinder? = null
     private var focusedClient: Client? = null
+    private var bindSequence = 0
+    private fun desktop() = com.android.server.LocalServices.getService(dev.artzig.window.WaylandInputMethod::class.java)
     private inner class Client(val endpoint: IInputMethodClient, val fallback: IRemoteInputConnection,
         val uid: Int, val pid: Int, val displayId: Int) : IBinder.DeathRecipient {
         override fun binderDied() = synchronized(lock) {
             if (clients[endpoint.asBinder()] === this) clients.remove(endpoint.asBinder())
-            if (focusedClient === this) { focusedClient = null; focusedWindow = null }
+            if (focusedClient === this) { desktop()?.finish(focusedWindow); focusedClient = null; focusedWindow = null }
         }
     }
 
@@ -84,6 +86,8 @@ internal class HostedInputMethodManagerService(private val context: android.cont
             return InputBindResult.INVALID_USER
         synchronized(lock) {
             val registered = clients[client.asBinder()] ?: throw IllegalArgumentException("Unknown client ${client.asBinder()}")
+            if (Binder.getCallingUid() != registered.uid || Binder.getCallingPid() != registered.pid)
+                throw SecurityException("Input client belongs to another process")
             val identity = Binder.clearCallingIdentity()
             try {
                 val windows = com.android.server.LocalServices.getService(com.android.server.wm.WindowManagerInternal::class.java)
@@ -99,14 +103,27 @@ internal class HostedInputMethodManagerService(private val context: android.cont
                 if (editorInfo != null && editorInfo.packageName !in
                     context.packageManager.getPackagesForUid(registered.uid).orEmpty())
                     return InputBindResult.INVALID_PACKAGE_NAME
-                if (focusedWindow == windowToken &&
+                if (focusedWindow == windowToken && editorInfo == null &&
                     startInputFlags and com.android.internal.inputmethod.StartInputFlags.IS_TEXT_EDITOR != 0) {
-                    return if (editorInfo != null) InputBindResult.NO_IME else InputBindResult(
+                    return InputBindResult(
                         InputBindResult.ResultCode.SUCCESS_REPORT_WINDOW_FOCUS_ONLY,
                         null, null, null, null, -1, false)
                 }
+                if (focusedClient !== registered && desktop()?.available == true) {
+                    focusedClient?.endpoint?.setActive(false, false)
+                    registered.endpoint.setActive(true, false)
+                }
                 focusedWindow = windowToken
                 focusedClient = registered
+                if (editorInfo != null && inputConnection != null) {
+                    val session = desktop()?.start(windowToken, registered.uid, registered.pid, editorInfo, inputConnection)
+                    if (session != null) {
+                        bindSequence = if (bindSequence == Int.MAX_VALUE) 1 else bindSequence + 1
+                        return InputBindResult(InputBindResult.ResultCode.SUCCESS_WITH_IME_SESSION,
+                            session, null, null, "dev.artzig/.WaylandInputMethod", bindSequence, false)
+                    }
+                }
+                desktop()?.finish(null)
                 return if (editorInfo == null) InputBindResult.NULL_EDITOR_INFO else InputBindResult.NO_IME
             } finally { Binder.restoreCallingIdentity(identity) }
         }

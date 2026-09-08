@@ -15,6 +15,7 @@
         </activity>
         <activity android:name=".TextureFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".VideoFixtureActivity" android:resizeableActivity="true" />
+        <activity android:name=".ImeFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".ColdProcessActivity" android:process=":cold" android:resizeableActivity="true" />
         <activity android:name=".ColdGroupedActivity" android:process=":cold" android:resizeableActivity="true" />
         <activity android:name=".ColdHandledConfigurationActivity" android:process=":cold"

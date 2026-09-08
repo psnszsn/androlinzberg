@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) void {
     scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
     scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
     scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
+    scanner.addSystemProtocol("unstable/text-input/text-input-unstable-v3.xml");
     scanner.addSystemProtocol("unstable/pointer-constraints/pointer-constraints-unstable-v1.xml");
     scanner.addSystemProtocol("unstable/relative-pointer/relative-pointer-unstable-v1.xml");
     scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
@@ -116,6 +117,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("zwp_relative_pointer_manager_v1", 1);
     scanner.generate("wp_cursor_shape_manager_v1", 1);
     scanner.generate("zwp_tablet_manager_v2", 1);
+    scanner.generate("zwp_text_input_manager_v3", 1);
     scanner.generate("zwlr_virtual_pointer_manager_v1", 2);
     scanner.generate("zwp_virtual_keyboard_manager_v1", 1);
     // --- embedded artzig runtime (ART) module
@@ -853,6 +855,7 @@ pub fn build(b: *std.Build) void {
     wayland_tests.root_module.linkSystemLibrary("wayland-client", .{ .needed = true });
     wayland_tests.root_module.linkSystemLibrary("xkbcommon", .{ .needed = true });
     const run_wayland_tests = b.addRunArtifact(wayland_tests);
+    b.step("wayland-unit-test", "Test Wayland event ownership and protocol state").dependOn(&run_wayland_tests.step);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
     const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
@@ -1204,6 +1207,7 @@ pub fn build(b: *std.Build) void {
     suspension_compositor.addFileArg(b.path("testdata/wayland/labwc-suspension.nix"));
     suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-suspension.patch"));
     suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-tablet.patch"));
+    suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-ime.patch"));
     suspension_compositor.run.addFileInput(artzig_dep.path("flake.nix"));
     suspension_compositor.run.addFileInput(artzig_dep.path("flake.lock"));
     suspension_compositor.addArg("--out-link");
@@ -1253,7 +1257,9 @@ pub fn build(b: *std.Build) void {
         b.step(if (mixed_outputs) "stock-task-output-test" else if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
     }
-    for ([_]bool{ false, true }) |video_fixture| {
+    for ([_][]const u8{ "desktop", "video", "ime" }) |fixture| {
+        const video_fixture = std.mem.eql(u8, fixture, "video");
+        const ime_fixture = std.mem.eql(u8, fixture, "ime");
         const desktop_launcher = @import("build/command.zig").create(b);
         setApplicationEnvironment(desktop_launcher, application_tree);
         desktop_launcher.setEnvironment("AZK_WINDOW_BACKEND", "stock");
@@ -1261,13 +1267,18 @@ pub fn build(b: *std.Build) void {
         desktop_launcher.setEnvironment("WLR_RENDERER", "gles2");
         desktop_launcher.setEnvironment("SHOT_COMPOSITOR", "labwc");
         desktop_launcher.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
+        if (ime_fixture) {
+            desktop_launcher.setEnvironment("AZK_TEST_IME", "1");
+            desktop_launcher.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
+        }
         desktop_launcher.addArg("env");
         desktop_launcher.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
         desktop_launcher.addFileArg(b.path("tools/shot.sh"));
-        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else "zig-out/test-results/stock-desktop-launcher"});
+        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else if (ime_fixture) "zig-out/test-results/stock-ime" else "zig-out/test-results/stock-desktop-launcher"});
         desktop_launcher.addArgs(&.{ b.pathResolve(&.{ launcher_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
         desktop_launcher.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
         if (video_fixture) desktop_launcher.addArg("--video");
+        if (ime_fixture) desktop_launcher.addArg("--ime");
         desktop_launcher.addArgs(&.{ "--launcher", "--testkit" });
         desktop_launcher.addDirectoryArg(testkit_tree.getDirectory());
         desktop_launcher.addArg("--seat");
@@ -1277,7 +1288,7 @@ pub fn build(b: *std.Build) void {
         desktop_launcher.addFileArg(window_fixture.apk);
         desktop_launcher.run.has_side_effects = true;
         desktop_launcher.run.setName("verify APK desktop launch and compositor close through ATMS");
-        b.step(if (video_fixture) "stock-video-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
+        b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
             .dependOn(&desktop_launcher.run.step);
     }
     const framework_module_smoke = @import("build/command.zig").create(b);

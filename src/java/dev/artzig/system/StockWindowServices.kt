@@ -117,9 +117,9 @@ internal class StockWindowServices private constructor() {
             check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
             shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap,
                 devices::publishSeatCapabilities, devices::publishTabletDevice,
-                { id -> com.android.server.wm.HostedTaskInputTargets.taskToken(windows, id) }) { token ->
-                com.android.server.wm.HostedTaskInputTargets.taskId(windows, token)
-            }
+                { id -> com.android.server.wm.HostedTaskInputTargets.taskToken(windows, id) },
+                { token -> com.android.server.wm.HostedTaskInputTargets.taskId(windows, token) },
+                { token, uid, pid -> com.android.server.wm.HostedTaskInputTargets.windowTask(windows, token, uid, pid) })
         }
     }
 

@@ -18,6 +18,8 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     compile.addFileArg(b.path("src/java/dev/artzig/window/TaskGeometrySmoke.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/window/WaylandTaskShell.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/window/WaylandTaskShellSmoke.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/window/WaylandTextContext.kt"));
+    compile.addFileArg(b.path("src/java/dev/artzig/window/WaylandTextContextSmoke.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStarts.kt"));
     compile.addFileArg(b.path("src/java/dev/artzig/system/HostedProcessStartsSmoke.kt"));
     compile.addArg("-d");
@@ -37,6 +39,12 @@ pub fn addGeometryTests(b: *std.Build, aosp: *std.Build.Dependency, parent: *std
     shell.run.setName("verify task window lifecycle and coordinated geometry");
     b.step("task-shell-test", "Verify task window ownership, resize, close and stale callbacks").dependOn(&shell.run.step);
     parent.dependOn(&shell.run.step);
+    const text = command.create(b);
+    text.addArgs(&.{ "java", "-cp" });
+    text.addJoinedPaths(":", &.{ classes, stdlib });
+    text.addArg("dev.artzig.window.WaylandTextContextSmoke");
+    b.step("text-input-context-test", "Verify Android/Wayland text indices, composition and bounded context").dependOn(&text.run.step);
+    parent.dependOn(&text.run.step);
     const processes = command.create(b);
     processes.addArgs(&.{ "java", "-cp" });
     processes.addJoinedPaths(":", &.{ classes, stdlib });

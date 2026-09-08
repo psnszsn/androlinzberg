@@ -22,6 +22,41 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Text-input checkpoint (2026-09-08)
+
+The system input-method service can now bind stock IInputMethodSession and
+IRemoteInputConnection clients to a seat-owned text-input-v3 object. Task and
+editor generations guard both directions. Incoming batches own bounded UTF-8
+payloads; their queue budget includes borrowed events. Android queries use
+asynchronous futures with deadlines, and publication waits until the app has
+applied the edit batch. An older state serial still delivers valid edits; a
+superseded editor's serial cannot acquire a new editor.
+
+The adapter converts surrounding text, selection and deletion between UTF-16
+and UTF-8 without splitting a Unicode scalar. It omits password context and
+unavailable context, removes old preedit before applying deletion/commit, and
+preserves the composing selection. Stock setImeConsumesInput handles hidden
+preedit carets. Android editor replacement follows BaseInputConnection's close
+contract, retaining text while finishing composition. CursorAnchorInfo maps
+from the synthetic Android display into task-local coordinates. There is no
+fabricated Android IME surface, panel height or inset.
+
+The test compositor supplies actual protocol events through the existing
+headless harness. Regression 366 passes `stock-ime-test` with 11 clean semantic
+steps covering Unicode composition, hidden caret, commit, byte deletion,
+password context, delayed state serials, superseded editor events and editor
+replacement. It also passes the tablet gate, Wayland ownership/state unit tests,
+C++ audit and graph audit. Regression 364 passes the existing 13-step desktop
+physical-input gate with no running compositor input method. Artifacts:
+`/tmp/wayland-ime-366-artifacts/` and `/tmp/wayland-ime-364-artifacts/`.
+
+Regression 367 passes the complete JVM suite and all 16 APK integration tests,
+with 48 clean steps. Artifacts: `/tmp/wayland-ime-367-artifacts/`.
+
+Further IME acceptance work includes compositor focus loss/re-entry, protocol
+hotplug, explicit show/hide policy, editor actions and invalidation/death stress.
+Clipboard, drag-and-drop and the remaining M10/M11 work are still pending.
+
 ## Stock decoded video checkpoint (2026-09-08)
 
 Stock MediaCodec surface output now queues independently owned GPU video frames
