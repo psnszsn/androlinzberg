@@ -22,6 +22,21 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Keyboard layout pressure checkpoint (2026-09-08)
+
+The ordered seat queue retains at most 16 XKB layout snapshots and charges at
+most 32 MiB of their serialized source sizes across pending and borrowed batches.
+This supplements the existing 4096-event and 16 MiB individual keymap limits.
+Group snapshots sharing a map are conservatively charged separately. These are
+source-size/reference limits, not a measurement of libxkbcommon's parsed heap.
+Overflow fails the session explicitly rather than dropping a layout and
+interpreting following keys with the wrong map. Drain and task removal release
+the corresponding references and budget.
+
+Regression 272 passes native pressure/ownership/chronology tests, Cage/labwc
+stock task gates and graph audit (7019 successful build steps). Log:
+`/tmp/wayland-keymap-pressure-272.log`.
+
 ## Resize input checkpoint (2026-09-08)
 
 Production pointer, touch, wheel and relative-motion events now wait for a

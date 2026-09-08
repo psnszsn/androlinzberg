@@ -208,6 +208,7 @@ pub const keyboard_scan_count = 768;
 /// events, even if another keymap arrives before the presenter drains the seat.
 pub const KeyboardLayout = struct {
     keymap: *xkb.Keymap,
+    source_bytes: usize = 0,
     group: u32,
     generation: i32,
 
@@ -319,12 +320,22 @@ pub const Event = union(enum) {
 pub const OrderedEvents = struct {
     pub const Item = struct { window: ?*Window, event: Event };
     const limit = 4096;
+    // XKB snapshots retain parsed maps, unlike ordinary key events. Charge
+    // both borrowed/delivered and pending snapshots, including group changes
+    // sharing a map, so neither chronology buffer escapes the budget.
+    const layout_limit = 16;
+    const layout_source_limit = 32 * 1024 * 1024;
+    retained_layouts: usize = 0,
+    retained_layout_source_bytes: usize = 0,
     pending: std.ArrayList(Item) = .empty,
     delivered: std.ArrayList(Item) = .empty,
     failed: bool = false,
 
     fn push(self: *OrderedEvents, gpa: std.mem.Allocator, window: ?*Window, event: Event) void {
-        if (self.failed or self.pending.items.len == limit) {
+        const layout_overflow = event == .keyboard_layout and
+            (self.retained_layouts == layout_limit or
+                event.keyboard_layout.source_bytes > layout_source_limit - self.retained_layout_source_bytes);
+        if (self.failed or self.pending.items.len == limit or layout_overflow) {
             self.failed = true;
             release(event);
             return;
@@ -332,7 +343,12 @@ pub const OrderedEvents = struct {
         self.pending.append(gpa, .{ .window = window, .event = event }) catch {
             release(event);
             self.failed = true;
+            return;
         };
+        if (event == .keyboard_layout) {
+            self.retained_layouts += 1;
+            self.retained_layout_source_bytes += event.keyboard_layout.source_bytes;
+        }
     }
 
     fn removeWindow(self: *OrderedEvents, window: *Window) void {
@@ -340,7 +356,7 @@ pub const OrderedEvents = struct {
             var index: usize = 0;
             while (index < items.items.len) {
                 if (items.items[index].window == window) {
-                    release(items.orderedRemove(index).event);
+                    self.releaseRetained(items.orderedRemove(index).event);
                 } else index += 1;
             }
         }
@@ -350,16 +366,24 @@ pub const OrderedEvents = struct {
         if (event == .keyboard_layout) xkb.xkb_keymap_unref(event.keyboard_layout.keymap);
     }
 
+    fn releaseRetained(self: *OrderedEvents, event: Event) void {
+        if (event == .keyboard_layout) {
+            self.retained_layouts -= 1;
+            self.retained_layout_source_bytes -= event.keyboard_layout.source_bytes;
+        }
+        release(event);
+    }
+
     pub fn take(self: *OrderedEvents) []const Item {
-        for (self.delivered.items) |item| release(item.event);
+        for (self.delivered.items) |item| self.releaseRetained(item.event);
         self.delivered.clearRetainingCapacity();
         std.mem.swap(std.ArrayList(Item), &self.pending, &self.delivered);
         return self.delivered.items;
     }
 
     fn deinit(self: *OrderedEvents, gpa: std.mem.Allocator) void {
-        for (self.pending.items) |item| release(item.event);
-        for (self.delivered.items) |item| release(item.event);
+        for (self.pending.items) |item| self.releaseRetained(item.event);
+        for (self.delivered.items) |item| self.releaseRetained(item.event);
         self.pending.deinit(gpa);
         self.delivered.deinit(gpa);
     }
@@ -577,6 +601,7 @@ pub const Session = struct {
     virtual_keyboard: ?*zwp.VirtualKeyboardV1 = null,
     xkb_context: ?*xkb.Context = null,
     xkb_keymap: ?*xkb.Keymap = null,
+    xkb_keymap_source_bytes: usize = 0,
     xkb_state: ?*xkb.State = null,
     keyboard_group: u32 = 0,
     keyboard_layout_generation: i32 = 0,
@@ -771,6 +796,7 @@ pub const Session = struct {
                 xkb.xkb_state_unref(self.xkb_state);
                 xkb.xkb_keymap_unref(self.xkb_keymap);
                 self.xkb_keymap = keymap;
+                self.xkb_keymap_source_bytes = k.size;
                 self.xkb_state = xkb.xkb_state_new(keymap);
                 self.keyboard_group = 0;
                 self.layoutChanged();
@@ -912,6 +938,7 @@ pub const Session = struct {
         const map = self.xkb_keymap orelse return;
         events.push(self.gpa, null, .{ .keyboard_layout = .{
             .keymap = xkb.xkb_keymap_ref(map),
+            .source_bytes = self.xkb_keymap_source_bytes,
             .group = self.keyboard_group,
             .generation = self.keyboard_layout_generation,
         } });
@@ -2909,4 +2936,77 @@ test "test text validates the complete request before any key can be sent" {
     try Window.validateTestText("aAZ09 !@#$%^&*()_+-=\n\t");
     try std.testing.expectError(error.UnsupportedText, Window.validateTestText("supported prefix\xc3\xa9"));
     try std.testing.expectError(error.UnsupportedText, Window.validateTestText("supported prefix\x00"));
+}
+
+test "queued keyboard layout pressure includes borrowed snapshots and releases on drain" {
+    const context = xkb.xkb_context_new(0) orelse return error.KeyboardContextAllocationFailed;
+    defer xkb.xkb_context_unref(context);
+    const map = xkb.xkb_keymap_new_from_string(context, test_keymap, 1, 0) orelse return error.KeyboardMapParseFailed;
+    defer xkb.xkb_keymap_unref(map);
+    var events: OrderedEvents = .{};
+    defer events.deinit(std.testing.allocator);
+    for (0..OrderedEvents.layout_limit) |index| {
+        events.push(std.testing.allocator, null, .{ .keyboard_layout = .{
+            .keymap = xkb.xkb_keymap_ref(map),
+            .group = 0,
+            .generation = @intCast(index + 1),
+            .source_bytes = test_keymap.len,
+        } });
+        events.push(std.testing.allocator, null, .keyboard_reset);
+    }
+    const retained = events.take();
+    try std.testing.expectEqual(2 * OrderedEvents.layout_limit, retained.len);
+    try std.testing.expect(!events.failed);
+    // Taking a batch borrows its snapshots; it cannot make their budget free.
+    events.push(std.testing.allocator, null, .{ .keyboard_layout = .{
+        .keymap = xkb.xkb_keymap_ref(map),
+        .group = 0,
+        .generation = 99,
+    } });
+    try std.testing.expect(events.failed);
+    try std.testing.expectEqual(@as(usize, 0), events.pending.items.len);
+    for (0..OrderedEvents.layout_limit) |index|
+        try std.testing.expectEqual(@as(i32, @intCast(index + 1)), retained[index * 2].event.keyboard_layout.generation);
+    _ = events.take();
+    try std.testing.expectEqual(@as(usize, 0), events.retained_layouts);
+    try std.testing.expectEqual(@as(usize, 0), events.retained_layout_source_bytes);
+}
+
+test "queued keyboard layout source budget and window removal" {
+    const context = xkb.xkb_context_new(0) orelse return error.KeyboardContextAllocationFailed;
+    defer xkb.xkb_context_unref(context);
+    const map = xkb.xkb_keymap_new_from_string(context, test_keymap, 1, 0) orelse return error.KeyboardMapParseFailed;
+    defer xkb.xkb_keymap_unref(map);
+    var events: OrderedEvents = .{};
+    defer events.deinit(std.testing.allocator);
+    var window: Window = undefined;
+    for (0..2) |index| events.push(std.testing.allocator, &window, .{ .keyboard_layout = .{
+        .keymap = xkb.xkb_keymap_ref(map),
+        .group = 0,
+        .generation = @intCast(index + 1),
+        .source_bytes = OrderedEvents.layout_source_limit / 2,
+    } });
+    _ = events.take();
+    events.removeWindow(&window);
+    try std.testing.expectEqual(@as(usize, 0), events.retained_layout_source_bytes);
+    // Removal makes capacity available without losing the next layout.
+    events.push(std.testing.allocator, null, .{ .keyboard_layout = .{
+        .keymap = xkb.xkb_keymap_ref(map),
+        .group = 0,
+        .generation = 3,
+        .source_bytes = OrderedEvents.layout_source_limit,
+    } });
+    try std.testing.expect(!events.failed);
+    events.push(std.testing.allocator, null, .{ .keyboard_layout = .{
+        .keymap = xkb.xkb_keymap_ref(map),
+        .group = 0,
+        .generation = 4,
+        .source_bytes = 1,
+    } });
+    try std.testing.expect(events.failed);
+    const retained = events.take();
+    try std.testing.expectEqual(@as(usize, 1), retained.len);
+    try std.testing.expectEqual(@as(i32, 3), retained[0].event.keyboard_layout.generation);
+    const chars = try retained[0].event.keyboard_layout.characters();
+    try std.testing.expectEqual(@as(i32, 'a'), chars[30 * 64]);
 }
