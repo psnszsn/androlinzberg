@@ -398,6 +398,9 @@ object StockColdLaunchSmoke {
         check(physical.supportedDisplayModes.single().width == 1280 &&
             physical.supportedDisplayModes.single().height == 720) { "Synthetic metadata resized the physical framebuffer" }
         val task = applicationTasks().single()
+        val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
+            android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
+        check(inputDevices.getInputDevice(0) == null)
         val commands = System.`in`.bufferedReader()
         fun pixels(marker: String, taskId: Int) {
             println("$marker $taskId")
@@ -412,8 +415,6 @@ object StockColdLaunchSmoke {
 
         if (dev.artzig.testing.ProcessInspection.enabled) verifyInspection(pid,
             manager.runningAppProcesses.orEmpty().single { it.pid == pid }.uid, packageName)
-        val inputDevices = android.hardware.input.IInputManager.Stub.asInterface(
-            android.os.ServiceManager.getService(android.content.Context.INPUT_SERVICE))
         // The harness initially owns only a keyboard. Create/remove/recreate a
         // compositor virtual pointer after checking truthful absence.
         fun pointerCapability(marker: String): Boolean {
@@ -423,7 +424,6 @@ object StockColdLaunchSmoke {
             check(mask and 15 == mask)
             return mask and 1 != 0
         }
-        check(inputDevices.getInputDevice(0) == null)
         check(pointerCapability("POINTER_DEVICE_CREATE"))
         await("Wayland pointer device publication") { inputDevices.getInputDevice(0) != null }
         val pointer = checkNotNull(inputDevices.getInputDevice(0))
@@ -564,6 +564,24 @@ object StockColdLaunchSmoke {
             error("$description: ${presenter.testWindow(taskId).contentToString()}")
         }
         val initial = awaitGeometry("Initial output generation did not present") { true }
+        val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")),
+            320, 240, 120, 0)
+        fun pointerEvents() = checkNotNull(context.contentResolver.call(
+            android.net.Uri.parse("content://dev.artzig.fixtures.windows.cold"),
+            "snapshot", null, null)).getIntArray("pointerEvents")!!.toList()
+        fun physicalInput(marker: String) {
+            println(marker); System.out.flush()
+            check(commands.readLine() != null)
+        }
+        fun awaitPointer(description: String, condition: (List<Int>) -> Boolean) {
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            while (!condition(pointerEvents())) {
+                check(SystemClock.uptimeMillis() < deadline) { "$description: ${pointerEvents()}" }
+                SystemClock.sleep(5)
+            }
+        }
+        physicalInput("RESIZE_POINTER_PRESS_READY")
+        awaitPointer("Physical press did not reach the initial task") { it.lastOrNull() == 0 }
         var previous = initial
         for ((requested, marker) in listOf(1 to "FULLSCREEN_TASK_WINDOW_READY",
                 0 to "FULLSCREEN_RESTORED_TASK_WINDOW_READY", 2 to "MAXIMIZED_TASK_WINDOW_READY",
@@ -576,7 +594,12 @@ object StockColdLaunchSmoke {
                 }
                 // The previous producer has been retired. Its committed image
                 // must remain valid on the compositor while the replacement is held.
+                awaitPointer("Resize failed to cancel the active pointer gesture") { it.lastOrNull() == 3 }
                 pixels("PENDING_FULLSCREEN_TASK_WINDOW_READY", taskId)
+                val before = pointerEvents()
+                physicalInput("RESIZE_PENDING_POINTER_READY")
+                SystemClock.sleep(250)
+                check(pointerEvents() == before) { "Pending configure delivered pointer input: ${pointerEvents()}" }
                 check(presenter.testHoldOutput(taskId, initial[0], false))
             }
             val next = awaitGeometry("Window state $requested did not produce a new configuration") {
@@ -595,6 +618,15 @@ object StockColdLaunchSmoke {
                 }
             }
             pixels(marker, taskId)
+            if (requested == 1) {
+                val before = pointerEvents().size
+                physicalInput("RESIZE_RESUMED_POINTER_READY")
+                awaitPointer("Presented output did not restore pointer input") {
+                    it.drop(before) == listOf(0, 1)
+                }
+                physicalInput("RESIZE_POINTER_REMOVE_READY")
+                println("Stock Wayland resize input: active gesture canceled, pending input suppressed, new frame resumes input")
+            }
             previous = next
         }
         println("SCALE_TASK_WINDOW_REQUESTED")

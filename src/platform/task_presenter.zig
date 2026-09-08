@@ -54,10 +54,13 @@ const Entry = struct {
     hold_output: bool = false,
     test_frame_pending: bool = false,
     cursor_icon: ?i32 = null,
+    fn inputGeometryReady(self: *const Entry) bool {
+        return self.has_content and self.pending_queue == null and self.configuration_generation == self.window.configuration_generation and
+            self.presented_output_generation == self.output_generation;
+    }
     fn matchesInputGeometry(self: *const Entry, geometry: [8]i32, configuration_generation: i64) bool {
-        return self.has_content and configuration_generation == self.configuration_generation and
-            configuration_generation == self.window.configuration_generation and
-            self.presented_output_generation == self.output_generation and std.mem.eql(i32, geometry[0..6], &self.bounds) and
+        return self.inputGeometryReady() and configuration_generation == self.configuration_generation and
+            std.mem.eql(i32, geometry[0..6], &self.bounds) and
             geometry[6] == self.window.width and geometry[7] == self.window.height;
     }
     fn deinit(self: *Entry) void {
@@ -162,6 +165,12 @@ const Server = struct {
             const entry = for (&self.entries) |*slot| {
                 if (slot.*) |*candidate| if (candidate.window == item.window) break candidate;
             } else continue;
+            // Retained pixels can be stretched while Android still uses the old
+            // projection. Never deliver coordinates from that interval to it.
+            if (!entry.inputGeometryReady()) switch (item.event) {
+                .pointer_motion, .pointer_enter, .pointer_leave, .pointer_button, .pointer_relative, .pointer_axis, .touch => continue,
+                else => {},
+            };
             switch (item.event) {
                 .frame_done => {
                     // A covered task may receive no frame callbacks. Progress
@@ -169,10 +178,16 @@ const Server = struct {
                     if (entry.test_frame_pending) self.completed_round += 1;
                     entry.test_frame_pending = false;
                 },
-                .configure => |size| try send(entry, 1, .{
-                    size.width,      size.height,           size.buffer_width, size.buffer_height,
-                    size.generation, @as(i64, size.serial),
-                }),
+                .configure => |size| {
+                    // Cancel before the Android bounds transaction, including
+                    // active gestures whose physical release arrives later.
+                    try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
+                    try send(entry, 8, .{});
+                    try send(entry, 1, .{
+                        size.width,      size.height,           size.buffer_width, size.buffer_height,
+                        size.generation, @as(i64, size.serial),
+                    });
+                },
                 .close => try send(entry, 2, .{}),
                 .keyboard_focus => |focused| try sendFocus(entry, focused),
                 .keyboard_reset => try send(entry, 3, .{ false, @as([]const i32, &.{}) }),
@@ -200,7 +215,7 @@ const Server = struct {
             for (&self.entries) |*slot| if (slot.*) |*entry| {
                 // Do not assign an older, already committed callback to a new
                 // inspection request. Each window retains at most one request.
-                if (!entry.has_content or entry.test_frame_pending or
+                if (!entry.inputGeometryReady() or entry.test_frame_pending or
                     entry.window.frame_cb != null) continue;
                 try entry.window.requestVsync();
                 self.submitted_round += 1;
@@ -493,6 +508,11 @@ const Server = struct {
                 try ok(AParcel_writeInt32(output, 0));
                 try ok(AParcel_writeInt32(output, 1)); // non-null stock Surface
                 try ok(queue.writeSurface(output));
+                // Preparation also covers Android-initiated relocation with
+                // unchanged compositor geometry. Cancel before WCT changes its
+                // input windows, and hold input until this producer presents.
+                try send(entry, 4, .{ 4, 0, false, 0.0, 0.0 });
+                try send(entry, 8, .{});
                 entry.pending_queue = queue;
                 entry.pending_output_generation = output_generation;
                 entry.pending_configuration_generation = configuration_generation;
@@ -517,7 +537,7 @@ const Server = struct {
                 const icon = try readInt(input);
                 try end(input);
                 const entry = self.find(key) orelse return error.StaleTask;
-                const applied = entry.window.setPointerIcon(icon);
+                const applied = entry.inputGeometryReady() and entry.window.setPointerIcon(icon);
                 if (applied and entry.cursor_icon != icon) {
                     entry.cursor_icon = icon;
                     if (self.inspection_enabled) std.log.info("task cursor task={d} type={d} applied=true", .{ key.id, icon });
@@ -537,7 +557,7 @@ const Server = struct {
                 try end(input);
                 const entry = self.find(key) orelse return error.StaleTask;
                 const values = pixels.values orelse return error.InvalidCursorImage;
-                const applied = try entry.window.setCursorImage(width, height, hotspot_x, hotspot_y, frame_ms, values);
+                const applied = entry.inputGeometryReady() and try entry.window.setCursorImage(width, height, hotspot_x, hotspot_y, frame_ms, values);
                 if (applied and self.inspection_enabled) std.log.info("task bitmap cursor task={d} size={d}x{d} frames={d} hotspot={d},{d}", .{ key.id, width, height, values.len / @as(usize, @intCast(width * height)), hotspot_x, hotspot_y });
                 try ok(AParcel_writeInt32(output, 0));
                 try ok(AParcel_writeInt32(output, @intFromBool(applied)));
@@ -764,14 +784,20 @@ fn run(init: std.process.Init) !void {
             count += 1;
         };
         try session.dispatch(files[0..count], ready[0..count], -1);
+        // Deliver protocol events before accepting frames: a queued event from
+        // a pending configure must not become eligible because its replacement
+        // frame happened to wake the same poll.
+        try server.dispatchEvents();
         // Consume existing windows before requests can destroy/reuse a slot.
         for (entries[0 .. count - 1], 1..) |entry, index| {
-            if (ready[index] and !entry.hold_output and try entry.queue.presentConfiguration(entry.window, entry.configuration_generation == entry.window.configuration_generation) > 0) {
+            if (ready[index] and !entry.hold_output and try entry.queue.presentConfiguration(entry.window, entry.pending_queue == null and entry.configuration_generation == entry.window.configuration_generation) > 0) {
+                const restore_hover = !entry.inputGeometryReady();
                 entry.has_content = true;
                 entry.presented_output_generation = entry.output_generation;
+                if (restore_hover and session.pointer_focus == entry.window and !entry.window.hasPointerCapture())
+                    try send(entry, 4, .{ 1, 0, false, entry.window.pointer_x, entry.window.pointer_y });
             }
         }
-        try server.dispatchEvents();
         // Configure/viewport transactions must progress without waiting for a
         // producer frame. Retained content fills the acknowledged geometry
         // while Android draws the new configuration.

@@ -22,6 +22,33 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Resize input checkpoint (2026-09-08)
+
+Production pointer, touch, wheel and relative-motion events now wait for a
+presented producer whose configuration matches the acknowledged compositor
+geometry. Preparing an Android-initiated relocation also closes that gate before
+the WCT changes input windows. The presenter cancels active gestures before the
+bounds callback, processes queued protocol events before accepting new frames,
+and restores pointer hover after the first compatible frame. Inspection frame
+requests and cursor changes use the same readiness condition.
+
+Touch cancellation removes only the affected task's contacts using pinned
+MotionEvent FLAG_CANCELED and native splitAction semantics. Other tasks retain
+their contacts; physical releases from the canceled stream cannot complete a
+click. Mouse Back/Forward cancellation uses InputState's canceled key-up flag.
+
+The labwc gate presses before fullscreen, holds replacement frames, verifies
+cancellation at the APK boundary, attempts real compositor input while pending,
+and checks input resumes after presentation. Regression 270 passes this gate,
+Cage, stock cold launch, desktop launcher, native tests and graph audit. The
+Android input smoke additionally splits a canceled contact between two windows
+and verifies the surviving contact's move/up sequence. Regression 269 passes
+7091 build steps, including all 15 APK tests (46 steps, zero runtime issues).
+Regression 271 repeats the complete gate with the final Back/Forward flag
+addition: 7091 successful build steps and the same 15 APKs / 46 issue-free steps.
+Logs: `/tmp/wayland-resize-input-{267,268,269,270,271}.log`; retained artifacts:
+`/tmp/wayland-resize-input-271-artifacts/`.
+
 ## Bitmap cursor checkpoint (2026-09-08)
 
 Stock pointer icons now fall back to immutable Wayland SHM cursor surfaces when

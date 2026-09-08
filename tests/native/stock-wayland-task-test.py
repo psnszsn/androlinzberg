@@ -123,6 +123,20 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                 process.stdin.write(f'{mask}\n'.encode())
                 process.stdin.flush()
 
+            def physical_pointer(marker, operation):
+                deadline = time.monotonic() + 15
+                while marker not in (out / 'app.log').read_text(errors='replace'):
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError(f'{marker} timeout/exit: {process.poll()}')
+                    time.sleep(.02)
+                seat.stdin.write(operation)
+                seat.stdin.flush()
+                if not select.select([seat.stdout], [], [], 3)[0]:
+                    raise RuntimeError(f'{marker} pointer input command timed out')
+                assert seat.stdout.readline() == b'pointer input sent\n'
+                process.stdin.write(b'input sent\n')
+                process.stdin.flush()
+
             def change_keyboard(marker, operation):
                 deadline = time.monotonic() + 15
                 while marker not in (out / 'app.log').read_text(errors='replace'):
@@ -268,6 +282,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             else:
                 verify_pixels('TASK_WINDOW_READY', (0, 255, 255), 'first-task')
                 if desktop:
+                    physical_pointer('RESIZE_POINTER_PRESS_READY', b'b')
                     for marker, name, fullscreen in [
                             ('PENDING_FULLSCREEN_TASK_WINDOW_READY', 'pending-fullscreen', True),
                             ('FULLSCREEN_TASK_WINDOW_READY', 'fullscreen', True),
@@ -275,6 +290,12 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             ('MAXIMIZED_TASK_WINDOW_READY', 'maximized', True),
                             ('MAXIMIZE_RESTORED_TASK_WINDOW_READY', 'maximize-restored', False)]:
                         verify_pixels(marker, (0, 255, 255), name, fullscreen=fullscreen)
+                        if name == 'pending-fullscreen':
+                            physical_pointer('RESIZE_PENDING_POINTER_READY', b't')
+                        if name == 'fullscreen':
+                            physical_pointer('RESIZE_RESUMED_POINTER_READY', b't')
+                            change_pointer('RESIZE_POINTER_REMOVE_READY', b'r')
+                            result['resize_input'] = dict(canceled=True, pending_suppressed=True, resumed=True)
                     for requested, marker, factor, name in [
                             ('SCALE_TASK_WINDOW_REQUESTED', 'SCALED_TASK_WINDOW_READY', 1.5, 'scaled'),
                             ('RESTORE_TASK_SCALE_REQUESTED', 'SCALE_RESTORED_TASK_WINDOW_READY', 1, 'scale-restored')]:

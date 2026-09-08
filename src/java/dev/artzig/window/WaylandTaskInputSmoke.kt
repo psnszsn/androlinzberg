@@ -94,6 +94,17 @@ object WaylandTaskInputSmoke {
             clear()
             first.relativePointer(5f, 5f)
             check(events.isEmpty())
+            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x113, true, 10f, 20f)
+            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x114, true, 10f, 20f)
+            clear()
+            first.cancelPointer()
+            val canceledButtons = events.filterIsInstance<KeyEvent>()
+            check(canceledButtons.map { it.keyCode } == listOf(KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_FORWARD))
+            check(canceledButtons.all { it.action == KeyEvent.ACTION_UP && it.isCanceled })
+            clear()
+            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x113, false, 10f, 20f)
+            first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x114, false, 10f, 20f)
+            check(events.isEmpty())
             first.key(42, true) // Left shift.
             first.key(30, true) // A.
             first.key(30, true) // Repeats retain the initial down time.
@@ -126,6 +137,24 @@ object WaylandTaskInputSmoke {
             first.touch(1, 1234, 11f, 21f, 8f, 4f, 0f)
             check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_POINTER_UP)
             second.touch(1, 9000, 31f, 41f, 8f, 4f, 0f)
+            check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_UP)
+            clear()
+            first.touch(0, 70, 10f, 20f, 4f, 2f, 0f)
+            second.touch(0, 80, 30f, 40f, 4f, 2f, 0f)
+            clear()
+            first.cancelTouches()
+            val canceled = events.single() as MotionEvent
+            check(canceled.actionMasked == MotionEvent.ACTION_POINTER_UP &&
+                canceled.flags and MotionEvent.FLAG_CANCELED != 0)
+            canceled.split(1).also { check(it.actionMasked == MotionEvent.ACTION_CANCEL); it.recycle() }
+            canceled.split(2).also { check(it.actionMasked == MotionEvent.ACTION_MOVE); it.recycle() }
+            clear()
+            first.touch(1, 70, 10f, 20f, 4f, 2f, 0f)
+            check(events.isEmpty()) // A later physical release cannot finish the canceled contact.
+            second.touch(2, 80, 31f, 41f, 4f, 2f, 0f)
+            check((events.single() as MotionEvent).pointerCount == 1 &&
+                (events.single() as MotionEvent).getPointerId(0) == 1)
+            second.touch(1, 80, 31f, 41f, 4f, 2f, 0f)
             check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_UP)
             clear()
             first.pointer(WaylandTaskInput.POINTER_BUTTON, 0x110, true, 10f, 20f)

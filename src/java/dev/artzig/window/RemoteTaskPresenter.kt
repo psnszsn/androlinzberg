@@ -100,7 +100,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
             major: Float, minor: Float, orientation: Float) =
             deliver(taskId, generation) { it.seat.touch(action, id, x, y, major, minor, orientation) }
         override fun cancelTouch(taskId: Int, generation: Long) =
-            deliver(taskId, generation) { input.cancelTouch() }
+            deliver(taskId, generation) { it.seat.cancelTouches() }
         override fun repeatConfiguration(rate: Int, delayMillis: Int) =
             deliverSeat { input.repeatConfiguration(rate, delayMillis) }
         override fun pointerCaptureChanged(taskId: Int, generation: Long, enabled: Boolean, sequence: Int) =

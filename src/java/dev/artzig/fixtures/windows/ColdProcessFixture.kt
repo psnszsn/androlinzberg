@@ -15,6 +15,8 @@ import android.widget.TextView
 private object ColdLifecycle {
     private val events = ArrayList<String>()
     private val activityEvents = ArrayList<String>()
+    private val pointerEvents = ArrayList<Int>()
+    @Synchronized fun pointer(action: Int) { pointerEvents.add(action) }
     @Volatile var activity = java.lang.ref.WeakReference<Activity>(null)
     @Volatile var frameCommitted = false
     @Volatile var activityGender = android.content.res.Configuration.GRAMMATICAL_GENDER_UNDEFINED
@@ -30,6 +32,7 @@ private object ColdLifecycle {
         putString("process", Application.getProcessName())
         putStringArrayList("events", ArrayList(events))
         putStringArrayList("activityEvents", ArrayList(activityEvents))
+        putIntArray("pointerEvents", pointerEvents.toIntArray())
         putString("activityClass", activity.get()?.javaClass?.simpleName)
         putBoolean("frameCommitted", frameCommitted)
         putInt("activityGender", activityGender)
@@ -39,6 +42,11 @@ private object ColdLifecycle {
 }
 
 open class ColdProcessActivity : Activity() {
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        ColdLifecycle.pointer(event.actionMasked)
+        super.dispatchTouchEvent(event)
+        return true
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ColdLifecycle.record("create", this)

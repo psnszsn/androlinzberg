@@ -40,6 +40,27 @@ pub fn main(init: std.process.Init) !void {
                     const line = try std.fmt.bufPrint(&status, "pointer updated {d}\n", .{session.seat_capabilities});
                     try Io.File.stdout().writeStreamingAll(init.io, line);
                 },
+                'b', 't' => {
+                    // The existing labwc harness places the first task at
+                    // (30,30), 440x300 on a 1280x720 output. 't' targets its
+                    // fullscreen center, including while replacement is held.
+                    try session.testPointerPresent(true);
+                    const pointer = session.virtual_pointer.?;
+                    pointer.motionAbsolute(1, if (buffer[0] == 'b') 250 else 640, if (buffer[0] == 'b') 180 else 360, 1280, 720);
+                    pointer.frame();
+                    if (buffer[0] == 't') {
+                        pointer.button(2, 0x110, .released);
+                        pointer.frame();
+                    }
+                    pointer.button(3, 0x110, .pressed);
+                    pointer.frame();
+                    if (buffer[0] == 't') {
+                        pointer.button(4, 0x110, .released);
+                        pointer.frame();
+                    }
+                    if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+                    try Io.File.stdout().writeStreamingAll(init.io, "pointer input sent\n");
+                },
                 'd', 'u' => {
                     try session.testKeyboardLayout(buffer[0] == 'd');
                     try Io.File.stdout().writeStreamingAll(init.io, "keyboard updated\n");

@@ -127,7 +127,7 @@ internal class WaylandTaskInput(private val android: Android,
             if (!live()) return
             if (bounds != value || output != size) {
                 cancelPointer()
-                if (contacts.values.any { it.owner === this }) cancelTouch()
+                cancelTouches()
             }
             bounds = value; output = size
             if (focus === this) android.focusTask(task.id)
@@ -274,9 +274,9 @@ internal class WaylandTaskInput(private val android: Android,
             } else dispatch(event)
         }
 
-        private fun buttonKey(code: Int, down: Boolean) = dispatch(KeyEvent(pointerDownTime, clock(),
+        private fun buttonKey(code: Int, down: Boolean, canceled: Boolean = false) = dispatch(KeyEvent(pointerDownTime, clock(),
             if (down) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP, code, 0, metaState(),
-            0, 0, KeyEvent.FLAG_FROM_SYSTEM,
+            0, 0, KeyEvent.FLAG_FROM_SYSTEM or if (canceled) KeyEvent.FLAG_CANCELED else 0,
             if (captured) InputDevice.SOURCE_MOUSE_RELATIVE else InputDevice.SOURCE_MOUSE), false, task)
 
         fun cancelPointer() {
@@ -284,7 +284,7 @@ internal class WaylandTaskInput(private val android: Android,
             if (hovering) mouse(MotionEvent.ACTION_HOVER_EXIT)
             for ((button, key) in listOf(MotionEvent.BUTTON_BACK to KeyEvent.KEYCODE_BACK,
                 MotionEvent.BUTTON_FORWARD to KeyEvent.KEYCODE_FORWARD)) {
-                if (buttons and button != 0) buttonKey(key, false)
+                if (buttons and button != 0) buttonKey(key, false, canceled = true)
             }
             buttons = 0; hovering = false
         }
@@ -382,11 +382,25 @@ internal class WaylandTaskInput(private val android: Android,
             if (action == 1) contacts.remove(id)
         }
 
+        /** Pinned MotionEvent FLAG_CANCELED / native splitAction contract: a
+         * canceled POINTER_UP becomes CANCEL for its last receiving pointer,
+         * while other windows retain their contacts and receive MOVE.
+         */
+        fun cancelTouches() {
+            for (id in contacts.filterValues { it.owner === this }.keys.toList()) {
+                val index = contacts.keys.indexOf(id)
+                touchEvent(if (contacts.size == 1) MotionEvent.ACTION_CANCEL else
+                    MotionEvent.ACTION_POINTER_UP or (index shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                    MotionEvent.FLAG_CANCELED)
+                contacts.remove(id)
+            }
+        }
+
         override fun close() {
             if (!live()) return
             cancelPointer()
             releaseKeys()
-            if (contacts.values.any { it.owner === this }) cancelTouch()
+            cancelTouches()
             if (focus === this) {
                 focus = null
                 physicalKeys.clear()
@@ -403,7 +417,7 @@ internal class WaylandTaskInput(private val android: Android,
         contacts.clear()
     }
 
-    private fun touchEvent(action: Int) {
+    private fun touchEvent(action: Int, flags: Int = 0) {
         val values = contacts.values.toList()
         val properties = values.map { contact -> MotionEvent.PointerProperties().apply {
             id = contact.id; toolType = MotionEvent.TOOL_TYPE_FINGER
@@ -413,7 +427,7 @@ internal class WaylandTaskInput(private val android: Android,
             touchMajor = contact.major; touchMinor = contact.minor; orientation = contact.orientation
         } }.toTypedArray()
         dispatch(MotionEvent.obtain(touchDownTime, clock(), action, values.size, properties, coordinates,
-            metaState(), 0, 1f, 1f, 2, 0, InputDevice.SOURCE_TOUCHSCREEN, 0).apply {
+            metaState(), 0, 1f, 1f, 2, 0, InputDevice.SOURCE_TOUCHSCREEN, flags).apply {
             displayId = Display.DEFAULT_DISPLAY
         })
     }
