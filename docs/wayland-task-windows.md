@@ -11,6 +11,30 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Repeated drag and failure capture (2026-09-08)
+
+`stock-drag-pressure-test` repeats the text/file drag and subsequent UI update
+sequence sixteen times, then completes the native transfer, shadow and cross-task
+matrix: 116 steps total. Each round records the fixture's descriptor count,
+thread count and resident memory. Failed runs pin the owned fixture by pidfd,
+request a bounded ART stack dump, and collect native stacks when GDB is available.
+The existing shot/Wayland runner owns all process cleanup.
+
+Regression 518 reproduces the earlier traversal stall on round three, at
+“Use drag file”: the action applies, but the frame remains at “Drag started” and
+idle stays false, with no structured runtime issue. The first two rounds both
+have 60 descriptors and 32 threads. Its short ART capture contains only the
+signal acknowledgement, so the diagnostic deadline is now ten seconds.
+Artifacts: `/tmp/wayland-drag-pressure-518-artifacts/`.
+
+Isolated regression 519 and combined regression 520 each pass eight rounds and
+76 steps. Regression 521 passes sixteen rounds and all 116 steps together with
+the four service-loss gates. Artifacts:
+`/tmp/wayland-drag-pressure-519-artifacts/`,
+`/tmp/wayland-drag-pressure-520-artifacts/`, and
+`/tmp/wayland-drag-pressure-521-artifacts/`. The intermittent stall remains open;
+these passing runs establish a reproducible pressure gate, not a root-cause fix.
+
 ## Stock APK matrix and worker lifecycle (2026-09-08)
 
 The full APK suite now runs on the actual stock task path: regression 516 passes

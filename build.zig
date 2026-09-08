@@ -1276,11 +1276,12 @@ pub fn build(b: *std.Build) void {
         b.step(if (mixed_outputs) "stock-task-output-test" else if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
     }
-    for ([_][]const u8{ "desktop", "video", "ime", "clipboard", "drag" }) |fixture| {
+    for ([_][]const u8{ "desktop", "video", "ime", "clipboard", "drag", "drag-pressure" }) |fixture| {
         const video_fixture = std.mem.eql(u8, fixture, "video");
         const ime_fixture = std.mem.eql(u8, fixture, "ime");
         const clipboard_fixture = std.mem.eql(u8, fixture, "clipboard");
-        const drag_fixture = std.mem.eql(u8, fixture, "drag");
+        const drag_pressure = std.mem.eql(u8, fixture, "drag-pressure");
+        const drag_fixture = std.mem.eql(u8, fixture, "drag") or drag_pressure;
         const desktop_launcher = @import("build/command.zig").create(b);
         setApplicationEnvironment(desktop_launcher, application_tree);
         desktop_launcher.setEnvironment("AZK_WINDOW_BACKEND", "stock");
@@ -1299,13 +1300,14 @@ pub fn build(b: *std.Build) void {
         desktop_launcher.addArg("env");
         desktop_launcher.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
         desktop_launcher.addFileArg(b.path("tools/shot.sh"));
-        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else if (ime_fixture) "zig-out/test-results/stock-ime" else if (clipboard_fixture) "zig-out/test-results/stock-clipboard" else if (drag_fixture) "zig-out/test-results/stock-drag" else "zig-out/test-results/stock-desktop-launcher"});
+        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else if (ime_fixture) "zig-out/test-results/stock-ime" else if (clipboard_fixture) "zig-out/test-results/stock-clipboard" else if (drag_pressure) "zig-out/test-results/stock-drag-pressure" else if (drag_fixture) "zig-out/test-results/stock-drag" else "zig-out/test-results/stock-desktop-launcher"});
         desktop_launcher.addArgs(&.{ b.pathResolve(&.{ launcher_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
         desktop_launcher.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
         if (video_fixture) desktop_launcher.addArg("--video");
         if (ime_fixture) desktop_launcher.addArg("--ime");
         if (clipboard_fixture) desktop_launcher.addArg("--clipboard");
         if (drag_fixture) desktop_launcher.addArg("--drag");
+        if (drag_pressure) desktop_launcher.addArgs(&.{ "--drag-rounds", "16" });
         desktop_launcher.addArgs(&.{ "--launcher", "--testkit" });
         desktop_launcher.addDirectoryArg(testkit_tree.getDirectory());
         desktop_launcher.addArg("--seat");
@@ -1315,7 +1317,7 @@ pub fn build(b: *std.Build) void {
         desktop_launcher.addFileArg(window_fixture.apk);
         desktop_launcher.run.has_side_effects = true;
         desktop_launcher.run.setName("verify APK desktop launch and compositor close through ATMS");
-        b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else if (clipboard_fixture) "stock-clipboard-test" else if (drag_fixture) "stock-drag-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
+        b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else if (clipboard_fixture) "stock-clipboard-test" else if (drag_pressure) "stock-drag-pressure-test" else if (drag_fixture) "stock-drag-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
             .dependOn(&desktop_launcher.run.step);
     }
     const session_loss_step = b.step("stock-session-loss-test", "Retire an idle APK session after system, graphics, presenter or broker death");

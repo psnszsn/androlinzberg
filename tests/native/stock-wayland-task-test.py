@@ -10,6 +10,8 @@ from pathlib import Path
 import resource
 import re
 import select
+import signal
+import shutil
 import subprocess
 import time
 import tempfile
@@ -20,14 +22,17 @@ parser.add_argument('--video', action='store_true')
 parser.add_argument('--ime', action='store_true')
 parser.add_argument('--clipboard', action='store_true')
 parser.add_argument('--drag', action='store_true')
+parser.add_argument('--drag-rounds', type=int, choices=range(1, 17), default=1)
 parser.add_argument('--testkit', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
 parser.add_argument('command', nargs=argparse.REMAINDER)
 args = parser.parse_args()
+if args.drag_rounds != 1 and not args.drag:
+    parser.error('--drag-rounds requires --drag')
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
-for artifact in ('result.json', 'control-failure.txt', 'failure.json', 'a11y-before.json', 'a11y.json'):
+for artifact in ('result.json', 'control-failure.txt', 'failure.json', 'a11y-before.json', 'a11y.json', 'thread-dump.log', 'native-thread-dump.log'):
     (out / artifact).unlink(missing_ok=True)
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 command = args.command[1:] if args.command[0] == '--' else args.command
@@ -77,6 +82,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
         if seat.stdout.readline() != b'ready\n':
             raise RuntimeError('virtual keyboard startup failed')
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log, env=environment)
+        app_pidfd = None
         try:
             def output_pixels(output_name, color, size):
                 # Discover placement only inside the compositor screenshot;
@@ -294,6 +300,19 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     time.sleep(0.05)
                 app_pid = int(re.search(r'\d\d-\d\d \S+\s+(\d+)\s+\d+ I WindowFixture:', text).group(1))
                 assert app_pid != process.pid, 'launcher attached as the APK'
+                # Pin the fixture before any failure: subsequent signals cannot
+                # target a reused PID or a process outside this owned session.
+                candidate = os.pidfd_open(app_pid)
+                try:
+                    ancestor = app_pid
+                    while ancestor != process.pid:
+                        status = Path(f'/proc/{ancestor}/status').read_text()
+                        ancestor = int(re.search(r'^PPid:\s+(\d+)$', status, re.MULTILINE).group(1))
+                        assert ancestor > 1, 'fixture is not a launcher descendant'
+                    assert not select.select([candidate], [], [], 0)[0], 'fixture exited'
+                    app_pidfd = candidate
+                finally:
+                    if app_pidfd is None: os.close(candidate)
                 deadline = time.monotonic() + 15
                 while True:
                     ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
@@ -434,10 +453,22 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         control('step', 'drag', '--task-id', task, '--description', 'Drag contract area',
                                 '--from-x', '.25', '--to-x', '.75', '--via', 'wayland', '--settle', 'idle')
                         control('wait', 'exists', '--task-id', task, '--text', expected)
-                    drag('Drag received=Android drag 😀 café')
-                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
-                    drag('Drag received=Android file 😀 café')
-                    control('step', 'click', '--task-id', task, '--text', 'USE SLOW DRAG FILE', '--via', 'semantic', '--settle', 'idle')
+                    samples = []
+                    result['drag_pressure'] = {'rounds': args.drag_rounds, 'samples': samples}
+                    for round_index in range(args.drag_rounds):
+                        if round_index:
+                            control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
+                        drag('Drag received=Android drag 😀 café')
+                        control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
+                        drag('Drag received=Android file 😀 café')
+                        control('step', 'click', '--task-id', task, '--text', 'USE SLOW DRAG FILE', '--via', 'semantic', '--settle', 'idle')
+                        status = Path(f'/proc/{app_pid}/status').read_text()
+                        samples.append({
+                            'round': round_index + 1,
+                            'fds': len(list(Path(f'/proc/{app_pid}/fd').iterdir())),
+                            'threads': int(re.search(r'^Threads:\s+(\d+)$', status, re.MULTILINE).group(1)),
+                            'rss_kib': int(re.search(r'^VmRSS:\s+(\d+) kB$', status, re.MULTILINE).group(1)),
+                        })
                     control('step', 'exec', '--wait', 'exists', '--task-id', task,
                             '--text', 'Drag received=Android file 😀 café', '--', str(args.seat), '--native-drag-slow-task')
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
@@ -570,7 +601,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                         time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 41 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 41 + 5 * (args.drag_rounds - 1) and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']
@@ -863,6 +894,35 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             result['passed'] = True
         except BaseException as error:
             result['error'] = str(error)
+            if app_pidfd is not None and not select.select([app_pidfd], [], [], 0)[0]:
+                # ART's pinned SignalCatcher/host palette writes managed and
+                # native thread stacks to stderr, even when the UI cannot pump
+                # an inspection request. Keep this diagnostic bounded.
+                mark = (out / 'app.log').stat().st_size
+                try: signal.pidfd_send_signal(app_pidfd, signal.SIGQUIT)
+                except ProcessLookupError: pass
+                deadline = time.monotonic() + 10
+                while True:
+                    with (out / 'app.log').open('rb') as snapshot:
+                        snapshot.seek(mark)
+                        dump = snapshot.read(2 * 1024 * 1024)
+                    if f'----- end {app_pid} -----'.encode() in dump or time.monotonic() >= deadline:
+                        (out / 'thread-dump.log').write_bytes(dump)
+                        break
+                    time.sleep(.05)
+            if app_pidfd is not None and not select.select([app_pidfd], [], [], 0)[0] and shutil.which('gdb'):
+                # A managed dump can itself wait for a thread checkpoint. When
+                # available, retain a bounded native snapshot of this still-owned
+                # fixture as well. GDB detaches on exit; the runner cleans up next.
+                with (out / 'native-thread-dump.log').open('wb') as native_dump:
+                    try:
+                        subprocess.run(['gdb', '--batch', '--nx',
+                            '-ex', 'set debuginfod enabled off',
+                            '-ex', 'set pagination off',
+                            '-ex', 'thread apply all bt 24', '-p', str(app_pid)],
+                            stdout=native_dump, stderr=subprocess.STDOUT, timeout=15, check=False)
+                    except subprocess.TimeoutExpired:
+                        native_dump.write(b'\nNative stack capture timed out after 15 seconds.\n')
             if args.launcher:
                 try:
                     (out / 'failure.json').write_text(json.dumps(control('diagnose'), indent=2))
@@ -871,6 +931,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
             subprocess.run(['grim', str(out / 'screenshot.png')], timeout=3, check=False)
             raise
         finally:
+            if app_pidfd is not None:
+                os.close(app_pidfd)
             if process.poll() is None:
                 # Release the driver's pixel gate and let Session.stop preserve
                 # system -> presenter -> SF -> broker shutdown order on failure.
