@@ -491,6 +491,17 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     export_drag('cancelled', 'Android drag 😀 café', 'cancel')
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
                     export_drag('file', 'Android file 😀 café')
+                    control('step', 'click', '--task-id', task, '--text', 'OPEN DRAG TASK', '--via', 'semantic', '--settle', 'idle')
+                    multiple = control('observe', '--tree')['observation']['tree']
+                    sibling = next(window for window in multiple['windows'] if str(window['task_id']) != task)
+                    target_task = str(sibling['task_id'])
+                    control('wait', 'exists', '--task-id', target_task, '--text', 'Drag ready')
+                    for label, expected in [('USE DRAG TEXT', 'Android drag 😀 café'), ('USE DRAG FILE', 'Android file 😀 café')]:
+                        control('step', 'click', '--task-id', task, '--text', label, '--via', 'semantic', '--settle', 'idle')
+                        control('step', 'exec', '--wait', 'exists', '--task-id', target_task,
+                                '--text', 'Drag received=' + expected, '--', str(args.seat), '--native-drag-cross-task')
+                        control('wait', 'exists', '--task-id', task, '--text', 'Drag exported')
+                    control('step', 'click', '--task-id', target_task, '--text', 'CLOSE DRAG TASK', '--via', 'semantic', '--settle', 'idle')
                     for _ in range(16):
                         ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
                         magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
@@ -501,7 +512,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                         time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 17 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 23 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']

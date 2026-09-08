@@ -51,9 +51,14 @@ refuses the offer, then a subsequent accepted offer is left before DROP. Both
 produce Android source cancellation, and a fresh file drag still succeeds.
 Artifacts: `/tmp/wayland-outgoing-468-artifacts/stock-drag/`.
 
-Cross-task desktop placement, the complete capability/death/timeout matrix,
-fallback shadow presentation, and the remaining M8–M11 acceptance and production
-cutover work remain unfinished.
+Regression 469 expands the gate to 23 clean steps with two separately placed
+Android task windows. Both text and file drags reach the second task; the source
+gets successful completion, and the file recipient checks that its URI is the
+original Android URI, not a staged desktop export. Artifacts:
+`/tmp/wayland-cross-task-469-artifacts/stock-drag/`.
+
+The complete capability/death/timeout matrix, fallback shadow presentation, and
+the remaining M8–M11 acceptance and production cutover remain unfinished.
 
 ## Native source start acknowledgement (2026-09-08)
 

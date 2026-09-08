@@ -337,3 +337,33 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8,
     // Flush finish before disconnecting this destination client.
     if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 }
+
+/// Two explicitly placed Android tasks share the source's native drag identity.
+/// This peer supplies physical input only; WMS owns the complete Android drop.
+pub fn crossTask(init: std.process.Init) !void {
+    const session = try Queue.Session.init(init.gpa, init.io);
+    defer session.deinit();
+    const window = try session.createWindowWithAppId(100, 100, "Drag test input", "dev.artzig.drag-driver", false);
+    defer window.deinit();
+    try window.prepareTestInput();
+    try window.testPointerAtOutput(.{ 160, 273 }, .{ 1280, 720 }, null, true);
+    var released = false;
+    defer if (!released) Queue.Window.releaseTestPointer(session) catch {};
+    const begin = Io.Clock.awake.now(init.io).toMilliseconds();
+    var moved = false;
+    while (!released) {
+        const now = Io.Clock.awake.now(init.io).toMilliseconds();
+        var ready: [0]bool = .{};
+        try session.dispatch(&.{}, &ready, 20);
+        _ = window.takeEvents();
+        if (!moved and now - begin >= 500) {
+            try window.testPointerAtOutput(.{ 960, 273 }, .{ 1280, 720 }, null, false);
+            moved = true;
+        }
+        if (moved and now - begin >= 1000) {
+            try Queue.Window.releaseTestPointer(session);
+            released = true;
+        }
+    }
+    if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+}

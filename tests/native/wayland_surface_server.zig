@@ -30,6 +30,9 @@ fn watchStdin(stop: *Stop) void {
 }
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--native-drag-cross-task")) {
+        return @import("native_drag_peer.zig").crossTask(init);
+    }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "--native-drag-destination")) {
         return @import("native_drag_peer.zig").destination(init, args);
     }

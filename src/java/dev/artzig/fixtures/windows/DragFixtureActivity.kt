@@ -19,6 +19,8 @@ import android.widget.TextView
 class DragFixtureActivity : Activity() {
     override fun onCreate(saved: Bundle?) {
         super.onCreate(saved)
+        val targetTask = intent.getBooleanExtra("drag-target", false)
+        if (targetTask) setTaskDescription(android.app.ActivityManager.TaskDescription.Builder().setLabel("Drag target").build())
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val status = TextView(this).apply { text = "Drag ready" }
         content.addView(status)
@@ -79,6 +81,8 @@ class DragFixtureActivity : Activity() {
                         check(event.x >= width / 2f) { "Drop coordinates did not reach the target half" }
                         if (!accept) return@setOnDragListener false
                         val item = event.clipData.getItemAt(0)
+                        if (event.clipDescription.label == "Drag file")
+                            check(item.uri == ClipboardFileProvider.URI) { "Original Android drag URI was replaced by an export" }
                         if (event.clipDescription.hasMimeType("text/html"))
                             check(item.htmlText == "<b>Native rich 😀</b>") { "Drag HTML representation was lost" }
                         val permissions = if (item.uri != null) requestDragAndDropPermissions(event) else null
@@ -111,6 +115,11 @@ class DragFixtureActivity : Activity() {
             }
         }
         content.addView(area, LinearLayout.LayoutParams(-1, 280))
+        if (targetTask) button("Close drag task") { finish() }
+        else button("Open drag task") {
+            startActivity(android.content.Intent(this, DragFixtureActivity::class.java)
+                .putExtra("drag-target", true).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
+        }
         setContentView(content)
     }
 }
