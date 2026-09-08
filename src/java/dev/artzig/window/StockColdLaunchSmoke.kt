@@ -326,8 +326,8 @@ object StockColdLaunchSmoke {
             .getTasks(128, false, true, android.view.Display.DEFAULT_DISPLAY).any {
                 it.taskId == taskId && it.baseActivity?.packageName == packageName
             })
-        check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), windowId) == taskId)
-        check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), Long.MAX_VALUE) == -1)
+        check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), windowId, null) == taskId)
+        check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), Long.MAX_VALUE, null) == -1)
         check(!before.containsKey("window_tokens")) { "Raw app window tokens escaped the system inspection boundary" }
         check(!text.getBoolean("selected"))
         val deadline = SystemClock.uptimeMillis() + 5_000
@@ -344,7 +344,7 @@ object StockColdLaunchSmoke {
         check(!registry.perform(pid, generation, tree.getLong("revision"), windowId,
             text.getInt("view_id"), text.getInt("virtual_id"),
             android.view.accessibility.AccessibilityNodeInfo.ACTION_CLEAR_SELECTION, null))
-        check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), windowId) == -1)
+        check(registry.validateInputTarget(pid, generation, tree.getLong("revision"), windowId, null) == -1)
         val runtime = org.json.JSONObject(checkNotNull(before.getString("runtime")))
         val after = registry.observe(pid, generation, tree.getLong("revision"),
             runtime.getLong("log_cursor"), runtime.getLong("issue_cursor"))

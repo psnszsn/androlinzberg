@@ -77,7 +77,9 @@ internal class StockWindowServices private constructor() {
                 .newInstance(input) as com.android.server.input.InputManagerInternal)
         val policy = Class.forName("com.android.server.policy.HostedDesktopWindowManagerPolicy")
             .getConstructor(HostedDesktopWindowPolicy::class.java)
-            .newInstance(HostedDesktopWindowPolicy()) as WindowManagerPolicy
+            .newInstance(HostedDesktopWindowPolicy { token ->
+                check(handler.post { shell?.toggleFullscreen(token) })
+            }) as WindowManagerPolicy
         windows = checkNotNull(WindowManagerService.main(context, input, false, policy, tasks)) {
             "WMS construction failed on the display thread; see its preceding exception"
         }

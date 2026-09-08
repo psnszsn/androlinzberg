@@ -14,7 +14,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
     data class Info<Token>(val id: Int, val token: Token, val appId: String,
         val title: String, val width: Int, val height: Int,
         val resizable: Boolean = true, val application: Boolean = true,
-        val left: Int = 0, val top: Int = 0)
+        val left: Int = 0, val top: Int = 0, val immersive: Boolean = false)
     data class Appeared<Token, Leash>(val info: Info<Token>, val leash: Leash)
     data class Size(val width: Int, val height: Int,
         val bufferWidth: Int = width, val bufferHeight: Int = height,
@@ -56,6 +56,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
     interface Window : AutoCloseable {
         val size: Size
         fun metadata(appId: String, title: String)
+        fun immersive(enabled: Boolean)
         fun committed(bounds: TaskGeometry.Bounds, size: Size)
         fun rejected(reason: TaskGeometry.Rejection)
     }
@@ -140,6 +141,7 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
                         catch (failure: Throwable) { entry.closing = false; throw failure }
                     }
                 })
+            if (info.immersive) entry.window?.immersive(true)
             resize(entry, entry.desired ?: checkNotNull(entry.window).size)
         } catch (failure: Throwable) {
             try { retire(entry) } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
@@ -151,8 +153,12 @@ internal class WaylandTaskShell<Token : Any, Leash : Any>(
         val entry = entries[info.id] ?: return
         if (entry.info.token != info.token) return
         if (!info.application) { retire(entry); return }
+        val immersiveChanged = entry.info.immersive != info.immersive
         entry.info = info
         entry.window?.metadata(info.appId, info.title)
+        // Only application intent changes issue requests. An unrelated title or
+        // geometry update must not undo a user's F11/compositor fullscreen choice.
+        if (immersiveChanged && !entry.closing) entry.window?.immersive(info.immersive)
         val bounds = geometry.bounds(entry.key)
         if (bounds != null && entry.pending == null && !entry.closing &&
             (bounds.left != info.left || bounds.top != info.top ||

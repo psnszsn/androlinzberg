@@ -6,6 +6,7 @@ import android.os.ServiceManager
 /** The system process owns one organizer independently of APK launchers. */
 internal object SessionTaskShell {
     class Controller(private val presenter: RemoteTaskPresenter, private val input: WaylandTaskInput, private val cleanup: () -> Unit) : AutoCloseable {
+        fun toggleFullscreen(token: android.os.IBinder) = presenter.toggleFullscreen(token)
         fun pointerCapture(token: android.os.IBinder?, sequence: Int) = presenter.pointerCapture(token, sequence)
         fun pointerIcon(token: android.os.IBinder, type: Int, deviceId: Int): Boolean = presenter.pointerIcon(token, type, deviceId)
         fun cursorImage(token: android.os.IBinder, image: WaylandCursor.Image, deviceId: Int): Boolean = presenter.cursorImage(token, image, deviceId)

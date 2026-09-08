@@ -131,11 +131,11 @@ class HostedInspectionRegistry(
         }
     }
 
-    override fun validateInputTarget(pid: Int, generation: Long, revision: Long, windowId: Long): Int {
+    override fun validateInputTarget(pid: Int, generation: Long, revision: Long, windowId: Long, expectedTarget: String?): Int {
         val entry = entry(pid, generation)
         if (!checkCurrent(entry).ready) return -1
         try {
-            val token = entry.endpoint.inputWindow(revision, windowId) ?: return -1
+            val token = entry.endpoint.inputWindow(revision, windowId, expectedTarget) ?: return -1
             val task = windowTask(token, entry.process.uid, entry.process.pid) ?: return -1
             checkCurrent(entry)
             return task

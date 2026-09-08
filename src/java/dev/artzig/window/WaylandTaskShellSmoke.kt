@@ -16,7 +16,9 @@ object WaylandTaskShellSmoke {
         val commits = mutableListOf<Pair<TaskGeometry.Bounds, WaylandTaskShell.Size>>()
         val rejections = mutableListOf<TaskGeometry.Rejection>()
         var title = ""
+        val immersiveRequests = mutableListOf<Boolean>()
         override fun metadata(appId: String, title: String) { this.title = title }
+        override fun immersive(enabled: Boolean) { immersiveRequests.add(enabled) }
         override fun committed(bounds: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
             check(closes == 0); commits.add(bounds to size)
         }
@@ -79,6 +81,11 @@ object WaylandTaskShellSmoke {
         check(duplicate.leash.releases == 1 && first.leash.releases == 0 && desktop.windows.size == 2)
         android.events.changed(first.info.copy(title = "updated"))
         check(one.title == "updated")
+        android.events.changed(first.info.copy(immersive = true))
+        android.events.changed(first.info.copy(immersive = true, title = "immersive title"))
+        check(one.immersiveRequests == listOf(true) && two.immersiveRequests.isEmpty())
+        android.events.changed(first.info.copy(immersive = false))
+        check(one.immersiveRequests == listOf(true, false))
         one.events.configure(WaylandTaskShell.Size(200, 120))
         one.events.configure(WaylandTaskShell.Size(240, 180))
         check(android.configurations.size == 2)

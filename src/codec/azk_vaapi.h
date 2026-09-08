@@ -25,6 +25,7 @@ typedef struct AzkHardwareFrame {
     void *va_display;
     uint32_t va_surface;
     int owns_va_surface;
+    int32_t dataspace;
 } AzkHardwareFrame;
 
 /* Returns 1 when VA-API is ready, 0 when hardware video is unavailable. */

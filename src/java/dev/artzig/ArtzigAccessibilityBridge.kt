@@ -137,11 +137,36 @@ object ArtzigAccessibilityBridge {
 
     /** Validate a physical-input selection on the same main thread as the
      * tree. The system registry resolves this real IWindow token through WMS. */
-    @JvmStatic @Synchronized fun inputWindow(expectedRevision: Long, windowId: Long): android.os.IBinder? {
-        observeTree()
-        if (expectedRevision < actionRevision || expectedRevision > currentRevision) return null
+    @JvmStatic @Synchronized fun inputWindow(expectedRevision: Long, windowId: Long,
+        expectedTarget: String? = null): android.os.IBinder? {
+        val snapshot = observeTree()
+        if (expectedRevision > currentRevision || snapshot.getBoolean("truncated")) return null
+        if (expectedTarget == null) {
+            if (expectedRevision < actionRevision) return null
+        } else {
+            val expected = JSONObject(expectedTarget)
+            val node = expected.getJSONObject("node")
+            if (node.getLong("window_id") != windowId ||
+                !sameJson(expected.getJSONArray("windows"), snapshot.getJSONArray("windows"))) return null
+            val nodes = snapshot.getJSONArray("nodes")
+            val current = (0 until nodes.length()).asSequence().map { nodes.getJSONObject(it) }
+                .singleOrNull { it.getString("id") == node.getString("id") } ?: return null
+            if (!current.getBoolean("visible") || !current.getBoolean("enabled") ||
+                !sameJson(node, current)) return null
+        }
         val root = collectWindows().firstOrNull { it.id == windowId }?.root ?: return null
         return android.view.HostedRootFrames.windowToken(root)
+    }
+
+    /** JSONObject key order is not part of the observation contract. */
+    private fun sameJson(left: Any?, right: Any?): Boolean = when {
+        left is JSONObject && right is JSONObject -> left.length() == right.length() &&
+            left.keys().asSequence().all { right.has(it) && sameJson(left.get(it), right.get(it)) }
+        left is JSONArray && right is JSONArray -> left.length() == right.length() &&
+            (0 until left.length()).all { sameJson(left.get(it), right.get(it)) }
+        left is Number && right is Number -> java.math.BigDecimal(left.toString())
+            .compareTo(java.math.BigDecimal(right.toString())) == 0
+        else -> left == right
     }
 
     private fun observeDraws(root: ViewRootImpl) {

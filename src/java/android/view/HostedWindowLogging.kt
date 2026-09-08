@@ -11,6 +11,11 @@ import com.android.internal.protolog.WmProtoLogGroups
 object HostedWindowLogging {
     @JvmStatic fun initialize() {
         ProtoLog.REQUIRE_PROTOLOGTOOL = false
+        // LogcatOnlyProtoLogImpl also prints every proto-enabled group. There
+        // is no Perfetto recording in this host, so retain AOSP's logcat group
+        // policy without turning all WM trace groups into ordinary log output.
+        ViewProtoLogGroups.ALL_GROUPS.forEach { it.setLogToProto(false) }
+        WmProtoLogGroups.values().forEach { it.setLogToProto(false) }
         ProtoLog.init(*ViewProtoLogGroups.ALL_GROUPS, *WmProtoLogGroups.values())
     }
 }

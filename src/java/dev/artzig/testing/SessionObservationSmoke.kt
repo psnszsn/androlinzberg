@@ -60,9 +60,18 @@ object SessionObservationSmoke {
                     putString("runtime", JSONObject().put("log_cursor", 0).put("issue_cursor", 0).toString())
                 }
             }
-            override fun validateInputTarget(pid: Int, generation: Long, revision: Long, windowId: Long): Int {
+            override fun validateInputTarget(pid: Int, generation: Long, revision: Long, windowId: Long, expectedTarget: String?): Int {
                 val peer = peers[pid] ?: return -1
-                if (peer.generation != generation || peer.revision != revision || windowId != 1L || peer.failed || peer.starting) return -1
+                if (peer.generation != generation || revision > peer.revision || windowId != 1L || peer.failed || peer.starting) return -1
+                if (expectedTarget == null) {
+                    if (peer.revision != revision) return -1
+                } else {
+                    val expected = JSONObject(expectedTarget)
+                    val node = expected.getJSONObject("node")
+                    check(node.getLong("window_id") == 1L && node.getString("id") == "n:1:7:-1")
+                    check(expected.getJSONArray("windows").getJSONObject(0).getLong("id") == 1L)
+                    if (node.getBoolean("selected") != peer.selected) return -1
+                }
                 return peer.task ?: -1
             }
             override fun perform(pid: Int, generation: Long, revision: Long, windowId: Long,
@@ -105,16 +114,19 @@ object SessionObservationSmoke {
         check(nodes.getJSONObject(2).getInt("task_id") == 200)
         val stable = observation.revision()
         val input = checkNotNull(observation.inputTarget(stable, second))
+        val selectedInput = checkNotNull(observation.inputTarget(stable, second, 7, -1))
         check(input.taskId == 200 && observation.validateInputTarget(input))
         check(observation.inputTarget(stable, Long.MAX_VALUE) == null)
         observation.refresh()
         check(observation.revision() == stable)
         peers.getValue(20).revision++ // An app mutation must reject the saved global revision.
         check(!observation.validateInputTarget(input))
+        check(observation.validateInputTarget(selectedInput))
         check(!observation.perform(stable, second, 7, -1, 4, null) && calls.isEmpty())
         check(observation.perform(observation.revision(), second, 7, -1, 4, null))
         check(calls.single() == listOf(20L, 2L, 1L, 7L))
         check(tree().getJSONArray("nodes").getJSONObject(2).getBoolean("selected"))
+        check(!observation.validateInputTarget(selectedInput))
         peers.getValue(20).failed = true
         observation.refresh()
         check(!observation.idle() && tree().getJSONArray("unavailable_processes").length() == 1)

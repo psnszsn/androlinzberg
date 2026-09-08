@@ -214,21 +214,33 @@ class SessionObservation(private val registry: IInspectionRegistry) {
     }
 
     data class InputTarget internal constructor(val taskId: Int, internal val pid: Int,
-        internal val generation: Long, internal val revision: Long, internal val windowId: Long)
+        internal val generation: Long, internal val revision: Long, internal val windowId: Long,
+        internal val expectedTarget: String?)
 
-    fun inputTarget(expectedRevision: Long, windowId: Long): InputTarget? {
+    fun inputTarget(expectedRevision: Long, windowId: Long, viewId: Int? = null, virtualId: Int? = null): InputTarget? {
         if (expectedRevision != revision) return null
         val window = windowIds.entries.singleOrNull { it.value == windowId }?.key ?: return null
         val peer = peers[window.process] ?: return null
         if (peer.starting || peer.failure != null) return null
         val tasks = peer.observation?.getBundle("window_tasks") ?: return null
         if (!tasks.containsKey(window.localId.toString())) return null
+        val expectedTarget = if (viewId != null && virtualId != null) {
+            val local = peer.tree ?: return null
+            if (local.getBoolean("truncated")) return null
+            val nodes = local.getJSONArray("nodes")
+            val node = (0 until nodes.length()).asSequence().map { nodes.getJSONObject(it) }
+                .singleOrNull { it.getLong("window_id") == window.localId &&
+                    it.getInt("view_id") == viewId && it.getInt("virtual_id") == virtualId } ?: return null
+            // Keep process-local identities. Window order/focus/geometry must
+            // also remain unchanged when the app validates the selected widget.
+            JSONObject().put("node", node).put("windows", local.getJSONArray("windows")).toString()
+        } else null
         return InputTarget(tasks.getInt(window.localId.toString()), window.process.pid,
-            window.process.generation, peer.revision, window.localId).takeIf(::validateInputTarget)
+            window.process.generation, peer.revision, window.localId, expectedTarget).takeIf(::validateInputTarget)
     }
 
     fun validateInputTarget(target: InputTarget): Boolean = registry.validateInputTarget(target.pid,
-        target.generation, target.revision, target.windowId) == target.taskId
+        target.generation, target.revision, target.windowId, target.expectedTarget) == target.taskId
 
     private fun event(reason: String, process: ProcessKey? = null, sourceRevision: Long? = null) {
         val event = JSONObject().put("revision", ++revision).put("reason", reason)

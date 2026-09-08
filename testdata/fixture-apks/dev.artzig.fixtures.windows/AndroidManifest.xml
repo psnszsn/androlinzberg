@@ -4,6 +4,8 @@
          a desktop launcher owns initial task starts. It uses Android's explicit
          background-start permission; ordinary APK launch belongs to the task shell. -->
     <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <application android:label="Window contracts" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".WindowFixtureActivity" android:exported="true" android:resizeableActivity="true">
             <intent-filter>
@@ -12,6 +14,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".TextureFixtureActivity" android:resizeableActivity="true" />
+        <activity android:name=".VideoFixtureActivity" android:resizeableActivity="true" />
         <activity android:name=".ColdProcessActivity" android:process=":cold" android:resizeableActivity="true" />
         <activity android:name=".ColdGroupedActivity" android:process=":cold" android:resizeableActivity="true" />
         <activity android:name=".ColdHandledConfigurationActivity" android:process=":cold"

@@ -250,7 +250,10 @@ class HostedPackageManagerService(desktopWindows: Boolean = false,
         check(pkg.packageName == "android") { "framework-res parsed as " + pkg.packageName }
         synchronized(lock) {
             installLocked(pkg, frameworkResPath, system = true)
-            packagesByUid[Process.SYSTEM_UID] = packages.getValue("android")
+            // PackageInfoUtils derives every component's ApplicationInfo.uid
+            // from PackageImpl. Bind the platform through the same path as
+            // scanned applications, keeping that source and PackageState equal.
+            bindPackageUidLocked("android", Process.SYSTEM_UID)
         }
         invalidateClientCaches()
         Log.i(

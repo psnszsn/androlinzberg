@@ -22,6 +22,83 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Stock decoded video checkpoint (2026-09-08)
+
+Stock MediaCodec surface output now queues independently owned GPU video frames
+through libgui Surface/BufferQueue. VAAPI converts supported SDR inputs to RGBX
+DMA-BUFs, preserving color standard, transfer and full RGB range metadata. The
+shared allocator validates and imports the external descriptors; stock parcels
+carry the resulting GraphicBuffers. Completed VPP output owns its storage
+independently of the decoder pool. Surface supplies bounded queue pressure,
+timestamps, output switching and disconnect behavior.
+
+The APK video fixture decodes actual AVC into SurfaceView underneath an Android
+overlay, switches that codec to TextureView, resizes and releases both views.
+The `stock-video-test` gate uses the existing headless runner and four semantic
+test steps, verifies each view's onscreen pixels and requires clean diagnostics.
+Regression 336 passes this gate, `gui-test` and `cpp-audit`. Native tests also
+cover external-buffer validation, parcel ownership, exact timestamps, color and
+crop metadata, a bounded queue timeout followed by recovery, and FD cleanup.
+Artifacts: `/tmp/wayland-video-336-artifacts/`; log: `/tmp/wayland-336.log`.
+
+Two HWUI omissions surfaced during this gate: pending texture updates were
+discarded by an Android-only compilation guard, and importing a window buffer
+changed GL texture bindings without invalidating Ganesh's binding cache. Package
+79 includes the updater guard correction; the host EGL import seam now resets
+the affected cache state. No CPU frame-copy fallback was added.
+
+Stock APK regressions 339/340 pass activity input, dialogs, saved-state restore,
+TextureView and permission-result delivery. The host logging setup now retains
+AOSP's logcat group policy instead of printing every proto-enabled WM trace
+group. Cage supplies explicit output-local placement to the existing testkit;
+its headless keyboard is available before activities launch.
+
+Package 80 adds a small ActivityStarter seam for the existing host permission
+operation. Stock launch authorization precedes it, and ActivityRecord.sendResult
+owns delivery. The operation checks the requesting activity/process identity,
+returns the administrator-managed grants and creates no system activity process.
+Platform installation now binds the parsed package UID as well as PackageState,
+so generated ApplicationInfo and resolved components consistently report uid
+1000. Regression 341 reaches NewPipe's home screen with clean diagnostics;
+its obsolete legacy-launch log assertion is replaced by a visible home-tab check.
+
+Regression 355 extends the video fixture with an AVC frame whose four borders
+must be cropped away. FFmpeg's default cropping loses top/left offsets on opaque
+hardware frames; the host now retains that rectangle and applies it through VA
+VPP. The normalized RGB output reports its actual dimensions, full crop, opaque
+Surface format and converted color aspects through MediaCodec. The fixture
+checks the declared BT.709 metadata and all onscreen corners. Regression 345's
+native gate additionally verifies quarter-turn transforms, negative rotations
+and both Surface scaling modes. Artifacts: `/tmp/wayland-video-355-artifacts/`.
+
+Package 81 observes the top activity's main window at the stock WM layout seam.
+The task organizer also reads committed visibility when Session reports a change
+without scheduling layout. The existing host immersive policy retains fullscreen
+while legacy layout flags remain set during temporary control visibility. A
+system-authorized presenter operation handles these requests and unmodified F11;
+xdg configure remains authoritative. Regression 352 passes all four desktop
+NewPipe tests, including paused-video fullscreen, control reveal and explicit
+exit, with 18 clean steps. These video cases now use the existing desktop fixture:
+NewPipe's phone UI requests orientation changes, which pinned Android deliberately
+ignores for resizable freeform tasks. No synthetic rotation is introduced.
+Artifacts: `/tmp/wayland-video-352-artifacts/integration/`.
+
+Physical test input now revalidates the selected process-local widget and window
+order/focus/geometry, allowing unrelated label changes without accepting a changed
+target. Default framework module regression 348 verifies text mutation, disabled
+and moved targets, stale process identity and window changes. Regression 353
+passes the stock Cage, desktop, mixed-output, suspension and tablet task gates,
+plus C++ and graph audits. Artifacts: `/tmp/wayland-video-353-artifacts/`.
+
+Regression 356 passes the complete default JVM suite and all 16 APK integration
+tests, with 51 clean steps. Artifacts: `/tmp/wayland-video-356-artifacts/`; log:
+`/tmp/wayland-356.log`. Main remains at `f79fbb3`; no newer framework work was
+available to rebase during this checkpoint.
+
+This is an M10 checkpoint, not media or desktop cutover completion. Rendered-frame listener delivery,
+codec capability reporting, broader HDR policy, IME, clipboard, drag-and-drop and
+M11 remain unfinished; unsupported HDR conversion is currently rejected.
+
 ## Presentation feedback checkpoint (2026-09-08)
 
 The session negotiates presentation-time v1/v2 and retains the compositor's

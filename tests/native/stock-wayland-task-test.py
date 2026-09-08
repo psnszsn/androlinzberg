@@ -16,6 +16,7 @@ import tempfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--launcher', action='store_true')
+parser.add_argument('--video', action='store_true')
 parser.add_argument('--testkit', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
@@ -288,7 +289,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     if process.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError(f'desktop APK launch failed: {process.poll()}')
                     time.sleep(0.05)
-                app_pid = int(re.search(r'\d\d-\d\d \S+ (\d+) +\d+ I WindowFixture:', text).group(1))
+                app_pid = int(re.search(r'\d\d-\d\d \S+\s+(\d+)\s+\d+ I WindowFixture:', text).group(1))
                 assert app_pid != process.pid, 'launcher attached as the APK'
                 deadline = time.monotonic() + 15
                 while True:
@@ -323,82 +324,130 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert any(node.get('text') == value and str(node.get('task_id')) == (task_id or task)
                                and (description is None or node.get('content_description') == description)
                                for node in current['nodes']), (value, current)
-                control('step', 'click', '--task-id', task, '--window-id', window,
-                        '--text', label('Increment counter'), '--via', 'semantic', '--settle', 'idle')
-                control('wait', 'exists', '--task-id', task, '--text', 'Counter: 1')
-                control('step', 'click', '--task-id', task, '--text', label('Show attached dialog'),
-                        '--via', 'semantic', '--settle', 'idle')
-                dialog = control('observe', '--tree')['observation']['tree']
-                assert len(dialog['windows']) == 2
-                assert {str(w['task_id']) for w in dialog['windows']} == {task}
-                close = next(node for node in dialog['nodes'] if (node.get('text') or '').lower() == 'close dialog')
-                control('step', 'click', '--window-id', str(close['window_id']), '--text', close['text'],
-                        '--via', 'semantic', '--settle', 'idle')
-                control('step', 'click', '--task-id', task, '--text', label('Increment counter'),
-                        '--via', 'wayland', '--settle', 'idle')
-                settled_text('Counter: 2')
-                # The semantic target and explicit origin placement determine
-                # this cursor position; no global desktop coordinates are inferred.
-                bounds = next(node['bounds'] for node in tree['nodes']
-                              if (node.get('text') or '').lower() == 'increment counter')
-                cursor_x = (bounds['left'] + bounds['right']) // 2 - 2
-                cursor_y = (bounds['top'] + bounds['bottom']) // 2 - 3
-                deadline = time.monotonic() + 10
-                while True:
-                    ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
-                    _, dimensions, _, rgba = ppm.split(b'\n', 3)
-                    cursor_width, _ = map(int, dimensions.split())
-                    colors = [tuple(rgba[((cursor_y + 8) * cursor_width + cursor_x + x) * 3:
-                                         ((cursor_y + 8) * cursor_width + cursor_x + x) * 3 + 3])
-                              for x in (8, 24)]
-                    if colors == [(255, 0, 255), (0, 255, 255)]:
-                        break
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError(f'Custom Android cursor pixels/hotspot differ: {colors}')
-                    time.sleep(.02)
-                subprocess.run(['grim', '-c', str(out / 'custom-cursor.png')], check=True, timeout=3)
-                result['custom_cursor'] = dict(hotspot=[2, 3], colors=colors)
-                control('step', 'click', '--task-id', task, '--description', 'Fixture editor',
-                        '--via', 'wayland', '--settle', 'idle')
-                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'abc',
-                        '--via', 'wayland', '--settle', 'idle')
-                settled_text('abc', 'Fixture editor')
-                control('step', 'key', '--task-id', task, '--description', 'Fixture editor', 'Backspace',
-                        '--via', 'wayland', '--settle', 'idle')
-                settled_text('ab', 'Fixture editor')
-                long_text = 'A' * 1024
-                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', long_text,
-                        '--via', 'wayland', '--settle', 'idle')
-                settled_text('ab' + long_text, 'Fixture editor')
-                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'ab',
-                        '--via', 'semantic', '--settle', 'idle')
-                settled_text('ab', 'Fixture editor')
-                control('step', 'click', '--task-id', task, '--text', label('Open independent task'),
-                        '--via', 'semantic', '--settle', 'idle')
-                multiple = control('observe', '--tree')['observation']['tree']
-                assert len(multiple['windows']) == 2, multiple
-                sibling = next(window for window in multiple['windows'] if str(window['task_id']) != task)
-                assert sibling['pid'] == app_pid
-                sibling_task = str(sibling['task_id'])
-                control('step', 'type', '--task-id', sibling_task, '--description', 'Fixture editor', 'Z',
-                        '--via', 'wayland', '--settle', 'idle')
-                settled_text('Z', 'Fixture editor', sibling_task)
-                settled_text('ab', 'Fixture editor')
-                control('step', 'click', '--task-id', sibling_task, '--text', label('Finish this activity'),
-                        '--via', 'semantic', '--settle', 'idle')
-                control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'C',
-                        '--via', 'wayland', '--settle', 'idle')
-                settled_text('abC', 'Fixture editor')
-                after = control('observe', '--tree')['observation']
-                assert len(after['tree']['windows']) == 1
-                assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
-                (out / 'a11y.json').write_text(json.dumps(after, indent=2))
-                steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
-                cursor_log = (out / 'app.log').read_text(errors='replace')
-                assert 'task cursor shape protocol available=false' in cursor_log
-                assert 'task bitmap cursor task=' in cursor_log, 'Missing stock bitmap cursor fallback'
-                result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
+                if args.video:
+                    video_mark = control('mark')['mark']
+                    control('step', 'click', '--task-id', task, '--text', label('Show decoded video'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('wait', 'exists', '--task-id', task, '--text', 'Surface video queued')
+
+                    def video_pixels(name, minimum_cyan, require_overlay=False):
+                        # This harness places the one task at output origin, at scale 1.
+                        # Restrict each check to its own Android view, so an old SurfaceView
+                        # image cannot satisfy the TextureView screenshot assertion.
+                        description = 'Decoded SurfaceView' if require_overlay else 'Decoded TextureView'
+                        nodes = control('observe', '--tree')['observation']['tree']['nodes']
+                        bounds = next(n['bounds'] for n in nodes if n.get('content_description') == description
+                                      and str(n.get('task_id')) == task)
+                        deadline = time.monotonic() + 10
+                        while True:
+                            ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
+                            magic, dimensions, maximum, data = ppm.split(b'\n', 3)
+                            w, h = map(int, dimensions.split())
+                            data = b''.join(data[(y * w + bounds['left']) * 3:(y * w + bounds['right']) * 3]
+                                            for y in range(bounds['top'], bounds['bottom']))
+                            cyan = sum(r < 12 and g > 243 and b > 243 for r, g, b in zip(data[0::3], data[1::3], data[2::3]))
+                            red = sum(r > 243 and g < 12 and b < 12 for r, g, b in zip(data[0::3], data[1::3], data[2::3]))
+                            if cyan >= minimum_cyan and (not require_overlay or red >= 900): break
+                            if time.monotonic() >= deadline:
+                                raise RuntimeError(f'{name}: cyan={cyan}, red={red}, required={minimum_cyan}')
+                            time.sleep(.05)
+                        subprocess.run(['grim', str(out / f'{name}.png')], check=True, timeout=3)
+                        result[name] = {'cyan_pixels': cyan, 'red_pixels': red}
+
+                    video_pixels('surface-video', 25000, True)
+                    for action, expected, area in [
+                        ('MOVE VIDEO TO TEXTURE', 'Texture video pixels verified', 25000),
+                        ('RESIZE VIDEO', 'Resized video pixels verified', 45000),
+                        ('REMOVE VIDEO', 'Video surfaces released', 0),
+                    ]:
+                        control('step', 'click', '--task-id', task, '--text', action,
+                                '--via', 'semantic', '--settle', 'idle')
+                        control('wait', 'exists', '--task-id', task, '--text', expected)
+                        if area: video_pixels(expected.split()[0].lower() + '-video', area)
+                    diagnostics = control('diagnose', '--since', json.dumps(video_mark))
+                    (out / 'video-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
+                    assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
+                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
+                    assert len(steps) == 4 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert 'GPU VPP RGB path active' in (out / 'app.log').read_text(errors='replace')
+                    result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
+                else:
+                    control('step', 'click', '--task-id', task, '--window-id', window,
+                            '--text', label('Increment counter'), '--via', 'semantic', '--settle', 'idle')
+                    control('wait', 'exists', '--task-id', task, '--text', 'Counter: 1')
+                    control('step', 'click', '--task-id', task, '--text', label('Show attached dialog'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    dialog = control('observe', '--tree')['observation']['tree']
+                    assert len(dialog['windows']) == 2
+                    assert {str(w['task_id']) for w in dialog['windows']} == {task}
+                    close = next(node for node in dialog['nodes'] if (node.get('text') or '').lower() == 'close dialog')
+                    control('step', 'click', '--window-id', str(close['window_id']), '--text', close['text'],
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('step', 'click', '--task-id', task, '--text', label('Increment counter'),
+                            '--via', 'wayland', '--settle', 'idle')
+                    settled_text('Counter: 2')
+                    # The semantic target and explicit origin placement determine
+                    # this cursor position; no global desktop coordinates are inferred.
+                    bounds = next(node['bounds'] for node in tree['nodes']
+                                  if (node.get('text') or '').lower() == 'increment counter')
+                    cursor_x = (bounds['left'] + bounds['right']) // 2 - 2
+                    cursor_y = (bounds['top'] + bounds['bottom']) // 2 - 3
+                    deadline = time.monotonic() + 10
+                    while True:
+                        ppm = subprocess.check_output(['grim', '-c', '-t', 'ppm', '-'], timeout=3)
+                        _, dimensions, _, rgba = ppm.split(b'\n', 3)
+                        cursor_width, _ = map(int, dimensions.split())
+                        colors = [tuple(rgba[((cursor_y + 8) * cursor_width + cursor_x + x) * 3:
+                                             ((cursor_y + 8) * cursor_width + cursor_x + x) * 3 + 3])
+                                  for x in (8, 24)]
+                        if colors == [(255, 0, 255), (0, 255, 255)]:
+                            break
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(f'Custom Android cursor pixels/hotspot differ: {colors}')
+                        time.sleep(.02)
+                    subprocess.run(['grim', '-c', str(out / 'custom-cursor.png')], check=True, timeout=3)
+                    result['custom_cursor'] = dict(hotspot=[2, 3], colors=colors)
+                    control('step', 'click', '--task-id', task, '--description', 'Fixture editor',
+                            '--via', 'wayland', '--settle', 'idle')
+                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'abc',
+                            '--via', 'wayland', '--settle', 'idle')
+                    settled_text('abc', 'Fixture editor')
+                    control('step', 'key', '--task-id', task, '--description', 'Fixture editor', 'Backspace',
+                            '--via', 'wayland', '--settle', 'idle')
+                    settled_text('ab', 'Fixture editor')
+                    long_text = 'A' * 1024
+                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', long_text,
+                            '--via', 'wayland', '--settle', 'idle')
+                    settled_text('ab' + long_text, 'Fixture editor')
+                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'ab',
+                            '--via', 'semantic', '--settle', 'idle')
+                    settled_text('ab', 'Fixture editor')
+                    control('step', 'click', '--task-id', task, '--text', label('Open independent task'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    multiple = control('observe', '--tree')['observation']['tree']
+                    assert len(multiple['windows']) == 2, multiple
+                    sibling = next(window for window in multiple['windows'] if str(window['task_id']) != task)
+                    assert sibling['pid'] == app_pid
+                    sibling_task = str(sibling['task_id'])
+                    control('step', 'type', '--task-id', sibling_task, '--description', 'Fixture editor', 'Z',
+                            '--via', 'wayland', '--settle', 'idle')
+                    settled_text('Z', 'Fixture editor', sibling_task)
+                    settled_text('ab', 'Fixture editor')
+                    control('step', 'click', '--task-id', sibling_task, '--text', label('Finish this activity'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('step', 'type', '--task-id', task, '--description', 'Fixture editor', 'C',
+                            '--via', 'wayland', '--settle', 'idle')
+                    settled_text('abC', 'Fixture editor')
+                    after = control('observe', '--tree')['observation']
+                    assert len(after['tree']['windows']) == 1
+                    assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
+                    (out / 'a11y.json').write_text(json.dumps(after, indent=2))
+                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
+                    assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    cursor_log = (out / 'app.log').read_text(errors='replace')
+                    assert 'task cursor shape protocol available=false' in cursor_log
+                    assert 'task bitmap cursor task=' in cursor_log, 'Missing stock bitmap cursor fallback'
+                    result['test_control'] = {'steps': len(steps), 'task': int(task), 'window': int(window)}
                 subprocess.run(['grim', str(out / 'screenshot.png')], check=True, timeout=3)
                 seat.stdin.write(b'c')
                 seat.stdin.flush()

@@ -1,0 +1,13 @@
+From: Androlinzberg host integration
+Subject: [PATCH] WM: observe host task presentation after layout
+
+--- a/services/core/java/com/android/server/wm/WindowSurfacePlacer.java
++++ b/services/core/java/com/android/server/wm/WindowSurfacePlacer.java
+@@ -171,6 +171,7 @@
+ 
+         try {
+             mService.mRoot.performSurfacePlacement();
++            HostedTaskPresentation.onLayout(mService);
+ 
+             mInLayout = false;
+ 

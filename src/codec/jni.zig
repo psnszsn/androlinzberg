@@ -46,7 +46,7 @@ fn nativeReceiveAudio(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, dst
 
 fn nativeReceiveVideo(env: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong, meta: jni.jintArray, pts: jni.jlongArray, hardware_handle: jni.jlongArray) callconv(.c) jni.jint {
     const decoder: *codec.Dec = @ptrFromInt(@as(usize, @intCast(handle)));
-    var values = [3]c_int{ 0, 0, 0 };
+    var values = [4]c_int{ 0, 0, 0, 0 };
     var timestamp: i64 = 0;
     var native_handle: usize = 0;
     const result = codec.azk_codec_receive_video2(decoder, &values, &timestamp, &native_handle);

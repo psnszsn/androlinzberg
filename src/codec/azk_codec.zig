@@ -74,8 +74,8 @@ pub const Dec = struct {
                 errdefer c.azk_hardware_frame_release(hardware);
                 try self.vqueue.append(gpa, .{
                     .hardware = hardware,
-                    .width = self.frame.width,
-                    .height = self.frame.height,
+                    .width = hardware.*.width,
+                    .height = hardware.*.height,
                     .pts = if (self.frame.pts != c.AV_NOPTS_VALUE) self.frame.pts else 0,
                 });
             } else {
@@ -258,8 +258,7 @@ pub export fn azk_codec_receive_audio(d: *Dec, dst: [*]u8, dst_cap: c_int, out_m
 }
 
 /// Hardware frames return 3 and transfer an owned AzkHardwareFrame.
-pub export fn azk_codec_receive_video2(d: *Dec, out_meta: [*]c_int,
-        out_pts: *i64, out_handle: *usize) c_int {
+pub export fn azk_codec_receive_video2(d: *Dec, out_meta: [*]c_int, out_pts: *i64, out_handle: *usize) c_int {
     out_handle.* = 0;
     if (d.vqueue.items.len == 0) d.pushDecoded() catch return -1;
     if (d.vqueue.items.len == 0) {
@@ -272,6 +271,7 @@ pub export fn azk_codec_receive_video2(d: *Dec, out_meta: [*]c_int,
     out_pts.* = pending.pts;
     const frame = d.vqueue.orderedRemove(0);
     out_meta[0] = 0;
+    out_meta[3] = frame.hardware.*.dataspace;
     out_handle.* = @intFromPtr(frame.hardware);
     return 3;
 }
@@ -440,7 +440,6 @@ pub export fn azk_codec_write_test_m4v(path: [*:0]const u8) c_int {
     }
     return frames;
 }
-
 
 /// Round-trip selftest: encode a sine with the mp3 encoder, decode it with the
 /// same path MediaCodec uses. Returns decoded sample count (>0 = pass).

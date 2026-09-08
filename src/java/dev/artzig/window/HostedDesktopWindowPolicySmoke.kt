@@ -11,7 +11,25 @@ import com.android.server.policy.WindowManagerPolicy
 import java.lang.reflect.Proxy
 
 object HostedDesktopWindowPolicySmoke {
+    private fun verifyFullscreenKeys() {
+        val fullscreenKeys = mutableListOf<android.os.IBinder>()
+        val policy = HostedDesktopWindowPolicy { fullscreenKeys.add(it) }
+        val focus = android.os.Binder()
+        fun key(action: Int, repeats: Int = 0, modifiers: Int = 0) = android.view.KeyEvent(
+            0L, 0L, action, android.view.KeyEvent.KEYCODE_F11, repeats, modifiers)
+        check(policy.interceptKeyBeforeDispatching(focus, key(android.view.KeyEvent.ACTION_DOWN), 0) == -1L)
+        check(policy.interceptKeyBeforeDispatching(focus, key(android.view.KeyEvent.ACTION_DOWN, 1), 0) == -1L)
+        check(policy.interceptKeyBeforeDispatching(focus, key(android.view.KeyEvent.ACTION_UP), 0) == -1L)
+        check(fullscreenKeys == listOf(focus))
+        check(policy.interceptKeyBeforeDispatching(null, key(android.view.KeyEvent.ACTION_DOWN), 0) == 0L)
+        check(policy.interceptKeyBeforeDispatching(focus,
+            key(android.view.KeyEvent.ACTION_DOWN, modifiers = android.view.KeyEvent.META_CTRL_ON), 0) == 0L)
+        check(fullscreenKeys == listOf(focus))
+    }
+
+
     fun run(base: Context) {
+        verifyFullscreenKeys()
         var permitInternal = false
         val context = object : ContextWrapper(base) {
             override fun checkCallingOrSelfPermission(permission: String): Int =

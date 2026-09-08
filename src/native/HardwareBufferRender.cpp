@@ -213,6 +213,12 @@ sk_sp<SkSurface> makeHardwareBufferSurface(GrDirectContext* context,
     imageTarget(GL_TEXTURE_2D, reinterpret_cast<GLeglImageOES>(image));
     const GLenum glError = glGetError();
     glBindTexture(GL_TEXTURE_2D, 0);
+    // As in pinned GrAHardwareBufferUtils::MakeGLBackendTexture, importing a
+    // foreign EGL image changes GL bindings outside Ganesh. The next window
+    // buffer can otherwise sample texture 0 while Ganesh believes the previous
+    // TextureView image is still bound. Readback happens to disturb that cache
+    // again, which can conceal the missing onscreen pixels.
+    context->resetContext(kTextureBinding_GrGLBackendState);
     if (glError != GL_NO_ERROR) {
         glDeleteTextures(1, &texture);
         auto destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(

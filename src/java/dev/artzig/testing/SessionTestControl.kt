@@ -36,9 +36,9 @@ object SessionTestControl {
         needFrames = poll(frames[0], frames[1]) || frames[1] == 0L
     }
 
-    @JvmStatic fun selectInputWindow(revision: Long, windowId: Long): Boolean {
+    @JvmStatic fun selectInputWindow(revision: Long, windowId: Long, viewId: Int, virtualId: Int): Boolean {
         selectedInput = null
-        val target = observation.inputTarget(revision, windowId) ?: return false
+        val target = observation.inputTarget(revision, windowId, viewId, virtualId) ?: return false
         val geometry = presenter.testWindow(target.taskId)
         if (geometry.size != 16 || geometry[0] <= 0) return false
         check((1..8).all { geometry[it] in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() })

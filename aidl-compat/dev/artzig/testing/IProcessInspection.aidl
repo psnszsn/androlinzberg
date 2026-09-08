@@ -7,5 +7,5 @@ interface IProcessInspection {
     boolean perform(long revision, long windowId, int viewId, int virtualId, int action, @nullable String text);
     /** Thread-safe journal access while Application.onCreate still owns main. */
     String runtimeDiagnostics(long afterLog, long afterIssue);
-    IBinder inputWindow(long revision, long windowId);
+    IBinder inputWindow(long revision, long windowId, @nullable String expectedTarget);
 }

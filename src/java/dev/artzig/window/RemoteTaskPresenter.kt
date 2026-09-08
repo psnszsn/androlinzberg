@@ -15,6 +15,11 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val windows = mutableMapOf<Int, Window>()
     @Volatile private var queuedTestInput = 0L
     fun testInputQueued(sequence: Long): Boolean = sequence > 0 && queuedTestInput >= sequence
+    fun toggleFullscreen(token: android.os.IBinder) {
+        check(Looper.myLooper() === handler.looper)
+        val window = taskForToken(token)?.let(windows::get) ?: return
+        check(remote.requestFullscreen(window.task.id, window.task.generation, 2))
+    }
     fun connect() {
         check(Looper.myLooper() === handler.looper)
         val state = remote.connectSeat(callback)
@@ -179,6 +184,9 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         }
         override fun metadata(appId: String, title: String) {
             if (!closed) remote.setMetadata(task.id, task.generation, appId, title)
+        }
+        override fun immersive(enabled: Boolean) {
+            if (!closed) check(remote.requestFullscreen(task.id, task.generation, if (enabled) 1 else 0))
         }
         override fun committed(bounds: TaskGeometry.Bounds, size: WaylandTaskShell.Size) {
             if (!closed) {

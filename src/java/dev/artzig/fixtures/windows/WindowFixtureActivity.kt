@@ -22,6 +22,8 @@ open class WindowFixtureActivity : Activity() {
     private var counter = 0
     private lateinit var count: TextView
     private lateinit var editor: EditText
+    private lateinit var permissions: Button
+    private var permissionState = intArrayOf()
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -68,6 +70,7 @@ open class WindowFixtureActivity : Activity() {
             check(dialog.isShowing)
             journal("dialog-shown")
         }
+        button("Show decoded video") { startActivity(Intent(this, VideoFixtureActivity::class.java)) }
         button("Recreate activity") { recreate() }
         button("Show SurfaceView") {
             content.addView(SurfaceView(this).apply {
@@ -84,7 +87,20 @@ open class WindowFixtureActivity : Activity() {
             }, LinearLayout.LayoutParams(240, 120))
         }
         button("Show TextureView") { startActivity(Intent(this, TextureFixtureActivity::class.java)) }
+        permissions = button("Check permission results") {
+            permissionState = permissionNames.map(::checkSelfPermission).toIntArray()
+            requestPermissions(permissionNames, 71)
+        }
         setContentView(content)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, names: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(requestCode, names, results)
+        check(requestCode == 71 && names.contentEquals(permissionNames))
+        check(results.contentEquals(permissionState)) { "A permission request changed administrator-managed grants" }
+        check(results.contentEquals(permissionNames.map(::checkSelfPermission).toIntArray()))
+        permissions.text = "Permission results verified"
+        journal("permission-result")
     }
 
     private fun updateCounter() { count.text = "Counter: $counter" }
@@ -118,7 +134,10 @@ open class WindowFixtureActivity : Activity() {
             .put("widthDp", config.screenWidthDp).put("heightDp", config.screenHeightDp)
             .put("densityDpi", config.densityDpi).toString())
     }
-    companion object { private val nextInstance = AtomicInteger() }
+    companion object {
+        private val nextInstance = AtomicInteger()
+        private val permissionNames = arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.INTERNET)
+    }
 }
 
 class SecondActivity : WindowFixtureActivity()

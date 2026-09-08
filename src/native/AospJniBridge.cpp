@@ -354,6 +354,7 @@ extern int register_android_graphics_ImageDecoder(JNIEnv*);
 extern "C" int azk_register_graphics_environment_backend(JNIEnv*);
 extern int register_dev_artzig_StockFenceSmoke(JNIEnv*);
 extern int register_dev_artzig_StockReadbackSmoke(JNIEnv*);
+extern int register_dev_artzig_HostedVideoOutput(JNIEnv*);
 namespace android { int register_android_os_GraphicsEnvironment(JNIEnv*); }
 namespace android { int register_com_android_server_wm_TaskFpsCallbackController(JNIEnv*); }
 namespace android { int register_android_view_TunnelModeEnabledListener(JNIEnv*); }
@@ -661,6 +662,7 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(azk_register_graphics_environment_backend),
             E(register_dev_artzig_StockFenceSmoke),
             E(register_dev_artzig_StockReadbackSmoke),
+            E(register_dev_artzig_HostedVideoOutput),
             E(android::register_android_os_GraphicsEnvironment),
             E(android::register_com_android_server_wm_TaskFpsCallbackController),
             E(android::register_android_view_TunnelModeEnabledListener),

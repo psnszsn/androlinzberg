@@ -83,6 +83,9 @@ framework_patches = tuple(
         (58, "-HWUI-record-hosted-texture-layers.patch"),
         (59, "-HWUI-initialize-layer-geometry.patch"),
         (60, "-HWUI-detach-host-worker-threads.patch"),
+        (61, "-HWUI-process-hosted-texture-updates.patch"),
+        (62, "-ATMS-complete-host-permission-operations.patch"),
+        (63, "-WM-observe-host-task-presentation-after-layout.patch"),
     )
 )
 

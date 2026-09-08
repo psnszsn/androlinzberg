@@ -90,6 +90,7 @@ const our_srcs = [_][]const u8{
     "src/native/ArtzigGpuPipeline.cpp",     "src/native/HardwareBufferRender.cpp",
     "src/native/HwuiRenderProxyBridge.cpp", "src/native/AospJniBridge.cpp",
     "src/native/AospParcelAbi.cpp",         "src/native/HostLooper.cpp",
+    "src/native/HostedVideoOutput.cpp",
 };
 
 pub fn build(b: *std.Build, o: Options) Result {

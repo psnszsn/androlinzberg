@@ -284,6 +284,7 @@ internal object FrameworkModuleSmoke {
         StockDisplayEventsSmoke.run()
         testChoreographerPhaseOrder()
         testAccessibilityInspectorContracts()
+        testPhysicalInputSelection()
         testAccessibilityVirtualNodes()
         testSimpleRendererContracts()
         testPostedCallbackRunsAfterPendingTraversal()
@@ -4869,6 +4870,59 @@ internal object FrameworkModuleSmoke {
         } finally {
             root.destroy()
             ArtzigAccessibilityBridge.setActivityRoot(null)
+            drainMainQueue()
+        }
+    }
+
+    private fun testPhysicalInputSelection() {
+        val context = HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 200, 200, 120, 0)
+        val root = ViewRootImpl(context)
+        val content = android.widget.LinearLayout(context).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        val button = android.widget.Button(context).apply { text = "target" }
+        val sibling = android.widget.TextView(context).apply { text = "before" }
+        content.addView(button, android.widget.LinearLayout.LayoutParams(200, 80))
+        content.addView(sibling, android.widget.LinearLayout.LayoutParams(200, 80))
+        try {
+            root.setView(content, 200, 200)
+            ArtzigAccessibilityBridge.setActivityRoot(root)
+            awaitChoreographerFrame()
+            drainMainQueue()
+            root.doTraversal()
+            val snapshot = org.json.JSONObject(ArtzigAccessibilityBridge.snapshot())
+            val nodes = snapshot.getJSONArray("nodes")
+            val selected = (0 until nodes.length()).map { nodes.getJSONObject(it) }
+                .single { it.getInt("view_id") == button.accessibilityViewId }
+            val target = org.json.JSONObject().put("node", selected)
+                .put("windows", snapshot.getJSONArray("windows")).toString()
+            val revision = snapshot.getLong("revision")
+            val window = selected.getLong("window_id")
+            val token = checkNotNull(android.view.HostedRootFrames.windowToken(root))
+            check(ArtzigAccessibilityBridge.inputWindow(revision, window, target) == token)
+            sibling.text = "after"
+            root.doTraversal()
+            check(ArtzigAccessibilityBridge.inputWindow(revision, window, target) == token) {
+                "An unrelated label invalidated an unchanged physical input target"
+            }
+            check(ArtzigAccessibilityBridge.inputWindow(Long.MAX_VALUE, window, target) == null)
+            check(ArtzigAccessibilityBridge.inputWindow(revision, Long.MAX_VALUE, target) == null)
+            button.text = "changed target"
+            check(ArtzigAccessibilityBridge.inputWindow(revision, window, target) == null)
+            button.text = "target"
+            button.isEnabled = false
+            check(ArtzigAccessibilityBridge.inputWindow(revision, window, target) == null)
+            button.isEnabled = true
+            button.translationX = 10f
+            check(ArtzigAccessibilityBridge.inputWindow(revision, window, target) == null)
+            button.translationX = 0f
+            val changedWindows = org.json.JSONObject(target)
+            changedWindows.getJSONArray("windows").getJSONObject(0).put("active",
+                !snapshot.getJSONArray("windows").getJSONObject(0).getBoolean("active"))
+            check(ArtzigAccessibilityBridge.inputWindow(revision, window, changedWindows.toString()) == null)
+        } finally {
+            ArtzigAccessibilityBridge.setActivityRoot(null)
+            root.destroy()
             drainMainQueue()
         }
     }

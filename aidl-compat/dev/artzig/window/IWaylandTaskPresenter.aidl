@@ -45,4 +45,7 @@ interface IWaylandTaskPresenter {
     boolean setTabletPointerIcon(int taskId, long generation, int deviceId, int deviceGeneration, int type);
     boolean setTabletCursorImage(int taskId, long generation, int deviceId, int deviceGeneration,
         int width, int height, int hotspotX, int hotspotY, int frameMillis, in int[] pixels);
+    /** Production task policy: exit=0, enter=1, toggle current compositor state=2.
+     * A request is not an acknowledgement; xdg configure remains authoritative. */
+    boolean requestFullscreen(int taskId, long generation, int mode);
 }

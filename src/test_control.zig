@@ -167,10 +167,10 @@ pub const Input = struct {
     fullscreen_fn: *const fn (*anyopaque) bool,
     type_at_fn: ?*const fn (*anyopaque, i32, i32, []const u8) anyerror!void = null,
     key_at_fn: ?*const fn (*anyopaque, i32, i32, []const u8) anyerror!void = null,
-    select_fn: ?*const fn (*anyopaque, u64, i64) anyerror!void = null,
+    select_fn: ?*const fn (*anyopaque, u64, i64, i32, i32) anyerror!void = null,
 
-    pub fn select(self: Input, revision: u64, window_id: i64) !void {
-        if (self.select_fn) |callback| try callback(self.context, revision, window_id);
+    pub fn select(self: Input, revision: u64, window_id: i64, view_id: i32, virtual_id: i32) !void {
+        if (self.select_fn) |callback| try callback(self.context, revision, window_id, view_id, virtual_id);
     }
 
     pub fn tap(self: Input, x: i32, y: i32) !void {
@@ -561,7 +561,7 @@ pub const Server = struct {
                 if (!oneway) try self.interfaceError("InputUnavailable", "reason", "compositor does not expose virtual input");
                 return;
             };
-            input.select(revision, intField(node, "window_id") orelse return error.InvalidNode) catch |err| {
+            input.select(revision, intField(node, "window_id") orelse return error.InvalidNode, @intCast(intField(node, "view_id") orelse return error.InvalidNode), @intCast(intField(node, "virtual_id") orelse return error.InvalidNode)) catch |err| {
                 if (!oneway) try self.interfaceError("InputUnavailable", "reason", @errorName(err));
                 return;
             };

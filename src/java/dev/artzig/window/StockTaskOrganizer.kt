@@ -111,7 +111,8 @@ internal class StockTaskOrganizer(private val handler: Handler) :
             bounds.width().coerceAtLeast(1), bounds.height().coerceAtLeast(1), info.isResizeable,
             info.displayId == Display.DEFAULT_DISPLAY &&
                 info.activityType == WindowConfiguration.ACTIVITY_TYPE_STANDARD && appId.isNotEmpty(),
-            bounds.left, bounds.top)
+            bounds.left, bounds.top,
+            com.android.server.wm.HostedTaskPresentation.isImmersive(info.token.asBinder()))
     }
 
     override fun configure(token: IBinder, leash: SurfaceControl, window: WaylandTaskShell.Window,

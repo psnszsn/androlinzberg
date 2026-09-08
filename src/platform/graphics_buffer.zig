@@ -108,6 +108,12 @@ fn lookup(handle: *const Handle) ?*Buffer {
 fn encode(handle: *Handle, info: Info) void {
     handle.writable().* = .{ @bitCast(info.fd), magic, 1, info.width, info.height, info.format, info.layers, @truncate(info.usage), @truncate(info.usage >> 32), info.stride, info.offset, @truncate(info.modifier), @truncate(info.modifier >> 32), @truncate(info.id), @truncate(info.id >> 32), @bitCast(info.dataspace), 0 };
 }
+fn validDescription(info: Info) bool {
+    if (!valid(info.width, info.height, info.format, info.layers, info.usage) or info.fd < 0 or info.reserved != 0) return false;
+    const format = formatInfo(info.format).?;
+    return info.drm_format == format.drm and info.stride % format.bpp == 0 and
+        info.stride >= info.width * format.bpp and info.stride <= std.math.maxInt(i32) and info.offset <= std.math.maxInt(i32);
+}
 fn decode(handle: *const Handle) ?Info {
     if (handle.version != @sizeOf(Handle) or handle.num_fds != 1 or handle.num_ints != integer_count) return null;
     const w = handle.words();
@@ -115,8 +121,8 @@ fn decode(handle: *const Handle) ?Info {
     const usage = @as(u64, w[7]) | (@as(u64, w[8]) << 32);
     if (!valid(w[3], w[4], w[5], w[6], usage)) return null;
     const format = formatInfo(w[5]).?;
-    if (w[9] % format.bpp != 0 or w[9] < w[3] * format.bpp or w[9] > std.math.maxInt(i32) or w[10] > std.math.maxInt(i32)) return null;
-    return .{ .width = w[3], .height = w[4], .format = w[5], .layers = w[6], .usage = usage, .drm_format = format.drm, .stride = w[9], .offset = w[10], .modifier = @as(u64, w[11]) | (@as(u64, w[12]) << 32), .id = @as(u64, w[13]) | (@as(u64, w[14]) << 32), .fd = @bitCast(w[0]), .dataspace = @bitCast(w[15]) };
+    const info: Info = .{ .width = w[3], .height = w[4], .format = w[5], .layers = w[6], .usage = usage, .drm_format = format.drm, .stride = w[9], .offset = w[10], .modifier = @as(u64, w[11]) | (@as(u64, w[12]) << 32), .id = @as(u64, w[13]) | (@as(u64, w[14]) << 32), .fd = @bitCast(w[0]), .dataspace = @bitCast(w[15]) };
+    return if (validDescription(info)) info else null;
 }
 // Takes ownership of bo on success and failure; serialized by mutex.
 fn register(bo: *Bo, info_in: Info, output: *?*Handle) i32 {
@@ -174,6 +180,20 @@ pub export fn azk_graphics_import(raw: *const Handle, output: *?*Handle) callcon
     const info = decode(raw) orelse return -22;
     lock();
     defer unlock();
+    return importBuffer(info, output);
+}
+/// Adopt a foreign single-plane RGB DMA-BUF into the stock gralloc contract.
+/// Input FDs remain borrowed; registration owns a new descriptor and buffer ID.
+pub export fn azk_graphics_import_external(raw: *const Info, output: *?*Handle) callconv(.c) i32 {
+    output.* = null;
+    if (!validDescription(raw.*)) return -22;
+    lock();
+    defer unlock();
+    var info = raw.*;
+    io.random(std.mem.asBytes(&info.id));
+    return importBuffer(info, output);
+}
+fn importBuffer(info: Info, output: *?*Handle) i32 {
     const d = getDevice() orelse return -19;
     // DMA-BUF stat sizes may be unavailable. For a linear layout validate the
     // minimum last-row extent when the exporter supplies a nonzero size.

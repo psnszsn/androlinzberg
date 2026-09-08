@@ -3,6 +3,7 @@
 #include <azk/binder.h>
 #include <cassert>
 #include <azk/graphics_buffer.h>
+#include <azk/VideoSurface.h>
 #include <binder/Binder.h>
 #include <binder/Parcel.h>
 #include <binder/IPCThreadState.h>
@@ -194,6 +195,161 @@ void hardwareBufferTests() {
                "mapping and AParcel serialization"
             << std::endl;
 }
+void externalBufferTests() {
+  const auto baseline = azk_graphics_live_buffers();
+  GpuBufferRenderer renderer;
+  const auto files = openFiles();
+  {
+    auto original = sp<GraphicBuffer>::make(48, 32, PIXEL_FORMAT_RGBA_8888,
+                                             1, usage, "external-source");
+    assert(original->initCheck() == OK);
+    auto fence = renderer.render(original, 0xff3478ab);
+    assert(fence->wait(1000) == OK);
+    fence.clear();
+    AzkGraphicsBufferInfo source{}, importedInfo{};
+    assert(azk_graphics_describe(original->handle, &source) == OK);
+    native_handle_t *handle = nullptr;
+    for (unsigned invalid = 0; invalid < 6; ++invalid) {
+      auto bad = source;
+      switch (invalid) {
+      case 0: bad.fd = -1; break;
+      case 1: bad.drm_format ^= 1; break;
+      case 2: bad.stride = 1; break;
+      case 3: bad.offset = 0xffffffff; break;
+      case 4: bad.usage |= GRALLOC_USAGE_PROTECTED; break;
+      case 5: bad.reserved = 1; break;
+      }
+      assert(azk_graphics_import_external(&bad, &handle) == BAD_VALUE && !handle);
+    }
+    assert(azk_graphics_import_external(&source, &handle) == OK && handle);
+    assert(azk_graphics_describe(handle, &importedInfo) == OK);
+    assert(importedInfo.fd != source.fd && importedInfo.id != source.id);
+    // Pinned initWithHandle queries transport sizes on CLONE_HANDLE; the raw
+    // TAKE_HANDLE wrapper does not initialize the fields used by flatten().
+    auto imported = sp<GraphicBuffer>::make(handle, GraphicBuffer::CLONE_HANDLE,
+        importedInfo.width, importedInfo.height, PIXEL_FORMAT_RGBA_8888,
+        1, importedInfo.usage, importedInfo.stride / 4);
+    assert(azk_graphics_free(handle) == OK);
+    assert(imported->initCheck() == OK);
+    original.clear(); // The foreign exporter's allocation owner may disappear.
+    Parcel parcel;
+    assert(parcel.write(*imported) == OK);
+    parcel.setDataPosition(0);
+    auto remote = sp<GraphicBuffer>::make();
+    assert(parcel.read(*remote) == OK);
+    imported.clear();
+    parcel.freeData();
+    void *pixels = nullptr;
+    assert(remote->lock(GRALLOC_USAGE_SW_READ_OFTEN, &pixels) == OK);
+    for (unsigned y : {0u, 31u}) for (unsigned x : {0u, 47u})
+      assert(static_cast<uint32_t *>(pixels)[y * remote->getStride() + x] == 0xff3478ab);
+    assert(remote->unlock() == OK);
+  }
+  assert(azk_graphics_live_buffers() == baseline && openFiles() == files);
+  std::cout << "PASS foreign GPU DMA-BUF import validates metadata, owns its FD "
+               "and preserves pixels through stock GraphicBuffer Parcel transport" << std::endl;
+}
+void videoSurfaceTests() {
+  const auto baseline = azk_graphics_live_buffers();
+  GpuBufferRenderer renderer;
+  const auto files = openFiles();
+  {
+    sp<IGraphicBufferProducer> producer;
+    sp<IGraphicBufferConsumer> consumer;
+    BufferQueue::createBufferQueue(&producer, &consumer);
+    auto listener = sp<Listener>::make();
+    auto proxy = sp<BufferQueue::ProxyConsumerListener>::make(listener);
+    assert(consumer->consumerConnect(proxy, false) == OK);
+    assert(consumer->setConsumerUsageBits(usage) == OK);
+    auto surface = sp<Surface>::make(producer, false);
+    status_t status;
+    auto video = azk::VideoSurface::connect(surface, &status);
+    assert(video && status == OK);
+    auto duplicate = azk::VideoSurface::connect(surface, &status);
+    assert(!duplicate && status != OK); // Failed connect must not disconnect the owner.
+    std::array<sp<GraphicBuffer>, 64> slots;
+    for (unsigned frame = 0; frame < 24; ++frame) {
+      const unsigned width = frame < 12 ? 48 : 64;
+      const unsigned height = frame < 12 ? 32 : 40;
+      const uint32_t color = 0xff246810 + frame;
+      auto original = sp<GraphicBuffer>::make(width, height, PIXEL_FORMAT_RGBA_8888,
+                                               1, usage, "video-external-source");
+      auto fence = renderer.render(original, color);
+      assert(fence->wait(1000) == OK);
+      fence.clear();
+      AzkGraphicsBufferInfo source{};
+      assert(azk_graphics_describe(original->handle, &source) == OK);
+      source.dataspace = HAL_DATASPACE_V0_SRGB;
+      const int angles[] = {0, 90, 180, 270, -90, 45};
+      const uint32_t transforms[] = {0, HAL_TRANSFORM_ROT_90, HAL_TRANSFORM_ROT_180,
+                                     HAL_TRANSFORM_ROT_270, HAL_TRANSFORM_ROT_270, 0};
+      const int scaling = frame % 2 == 0 ? NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW
+                                       : NATIVE_WINDOW_SCALING_MODE_SCALE_CROP;
+      assert(video->configure(angles[frame % 6], scaling) == OK);
+      assert(video->configure(0, 0) == BAD_VALUE); // Failed mode preserves prior settings.
+      const int64_t timestamp = 123456789000LL + frame * 16666667LL;
+      assert(video->queue(source, timestamp) == OK);
+      original.clear(); // No exporter object or FD survives until acquire.
+      BufferItem item;
+      assert(consumer->acquireBuffer(&item, 0) == OK);
+      assert(item.mTimestamp == timestamp && !item.mIsAutoTimestamp);
+      assert(item.mDataSpace == HAL_DATASPACE_V0_SRGB);
+      assert(item.mCrop == Rect(width, height));
+      assert(item.mScalingMode == scaling);
+      assert(item.mTransform == transforms[frame % 6]);
+      if (item.mGraphicBuffer) slots[item.mSlot] = item.mGraphicBuffer;
+      auto buffer = slots[item.mSlot];
+      assert(buffer && buffer->getWidth() == width && buffer->getHeight() == height);
+      void* pixels = nullptr;
+      assert(buffer->lock(GRALLOC_USAGE_SW_READ_OFTEN, &pixels) == OK);
+      for (unsigned y : {0u, height - 1}) for (unsigned x : {0u, width - 1})
+        assert(static_cast<uint32_t*>(pixels)[y * buffer->getStride() + x] == color);
+      assert(buffer->unlock() == OK);
+      assert(consumer->releaseBuffer(item.mSlot, item.mFrameNumber, Fence::NO_FENCE) == OK);
+      assert(azk_graphics_live_buffers() <= baseline + 5);
+    }
+    {
+      auto original = sp<GraphicBuffer>::make(48, 32, PIXEL_FORMAT_RGBA_8888,
+                                               1, usage, "video-backpressure");
+      AzkGraphicsBufferInfo source{};
+      assert(azk_graphics_describe(original->handle, &source) == OK);
+      unsigned queued = 0;
+      const auto began = std::chrono::steady_clock::now();
+      for (; queued < 4; ++queued) {
+        status = video->queue(source, queued);
+        if (status != OK) break;
+      }
+      assert(queued > 0 && queued < 4 && status == TIMED_OUT);
+      const auto elapsed = std::chrono::steady_clock::now() - began;
+      assert(elapsed >= 800ms && elapsed < 2500ms);
+      // A timed-out attachment returns all imported ownership, and consuming
+      // the outstanding frames makes the same connection usable again.
+      for (unsigned i = 0; i < queued; ++i) {
+        BufferItem item;
+        assert(consumer->acquireBuffer(&item, 0) == OK);
+        if (item.mGraphicBuffer) slots[item.mSlot] = item.mGraphicBuffer;
+        assert(consumer->releaseBuffer(item.mSlot, item.mFrameNumber, Fence::NO_FENCE) == OK);
+      }
+      assert(video->queue(source, 999) == OK);
+      BufferItem item;
+      assert(consumer->acquireBuffer(&item, 0) == OK && item.mTimestamp == 999);
+      if (item.mGraphicBuffer) slots[item.mSlot] = item.mGraphicBuffer;
+      assert(consumer->releaseBuffer(item.mSlot, item.mFrameNumber, Fence::NO_FENCE) == OK);
+    }
+    video.reset();
+    video = azk::VideoSurface::connect(surface, &status);
+    assert(video && status == OK);
+    assert(consumer->consumerDisconnect() == OK);
+    auto buffer = sp<GraphicBuffer>::make(48, 32, PIXEL_FORMAT_RGBA_8888,
+                                            1, usage, "video-abandoned");
+    AzkGraphicsBufferInfo source{};
+    assert(azk_graphics_describe(buffer->handle, &source) == OK);
+    assert(video->queue(source, 0) != OK);
+  }
+  assert(azk_graphics_live_buffers() == baseline && openFiles() == files);
+  std::cout << "PASS stock video Surface preserves foreign GPU pixels, timestamps, "
+               "dataspace and crop across resize; bounded ownership, backpressure, reconnect and abandonment" << std::endl;
+}
 void handleTests() {
   const auto baseline = azk_graphics_live_buffers();
   auto buffer = sp<GraphicBuffer>::make(40, 20, PIXEL_FORMAT_RGBA_8888, 1,
@@ -280,6 +436,8 @@ int main(int argc, char **argv) {
             << std::endl;
   handleTests();
   hardwareBufferTests();
+  externalBufferTests();
+  videoSurfaceTests();
   auto service = IBinder::fromNative(
       AServiceManager_waitForService("dev.artzig.facade.v2"));
   assert(service && service->remoteBinder());

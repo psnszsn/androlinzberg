@@ -21,7 +21,7 @@ class NewPipeTest {
         expectVisible(text = "Live")
         expectVisible(description = "Search")
         expectVisible(description = "Open Drawer")
-        assertLog("ApkHost", "starting org.schabi.newpipe.MainActivity")
+        expectVisible(resourceId = "org.schabi.newpipe:id/main_tab_layout")
     }
 
     @Test
@@ -74,6 +74,35 @@ class NewPipeTest {
         assertDrawerOpened(closed, open, screenshot("drawer-settled.png"), panel)
     }
 
+
+}
+
+/** Exercises the desktop-sized configuration used by a normal compositor. */
+class NewPipeDesktopTest {
+    @get:Rule
+    val app = ApkRule("newpipe-0.29.1", LaunchSize(1600, 900))
+
+    @Test
+    fun hamburgerOpensNavigationDrawer() = app.run {
+        dismissKeepAndroidOpenDialog()
+        expectVisible(description = "Open Drawer")
+        val closed = screenshot("drawer-closed.png")
+        assertScreenshotSize(closed, 1600, 900)
+        click(description = "Open Drawer")
+        waitFor(text = "Downloads")
+        waitForPresentedFrames(30)
+        val panel = drawerPanelBounds()
+        val open = screenshot("drawer-open.png")
+        waitForPresentedFrames(3)
+        assertEquals(panel, drawerPanelBounds(), "drawer bounds were still moving")
+        assertDrawerOpened(closed, open, screenshot("drawer-settled.png"), panel)
+    }
+
+    // In its narrow phone UI, NewPipe requests screen rotation for this button.
+    // Stock Android ignores orientation requests from resizable freeform tasks
+    // (DesktopActivityOrientationChangeHandler handles only non-resizable ones).
+    // Desktop UI requests immersive presentation directly; exercise its complete
+    // enter/reveal/exit contract without synthesizing an Android rotation.
     @Test
     fun revealingVideoControlsKeepsCompositorFullscreen() = app.run {
         dismissKeepAndroidOpenDialog()
@@ -139,29 +168,6 @@ class NewPipeTest {
         waitFor(text = title)
         waitFor(description = "Comments")
         waitFor(text = "Background")
-    }
-
-}
-
-/** Exercises the desktop-sized configuration used by a normal compositor. */
-class NewPipeDesktopTest {
-    @get:Rule
-    val app = ApkRule("newpipe-0.29.1", LaunchSize(1600, 900))
-
-    @Test
-    fun hamburgerOpensNavigationDrawer() = app.run {
-        dismissKeepAndroidOpenDialog()
-        expectVisible(description = "Open Drawer")
-        val closed = screenshot("drawer-closed.png")
-        assertScreenshotSize(closed, 1600, 900)
-        click(description = "Open Drawer")
-        waitFor(text = "Downloads")
-        waitForPresentedFrames(30)
-        val panel = drawerPanelBounds()
-        val open = screenshot("drawer-open.png")
-        waitForPresentedFrames(3)
-        assertEquals(panel, drawerPanelBounds(), "drawer bounds were still moving")
-        assertDrawerOpened(closed, open, screenshot("drawer-settled.png"), panel)
     }
 
     @Test

@@ -70,6 +70,9 @@ object StockOptionalWmServicesSmoke {
             installPlatform(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         }
         val packageName = verifyPackageObservers(packages, apk)
+        check(packages.getApplicationInfo("android", 0L, 0)!!.uid == android.os.Process.SYSTEM_UID)
+        check(packages.getActivityInfo(HostedPermissionController.component, 0L, 0)!!.applicationInfo.uid ==
+            packages.getPackageUid("android", 0L, 0))
         val permissionPolicy = HostedWindowPermissionPolicy(context, packages)
         check(!permissionPolicy.isInitialized(0))
         var initialized = 0

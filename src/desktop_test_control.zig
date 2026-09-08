@@ -23,7 +23,7 @@ pub fn register(env: [*c]jni.JNIEnv, server: *control.Server) !void {
     const state: State = .{
         .server = server,
         .android = try control.Android.init(env, global),
-        .select_method = try e.getStaticMethodID(class, "selectInputWindow", "(JJ)Z"),
+        .select_method = try e.getStaticMethodID(class, "selectInputWindow", "(JJII)Z"),
         .inject_method = try e.getStaticMethodID(class, "injectInput", "(IIIIILjava/lang/String;)Z"),
         .fullscreen_method = try e.getStaticMethodID(class, "inputFullscreen", "()Z"),
     };
@@ -47,10 +47,10 @@ fn poll(_: [*c]jni.JNIEnv, _: jni.jclass, frame: jni.jlong, presented: jni.jlong
     return @intFromBool(state.server.needsFrame());
 }
 
-fn select(context: *anyopaque, revision: u64, window_id: i64) !void {
+fn select(context: *anyopaque, revision: u64, window_id: i64, view_id: i32, virtual_id: i32) !void {
     const state: *State = @ptrCast(@alignCast(context));
     const android = &state.android;
-    const result = android.env.*.*.CallStaticBooleanMethod.?(android.env, android.class, state.select_method, @as(jni.jlong, @intCast(revision)), @as(jni.jlong, window_id));
+    const result = android.env.*.*.CallStaticBooleanMethod.?(android.env, android.class, state.select_method, @as(jni.jlong, @intCast(revision)), @as(jni.jlong, window_id), @as(jni.jint, view_id), @as(jni.jint, virtual_id));
     try (art.Env{ .env = android.env }).check();
     if (result == 0) return error.InputTargetChanged;
 }

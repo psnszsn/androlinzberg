@@ -17,7 +17,7 @@ import com.android.internal.pm.pkg.component.ParsedIntentInfoImpl
  * PackageManager registers this service-owned operation as an activity so stock
  * intent resolution also sees it. TaskManager executes it without starting a UI.
  */
-internal object HostedPermissionController {
+object HostedPermissionController {
     const val PACKAGE = "android"
     val component = ComponentName(PACKAGE, HostedPermissionController::class.java.name)
 
@@ -34,7 +34,7 @@ internal object HostedPermissionController {
         })
     }
 
-    fun result(packages: HostedPackageManagerService, intent: Intent, target: String, uid: Int): Intent {
+    fun result(packages: android.content.pm.IPackageManager, intent: Intent, target: String, uid: Int): Intent {
         require(intent.action == PackageManager.ACTION_REQUEST_PERMISSIONS) {
             "Permission controller requires ACTION_REQUEST_PERMISSIONS"
         }

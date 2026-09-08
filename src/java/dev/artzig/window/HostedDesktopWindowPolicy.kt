@@ -30,7 +30,7 @@ import com.android.server.wm.WindowManagerInternal
  * DisplayPolicy still owns screen/draw state and stock WMS validates tokens.
  * The generated interface adapter inherits AOSP's window-layer default methods.
  */
-class HostedDesktopWindowPolicy {
+class HostedDesktopWindowPolicy(private val toggleFullscreen: ((android.os.IBinder) -> Unit)? = null) {
     private lateinit var context: Context
     private lateinit var funcs: WindowManagerPolicy.WindowManagerFuncs
     private lateinit var handler: Handler
@@ -216,7 +216,15 @@ class HostedDesktopWindowPolicy {
     }
 
     fun interceptKeyBeforeQueueing(event: KeyEvent, policyFlags: Int): Int = WindowManagerPolicy.ACTION_PASS_TO_USER
-    fun interceptKeyBeforeDispatching(focusedToken: android.os.IBinder?, event: KeyEvent, policyFlags: Int): Long = 0L
+    fun interceptKeyBeforeDispatching(focusedToken: android.os.IBinder?, event: KeyEvent, policyFlags: Int): Long {
+        // Desktop-owned shortcut, following PhoneWindowManager's consumed-key
+        // policy: one request on the initial down, consume repeats and key-up.
+        val toggle = toggleFullscreen ?: return 0L
+        if (focusedToken == null || event.keyCode != KeyEvent.KEYCODE_F11 || !event.hasNoModifiers()) return 0L
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && !event.isCanceled)
+            toggle(focusedToken)
+        return -1L
+    }
     fun interceptUnhandledKey(event: KeyEvent, focusedToken: android.os.IBinder?): Boolean = false
     fun isGlobalKey(keyCode: Int): Boolean = false
     fun setTopFocusedDisplay(displayId: Int) { require(displayId == Display.DEFAULT_DISPLAY) }

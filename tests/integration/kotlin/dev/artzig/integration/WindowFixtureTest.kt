@@ -36,6 +36,15 @@ class WindowFixtureTest {
     }
 
     @Test
+    fun permissionRequestReturnsConfiguredGrants() = app.run {
+        click(text = "CHECK PERMISSION RESULTS")
+        expectVisible(text = "PERMISSION RESULTS VERIFIED")
+        assertLog("WindowFixture", "\"event\":\"permission-result\"")
+        click(text = "INCREMENT COUNTER")
+        expectVisible(text = "Counter: 1")
+    }
+
+    @Test
     fun textureViewRendersResizesAndReleases() = app.run {
         click(text = "SHOW TEXTUREVIEW")
         expectVisible(text = "Texture cyan frame verified")

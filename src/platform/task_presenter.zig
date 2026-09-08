@@ -435,6 +435,15 @@ const Server = struct {
         const key: Key = .{ .id = try readInt(input), .generation = try readLong(input) };
         if (key.id < 0 or key.generation <= 0) return error.InvalidTask;
         switch (request.code) {
+            18 => {
+                const mode = try readInt(input);
+                try end(input);
+                if (mode < 0 or mode > 2) return error.InvalidWindowState;
+                const entry = self.find(key) orelse return error.StaleTask;
+                if (mode == 2) entry.window.toggleFullscreen() else entry.window.setFullscreen(mode == 1);
+                try ok(AParcel_writeInt32(output, 0));
+                try ok(AParcel_writeInt32(output, 1));
+            },
             1 => {
                 const width = try readInt(input);
                 const height = try readInt(input);
@@ -642,7 +651,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 17) return -38;
+    if (code < 1 or code > 18) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -810,6 +819,11 @@ fn run(init: std.process.Init) !void {
     server.inspection_enabled = inspection_enabled;
     if (server.inspection_enabled) if (init.minimal.environ.getPosix("AZK_TEST_WINDOW_PLACEMENT")) |placement| {
         server.test_placement = try TestPlacement.parse(placement);
+        // The harness may start on an empty headless seat. Publish its keyboard
+        // before the shell snapshots devices and any activity is launched;
+        // creating it at the first click would relaunch the selected editor.
+        if (session.keyboard == null and session.virtual_keyboard_manager != null)
+            try session.prepareTestKeyboard();
     };
     const class = AIBinder_Class_define("dev.artzig.window.IWaylandTaskPresenter", null, null, transact);
     const binder = AIBinder_new(class, null);

@@ -432,6 +432,13 @@ class AppSession internal constructor(
             )
             launchSize?.let { childEnvironment["AZK_SIZE"] = it.toString() }
             configureHeadlessOutput(environment, launchSize)
+            // Cage's single kiosk window fills the output just configured by
+            // this harness. Supply that known placement to task-addressed input;
+            // Android's synthetic task coordinates are not desktop positions.
+            if (environment["AZK_HEADLESS_OUTPUT"] != null && launchSize != null &&
+                (environment["SHOT_COMPOSITOR"] ?: "cage") == "cage") {
+                childEnvironment["AZK_TEST_WINDOW_PLACEMENT"] = "0,0,${launchSize.width},${launchSize.height}"
+            }
             val process = try {
                 processAdapter.start(
                     listOf(launcher.toString()) + launcherArguments,

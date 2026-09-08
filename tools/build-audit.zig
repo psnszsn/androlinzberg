@@ -265,6 +265,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/HardwareBufferRender.cpp",
         "src/native/HostInputDispatcher.cpp",
         "src/native/HostLooper.cpp",
+        "src/native/HostedVideoOutput.cpp",
         "src/native/HwuiRenderProxyBridge.cpp",
         "src/native/WebViewGraphicBuffer.cpp",
         "src/native/binder/Binder.cpp",
@@ -275,6 +276,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/graphics/HostTrace.cpp",
         "src/native/graphics/SurfaceFlingerHost.cpp",
         "src/native/graphics/SurfaceQueue.cpp",
+        "src/native/graphics/VideoSurface.cpp",
     };
     if (files.len != expected.len) return error.AuditFailed;
     for (files, expected) |actual, suffix| {

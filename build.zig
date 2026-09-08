@@ -753,6 +753,7 @@ pub fn build(b: *std.Build) void {
     });
     codec_mod.addImport("av", av_tc.createModule());
     codec_mod.addIncludePath(b.path("src/codec"));
+    codec_mod.addIncludePath(b.path("src/native/graphics/include"));
     codec_mod.addCSourceFile(.{
         .file = b.path("src/codec/azk_vaapi.c"),
         .flags = &.{"-std=c11"},
@@ -1252,30 +1253,33 @@ pub fn build(b: *std.Build) void {
         b.step(if (mixed_outputs) "stock-task-output-test" else if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
     }
-    const desktop_launcher = @import("build/command.zig").create(b);
-    setApplicationEnvironment(desktop_launcher, application_tree);
-    desktop_launcher.setEnvironment("AZK_WINDOW_BACKEND", "stock");
-    desktop_launcher.setEnvironment("AZK_TASK_WINDOWS", "1");
-    desktop_launcher.setEnvironment("WLR_RENDERER", "gles2");
-    desktop_launcher.setEnvironment("SHOT_COMPOSITOR", "labwc");
-    desktop_launcher.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
-    desktop_launcher.addArg("env");
-    desktop_launcher.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
-    desktop_launcher.addFileArg(b.path("tools/shot.sh"));
-    const launcher_artifacts = b.pathResolve(&.{"zig-out/test-results/stock-desktop-launcher"});
-    desktop_launcher.addArgs(&.{ b.pathResolve(&.{ launcher_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
-    desktop_launcher.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
-    desktop_launcher.addArgs(&.{ "--launcher", "--testkit" });
-    desktop_launcher.addDirectoryArg(testkit_tree.getDirectory());
-    desktop_launcher.addArg("--seat");
-    desktop_launcher.addFileArg(surface_server.getEmittedBin());
-    desktop_launcher.addArgs(&.{ "--output", launcher_artifacts, "--" });
-    desktop_launcher.addFileArg(application_tree.path(b, "bin/androlinzberg"));
-    desktop_launcher.addFileArg(window_fixture.apk);
-    desktop_launcher.run.has_side_effects = true;
-    desktop_launcher.run.setName("verify APK desktop launch and compositor close through ATMS");
-    b.step("stock-desktop-launcher-test", "Launch an APK through ATMS and close the session's last Wayland task")
-        .dependOn(&desktop_launcher.run.step);
+    for ([_]bool{ false, true }) |video_fixture| {
+        const desktop_launcher = @import("build/command.zig").create(b);
+        setApplicationEnvironment(desktop_launcher, application_tree);
+        desktop_launcher.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+        desktop_launcher.setEnvironment("AZK_TASK_WINDOWS", "1");
+        desktop_launcher.setEnvironment("WLR_RENDERER", "gles2");
+        desktop_launcher.setEnvironment("SHOT_COMPOSITOR", "labwc");
+        desktop_launcher.setEnvironment("XKB_DEFAULT_LAYOUT", "us");
+        desktop_launcher.addArg("env");
+        desktop_launcher.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
+        desktop_launcher.addFileArg(b.path("tools/shot.sh"));
+        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else "zig-out/test-results/stock-desktop-launcher"});
+        desktop_launcher.addArgs(&.{ b.pathResolve(&.{ launcher_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
+        desktop_launcher.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
+        if (video_fixture) desktop_launcher.addArg("--video");
+        desktop_launcher.addArgs(&.{ "--launcher", "--testkit" });
+        desktop_launcher.addDirectoryArg(testkit_tree.getDirectory());
+        desktop_launcher.addArg("--seat");
+        desktop_launcher.addFileArg(surface_server.getEmittedBin());
+        desktop_launcher.addArgs(&.{ "--output", launcher_artifacts, "--" });
+        desktop_launcher.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        desktop_launcher.addFileArg(window_fixture.apk);
+        desktop_launcher.run.has_side_effects = true;
+        desktop_launcher.run.setName("verify APK desktop launch and compositor close through ATMS");
+        b.step(if (video_fixture) "stock-video-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
+            .dependOn(&desktop_launcher.run.step);
+    }
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

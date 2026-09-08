@@ -143,6 +143,7 @@ pub fn build(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     gui_mod.addCSourceFiles(.{ .root = aosp.path(b, "frameworks/native/libs/gui"), .files = &gui_sources, .flags = flags });
     gui_mod.addCSourceFile(.{ .file = aosp.path(b, "frameworks/native/libs/nativewindow/ANativeWindow.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/SurfaceQueue.cpp"), .flags = flags });
+    gui_mod.addCSourceFile(.{ .file = b.path("src/native/graphics/VideoSurface.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "LibGuiProperties.sysprop.cpp"), .flags = flags });
     gui_mod.addCSourceFile(.{ .file = generated.sources.path(b, "com_android_graphics_libgui_flags.cc"), .flags = flags });
     for (declarations.gui_cpp_aidl ++ declarations.graphics_ndk_aidl) |file| {
