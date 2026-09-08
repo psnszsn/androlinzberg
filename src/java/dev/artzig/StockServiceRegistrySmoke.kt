@@ -6,13 +6,13 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
-import android.net.wifi.WifiManager
+import android.app.NotificationManager
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
-/** Exercise registry behavior through Context and the stock WifiManager constructor. */
+/** Exercise registry behavior through Context and the stock notification-manager factory. */
 internal object StockServiceRegistrySmoke {
     private fun context(onApplicationInfo: () -> Unit): Context {
         val base: Context = ActivityThread.currentActivityThread().systemContext
@@ -48,17 +48,17 @@ internal object StockServiceRegistrySmoke {
             entered.countDown()
             await(release)
         }
-        val creatorResult = AtomicReference<WifiManager>()
-        val waiterResult = AtomicReference<WifiManager>()
+        val creatorResult = AtomicReference<NotificationManager>()
+        val waiterResult = AtomicReference<NotificationManager>()
         val failure = AtomicReference<Throwable>()
         val interrupted = AtomicReference<Boolean>()
         val creator = Thread({
-            try { creatorResult.set(context.getSystemService(WifiManager::class.java)) }
+            try { creatorResult.set(context.getSystemService(NotificationManager::class.java)) }
             catch (error: Throwable) { failure.compareAndSet(null, error) }
         }, "service-constructor").apply { isDaemon = true }
         val waiter = Thread({
             try {
-                waiterResult.set(context.getSystemService(WifiManager::class.java))
+                waiterResult.set(context.getSystemService(NotificationManager::class.java))
                 interrupted.set(Thread.currentThread().isInterrupted)
             } catch (error: Throwable) { failure.compareAndSet(null, error) }
         }, "service-waiter").apply { isDaemon = true }
@@ -84,9 +84,9 @@ internal object StockServiceRegistrySmoke {
         check(creatorResult.get() != null && creatorResult.get() === waiterResult.get())
         check(interrupted.get() == true) { "lookup lost the waiting thread's interrupt" }
         check(constructions.get() == 1)
-        check(context.getSystemService(Context.WIFI_SERVICE) === creatorResult.get())
+        check(context.getSystemService(Context.NOTIFICATION_SERVICE) === creatorResult.get())
         val another = context {}
-        check(another.getSystemService(WifiManager::class.java) !== creatorResult.get())
+        check(another.getSystemService(NotificationManager::class.java) !== creatorResult.get())
     }
 
     private fun failedConstructionCanRetry() {
@@ -95,15 +95,15 @@ internal object StockServiceRegistrySmoke {
             if (calls.incrementAndGet() == 1) throw IllegalArgumentException("fixture constructor")
         }
         try {
-            context.getSystemService(WifiManager::class.java)
+            context.getSystemService(NotificationManager::class.java)
             error("constructor failure was swallowed")
         } catch (expected: IllegalArgumentException) {
             check(expected.message == "fixture constructor")
         }
-        val result = AtomicReference<WifiManager>()
+        val result = AtomicReference<NotificationManager>()
         val failure = AtomicReference<Throwable>()
         val retry = Thread({
-            try { result.set(context.getSystemService(WifiManager::class.java)) }
+            try { result.set(context.getSystemService(NotificationManager::class.java)) }
             catch (error: Throwable) { failure.set(error) }
         }, "service-retry").apply { isDaemon = true }
         retry.start()
@@ -113,6 +113,38 @@ internal object StockServiceRegistrySmoke {
     }
 
     fun run() {
+        val base: Context = ActivityThread.currentActivityThread().systemContext
+        val moduleManagers = mapOf(
+            android.hardware.SerialManager::class.java to Context.SERIAL_SERVICE,
+            android.hardware.radio.RadioManager::class.java to Context.RADIO_SERVICE,
+            android.uwb.UwbManager::class.java to Context.UWB_SERVICE,
+            android.app.contextualsearch.ContextualSearchManager::class.java to Context.CONTEXTUAL_SEARCH_SERVICE,
+        )
+        for ((manager, name) in moduleManagers) {
+            check(base.getSystemServiceName(manager) == name) { "Missing stock manager registration: $manager" }
+        }
+        check(!base.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_VIRTUALIZATION_FRAMEWORK))
+        check(base.getSystemService(android.system.virtualmachine.VirtualMachineManager::class.java) == null) {
+            "Stock virtualization factory must honor the absent platform feature"
+        }
+        // Both framework and jarjar module clients must reach the pinned native
+        // zeroization, including null/empty inputs and non-movable storage.
+        for (name in listOf("com.android.internal.util.ArrayUtils",
+                "com.android.internal.util.configinfrastructure.ArrayUtils")) {
+            val type = Class.forName(name)
+            val bytes = type.getMethod("newNonMovableByteArray", Int::class.javaPrimitiveType)
+                .invoke(null, 257) as ByteArray
+            val chars = type.getMethod("newNonMovableCharArray", Int::class.javaPrimitiveType)
+                .invoke(null, 129) as CharArray
+            bytes.fill(0x5a); chars.fill('x')
+            type.getMethod("zeroize", ByteArray::class.java).apply {
+                invoke(null, bytes); invoke(null, byteArrayOf()); invoke(null, null as Any?)
+            }
+            type.getMethod("zeroize", CharArray::class.java).apply {
+                invoke(null, chars); invoke(null, charArrayOf()); invoke(null, null as Any?)
+            }
+            check(bytes.all { it == 0.toByte() } && chars.all { it == '\u0000' })
+        }
         check(SystemServiceRegistry.getSystemServiceWithNoContext("dev.artzig.unknown") == null)
         try {
             SystemServiceRegistry.getSystemServiceWithNoContext(Context.WIFI_SERVICE)

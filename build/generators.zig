@@ -90,6 +90,27 @@ fn replaceExtension(b: *std.Build, path: []const u8, extension: []const u8) []co
 
 fn aidlOutputPath(b: *std.Build, input: []const u8) []const u8 {
     inline for (.{
+        "system/connectivity/wificond/aidl/",
+        "packages/modules/Virtualization/android/virtualizationservice/aidl/",
+        "system/gsid/aidl/",
+        "packages/modules/Scheduling/framework/java/",
+        "packages/modules/OnDevicePersonalization/framework/java/",
+        "packages/modules/DeviceLock/framework/java/",
+        "packages/modules/Wifi/framework/aidl-export/",
+        "packages/modules/Connectivity/staticlibs/netd/binder/",
+        "frameworks/base/wifi/java/src/",
+        "frameworks/base/media/java/android/media/quality/aidl/",
+        "frameworks/libs/modules-utils/java/",
+        "packages/modules/Uwb/framework/java/",
+        "packages/modules/Connectivity/thread/framework/java/",
+        "packages/modules/Connectivity/nearby/framework/java/",
+        "packages/modules/AdServices/adservices/framework/java/",
+        "hardware/interfaces/power/aidl/",
+        "hardware/interfaces/contexthub/aidl/",
+        "frameworks/native/cmds/dumpstate/binder/",
+        "frameworks/base/packages/Vcn/framework-b/src/",
+        "frameworks/base/packages/NeuralNetworks/framework/module/java/",
+        "frameworks/base/apex/blobstore/framework/java/",
         "frameworks/base/omapi/aidl/aidl_api/android.se.omapi/1/",
         "packages/modules/AdServices/sdksandbox/framework/java/",
         "packages/modules/Nfc/framework/java/",
@@ -192,6 +213,25 @@ fn hostTool(b: *std.Build, name: []const u8, source: []const u8) *std.Build.Step
 }
 
 fn addAidlIncludes(run: *std.Build.Step.Run, aosp: *std.Build.Dependency, compat: LazyPath) void {
+    run.addPrefixedDirectoryArg("-I", aosp.path("system/connectivity/wificond/aidl"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Virtualization/android/virtualizationservice/aidl"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("system/gsid/aidl"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Scheduling/framework/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/OnDevicePersonalization/framework/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/DeviceLock/framework/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Connectivity/staticlibs/netd/binder"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/wifi/java/src"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/media/java/android/media/quality/aidl"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Uwb/framework/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Connectivity/thread/framework/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Connectivity/nearby/framework/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/AdServices/adservices/framework/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/power/aidl"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("hardware/interfaces/contexthub/aidl"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/native/cmds/dumpstate/binder"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/packages/Vcn/framework-b/src"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/packages/NeuralNetworks/framework/module/java"));
+    run.addPrefixedDirectoryArg("-I", aosp.path("frameworks/base/apex/blobstore/framework/java"));
     run.addPrefixedDirectoryArg("-I", aosp.path("packages/modules/Connectivity/framework/aidl-export"));
     inline for (.{
         "frameworks/base/core/java",
@@ -308,6 +348,11 @@ fn aidlJava(
             if (std.mem.indexOf(u8, input.path, "/virtualhal/") == null) {
                 run.addArgs(&.{ "--stability", "vintf" });
             }
+        }
+        // Thread's framework-t module has a minimum SDK of 33; binder-interface
+        // lists require the corresponding AIDL Java backend rather than API 1.
+        if (std.mem.startsWith(u8, input.path, "packages/modules/Connectivity/thread/")) {
+            run.addArg("--min_sdk_version=33");
         }
         for (declarations.versioned_aidl) |version| {
             if (input.source == .aosp and std.mem.startsWith(u8, input.path, version.prefix)) {
@@ -557,6 +602,18 @@ fn incrementalSyspropCpp(b: *std.Build, aosp: *std.Build.Dependency, tool: *std.
     return .{ .headers = headers, .source = sources.path(b, declaration.source) };
 }
 
+fn javaTemplates(b: *std.Build, aosp: *std.Build.Dependency) []const LazyPath {
+    var files: std.ArrayList(LazyPath) = .empty;
+    inline for (declarations.java_templates) |entry| {
+        const run = command.create(b);
+        run.addArgs(&.{ "sed", "-e", entry.substitution });
+        run.addFileArg(sourcePath(b, aosp, entry.input));
+        run.run.setName(b.fmt("generate Java template {s}", .{entry.output}));
+        files.append(b.allocator, run.run.captureStdOut(.{ .basename = std.fs.path.basename(entry.output) })) catch @panic("OOM");
+    }
+    return files.toOwnedSlice(b.allocator) catch @panic("OOM");
+}
+
 fn aconfigDevicePathsJava(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
     const declaration = declarations.aconfig_device_paths;
     // The exact substitution used by libaconfig_java_device_paths_src in AOSP's Android.bp.
@@ -588,7 +645,7 @@ fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.
     return result;
 }
 
-fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) []const LazyPath {
+fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile, package_rewriter: *std.Build.Step.Compile) []const LazyPath {
     const run = command.create(b);
     run.addFileArg(protoc.getEmittedBin());
     run.addPrefixedFileArg("--plugin=protoc-gen-javastream=", plugin.getEmittedBin());
@@ -603,7 +660,18 @@ fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.B
     run.filterStderr("frameworks/base/core/proto/android/os/batteryusagestats.proto:22:1: warning: Import frameworks/proto_logging/stats/enums/os/enums.proto is unused.");
     run.run.setName("generate javastream proto Java");
     const files = b.allocator.alloc(LazyPath, declarations.proto_outputs.len) catch @panic("OOM");
-    for (declarations.proto_outputs, 0..) |path, index| files[index] = output.path(b, path);
+    for (declarations.proto_outputs, 0..) |path, index| {
+        files[index] = output.path(b, path);
+        inline for (declarations.proto_relocations) |relocation| {
+            if (std.mem.eql(u8, path, relocation.output)) {
+                const rewrite = b.addRunArtifact(package_rewriter);
+                rewrite.addFileArg(files[index]);
+                files[index] = rewrite.addOutputFileArg(std.fs.path.basename(path));
+                rewrite.addArgs(&.{ relocation.from, relocation.to });
+                rewrite.setName(b.fmt("relocate framework proto package in {s}", .{path}));
+            }
+        }
+    }
     return files;
 }
 
@@ -642,7 +710,7 @@ fn protoJava(
     plugin: *std.Build.Step.Compile,
     package_rewriter: *std.Build.Step.Compile,
 ) []const LazyPath {
-    const framework_files = frameworkProtoJava(b, aosp, protoc, plugin);
+    const framework_files = frameworkProtoJava(b, aosp, protoc, plugin, package_rewriter);
     const perfetto_files = perfettoProtoJava(b, aosp, protoc, plugin, package_rewriter);
     var files: std.ArrayList(LazyPath) = .empty;
     files.appendSlice(b.allocator, framework_files) catch @panic("OOM");
@@ -1112,12 +1180,13 @@ pub fn build(b: *std.Build, o: Options) Result {
     const express_metric_ids_java = expressMetricIdsJava(b, o.aosp);
     const system_features_java = systemFeaturesJava(b, o.aosp);
     const aconfig_device_paths_java = aconfigDevicePathsJava(b, o.aosp);
+    const template_java = javaTemplates(b, o.aosp);
     const xsd_java = xsdJava(b, o.aosp);
     const res = resources(b, o.aosp, filter);
     const fixtures = fixtureApks(b, o.aosp, res.apk);
     const mime_resources = mimeResources(b, o.aosp);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
+    inline for (.{ template_java, cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
     java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");

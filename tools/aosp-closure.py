@@ -54,7 +54,8 @@ BOOT_PREFIXES = (
 
 # keystore2 comes from generated AIDL, and the legacy Khronos APIs belong to
 # frameworks/base/opengl. Neither is supplied by libcore's boot image.
-BOOT_PREFIX_EXCEPTIONS = ("android.system.keystore2.", "javax.microedition.khronos.")
+BOOT_PREFIX_EXCEPTIONS = ("android.system.keystore2.", "android.system.virtual",
+                          "javax.microedition.khronos.")
 
 # Checkout directories that never hold framework sources worth indexing.
 SKIP_DIRS = {
@@ -89,7 +90,7 @@ KNOWN_GENERATED = {
     "com.android.modules.expresslog.StatsExpressLog": "stats-log expresslog module (build/generators.zig)",
 }
 
-INDEX_VERSION = 13
+INDEX_VERSION = 14
 
 
 def strip_code(text: str) -> str:
@@ -227,8 +228,12 @@ class SourceIndex:
         by_fqn: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
         for dirpath, dirnames, filenames in os.walk(self.aosp):
             rel_dir = os.path.relpath(dirpath, self.aosp)
-            # The production environment class shares a name with the test tree.
-            production_ravenwood = rel_dir == "frameworks/base/core/java/com/android/internal"
+            # Production environment and annotation packages share a directory
+            # name with the test infrastructure, which must remain excluded.
+            production_ravenwood = rel_dir in {
+                "frameworks/base/core/java/com/android/internal",
+                "frameworks/libs/modules-utils/java/android",
+            }
             dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and
                                  (d not in SKIP_DIRS or (d == "ravenwood" and production_ravenwood)))
             sources = [f for f in filenames if f.endswith((".java", ".kt", ".aidl"))]

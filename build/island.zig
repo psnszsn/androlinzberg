@@ -464,6 +464,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{ "draw_functor.cpp", "draw_gl_functor.cpp", "functor_utils.cpp", "graphics_utils.cpp" }, webview_includes, &.{"-D__unused=__attribute__((unused))"});
     g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{"jni_entry_point.cpp"}, webview_includes, &.{"-DJNI_OnLoad=azk_webview_JNI_OnLoad"});
     g.add(b.path("src/native"), &.{"WebViewGraphicBuffer.cpp"}, webview_includes, &.{"-fexceptions"});
+    g.add(b.path("src/native"), &.{"ArrayUtilsJniBridge.cpp"}, webview_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_hardware_SerialPort.cpp"}, webview_includes, &.{});
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});

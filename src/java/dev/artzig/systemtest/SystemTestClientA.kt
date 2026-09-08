@@ -1435,9 +1435,12 @@ internal object SystemTestClientA {
             "APEX session inventory rejects application UIDs")
         check(runCatching { apex.getStagedSessionInfo(17) }.exceptionOrNull() is SecurityException,
             "APEX session lookup rejects application UIDs")
-        val wifi = checkNotNull(context.getSystemService(android.net.wifi.WifiManager::class.java))
-        check(wifi === context.getSystemService(android.net.wifi.WifiManager::class.java),
-            "stock Wi-Fi manager is cached per context")
+        // The stock registry hides Wi-Fi when the platform does not advertise hardware.
+        // Construct the stock client explicitly to keep testing Binder permission/lock contracts.
+        check(!context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WIFI), "host has no Android Wi-Fi feature")
+        check(context.getSystemService(android.net.wifi.WifiManager::class.java) == null, "stock Wi-Fi factory honors absent hardware")
+        val wifi = android.net.wifi.WifiManager(context,
+            android.net.wifi.IWifiManager.Stub.asInterface(ServiceManager.getService(Context.WIFI_SERVICE)))
         check(!wifi.isWifiEnabled && wifi.wifiState == android.net.wifi.WifiManager.WIFI_STATE_DISABLED,
             "no Android Wi-Fi interface is enabled")
         check(wifi.connectionInfo.networkId == -1 && wifi.connectionInfo.bssid == null,

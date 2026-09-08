@@ -34,16 +34,16 @@ Pending: 6 (budget 6). Survivors: 5. Total: 11.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2571 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2569 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2663 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2582 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2428 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2426 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2477 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2439 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
 
 ### systemserver
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2569 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2426 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
 
 ## Hubs
 
@@ -78,7 +78,6 @@ decides where to cut.
 | `com.android.server.criticalevents.CriticalEventLog` | 5 | 2 |
 | `com.android.server.input.KeyGestureController` | 5 | 2 |
 | `com.android.server.input.KeyboardLayoutManager` | 5 | 2 |
-| `com.android.server.net.NetworkPolicyManagerInternal` | 5 | 2 |
 | `com.android.server.om.OverlayReferenceMapper` | 5 | 2 |
 | `com.android.server.pm.PackageManagerShellCommandDataLoader` | 5 | 2 |
 | `com.android.server.pm.dex.ArtStatsLogUtils` | 5 | 2 |
@@ -92,5 +91,6 @@ decides where to cut.
 | `com.android.server.wm.WindowManagerService` | 5 | 2 |
 | `com.android.server.wm.WindowProcessController` | 5 | 2 |
 | `com.android.server.wm.WindowState` | 5 | 2 |
-| `android.os.BugreportParams` | 5 | 3 |
 | `com.android.internal.protolog.LegacyProtoLogImpl` | 5 | 3 |
+| `com.android.server.AlarmManagerInternal` | 5 | 3 |
+| `com.android.server.BootReceiver` | 5 | 3 |

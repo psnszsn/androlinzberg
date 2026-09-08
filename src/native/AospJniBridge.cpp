@@ -265,6 +265,8 @@ extern int register_android_graphics_Mesh(JNIEnv*);
 extern int register_android_util_PathParser(JNIEnv*);
 }  // namespace android
 
+extern "C" int azk_register_array_utils_packages(JNIEnv*);
+extern int register_android_hardware_SerialPort(JNIEnv*);
 namespace android {
 extern jobject android_view_KeyCharacterMap_create(JNIEnv*, int32_t,
                                                    std::unique_ptr<KeyCharacterMap>);
@@ -626,6 +628,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_view_KeyEvent),
             E(android::register_android_os_MessageQueue),
             E(android::register_android_view_InputQueue),
+            E(register_android_hardware_SerialPort),
+            E(azk_register_array_utils_packages),
             E(android::register_android_view_Surface),
             E(android::register_android_view_InputDevice),
             E(android::register_android_view_VelocityTracker),

@@ -23,6 +23,11 @@ zig build -j10 cpp-audit
   C++ Looper on the Java thread. A host-only accessor exposes its epoll descriptor;
   only stock `pollOnce` consumes readiness and dispatches callbacks. The host
   renderer observes that descriptor through its existing event loop.
+- `ArrayUtilsJniBridge.cpp` includes the pinned ArrayUtils JNI implementation
+  and registers its exact table for both the framework and ConfigInfrastructure
+  packages. The original code owns critical-array access, zeroization and CPU
+  cache flushing. Original SerialPort JNI supplies Linux descriptor and termios
+  operations. These client natives do not advertise unavailable hardware services.
 - Stock WebView platform-support JNI loads in the provider class loader through
   `src/platform/webview_support.zig`. The original HWUI functor manager owns
   callback lifetime and the original GL drawable records and draws the functor.

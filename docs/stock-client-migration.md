@@ -27,6 +27,34 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- SystemServiceRegistry now compiles verbatim; its 820-line hosted adaptation is
+  deleted. The batch selects 582 original Java sources covering the registry's
+  module initializers and client dependencies, including UWB, Nearby, Thread,
+  AdServices, contextual search, printing, blob storage and virtualization APIs.
+  AIDL, aconfig, HIDL, sysprop and proto outputs come from pinned generators;
+  ConfigInfrastructure's proto relocation and AVF's original BuildFlags template
+  follow their Soong declarations. Twelve handwritten Ravenwood annotations are
+  deleted; eleven have original replacements and one obsolete annotation has no
+  remaining callers. All 582 added Java selections match the checkout verbatim.
+
+  Original ArrayUtils JNI serves both the framework and relocated module class,
+  retaining native non-movable arrays and zeroization. Original SerialPort JNI
+  is registered. These imports do not add radio hardware or a virtualization
+  backend: stock factories honor absent platform features. Registry tests cover
+  per-context construction, concurrent waiters, interrupt preservation, failed
+  construction retry, module names and absent virtualization. Wi-Fi service tests
+  now assert stock lookup returns null without hardware, then construct the stock
+  client explicitly to retain Binder permission and lock coverage.
+
+  JVM, system, native, Binder and build checks pass, including 16 closure-tool
+  regressions. WebView HTML/JavaScript/cookie and visible rendering tests pass.
+  All 11 APK integration tests pass with 37 captured steps and zero structured
+  runtime issues; WebView and fullscreen-video screenshots are inspected.
+  The AOSP archive is rebuilt and repinned, both archive checksums are verified,
+  and ART is unchanged. The inventory remains 11 stubs (6 pending, 5 survivors).
+  Self-targeting overlays, window/client adaptations and the remaining server
+  dependencies still require work.
+
 - WebView, WebSettings, CookieManager and WebIconDatabase now use the original
   AOSP Java sources, with their original supporting classes. The 750-line hosted
   provider and its desktop Chromium/CDP path are deleted. The bundled Android

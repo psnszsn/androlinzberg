@@ -156,6 +156,10 @@ service HiddenService {}
             self.assertTrue(classes.has("javax.microedition.khronos.egl.EGLConfig"))
             self.assertFalse(classes.has("javax.microedition.khronos.egl.EGLContext"))
             self.assertFalse(classes.has("javax.microedition.khronos.opengles.GL11"))
+            self.assertTrue(classes.has("android.system.Os"))
+            self.assertFalse(classes.has("android.system.virtualmachine.VirtualizationFrameworkInitializer"))
+            self.assertFalse(classes.has("android.system.virtualizationservice.IVirtualizationService"))
+            self.assertFalse(classes.has("android.system.virtualizationcommon.DeathReason"))
 
     def test_wildcard_import_closure_includes_legacy_egl_and_static_owner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -317,14 +321,19 @@ import android.example.Grantor;
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             production = root / "frameworks/base/core/java/com/android/internal/ravenwood"
+            annotations = root / "frameworks/libs/modules-utils/java/android/ravenwood/annotation"
             tests = root / "frameworks/base/ravenwood"
             production.mkdir(parents=True)
+            annotations.mkdir(parents=True)
             tests.mkdir(parents=True)
             (production / "RavenwoodEnvironment.java").write_text(
                 "package com.android.internal.ravenwood; public class RavenwoodEnvironment {}")
+            (annotations / "RavenwoodKeep.java").write_text(
+                "package android.ravenwood.annotation; public @interface RavenwoodKeep {}")
             (tests / "Test.java").write_text("package test; public class Test {}")
             index = aosp_closure.SourceIndex(root, None)
             self.assertIn("com.android.internal.ravenwood.RavenwoodEnvironment", index.by_fqn)
+            self.assertIn("android.ravenwood.annotation.RavenwoodKeep", index.by_fqn)
             self.assertNotIn("test.Test", index.by_fqn)
 
 

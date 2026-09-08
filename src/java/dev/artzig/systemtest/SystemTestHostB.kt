@@ -39,7 +39,12 @@ internal object SystemTestHostB {
             "provider:SecretProvider", "provider:TestProvider", "application:create")) {
             "application/provider startup order: ${ApplicationBindingEvents.events}"
         }
-        val wifi = checkNotNull(context.getSystemService(android.net.wifi.WifiManager::class.java))
+        // The stock registry hides Wi-Fi when the platform does not advertise hardware.
+        // Construct the stock client explicitly to keep testing Binder permission/lock contracts.
+        check(!context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WIFI))
+        check(context.getSystemService(android.net.wifi.WifiManager::class.java) == null)
+        val wifi = android.net.wifi.WifiManager(context,
+            android.net.wifi.IWifiManager.Stub.asInterface(ServiceManager.getService(android.content.Context.WIFI_SERVICE)))
         check(runCatching { wifi.wifiState }.exceptionOrNull() is SecurityException)
         check(runCatching { wifi.createWifiLock("denied").acquire() }.exceptionOrNull() is SecurityException)
         check(runCatching { wifi.createMulticastLock("denied").acquire() }.exceptionOrNull() is SecurityException)
