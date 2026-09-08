@@ -116,7 +116,7 @@ fn run(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const feedback_fallback = args.len > 1 and std.mem.eql(u8, args[1], "--paced-fallback");
     const drag_icon = args.len > 1 and std.mem.startsWith(u8, args[1], "--drag-icon");
-    const icon_v4 = args.len > 1 and std.mem.eql(u8, args[1], "--drag-icon-v4");
+    const icon_v4 = args.len > 1 and std.mem.startsWith(u8, args[1], "--drag-icon-v4");
     const queue = try Queue.init(init.gpa, io, 320, 240);
     defer queue.deinit();
     const session = try Queue.Session.initWithOptions(init.gpa, io, .{ .presentation = !feedback_fallback, .clipboard = drag_icon, .compositor_max_version = if (icon_v4) 4 else 6 });
@@ -130,7 +130,8 @@ fn run(init: std.process.Init) !void {
     sibling.?.deinit();
     sibling = null;
     std.debug.assert(session.windows.items.len == 1);
-    const icon = if (drag_icon) try Queue.DragIcon.init(session, 64, 48, .{ 12, 9 }) else null;
+    const icon_hotspot: [2]i32 = if (drag_icon and std.mem.endsWith(u8, args[1], "-offset")) .{ 80, 60 } else .{ 12, 9 };
+    const icon = if (drag_icon) try Queue.DragIcon.init(session, 64, 48, icon_hotspot) else null;
     defer if (icon) |value| value.deinit();
     var icon_source: IconSource = .{};
     if (icon) |value| {

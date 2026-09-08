@@ -502,7 +502,7 @@ pub fn build(b: *std.Build) void {
     const surface_pacing_step = b.step("surface-pacing-test", "Verify bounded frame submission paced by real compositor callbacks");
     const drag_icon_step = b.step("surface-drag-icon-test", "Verify GPU BufferQueue drag-icon geometry, updates and teardown");
     var previous_surface_run: ?*std.Build.Step = null;
-    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout", "paced", "paced-fallback", "drag-icon", "drag-icon-v4" }) |scenario| {
+    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout", "paced", "paced-fallback", "drag-icon", "drag-icon-v4", "drag-icon-offset", "drag-icon-v4-offset" }) |scenario| {
         const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
         const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
         if (std.mem.eql(u8, scenario, "pointer-capture") or std.mem.startsWith(u8, scenario, "drag-icon")) {

@@ -3150,7 +3150,7 @@ pub const DragIcon = struct {
 
     pub fn init(session: *Session, width: i32, height: i32, hotspot: [2]i32) !*DragIcon {
         if (width < 1 or width > 16384 or height < 1 or height > 16384 or
-            hotspot[0] < 0 or hotspot[0] > width or hotspot[1] < 0 or hotspot[1] > height)
+            hotspot[0] < 0 or hotspot[1] < 0)
             return error.InvalidDragIconGeometry;
         const compositor = session.compositor orelse return error.NoCompositor;
         const viewporter = session.viewporter orelse return error.NoViewporter;

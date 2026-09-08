@@ -30,6 +30,9 @@ class DragFixtureActivity : Activity() {
         val events = ArrayList<String>()
         var received: String? = null
         var sourceGesture = false
+        var gestureGeneration = 0
+        var shadowMode = 0
+        val shadowModes = listOf("Normal", "Offset", "Empty", "Updating", "Transparent")
         fun button(label: String, height: Int = 36, action: () -> Unit) {
             content.addView(Button(this).apply { text = label; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, height))
         }
@@ -54,18 +57,43 @@ class DragFixtureActivity : Activity() {
                     ClipboardFileProvider.nextOpenDelayMillis.set(if (slow) 800 else 0)
                     val data = if (files) ClipData.newUri(contentResolver, "Drag file", ClipboardFileProvider.URI)
                         else ClipData.newPlainText("Drag text", "Android drag 😀 café")
-                    val shadow = object : DragShadowBuilder(this) {
-                        override fun onProvideShadowMetrics(size: Point, touch: Point) { size.set(64, 48); touch.set(32, 24) }
+                    val mode = shadowMode
+                    val generation = ++gestureGeneration
+                    fun shadow(updated: Boolean = false) = object : DragShadowBuilder(this) {
+                        override fun onProvideShadowMetrics(size: Point, touch: Point) {
+                            size.set(if (mode == 2) 1 else 64, if (mode == 2) 1 else 48)
+                            touch.set(if (mode == 1) 80 else if (mode == 2) 0 else 32,
+                                if (mode == 1) 60 else if (mode == 2) 0 else 24)
+                        }
                         override fun onDrawShadow(canvas: Canvas) {
-                            val p = Paint().apply { color = Color.BLUE }
+                            if (mode == 2) return // View clears the stock producer buffer first.
+                            val save = canvas.save()
+                            if (mode == 4) canvas.clipRect(16f, 12f, 48f, 36f)
+                            val p = Paint().apply { color = if (updated) Color.MAGENTA else Color.BLUE }
                             canvas.drawRect(0f, 0f, 64f, 48f, p)
                             p.color = Color.WHITE; p.textSize = 16f; canvas.drawText("DRAG", 8f, 30f, p)
+                            canvas.restoreToCount(save)
                         }
                     }
+                    if (mode == 2) {
+                        // Pinned View.startDragAndDrop only accepts zero size for
+                        // target SDK < P. Modern apps use an empty 1x1 buffer.
+                        check(applicationInfo.targetSdkVersion >= 28)
+                        val invalid = object : DragShadowBuilder(this) {
+                            override fun onProvideShadowMetrics(size: Point, touch: Point) {
+                                size.set(0, 0); touch.set(0, 0)
+                            }
+                        }
+                        check(runCatching { startDragAndDrop(data, invalid, null, View.DRAG_FLAG_GLOBAL) }
+                            .exceptionOrNull() is IllegalStateException)
+                    }
                     sourceGesture = true
-                    val started = startDragAndDrop(data, shadow, null,
+                    val started = startDragAndDrop(data, shadow(), null,
                         View.DRAG_FLAG_GLOBAL or if (files) View.DRAG_FLAG_GLOBAL_URI_READ else 0)
                     check(started) { "Stock WMS refused the active drag gesture" }
+                    if (mode == 3) postDelayed({
+                        if (sourceGesture && gestureGeneration == generation) updateDragShadow(shadow(true))
+                    }, 1200)
                     return true
                 }
                 return event.actionMasked != MotionEvent.ACTION_DOWN
@@ -120,7 +148,7 @@ class DragFixtureActivity : Activity() {
                 }
             }
         }
-        content.addView(area, LinearLayout.LayoutParams(-1, 244))
+        content.addView(area, LinearLayout.LayoutParams(-1, 220))
         if (targetTask) button("Close drag task") { finish() }
         else button("Open drag task") {
             startActivity(android.content.Intent(this, DragFixtureActivity::class.java)
@@ -136,6 +164,10 @@ class DragFixtureActivity : Activity() {
                 toggle.text = if (removed) "Restore drag protocol" else "Remove drag protocol"
             }
             content.addView(toggle, LinearLayout.LayoutParams(-1, 24))
+        }
+        button("Next drag shadow", 24) {
+            shadowMode = (shadowMode + 1) % shadowModes.size
+            status.text = "Drag shadow=" + shadowModes[shadowMode]
         }
         setContentView(content)
     }

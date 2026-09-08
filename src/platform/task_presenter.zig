@@ -592,7 +592,7 @@ const Server = struct {
         const pixel_width = geometry[4];
         const pixel_height = geometry[5];
         if (generation <= 0 or !dimension(width) or !dimension(height) or !dimension(pixel_width) or !dimension(pixel_height) or
-            geometry[2] < 0 or geometry[2] >= width or geometry[3] < 0 or geometry[3] >= height) return error.InvalidDragIcon;
+            geometry[2] < 0 or geometry[3] < 0) return error.InvalidDragIcon;
         var text: ClipboardBytes = .{ .gpa = self.gpa };
         defer text.deinit();
         var html: ClipboardBytes = .{ .gpa = self.gpa };

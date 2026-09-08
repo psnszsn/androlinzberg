@@ -462,12 +462,12 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     native_drag('rejected', 'text/plain;charset=utf-8', 'Rejected native drag', 'Drag rejected', False)
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
                     native_drag('cancelled', 'text/plain;charset=utf-8', 'Cancelled native drag', 'Drag cancelled', False, True)
-                    def export_drag(name, expected, outcome="accept"):
+                    def export_drag(name, expected, outcome="accept", shadow="normal"):
                         report = out / ('android-drag-' + name + '.json')
                         report.unlink(missing_ok=True)
                         control('step', 'exec', '--wait', 'exists', '--task-id', task,
                                 '--text', 'Drag exported' if outcome == 'accept' else 'Drag cancelled', '--',
-                                str(args.seat), '--native-drag-destination', str(report), outcome)
+                                str(args.seat), '--native-drag-destination', str(report), 'accept-update' if shadow == 'updating' else outcome)
                         state = json.loads(report.read_text())
                         assert state['failure'] is None and state['dropped'] == (outcome == 'accept') and state['finished'] == (outcome == 'accept'), state
                         if name != 'file': assert state['text'] == expected, state
@@ -475,24 +475,43 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             from urllib.parse import urlparse, unquote
                             paths = [Path(unquote(urlparse(uri).path)) for uri in state['uris'].splitlines()]
                             assert len(paths) == 1 and paths[0].read_text() == expected, state
-                        raw = Path(str(report) + '.ppm').read_bytes()
-                        magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
-                        width, height = map(int, dimensions.split())
-                        assert magic == b'P6' and maximum == b'255' and (width, height) == (1280, 720)
-                        def pixel(x, y):
-                            offset = (y * width + x) * 3
-                            return tuple(pixels[offset:offset + 3])
-                        # Real stock shadow: 64x48, hotspot32,24, pointer800,240.
-                        for x, y in [(770, 218), (829, 218), (770, 261), (829, 261)]:
-                            r, g, b = pixel(x, y)
-                            assert abs(r - 58) <= 2 and abs(g - 29) <= 2 and abs(b - 195) <= 2, ('Android drag alpha was flattened', x, y, pixel(x, y))
-                        for x, y in [(767, 218), (832, 218), (800, 215), (800, 264)]:
-                            assert pixel(x, y) == (200, 100, 50), ('Drag icon bounds/hotspot', x, y, pixel(x, y))
-                        assert sum(all(channel > 120 for channel in pixel(x, y))
-                                   for y in range(230, 248) for x in range(774, 824)) > 20, 'Stock DRAG text is absent'
+                        def shadow_pixels(suffix, updated=False):
+                            raw = Path(str(report) + suffix + '.ppm').read_bytes()
+                            magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
+                            width, height = map(int, dimensions.split())
+                            assert magic == b'P6' and maximum == b'255' and (width, height) == (1280, 720)
+                            def pixel(x, y):
+                                offset = (y * width + x) * 3
+                                return tuple(pixels[offset:offset + 3])
+                            if shadow == 'empty':
+                                for x, y in [(799, 239), (800, 240), (801, 241), (770, 218), (829, 261)]:
+                                    assert pixel(x, y) == (200, 100, 50), ('Empty shadow acquired opaque pixels', x, y, pixel(x, y))
+                                return
+                            left, top = (720, 180) if shadow == 'offset' else (768, 216)
+                            colored = [(18, 14), (45, 14), (18, 34), (45, 34)] if shadow == 'transparent' else [(2, 2), (61, 2), (2, 45), (61, 45)]
+                            expected_rgb = (238 if updated else 58, 29, 195)
+                            for dx, dy in colored:
+                                actual = pixel(left + dx, top + dy)
+                                assert all(abs(a - b) <= 2 for a, b in zip(actual, expected_rgb)), ('Stock shadow color/alpha', shadow, updated, dx, dy, actual)
+                            outside = [(-1, 2), (64, 2), (32, -1), (32, 48)]
+                            if shadow == 'transparent': outside += [(2, 2), (61, 2), (2, 45), (61, 45)]
+                            for dx, dy in outside:
+                                x, y = left + dx, top + dy
+                                expected_rgb = (0, 0, 0) if x < 720 else (200, 100, 50)
+                                assert pixel(x, y) == expected_rgb, ('Shadow bounds/hotspot/padding', shadow, x, y, pixel(x, y))
+                            assert sum(all(channel > 120 for channel in pixel(left + x, top + y))
+                                       for y in range(14, 32) for x in range(16, 48)) > 20, 'Stock DRAG text is absent'
+                        shadow_pixels('')
+                        if shadow == 'updating': shadow_pixels('.updated', updated=True)
                     export_drag('text', 'Android drag 😀 café')
                     export_drag('rejected', 'Android drag 😀 café', 'reject')
                     export_drag('cancelled', 'Android drag 😀 café', 'cancel')
+                    for mode in ('Offset', 'Empty', 'Updating', 'Transparent'):
+                        control('step', 'click', '--task-id', task, '--text', 'NEXT DRAG SHADOW', '--via', 'semantic', '--settle', 'idle')
+                        control('wait', 'exists', '--task-id', task, '--text', 'Drag shadow=' + mode)
+                        export_drag(mode.lower(), 'Android drag 😀 café', shadow=mode.lower())
+                    control('step', 'click', '--task-id', task, '--text', 'NEXT DRAG SHADOW', '--via', 'semantic', '--settle', 'idle')
+                    control('wait', 'exists', '--task-id', task, '--text', 'Drag shadow=Normal')
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
                     export_drag('file', 'Android file 😀 café')
                     control('step', 'click', '--task-id', task, '--text', 'OPEN DRAG TASK', '--via', 'semantic', '--settle', 'idle')
@@ -551,7 +570,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                         time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 32 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 41 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']

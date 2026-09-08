@@ -18,7 +18,7 @@ p.add_argument('--server', type=Path, required=True)
 p.add_argument('--producer', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout', 'paced', 'paced-fallback', 'drag-icon', 'drag-icon-v4'], default='normal')
+p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout', 'paced', 'paced-fallback', 'drag-icon', 'drag-icon-v4', 'drag-icon-offset', 'drag-icon-v4-offset'], default='normal')
 a = p.parse_args()
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -152,7 +152,11 @@ try:
         magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
         assert magic == b'P6' and maximum == b'255'
         width, height = map(int, dimensions.split())
-        offset = ((height // 2) * width + width // 2) * 3
+        center_x, center_y = width // 2, height // 2
+        if a.scenario.endswith('-offset'):
+            center_x += 32 - 80
+            center_y += 24 - 60
+        offset = (center_y * width + center_x) * 3
         actual = tuple(pixels[offset:offset + 3])
         assert all(abs(x - y) <= 2 for x, y in zip(actual, (171, 120, 52))), actual
         result.update(presented=presented, screenshot_size=[width, height], center_rgb=actual)
@@ -161,13 +165,14 @@ try:
             # one hotspot offset. Reapplying the offset per commit drifts it.
             def pixel(x, y):
                 return tuple(pixels[(y * width + x) * 3:(y * width + x) * 3 + 3])
-            left, top = width // 2 - 12, height // 2 - 9
+            hotspot = [80, 60] if a.scenario.endswith('-offset') else [12, 9]
+            left, top = width // 2 - hotspot[0], height // 2 - hotspot[1]
             for x, y in ((left + 1, top + 1), (left + 62, top + 46)):
                 assert all(abs(a-b) <= 2 for a, b in zip(pixel(x, y), (171, 120, 52))), (x, y, pixel(x, y))
             for x, y in ((left - 2, top + 24), (left + 65, top + 24),
                          (left + 32, top - 2), (left + 32, top + 49)):
                 assert pixel(x, y) == (0, 0, 0), (x, y, pixel(x, y))
-            result['drag_icon'] = dict(size=[64, 48], hotspot=[12, 9], frames=12)
+            result['drag_icon'] = dict(size=[64, 48], hotspot=hotspot, frames=12)
 
         if a.scenario == 'cursor-animation':
             assert line(server) == 'cursor animation ready'

@@ -11,6 +11,31 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Drag-shadow geometry and producer updates (2026-09-08)
+
+Pinned `View.startDragAndDrop` allows nonnegative hotspots outside the shadow
+bounds. The Kotlin projection, presenter request validation and Wayland icon
+constructor now preserve that contract; projected dimensions and signed offsets
+are range-checked before integer conversion. Modern apps still reject zero-sized
+shadows, while a transparent 1×1 shadow remains valid.
+
+Regression 494 reproduced both native protocol failures and an Android export
+cancellation with the structured issue `WaylandDrag.source` /
+`IllegalArgumentException`. Regression 495 passes the expanded 41-step stock
+Android/native drag suite with no runtime issues. Compositor pixels verify an
+80×60 hotspot on a 64×48 shadow, transparent padding, an empty shadow, and an
+actual blue-to-magenta `View.updateDragShadow` while the original grab remains
+held. All four native icon gates pass twelve changing/resized producer frames
+and complete buffer cleanup, covering inside/outside hotspots with current
+`wl_surface.offset` and version-4 attachment offsets. Wayland unit tests and
+C++/graph audits also pass.
+
+Artifacts: `/tmp/wayland-drag-shadow-494-artifacts/` and
+`/tmp/wayland-drag-shadow-495-artifacts/`. Regression 496 passes the full default JVM suite, all 16 APK tests
+(49 issue-free steps), and C++/graph audits. Its APK artifacts are retained in
+`/tmp/wayland-drag-shadow-496-artifacts/integration/`. Remaining drag policy/death cases and the M8–M11 acceptance
+and production cutover work are unfinished.
+
 ## Stock WebView, NDK media and audio rebase (2026-09-08)
 
 The task branch is rebased onto main `efb51503`, including the stock Chromium

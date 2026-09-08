@@ -256,7 +256,8 @@ const Destination = struct {
 
 pub fn destination(init: std.process.Init, args: []const [:0]const u8) !void {
     if (args.len != 4) return error.ExpectedDestinationResultPath;
-    const consumed = std.mem.eql(u8, args[3], "accept");
+    const updating = std.mem.eql(u8, args[3], "accept-update");
+    const consumed = updating or std.mem.eql(u8, args[3], "accept");
     const cancel = std.mem.eql(u8, args[3], "cancel");
     if (!consumed and !cancel and !std.mem.eql(u8, args[3], "reject")) return error.InvalidDestinationOutcome;
     var state: Destination = .{};
@@ -273,12 +274,12 @@ pub fn destination(init: std.process.Init, args: []const [:0]const u8) !void {
         defer init.gpa.free(report);
         Io.Dir.cwd().writeFile(init.io, .{ .sub_path = args[2], .data = report }) catch {};
     }
-    receiveAndroid(init, &state, args[2], consumed, cancel) catch |failure| {
+    receiveAndroid(init, &state, args[2], consumed, cancel, updating) catch |failure| {
         state.failure = failure;
         return failure;
     };
 }
-fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8, consumed: bool, cancel: bool) !void {
+fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8, consumed: bool, cancel: bool, updating: bool) !void {
     const session = try Queue.Session.initWithOptions(init.gpa, init.io, .{ .clipboard = true });
     defer session.deinit();
     const window = try session.createWindowWithAppId(320, 480, "Native drag destination", "dev.artzig.drag-peer", false);
@@ -297,6 +298,7 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8,
     var moved = false;
     var accepted = false;
     var accepted_at: i64 = 0;
+    var captured = false;
     var finished = false;
     while (!state.terminal) {
         const now = Io.Clock.awake.now(init.io).toMilliseconds();
@@ -315,10 +317,18 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8,
             accepted = true;
             accepted_at = now;
         }
-        if (accepted and !released and now - accepted_at >= 400) {
-            // Capture the actual SF-mirrored stock drag shadow before releasing.
-            // The harness verifies its blue pixels, text, bounds and hotspot.
+        if (accepted and !captured and now - accepted_at >= 400) {
+            // Capture the stock SF mirror before a producer update. The second
+            // capture must contain the new buffer while the same grab is held.
             try capturePpm(init, path);
+            captured = true;
+        }
+        if (captured and !released and (!updating or now - accepted_at >= 1800)) {
+            if (updating) {
+                const updated = try std.fmt.allocPrint(init.gpa, "{s}.updated", .{path});
+                defer init.gpa.free(updated);
+                try capturePpm(init, updated);
+            }
             if (cancel) try window.testPointerAtOutput(.{ 1150, 600 }, .{ 1280, 720 }, null, false);
             try Queue.Window.releaseTestPointer(session);
             released = true;

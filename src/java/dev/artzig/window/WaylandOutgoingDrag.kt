@@ -108,14 +108,26 @@ internal class WaylandOutgoingDrag(private val handler: Handler, private val wm:
         val origin = request.origin
         try {
             fun project(value: Float, logical: Int, android: Int) = value.toDouble() * logical / android
-            val width = kotlin.math.ceil(project(source.width.toFloat(), origin.size.width, origin.bounds.width)).toInt()
-            val height = kotlin.math.ceil(project(source.height.toFloat(), origin.size.height, origin.bounds.height)).toInt()
-            val x = kotlin.math.floor(project(source.hotspotX, origin.size.width, origin.bounds.width)).toInt()
-            val y = kotlin.math.floor(project(source.hotspotY, origin.size.height, origin.bounds.height)).toInt()
-            val pixelsX = kotlin.math.ceil(width.toDouble() * origin.size.bufferWidth / origin.size.width).toInt()
-            val pixelsY = kotlin.math.ceil(height.toDouble() * origin.size.bufferHeight / origin.size.height).toInt()
-            require(width in 1..16384 && height in 1..16384 && x in 0 until width && y in 0 until height &&
-                pixelsX in 1..16384 && pixelsY in 1..16384)
+            fun dimension(value: Double): Int {
+                val rounded = kotlin.math.ceil(value)
+                require(rounded.isFinite() && rounded >= 1.0 && rounded <= 16384.0)
+                return rounded.toInt()
+            }
+            fun hotspot(value: Double): Int {
+                val rounded = kotlin.math.floor(value)
+                // Pinned View.startDragAndDrop permits a nonnegative hotspot
+                // outside the shadow. Wayland's signed offset limits its range,
+                // independently of buffer dimensions. Check before toInt, which
+                // would otherwise saturate an out-of-range value silently.
+                require(rounded.isFinite() && rounded >= 0.0 && rounded <= Int.MAX_VALUE.toDouble())
+                return rounded.toInt()
+            }
+            val width = dimension(project(source.width.toFloat(), origin.size.width, origin.bounds.width))
+            val height = dimension(project(source.height.toFloat(), origin.size.height, origin.bounds.height))
+            val x = hotspot(project(source.hotspotX, origin.size.width, origin.bounds.width))
+            val y = hotspot(project(source.hotspotY, origin.size.height, origin.bounds.height))
+            val pixelsX = dimension(width.toDouble() * origin.size.bufferWidth / origin.size.width)
+            val pixelsY = dimension(height.toDouble() * origin.size.bufferHeight / origin.size.height)
             val result = LongArray(2)
             request.exposed = true // Binder failure can occur after paths reached the compositor.
             val surface = remote.startNativeDrag(origin.task.id, origin.task.generation, origin.size.configurationGeneration,
