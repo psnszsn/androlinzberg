@@ -1,6 +1,18 @@
 const std = @import("std");
 const Queue = @import("surface_queue");
 const Io = std.Io;
+const IconSource = struct {
+    ended: bool = false,
+    failure: ?anyerror = null,
+    fn event(context: *anyopaque, _: u64, value: Queue.Clipboard.DragSource.Event) void {
+        const self: *IconSource = @ptrCast(@alignCast(context));
+        if (value == .ended) self.ended = true;
+    }
+    fn issue(context: *anyopaque, failure: anyerror) void {
+        const self: *IconSource = @ptrCast(@alignCast(context));
+        self.failure = failure;
+    }
+};
 extern "c" fn AServiceManager_addService(?*anyopaque, [*:0]const u8) i32;
 extern "c" fn AIBinder_decStrong(?*anyopaque) void;
 extern "c" fn azk_graphics_live_buffers() u64;
@@ -91,9 +103,11 @@ fn run(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const feedback_fallback = args.len > 1 and std.mem.eql(u8, args[1], "--paced-fallback");
+    const drag_icon = args.len > 1 and std.mem.startsWith(u8, args[1], "--drag-icon");
+    const icon_v4 = args.len > 1 and std.mem.eql(u8, args[1], "--drag-icon-v4");
     const queue = try Queue.init(init.gpa, io, 320, 240);
     defer queue.deinit();
-    const session = try Queue.Session.initWithOptions(init.gpa, io, .{ .presentation = !feedback_fallback });
+    const session = try Queue.Session.initWithOptions(init.gpa, io, .{ .presentation = !feedback_fallback, .clipboard = drag_icon, .compositor_max_version = if (icon_v4) 4 else 6 });
     defer session.deinit();
     var sibling: ?*Queue.Window = try session.createWindow(160, 120, "Sibling task", false);
     defer if (sibling) |window| window.deinit();
@@ -104,13 +118,31 @@ fn run(init: std.process.Init) !void {
     sibling.?.deinit();
     sibling = null;
     std.debug.assert(session.windows.items.len == 1);
+    const icon = if (drag_icon) try Queue.DragIcon.init(session, 64, 48, .{ 12, 9 }) else null;
+    defer if (icon) |value| value.deinit();
+    var icon_source: IconSource = .{};
+    if (icon) |value| {
+        try window.prepareTestInput();
+        // The existing labwc harness fixes this window to the 1280x720 output.
+        try window.testPointerAtOutput(.{ 640, 360 }, .{ 1280, 720 }, .{ 640, 360 }, true);
+        if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        const generation = session.dragClaim(window, .pointer, 0) orelse return error.NoPressedGesture;
+        const payload = try Queue.Clipboard.Payload.init(init.gpa, "Icon fixture", null);
+        _ = try session.startDrag(window, .pointer, 0, generation, value.surface, payload, .{ .context = &icon_source, .event = IconSource.event, .issue = IconSource.issue });
+        if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        try window.testPointerAtOutput(.{ 640, 360 }, .{ 1280, 720 }, null, false);
+    }
+    defer if (icon != null) {
+        if (session.clipboard.?.outbound_drag) |source| source.cancel();
+        Queue.Window.releaseTestPointer(session) catch {};
+    };
     // The following producer frames must still render after the sibling closes.
     const producer = queue.producer();
     defer AIBinder_decStrong(producer);
     if (AServiceManager_addService(producer, "dev.artzig.surface.v1") != 0) return error.PublishFailed;
     const unavailable = args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture-unavailable");
     const paced = args.len > 1 and std.mem.startsWith(u8, args[1], "--paced");
-    queue.pace_frames = paced;
+    queue.pace_frames = paced or drag_icon;
     var callbacks: usize = 0;
     const capture = unavailable or (args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture"));
     var captured = false;
@@ -126,6 +158,8 @@ fn run(init: std.process.Init) !void {
     while (!stop.stopped.load(.acquire)) {
         var ready = [_]bool{false};
         try session.dispatch(&.{queue.notify_file}, &ready, 100);
+        if (icon_source.failure) |failure| return failure;
+        if (drag_icon and icon_source.ended) return error.IconDragEndedEarly;
         if (stop.probe.swap(false, .acq_rel)) {
             var message: [100]u8 = undefined;
             try Io.File.stdout().writeStreamingAll(io, try std.fmt.bufPrint(&message, "owner responsive frames={d} pendingFence={d}\n", .{ frames, queue.waitingFrame() }));
@@ -138,11 +172,11 @@ fn run(init: std.process.Init) !void {
             },
             else => {},
         };
-        if (ready[0]) {
+        if (ready[0] or (icon != null and icon.?.frame_cb == null and queue.pending_frame != null)) {
             if (stop.hold.load(.acquire)) {
                 continue;
             }
-            frames += try queue.presentNotified(window);
+            frames += if (icon) |value| try queue.presentNotified(value) else try queue.presentNotified(window);
             if (paced) frames = @intCast(queue.presented_number);
             var buffer: [80]u8 = undefined;
             const line = try std.fmt.bufPrint(&buffer, "presented {d}\n", .{frames});

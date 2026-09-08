@@ -18,7 +18,7 @@ p.add_argument('--server', type=Path, required=True)
 p.add_argument('--producer', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout', 'paced', 'paced-fallback'], default='normal')
+p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout', 'paced', 'paced-fallback', 'drag-icon', 'drag-icon-v4'], default='normal')
 a = p.parse_args()
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -66,7 +66,7 @@ try:
     paced = a.scenario.startswith('paced')
     delayed = a.scenario == 'delayed-fence' or a.scenario.startswith('fence-')
     early = False
-    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') or a.scenario == 'cursor-animation' or paced else ())
+    server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') or a.scenario == 'cursor-animation' or a.scenario.startswith('drag-icon') or paced else ())
     assert line(server) == 'ready'
     env.pop('AZK_BINDER_SYSTEM_COOKIE')
     env['AZK_BINDER_PACKAGE'] = 'dev.artzig.surface.producer'
@@ -156,6 +156,19 @@ try:
         actual = tuple(pixels[offset:offset + 3])
         assert all(abs(x - y) <= 2 for x, y in zip(actual, (171, 120, 52))), actual
         result.update(presented=presented, screenshot_size=[width, height], center_rgb=actual)
+        if a.scenario.startswith('drag-icon'):
+            # Twelve resized producer buffers must retain one logical icon and
+            # one hotspot offset. Reapplying the offset per commit drifts it.
+            def pixel(x, y):
+                return tuple(pixels[(y * width + x) * 3:(y * width + x) * 3 + 3])
+            left, top = width // 2 - 12, height // 2 - 9
+            for x, y in ((left + 1, top + 1), (left + 62, top + 46)):
+                assert all(abs(a-b) <= 2 for a, b in zip(pixel(x, y), (171, 120, 52))), (x, y, pixel(x, y))
+            for x, y in ((left - 2, top + 24), (left + 65, top + 24),
+                         (left + 32, top - 2), (left + 32, top + 49)):
+                assert pixel(x, y) == (0, 0, 0), (x, y, pixel(x, y))
+            result['drag_icon'] = dict(size=[64, 48], hotspot=[12, 9], frames=12)
+
         if a.scenario == 'cursor-animation':
             assert line(server) == 'cursor animation ready'
             colors = set()

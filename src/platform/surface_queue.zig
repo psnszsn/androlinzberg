@@ -5,6 +5,7 @@ const Io = std.Io;
 const wayland = @import("wayland.zig");
 pub const Window = wayland.Window;
 pub const Session = wayland.Session;
+pub const DragIcon = wayland.DragIcon;
 pub const KeyboardLayout = wayland.KeyboardLayout;
 pub const TextInput = wayland.TextInput;
 pub const Clipboard = wayland.Clipboard;
@@ -219,19 +220,19 @@ fn abandon(context: *anyopaque) void {
 }
 
 /// Call only when notify_file is readable, then present all newly ready frames.
-pub fn presentReady(self: *Self, window: *wayland.Window) !usize {
+pub fn presentReady(self: *Self, window: anytype) !usize {
     try self.drainNotification();
     return self.presentNotified(window);
 }
 
 /// Session.dispatch already consumed this queue's eventfd notification.
-pub fn presentNotified(self: *Self, window: *wayland.Window) !usize {
+pub fn presentNotified(self: *Self, window: anytype) !usize {
     return self.presentConfiguration(window, true);
 }
 
 /// An obsolete compositor generation may release its completed buffers but may
 /// never attach them, even when a later configure returned to the same size.
-pub fn presentConfiguration(self: *Self, window: *wayland.Window, accepted: bool) !usize {
+pub fn presentConfiguration(self: *Self, window: anytype, accepted: bool) !usize {
     if (self.failure.load(.acquire) != 0) return error.SurfaceQueueFailed;
     var frames: [2]*Frame = undefined;
     const count = try self.ready.get(self.io, &frames, 0);
@@ -277,7 +278,7 @@ pub fn presentConfiguration(self: *Self, window: *wayland.Window, accepted: bool
 
 /// Consumes the acquired lease on every outcome; a frame callback paces only
 /// submission. wl_buffer.release remains the independent storage-release gate.
-fn presentFrame(self: *Self, window: *wayland.Window, frame: *Frame) !void {
+fn presentFrame(self: *Self, window: anytype, frame: *Frame) !void {
     const info = frame.info;
     if (self.expected_size) |size| {
         if (info.width != size[0] or info.height != size[1]) {

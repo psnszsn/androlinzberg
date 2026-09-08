@@ -859,6 +859,59 @@ pub const Session = struct {
         if (self.ordered_events) |*events| if (events.failed) return error.SeatEventQueueOverflow;
     }
 
+    const ImportedDmabuf = struct {
+        gpa: std.mem.Allocator,
+        pending: *std.ArrayList(*ImportedDmabuf),
+        wl_buffer: *wl.Buffer,
+        frame: DmabufFrame,
+
+        fn listener(_: *wl.Buffer, event: wl.Buffer.Event, state: *ImportedDmabuf) void {
+            switch (event) {
+                .release => {
+                    for (state.pending.items, 0..) |candidate, index| {
+                        if (candidate == state) {
+                            _ = state.pending.orderedRemove(index);
+                            break;
+                        }
+                    }
+                    state.wl_buffer.destroy();
+                    state.frame.release();
+                    state.gpa.destroy(state);
+                },
+            }
+        }
+    };
+
+    /// Shared importer for decoded video and stock BufferQueue task output.
+    /// The caller must complete its acquire fence off the Wayland event thread
+    /// before transfer. Only wl_buffer.release permits normal queue reuse.
+    fn importDmabuf(self: *Session, frame: DmabufFrame, pending: *std.ArrayList(*ImportedDmabuf)) !*wl.Buffer {
+        errdefer frame.release();
+        const factory = self.dmabuf orelse return error.DmabufUnavailable;
+        if (frame.width <= 0 or frame.width > 16384 or frame.height <= 0 or frame.height > 16384 or frame.plane_count == 0 or frame.plane_count > frame.fds.len)
+            return error.InvalidDmabuf;
+        if (pending.items.len >= 64) return error.TooManyPendingBuffers;
+        for (0..frame.plane_count) |index| {
+            if (frame.fds[index] < 0 or frame.strides[index] == 0) return error.InvalidDmabuf;
+            if (selectDmabufImportModifier(self.dmabuf_formats.items, frame.format, frame.modifiers[index]) == null)
+                return error.UnsupportedDmabufFormat;
+        }
+        const params = try factory.createParams();
+        defer params.destroy();
+        for (0..frame.plane_count) |index| {
+            const modifier = frame.modifiers[index];
+            params.add(frame.fds[index], @intCast(index), frame.offsets[index], frame.strides[index], @truncate(modifier >> 32), @truncate(modifier));
+        }
+        const buffer = try params.createImmed(frame.width, frame.height, frame.format, .{});
+        errdefer buffer.destroy();
+        const state = try self.gpa.create(ImportedDmabuf);
+        errdefer self.gpa.destroy(state);
+        state.* = .{ .gpa = self.gpa, .pending = pending, .wl_buffer = buffer, .frame = frame };
+        try pending.append(self.gpa, state);
+        buffer.setListener(*ImportedDmabuf, ImportedDmabuf.listener, state);
+        return buffer;
+    }
+
     fn surfaceWindow(self: *Session, surface: ?*wl.Surface) ?*Window {
         const target = surface orelse return null;
         for (self.windows.items) |window| {
@@ -1716,7 +1769,7 @@ pub const Window = struct {
     ui_surface: *wl.Surface = undefined,
     ui_subsurface: *wl.Subsurface = undefined,
     ui_viewport: *wp.Viewport = undefined,
-    ui_dmabuf_buffers: std.ArrayList(*ImportedDmabuf) = .empty,
+    ui_dmabuf_buffers: std.ArrayList(*Session.ImportedDmabuf) = .empty,
 
     width: i32,
     height: i32,
@@ -2409,59 +2462,6 @@ pub const Window = struct {
         return self.ui_surface;
     }
 
-    const ImportedDmabuf = struct {
-        win: *Window,
-        pending: *std.ArrayList(*ImportedDmabuf),
-        wl_buffer: *wl.Buffer,
-        frame: DmabufFrame,
-
-        fn listener(_: *wl.Buffer, event: wl.Buffer.Event, state: *ImportedDmabuf) void {
-            switch (event) {
-                .release => {
-                    for (state.pending.items, 0..) |candidate, index| {
-                        if (candidate == state) {
-                            _ = state.pending.orderedRemove(index);
-                            break;
-                        }
-                    }
-                    state.wl_buffer.destroy();
-                    state.frame.release();
-                    state.win.gpa.destroy(state);
-                },
-            }
-        }
-    };
-
-    /// Shared importer for decoded video and stock BufferQueue task output.
-    /// The caller must complete its acquire fence off the Wayland event thread
-    /// before transfer. Only wl_buffer.release permits normal queue reuse.
-    fn importDmabuf(self: *Window, frame: DmabufFrame, pending: *std.ArrayList(*ImportedDmabuf)) !*wl.Buffer {
-        errdefer frame.release();
-        const factory = self.session.dmabuf orelse return error.DmabufUnavailable;
-        if (frame.width <= 0 or frame.height <= 0 or frame.plane_count == 0 or frame.plane_count > frame.fds.len)
-            return error.InvalidDmabuf;
-        if (pending.items.len >= 64) return error.TooManyPendingBuffers;
-        for (0..frame.plane_count) |index| {
-            if (frame.fds[index] < 0 or frame.strides[index] == 0) return error.InvalidDmabuf;
-            if (selectDmabufImportModifier(self.session.dmabuf_formats.items, frame.format, frame.modifiers[index]) == null)
-                return error.UnsupportedDmabufFormat;
-        }
-        const params = try factory.createParams();
-        defer params.destroy();
-        for (0..frame.plane_count) |index| {
-            const modifier = frame.modifiers[index];
-            params.add(frame.fds[index], @intCast(index), frame.offsets[index], frame.strides[index], @truncate(modifier >> 32), @truncate(modifier));
-        }
-        const buffer = try params.createImmed(frame.width, frame.height, frame.format, .{});
-        errdefer buffer.destroy();
-        const state = try self.gpa.create(ImportedDmabuf);
-        errdefer self.gpa.destroy(state);
-        state.* = .{ .win = self, .pending = pending, .wl_buffer = buffer, .frame = frame };
-        try pending.append(self.gpa, state);
-        buffer.setListener(*ImportedDmabuf, ImportedDmabuf.listener, state);
-        return buffer;
-    }
-
     /// Present a completed task output on the existing UI child. Ownership
     /// transfers on every outcome. A queue owner must supply abandonment for
     /// disconnect/error teardown; a frame callback is never a release signal.
@@ -2470,7 +2470,7 @@ pub const Window = struct {
             frame.release();
             return error.QueueAbandonmentRequired;
         }
-        const buffer = try self.importDmabuf(frame, &self.ui_dmabuf_buffers);
+        const buffer = try self.session.importDmabuf(frame, &self.ui_dmabuf_buffers);
         if (self.session.presentation) |manager| if (self.session.presentation_clock) |clock| {
             try self.presentation_feedback.request(manager, self.ui_surface, .{
                 .clock_id = clock,
@@ -2989,7 +2989,7 @@ pub const Window = struct {
         full_w: i32 = 0,
         full_h: i32 = 0,
         geometry_visible: bool = false,
-        dmabuf_buffers: std.ArrayList(*ImportedDmabuf) = .empty,
+        dmabuf_buffers: std.ArrayList(*Session.ImportedDmabuf) = .empty,
 
         fn configureViewport(self: *VideoLayer) void {
             const vp = self.viewport;
@@ -3067,7 +3067,7 @@ pub const Window = struct {
         /// Import and present an owned decoded DMA-BUF frame. The frame remains
         /// alive until the compositor sends wl_buffer.release.
         pub fn pushDmabuf(self: *VideoLayer, frame: DmabufFrame) !void {
-            const wl_buffer = try self.win.importDmabuf(frame, &self.dmabuf_buffers);
+            const wl_buffer = try self.win.session.importDmabuf(frame, &self.dmabuf_buffers);
 
             self.src_w = frame.width;
             self.src_h = frame.height;
@@ -3114,6 +3114,93 @@ pub const Window = struct {
         const layer = try self.gpa.create(VideoLayer);
         layer.* = .{ .win = self, .surface = vsurf, .subsurface = subsurf, .viewport = vp };
         return layer;
+    }
+};
+
+/// Unroled until wl_data_device.start_drag assigns the icon role. A private
+/// stock SF output supplies its pixels through the same consumer as task windows.
+/// Geometry is already projected into logical task-surface units by the owner.
+pub const DragIcon = struct {
+    session: *Session,
+    surface: *wl.Surface,
+    viewport: *wp.Viewport,
+    width: i32,
+    height: i32,
+    hotspot: [2]i32,
+    attached: bool = false,
+    frame_cb: ?*wl.Callback = null,
+    pending: std.ArrayList(*Session.ImportedDmabuf) = .empty,
+    callbacks: u64 = 0,
+
+    pub fn init(session: *Session, width: i32, height: i32, hotspot: [2]i32) !*DragIcon {
+        if (width < 1 or width > 16384 or height < 1 or height > 16384 or
+            hotspot[0] < 0 or hotspot[0] > width or hotspot[1] < 0 or hotspot[1] > height)
+            return error.InvalidDragIconGeometry;
+        const compositor = session.compositor orelse return error.NoCompositor;
+        const viewporter = session.viewporter orelse return error.NoViewporter;
+        const surface = try compositor.createSurface();
+        errdefer surface.destroy();
+        const viewport = try viewporter.getViewport(surface);
+        errdefer viewport.destroy();
+        const region = try compositor.createRegion();
+        defer region.destroy();
+        surface.setInputRegion(region);
+        const self = try session.gpa.create(DragIcon);
+        self.* = .{ .session = session, .surface = surface, .viewport = viewport, .width = width, .height = height, .hotspot = hotspot };
+        surface.setListener(*DragIcon, surfaceListener, self);
+        return self;
+    }
+    fn surfaceListener(_: *wl.Surface, _: wl.Surface.Event, _: *DragIcon) void {
+        // Scale/transform preferences do not change accepted logical geometry.
+        // SF's output allocation supplies the projected buffer resolution.
+    }
+    pub fn requestFrame(self: *DragIcon) !void {
+        if (self.frame_cb != null) return;
+        self.frame_cb = try self.surface.frame();
+        self.frame_cb.?.setListener(*DragIcon, frameListener, self);
+    }
+    fn frameListener(callback: *wl.Callback, _: wl.Callback.Event, self: *DragIcon) void {
+        callback.destroy();
+        self.frame_cb = null;
+        self.callbacks +|= 1;
+    }
+    /// Consumes ownership on every outcome; only buffer release recycles storage.
+    pub fn pushUiDmabuf(self: *DragIcon, frame: DmabufFrame) !void {
+        if (frame.abandon_fn == null) {
+            frame.release();
+            return error.QueueAbandonmentRequired;
+        }
+        const buffer = try self.session.importDmabuf(frame, &self.pending);
+        const offset: [2]i32 = if (self.attached) .{ 0, 0 } else .{ -self.hotspot[0], -self.hotspot[1] };
+        if (self.surface.getVersion() >= 5) {
+            self.surface.offset(offset[0], offset[1]);
+            self.surface.attach(buffer, 0, 0);
+        } else self.surface.attach(buffer, offset[0], offset[1]);
+        self.viewport.setSource(wl.Fixed.fromInt(0), wl.Fixed.fromInt(0), wl.Fixed.fromInt(@intCast(frame.width)), wl.Fixed.fromInt(@intCast(frame.height)));
+        self.viewport.setDestination(self.width, self.height);
+        self.surface.damageBuffer(0, 0, frame.width, frame.height);
+        self.attached = true;
+    }
+    pub fn present(self: *DragIcon) !void {
+        self.surface.commit();
+        switch (self.session.display.flush()) {
+            .SUCCESS, .AGAIN => {},
+            else => return error.FlushFailed,
+        }
+    }
+    /// Unbind the SF output first. Compositor references can outlive these
+    /// proxies, so teardown abandons pending leases instead of recycling them.
+    pub fn deinit(self: *DragIcon) void {
+        if (self.frame_cb) |callback| callback.destroy();
+        for (self.pending.items) |state| {
+            state.wl_buffer.destroy();
+            state.frame.abandon();
+            self.session.gpa.destroy(state);
+        }
+        self.pending.deinit(self.session.gpa);
+        self.viewport.destroy();
+        self.surface.destroy();
+        self.session.gpa.destroy(self);
     }
 };
 

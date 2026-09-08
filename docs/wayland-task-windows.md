@@ -11,6 +11,36 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## GPU drag-icon presentation (2026-09-08)
+
+An unroled Wayland icon surface now accepts the same stock BufferQueue leases
+as task output. The session owns a shared DMA-BUF importer; buffer release
+permits reuse, while teardown abandons outstanding leases. Frame callbacks only
+pace submission. The icon viewport retains its logical size across producer
+buffer changes, and the hotspot offset applies once rather than accumulating
+on every frame.
+
+The native GPU fixture presents 12 stock Surface frames, resizes their buffers
+from 320×240 to 480×360, and checks a 64×48 icon with a 12×9 hotspot against the
+compositor screenshot. Regression 447 passes with zero live graphics buffers
+after shutdown. Regression 448 passes stock video (4 clean steps), stock/native
+drag (12 clean steps), delayed acquire-fence delivery, fence timeout and shutdown.
+Regression 449 passes the full default APK suite (16 tests, 49 clean steps).
+Regression 450 passes the icon gate using both current surfaces and version 4
+attachment offsets, plus C++/graph audits. Both icon runs release every buffer.
+Artifacts: `/tmp/wayland-icon-448-artifacts/` and
+`/tmp/wayland-icon-449-artifacts/`, with both icon captures in
+`/tmp/wayland-icon-450-artifacts/`.
+
+The full `integration-test` target currently requires the default build selection;
+its launcher still uses the legacy service stack. Combining it with
+`-Dstock-window-clients=true` fails at legacy window-session admission before
+any test action, as confirmed by the retained 448 failure logs. Stock task tests
+use their own cold-launch harness. Migrating the complete suite belongs to M11.
+
+WMS still needs to mirror its stock shadow into this icon producer and transfer
+the existing Android drag state, including cross-task recipients and URI grants.
+
 ## Held native drag gesture validation (2026-09-08)
 
 The session records the exact pointer-enter or touch-down surface and the
