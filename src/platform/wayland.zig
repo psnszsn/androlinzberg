@@ -1310,6 +1310,7 @@ pub const Session = struct {
                 self.tablet_failure = err;
                 break :failed null;
             };
+            self.syncTabletCapture();
         };
         if (self.text_input == null) if (self.text_input_manager) |manager| if (self.seat) |seat| {
             self.text_input = TextInput.init(self.gpa, manager, seat, .{
@@ -1396,6 +1397,16 @@ pub const Session = struct {
         const index = self.outputIndex(proxy) orelse return null;
         return self.outputs[index].global_name;
     }
+    // A protocol manager can reappear while an existing pointer lock remains
+    // active. An old window's unlock must also preserve another window's lock.
+    fn syncTabletCapture(self: *Session) void {
+        const tablets = self.tablets orelse return;
+        const captured = for (self.windows.items) |window| {
+            if (window.pointer_capture_actual) break true;
+        } else false;
+        tablets.pointerCapture(captured);
+    }
+
     fn tabletEvent(context: *anyopaque, target: ?*anyopaque, event: TabletSeat.Event) void {
         const self: *Session = @ptrCast(@alignCast(context));
         const window: ?*Window = if (target) |value| @ptrCast(@alignCast(value)) else null;
@@ -2074,7 +2085,7 @@ pub const Window = struct {
         };
         if (actual == self.pointer_capture_actual) return;
         self.pointer_capture_actual = actual;
-        if (self.session.tablets) |tablets| tablets.pointerCapture(actual);
+        self.session.syncTabletCapture();
         self.push(.{ .pointer_capture_changed = .{ .enabled = actual, .sequence = self.pointer_capture_sequence } });
     }
 
@@ -2111,7 +2122,7 @@ pub const Window = struct {
             self.relative_pointer = null;
             if (self.pointer_capture_actual) {
                 self.pointer_capture_actual = false;
-                if (self.session.tablets) |tablets| tablets.pointerCapture(false);
+                self.session.syncTabletCapture();
                 self.push(.{ .pointer_capture_changed = .{ .enabled = false, .sequence = self.pointer_capture_sequence } });
             }
             return;
@@ -2569,6 +2580,30 @@ pub const Window = struct {
         pointer.motion(inputTimestamp(self.io), wl.Fixed.fromDouble(dx), wl.Fixed.fromDouble(dy));
         pointer.frame();
         if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
+    /// One paced test gesture edge. The presenter returns to its normal event
+    /// loop between edges so Android can acquire the drag input channel while
+    /// the real compositor button grab is still held.
+    pub fn testPointerAtOutput(self: *Window, point: [2]u32, extent: [2]u32, local: ?[2]u32, press: bool) !void {
+        if (extent[0] == 0 or extent[1] == 0 or point[0] >= extent[0] or point[1] >= extent[1]) return error.InvalidTestPoint;
+        const pointer = self.session.virtual_pointer orelse return error.SeatCapabilitiesUnavailable;
+        const time = inputTimestamp(self.io);
+        pointer.motionAbsolute(time, point[0], point[1], extent[0], extent[1]);
+        pointer.frame();
+        if (local) |expected| try self.verifyTestPointer(expected);
+        if (press) {
+            pointer.button(time, 0x110, .pressed);
+            pointer.frame();
+        }
+        if (self.session.display.flush() != .SUCCESS) return error.FlushFailed;
+    }
+
+    pub fn releaseTestPointer(session: *Session) !void {
+        const pointer = session.virtual_pointer orelse return;
+        pointer.button(inputTimestamp(session.io), 0x110, .released);
+        pointer.frame();
+        if (session.display.flush() != .SUCCESS) return error.FlushFailed;
     }
 
     /// Inject a compositor-routed primary-button drag between Android buffer
@@ -3056,6 +3091,35 @@ test "pointer capture rejects missing capability and snapshots acknowledgement s
     try std.testing.expectEqual(@as(i32, 2), events[0].event.pointer_capture_changed.sequence);
     try std.testing.expectEqual(@as(i32, 3), events[1].event.pointer_capture_changed.sequence);
     try std.testing.expect(!events[0].event.pointer_capture_changed.enabled);
+}
+
+test "tablet manager recreation and a late unlock retain live seat capture" {
+    var session: Session = undefined;
+    session.windows = .empty;
+    session.gpa = std.testing.allocator;
+    session.ordered_events = .{};
+    defer session.windows.deinit(std.testing.allocator);
+    defer session.ordered_events.?.deinit(std.testing.allocator);
+    var first: Window = .{ .session = &session, .gpa = std.testing.allocator, .io = undefined, .width = 100, .height = 100 };
+    var second = first;
+    first.pointer_capture_actual = true;
+    first.pointer_capture_requested = true;
+    try session.windows.append(std.testing.allocator, &first);
+    try session.windows.append(std.testing.allocator, &second);
+    session.tablets = null;
+    session.syncTabletCapture();
+    var replacement: TabletSeat = undefined;
+    replacement.tools = @splat(null);
+    replacement.pointer_captured = false;
+    session.tablets = &replacement;
+    session.syncTabletCapture();
+    try std.testing.expect(replacement.pointer_captured);
+    second.pointer_capture_actual = true;
+    second.pointer_capture_requested = true;
+    try first.setPointerCapture(false);
+    try std.testing.expect(replacement.pointer_captured);
+    try second.setPointerCapture(false);
+    try std.testing.expect(!replacement.pointer_captured);
 }
 
 test "queued scroll retains its surface position across later pointer motion" {

@@ -31,6 +31,38 @@ The default JVM and complete APK suite still need rerunning on the combined
 package. Drag-and-drop and the remaining acceptance work are in progress;
 this rebase is not the default launcher cutover.
 
+## Stock drag contracts and cursor lock ordering (2026-09-08)
+
+The new `stock-drag-test` launches a real APK View and calls stock
+`View.startDragAndDrop` during a held compositor pointer gesture. Regression
+403 passes six clean steps covering text and content-URI drops, the stock
+permission object, callback ordering, recipient consumption and rejection.
+Artifacts: `/tmp/wayland-drag-403-artifacts/stock-drag/`.
+
+The fixture exposed two issues. The virtual input driver previously sent a
+complete drag in one burst, releasing the pointer before WMS could transfer its
+input channel. Stock test drags now retain one bounded pending gesture and send
+paced edges from the normal presenter loop, with the final input barrier after
+release. Task/configuration and seat generations guard the pending gesture.
+
+Stock `DragDropController.performDrag` calls the pointer-icon service with the
+WM lock held. The host adapter synchronously waited for the shell thread, which
+needed the same lock. Cursor publication now accepts a validated request and
+coalesces one update per device, revalidating its device generation and input
+window before rendering. It never waits for the shell while holding a caller's
+WM lock. Internal drag input channels are not mistaken for task windows.
+
+Tablet cursor capture now derives from all live windows, including when the
+protocol manager reappears. A late unlock cannot clear another live capture.
+The ownership unit test and the existing real tablet gate pass in 403, as does
+the 13-step desktop cursor/input gate. A real manager-recreation-under-capture
+gate remains part of the broader input acceptance matrix.
+
+This proves the stock same-window drag contract. Native/cross-task data offers,
+Wayland drag icons, cancellation/death recovery and the remaining M10/M11 work
+are still pending. The 402 failure also showed why M11 must retain diagnostics
+from dying app processes: its raw fatal-exception log preceded inspection loss.
+
 ## Clipboard file transfers (2026-09-08)
 
 The desktop bridge now stages `text/uri-list` through the separately installed

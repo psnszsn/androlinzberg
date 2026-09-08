@@ -99,6 +99,18 @@ const Server = struct {
     completed_round: i64 = 0,
     test_placement: ?TestPlacement = null,
     test_input_sequence: i64 = 0,
+    test_drag: ?struct {
+        key: Key,
+        configuration: i64,
+        geometry: [8]i32,
+        from: [2]u32,
+        to: [2]u32,
+        extent: [2]u32,
+        seat_generation: i32,
+        sequence: i64 = 0,
+        step: u32 = 0,
+        next_ms: i64,
+    } = null,
     death: *Death,
     events_class: *Class,
     fn signal(self: *Server) void {
@@ -315,6 +327,7 @@ const Server = struct {
         return 0;
     }
     fn injectTestInput(self: *Server, request: *Request) !i64 {
+        if (self.test_drag != null) return error.TestGestureAlreadyActive;
         const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
         const configuration_generation = try readLong(request.input);
         var geometry: [8]i32 = undefined;
@@ -341,7 +354,17 @@ const Server = struct {
                 const local = [2]u32{ from[0] - @as(u32, @intCast(placement.left)), from[1] - @as(u32, @intCast(placement.top)) };
                 if (kind != 1) try entry.window.testTapAtOutput(from, extent, local) else {
                     const to = try placement.point(entry.bounds[0..4].*, .{ entry.window.width, entry.window.height }, points[2], points[3]);
-                    try entry.window.testDragAtOutput(from, to, extent, local);
+                    try entry.window.testPointerAtOutput(from, extent, local, true);
+                    self.test_drag = .{
+                        .key = key,
+                        .configuration = configuration_generation,
+                        .geometry = geometry,
+                        .from = from,
+                        .to = to,
+                        .extent = extent,
+                        .seat_generation = self.session.seat_generation,
+                        .next_ms = Io.Clock.awake.now(self.io).toMilliseconds() + 300,
+                    };
                 }
             },
             2, 3 => {},
@@ -381,8 +404,38 @@ const Server = struct {
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
         try self.dispatchEvents();
         self.test_input_sequence = try std.math.add(i64, self.test_input_sequence, 1);
-        try send(entry, 14, .{self.test_input_sequence});
+        if (self.test_drag) |*drag| drag.sequence = self.test_input_sequence else try send(entry, 14, .{self.test_input_sequence});
         return self.test_input_sequence;
+    }
+
+    fn tickTestDrag(self: *Server) !void {
+        var drag = self.test_drag orelse return;
+        const now = Io.Clock.awake.now(self.io).toMilliseconds();
+        const entry = self.find(drag.key);
+        const valid = self.session.seat_generation == drag.seat_generation and
+            entry != null and entry.?.matchesInputGeometry(drag.geometry, drag.configuration);
+        if (valid and now < drag.next_ms) return;
+        if (valid and drag.step < 10) {
+            drag.step += 1;
+            var point: [2]u32 = undefined;
+            for (&point, 0..) |*value, axis| {
+                const start: i64 = drag.from[axis];
+                const delta = @as(i64, drag.to[axis]) - start;
+                value.* = @intCast(start + @divTrunc(delta * drag.step, 10));
+            }
+            try entry.?.window.testPointerAtOutput(point, drag.extent, null, false);
+            drag.next_ms = now + 20;
+            self.test_drag = drag;
+            return;
+        }
+        self.test_drag = null;
+        // Do not synthesize an edge on a replacement seat. A removed device
+        // already cancels its compositor grab and Android contact.
+        if (self.session.seat_generation == drag.seat_generation)
+            try Queue.Window.releaseTestPointer(self.session);
+        if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        try self.dispatchEvents();
+        if (entry) |target| try send(target, 14, .{drag.sequence});
     }
     fn handle(self: *Server, request: *Request) !i32 {
         // This read/test-pacing API is available to the system controller; only
@@ -991,7 +1044,7 @@ fn run(init: std.process.Init) !void {
             entries[count - 1] = entry;
             count += 1;
         };
-        try session.dispatch(files[0..count], ready[0..count], -1);
+        try session.dispatch(files[0..count], ready[0..count], if (server.test_drag != null) 10 else -1);
         // Deliver protocol events before accepting frames: a queued event from
         // a pending configure must not become eligible because its replacement
         // frame happened to wake the same poll.
@@ -1011,6 +1064,7 @@ fn run(init: std.process.Init) !void {
         // while Android draws the new configuration.
         for (entries[0 .. count - 1]) |entry| try entry.window.present();
         if (ready[0]) server.drain(!disconnected.load(.acquire));
+        try server.tickTestDrag();
     }
 }
 

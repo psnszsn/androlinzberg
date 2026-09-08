@@ -19,6 +19,7 @@ parser.add_argument('--launcher', action='store_true')
 parser.add_argument('--video', action='store_true')
 parser.add_argument('--ime', action='store_true')
 parser.add_argument('--clipboard', action='store_true')
+parser.add_argument('--drag', action='store_true')
 parser.add_argument('--testkit', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
@@ -415,6 +416,22 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
                     assert len(steps) == 19 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
+                elif args.drag:
+                    control('step', 'click', '--task-id', task, '--text', label('Show drag and drop'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('wait', 'exists', '--task-id', task, '--text', 'Drag ready')
+                    def drag(expected):
+                        control('step', 'drag', '--task-id', task, '--description', 'Drag contract area',
+                                '--from-x', '.25', '--to-x', '.75', '--via', 'wayland', '--settle', 'idle')
+                        control('wait', 'exists', '--task-id', task, '--text', expected)
+                    drag('Drag received=Android drag 😀 café')
+                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
+                    drag('Drag received=Android file 😀 café')
+                    control('step', 'click', '--task-id', task, '--text', 'REJECT DRAG', '--via', 'semantic', '--settle', 'idle')
+                    drag('Drag rejected')
+                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
+                    assert len(steps) == 6 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']
                     control('step', 'click', '--task-id', task, '--text', label('Show IME editor'),
@@ -586,7 +603,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert after['mark']['presented_frame_seq'] > observed['mark']['presented_frame_seq']
                     (out / 'a11y.json').write_text(json.dumps(after, indent=2))
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 19 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     cursor_log = (out / 'app.log').read_text(errors='replace')
                     assert 'task cursor shape protocol available=false' in cursor_log
                     assert 'task bitmap cursor task=' in cursor_log, 'Missing stock bitmap cursor fallback'

@@ -73,6 +73,7 @@ open class WindowFixtureActivity : Activity() {
         }
         button("Show decoded video") { startActivity(Intent(this, VideoFixtureActivity::class.java)) }
         button("Show IME editor") { startActivity(Intent(this, ImeFixtureActivity::class.java)) }
+        button("Show drag and drop") { startActivity(Intent(this, DragFixtureActivity::class.java)) }
         button("Show clipboard") { startActivity(Intent(this, ClipboardFixtureActivity::class.java)) }
         button("Recreate activity") { recreate() }
         button("Show SurfaceView") {

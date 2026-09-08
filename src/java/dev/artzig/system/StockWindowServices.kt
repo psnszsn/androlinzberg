@@ -130,42 +130,57 @@ internal class StockWindowServices private constructor() {
             .enableScreenAfterBoot(booted)
     }
 
+    private data class CursorRequest(val icon: android.view.PointerIcon, val displayId: Int,
+        val deviceId: Int, val generation: Int, val pointerId: Int, val token: IBinder)
+    private val cursorLock = Any()
+    private val pendingCursors = HashMap<Int, CursorRequest>()
+    private val applyCursors = Runnable {
+        val pending = synchronized(cursorLock) { pendingCursors.values.toList().also { pendingCursors.clear() } }
+        for (request in pending) {
+            if (devices.getInputDevice(request.deviceId)?.generation != request.generation ||
+                !input.isPointerInWindow(request.token, request.displayId, request.deviceId, request.pointerId)) continue
+            if (shell?.pointerIcon(request.token, request.icon.type, request.deviceId) == true) continue
+            val image = try { dev.artzig.window.WaylandCursor.load(context, request.icon) }
+            catch (failure: IllegalArgumentException) {
+                android.util.Log.w("WaylandSeat", "Cursor cannot be represented: ${failure.message}",
+                    dev.artzig.ArtzigTestDiagnostics.unsupported("WaylandSeat", "setPointerIcon",
+                        failure.message ?: "Cursor exceeds host representation limits"))
+                null
+            }
+            if (image != null) shell?.cursorImage(request.token, image, request.deviceId)
+        }
+    }
+
+    /** Pinned NativeInputManager.setPointerIcon validates the current input
+     * target before PointerChoreographer updates its controller. Wayland applies
+     * the accepted image on the shell thread. Never wait for that thread: stock
+     * DragDropController.performDrag calls here while holding WMS.mGlobalLock.
+     * A bounded latest request per device replaces the controller's icon state.
+     */
     private fun setPointerIcon(icon: android.view.PointerIcon, displayId: Int, deviceId: Int,
         pointerId: Int, token: IBinder?): Boolean {
         if (token == null || displayId != Display.DEFAULT_DISPLAY || (deviceId != 0 && deviceId !in dev.artzig.window.WaylandTabletInput.FIRST_DEVICE until
                 dev.artzig.window.WaylandTabletInput.FIRST_DEVICE + dev.artzig.window.WaylandTabletInput.MAX_TOOLS) || pointerId != 0 ||
-            !input.isPointerInWindow(token, displayId, deviceId, pointerId)) return false
-        val work = java.util.concurrent.FutureTask(java.util.concurrent.Callable {
-            // Revalidate after crossing to the shell thread; hover may have left
-            // this input window while the Binder request was queued.
-            if (!input.isPointerInWindow(token, displayId, deviceId, pointerId)) false
-            else if (shell?.pointerIcon(token, icon.type, deviceId) == true) true
-            else {
-                val image = try { dev.artzig.window.WaylandCursor.load(context, icon) }
-                catch (failure: IllegalArgumentException) {
-                    android.util.Log.w("WaylandSeat", "Cursor cannot be represented: ${failure.message}",
-                        dev.artzig.ArtzigTestDiagnostics.unsupported("WaylandSeat", "setPointerIcon",
-                            failure.message ?: "Cursor exceeds host representation limits"))
-                    null
-                }
-                image != null && shell?.cursorImage(token, image, deviceId) == true
+            !input.isPointerInWindow(token, displayId, deviceId, pointerId) || shell == null) return false
+        val generation = devices.getInputDevice(deviceId)?.generation ?: return false
+        // Internal drag input channels are not task windows. The drag bridge
+        // owns their native icon; do not route them to an unrelated task.
+        if (com.android.server.wm.HostedTaskInputTargets.taskId(windows, token) == null) return false
+        synchronized(cursorLock) {
+            val schedule = pendingCursors.isEmpty()
+            pendingCursors[deviceId] = CursorRequest(icon, displayId, deviceId, generation, pointerId, token)
+            if (schedule && !handler.post(applyCursors)) {
+                pendingCursors.clear()
+                return false
             }
-        })
-        if (Looper.myLooper() == handler.looper) work.run() else check(handler.post(work))
-        try { return work.get(3, java.util.concurrent.TimeUnit.SECONDS) }
-        catch (failure: java.util.concurrent.TimeoutException) {
-            work.cancel(false); handler.removeCallbacks(work)
-            return false
-        } catch (failure: InterruptedException) {
-            work.cancel(false); handler.removeCallbacks(work)
-            Thread.currentThread().interrupt()
-            return false
-        } catch (failure: java.util.concurrent.ExecutionException) {
-            throw IllegalStateException("Wayland cursor request failed", failure.cause ?: failure)
         }
+        return true
     }
 
-    fun close() { shell?.close(); shell = null }
+    fun close() {
+        synchronized(cursorLock) { pendingCursors.clear(); handler.removeCallbacks(applyCursors) }
+        shell?.close(); shell = null
+    }
     fun taskForObservedWindow(token: android.os.IBinder, uid: Int, pid: Int): Int? =
         com.android.server.wm.HostedTaskInputTargets.windowTask(windows, token, uid, pid)
 
