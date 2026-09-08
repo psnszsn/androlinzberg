@@ -11,6 +11,40 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Stock MediaCodec rebase and clipboard ordering (2026-09-08)
+
+Rebased onto main `84b3907b`, incorporating stock AudioManager, AudioTrack,
+MediaCodec, media metrics/CAS and extractor sources. Main was left untouched.
+The package contains 93 patches (56,226 sources and 217 symlinks), with hash
+`N-V-__8AAOyOe04S_EqvkIKxsmZc_8ISUctwByyUKWAzJ6zv` and SHA-256
+`e1b46c0e10c1e88f5e24d06791ad1dc648d4f18877bc8cddc445a33362fa3d32`.
+The source audit has seven pending stubs and four survivors.
+
+Pinned Java MediaCodec owns validation, buffer views and Handler delivery.
+HostedMediaCodecBackend now connects decoded frames, color metadata and rendered
+frame events to HostedVideoOutput. Polling uses the handler selected by stock
+Java. The rebase also removes duplicate permission-service AIDL/native/source
+entries. HostedAudioService preserves stock navigation/home effect switches and
+the disabled-sound-effects early return. The native permission smoke now uses
+an unassigned application UID; its previous value had root app ID zero.
+
+Clipboard publication now has one wl_display.sync barrier in flight. Copies and
+clears coalesce behind it; the preceding source marker survives only until the
+replacement barrier completes. A barrier orders events without treating an old
+seat serial as accepted. Explicit ownership loss still retires publication
+retries. A 16-pair copy/clear burst verifies final plain/HTML contents and retained
+Android ClipDescription metadata. Codec CLI fixture writers now own files through
+explicit std.Io.
+
+Regression 431 passes stock video (four clean steps), native BufferQueue and
+C++/graph audits. Regression 432 passes all 21 clipboard steps and Wayland unit
+tests. Regression 433 passes all 16 APK tests with 47 clean steps; regression 434
+passes the full JVM suite after correcting the permission test UID. Artifacts:
+`/tmp/wayland-video-clipboard-431-artifacts/stock-video/`,
+`/tmp/wayland-clipboard-432-artifacts/`, and
+`/tmp/wayland-regression-433-artifacts/`. Outbound/cross-task drag, its icon, and
+the remaining M8–M11 acceptance/cutover work are still unfinished.
+
 ## Rendered video callbacks (2026-09-08)
 
 `MediaCodec.setOnFrameRenderedListener` now forwards to the hosted codec output
@@ -23,9 +57,10 @@ or dropped display samples never become fabricated presentation callbacks.
 
 One handler poll and 128 native records bound pending work. Listener replacement,
 flush, output changes, stop and release invalidate pending records and callbacks.
-Application callbacks execute outside the output ownership lock, on the requested
-handler or the codec creation looper; codecs created without a looper own a
-callback thread that is retired at release.
+Application callbacks execute outside the output ownership lock. After the stock
+MediaCodec rebase, pinned Java selects the explicit handler, creation looper or
+main-looper fallback; the host output owns no additional callback thread. Already
+delivered Java messages retain stock MediaCodec lifecycle semantics.
 
 Regression 426 passes the native BufferQueue ownership/pressure suite, stock
 video APK and C++/graph audits. The APK checks real SurfaceView timestamps,

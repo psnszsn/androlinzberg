@@ -301,7 +301,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedMediaMetricsService.kt",
     "src/java/dev/artzig/system/HostedAudioService.kt",
     "src/java/dev/artzig/system/HostedAudioFocus.kt",
-    "src/java/dev/artzig/system/HostedNativePermissionController.kt",
     "src/java/dev/artzig/system/HostedMediaRouterService.kt",
     "src/java/dev/artzig/system/HostedMediaSessionService.kt",
     "src/java/dev/artzig/system/HostedNotificationManagerService.kt",

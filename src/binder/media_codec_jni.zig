@@ -7,6 +7,7 @@ var backend: jni.jclass = null;
 var codec_class: jni.jclass = null;
 var context: jni.jfieldID = null;
 var post_event: jni.jmethodID = null;
+var rendered_handler: jni.jfieldID = null;
 var block_class: jni.jclass = null;
 var block_state: jni.jmethodID = null;
 
@@ -40,6 +41,7 @@ fn blockCompatible(_: Env, _: jni.jclass, _: jni.jobject) callconv(.c) jni.jbool
 fn native_init(env: Env, cls: jni.jclass) callconv(.c) void {
     context = env.*.*.GetFieldID.?(env, cls, "mNativeContext", "J");
     post_event = env.*.*.GetMethodID.?(env, cls, "postEventFromNative", "(IIILjava/lang/Object;)V");
+    rendered_handler = env.*.*.GetFieldID.?(env, cls, "mOnFrameRenderedHandler", "Landroid/media/MediaCodec$EventHandler;");
 }
 fn codecException(env: Env, _: jni.jclass, code: jni.jint, action: jni.jint, message: jni.jobject) callconv(.c) jni.jobject {
     const cls = env.*.*.FindClass.?(env, "android/media/MediaCodec$CodecException") orelse return null;
@@ -137,8 +139,12 @@ fn native_enableOnFirstTunnelFrameReadyListener(env: Env, object: jni.jobject, a
 }
 
 fn native_enableOnFrameRenderedListener(env: Env, object: jni.jobject, a0: jni.jboolean) callconv(.c) void {
-    const id = method(env, "enableOnFrameRenderedListener", "(JZ)V") orelse return;
-    const args = [_]jni.jvalue{ .{ .j = env.*.*.GetLongField.?(env, object, context) }, .{ .z = a0 } };
+    const id = method(env, "enableOnFrameRenderedListener", "(JZLandroid/os/Handler;)V") orelse return;
+    // Stock Java has already selected this handler while holding mListenerLock.
+    // Keep native polling on that looper so queued timestamp notifications remain bounded.
+    const handler = env.*.*.GetObjectField.?(env, object, rendered_handler);
+    defer if (handler != null) env.*.*.DeleteLocalRef.?(env, handler);
+    const args = [_]jni.jvalue{ .{ .j = env.*.*.GetLongField.?(env, object, context) }, .{ .z = a0 }, .{ .l = handler } };
     env.*.*.CallStaticVoidMethodA.?(env, backend, id, &args);
 }
 
@@ -460,7 +466,7 @@ pub fn register(env: Env) !void {
         .{ "createPersistentInputSurface", "()Landroid/view/Surface;" },
         .{ "setInputSurface", "(JLandroid/view/Surface;)V" },
         .{ "enableOnFirstTunnelFrameReadyListener", "(JZ)V" },
-        .{ "enableOnFrameRenderedListener", "(JZ)V" },
+        .{ "enableOnFrameRenderedListener", "(JZLandroid/os/Handler;)V" },
         .{ "setCallback", "(JLandroid/media/MediaCodec$Callback;)V" },
         .{ "configure", "(J[Ljava/lang/String;[Ljava/lang/Object;Landroid/view/Surface;Landroid/media/MediaCrypto;Landroid/os/IHwBinder;I)V" },
         .{ "setSurface", "(JLandroid/view/Surface;)V" },

@@ -411,7 +411,6 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/module/extractors/aac"), &.{"AACExtractor.cpp"}, extractor_includes, &.{"-DGETEXTRACTORDEF=azk_aac_extractor_def"});
     g.add(o.aosp.path(b, "frameworks/av/media/module/id3"), &.{"ID3.cpp"}, extractor_includes, &.{});
     g.add(o.aosp.path(b, "system/media/audio_utils"), &.{"primitives.c"}, extractor_includes, &.{});
-    g.add(o.aosp.path(b, "frameworks/native/libs/binder"), &.{ "PermissionCache.cpp", "IPermissionController.cpp" }, extractor_includes, &.{});
     // Android's host-capable camera metadata library and C++ value containers.
     g.add(o.aosp.path(b, "frameworks/av/camera"), &.{ "CameraMetadata.cpp", "VendorTagDescriptor.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/media/camera/src"), &.{"camera_metadata.c"}, &.{}, &.{});

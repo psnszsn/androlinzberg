@@ -7,7 +7,7 @@ import android.content.pm.PackageManager
 import android.media.*
 import android.os.IHwBinder
 import android.os.PersistableBundle
-import android.view.ArtzigVideoLayer
+import dev.artzig.window.WindowBackend
 import android.view.Surface
 import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
@@ -20,10 +20,10 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Pinned JMediaCodec and libstagefright MediaCodec lifecycle/ownership boundary.
- * Their Codec2/OMX service and BufferQueue collaborators are unavailable here.
+ * Their Codec2/OMX service is unavailable here; HostedVideoOutput owns the stock
+ * Surface/BufferQueue connection and its presentation timestamps.
  * Stock Java owns API validation, buffer invalidation and Handler callback delivery;
  * this module owns the existing decoder, buffers, execution generations and GPU frames.
- * src/codec/azk_codec.zig and the presentation backend are unchanged.
  */
 internal object HostedMediaCodecBackend {
     @JvmStatic private external fun codecException(code: Int, action: Int, message: String): MediaCodec.CodecException
@@ -41,6 +41,7 @@ internal object HostedMediaCodecBackend {
         var handle = 0L
         var video = false
         var surface: Surface? = null
+        val videoOutput = HostedVideoOutput()
         var input = emptyArray<ByteBuffer>()
         var output = emptyArray<ByteBuffer>()
         val inputOwned = BooleanArray(8)
@@ -49,7 +50,7 @@ internal object HostedMediaCodecBackend {
         val outputInfos = Array(8) { MediaCodec.BufferInfo() }
         val formats = HostedCodecFormats()
         var outputFormat = MediaFormat()
-        val meta = IntArray(3)
+        val meta = IntArray(4)
         val pts = LongArray(1)
         val frame = LongArray(1)
         val pendingFrames = LinkedHashMap<Long, PendingFrame>()
@@ -95,17 +96,18 @@ internal object HostedMediaCodecBackend {
     }
     private fun discardBuffers(value: Codec) {
         for (frame in value.pendingFrames.values) {
-            frame.task?.cancel(false); ArtzigVideoLayer.releaseHardware(frame.handle)
+            frame.task?.cancel(false); HostedVideoOutput.releaseHardware(frame.handle)
         }
         value.pendingFrames.clear()
         for (i in value.hardware.indices) {
-            ArtzigVideoLayer.releaseHardware(value.hardware[i]); value.hardware[i] = 0
+            HostedVideoOutput.releaseHardware(value.hardware[i]); value.hardware[i] = 0
         }
         value.inputOwned.fill(false); value.outputOwned.fill(false)
         value.pendingOutput = -1; value.inputEos = false; value.outputEos = false
     }
     private fun close(value: Codec) {
         cancel(value); discardBuffers(value)
+        value.videoOutput.close()
         if (value.handle != 0L) HostedCodecEngine.nativeClose(value.handle)
         value.handle = 0
         value.input = emptyArray(); value.output = emptyArray()
@@ -115,7 +117,7 @@ internal object HostedMediaCodecBackend {
     }
     @JvmStatic fun release(id: Long) {
         val value = codecs.remove(id) ?: return
-        synchronized(value) { close(value); value.phase = Phase.RELEASED }
+        synchronized(value) { close(value); value.videoOutput.release(); value.phase = Phase.RELEASED }
     }
     @JvmStatic fun reset(id: Long) = withCodec(id) { close(it); it.phase = Phase.INITIALIZED }
     @JvmStatic fun configure(id: Long, keys: Array<String>?, values: Array<Any?>?, surface: Surface?,
@@ -160,26 +162,35 @@ internal object HostedMediaCodecBackend {
             it.outputFormat = if (it.video) videoFormat(mime, format.getInteger(MediaFormat.KEY_WIDTH, 0), format.getInteger(MediaFormat.KEY_HEIGHT, 0))
                 else MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_RAW, rate.takeIf { n -> n > 0 } ?: 44100,
                     channels.takeIf { n -> n > 0 } ?: 2).apply { setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT) }
+            it.videoOutput.configure(if (it.video) surface else null,
+                if (it.video) format.getInteger(MediaFormat.KEY_ROTATION, 0) else 0)
             it.formats.configured(format, it.outputFormat)
             it.handle = handle; it.surface = surface; it.phase = Phase.CONFIGURED
             it.formatReported = false; discardBuffers(it)
-        } catch (error: Throwable) { HostedCodecEngine.nativeClose(handle); throw error }
+        } catch (error: Throwable) {
+            it.videoOutput.close()
+            HostedCodecEngine.nativeClose(handle)
+            it.input = emptyArray(); it.output = emptyArray(); it.formats.clear()
+            throw error
+        }
     }
     private fun videoFormat(mime: String, width: Int, height: Int) = MediaFormat.createVideoFormat(mime, width, height).apply {
         setInteger(MediaFormat.KEY_CROP_LEFT, 0); setInteger(MediaFormat.KEY_CROP_TOP, 0)
         setInteger(MediaFormat.KEY_CROP_RIGHT, (width - 1).coerceAtLeast(0)); setInteger(MediaFormat.KEY_CROP_BOTTOM, (height - 1).coerceAtLeast(0))
         setInteger(MediaFormat.KEY_STRIDE, width); setInteger(MediaFormat.KEY_SLICE_HEIGHT, height)
-        setInteger(MediaFormat.KEY_COLOR_FORMAT, 0x2a)
+        setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
     }
     @JvmStatic fun start(id: Long) = withCodec(id) {
         check(it.phase == Phase.CONFIGURED || (it.phase == Phase.FLUSHED && it.asynchronous))
         it.phase = Phase.EXECUTING
+        it.videoOutput.start()
         cancel(it)
         if (it.asynchronous) schedule(id, it, it.generation, 0)
     }
     @JvmStatic fun stop(id: Long) = withCodec(id) { close(it); it.phase = Phase.INITIALIZED }
     @JvmStatic fun flush(id: Long) = withCodec(id) {
         check(it.phase == Phase.EXECUTING)
+        it.videoOutput.flush(it.asynchronous)
         cancel(it); discardBuffers(it); HostedCodecEngine.nativeFlush(it.handle)
         it.phase = Phase.FLUSHED
     }
@@ -215,7 +226,7 @@ internal object HostedMediaCodecBackend {
         require(offset >= 0 && size >= 0 && offset.toLong() + size <= it.input[index].capacity())
         check(!it.inputEos) { "Input EOS already queued" }
         if (it.video) HostedCodecEngine.nativeSetVideoTarget(it.handle,
-            it.surface?.let(ArtzigVideoLayer::targetWidth) ?: 0, it.surface?.let(ArtzigVideoLayer::targetHeight) ?: 0)
+            0, 0)
         val configuration = flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
         if (size > 0 && (!configuration || it.video)) {
             val result = HostedCodecEngine.nativeSend(it.handle, it.input[index], offset, size, pts, 0)
@@ -258,13 +269,21 @@ internal object HostedMediaCodecBackend {
             value.hardware[index] = value.frame[0]
         }
         val changed = !value.formatReported || if (value.video)
-            value.meta[1] != value.outputFormat.getInteger(MediaFormat.KEY_WIDTH, 0) || value.meta[2] != value.outputFormat.getInteger(MediaFormat.KEY_HEIGHT, 0)
+            value.meta[1] != value.outputFormat.getInteger(MediaFormat.KEY_WIDTH, 0) || value.meta[2] != value.outputFormat.getInteger(MediaFormat.KEY_HEIGHT, 0) ||
+                (value.meta[3] ushr 16 and 63) != value.outputFormat.getInteger(MediaFormat.KEY_COLOR_STANDARD, 0) ||
+                (value.meta[3] ushr 22 and 31) != value.outputFormat.getInteger(MediaFormat.KEY_COLOR_TRANSFER, 0) ||
+                (value.meta[3] ushr 27 and 7) != value.outputFormat.getInteger(MediaFormat.KEY_COLOR_RANGE, 0)
             else value.meta[1] != value.outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE, 0) || value.meta[2] != value.outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT, 0)
         if (changed) {
             value.outputFormat = if (value.video) videoFormat(value.outputFormat.getString(MediaFormat.KEY_MIME)!!, value.meta[1], value.meta[2])
                 else MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_RAW, value.meta[1], value.meta[2]).apply {
                     setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
                 }
+            if (value.video && value.meta[3] != 0) {
+                value.outputFormat.setInteger(MediaFormat.KEY_COLOR_STANDARD, value.meta[3] ushr 16 and 63)
+                value.outputFormat.setInteger(MediaFormat.KEY_COLOR_TRANSFER, value.meta[3] ushr 22 and 31)
+                value.outputFormat.setInteger(MediaFormat.KEY_COLOR_RANGE, value.meta[3] ushr 27 and 7)
+            }
             value.formats.outputChanged(value.outputFormat); value.formatReported = true
         }
         if (!value.video) buffer.limit(value.meta[0])
@@ -286,7 +305,12 @@ internal object HostedMediaCodecBackend {
             if (render && surface != null) {
                 val now = System.nanoTime()
                 val delay = if (timed && timestamp > now) timestamp - now else 0L
-                if (delay == 0L) ArtzigVideoLayer.pushHardware(surface, frame)
+                val pts = it.outputInfos[index].presentationTimeUs
+                val requested = if (timed) timestamp else pts * 1000
+                if (WindowBackend.stock || delay == 0L) {
+                    val status = it.videoOutput.queue(frame, requested, pts)
+                    if (status != 0) { it.outputOwned[index] = false; failed("Surface video queue failed: $status") }
+                }
                 else {
                     // The host surface accepts a frame immediately; retain ownership here
                     // until the requested monotonic timestamp. These count against output
@@ -297,11 +321,11 @@ internal object HostedMediaCodecBackend {
                     value.pendingFrames[token] = pending
                     pending.task = worker.schedule({
                         synchronized(value) {
-                            if (value.pendingFrames.remove(token) != null) ArtzigVideoLayer.pushHardware(surface, frame)
+                            if (value.pendingFrames.remove(token) != null) value.videoOutput.queue(frame, requested, pts)
                         }
                     }, delay, TimeUnit.NANOSECONDS)
                 }
-            } else ArtzigVideoLayer.releaseHardware(frame)
+            } else HostedVideoOutput.releaseHardware(frame)
         }
         it.outputOwned[index] = false
     }
@@ -366,11 +390,17 @@ internal object HostedMediaCodecBackend {
     @JvmStatic fun getCanonicalName(id: Long): String = withCodec(id) { it.name }
     @JvmStatic fun getOwnCodecInfo(id: Long): MediaCodecInfo = withCodec(id) { MediaCodecList.getInfoFor(it.name) }
     @JvmStatic fun setSurface(id: Long, surface: Surface?) = withCodec(id) {
-        check(it.phase != Phase.INITIALIZED && it.video); requireNotNull(surface); it.surface = surface
+        check(it.phase != Phase.INITIALIZED && it.video); requireNotNull(surface)
+        it.videoOutput.setSurface(surface) // A failed connection retains the previous output.
+        for (frame in it.pendingFrames.values) {
+            frame.task?.cancel(false); HostedVideoOutput.releaseHardware(frame.handle)
+        }
+        it.pendingFrames.clear()
+        it.surface = surface
     }
     @JvmStatic fun setVideoScalingMode(id: Long, mode: Int) = withCodec(id) {
         require(mode == 1 || mode == 2) { "Unrecognized mode: $mode" }
-        if (mode == 2) unavailable("setVideoScalingMode(crop)")
+        it.videoOutput.setScalingMode(mode)
     }
     @JvmStatic fun getMetrics(id: Long): PersistableBundle = withCodec(id) {
         PersistableBundle().apply { putString("android.media.mediacodec.codec", it.name) }
@@ -389,7 +419,16 @@ internal object HostedMediaCodecBackend {
     @JvmStatic fun createPersistentInputSurface(): android.view.Surface? = unavailable("createPersistentInputSurface")
     @JvmStatic fun setInputSurface(a0: Long, a1: android.view.Surface?): Unit = unavailable("setInputSurface")
     @JvmStatic fun enableOnFirstTunnelFrameReadyListener(a0: Long, a1: Boolean): Unit = withCodec(a0) { if (a1) unavailable("enableOnFirstTunnelFrameReadyListener") }
-    @JvmStatic fun enableOnFrameRenderedListener(a0: Long, a1: Boolean): Unit = withCodec(a0) { if (a1) unavailable("enableOnFrameRenderedListener") }
+    @JvmStatic fun enableOnFrameRenderedListener(id: Long, enabled: Boolean, handler: android.os.Handler?): Unit = withCodec(id) { value ->
+        value.videoOutput.setFrameListener(if (!enabled) null else HostedVideoOutput.FrameListener { pts, rendered ->
+            // Native timestamp polling shares the Java-selected listener looper.
+            // A stalled app therefore retains at most 128 native records instead
+            // of accumulating an unbounded stream of Java notification messages.
+            val owner = value.owner.get()
+            if (owner != null) postEvent(owner, 3, 0, 0,
+                mapOf("0-media-time-us" to pts, "0-system-nano" to rendered))
+        }, handler)
+    }
     @JvmStatic fun detachOutputSurface(a0: Long): Unit = unavailable("detachOutputSurface")
     @JvmStatic fun createInputSurface(a0: Long): android.view.Surface? = unavailable("createInputSurface")
     @JvmStatic fun queueInputBuffers(a0: Long, a1: Int, a2: Array<Any?>?): Unit = unavailable("queueInputBuffers")

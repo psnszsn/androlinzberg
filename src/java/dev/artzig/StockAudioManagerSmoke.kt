@@ -19,7 +19,10 @@ internal object StockAudioManagerSmoke {
         val context = ActivityThread.currentApplication() ?: ActivityThread.currentActivityThread().systemContext
         // Original native PermissionCache/IPermissionController reach the published Java service.
         check(nativePermission(android.Manifest.permission.DUMP, -1, 0))
-        check(!nativePermission(android.Manifest.permission.DUMP, -1, 1_000_000_000))
+        // ActivityManager.canAccessUnexportedComponents checks the app ID:
+        // 1_000_000_000 is root in another user, not an unassigned application.
+        val unknownAppUid = android.os.UserHandle.getUid(10_000, android.os.Process.FIRST_APPLICATION_UID)
+        check(!nativePermission(android.Manifest.permission.DUMP, -1, unknownAppUid))
         val permission = android.os.IPermissionController.Stub.asInterface(android.os.ServiceManager.getService("permission"))
         check(permission.isRuntimePermission(android.Manifest.permission.CAMERA))
         check(!permission.isRuntimePermission(android.Manifest.permission.INTERNET))

@@ -10,13 +10,6 @@ const c = @import("av");
 
 const gpa = std.heap.c_allocator;
 
-extern "c" fn fopen(path: [*:0]const u8, mode: [*:0]const u8) ?*anyopaque;
-extern "c" fn fwrite(ptr: *const anyopaque, size: usize, n: usize, f: *anyopaque) usize;
-extern "c" fn fclose(f: *anyopaque) c_int;
-const c_fopen = fopen;
-const c_fwrite = fwrite;
-const c_fclose = fclose;
-
 const Frame = struct {
     pcm: []u8, // interleaved s16
     sample_rate: c_int,
@@ -316,7 +309,7 @@ pub export fn azk_codec_close(d: *Dec) void {
 }
 
 /// Write a short mp3 file for Java-level MediaCodec tests.
-pub export fn azk_codec_write_test_mp3(path: [*:0]const u8) c_int {
+pub fn writeTestMP3(io: std.Io, path: []const u8) c_int {
     const enc = c.avcodec_find_encoder_by_name("libmp3lame") orelse return -1;
     const ectx = c.avcodec_alloc_context3(enc) orelse return -2;
     defer {
@@ -329,8 +322,8 @@ pub export fn azk_codec_write_test_mp3(path: [*:0]const u8) c_int {
     ectx.*.bit_rate = 128000;
     ectx.*.time_base = .{ .num = 1, .den = 44100 };
     if (c.avcodec_open2(ectx, null, null) < 0) return -3;
-    const file = c_fopen(path, "wb") orelse return -4;
-    defer _ = c_fclose(file);
+    const file = std.Io.Dir.cwd().createFile(io, path, .{}) catch return -4;
+    defer file.close(io);
     const ef = c.av_frame_alloc();
     defer {
         var f: ?*c.AVFrame = ef;
@@ -360,7 +353,7 @@ pub export fn azk_codec_write_test_mp3(path: [*:0]const u8) c_int {
         t += n;
         if (c.avcodec_send_frame(ectx, ef) < 0) return -6;
         while (c.avcodec_receive_packet(ectx, epkt) == 0) {
-            if (c_fwrite(epkt.*.data, 1, @intCast(epkt.*.size), file) != @as(usize, @intCast(epkt.*.size))) return -7;
+            file.writeStreamingAll(io, epkt.*.data[0..@intCast(epkt.*.size)]) catch return -7;
             total += epkt.*.size;
             c.av_packet_unref(epkt);
         }
@@ -370,7 +363,7 @@ pub export fn azk_codec_write_test_mp3(path: [*:0]const u8) c_int {
 
 /// Write a short mpeg4 elementary stream as [u32le size][frame]... for
 /// Java-level MediaCodec video tests.
-pub export fn azk_codec_write_test_m4v(path: [*:0]const u8) c_int {
+pub fn writeTestM4V(io: std.Io, path: []const u8) c_int {
     const enc = c.avcodec_find_encoder_by_name("mpeg4") orelse return -1;
     const ectx = c.avcodec_alloc_context3(enc) orelse return -2;
     defer {
@@ -384,8 +377,8 @@ pub export fn azk_codec_write_test_m4v(path: [*:0]const u8) c_int {
     ectx.*.bit_rate = 800000;
     ectx.*.gop_size = 10;
     if (c.avcodec_open2(ectx, null, null) < 0) return -3;
-    const file = c_fopen(path, "wb") orelse return -4;
-    defer _ = c_fclose(file);
+    const file = std.Io.Dir.cwd().createFile(io, path, .{}) catch return -4;
+    defer file.close(io);
     const ef = c.av_frame_alloc();
     defer {
         var f: ?*c.AVFrame = ef;
@@ -423,8 +416,8 @@ pub export fn azk_codec_write_test_m4v(path: [*:0]const u8) c_int {
         while (c.avcodec_receive_packet(ectx, epkt) == 0) {
             var size_le: [4]u8 = undefined;
             std.mem.writeInt(u32, &size_le, @intCast(epkt.*.size), .little);
-            if (c_fwrite(&size_le, 1, 4, file) != 4) return -7;
-            if (c_fwrite(epkt.*.data, 1, @intCast(epkt.*.size), file) != @as(usize, @intCast(epkt.*.size))) return -7;
+            file.writeStreamingAll(io, &size_le) catch return -7;
+            file.writeStreamingAll(io, epkt.*.data[0..@intCast(epkt.*.size)]) catch return -7;
             frames += 1;
             c.av_packet_unref(epkt);
         }
@@ -433,8 +426,8 @@ pub export fn azk_codec_write_test_m4v(path: [*:0]const u8) c_int {
     while (c.avcodec_receive_packet(ectx, epkt) == 0) {
         var size_le: [4]u8 = undefined;
         std.mem.writeInt(u32, &size_le, @intCast(epkt.*.size), .little);
-        if (c_fwrite(&size_le, 1, 4, file) != 4) return -7;
-        if (c_fwrite(epkt.*.data, 1, @intCast(epkt.*.size), file) != @as(usize, @intCast(epkt.*.size))) return -7;
+        file.writeStreamingAll(io, &size_le) catch return -7;
+        file.writeStreamingAll(io, epkt.*.data[0..@intCast(epkt.*.size)]) catch return -7;
         frames += 1;
         c.av_packet_unref(epkt);
     }

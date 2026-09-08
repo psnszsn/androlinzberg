@@ -1359,7 +1359,7 @@ pub const Session = struct {
             if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .text_input_available = self.text_input != null });
         };
         if (self.clipboard == null) if (self.data_device_manager) |manager| if (self.seat) |seat| {
-            self.clipboard = Clipboard.init(self.gpa, self.io, manager, seat, &self.data_offer_token, .{
+            self.clipboard = Clipboard.init(self.gpa, self.io, self.display, manager, seat, &self.data_offer_token, .{
                 .context = self,
                 .changed = clipboardChanged,
                 .issue = clipboardIssue,

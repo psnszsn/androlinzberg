@@ -14,7 +14,7 @@ import java.util.Objects
  * LoudnessCodecHelper. The host has no native spatializer or AudioPolicy device loudness
  * model. Preserve their absent-effect/absent-route results, listener ownership and session
  * transitions here; decoding and PCM presentation remain in the existing native backend. */
-internal class HostedAudioService(private val enforcer: PermissionEnforcer, context: android.content.Context? = null) : IAudioService.Stub(enforcer),
+internal class HostedAudioService(private val enforcer: PermissionEnforcer, private val context: android.content.Context? = null) : IAudioService.Stub(enforcer),
     IAudioService by unsupported<IAudioService>() {
     override fun asBinder(): IBinder = this
     private val playback = HostedPlaybackRegistry(enforcer)
@@ -38,6 +38,24 @@ internal class HostedAudioService(private val enforcer: PermissionEnforcer, cont
         focus.setMultiFocus(enabled)
     }
     override fun isVolumeFixed(): Boolean = true
+
+    // Pinned AudioService's navigation/home effect switches start disabled and
+    // retain the caller's setting. Its full AudioPolicy/SoundPool service cannot
+    // run here; preserve the disabled SOUND_EFFECTS_ENABLED early return before
+    // reaching the explicitly unsupported sample playback operation.
+    @Volatile private var navigationRepeatEffects = false
+    @Volatile private var homeEffect = false
+    override fun setNavigationRepeatSoundEffectsEnabled(enabled: Boolean) { navigationRepeatEffects = enabled }
+    override fun areNavigationRepeatSoundEffectsEnabled(): Boolean = navigationRepeatEffects
+    override fun setHomeSoundEffectEnabled(enabled: Boolean) { homeEffect = enabled }
+    override fun isHomeSoundEffectEnabled(): Boolean = homeEffect
+    override fun playSoundEffect(effectType: Int, userId: Int) {
+        val resolver = checkNotNull(context) { "Sound effects require a service context" }.contentResolver
+        if (android.provider.Settings.System.getIntForUser(resolver,
+                android.provider.Settings.System.SOUND_EFFECTS_ENABLED, 0, userId) != 0) {
+            playSoundEffectVolume(effectType, -1.0f)
+        }
+    }
 
     override fun trackPlayer(card: PlayerBase.PlayerIdCard): Int = playback.track(card)
     override fun playerAttributes(id: Int, attributes: AudioAttributes) = playback.attributes(id, attributes)

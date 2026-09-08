@@ -224,11 +224,11 @@ pub fn main(init: std.process.Init) !void {
             try runFrameworkMain(&headless.rt, "dev.artzig.system.SystemServer", &.{});
             return;
         } else if (std.mem.eql(u8, args[i], "--codec-make-m4v")) {
-            const r = @import("azk_codec").azk_codec_write_test_m4v("/tmp/azk-test.m4v");
+            const r = @import("azk_codec").writeTestM4V(init.io, "/tmp/azk-test.m4v");
             std.debug.print("wrote /tmp/azk-test.m4v: {d} frames\n", .{r});
             return;
         } else if (std.mem.eql(u8, args[i], "--codec-make-mp3")) {
-            const r = @import("azk_codec").azk_codec_write_test_mp3("/tmp/azk-test.mp3");
+            const r = @import("azk_codec").writeTestMP3(init.io, "/tmp/azk-test.mp3");
             std.debug.print("wrote /tmp/azk-test.mp3: {d} bytes\n", .{r});
             return;
         } else if (std.mem.eql(u8, args[i], "--codec-selftest")) {

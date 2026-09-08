@@ -12,11 +12,13 @@ import android.widget.TextView
 class ClipboardFixtureActivity : Activity() {
     private lateinit var clipboard: ClipboardManager
     private lateinit var status: TextView
+    private lateinit var description: TextView
     private var lastUri: android.net.Uri? = null
     private var heldFile: java.io.InputStream? = null
     private val listener = ClipboardManager.OnPrimaryClipChangedListener { report() }
     private fun report() {
         val clip = clipboard.primaryClip
+        description.text = "Clipboard label=${clip?.description?.label ?: "none"}"
         status.text = if (clip == null) "Clipboard is empty" else {
             val item = clip.getItemAt(0)
             if (item.uri != null) {
@@ -34,6 +36,8 @@ class ClipboardFixtureActivity : Activity() {
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         status = TextView(this).apply { text = "Clipboard fixture ready" }
         content.addView(status)
+        description = TextView(this)
+        content.addView(description)
         fun button(label: String, action: () -> Unit) {
             content.addView(Button(this).apply { text = label; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, 32))
         }
@@ -41,6 +45,15 @@ class ClipboardFixtureActivity : Activity() {
         button("Copy HTML") { clipboard.setPrimaryClip(ClipData.newHtmlText("Fixture HTML", "Android bold 😀", "<b>Android bold 😀</b>")); report() }
         button("Read clipboard") { report() }
         button("Clear clipboard") { clipboard.clearPrimaryClip(); report() }
+        button("Copy rapid sequence") {
+            repeat(16) { index ->
+                clipboard.setPrimaryClip(ClipData.newPlainText("Interim $index", "Interim $index"))
+                clipboard.clearPrimaryClip()
+            }
+            clipboard.setPrimaryClip(ClipData.newHtmlText("Final sequence metadata",
+                "Android final 😀", "<b>Android final 😀</b>"))
+            report()
+        }
         button("Copy file") {
             clipboard.setPrimaryClip(ClipData.newUri(contentResolver, "Fixture file", ClipboardFileProvider.URI))
             report()

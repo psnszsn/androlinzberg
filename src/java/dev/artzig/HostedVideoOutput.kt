@@ -3,8 +3,6 @@ package dev.artzig
 import android.view.ArtzigVideoLayer
 import android.view.Surface
 import android.os.Handler
-import android.os.HandlerThread
-import android.os.Looper
 import dev.artzig.window.WindowBackend
 
 /** ACodec native-window ownership at the FFmpeg host seam. The stock codec
@@ -15,8 +13,6 @@ class HostedVideoOutput : AutoCloseable {
     private var connection = 0L
     private var rotation = 0
     private var scalingMode = 1
-    private val creationLooper = Looper.myLooper()
-    private var ownedThread: HandlerThread? = null
     private var listener: FrameListener? = null
     private var callbackHandler: Handler? = null
     private var executing = false
@@ -27,19 +23,13 @@ class HostedVideoOutput : AutoCloseable {
         fun rendered(presentationTimeUs: Long, nanoTime: Long)
     }
 
-    /** Pinned MediaCodec.setOnFrameRenderedListener's handler and replacement
-     * contract, with CCodecBufferChannel's timestamps supplied by stock Surface.
-     * One poll and 128 native records bound work even when an app handler stalls. */
+    /** Stock MediaCodec selects its Handler and delivers EVENT_FRAME_RENDERED.
+     * Poll on that same handler to keep a stalled app within the native record
+     * budget. This seam owns only timestamp collection and output lifetimes. */
     @Synchronized fun setFrameListener(value: FrameListener?, handler: Handler?) {
         invalidateCallbacks()
-        listener = value
-        callbackHandler = if (value == null) null else handler ?: Handler(creationLooper ?: run {
-            val thread = ownedThread ?: HandlerThread("Hosted codec frames").apply {
-                start()
-                ownedThread = this
-            }
-            thread.looper
-        })
+        listener = if (handler != null) value else null
+        callbackHandler = handler
         updateTracking()
     }
 
@@ -154,8 +144,6 @@ class HostedVideoOutput : AutoCloseable {
         close()
         listener = null
         callbackHandler = null
-        ownedThread?.quitSafely()
-        ownedThread = null
     }
 
     companion object {

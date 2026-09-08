@@ -345,6 +345,16 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     clipboard_click('COPY HTML', 'Clipboard text=Android bold 😀 html=<b>Android bold 😀</b>')
                     native_paste('text/plain;charset=utf-8', 'Android bold 😀')
                     native_paste('text/html', '<b>Android bold 😀</b>')
+                    clipboard_click('COPY RAPID SEQUENCE',
+                                    'Clipboard text=Android final 😀 html=<b>Android final 😀</b>', via='wayland')
+                    native_paste('text/plain;charset=utf-8', 'Android final 😀')
+                    native_paste('text/html', '<b>Android final 😀</b>')
+                    # An own-source echo must not rebuild ClipData and discard
+                    # metadata, even after a burst of copy/clear publications.
+                    clipboard_click('READ CLIPBOARD',
+                                    'Clipboard text=Android final 😀 html=<b>Android final 😀</b>', via='wayland')
+                    control('wait', 'exists', '--task-id', task,
+                            '--text', 'Clipboard label=Final sequence metadata')
                     control('step', 'exec', '--wait', 'exists', '--task-id', task,
                             '--text', 'Clipboard text=Native 😀 café html=none', '--',
                             'wl-copy', '--type', 'text/plain;charset=utf-8', 'Native 😀 café')
@@ -414,7 +424,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     (out / 'clipboard-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
                     assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 19 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 21 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.drag:
                     control('step', 'click', '--task-id', task, '--text', label('Show drag and drop'),

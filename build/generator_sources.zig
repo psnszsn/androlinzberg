@@ -954,7 +954,6 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/usd/IPublishSessionCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/usd/ISubscribeSessionCallback.aidl" },
     .{ .source = .aosp, .path = "packages/modules/Wifi/framework/java/android/net/wifi/usd/IUsdManager.aidl" },
-    .{ .source = .aosp, .path = "frameworks/base/core/java/android/os/IPermissionController.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/tv/ITvInputClient.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/tv/ITvInputHardware.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/media/java/android/media/tv/ITvInputHardwareCallback.aidl" },

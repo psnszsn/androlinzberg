@@ -35,6 +35,7 @@ const Source = struct {
 
 gpa: std.mem.Allocator,
 io: std.Io,
+display: *wl.Display, // Borrowed from Session; publications share its event order.
 manager: *wl.DataDeviceManager, // Borrowed from Session.
 device: *wl.DataDevice,
 transfers: *Transfers,
@@ -44,6 +45,9 @@ selection: ?*Offer = null,
 drag: ?*Offer = null,
 native_drag: ?DragOffer = null,
 source: ?*Source = null,
+publication_barrier: ?*wl.Callback = null,
+retired_marker: [80:0]u8 = @splat(0),
+retired_marker_length: usize = 0,
 pending: ?*Payload = null,
 has_pending: bool = false,
 clear_echo: bool = false,
@@ -54,19 +58,20 @@ focused: bool = false,
 next_token: *u64,
 revision: i64 = 0,
 
-pub fn init(gpa: std.mem.Allocator, io: std.Io, manager: *wl.DataDeviceManager, seat: *wl.Seat, next_token: *u64, hooks: Hooks) !*Self {
+pub fn init(gpa: std.mem.Allocator, io: std.Io, display: *wl.Display, manager: *wl.DataDeviceManager, seat: *wl.Seat, next_token: *u64, hooks: Hooks) !*Self {
     const self = try gpa.create(Self);
     errdefer gpa.destroy(self);
     const transfers = try Transfers.init(gpa, io);
     errdefer transfers.deinit();
     const device = try manager.getDataDevice(seat);
-    self.* = .{ .gpa = gpa, .io = io, .manager = manager, .device = device, .transfers = transfers, .hooks = hooks, .next_token = next_token };
+    self.* = .{ .gpa = gpa, .io = io, .display = display, .manager = manager, .device = device, .transfers = transfers, .hooks = hooks, .next_token = next_token };
     if (hooks.drag) |drag| self.native_drag = .{ .io = io, .hooks = drag };
     device.setListener(*Self, deviceListener, self);
     return self;
 }
 
 pub fn deinit(self: *Self) void {
+    if (self.publication_barrier) |callback| callback.destroy();
     if (self.native_drag) |*drag| drag.cancel();
     for (self.offers) |offer| if (offer) |live| self.destroyOffer(live);
     if (self.source) |source| self.destroySource(source);
@@ -150,7 +155,7 @@ fn retryPublication(self: *Self) !void {
 }
 
 fn publish(self: *Self) !void {
-    if (!self.has_pending or !self.focused) return;
+    if (!self.has_pending or !self.focused or self.publication_barrier != null) return;
     const serial = self.serial orelse return;
     var replacement: ?*Source = null;
     if (self.pending) |payload| {
@@ -182,10 +187,37 @@ fn publish(self: *Self) !void {
     self.publication_confirmed = false;
     self.publication_serial = serial;
     self.device.setSelection(if (replacement) |source| source.proxy else null, serial);
-    if (self.source) |source| self.destroySource(source);
+    if (self.source) |source| {
+        // A focus echo can already be in flight when this replacement is sent.
+        // Retain exactly the preceding marker until the replacement's barrier;
+        // recognizing all historical markers would swallow clipboard-manager
+        // restores of an earlier Android copy after foreign ownership.
+        self.retired_marker = source.marker;
+        self.retired_marker_length = source.marker_length;
+        self.destroySource(source);
+    }
     self.source = replacement;
     self.pending = null;
     self.has_pending = false;
+    const callback = self.display.sync() catch |err| {
+        // set_selection has already been sent. Continuing without its ordering
+        // barrier could misclassify an old echo as a new native copy.
+        self.hooks.failure(self.hooks.context, err);
+        return err;
+    };
+    self.publication_barrier = callback;
+    callback.setListener(*Self, publicationDone, self);
+}
+
+fn publicationDone(callback: *wl.Callback, _: wl.Callback.Event, self: *Self) void {
+    std.debug.assert(self.publication_barrier == callback);
+    callback.destroy();
+    self.publication_barrier = null;
+    self.retired_marker_length = 0;
+    // A roundtrip orders server processing; it does not confirm acceptance of
+    // the seat serial. Only our selection echo confirms that. Coalesce all
+    // intervening copies/clears into the one latest pending publication.
+    self.publish() catch |err| self.hooks.issue(self.hooks.context, err);
 }
 
 fn removeSource(self: *Self, source: *Source) *Payload {
@@ -247,6 +279,8 @@ fn readSelection(self: *Self, offer: *Offer) !void {
         self.publication_confirmed = true;
         return;
     };
+    if (self.retired_marker_length != 0 and
+        offer.mimes.contains(self.retired_marker[0..self.retired_marker_length])) return;
     // A delivered foreign selection supersedes an unconfirmed older copy.
     self.publication_confirmed = true;
     // The new native owner supersedes the old contents immediately. While an
@@ -299,6 +333,8 @@ fn sourceListener(_: *wl.DataSource, event: wl.DataSource.Event, source: *Source
         },
         .cancelled => {
             self.publication_confirmed = true; // Explicit ownership loss retires retries.
+            self.retired_marker_length = 0;
+            self.clear_echo = false;
             self.destroySource(source);
         },
         .target, .action, .dnd_drop_performed, .dnd_finished => {},
