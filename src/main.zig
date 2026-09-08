@@ -288,6 +288,15 @@ pub fn main(init: std.process.Init) !void {
             try @import("desktop_test_control.zig").register(@ptrCast(headless.rt.env), &desktop_control.?);
         }
         try runFrameworkMain(&headless.rt, "dev.artzig.window.DesktopLauncher", &.{if (binder != null) "owner" else "joined"});
+        const e = art.Env{ .env = headless.rt.env };
+        const cls = try e.findClass("dev/artzig/window/DesktopLauncher");
+        defer headless.rt.env.*.*.DeleteLocalRef.?(headless.rt.env, cls);
+        const failed = try e.getStaticMethodID(cls, "sessionFailed", "()Z");
+        const lost = headless.rt.env.*.*.CallStaticBooleanMethod.?(headless.rt.env, cls, failed) != 0;
+        try e.check();
+        // Unwind through the session owner's bounded cleanup before reporting
+        // service loss. AndroidRuntime's uncaught-exception exit cannot do that.
+        if (lost) return error.DesktopSessionLost;
         return;
     }
     return javaMain(init, frames_limit, apk, fullscreen, if (binder) |*session| session else null);

@@ -1318,6 +1318,29 @@ pub fn build(b: *std.Build) void {
         b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else if (clipboard_fixture) "stock-clipboard-test" else if (drag_fixture) "stock-drag-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
             .dependOn(&desktop_launcher.run.step);
     }
+    const session_loss_step = b.step("stock-session-loss-test", "Retire an idle APK session after system, graphics, presenter or broker death");
+    for ([_][]const u8{ "system", "surfaceflinger", "presenter", "broker" }) |fault| {
+        const run = @import("build/command.zig").create(b);
+        setApplicationEnvironment(run, application_tree);
+        run.setEnvironment("AZK_WINDOW_BACKEND", "stock");
+        run.setEnvironment("AZK_TASK_WINDOWS", "1");
+        run.setEnvironment("WLR_RENDERER", "gles2");
+        run.setEnvironment("SHOT_COMPOSITOR", "labwc");
+        run.addArg("env");
+        run.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
+        run.addFileArg(b.path("tools/shot.sh"));
+        const output = b.pathResolve(&.{ "zig-out/test-results/stock-session-loss", fault });
+        run.addArgs(&.{ b.pathResolve(&.{ output, "screenshot.png" }), "--runner", "--", "python3" });
+        run.addFileArg(b.path("tests/native/desktop-session-loss-test.py"));
+        run.addArgs(&.{ "--fault", fault, "--output", output, "--seat" });
+        run.addFileArg(surface_server.getEmittedBin());
+        run.addArg("--");
+        run.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+        run.addFileArg(window_fixture.apk);
+        run.run.has_side_effects = true;
+        run.run.setName(b.fmt("verify desktop session retirement after {s} loss", .{fault}));
+        session_loss_step.dependOn(&run.run.step);
+    }
     const framework_module_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_module_smoke, application_tree);
     framework_module_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

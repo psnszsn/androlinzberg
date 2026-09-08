@@ -11,6 +11,32 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Idle session retirement after service loss (2026-09-08)
+
+The desktop controller now watches the ATMS, presenter and SurfaceFlinger Binder
+identities independently of task callbacks. Service loss returns an explicit
+failure result to the native launcher, which runs ordered, bounded session
+cleanup before exiting nonzero. An uncaught Java exception would instead invoke
+AndroidRuntime's immediate exit and bypass this cleanup.
+
+`stock-session-loss-test` runs under the existing labwc/shot harness and disables
+the test controller, whose periodic Binder queries could hide an idle-loop hang.
+It kills only a pidfd-pinned descendant of its own launcher after actual APK
+presentation. Regression 497 reproduces a 20-second controller timeout after
+all four service losses. Regression 498 exposed an inline Kotlin return losing
+a nested cleanup exception handler; an explicit loop exit preserves it.
+
+Regression 499 passes system-service, SurfaceFlinger, presenter and broker loss.
+Each controller exits with status 1 in 114–165 ms, all owned processes retire,
+and the session directory is removed. Surviving presenters release every buffer;
+no native fatal crash is observed. Normal desktop launch/close still passes its
+13 issue-free interaction steps, and C++/graph audits pass. Artifacts:
+`/tmp/wayland-session-loss-497-artifacts/`,
+`/tmp/wayland-session-loss-498-artifacts/`, and
+`/tmp/wayland-session-loss-499-artifacts/`. Regression 500 passes the full default JVM suite, all 16 APK tests
+(53 issue-free steps), and C++/graph audits. APK artifacts:
+`/tmp/wayland-session-loss-500-artifacts/integration/`. The remaining acceptance matrix and default cutover are unfinished.
+
 ## Drag-shadow geometry and producer updates (2026-09-08)
 
 Pinned `View.startDragAndDrop` allows nonnegative hotspots outside the shadow

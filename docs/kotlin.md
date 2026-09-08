@@ -52,6 +52,13 @@ Compare `javap -p -s` output before and after the change. Use `@JvmStatic`,
 Do not make a bulk conversion. Kotlin null types and synthetic properties can
 change source behavior.
 
+For resource-owning `try`/`finally`, prefer an explicit loop exit to a nonlocal
+return inside an inline lambda such as `let`. The pinned K2 compiler omitted a
+nested cleanup `catch` when copying `DesktopLauncher`'s `finally` for that return;
+`javap -c -p` confirmed the missing exception-table range before D8. The
+`stock-session-loss-test` regression exercises this cleanup with real Binder
+death. Keep cleanup exceptions covered when changing these exit paths.
+
 ## APK class loading
 
 The hosted APK class loader loads framework and runtime API classes from the
