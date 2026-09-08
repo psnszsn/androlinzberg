@@ -9,6 +9,7 @@ const DataOffer = @import("data_offer.zig");
 pub const MimeTypes = DataOffer.MimeTypes;
 pub const Payload = DataOffer.Payload;
 pub const DragOffer = @import("drag_offer.zig");
+pub const DragSource = @import("drag_source.zig");
 
 pub const Hooks = struct {
     context: *anyopaque,
@@ -44,6 +45,7 @@ offers: [16]?*Offer = @splat(null),
 selection: ?*Offer = null,
 drag: ?*Offer = null,
 native_drag: ?DragOffer = null,
+outbound_drag: ?*DragSource = null,
 source: ?*Source = null,
 publication_barrier: ?*wl.Callback = null,
 retired_marker: [80:0]u8 = @splat(0),
@@ -72,6 +74,7 @@ pub fn init(gpa: std.mem.Allocator, io: std.Io, display: *wl.Display, manager: *
 
 pub fn deinit(self: *Self) void {
     if (self.publication_barrier) |callback| callback.destroy();
+    if (self.outbound_drag) |drag| drag.deinit();
     if (self.native_drag) |*drag| drag.cancel();
     for (self.offers) |offer| if (offer) |live| self.destroyOffer(live);
     if (self.source) |source| self.destroySource(source);
@@ -86,6 +89,41 @@ fn token(self: *Self) !u64 {
     const result = self.next_token.*;
     self.next_token.* += 8;
     return result;
+}
+
+/// Consumes payload on every outcome. Clipboard owns this source through its
+/// terminal event and frees it at the next drag or seat/manager teardown. The
+/// caller supplies a validated held gesture, never a generic clipboard serial.
+pub fn startDrag(self: *Self, origin: *wl.Surface, serial: u32, icon: ?*wl.Surface, payload: *Payload, hooks: DragSource.Hooks) !*DragSource {
+    if (self.outbound_drag) |previous| {
+        if (previous.active()) {
+            payload.destroy();
+            return error.NativeDragAlreadyActive;
+        }
+        previous.deinit();
+        self.outbound_drag = null;
+    }
+    const source_token = self.token() catch |err| {
+        payload.destroy();
+        return err;
+    };
+    const source = try DragSource.init(self.gpa, self.io, self.manager, self.device, self.transfers, source_token, origin, serial, icon, payload, hooks);
+    self.outbound_drag = source;
+    return source;
+}
+
+pub fn dragTimeout(self: *Self) i32 {
+    var timeout: i32 = -1;
+    if (self.native_drag) |*drag| timeout = drag.tick();
+    if (self.outbound_drag) |drag| {
+        const outgoing = drag.tick();
+        if (outgoing >= 0) timeout = if (timeout < 0) outgoing else @min(timeout, outgoing);
+    }
+    return timeout;
+}
+pub fn removeDragSurface(self: *Self, surface: *wl.Surface) void {
+    if (self.native_drag) |*drag| drag.removed(surface);
+    if (self.outbound_drag) |drag| if (drag.origin == surface) drag.cancel();
 }
 
 /// Actual wl_keyboard.enter is a seat event with a compositor-issued serial.
@@ -303,6 +341,7 @@ fn readSelection(self: *Self, offer: *Offer) !void {
 /// and callbacks remain on the Wayland thread.
 pub fn drain(self: *Self) void {
     while (self.transfers.take()) |completion| {
+        if (self.outbound_drag) |drag| if (drag.complete(completion)) continue;
         if (self.native_drag) |*drag| if (drag.complete(completion)) continue;
         const offer = self.selection;
         if (offer == null or (completion.token < offer.?.token or completion.token > offer.?.token + 2)) {

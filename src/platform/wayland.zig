@@ -742,10 +742,10 @@ pub const Session = struct {
         if (self.clipboard_failure) |failure| return failure;
         if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         var timeout = timeout_ms;
-        if (self.clipboard) |clipboard| if (clipboard.native_drag) |*drag| {
-            const drag_timeout = drag.tick();
+        if (self.clipboard) |clipboard| {
+            const drag_timeout = clipboard.dragTimeout();
             if (drag_timeout >= 0) timeout = if (timeout < 0) drag_timeout else @min(timeout, drag_timeout);
-        };
+        }
         if (self.pointer_focus) |window| {
             const cursor_timeout = window.updateCursorAnimation();
             if (cursor_timeout >= 0) timeout = if (timeout < 0) cursor_timeout else @min(timeout, cursor_timeout);
@@ -864,10 +864,10 @@ pub const Session = struct {
     }
 
     fn removeWindow(self: *Session, window: *Window) void {
-        if (self.clipboard) |clipboard| if (clipboard.native_drag) |*drag| {
-            if (window.surface_created) drag.removed(window.surface);
-            if (window.ui_initialized) drag.removed(window.ui_surface);
-        };
+        if (self.clipboard) |clipboard| {
+            if (window.surface_created) clipboard.removeDragSurface(window.surface);
+            if (window.ui_initialized) clipboard.removeDragSurface(window.ui_surface);
+        }
         if (self.text_input) |input| {
             if (window.surface_created) input.removeSurface(window.surface);
             if (window.ui_initialized) input.removeSurface(window.ui_surface);

@@ -11,6 +11,28 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Outbound native source component (2026-09-08)
+
+The seat now owns an outbound COPY data-source component with immutable MIME
+representations, a private source marker, shared bounded FD workers and terminal
+compositor-event delivery. Source transfer failures cancel the source; the
+post-drop destination wait is bounded to ten seconds. Origin-surface, manager
+and session teardown cancel outstanding ownership. Source objects and their
+payloads remain bounded to one per seat and retire at replacement or teardown.
+
+The existing native drag peer now exercises this production source component
+instead of its own protocol listener. Regression 443 passes all 12 drag steps:
+Unicode text, HTML and URI COPY completion, Android recipient rejection and
+cancellation before DROP. Native result files verify target/action negotiation,
+FD sends and the correct terminal source event. All 21 clipboard steps, Wayland
+unit tests and C++/graph audits also pass. Artifacts:
+`/tmp/wayland-drag-source-443-artifacts/`.
+
+This is the outbound protocol component, not the completed Android/native
+handoff. WMS still needs to transfer the existing drag state using the actual
+held-input origin/serial, preserve its grants across task targets, and mirror
+its stock drag shadow into the native icon surface.
+
 ## Test-control descriptor ownership and pressure (2026-09-08)
 
 The Varlink server now uses explicit std.Io ownership for sockets, reads,

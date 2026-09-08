@@ -2,7 +2,6 @@
 const std = @import("std");
 const Io = std.Io;
 const Queue = @import("surface_queue");
-const wl = @import("wayland").client.wl;
 const State = struct {
     io: Io,
     clipboard: ?*Queue.Clipboard = null,
@@ -14,35 +13,22 @@ const State = struct {
     finished: bool = false,
     cancelled: bool = false,
     sends: u32 = 0,
-    source_live: bool = false,
     failure: ?anyerror = null,
-    fn listener(source: *wl.DataSource, event: wl.DataSource.Event, self: *State) void {
-        switch (event) {
-            .target => |target| self.accepted = target.mime_type != null,
-            .action => |action| self.copy = action.dnd_action.copy,
-            .dnd_drop_performed => self.dropped = true,
-            .dnd_finished, .cancelled => {
-                self.finished = event == .dnd_finished;
-                self.cancelled = event == .cancelled;
-                // Both events end ownership. Destroy immediately; a later
-                // invalidation of the offer cannot undo a completed copy.
-                self.source_live = false;
-                source.destroy();
-            },
-            .send => |send| {
-                const file: Io.File = .{ .handle = send.fd, .flags = .{ .nonblocking = false } };
-                if (!std.mem.eql(u8, std.mem.span(send.mime_type), self.mime)) {
-                    file.close(self.io);
-                    self.failure = error.UnadvertisedDragMime;
-                    return;
-                }
-                self.clipboard.?.transfers.send(1, file, self.bytes) catch |err| {
-                    self.failure = err;
-                    return;
-                };
-                self.sends += 1;
+    fn event(context: *anyopaque, _: u64, value: Queue.Clipboard.DragSource.Event) void {
+        const self: *State = @ptrCast(@alignCast(context));
+        switch (value) {
+            .accepted => |accepted| self.accepted = accepted,
+            .copy => |copy| self.copy = copy,
+            .dropped => self.dropped = true,
+            .ended => |consumed| {
+                self.finished = consumed;
+                self.cancelled = !consumed;
             },
         }
+    }
+    fn issue(context: *anyopaque, failure: anyerror) void {
+        const self: *State = @ptrCast(@alignCast(context));
+        self.failure = failure;
     }
 };
 
@@ -78,13 +64,6 @@ fn exercise(init: std.process.Init, state: *State, consumed: bool, cancelled: bo
     defer window.deinit();
     try window.prepareTestInput();
     state.clipboard = session.clipboard orelse return error.NoDataDevice;
-    const source = try session.data_device_manager.?.createDataSource();
-    state.source_live = true;
-    defer if (state.source_live) source.destroy();
-    if (source.getVersion() < 3) return error.DragResultProtocolUnavailable;
-    source.setListener(*State, State.listener, state);
-    source.offer(state.mime);
-    source.setActions(.{ .copy = true });
     // The harness explicitly places this peer at (720,0), 320x480. These
     // output coordinates are test input, never inferred from Android bounds.
     const previous = state.clipboard.?.serial;
@@ -93,7 +72,12 @@ fn exercise(init: std.process.Init, state: *State, consumed: bool, cancelled: bo
     const serial = state.clipboard.?.serial orelse return error.NoPressedSerial;
     if (serial == previous or session.pointer_focus != window) return error.PressDidNotReachSource;
     // No other input is emitted between that actual button event and start_drag.
-    state.clipboard.?.device.startDrag(source, window.surface, null, serial);
+    const plain = std.mem.startsWith(u8, state.mime, "text/plain");
+    const html = std.mem.eql(u8, state.mime, "text/html");
+    const uris = std.mem.eql(u8, state.mime, "text/uri-list");
+    const payload = try Queue.Clipboard.Payload.initAll(init.gpa, if (plain) state.bytes else null, if (html) state.bytes else null, if (uris) state.bytes else null);
+    const source = try state.clipboard.?.startDrag(window.surface, serial, null, payload, .{ .context = state, .event = State.event, .issue = State.issue });
+    defer state.sends = source.sends;
     if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
     try window.testPointerAtOutput(.{ 480, 273 }, .{ 1280, 720 }, null, false);
     var released = false;
@@ -111,6 +95,6 @@ fn exercise(init: std.process.Init, state: *State, consumed: bool, cancelled: bo
             released = true;
         }
     }
-    if (!released or state.sends == 0 or state.dropped == cancelled) return error.NativeDragWasNotDelivered;
+    if (!released or source.sends == 0 or state.dropped == cancelled) return error.NativeDragWasNotDelivered;
     if (consumed != state.finished or consumed == state.cancelled) return error.NativeRecipientResultMismatch;
 }
