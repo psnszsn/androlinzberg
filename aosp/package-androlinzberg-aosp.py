@@ -170,6 +170,10 @@ packager.PATCH_SERIES = framework_patches + (
         patch_root / "frameworks-native" / "0009-inputdispatcher-host-native-drag.patch",
     ),
     (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0010-inputdispatcher-host-drag-handoff.patch",
+    ),
+    (
         "system/libbase",
         patch_root / "system" / "libbase" / "0001-host-prop_info_cmp-operator-must-be-const-libc-std-s.patch",
     ),

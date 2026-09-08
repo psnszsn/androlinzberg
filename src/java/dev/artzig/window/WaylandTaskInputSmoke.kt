@@ -214,17 +214,23 @@ object WaylandTaskInputSmoke {
             val multi = events.last() as MotionEvent
             check(multi.actionMasked == MotionEvent.ACTION_POINTER_DOWN && multi.actionIndex == 1)
             check(multi.pointerCount == 2 && multi.getPointerId(0) == 0 && multi.getPointerId(1) == 1)
+            check(first.nativeTouchId(0) == 1234 && second.nativeTouchId(1) == 9000)
+            check(first.nativeTouchId(1) == null && second.nativeTouchId(0) == null)
+            check(first.nativeTouchId(1234) == null) // A native ID is not an Android pointer ID.
             check(multi.getX(0) == 120f && multi.getX(1) == 1060f)
             check(multi.getTouchMajor(0) == 16f && multi.getTouchMinor(0) == 8f)
             first.touch(1, 1234, 11f, 21f, 8f, 4f, 0f)
+            check(first.nativeTouchId(0) == null && second.nativeTouchId(1) == 9000)
             check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_POINTER_UP)
             second.touch(1, 9000, 31f, 41f, 8f, 4f, 0f)
             check((events.last() as MotionEvent).actionMasked == MotionEvent.ACTION_UP)
             clear()
             first.touch(0, 70, 10f, 20f, 4f, 2f, 0f)
             second.touch(0, 80, 30f, 40f, 4f, 2f, 0f)
+            check(first.nativeTouchId(0) == 70 && second.nativeTouchId(1) == 80)
             clear()
             first.cancelTouches()
+            check(first.nativeTouchId(0) == null && second.nativeTouchId(1) == 80)
             val canceled = events.single() as MotionEvent
             check(canceled.actionMasked == MotionEvent.ACTION_POINTER_UP &&
                 canceled.flags and MotionEvent.FLAG_CANCELED != 0)
@@ -243,6 +249,7 @@ object WaylandTaskInputSmoke {
             first.touch(0, 5, 10f, 20f, 4f, 2f, 0f)
             clear()
             first.committed(TaskGeometry.Bounds(500, 800, 200, 100), WaylandTaskShell.Size(200, 100))
+            check(first.nativeTouchId(0) == null)
             check(events.filterIsInstance<MotionEvent>().count { it.action == MotionEvent.ACTION_CANCEL } == 2)
             clear()
             first.pointer(WaylandTaskInput.POINTER_MOVE, 0, false, 10f, 20f)

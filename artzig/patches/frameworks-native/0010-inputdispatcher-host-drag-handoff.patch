@@ -1,0 +1,75 @@
+--- a/services/inputflinger/dispatcher/InputDispatcher.h
++++ b/services/inputflinger/dispatcher/InputDispatcher.h
+@@ -108,9 +108,10 @@
+     void notifyHostedKey(const NotifyKeyArgs& args, const sp<IBinder>& task);
+     void setHostedKeyboardFocus(const sp<IBinder>& task);
+     void onHostedWindowInfosChanged(const gui::WindowInfosUpdate&, HostedWindowTasks);
++    bool handoffHostedDrag(const sp<IBinder>& inputToken);
+     struct HostedDragTarget { sp<IBinder> token; float x = 0; float y = 0; };
+-    HostedDragTarget hostedDragTarget(const sp<IBinder>& task, const sp<IBinder>& previous,
+-            ui::LogicalDisplayId displayId, float x, float y, bool dispatchHover);
++    HostedDragTarget hostedDragTarget(const sp<IBinder>& task,
++            ui::LogicalDisplayId displayId, float x, float y);
+     void notifyMotion(const NotifyMotionArgs& args) override;
+     void notifySwitch(const NotifySwitchArgs& args) override;
+     void notifySensor(const NotifySensorArgs& args) override;
+--- a/services/inputflinger/dispatcher/InputDispatcher.cpp
++++ b/services/inputflinger/dispatcher/InputDispatcher.cpp
+@@ -2873,35 +2873,32 @@
+     return targets;
+ }
+ 
+-// Incoming native drags have no Android pointer DOWN to transfer. Reuse the
+-// same SF hit test and input-channel DragEntry path as addDragEventLocked;
+-// WM retains the drag lifecycle, recipient checks and URI permission policy.
++// Only the authorized WM drag input channel may hand its current gesture to
++// the native compositor. Window/channel removal normally sends a null DROP;
++// suppress that old input path before WM asynchronously tears it down.
++bool InputDispatcher::handoffHostedDrag(const sp<IBinder>& inputToken) {
++    if (!inputToken) return false;
++    std::scoped_lock lock(mLock);
++    if (!mDragState || mDragState->dragWindow->getToken() != inputToken) return false;
++    mDragState.reset();
++    return true;
++}
++
++// Native drags use the same SF hit test and window-local transform as stock
++// pointer targeting. WM sends LOCATION through IWindow, ordered with START and
++// DROP; injecting DragEntry on a second input FD could overtake START.
+ InputDispatcher::HostedDragTarget InputDispatcher::hostedDragTarget(
+-        const sp<IBinder>& task, const sp<IBinder>& previous,
+-        ui::LogicalDisplayId displayId, float x, float y, bool dispatchHover) {
++        const sp<IBinder>& task, ui::LogicalDisplayId displayId, float x, float y) {
+     HostedDragTarget result;
+     if (!task || !std::isfinite(x) || !std::isfinite(y)) return result;
+-    // enqueueDragEventLocked follows the pinned integer input-coordinate API.
+     if (x < INT32_MIN || x >= INT32_MAX || y < INT32_MIN || y >= INT32_MAX) return result;
+-    {
+-        std::scoped_lock lock(mLock);
+-        auto target = mWindowInfos.findTouchedWindowAt(displayId, x, y, false);
+-        if (target) {
+-            auto owner = mHostedWindowTasks.find(target->getToken());
+-            if (owner == mHostedWindowTasks.end() || owner->second != task) target = nullptr;
+-        }
+-        if (dispatchHover) {
+-            auto old = previous ? mWindowInfos.findWindowHandle(previous) : nullptr;
+-            if (old && !haveSameToken(old, target)) enqueueDragEventLocked(old, true, x, y);
+-            if (target) enqueueDragEventLocked(target, false, x, y);
+-        }
+-        if (target) {
+-            const vec2 local = target->getInfo()->transform.transform(x, y);
+-            result = {target->getToken(), local.x, local.y};
+-        }
+-    }
+-    if (dispatchHover) mLooper->wake();
+-    return result;
++    std::scoped_lock lock(mLock);
++    auto target = mWindowInfos.findTouchedWindowAt(displayId, x, y, false);
++    if (!target) return result;
++    auto owner = mHostedWindowTasks.find(target->getToken());
++    if (owner == mHostedWindowTasks.end() || owner->second != task) return result;
++    const vec2 local = target->getInfo()->transform.transform(x, y);
++    return {target->getToken(), local.x, local.y};
+ }
+ 
+ void InputDispatcher::finishDragAndDrop(ui::LogicalDisplayId displayId, float x, float y) {

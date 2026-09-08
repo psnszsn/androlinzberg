@@ -358,6 +358,13 @@ internal class WaylandTaskInput(private val android: Android,
             }
         }
 
+        /** WMS supplies an Android pointer ID; the compositor grab belongs to
+         * the original seat contact. Never resolve another task's contact. */
+        fun nativeTouchId(pointerId: Int): Int? {
+            if (!live()) return null
+            return contacts.entries.firstOrNull { it.value.owner === this && it.value.id == pointerId }?.key
+        }
+
         fun touch(action: Int, id: Int, x: Float, y: Float, major: Float, minor: Float, orientation: Float) {
             val p = surfacePoint(x, y) ?: return
             if (!major.isFinite() || !minor.isFinite() || !orientation.isFinite() || major < 0 || minor < 0) return

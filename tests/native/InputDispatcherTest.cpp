@@ -8,6 +8,7 @@
 #include <input/InputEventBuilders.h>
 #include <binder/Binder.h>
 #include <gtest/gtest.h>
+#include <atomic>
 
 using namespace android;
 using namespace android::inputdispatcher;
@@ -15,9 +16,19 @@ using android::os::InputEventInjectionResult;
 using android::os::InputEventInjectionSync;
 using namespace std::chrono_literals;
 
+class HostedDragPolicy : public FakeInputDispatcherPolicy {
+public:
+  std::atomic<unsigned> dropCalls{0};
+  std::atomic<bool> nonNullDrop{false};
+  void notifyDropWindow(const sp<IBinder>& token, float, float) override {
+    if (token) nonNullDrop.store(true);
+    dropCalls.fetch_add(1);
+  }
+};
+
 class HostedInputDispatcher : public testing::Test {
 protected:
-  FakeInputDispatcherPolicy policy;
+  HostedDragPolicy policy;
   std::unique_ptr<InputDispatcher> dispatcher;
   std::shared_ptr<FakeApplicationHandle> application;
   sp<FakeWindowHandle> left, right;
@@ -318,4 +329,70 @@ TEST_F(HostedTaskKeyboard, FocusChangeCancelsHeldKeyAndStopsOldRepeat) {
   right->consumeFocusEvent(true);
   right->assertNoEvents(150ms);
   left->assertNoEvents(150ms);
+}
+
+// Follows pinned InputDispatcherDragTests::startDrag: transfer a real DOWN to
+// an empty-region drag input window, then retire its channel like WMS does.
+TEST_F(HostedInputDispatcher, NativeDragHandoffOwnsOneInputTokenWithoutFalseDrop) {
+  for (const bool cancelBeforeRemoval : {true, false}) {
+    ASSERT_FALSE(dispatcher->handoffHostedDrag(left->getToken()));
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              motion(AMOTION_EVENT_ACTION_DOWN, 350, 150));
+    expectMotion(left, AMOTION_EVENT_ACTION_DOWN, 50, 50);
+    auto drag = sp<FakeWindowHandle>::make(application, dispatcher, "drag",
+                                           ui::LogicalDisplayId::DEFAULT);
+    drag->setFrame(Rect(0, 0, 1280, 720));
+    drag->setTouchableRegion(Region{{0, 0, 0, 0}});
+    dispatcher->onWindowInfosChanged({{*drag->getInfo(), *right->getInfo(), *left->getInfo()}, {}, 0, 0});
+    ASSERT_TRUE(dispatcher->transferTouchGesture(left->getToken(), drag->getToken(), true, false));
+    left->consumeMotionCancel();
+    drag->consumeMotionDown(ui::LogicalDisplayId::DEFAULT, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+    ASSERT_FALSE(dispatcher->handoffHostedDrag(right->getToken()));
+    ASSERT_TRUE(dispatcher->handoffHostedDrag(drag->getToken()));
+    ASSERT_FALSE(dispatcher->handoffHostedDrag(drag->getToken()));
+    // Taking the native grab causes pointer leave/touch cancel. Its Android
+    // cancellation retires the old physical stream after the WM handoff.
+    if (cancelBeforeRemoval) {
+      ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+                motion(AMOTION_EVENT_ACTION_CANCEL, 350, 150));
+      expectMotion(drag, AMOTION_EVENT_ACTION_CANCEL, 350, 150);
+    }
+    ASSERT_EQ(OK, dispatcher->removeInputChannel(drag->getToken()));
+    dispatcher->onWindowInfosChanged({{*right->getInfo(), *left->getInfo()}, {}, 0, 0});
+    if (!cancelBeforeRemoval) {
+      // The physical cancellation still retires the input verifier stream,
+      // even when WM already removed its former recipient channel.
+      EXPECT_EQ(InputEventInjectionResult::FAILED,
+                motion(AMOTION_EVENT_ACTION_CANCEL, 350, 150));
+    }
+    dispatcher->waitForIdle();
+    EXPECT_EQ(0u, policy.dropCalls.load());
+    left->assertNoEvents();
+    right->assertNoEvents();
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              motion(AMOTION_EVENT_ACTION_DOWN, 350, 150));
+    expectMotion(left, AMOTION_EVENT_ACTION_DOWN, 50, 50);
+    ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+              motion(AMOTION_EVENT_ACTION_UP, 350, 150));
+    expectMotion(left, AMOTION_EVENT_ACTION_UP, 50, 50);
+    EXPECT_EQ(0u, policy.dropCalls.load());
+  }
+}
+
+TEST_F(HostedInputDispatcher, DragChannelRemovalStillReportsDropWithoutNativeHandoff) {
+  ASSERT_EQ(InputEventInjectionResult::SUCCEEDED,
+            motion(AMOTION_EVENT_ACTION_DOWN, 350, 150));
+  expectMotion(left, AMOTION_EVENT_ACTION_DOWN, 50, 50);
+  auto drag = sp<FakeWindowHandle>::make(application, dispatcher, "drag",
+                                         ui::LogicalDisplayId::DEFAULT);
+  drag->setTouchableRegion(Region{{0, 0, 0, 0}});
+  dispatcher->onWindowInfosChanged({{*drag->getInfo(), *right->getInfo(), *left->getInfo()}, {}, 0, 0});
+  ASSERT_TRUE(dispatcher->transferTouchGesture(left->getToken(), drag->getToken(), true, false));
+  left->consumeMotionCancel();
+  drag->consumeMotionDown(ui::LogicalDisplayId::DEFAULT, AMOTION_EVENT_FLAG_NO_FOCUS_CHANGE);
+  dispatcher->onWindowInfosChanged({{*right->getInfo(), *left->getInfo()}, {}, 0, 0});
+  dispatcher->waitForIdle();
+  EXPECT_EQ(1u, policy.dropCalls.load());
+  EXPECT_FALSE(policy.nonNullDrop.load());
+  ASSERT_FALSE(dispatcher->handoffHostedDrag(drag->getToken()));
 }

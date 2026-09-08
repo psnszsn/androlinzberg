@@ -11,6 +11,28 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Stock dispatcher drag handoff (2026-09-08)
+
+The pinned InputDispatcher now exposes a host handoff that checks its current
+drag input token and clears that drag without reporting a failed DROP. This is
+separate from ordinary channel/window removal, which retains the stock failure
+callback. Native targeting now only queries SF geometry; WMS sends native
+LOCATION through the same IWindow channel as START and DROP. The unused second
+input-FD hover path has been removed.
+
+Regression 453 passes all 13 native dispatcher tests, including wrong-token
+rejection, one-time handoff, cancellation before/after channel teardown, a fresh
+subsequent gesture, and unchanged failure reporting without handoff. The Kotlin
+bridge also resolves Android pointer IDs back to the owning task's native touch
+contact, with assertions for remapping, release, cancellation and resize.
+
+Regression 454 passes the full JVM suite and all 16 APK tests with 49 clean
+steps; 455 passes all 12 stock/native drag steps. Artifacts:
+`/tmp/wayland-handoff-454-artifacts/` and
+`/tmp/wayland-handoff-455-artifacts/`. The package now includes native patch 0010.
+WMS invocation, compositor start acknowledgement, shadow mirroring and original
+state reuse across task/native targets remain the next integration work.
+
 ## GPU drag-icon presentation (2026-09-08)
 
 An unroled Wayland icon surface now accepts the same stock BufferQueue leases

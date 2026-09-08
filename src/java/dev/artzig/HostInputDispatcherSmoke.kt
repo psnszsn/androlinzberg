@@ -104,6 +104,7 @@ object HostInputDispatcherSmoke {
         dispatcher = HostInputManagerBridge(HostContexts.systemContext(
             System.getenv("ARTZIG_FRAMEWORK_RES"), 1280, 720, 120, 0), desktop)
         dispatcher.setWindowManagerCallbacks(callbacks)
+        check(!dispatcher.handoffNativeDrag(Binder())) { "An unrelated token claimed a native drag" }
         dispatcher.setInputDispatchMode(true, false)
         dispatcher.setFocusedApplication(0, InputApplicationHandle(Binder(), "AwaitingWindow", 150))
         val beforeWindow = KeyEvent(SystemClock.uptimeMillis(), SystemClock.uptimeMillis(),

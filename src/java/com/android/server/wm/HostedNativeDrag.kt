@@ -81,7 +81,7 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         // SF's input transforms, regions, visibility, z-order and task Binder
         // identity determine the recipient. Synthetic Android coordinates are
         // never passed to the native compositor as desktop positions.
-        val target = input.hostedDragTarget(task, drag.target, Display.DEFAULT_DISPLAY, x, y, false)
+        val target = input.hostedDragTarget(task, Display.DEFAULT_DISPLAY, x, y)
         synchronized(windows.mGlobalLock) {
             if (windows.mDragDropController.hostedDragStateLocked() !== drag.state) return
             val old = drag.target?.let { windows.mInputToWindowMap[it] }
@@ -116,7 +116,7 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         onThread()
         val drag = active?.takeIf { it.token == token && !it.dropped } ?: return false
         val task = HostedTaskInputTargets.taskToken(windows, taskId) ?: run { cancel(token); return false }
-        val target = input.hostedDragTarget(task, drag.target, Display.DEFAULT_DISPLAY, x, y, false)
+        val target = input.hostedDragTarget(task, Display.DEFAULT_DISPLAY, x, y)
         synchronized(windows.mGlobalLock) {
             if (windows.mDragDropController.hostedDragStateLocked() !== drag.state) return false
             drag.dropped = true

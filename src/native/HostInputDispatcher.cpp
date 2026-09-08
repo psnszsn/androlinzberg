@@ -590,8 +590,7 @@ static jboolean transfer(JNIEnv *env, jclass, jlong handle, jobject from,
                       ibinderForJavaObject(env, to), drag, entire);
 }
 static jobject hostedDragTarget(JNIEnv *env, jclass, jlong handle, jobject task,
-                                 jobject previous, jint display, jfloat x, jfloat y,
-                                 jboolean hover, jfloatArray local) {
+                                 jint display, jfloat x, jfloat y, jfloatArray local) {
   if (!local || env->GetArrayLength(local) != 2) {
     jniThrowException(env, "java/lang/IllegalArgumentException", "Drag coordinates require two floats");
     return nullptr;
@@ -599,10 +598,14 @@ static jobject hostedDragTarget(JNIEnv *env, jclass, jlong handle, jobject task,
   auto owner = get(env, handle);
   if (!owner) return nullptr;
   auto target = owner->dispatcher.hostedDragTarget(ibinderForJavaObject(env, task),
-      ibinderForJavaObject(env, previous), ui::LogicalDisplayId{display}, x, y, hover);
+      ui::LogicalDisplayId{display}, x, y);
   const jfloat point[] = {target.x, target.y};
   env->SetFloatArrayRegion(local, 0, 2, point);
   return javaObjectForIBinder(env, target.token);
+}
+static jboolean handoffDrag(JNIEnv *env, jclass, jlong handle, jobject inputToken) {
+  auto owner = get(env, handle);
+  return owner && owner->dispatcher.handoffHostedDrag(ibinderForJavaObject(env, inputToken));
 }
 static jboolean transferDisplay(JNIEnv *env, jclass, jlong handle, jobject to,
                                 jint display) {
@@ -860,8 +863,9 @@ int registerNatives(JNIEnv *env) {
        reinterpret_cast<void *>(touchMode)},
       {"nativeTransferTouch", "(JLandroid/os/IBinder;Landroid/os/IBinder;ZZ)Z",
        reinterpret_cast<void *>(transfer)},
-      {"nativeHostedDragTarget", "(JLandroid/os/IBinder;Landroid/os/IBinder;IFFZ[F)Landroid/os/IBinder;",
+      {"nativeHostedDragTarget", "(JLandroid/os/IBinder;IFF[F)Landroid/os/IBinder;",
        reinterpret_cast<void *>(hostedDragTarget)},
+      {"nativeHandoffDrag", "(JLandroid/os/IBinder;)Z", reinterpret_cast<void *>(handoffDrag)},
       {"nativeTransferTouchOnDisplay", "(JLandroid/os/IBinder;I)Z",
        reinterpret_cast<void *>(transferDisplay)},
       {"nativePilferPointers", "(JLandroid/os/IBinder;)V",
