@@ -294,6 +294,7 @@ pub const Event = union(enum) {
     clipboard_issue: anyerror,
     native_drag: Clipboard.DragOffer.Event,
     native_drag_issue: anyerror,
+    native_drag_source: struct { token: u64, value: Clipboard.DragSource.Event },
     close,
     configure: struct {
         width: i32,
@@ -369,8 +370,8 @@ pub const OrderedEvents = struct {
         if (self.failed or self.pending.items.len == limit or layout_overflow or
             (event == .text_input_batch and self.retained_text_batches == 128) or
             (event == .clipboard_changed and self.retained_clipboards == 8) or
-            (event == .native_drag and (self.retained_drags == 128 or
-                (event.native_drag == .payload and self.retained_drag_payloads == 8))))
+            ((event == .native_drag or event == .native_drag_source) and (self.retained_drags == 128 or
+                (event == .native_drag and event.native_drag == .payload and self.retained_drag_payloads == 8))))
         {
             self.failed = true;
             release(event);
@@ -387,9 +388,9 @@ pub const OrderedEvents = struct {
         }
         if (event == .text_input_batch) self.retained_text_batches += 1;
         if (event == .clipboard_changed) self.retained_clipboards += 1;
-        if (event == .native_drag) {
+        if (event == .native_drag or event == .native_drag_source) {
             self.retained_drags += 1;
-            if (event.native_drag == .payload) self.retained_drag_payloads += 1;
+            if (event == .native_drag and event.native_drag == .payload) self.retained_drag_payloads += 1;
         }
     }
 
@@ -414,9 +415,9 @@ pub const OrderedEvents = struct {
     fn releaseRetained(self: *OrderedEvents, event: Event) void {
         if (event == .text_input_batch) self.retained_text_batches -= 1;
         if (event == .clipboard_changed) self.retained_clipboards -= 1;
-        if (event == .native_drag) {
+        if (event == .native_drag or event == .native_drag_source) {
             self.retained_drags -= 1;
-            if (event.native_drag == .payload) self.retained_drag_payloads -= 1;
+            if (event == .native_drag and event.native_drag == .payload) self.retained_drag_payloads -= 1;
         }
         if (event == .keyboard_layout) {
             self.retained_layouts -= 1;
@@ -738,7 +739,7 @@ pub const Session = struct {
     /// The caller must inspect every ready slot even when a Wayland event also
     /// arrives. Files are borrowed for this call; libwayland retains its socket.
     pub fn dispatch(self: *Session, wakes: []const std.Io.File, ready: []bool, timeout_ms: i32) !void {
-        if (wakes.len > 65 or ready.len != wakes.len) return error.InvalidWakeSources;
+        if (wakes.len > 66 or ready.len != wakes.len) return error.InvalidWakeSources;
         @memset(ready, false);
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         if (self.output_failure) |failure| return failure;
@@ -791,7 +792,7 @@ pub const Session = struct {
             else => return error.FlushFailed,
         };
 
-        var storage: [67]std.Io.Operation.Storage = undefined;
+        var storage: [68]std.Io.Operation.Storage = undefined;
         var batch = std.Io.Batch.init(storage[0 .. wakes.len + 1 + @as(usize, if (self.clipboard != null) 1 else 0)]);
         defer batch.cancel(self.io);
         // The pinned std.Io.Threaded batches file operations behind readiness,
@@ -805,8 +806,8 @@ pub const Session = struct {
         };
         var empty: [0]u8 = .{};
         batch.addAt(0, .{ .file_read_streaming = .{ .file = borrowed, .data = &.{&empty} } });
-        var counters: [66]u64 = undefined;
-        var vectors: [66][1][]u8 = undefined;
+        var counters: [67]u64 = undefined;
+        var vectors: [67][1][]u8 = undefined;
         for (wakes, 0..) |file, index| {
             vectors[index][0] = std.mem.asBytes(&counters[index]);
             batch.addAt(@intCast(index + 1), .{ .file_read_streaming = .{
@@ -983,16 +984,16 @@ pub const Session = struct {
     }
 
     /// Consumes payload on every return. Android authorization precedes this seam.
-    pub fn startDrag(self: *Session, window: *Window, kind: DragKind, id: i32, generation: u64, icon: ?*wl.Surface, payload: *Clipboard.Payload, hooks: Clipboard.DragSource.Hooks) !*Clipboard.DragSource {
+    pub fn startDrag(self: *Session, window: *Window, kind: DragKind, id: i32, generation: u64, icon: ?*wl.Surface, payload: ?*Clipboard.Payload, hooks: Clipboard.DragSource.Hooks) !*Clipboard.DragSource {
         const clipboard = blk: {
-            errdefer payload.destroy();
+            errdefer if (payload) |value| value.destroy();
             if (window.session != self) return error.DragWindowNotOwned;
             const clipboard = self.clipboard orelse return error.NoDataDevice;
             if (clipboard.outbound_drag) |source| if (source.active()) return error.DragAlreadyActive;
             break :blk clipboard;
         };
         const claim = self.drag_grabs.take(window, kind, id, generation) orelse {
-            payload.destroy();
+            if (payload) |value| value.destroy();
             return error.NativeDragGestureExpired;
         };
         const source = try clipboard.startDrag(claim.origin.surface, claim.serial, icon, payload, hooks);
@@ -1508,6 +1509,13 @@ pub const Session = struct {
     pub fn enableNativeDrag(self: *Session) void {
         self.native_drag_enabled = true;
         if (self.clipboard) |clipboard| clipboard.native_drag = .{ .io = self.io, .hooks = self.nativeDragHooks() };
+    }
+    pub fn nativeSourceHooks(self: *Session) Clipboard.DragSource.Hooks {
+        return .{ .context = self, .event = nativeSourceEvent, .issue = nativeDragIssue };
+    }
+    fn nativeSourceEvent(context: *anyopaque, token: u64, value: Clipboard.DragSource.Event) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .native_drag_source = .{ .token = token, .value = value } });
     }
     fn nativeDragHooks(self: *Session) Clipboard.DragOffer.Hooks {
         return .{ .context = self, .event = nativeDragEvent, .issue = nativeDragIssue };
@@ -3647,4 +3655,20 @@ test "clipboard event budget includes borrowed payloads and closes every owner" 
     try std.testing.expectEqual(@as(usize, 8), events.retained_clipboards);
     try std.testing.expectEqual(@as(usize, 0), events.take().len);
     try std.testing.expectEqual(@as(usize, 0), events.retained_clipboards);
+}
+
+test "native source and offer callbacks share the retained drag budget" {
+    const gpa = std.testing.allocator;
+    var events: OrderedEvents = .{};
+    defer events.deinit(gpa);
+    for (0..64) |index| {
+        events.push(gpa, null, .{ .native_drag = .{ .ended = .{ .token = index + 1, .consumed = false } } });
+        events.push(gpa, null, .{ .native_drag_source = .{ .token = index + 1, .value = .{ .ended = false } } });
+    }
+    try std.testing.expectEqual(@as(usize, 128), events.take().len);
+    try std.testing.expectEqual(@as(usize, 128), events.retained_drags);
+    events.push(gpa, null, .{ .native_drag_source = .{ .token = 65, .value = .dropped } });
+    try std.testing.expect(events.failed);
+    try std.testing.expectEqual(@as(usize, 0), events.take().len);
+    try std.testing.expectEqual(@as(usize, 0), events.retained_drags);
 }

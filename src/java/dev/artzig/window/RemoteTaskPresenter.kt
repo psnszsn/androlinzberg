@@ -14,9 +14,33 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val publishTablet: (WaylandTabletInput.Device, Boolean) -> Unit,
     acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
+    private val outgoingDrag by lazy {
+        WaylandOutgoingDrag(handler, checkNotNull(com.android.server.LocalServices.getService(
+            com.android.server.wm.HostedNativeDrag::class.java)), remote, object : WaylandOutgoingDrag.Host {
+            override fun origin(source: com.android.server.wm.HostedNativeDrag.Source): WaylandOutgoingDrag.Origin? {
+                val window = windows[source.taskId] ?: return null
+                val bounds = window.bounds ?: return null
+                val kind: Int
+                val id: Int
+                if (source.deviceId == 0 && source.inputSource and android.view.InputDevice.SOURCE_MOUSE == android.view.InputDevice.SOURCE_MOUSE) {
+                    kind = 0; id = 0
+                } else if (source.deviceId == 2 && source.inputSource and android.view.InputDevice.SOURCE_TOUCHSCREEN == android.view.InputDevice.SOURCE_TOUCHSCREEN) {
+                    kind = 1; id = window.seat.nativeTouchId(source.pointerId) ?: return null
+                } else return null
+                val claim = remote.claimNativeDrag(window.task.id, window.task.generation, window.size.configurationGeneration, kind, id)
+                if (claim <= 0) return null
+                return WaylandOutgoingDrag.Origin(window.task, window.size, bounds, kind, id, claim)
+            }
+            override fun current(origin: WaylandOutgoingDrag.Origin): Boolean = windows[origin.task.id]?.let {
+                it.task == origin.task && it.size == origin.size && it.bounds == origin.bounds
+            } == true
+        })
+    }
     private val nativeDrag by lazy {
         WaylandNativeDrag(handler, checkNotNull(com.android.server.LocalServices.getService(
             com.android.server.wm.HostedNativeDrag::class.java)), object : WaylandNativeDrag.Host {
+            override fun source(token: Long) = outgoingDrag.source(token)
+            override fun dropping(token: Long) = outgoingDrag.dropping(token)
             override fun point(task: TaskGeometry.Task, x: Float, y: Float) =
                 windows[task.id]?.takeIf { it.task == task }?.seat?.surfacePoint(x, y)
             override fun accept(token: Long, accepted: Boolean) { remote.acceptNativeDrag(token, accepted) }
@@ -56,6 +80,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     }
     fun connect() {
         check(Looper.myLooper() === handler.looper)
+        outgoingDrag // Register the authorized WMS source hook before opening tasks.
         val state = remote.connectSeat(callback)
         val characterCount = WaylandKeyboardMap.SCAN_COUNT * WaylandKeyboardMap.STATE_COUNT
         check(state.size == 8 + characterCount + WaylandKeyboardMap.SCAN_COUNT && state[0] == 2)
@@ -127,6 +152,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 if (payload) queuedDragPayloads.decrementAndGet()
                 if (dragOverflow.compareAndSet(false, true)) check(handler.post {
                     nativeDrag.cancelCurrent()
+                    outgoingDrag.cancelCurrent()
                     dev.artzig.ArtzigTestDiagnostics.reportIssue("runtime_exception", "WaylandDrag", "callbacks", "Native drag callback capacity exceeded")
                     dragOverflow.set(false)
                 })
@@ -143,10 +169,13 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
                 error("Native drag handler has stopped")
             }
         }
-        override fun nativeDragEntered(taskId: Int, generation: Long, token: Long, x: Float, y: Float) = dragEvent {
+        override fun nativeDragEntered(taskId: Int, generation: Long, token: Long, sourceToken: Long, x: Float, y: Float) = dragEvent {
             val window = windows[taskId]?.takeIf { it.task.generation == generation }
             if (window == null) remote.finishNativeDrag(token, false)
-            else nativeDrag.entered(token, window.task, x, y)
+            else nativeDrag.entered(token, sourceToken, window.task, x, y)
+        }
+        override fun nativeDragSourceEvent(sourceToken: Long, kind: Int, value: Boolean) = dragEvent {
+            outgoingDrag.sourceEvent(sourceToken, kind, value)
         }
         override fun nativeDragMotion(token: Long, x: Float, y: Float) = dragEvent { nativeDrag.motion(token, x, y) }
         override fun nativeDragPayload(token: Long, text: ByteArray?, html: ByteArray?, uris: ByteArray?) {
@@ -322,6 +351,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override fun close() {
             if (closed) return
             closed = true
+            outgoingDrag.removed(task)
             nativeDrag.removed(task)
             textInput.removed(task)
             capture.closed(task)

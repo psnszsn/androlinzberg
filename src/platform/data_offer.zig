@@ -28,8 +28,12 @@ pub const MimeTypes = struct {
         return self.values[index][0..self.lengths[index] :0];
     }
     pub fn contains(self: *const MimeTypes, value: []const u8) bool {
-        for (0..self.count) |i| if (std.mem.eql(u8, self.get(i), value)) return true;
-        return false;
+        return self.matching(value) != null;
+    }
+    /// Borrow the offer's own storage, never a source marker that can retire.
+    pub fn matching(self: *const MimeTypes, value: []const u8) ?[:0]const u8 {
+        for (0..self.count) |i| if (std.mem.eql(u8, self.get(i), value)) return self.get(i);
+        return null;
     }
     pub fn text(self: *const MimeTypes) ?[:0]const u8 {
         return self.representation("text/plain", true);

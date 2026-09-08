@@ -19,6 +19,13 @@ internal class TaskSurfaceOutput(
     private val surface: Surface,
     private val layerStack: Int,
 ) : AutoCloseable {
+    companion object {
+        private var nextLayerStack = 1
+        @Synchronized fun allocateLayerStack(): Int {
+            check(nextLayerStack < Int.MAX_VALUE) { "Private layer stack IDs exhausted" }
+            return nextLayerStack++
+        }
+    }
     private var display: IBinder? = null
     private var root: SurfaceControl? = null
     private var mirror: SurfaceControl? = null

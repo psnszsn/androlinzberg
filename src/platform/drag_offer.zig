@@ -9,7 +9,7 @@ const Transfers = @import("data_transfers.zig");
 const Self = @This();
 
 pub const Event = union(enum) {
-    entered: struct { token: u64, surface: *wl.Surface, x: f64, y: f64, representations: u3 },
+    entered: struct { token: u64, source_token: u64, surface: *wl.Surface, x: f64, y: f64, representations: u3 },
     motion: struct { token: u64, x: f64, y: f64 },
     payload: struct { token: u64, value: *Offer.Payload },
     dropped: u64,
@@ -20,7 +20,9 @@ pub const Hooks = struct {
     event: *const fn (*anyopaque, Event) void,
     issue: *const fn (*anyopaque, anyerror) void,
 };
+pub const OwnSource = struct { token: u64, mime: [:0]const u8 };
 const Active = struct {
+    source_token: u64 = 0,
     offer: *Offer,
     surface: *wl.Surface,
     serial: u32,
@@ -36,7 +38,7 @@ active: ?Active = null,
 
 /// Consumes the offer on every return. Only one drag may await an Android
 /// recipient at a time, matching stock DragDropController's admission policy.
-pub fn enter(self: *Self, offer: *Offer, serial: u32, surface: *wl.Surface, x: f64, y: f64) !void {
+pub fn enter(self: *Self, offer: *Offer, serial: u32, surface: *wl.Surface, x: f64, y: f64, own: ?OwnSource) !void {
     if (self.active) |active| {
         if (active.dropped) {
             offer.destroy();
@@ -47,7 +49,8 @@ pub fn enter(self: *Self, offer: *Offer, serial: u32, surface: *wl.Surface, x: f
     const plain = offer.mimes.text();
     const html = offer.mimes.html();
     const uris = offer.mimes.uris();
-    const mime = uris orelse html orelse plain orelse {
+    const marker = if (own) |source| offer.mimes.matching(source.mime) else null;
+    const mime = marker orelse uris orelse html orelse plain orelse {
         offer.destroy();
         return error.UnsupportedDragMimeTypes;
     };
@@ -55,7 +58,7 @@ pub fn enter(self: *Self, offer: *Offer, serial: u32, surface: *wl.Surface, x: f
         offer.destroy();
         return error.InvalidDragPosition;
     }
-    self.active = .{ .offer = offer, .surface = surface, .serial = serial, .mime = mime };
+    self.active = .{ .offer = offer, .surface = surface, .serial = serial, .mime = mime, .received = marker != null, .source_token = if (marker != null) own.?.token else 0 };
     errdefer self.cancel();
     // Preview reads are legal before drop. Acceptance remains false until an
     // Android view actually becomes the recipient; URI staging can run first.
@@ -63,7 +66,8 @@ pub fn enter(self: *Self, offer: *Offer, serial: u32, surface: *wl.Surface, x: f
     if (offer.proxy.getVersion() >= 3) offer.proxy.setActions(.{ .copy = true }, .{ .copy = true });
     const representations: u3 = @as(u3, @intFromBool(plain != null)) |
         (@as(u3, @intFromBool(html != null)) << 1) | (@as(u3, @intFromBool(uris != null)) << 2);
-    self.emit(.{ .entered = .{ .token = offer.token, .surface = surface, .x = x, .y = y, .representations = representations } });
+    self.emit(.{ .entered = .{ .token = offer.token, .source_token = self.active.?.source_token, .surface = surface, .x = x, .y = y, .representations = representations } });
+    if (marker != null) return; // Original Android ClipData/grants stay in WMS.
     if (plain) |value| try offer.receive(value, 0);
     if (html) |value| try offer.receive(value, 1);
     if (uris) |value| try offer.receive(value, 2);

@@ -62,4 +62,16 @@ interface IWaylandTaskPresenter {
     /** Copy acceptance and actual Android recipient result for one native offer. */
     boolean acceptNativeDrag(long token, boolean accepted);
     boolean finishNativeDrag(long token, boolean consumed);
+    /** Snapshot one actual held pointer (kind 0) or raw touch (kind 1) generation. */
+    long claimNativeDrag(int taskId, long generation, long configurationGeneration, int kind, int inputId);
+    /** Result is [sourceToken, status]: accepted=1, rejected before takeover=2,
+     * uncertain=3. The owner dispatches Wayland while this bounded call waits.
+     * All-null representations make a private Android-only source. */
+    @nullable Surface startNativeDrag(int taskId, long generation, long configurationGeneration,
+        int kind, int inputId, long claim, int width, int height, int hotspotX, int hotspotY,
+        int bufferWidth, int bufferHeight, in @nullable byte[] text, in @nullable byte[] html,
+        in @nullable byte[] uris, out long[] result);
+    boolean cancelNativeDragSource(long sourceToken);
+    /** Call only after unbinding the private SF output and terminal source event. */
+    boolean retireNativeDragIcon(long sourceToken);
 }

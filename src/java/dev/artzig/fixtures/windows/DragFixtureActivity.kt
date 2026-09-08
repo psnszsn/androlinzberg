@@ -26,6 +26,7 @@ class DragFixtureActivity : Activity() {
         var accept = true
         val events = ArrayList<String>()
         var received: String? = null
+        var sourceGesture = false
         fun button(label: String, action: () -> Unit) {
             content.addView(Button(this).apply { text = label; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, 36))
         }
@@ -56,6 +57,7 @@ class DragFixtureActivity : Activity() {
                             p.color = Color.WHITE; p.textSize = 16f; canvas.drawText("DRAG", 8f, 30f, p)
                         }
                     }
+                    sourceGesture = true
                     val started = startDragAndDrop(data, shadow, null,
                         View.DRAG_FLAG_GLOBAL or if (files) View.DRAG_FLAG_GLOBAL_URI_READ else 0)
                     check(started) { "Stock WMS refused the active drag gesture" }
@@ -91,8 +93,8 @@ class DragFixtureActivity : Activity() {
                         events.add("end")
                         check(events.first() == "start" && events.last() == "end")
                         if ("drop" !in events) {
-                            check(!event.result && received == null) { "Cancelled drag was consumed: $events" }
-                            status.text = "Drag cancelled"
+                            check(received == null && (!event.result || sourceGesture)) { "Unexpected foreign drag completion: $events" }
+                            status.text = if (event.result) "Drag exported" else "Drag cancelled"
                         } else if (accept) {
                             check(events.indexOf("location") in 1 until events.indexOf("drop")) { events.toString() }
                             check(event.result && received != null) { "Drop was not consumed: $events" }
@@ -101,6 +103,7 @@ class DragFixtureActivity : Activity() {
                             check("drop" in events && !event.result) { "Rejected drag was consumed: $events" }
                             status.text = "Drag rejected"
                         }
+                        sourceGesture = false
                         true
                     }
                     else -> false

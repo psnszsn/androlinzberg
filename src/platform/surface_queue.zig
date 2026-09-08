@@ -5,6 +5,7 @@ const Io = std.Io;
 const wayland = @import("wayland.zig");
 pub const Window = wayland.Window;
 pub const Session = wayland.Session;
+pub const DragKind = wayland.DragKind;
 pub const DragIcon = wayland.DragIcon;
 pub const KeyboardLayout = wayland.KeyboardLayout;
 pub const TextInput = wayland.TextInput;

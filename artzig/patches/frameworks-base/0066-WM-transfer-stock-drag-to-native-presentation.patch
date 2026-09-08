@@ -1,0 +1,64 @@
+--- a/services/core/java/com/android/server/wm/DragDropController.java
++++ b/services/core/java/com/android/server/wm/DragDropController.java
+@@ -312,6 +312,10 @@
+                 displayContent.reparentToOverlay(transaction, surfaceControl);
+                 mDragState.updateDragSurfaceLocked(true /* keepHandling */,
+                         displayContent.getDisplayId(), touchX, touchY);
++                // Capture the authorized stock drag after input transfer and
++                // START. The host only posts work while this lock is held.
++                HostedNativeDrag.started(mDragState, touchSource, touchDeviceId,
++                        touchPointerId);
+                 if (SHOW_LIGHT_TRANSACTIONS) {
+                     Slog.i(TAG_WM, "<<< CLOSE TRANSACTION performDrag");
+                 }
+@@ -524,7 +528,7 @@
+      */
+     void handleMotionEvent(boolean keepHandling, int displayId, float newX, float newY) {
+         synchronized (mService.mGlobalLock) {
+-            if (!dragDropActiveLocked()) {
++            if (!dragDropActiveLocked() || mDragState.mHostedNativePresentation) {
+                 // The drag has ended but the clean-up message has not been processed by
+                 // window manager. Drop events that occur after this until window manager
+                 // has a chance to clean-up the input handle.
+@@ -577,12 +581,10 @@
+     }
+ 
+     void reportDropWindow(IBinder token, float x, float y) {
+-        if (mDragState == null) {
+-            Slog.w(TAG_WM, "Drag state is closed.");
+-            return;
+-        }
+-
+         synchronized (mService.mGlobalLock) {
++            // The old input channel may already have queued its final callback.
++            // Native targeting calls DragState directly with its real recipient.
++            if (mDragState == null || mDragState.mHostedNativePresentation) return;
+             mDragState.reportDropWindowLock(token, x, y);
+         }
+     }
+--- a/services/core/java/com/android/server/wm/DragState.java
++++ b/services/core/java/com/android/server/wm/DragState.java
+@@ -220,6 +220,23 @@
+             .addWindowInfosReportedListener(() -> result.complete(null))
+             .apply();
+         return result;
++    }
++
++    // InputDispatcher.handoffHostedDrag must have succeeded before entering
++    // this WM-locked operation. Keep the original state, shadow and URI grants;
++    // the compositor now owns movement and supplies the final drop result.
++    void handoffHostedPresentationLocked() {
++        mHostedNativePresentation = true;
++        if (mInputInterceptor != null) {
++            mDragDropController.sendHandlerMessage(
++                    MSG_TEAR_DOWN_DRAG_AND_DROP_INPUT, mInputInterceptor);
++            mInputInterceptor = null;
++        }
++        if (mInputSurface != null) {
++            mTransaction.remove(mInputSurface);
++            mInputSurface = null;
++        }
++        mTransaction.setPosition(mSurfaceControl, 0, 0).apply();
+     }
+ 
+     /**

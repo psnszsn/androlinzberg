@@ -33,10 +33,13 @@ oneway interface IWaylandTaskEvents {
     void clipboardAvailability(boolean available);
     void clipboardChanged(long revision, in @nullable byte[] text, in @nullable byte[] html, in @nullable byte[] uris);
     void clipboardIssue(String detail);
-    void nativeDragEntered(int taskId, long generation, long token, float x, float y);
+    void nativeDragEntered(int taskId, long generation, long token, long sourceToken, float x, float y);
     void nativeDragMotion(long token, float x, float y);
     void nativeDragPayload(long token, in @nullable byte[] text, in @nullable byte[] html, in @nullable byte[] uris);
     void nativeDragDropped(long token);
     void nativeDragEnded(long token, boolean consumed);
     void nativeDragIssue(String detail);
+    /** Source identity survives per-surface offer identities: accepted=0, copy=1,
+     * drop-performed=2, terminal=3; only terminal's value denotes consumption. */
+    void nativeDragSourceEvent(long sourceToken, int kind, boolean value);
 }

@@ -99,6 +99,15 @@ const Server = struct {
     completed_round: i64 = 0,
     test_placement: ?TestPlacement = null,
     test_input_sequence: i64 = 0,
+    outbound: ?struct {
+        key: Key,
+        token: u64,
+        icon: *Queue.DragIcon,
+        queue: *Queue,
+        request: ?*Request,
+        retire_deadline: ?i64,
+        failed: bool = false,
+    } = null,
     test_drag: ?struct {
         key: Key,
         configuration: i64,
@@ -137,6 +146,7 @@ const Server = struct {
                 std.log.err("task presenter request {d}: {s}", .{ request.code, @errorName(err) });
                 break :status -22;
             } else -32;
+            if (self.outbound) |outbound| if (outbound.request == request) continue;
             request.done.set(self.io);
         }
     }
@@ -162,6 +172,22 @@ const Server = struct {
         if (self.session.ordered_events.?.failed) return error.SeatEventQueueOverflow;
         for (self.session.ordered_events.?.take()) |item| {
             switch (item.event) {
+                .native_drag_source => |source_event| {
+                    if (self.owner) |callback| {
+                        const kind: i32 = switch (source_event.value) {
+                            .accepted => 0,
+                            .copy => 1,
+                            .dropped => 2,
+                            .ended => 3,
+                        };
+                        const value = switch (source_event.value) {
+                            .accepted, .copy, .ended => |v| v,
+                            .dropped => true,
+                        };
+                        try sendGlobal(callback, 32, .{ @as(i64, @intCast(source_event.token)), kind, value });
+                    }
+                    continue;
+                },
                 .native_drag_issue => |issue| {
                     if (self.owner) |callback| try sendGlobal(callback, 31, .{@as([]const u8, @errorName(issue))});
                     continue;
@@ -180,7 +206,7 @@ const Server = struct {
                         continue;
                     }
                     switch (event) {
-                        .entered => |value| try sendGlobal(callback, 26, .{ entry.?.key.id, entry.?.key.generation, @as(i64, @intCast(value.token)), value.x, value.y }),
+                        .entered => |value| try sendGlobal(callback, 26, .{ entry.?.key.id, entry.?.key.generation, @as(i64, @intCast(value.token)), @as(i64, @intCast(value.source_token)), value.x, value.y }),
                         .motion => |value| try sendGlobal(callback, 27, .{ @as(i64, @intCast(value.token)), value.x, value.y }),
                         .payload => |value| try sendPayload(callback, 28, @intCast(value.token), value.value),
                         .dropped => |token| try sendGlobal(callback, 29, .{@as(i64, @intCast(token))}),
@@ -463,6 +489,149 @@ const Server = struct {
         try self.dispatchEvents();
         if (entry) |target| try send(target, 14, .{drag.sequence});
     }
+    fn source(self: *Server) ?*Queue.Clipboard.DragSource {
+        const outbound = self.outbound orelse return null;
+        const clipboard = self.session.clipboard orelse return null;
+        const value = clipboard.outbound_drag orelse return null;
+        return if (value.token == outbound.token) value else null;
+    }
+    fn retireSourceOutput(self: *Server) void {
+        const outbound = self.outbound orelse return;
+        std.debug.assert(outbound.request == null);
+        if (self.source()) |value| value.cancel();
+        self.outbound = null;
+        outbound.icon.deinit();
+        outbound.queue.deinit();
+    }
+    fn writeStart(request: *Request, queue: ?*Queue, token: u64, state: i64) !void {
+        try ok(AParcel_writeInt32(request.output, 0));
+        try ok(AParcel_writeInt32(request.output, @intFromBool(queue != null)));
+        if (queue) |value| try ok(value.writeSurface(request.output));
+        try ok(AParcel_writeInt32(request.output, 2));
+        try ok(AParcel_writeInt64(request.output, @intCast(token)));
+        try ok(AParcel_writeInt64(request.output, state));
+    }
+    fn tickSource(self: *Server) !void {
+        const outbound = if (self.outbound) |*value| value else return;
+        const current = self.source();
+        if (outbound.request) |request| {
+            const state: Queue.Clipboard.DragSource.Start = if (current) |value| value.startState() else .unknown;
+            if (state == .pending) return;
+            const accepted = state == .accepted and current != null and current.?.active();
+            outbound.request = null;
+            request.status = status: {
+                writeStart(request, if (accepted) outbound.queue else null, outbound.token, if (accepted) 1 else if (state == .rejected) 2 else 3) catch break :status -22;
+                break :status 0;
+            };
+            const written = request.status == 0;
+            request.done.set(self.io); // The Binder worker may now destroy Request.
+            if (!accepted or !written) {
+                self.retireSourceOutput();
+                return;
+            }
+        }
+        const now = Io.Clock.awake.now(self.io).toMilliseconds();
+        if (current == null or !current.?.active()) {
+            if (outbound.retire_deadline == null) outbound.retire_deadline = now + 6000;
+        }
+        if (outbound.retire_deadline) |deadline| if (now >= deadline) {
+            // A dead/hung owner must not retain GPU leases forever. Destroying
+            // the consumer abandons its imports; it never releases them as safe.
+            self.retireSourceOutput();
+            if (self.owner) |callback| try sendGlobal(callback, 31, .{@as([]const u8, "NativeDragIconRetirementTimedOut")});
+        };
+    }
+    fn sourceRequest(self: *Server, request: *Request) !i32 {
+        if (self.owner == null) return -1;
+        if (request.code == 27 or request.code == 28) {
+            const token = try readLong(request.input);
+            try end(request.input);
+            if (token <= 0) return error.InvalidDragSourceToken;
+            var applied = false;
+            if (self.outbound) |outbound| if (outbound.token == token and outbound.request == null) {
+                if (request.code == 27) {
+                    if (self.source()) |value| value.cancel();
+                    applied = true;
+                } else if (self.source() == null or !self.source().?.active()) {
+                    self.retireSourceOutput();
+                    applied = true;
+                }
+            };
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, @intFromBool(applied)));
+            return 0;
+        }
+        const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
+        const configuration = try readLong(request.input);
+        const kind = switch (try readInt(request.input)) {
+            0 => Queue.DragKind.pointer,
+            1 => Queue.DragKind.touch,
+            else => return error.InvalidDragInputKind,
+        };
+        const id = try readInt(request.input);
+        const entry = self.find(key);
+        const valid = entry != null and entry.?.inputGeometryReady() and entry.?.configuration_generation == configuration;
+        if (request.code == 25) {
+            try end(request.input);
+            const generation = if (valid and self.outbound == null) self.session.dragClaim(entry.?.window, kind, id) else null;
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt64(request.output, @intCast(generation orelse 0)));
+            return 0;
+        }
+        const generation = try readLong(request.input);
+        var geometry: [6]i32 = undefined;
+        for (&geometry) |*value| value.* = try readInt(request.input);
+        const width = geometry[0];
+        const height = geometry[1];
+        const pixel_width = geometry[4];
+        const pixel_height = geometry[5];
+        if (generation <= 0 or !dimension(width) or !dimension(height) or !dimension(pixel_width) or !dimension(pixel_height) or
+            geometry[2] < 0 or geometry[2] >= width or geometry[3] < 0 or geometry[3] >= height) return error.InvalidDragIcon;
+        var text: ClipboardBytes = .{ .gpa = self.gpa };
+        defer text.deinit();
+        var html: ClipboardBytes = .{ .gpa = self.gpa };
+        defer html.deinit();
+        var uris: ClipboardBytes = .{ .gpa = self.gpa };
+        defer uris.deinit();
+        try ok(AParcel_readByteArray(request.input, &text, ClipboardBytes.allocate));
+        try ok(AParcel_readByteArray(request.input, &html, ClipboardBytes.allocate));
+        try ok(AParcel_readByteArray(request.input, &uris, ClipboardBytes.allocate));
+        if (try readInt(request.input) != 2) return error.InvalidDragResultArray;
+        try end(request.input);
+        if (!valid or self.outbound != null or self.session.dragClaim(entry.?.window, kind, id) != @as(u64, @intCast(generation))) {
+            try writeStart(request, null, 0, 2);
+            return 0;
+        }
+        const clipboard = self.session.clipboard orelse {
+            try writeStart(request, null, 0, 2);
+            return 0;
+        };
+        if (clipboard.manager.getVersion() < 3 or clipboard.device.getVersion() < 3) {
+            try writeStart(request, null, 0, 2);
+            return 0;
+        }
+        const icon = try Queue.DragIcon.init(self.session, width, height, .{ geometry[2], geometry[3] });
+        errdefer icon.deinit();
+        const queue = try Queue.init(self.gpa, self.io, @intCast(pixel_width), @intCast(pixel_height));
+        errdefer queue.deinit();
+        queue.expected_size = .{ @intCast(pixel_width), @intCast(pixel_height) };
+        queue.pace_frames = true;
+        const payload = if (text.bytes != null or html.bytes != null or uris.bytes != null)
+            try Queue.Clipboard.Payload.initAll(self.gpa, text.bytes, html.bytes, uris.bytes)
+        else
+            null;
+        const current = self.session.startDrag(entry.?.window, kind, id, @intCast(generation), icon.surface, payload, self.session.nativeSourceHooks()) catch |failure| {
+            // The validated generation was consumed. Allocation/transport errors
+            // after admission cannot prove that the compositor kept the grab.
+            std.log.warn("native drag start uncertain: {s}", .{@errorName(failure)});
+            try writeStart(request, null, 0, 3);
+            queue.deinit();
+            icon.deinit();
+            return 0;
+        };
+        self.outbound = .{ .key = key, .token = current.token, .icon = icon, .queue = queue, .request = request, .retire_deadline = Io.Clock.awake.now(self.io).toMilliseconds() + 6000 };
+        return 0; // drain keeps this request alive while protocol dispatch runs.
+    }
     fn handle(self: *Server, request: *Request) !i32 {
         // This read/test-pacing API is available to the system controller; only
         // the system-server owner may mutate task identities and geometry.
@@ -533,6 +702,7 @@ const Server = struct {
             return 0;
         }
         if (self.owner_pid != 0 and self.owner_pid != request.pid) return -1;
+        if (request.code >= 25 and request.code <= 28) return self.sourceRequest(request);
         if (request.code == 19 or request.code == 21) {
             try end(request.input);
             try ok(AParcel_writeInt32(request.output, 0));
@@ -547,7 +717,7 @@ const Server = struct {
             if (token <= 0 or (accepted != 0 and accepted != 1)) return error.InvalidDragResponse;
             var applied = false;
             if (self.session.clipboard) |clipboard| if (clipboard.native_drag) |*drag| {
-                applied = if (request.code == 23) drag.accept(@intCast(token), accepted != 0) else drag.finish(@intCast(token), accepted != 0);
+                applied = if (request.code == 23) drag.accept(@intCast(token), accepted != 0) else clipboard.finishNativeDrag(@intCast(token), accepted != 0);
             };
             try ok(AParcel_writeInt32(request.output, 0));
             try ok(AParcel_writeInt32(request.output, @intFromBool(applied)));
@@ -830,7 +1000,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 24) return -38;
+    if (code < 1 or code > 28) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -1059,6 +1229,14 @@ fn run(init: std.process.Init) !void {
     defer {
         accepting.store(false, .release);
         server.drain(false);
+        if (server.outbound) |*outbound| {
+            if (outbound.request) |request| {
+                outbound.request = null;
+                request.status = -32;
+                request.done.set(io);
+            }
+            server.retireSourceOutput();
+        }
         while (callbacks.load(.acquire) != 0) Io.sleep(io, .fromMilliseconds(1), .awake) catch {};
         if (server.owner) |owner| {
             _ = AIBinder_unlinkToDeath(owner, death, null);
@@ -1075,8 +1253,8 @@ fn run(init: std.process.Init) !void {
     defer stdin_group.cancel(io);
     try Io.File.stdout().writeStreamingAll(io, "ready\n");
     while (!disconnected.load(.acquire)) {
-        var files: [max_tasks + 1]Io.File = undefined;
-        var ready: [max_tasks + 1]bool = undefined;
+        var files: [max_tasks + 2]Io.File = undefined;
+        var ready: [max_tasks + 2]bool = undefined;
         var entries: [max_tasks]*Entry = undefined;
         files[0] = wake;
         var count: usize = 1;
@@ -1085,13 +1263,19 @@ fn run(init: std.process.Init) !void {
             entries[count - 1] = entry;
             count += 1;
         };
-        try session.dispatch(files[0..count], ready[0..count], if (server.test_drag != null) 10 else -1);
+        const task_count = count - 1;
+        const icon_index = count;
+        if (server.outbound) |outbound| {
+            files[count] = outbound.queue.notify_file;
+            count += 1;
+        }
+        try session.dispatch(files[0..count], ready[0..count], if (server.test_drag != null or server.outbound != null) 10 else -1);
         // Deliver protocol events before accepting frames: a queued event from
         // a pending configure must not become eligible because its replacement
         // frame happened to wake the same poll.
         try server.dispatchEvents();
         // Consume existing windows before requests can destroy/reuse a slot.
-        for (entries[0 .. count - 1], 1..) |entry, index| {
+        for (entries[0..task_count], 1..) |entry, index| {
             if (ready[index] and !entry.hold_output and try entry.queue.presentConfiguration(entry.window, !entry.suspended and !entry.window.suspended and entry.pending_queue == null and entry.configuration_generation == entry.window.configuration_generation) > 0) {
                 const restore_hover = !entry.inputGeometryReady();
                 entry.has_content = true;
@@ -1103,7 +1287,22 @@ fn run(init: std.process.Init) !void {
         // Configure/viewport transactions must progress without waiting for a
         // producer frame. Retained content fills the acknowledged geometry
         // while Android draws the new configuration.
-        for (entries[0 .. count - 1]) |entry| try entry.window.present();
+        for (entries[0..task_count]) |entry| try entry.window.present();
+        if (server.outbound) |*outbound| {
+            if (!outbound.failed) {
+                const presented = if (icon_index < count and ready[icon_index]) outbound.queue.presentConfiguration(outbound.icon, true) catch |failure| failed: {
+                    outbound.failed = true;
+                    if (server.source()) |value| value.cancel();
+                    if (server.owner) |callback| try sendGlobal(callback, 31, .{@as([]const u8, @errorName(failure))});
+                    break :failed @as(u32, 0);
+                } else 0;
+                if (presented > 0) if (server.source()) |value| {
+                    if (value.active()) outbound.retire_deadline = null;
+                };
+                try outbound.icon.present();
+            }
+        }
+        try server.tickSource();
         if (ready[0]) server.drain(!disconnected.load(.acquire));
         try server.tickTestDrag();
     }

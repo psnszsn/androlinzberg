@@ -94,22 +94,34 @@ fn token(self: *Self) !u64 {
 /// Consumes payload on every outcome. Clipboard owns this source through its
 /// terminal event and frees it at the next drag or seat/manager teardown. The
 /// caller supplies a validated held gesture, never a generic clipboard serial.
-pub fn startDrag(self: *Self, origin: *wl.Surface, serial: u32, icon: ?*wl.Surface, payload: *Payload, hooks: DragSource.Hooks) !*DragSource {
+pub fn startDrag(self: *Self, origin: *wl.Surface, serial: u32, icon: ?*wl.Surface, payload: ?*Payload, hooks: DragSource.Hooks) !*DragSource {
     if (self.outbound_drag) |previous| {
         if (previous.active()) {
-            payload.destroy();
+            if (payload) |value| value.destroy();
             return error.NativeDragAlreadyActive;
         }
         previous.deinit();
         self.outbound_drag = null;
     }
     const source_token = self.token() catch |err| {
-        payload.destroy();
+        if (payload) |value| value.destroy();
         return err;
     };
     const source = try DragSource.init(self.gpa, self.io, self.display, self.manager, self.device, self.transfers, source_token, origin, serial, icon, payload, hooks);
     self.outbound_drag = source;
     return source;
+}
+
+/// Recipient acknowledgement precedes compositor dnd_finished. Reading a
+/// private marker cannot authorize success for a local-only Android source.
+pub fn finishNativeDrag(self: *Self, offer_token: u64, consumed: bool) bool {
+    const drag = if (self.native_drag) |*value| value else return false;
+    const source_token = if (drag.active) |value| value.source_token else return false;
+    if (!drag.finish(offer_token, consumed)) return false;
+    if (consumed) if (self.outbound_drag) |source| {
+        if (source.token == source_token) source.android_consumed = true;
+    };
+    return true;
 }
 
 pub fn dragTimeout(self: *Self) i32 {
@@ -403,7 +415,7 @@ fn deviceListener(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Self) vo
                     for (&self.offers) |*slot| if (slot.* == offer) {
                         slot.* = null;
                     };
-                    drag.enter(offer, enter.serial, surface, enter.x.toDouble(), enter.y.toDouble()) catch |err|
+                    drag.enter(offer, enter.serial, surface, enter.x.toDouble(), enter.y.toDouble(), if (self.outbound_drag) |source| (if (source.active()) DragOffer.OwnSource{ .token = source.token, .mime = source.mime() } else null) else null) catch |err|
                         drag.hooks.issue(drag.hooks.context, err);
                 } else drag.leave();
             } else {

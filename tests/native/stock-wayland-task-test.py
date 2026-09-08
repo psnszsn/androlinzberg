@@ -458,6 +458,36 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     native_drag('rejected', 'text/plain;charset=utf-8', 'Rejected native drag', 'Drag rejected', False)
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
                     native_drag('cancelled', 'text/plain;charset=utf-8', 'Cancelled native drag', 'Drag cancelled', False, True)
+                    def export_drag(name, expected):
+                        report = out / ('android-drag-' + name + '.json')
+                        report.unlink(missing_ok=True)
+                        control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                                '--text', 'Drag exported', '--', str(args.seat), '--native-drag-destination', str(report))
+                        state = json.loads(report.read_text())
+                        assert state['failure'] is None and state['dropped'] and state['finished'], state
+                        if name == 'text': assert state['text'] == expected, state
+                        else:
+                            from urllib.parse import urlparse, unquote
+                            paths = [Path(unquote(urlparse(uri).path)) for uri in state['uris'].splitlines()]
+                            assert len(paths) == 1 and paths[0].read_text() == expected, state
+                        raw = Path(str(report) + '.ppm').read_bytes()
+                        magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
+                        width, height = map(int, dimensions.split())
+                        assert magic == b'P6' and maximum == b'255' and (width, height) == (1280, 720)
+                        def pixel(x, y):
+                            offset = (y * width + x) * 3
+                            return tuple(pixels[offset:offset + 3])
+                        # Real stock shadow: 64x48, hotspot32,24, pointer800,240.
+                        for x, y in [(770, 218), (829, 218), (770, 261), (829, 261)]:
+                            r, g, b = pixel(x, y)
+                            assert r < 20 and g < 20 and b > 120, ('Missing Android drag icon', x, y, pixel(x, y))
+                        for x, y in [(767, 218), (832, 218), (800, 215), (800, 264)]:
+                            assert pixel(x, y) == (0, 0, 0), ('Drag icon bounds/hotspot', x, y, pixel(x, y))
+                        assert sum(all(channel > 120 for channel in pixel(x, y))
+                                   for y in range(230, 248) for x in range(774, 824)) > 20, 'Stock DRAG text is absent'
+                    export_drag('text', 'Android drag 😀 café')
+                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
+                    export_drag('file', 'Android file 😀 café')
                     for _ in range(16):
                         ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
                         magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
@@ -468,7 +498,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                         time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 12 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 15 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']

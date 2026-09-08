@@ -28,7 +28,7 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         fun accepted(token: Long, accepted: Boolean)
         fun ended(token: Long, consumed: Boolean)
     }
-    private class Active(val token: Long, val state: DragState, val native: Native) {
+    private class Active(val token: Long, val state: DragState, val native: Native, val source: Source? = null) {
         var target: IBinder? = null
         var client: IBinder? = null
         var dropped = false
@@ -44,6 +44,101 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
             override fun dragRecipientEntered(window: IWindow) = recipient(window.asBinder(), true)
             override fun dragRecipientExited(window: IWindow) = recipient(window.asBinder(), false)
         })
+    }
+
+    /** Snapshot captured after pinned performDrag's authorization, input transfer,
+     * START and shadow setup. Only the handler calls into native presentation. */
+    class Source internal constructor(internal val identity: Any, val taskId: Int,
+        val taskToken: IBinder, val client: IBinder, val uid: Int, val pid: Int,
+        val flags: Int, val data: ClipData?, val inputToken: IBinder,
+        val inputSource: Int, val deviceId: Int, val pointerId: Int,
+        val shadow: android.view.SurfaceControl, val width: Int, val height: Int,
+        val hotspotX: Float, val hotspotY: Float) : AutoCloseable {
+        override fun close() = shadow.release()
+    }
+    interface SourceListener {
+        fun started(source: Source)
+        fun closed(source: Source, consumed: Boolean)
+    }
+    private var sourceListener: SourceListener? = null
+    private var outgoing: Source? = null
+    fun connectSource(listener: SourceListener) {
+        onThread()
+        check(sourceListener == null)
+        sourceListener = listener
+    }
+    private fun captureSource(state: DragState, inputSource: Int, deviceId: Int, pointerId: Int) {
+        // Called under WM lock. No provider/Binder calls or handler waits here.
+        val window = windows.mWindowMap[state.mLocalWin] ?: return
+        val task = window.task ?: return
+        val surface = state.mSurfaceControl ?: return
+        if (!surface.isValid || state.mFlags and View.DRAG_FLAG_ACCESSIBILITY_ACTION != 0) return
+        val inputToken = state.inputToken ?: return
+        val source = Source(state, task.mTaskId, task.mRemoteToken.toWindowContainerToken().asBinder(),
+            window.mClient.asBinder(), state.mUid, state.mPid, state.mFlags, state.mData?.let(::ClipData),
+            inputToken, inputSource, deviceId, pointerId,
+            android.view.SurfaceControl(surface, "Hosted drag shadow"), surface.width, surface.height,
+            state.mThumbOffsetX, state.mThumbOffsetY)
+        if (!handler.post {
+            val listener = sourceListener
+            if (listener == null || outgoing != null || !valid(source)) source.close()
+            else {
+                outgoing = source
+                listener.started(source)
+            }
+        }) source.close()
+    }
+    fun valid(source: Source): Boolean = synchronized(windows.mGlobalLock) {
+        val state = source.identity as DragState
+        val window = windows.mWindowMap[source.client]
+        windows.mDragDropController.hostedDragStateLocked() === state &&
+            window != null && window.mSession.mUid == source.uid && window.mSession.mPid == source.pid &&
+            window.task?.mRemoteToken?.toWindowContainerToken()?.asBinder() == source.taskToken &&
+            state.mSurfaceControl?.isValid == true
+    }
+    fun handoff(source: Source): Boolean {
+        onThread()
+        if (outgoing !== source || !valid(source)) return false
+        // Lock order: the dispatcher may query WMS; never hold its global lock
+        // while resetting input ownership. The shell serializes queued CANCEL.
+        if (!input.handoffNativeDrag(source.inputToken)) return false
+        synchronized(windows.mGlobalLock) {
+            if (!valid(source)) return false
+            (source.identity as DragState).handoffHostedPresentationLocked()
+        }
+        return true
+    }
+    fun enterSource(source: Source, token: Long, taskId: Int, x: Float, y: Float, native: Native): Boolean {
+        onThread()
+        if (outgoing !== source || !valid(source)) return false
+        synchronized(windows.mGlobalLock) {
+            val state = source.identity as DragState
+            if (!state.mHostedNativePresentation || active != null) return false
+            active = Active(token, state, native, source)
+        }
+        motion(token, taskId, x, y)
+        return true
+    }
+    fun leaveSource(token: Long) {
+        onThread()
+        val drag = active?.takeIf { it.token == token && it.source != null && !it.dropped } ?: return
+        synchronized(windows.mGlobalLock) {
+            if (windows.mDragDropController.hostedDragStateLocked() === drag.state) {
+                drag.target?.let { windows.mInputToWindowMap[it] }?.let {
+                    dispatchLocation(it, DragEvent.ACTION_DRAG_EXITED, drag.localX, drag.localY)
+                }
+            }
+        }
+        active = null // Leave ends the offer, not the original Android gesture.
+    }
+    fun finishSource(source: Source, consumed: Boolean) {
+        onThread()
+        synchronized(windows.mGlobalLock) {
+            if (windows.mDragDropController.hostedDragStateLocked() === source.identity)
+                (source.identity as DragState).let {
+                    if (consumed) it.endDragLocked(true, false) else { it.mDragResult = false; it.cancelDragLocked(true) }
+                }
+        }
     }
 
     fun begin(token: Long, taskId: Int, data: ClipData, sourceUid: Int, x: Float, y: Float,
@@ -145,14 +240,24 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
     }
     private fun closedOnThread(state: DragState, consumed: Boolean) {
         check(handler.post {
-            val drag = active?.takeIf { it.state === state } ?: return@post
-            active = null
-            drag.native.ended(drag.token, consumed)
+            active?.takeIf { it.state === state }?.let { drag ->
+                active = null
+                drag.native.ended(drag.token, consumed)
+            }
+            outgoing?.takeIf { it.identity === state }?.let { source ->
+                outgoing = null
+                sourceListener?.closed(source, consumed)
+                source.close()
+            }
         })
     }
     private fun onThread() { check(Looper.myLooper() === handler.looper) }
 
     companion object {
+        @JvmStatic fun started(value: Any, inputSource: Int, deviceId: Int, pointerId: Int) {
+            LocalServices.getService(HostedNativeDrag::class.java)?.captureSource(
+                value as DragState, inputSource, deviceId, pointerId)
+        }
         /** Called by stock closeLocked before clearing fields; only posts work. */
         @JvmStatic fun closed(value: Any, consumed: Boolean) {
             // DragState is package-private Java and cannot appear in a public Kotlin signature.

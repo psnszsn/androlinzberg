@@ -14,11 +14,13 @@ import dev.artzig.system.HostedDesktopTransfers
 internal class WaylandNativeDrag(private val handler: Handler, private val wm: HostedNativeDrag,
     private val host: Host) {
     interface Host {
+        fun source(token: Long): HostedNativeDrag.Source?
+        fun dropping(token: Long)
         fun point(task: TaskGeometry.Task, x: Float, y: Float): Pair<Float, Float>?
         fun accept(token: Long, accepted: Boolean)
         fun finish(token: Long, consumed: Boolean)
     }
-    private class Attempt(val token: Long, val task: TaskGeometry.Task, var x: Float, var y: Float) {
+    private class Attempt(val token: Long, val sourceToken: Long, val task: TaskGeometry.Task, var x: Float, var y: Float) {
         var payload = false
         var started = false
         var dropped = false
@@ -28,12 +30,20 @@ internal class WaylandNativeDrag(private val handler: Handler, private val wm: H
     private val transfers = HostedDesktopTransfers.get(wm.context, handler)
     private var active: Attempt? = null
 
-    fun entered(token: Long, task: TaskGeometry.Task, x: Float, y: Float) {
+    fun entered(token: Long, sourceToken: Long, task: TaskGeometry.Task, x: Float, y: Float) {
         onThread()
         require(token > 0)
         active?.let { cancel(it) }
         if (host.point(task, x, y) == null) { host.finish(token, false); return }
-        active = Attempt(token, task, x, y)
+        val attempt = Attempt(token, sourceToken, task, x, y)
+        active = attempt
+        if (sourceToken != 0L) {
+            val source = host.source(sourceToken) ?: run { cancel(attempt); return }
+            val point = host.point(task, x, y) ?: run { cancel(attempt); return }
+            attempt.payload = true
+            attempt.started = wm.enterSource(source, token, task.id, point.first, point.second, callbacks(attempt))
+            if (!attempt.started) cancel(attempt)
+        }
     }
     fun motion(token: Long, x: Float, y: Float) {
         onThread()
@@ -90,31 +100,36 @@ internal class WaylandNativeDrag(private val handler: Handler, private val wm: H
         try {
             attempt.started = true // Cleanup also covers a partially initialized WMS attempt.
             attempt.started = wm.begin(attempt.token, attempt.task.id, clip, uid,
-                point.first, point.second, object : HostedNativeDrag.Native {
-                    override fun accepted(token: Long, accepted: Boolean) {
-                        if (active === attempt) host.accept(token, accepted)
-                    }
-                    override fun ended(token: Long, consumed: Boolean) {
-                        if (active !== attempt) return
-                        retire(attempt)
-                        host.finish(token, consumed)
-                    }
-                })
+                point.first, point.second, callbacks(attempt))
             if (!attempt.started) cancel(attempt)
             else if (attempt.dropped) deliverDrop(attempt)
         } catch (failure: RuntimeException) { fail(attempt, failure) }
+    }
+    private fun callbacks(attempt: Attempt) = object : HostedNativeDrag.Native {
+        override fun accepted(token: Long, accepted: Boolean) {
+            if (active === attempt) host.accept(token, accepted)
+        }
+        override fun ended(token: Long, consumed: Boolean) {
+            if (active !== attempt) return
+            retire(attempt)
+            host.finish(token, consumed)
+        }
     }
     private fun deliverDrop(attempt: Attempt) {
         val point = host.point(attempt.task, attempt.x, attempt.y) ?: run { cancel(attempt); return }
         // Retain conservatively even if IPC fails after dispatch. App-held
         // DragAndDropPermissions can outlive the gesture. Session storage has a
         // hard shared budget; no granted URI is silently evicted to make room.
+        if (attempt.sourceToken != 0L) host.dropping(attempt.sourceToken)
         attempt.attemptedDrop = true
         wm.drop(attempt.token, attempt.task.id, point.first, point.second)
     }
     private fun cancel(attempt: Attempt) {
         retire(attempt)
-        if (attempt.started) wm.cancel(attempt.token)
+        if (attempt.started) {
+            if (attempt.sourceToken != 0L && !attempt.dropped) wm.leaveSource(attempt.token)
+            else wm.cancel(attempt.token)
+        }
         host.finish(attempt.token, false)
     }
     private fun retire(attempt: Attempt) {

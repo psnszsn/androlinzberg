@@ -24,13 +24,14 @@ gpa: std.mem.Allocator,
 io: Io,
 transfers: *Transfers,
 proxy: ?*wl.DataSource,
-payload: *Payload,
+payload: ?*Payload,
 origin: *wl.Surface,
 input_kind: ?@import("drag_grab.zig").Kind = null,
 token: u64,
 hooks: Hooks,
 marker: [80:0]u8 = @splat(0),
 marker_length: usize = 0,
+android_consumed: bool = false,
 dropped: bool = false,
 sends: u32 = 0,
 deadline: ?i64 = null,
@@ -44,8 +45,8 @@ start_deadline: ?i64 = null,
 
 /// Consumes payload on every return. The caller must supply the actual held
 /// gesture's origin and serial, after its Android/WMS authorization succeeds.
-pub fn init(gpa: std.mem.Allocator, io: Io, display: *wl.Display, manager: *wl.DataDeviceManager, device: *wl.DataDevice, transfers: *Transfers, token: u64, origin: *wl.Surface, serial: u32, icon: ?*wl.Surface, payload: *Payload, hooks: Hooks) !*Self {
-    errdefer payload.destroy();
+pub fn init(gpa: std.mem.Allocator, io: Io, display: *wl.Display, manager: *wl.DataDeviceManager, device: *wl.DataDevice, transfers: *Transfers, token: u64, origin: *wl.Surface, serial: u32, icon: ?*wl.Surface, payload: ?*Payload, hooks: Hooks) !*Self {
+    errdefer if (payload) |value| value.destroy();
     if (manager.getVersion() < 3 or device.getVersion() < 3) return error.DragResultProtocolUnavailable;
     const self = try gpa.create(Self);
     errdefer gpa.destroy(self);
@@ -58,13 +59,15 @@ pub fn init(gpa: std.mem.Allocator, io: Io, display: *wl.Display, manager: *wl.D
     self.marker_length = marker.len;
     self.marker[marker.len] = 0;
     proxy.setListener(*Self, listener, self);
-    if (payload.text != null) {
-        proxy.offer("text/plain;charset=utf-8");
-        proxy.offer("UTF8_STRING");
-        proxy.offer("text/plain");
+    if (payload) |value| {
+        if (value.text != null) {
+            proxy.offer("text/plain;charset=utf-8");
+            proxy.offer("UTF8_STRING");
+            proxy.offer("text/plain");
+        }
+        if (value.html != null) proxy.offer("text/html");
+        if (value.uris != null) proxy.offer("text/uri-list");
     }
-    if (payload.html != null) proxy.offer("text/html");
-    if (payload.uris != null) proxy.offer("text/uri-list");
     proxy.offer(self.mime());
     // Android drag flags provide no source-side deletion contract for MOVE.
     proxy.setActions(.{ .copy = true });
@@ -101,7 +104,7 @@ fn processedListener(callback: *wl.Callback, _: wl.Callback.Event, self: *Self) 
 }
 pub fn deinit(self: *Self) void {
     self.finish(false);
-    self.payload.destroy();
+    if (self.payload) |value| value.destroy();
     self.gpa.destroy(self);
 }
 pub fn mime(self: *const Self) [:0]const u8 {
@@ -150,14 +153,15 @@ fn finish(self: *Self, consumed: bool) void {
     self.processing = null;
     proxy.destroy();
     self.transfers.cancel(self.token + 4);
-    self.hooks.event(self.hooks.context, self.token, .{ .ended = consumed });
+    self.hooks.event(self.hooks.context, self.token, .{ .ended = consumed and (self.payload != null or self.android_consumed) });
 }
 fn bytes(self: *const Self, mime_type: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, mime_type, self.mime())) return "";
+    const payload = self.payload orelse return null;
     if (std.mem.eql(u8, mime_type, "text/plain;charset=utf-8") or
-        std.mem.eql(u8, mime_type, "text/plain") or std.mem.eql(u8, mime_type, "UTF8_STRING")) return self.payload.text;
-    if (std.mem.eql(u8, mime_type, "text/html")) return self.payload.html;
-    if (std.mem.eql(u8, mime_type, "text/uri-list")) return self.payload.uris;
+        std.mem.eql(u8, mime_type, "text/plain") or std.mem.eql(u8, mime_type, "UTF8_STRING")) return payload.text;
+    if (std.mem.eql(u8, mime_type, "text/html")) return payload.html;
+    if (std.mem.eql(u8, mime_type, "text/uri-list")) return payload.uris;
     return null;
 }
 fn listener(_: *wl.DataSource, event: wl.DataSource.Event, self: *Self) void {

@@ -33,7 +33,6 @@ internal class StockTaskOrganizer(private val handler: Handler) :
     private var events: WaylandTaskShell.Events<IBinder, SurfaceControl>? = null
     private val tasks = mutableMapOf<IBinder, ActivityManager.RunningTaskInfo>()
     private val outputs = IdentityHashMap<SurfaceControl, TaskSurfaceOutput>()
-    private var layerStack = 1
     private var registered = false
     private var descriptionsRegistered = false
     // Pinned Task.updateTaskDescription sends TaskStackListener immediately,
@@ -123,9 +122,8 @@ internal class StockTaskOrganizer(private val handler: Handler) :
         val target = window as SurfaceWindow
         val surface = target.prepare(size)
         val output = outputs[leash] ?: run {
-            check(layerStack < Int.MAX_VALUE) { "Private layer stack IDs exhausted" }
             TaskSurfaceOutput("Task ${change.task.id}/${change.task.generation}", leash,
-                surface, layerStack++).also { outputs[leash] = it }
+                surface, TaskSurfaceOutput.allocateLayerStack()).also { outputs[leash] = it }
         }
         val bounds = change.after
         val oldBounds = info.configuration.windowConfiguration.bounds

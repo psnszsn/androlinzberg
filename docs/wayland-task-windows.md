@@ -11,6 +11,45 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Original Android drag handoff and native export (2026-09-08)
+
+Stock `View.startDragAndDrop` now transfers its authorized drag to the native
+presenter. The shell retains the original WMS DragState, ClipData, source UID
+and URI-grant flags. A bounded native start reply distinguishes accepted,
+rejected and uncertain grabs while the Wayland owner keeps dispatching. Only
+accepted handoffs reset the stock input dispatcher; queued legacy motion/drop
+callbacks cannot close the transferred drag.
+
+The original stock shadow is mirrored by SF into a private BufferQueue output
+and presented as the compositor drag icon. Logical dimensions/hotspot are
+projected from the accepted task geometry; allocation follows its output scale.
+Task and icon outputs share a private layer-stack allocator. Icon retirement
+follows SF unbinding and the terminal source event, with bounded orphan cleanup.
+
+Offers returning to the same Android session carry the current source identity.
+They reuse the original state and grants without reading exported bytes or
+creating a second drag. Leaving a task only ends that offer. The Android
+recipient result finishes the offer before the compositor finishes the source.
+Private/local-only sources export no representations, and a native peer merely
+finishing their marker cannot claim Android consumption. URI exports require
+GLOBAL_URI_READ and retain exposed immutable file leases for the session.
+
+Regression 461 passes private-source leave/re-enter and completion-authority
+checks. Regression 465 passes 49 Wayland unit tests and all 15 stock drag steps:
+Android recipient acceptance/rejection, native text/HTML/file import, and real
+Android-to-native text/file export. Captured GPU pixels verify the original blue
+64x48 shadow, white DRAG text, and 32,24 hotspot. Regression 466 passes the entire
+JVM suite and all 16 APK integration tests with 48 clean steps. Artifacts:
+`/tmp/wayland-own-source-461-artifacts/`,
+`/tmp/wayland-outgoing-465-artifacts/`, and
+`/tmp/wayland-outgoing-466-artifacts/`. Package 91 contains 95 patches. Regression 467 also passes stock video
+(four clean steps), both drag-icon protocol versions, all three GPU-fence gates
+and C++/graph audits; artifacts: `/tmp/wayland-outgoing-467-artifacts/`.
+
+Cross-task desktop placement, the complete capability/death/timeout matrix,
+fallback shadow presentation, and the remaining M8–M11 acceptance and production
+cutover work remain unfinished.
+
 ## Native source start acknowledgement (2026-09-08)
 
 The native source now waits for compositor evidence of grab acceptance. A
