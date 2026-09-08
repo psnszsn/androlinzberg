@@ -112,8 +112,9 @@ fn configureNativeLibraries(init: std.process.Init, tree: []const u8, runtime_ro
     try std.Io.Dir.cwd().createDirPath(init.io, native_dir);
 
     _ = setenv("ARTZIG_NATIVE_LIB_DIR", try a.dupeSentinel(u8, native_dir, 0), 1);
+    _ = setenv("ARTZIG_IMAGE_NATIVE_LIB_DIR", try std.fs.path.joinZ(a, &.{ tree, "apps", "lib" }), 1);
     _ = runtime_root;
-    _ = setenv("BIONIC_LD_LIBRARY_PATH", try a.dupeSentinel(u8, native_dir, 0), 1);
+    _ = setenv("BIONIC_LD_LIBRARY_PATH", try std.fmt.allocPrintSentinel(a, "{s}:{s}/apps/lib/*", .{ native_dir, tree }, 0), 1);
 
     // libdl_bio reads its soname override files from XDG_DATA_DIRS in its ELF
     // constructor, so prepend the mappings installed alongside the launcher.
@@ -232,7 +233,12 @@ pub fn main(init: std.process.Init) !void {
             return;
         } else if (std.mem.eql(u8, args[i], "--javatest")) {
             try ensureSession(init, &binder, join_dir);
-            var headless = try bootHeadless(init);
+            const test_apk = init.minimal.environ.getPosix("AZK_TEST_APK");
+            if (test_apk) |fixture_apk| {
+                if (!std.fs.path.isAbsolute(fixture_apk)) return error.TestApkPathMustBeAbsolute;
+                _ = setenv("ARTZIG_APK", try init.arena.allocator().dupeSentinel(u8, fixture_apk, 0), 1);
+            }
+            var headless = if (test_apk) |fixture_apk| try bootHeadlessApk(init, fixture_apk) else try bootHeadless(init);
             defer headless.rt.releaseProcessState();
             if (binder) |*session| try session.awaitSystemReady();
             const rt = &headless.rt;
@@ -456,6 +462,7 @@ const RetainRenderNodeFn = *const fn (node: *anyopaque) callconv(.c) void;
 
 fn lookupHwuiBridges(lib: *std.DynLib) !host_natives.HwuiBridges {
     return .{
+        .looper_poll_fd = lib.lookup(*const fn () callconv(.c) c_int, "azk_host_looper_poll_fd") orelse return error.SymbolNotFound,
         .bind_egl_display = lib.lookup(RetainRenderNodeFn, "azk_hwui_bind_egl_display") orelse return error.SymbolNotFound,
         .configure = lib.lookup(ConfigureHostFn, "azk_hwui_configure_host_surface") orelse return error.SymbolNotFound,
         .destroy = lib.lookup(DestroyHostFn, "azk_hwui_destroy_host_surface") orelse return error.SymbolNotFound,
@@ -870,7 +877,6 @@ fn javaMain(init: std.process.Init, frames_limit: ?u32, apk: ?[]const u8, fullsc
                 .{ monotonicMs(), waited.looper_ready, waited.renderer_ready, waited.optimizer_ready, events.len },
             );
         }
-        if (waited.looper_ready) _ = host_natives.consumeLooperWakeup();
         if (waited.renderer_ready and host_natives.consumeRendererWakeup() != 0) {
             if (trace_frame_pacing) std.debug.print("azk pacing: renderer ready t={d}, committing parent\n", .{monotonicMs()});
             render_in_flight = false;

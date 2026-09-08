@@ -275,6 +275,9 @@ extern int register_android_content_StringBlock(JNIEnv*);
 extern int register_android_view_RenderNode(JNIEnv*);
 extern int register_android_view_MotionEvent(JNIEnv*);
 extern int register_android_view_KeyEvent(JNIEnv*);
+extern int register_android_view_InputQueue(JNIEnv*);
+extern int register_android_view_Surface(JNIEnv*);
+extern int register_android_os_MessageQueue(JNIEnv*);
 extern int register_android_view_InputDevice(JNIEnv*);
 extern int register_android_view_VelocityTracker(JNIEnv*);
 extern int register_android_view_KeyCharacterMap(JNIEnv*);
@@ -369,6 +372,9 @@ static jobject roundTripHidlMemory(JNIEnv* env, jclass, jobject memory) {
     return android::JHidlMemory::toJava(env, *native);
 }
 
+static int registerStockNdkLooperSmoke(JNIEnv* env);
+static int registerStockNdkGraphicsSmoke(JNIEnv* env);
+static int registerStockNativePropertiesSmoke(JNIEnv* env);
 static int registerStockHidlMemorySmoke(JNIEnv* env) {
     const JNINativeMethod methods[] = {
         {"nativeRoundTrip", "(Landroid/os/HidlMemory;)Landroid/os/HidlMemory;",
@@ -549,6 +555,9 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(azk_register_media_extractor_service),
             E(azk_register_audio_manager_smoke),
             E(registerStockHidlMemorySmoke),
+            E(registerStockNdkLooperSmoke),
+            E(registerStockNdkGraphicsSmoke),
+            E(registerStockNativePropertiesSmoke),
             E(registerHostedZygoteCommandBuffer),
             E(registerPerfettoTrace),
             E(android::register_android_os_PerfettoTrackEventExtra),
@@ -615,6 +624,9 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_view_RenderNode),
             E(android::register_android_view_MotionEvent),
             E(android::register_android_view_KeyEvent),
+            E(android::register_android_os_MessageQueue),
+            E(android::register_android_view_InputQueue),
+            E(android::register_android_view_Surface),
             E(android::register_android_view_InputDevice),
             E(android::register_android_view_VelocityTracker),
             E(android::register_android_view_KeyCharacterMap),
@@ -785,3 +797,159 @@ jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& binder) {
     return result;
 }
 } // namespace android
+
+// AOSP NativeMessageQueue and ALooper share Looper::getForThread(). The host
+// observes its epoll descriptor; only stock pollOnce drains it and dispatches.
+#include <utils/Looper.h>
+extern "C" __attribute__((visibility("default"))) int azk_host_looper_poll_fd() {
+    auto looper = android::Looper::getForThread();
+    return looper ? looper->getPollFdForHost() : -1;
+}
+
+#include <android/looper.h>
+static thread_local int ndkLooperCallbackCount = 0;
+static int testNdkLooperCallback(int, int events, void*) {
+    if (events & ALOOPER_EVENT_INPUT) ++ndkLooperCallbackCount;
+    return 0;
+}
+static jboolean attachTestNdkLooper(JNIEnv* env, jclass, jobject fd) {
+    ndkLooperCallbackCount = 0;
+    ALooper* looper = ALooper_forThread();
+    if (!looper || ALooper_prepare(0) != looper || azk_host_looper_poll_fd() < 0) return JNI_FALSE;
+    return ALooper_addFd(looper, jniGetFDFromFileDescriptor(env, fd), ALOOPER_POLL_CALLBACK,
+                        ALOOPER_EVENT_INPUT, testNdkLooperCallback, nullptr) == 1;
+}
+static jint countTestNdkLooper(JNIEnv*, jclass) { return ndkLooperCallbackCount; }
+static void detachTestNdkLooper(JNIEnv* env, jclass, jobject fd) {
+    if (auto* looper = ALooper_forThread()) ALooper_removeFd(looper, jniGetFDFromFileDescriptor(env, fd));
+}
+static int registerStockNdkLooperSmoke(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"attach", "(Ljava/io/FileDescriptor;)Z", reinterpret_cast<void*>(attachTestNdkLooper)},
+        {"callbackCount", "()I", reinterpret_cast<void*>(countTestNdkLooper)},
+        {"detach", "(Ljava/io/FileDescriptor;)V", reinterpret_cast<void*>(detachTestNdkLooper)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/StockNdkLooperSmoke", methods, 3);
+}
+
+#include <android/bitmap.h>
+#include <android/native_window_jni.h>
+#include <android/native_window.h>
+#include <sys/socket.h>
+#include <unistd.h>
+extern "C" void* __memchr_chk(const void*, int, size_t, size_t);
+extern "C" ssize_t __pwrite64_chk(int, const void*, size_t, off64_t, size_t);
+extern "C" ssize_t __sendto_chk(int, const void*, size_t, size_t, int, const sockaddr*, socklen_t);
+static jboolean testNdkBitmapAndWindow(JNIEnv* env, jclass, jobject bitmap, jobject surface) {
+    AndroidBitmapInfo info{};
+    if (AndroidBitmap_getInfo(env, nullptr, &info) != ANDROID_BITMAP_RESULT_BAD_PARAMETER ||
+        AndroidBitmap_getInfo(env, bitmap, &info) != 0 || info.width != 3 || info.height != 2 ||
+        info.stride < 12 || info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) return JNI_FALSE;
+    void* pixels = nullptr;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != 0 || !pixels) return JNI_FALSE;
+    // White is independent of the host Skia channel order.
+    memset(pixels, 0xff, 4);
+    if (AndroidBitmap_unlockPixels(env, bitmap) != 0) return JNI_FALSE;
+    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
+    if (window) { ANativeWindow_release(window); return JNI_FALSE; }
+    return ANativeWindow_toSurface(env, nullptr) == nullptr;
+}
+static jboolean testFortifiedIo(JNIEnv* env, jclass, jobject file, jobject socket) {
+    const unsigned char bytes[] = {4, 5};
+    if (__memchr_chk(bytes, 5, 2, 2) != bytes + 1 || __memchr_chk(bytes, 5, 1, 2) != nullptr)
+        return JNI_FALSE;
+    return __pwrite64_chk(jniGetFDFromFileDescriptor(env, file), bytes, 2, 2, 2) == 2 &&
+           __sendto_chk(jniGetFDFromFileDescriptor(env, socket), bytes, 2, 2, 0, nullptr, 0) == 2;
+}
+#include <android/sharedmem.h>
+#include <android/sharedmem_jni.h>
+#include <android-base/unique_fd.h>
+#include <sys/mman.h>
+static jboolean testNdkSharedMemory(JNIEnv* env, jclass, jobject javaMemory) {
+    if (ASharedMemory_create("empty", 0) != -22 || ASharedMemory_getSize(-1) != 0 ||
+        ASharedMemory_dupFromJava(env, nullptr) != -1) return JNI_FALSE;
+    android::base::unique_fd duplicate(ASharedMemory_dupFromJava(env, javaMemory));
+    if (duplicate < 0 || ASharedMemory_getSize(duplicate) != 4096 ||
+        !(fcntl(duplicate, F_GETFD) & FD_CLOEXEC)) return JNI_FALSE;
+    android::base::unique_fd fd(ASharedMemory_create(nullptr, 4096));
+    if (fd < 0 || ASharedMemory_getSize(fd) != 4096 ||
+        !(fcntl(fd, F_GETFD) & FD_CLOEXEC) || ftruncate(fd, 8192) != -1) return JNI_FALSE;
+    auto* writable = static_cast<unsigned char*>(mmap(nullptr, 4096,
+            PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+    if (writable == MAP_FAILED) return JNI_FALSE;
+    bool valid = ASharedMemory_setProt(fd, PROT_READ | PROT_WRITE) == 0 &&
+            ASharedMemory_setProt(fd, PROT_READ) == 0;
+    errno = 0;
+    valid = valid && ASharedMemory_setProt(fd, PROT_READ | PROT_WRITE) == -1 && errno == EINVAL;
+    // Existing writable mappings remain live; only future mappings lose write access.
+    writable[0] = 73;
+    void* rejected = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    valid = valid && rejected == MAP_FAILED;
+    if (rejected != MAP_FAILED) munmap(rejected, 4096);
+    auto* readable = static_cast<unsigned char*>(mmap(nullptr, 4096, PROT_READ, MAP_SHARED, fd, 0));
+    valid = valid && readable != MAP_FAILED && readable[0] == 73;
+    if (readable != MAP_FAILED) munmap(readable, 4096);
+    munmap(writable, 4096);
+    return valid;
+}
+static int registerStockNdkGraphicsSmoke(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"sharedMemory", "(Landroid/os/SharedMemory;)Z", reinterpret_cast<void*>(testNdkSharedMemory)},
+        {"bitmapAndWindow", "(Landroid/graphics/Bitmap;Landroid/view/Surface;)Z", reinterpret_cast<void*>(testNdkBitmapAndWindow)},
+        {"checkedIo", "(Ljava/io/FileDescriptor;Ljava/io/FileDescriptor;)Z", reinterpret_cast<void*>(testFortifiedIo)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/StockNdkGraphicsSmoke", methods, 3);
+}
+
+extern "C" const void* bionic___system_property_find(const char*);
+extern "C" int bionic___system_property_get(const char*, char*);
+extern "C" int bionic___system_property_set(const char*, const char*);
+extern "C" uint32_t bionic___system_property_serial(const void*);
+extern "C" void bionic___system_property_read_callback(const void*, void (*)(void*, const char*, const char*, uint32_t), void*);
+struct NativePropertyObservation {
+    const char* name;
+    const char* expected;
+    bool matches = false;
+    uint32_t serial = 0;
+};
+static void observeNativeProperty(void* cookie, const char* name, const char* value, uint32_t serial) {
+    auto* result = static_cast<NativePropertyObservation*>(cookie);
+    char legacy[92] = {};
+    const char* expectedLegacy = strlen(value) >= 92 ? "Must use __system_property_read_callback() to read" : value;
+    result->matches = strcmp(name, result->name) == 0 && strcmp(value, result->expected) == 0 &&
+            bionic___system_property_get(name, legacy) == strlen(expectedLegacy) &&
+            strcmp(legacy, expectedLegacy) == 0;
+    result->serial = serial;
+}
+static jlong findNativeProperty(JNIEnv* env, jclass, jstring key) {
+    ScopedUtfChars name(env, key);
+    return name.c_str() ? reinterpret_cast<jlong>(bionic___system_property_find(name.c_str())) : 0;
+}
+static jlong testNativeProperty(JNIEnv* env, jclass, jlong handle, jstring key, jstring expected) {
+    ScopedUtfChars name(env, key);
+    if (!name.c_str()) return -2;
+    const void* info = reinterpret_cast<const void*>(handle);
+    if (!info) return -2;
+    if (!expected || info != bionic___system_property_find(name.c_str())) return -2;
+    ScopedUtfChars value(env, expected);
+    if (!value.c_str()) return -2;
+    NativePropertyObservation observation{name.c_str(), value.c_str()};
+    bionic___system_property_read_callback(info, observeNativeProperty, &observation);
+    return observation.matches && observation.serial == bionic___system_property_serial(info)
+            ? static_cast<jlong>(observation.serial) : -2;
+}
+static jint setNativeProperty(JNIEnv* env, jclass, jstring key, jstring value) {
+    ScopedUtfChars name(env, key);
+    if (!name.c_str()) return -1;
+    if (!value) return bionic___system_property_set(name.c_str(), nullptr);
+    ScopedUtfChars text(env, value);
+    return text.c_str() ? bionic___system_property_set(name.c_str(), text.c_str()) : -1;
+}
+static int registerStockNativePropertiesSmoke(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"find", "(Ljava/lang/String;)J", reinterpret_cast<void*>(findNativeProperty)},
+        {"observe", "(JLjava/lang/String;Ljava/lang/String;)J", reinterpret_cast<void*>(testNativeProperty)},
+        {"put", "(Ljava/lang/String;Ljava/lang/String;)I", reinterpret_cast<void*>(setNativeProperty)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/StockNativePropertiesSmoke", methods, 3);
+}

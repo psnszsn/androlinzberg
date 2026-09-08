@@ -1,6 +1,12 @@
 //! Explicit repository-owned JVM source declarations.
 //! Add new sources here so graph membership changes with this Zig file.
 pub const framework = [_][]const u8{
+    "src/java/com/android/server/webkit/HostedWebViewUpdateService.kt",
+    "src/java/dev/artzig/StockWebViewSmoke.kt",
+    "src/java/dev/artzig/StockWebViewTestActivity.kt",
+    "src/java/dev/artzig/StockNdkLooperSmoke.kt",
+    "src/java/dev/artzig/StockNdkGraphicsSmoke.kt",
+    "src/java/dev/artzig/StockNativePropertiesSmoke.kt",
     "src/java/dev/artzig/StockMediaMetricsSmoke.kt",
     "src/java/dev/artzig/StockAudioManagerSmoke.kt",
     "src/java/dev/artzig/StockAudioTrackSmoke.kt",
@@ -21,10 +27,6 @@ pub const framework = [_][]const u8{
     "src/framework-stubs/android/view/SurfaceControl.java",
     "src/framework-stubs/android/view/SurfaceSession.java",
     "src/framework-stubs/android/view/TextureView.java",
-    "src/framework-stubs/android/webkit/CookieManager.kt",
-    "src/framework-stubs/android/webkit/HostedWebViewProvider.kt",
-    "src/framework-stubs/android/webkit/WebSettings.kt",
-    "src/framework-stubs/android/webkit/WebView.java",
     "src/framework-stubs/com/android/server/pm/Computer.java",
     "src/framework-stubs/com/android/server/pm/PackageArchiver.java",
     "src/framework-stubs/com/android/server/pm/PackageManagerService.java",
@@ -34,7 +36,6 @@ pub const framework = [_][]const u8{
     "src/framework/android/content/res/HostedConfigurationController.kt",
     "src/framework/android/content/res/HostedResources.kt",
     "src/framework/android/graphics/SurfaceTexture.java",
-    "src/framework/android/webkit/WebIconDatabase.kt",
     "src/framework/android/ravenwood/annotation/RavenwoodClassLoadHook.java",
     "src/framework/android/ravenwood/annotation/RavenwoodIgnore.java",
     "src/framework/android/ravenwood/annotation/RavenwoodKeep.java",
@@ -312,6 +313,7 @@ pub const testkit = [_][]const u8{
 pub const tests = [_][]const u8{
     "tests/integration/kotlin/dev/artzig/integration/NewPipeTest.kt",
     "tests/integration/kotlin/dev/artzig/integration/ViewHostTest.kt",
+    "tests/testkit/kotlin/dev/artzig/testkit/WebViewFrameCheck.kt",
     "tests/testkit/kotlin/dev/artzig/testkit/ApkRegistryTest.kt",
     "tests/testkit/kotlin/dev/artzig/testkit/AppSessionTest.kt",
     "tests/testkit/kotlin/dev/artzig/testkit/AzkTestCliCompatibilityTest.kt",

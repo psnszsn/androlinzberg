@@ -261,6 +261,7 @@ fn cppBoundary(io: Io, files: []const []const u8) !void {
         "src/native/GraphicsEnvironmentBackend.cpp",
         "src/native/HardwareBufferRender.cpp",
         "src/native/HwuiRenderProxyBridge.cpp",
+        "src/native/WebViewGraphicBuffer.cpp",
         "src/native/binder/Binder.cpp",
         "src/native/binder/Parcel.cpp",
     };

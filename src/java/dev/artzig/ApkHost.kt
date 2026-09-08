@@ -40,7 +40,7 @@ public final class ApkHost {
         private lateinit var sContext: android.content.Context
         private lateinit var sRoot: android.view.ViewRootImpl
         private var sRootActive: Boolean = false
-        private lateinit var sClassLoader: HostedApkClassLoader
+        private lateinit var sClassLoader: ClassLoader
         private var sWidth: Int = 0
         private var sHeight: Int = 0
         private var sScale120: Int = 0
@@ -480,12 +480,12 @@ public final class ApkHost {
         /** AOSP ActivityThread.handleBindApplication: the process's LoadedApk
          * (CONTEXT_INCLUDE_CODE) owns the APK class loader. */
         @JvmStatic
-        private fun loadedApkClassLoader(appInfo: android.content.pm.ApplicationInfo): HostedApkClassLoader {
+        private fun loadedApkClassLoader(appInfo: android.content.pm.ApplicationInfo): ClassLoader {
             val apk: android.app.LoadedApk = android.app.ActivityThread.currentActivityThread().getPackageInfoNoCheck(
                 appInfo,
                 android.content.res.CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO,
             )
-            return apk.classLoader as HostedApkClassLoader
+            return apk.classLoader
         }
 
         /** The MAIN/LAUNCHER activity via the real resolver. */
@@ -518,7 +518,8 @@ public final class ApkHost {
             AssetManager.createSystemAssetsInZygoteLocked(false, frameworkRes)
             val pkg: String = parseApkLitePackageName(apkPath)
             dev.artzig.BinderSession.setIdentity(pkg, false)
-            android.os.Process.setArgV0(pkg)
+            val processName = System.getenv("AZK_APP_PROCESS_NAME") ?: pkg
+            android.os.Process.setArgV0(processName)
             installOwnPackage(apkPath, pkg, extractNativeLibraries(apkPath))
             val pm: android.content.pm.IPackageManager = android.app.ActivityThread.getPackageManager()
             val appInfo: android.content.pm.ApplicationInfo =
@@ -532,7 +533,7 @@ public final class ApkHost {
             // discovery is scoped to that name and UID during bindApplication.
             // AOSP ordering: attach first, then bindApplication (providers
             // installed + published before Application.onCreate).
-            sContext = dev.artzig.HostedServiceClient.attachApplication(pkg, appInfo.processName ?: pkg)
+            sContext = dev.artzig.HostedServiceClient.attachApplication(pkg, System.getenv("AZK_APP_PROCESS_NAME") ?: appInfo.processName ?: pkg)
             sClassLoader = loadedApkClassLoader(appInfo)
             Log.i(TAG, "headless app process up: " + pkg)
         }

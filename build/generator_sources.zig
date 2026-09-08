@@ -301,6 +301,7 @@ pub const CppAidl = struct {
 };
 
 pub const cpp_aidl = [_]CppAidl{
+    .{ .root = "frameworks/native/libs/input", .input = "android/os/InputChannelCore.aidl" },
     // Original extractor service plus native audio metadata/interface headers.
     .{ .root = "frameworks/av/media/libmedia/aidl", .input = "android/IMediaExtractorService.aidl", .output = "android/IMediaExtractorService.cpp" },
     .{ .root = "frameworks/native/libs/permission/aidl", .input = "android/content/AttributionSourceState.aidl" },

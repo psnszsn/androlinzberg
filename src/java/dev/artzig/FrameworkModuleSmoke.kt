@@ -244,7 +244,6 @@ internal object FrameworkModuleSmoke {
         testSplashScreenLifecycle()
         testStockWindowContexts()
         testQueuedRootInput()
-        testWebViewUnhandledInput()
         testHealthPermissionContracts()
         testAconfigManifestFlags()
         testContentCaptureContracts()
@@ -256,6 +255,9 @@ internal object FrameworkModuleSmoke {
         testConfigurationContexts()
         testMessageQueueSyncBarrier()
         testMessageQueueHostPumpSemantics()
+        StockNdkLooperSmoke.run(::drainMainQueue)
+        StockNdkGraphicsSmoke.run()
+        StockNativePropertiesSmoke.run()
         StockDisplayEventsSmoke.run()
         testChoreographerPhaseOrder()
         testAccessibilityInspectorContracts()
@@ -3360,7 +3362,7 @@ internal object FrameworkModuleSmoke {
         // Failed process bring-up removes its provisional activity/task record immediately.
         val beforeFailedLaunch = service.getTasks(10, false, true, Display.DEFAULT_DISPLAY).size
         var headlessLauncherCalls = 0
-        activityManager.processLauncher = HostedActivityManagerService.ProcessLauncher { _, _ ->
+        activityManager.processLauncher = HostedActivityManagerService.ProcessLauncher { _, _, _, _ ->
             headlessLauncherCalls++
             true
         }
@@ -4006,19 +4008,6 @@ internal object FrameworkModuleSmoke {
         cancelled.cancel()
         check(completed === cancelled && !cancelled.result && cancelled.stringResult == null)
 
-        val cookies = android.webkit.CookieManager.getInstance()
-        cookies.removeAllCookies(null)
-        var cookieAccepted: Boolean? = null
-        cookies.setCookie(
-            "https://video.example/path/page",
-            "session=abc; Domain=video.example; Path=/path; Secure",
-        ) { cookieAccepted = it }
-        check(cookieAccepted == true)
-        check(cookies.getCookie("https://video.example/path/next") == "session=abc")
-        check(cookies.getCookie("http://video.example/path/next") == null)
-        cookies.removeSessionCookies(null)
-        check(!cookies.hasCookies())
-
         val response = WebResourceResponse(
             "text/plain",
             "utf-8",
@@ -4057,58 +4046,6 @@ internal object FrameworkModuleSmoke {
         check(client.shouldOverrideUrlLoading(null, request))
         check(client.shouldInterceptRequest(null, request) === response)
 
-        val context = HostContexts.systemContext(
-            System.getenv("ARTZIG_FRAMEWORK_RES") ?: "zig-out/res/framework-res.apk",
-            200,
-            200,
-            120,
-            0,
-        )
-        android.webkit.HostedWebViewProviders.installForTests {
-            android.webkit.InMemoryHostedWebViewProvider(it)
-        }
-        try {
-            val navigation = mutableListOf<String>()
-            val webView = android.webkit.WebView(context, null).apply {
-                settings.setJavaScriptEnabled(true)
-                settings.setDomStorageEnabled(true)
-                settings.setUserAgentString("framework-smoke")
-                webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(
-                        view: android.webkit.WebView?,
-                        url: String?,
-                        favicon: android.graphics.Bitmap?,
-                    ) { navigation += "started:$url" }
-                    override fun onPageCommitVisible(view: android.webkit.WebView?, url: String?) {
-                        navigation += "committed:$url"
-                    }
-                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        navigation += "finished:$url"
-                    }
-                }
-                webChromeClient = object : android.webkit.WebChromeClient() {
-                    override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
-                        navigation += "progress:$newProgress"
-                    }
-                }
-            }
-            check(webView.settings.getJavaScriptEnabled())
-            check(webView.settings.getDomStorageEnabled())
-            check(webView.settings.getUserAgentString() == "framework-smoke")
-            webView.loadUrl("https://example.invalid/page")
-            check(navigation == listOf(
-                "started:https://example.invalid/page",
-                "progress:100",
-                "committed:https://example.invalid/page",
-                "finished:https://example.invalid/page",
-            )) { "hosted WebView callback ordering: $navigation" }
-            var evaluation: String? = null
-            webView.evaluateJavascript("1 + 1") { evaluation = it }
-            check(evaluation == "null")
-            webView.destroy()
-        } finally {
-            android.webkit.HostedWebViewProviders.installForTests(null)
-        }
     }
 
     private fun testAlertDialogContracts() {
@@ -5165,71 +5102,6 @@ internal object FrameworkModuleSmoke {
         } finally { root.destroy() }
         drainMainQueue()
         check(delivered.size == 3) { "detached root received pending input" }
-    }
-
-    private fun testWebViewUnhandledInput() {
-        val context = HostContexts.systemContext(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")), 200, 200, 120, 0)
-        val root = android.view.ViewRootImpl(context)
-        val keys = ArrayList<Pair<Int, Int>>()
-        val container = object : android.widget.FrameLayout(context) {
-            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-                check(event.flags and KeyEvent.FLAG_FALLBACK != 0)
-                keys.add(event.keyCode to event.action)
-                return true
-            }
-        }
-        android.webkit.HostedWebViewProviders.installForTests {
-            android.webkit.InMemoryHostedWebViewProvider(it)
-        }
-        try {
-            val webView = android.webkit.WebView(context, null)
-            container.addView(webView)
-            root.setView(container, 200, 200)
-            val client = WebViewClient()
-            fun motion(action: Int, source: Int) {
-                val now = android.os.SystemClock.uptimeMillis()
-                val event = MotionEvent.obtain(now, now, action, 1f, 0f, 0).apply { this.source = source }
-                try { client.onUnhandledInputEvent(webView, event) } finally { event.recycle() }
-            }
-            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_JOYSTICK)
-            check(keys.isEmpty()) { "WebView fallback must be asynchronous" }
-            drainMainQueue()
-            check(keys == listOf(KeyEvent.KEYCODE_DPAD_RIGHT to KeyEvent.ACTION_DOWN))
-            motion(MotionEvent.ACTION_CANCEL, InputDevice.SOURCE_JOYSTICK)
-            drainMainQueue()
-            check(keys == listOf(KeyEvent.KEYCODE_DPAD_RIGHT to KeyEvent.ACTION_DOWN,
-                KeyEvent.KEYCODE_DPAD_RIGHT to KeyEvent.ACTION_UP))
-            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_MOUSE_RELATIVE)
-            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_TOUCHSCREEN)
-            val now = android.os.SystemClock.uptimeMillis()
-            client.onUnhandledKeyEvent(webView, KeyEvent(now, now, KeyEvent.ACTION_DOWN,
-                KeyEvent.KEYCODE_A, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, KeyEvent.FLAG_FALLBACK))
-            drainMainQueue()
-            check(keys.size == 2) { "relative mouse, pointer input, and fallback keys must not be reinjected" }
-            motion(MotionEvent.ACTION_MOVE, InputDevice.SOURCE_JOYSTICK)
-            drainMainQueue()
-            check(keys.size == 3)
-            root.destroy()
-            drainMainQueue()
-            check(keys.size == 3) { "detached root must cancel synthesized repeats and pending keys" }
-            var clientCertCanceled = false
-            client.onReceivedClientCertRequest(webView, object : android.webkit.ClientCertRequest() {
-                override fun getKeyTypes(): Array<String> = emptyArray()
-                override fun getPrincipals(): Array<java.security.Principal> = emptyArray()
-                override fun getHost(): String = "example.invalid"
-                override fun getPort(): Int = 443
-                override fun proceed(key: java.security.PrivateKey?, chain: Array<java.security.cert.X509Certificate>?) {
-                    error("default client certificate handling must not proceed")
-                }
-                override fun ignore() { error("default client certificate handling must cancel") }
-                override fun cancel() { clientCertCanceled = true }
-            })
-            check(clientCertCanceled)
-            webView.destroy()
-        } finally {
-            root.destroy()
-            android.webkit.HostedWebViewProviders.installForTests(null)
-        }
     }
 
     private fun testStockWindowContexts() {

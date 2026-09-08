@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+tools/azk-test --timeout 60 wait ready >/dev/null
+tools/azk-test --timeout 60 wait exists --text "Count: 0" >/dev/null
+tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); issues=d["diagnostics"]["runtime"]["issues"]; assert not issues, issues'
+tools/azk-test step click --text "Count: 0" --settle idle >/dev/null
+tools/azk-test wait exists --text "Count: 1" >/dev/null
+tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); issues=d["diagnostics"]["runtime"]["issues"]; assert not issues, issues'
+# Capture while the app is still running, then require actual painted text.
+frame="${SHOT_A11Y_OUT%.a11y.json}.content.png"
+grim "$frame"
+java -cp "${AZK_TESTKIT_ROOT:-zig-out/lib/azk-test}/*" dev.artzig.testkit.WebViewFrameCheck "$frame"

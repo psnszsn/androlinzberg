@@ -33,7 +33,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
     /** Launches a process for a package that is not attached (production: the launcher's --app-process). */
     fun interface ProcessLauncher {
         /** Returns false when the package cannot be launched. */
-        fun launch(packageName: String, apkPath: String): Boolean
+        fun launch(packageName: String, apkPath: String, processName: String, onExit: () -> Unit): Boolean
     }
 
     // AppExitInfoTracker equivalent for this hosted session. Binder death supplies no
@@ -48,6 +48,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val processName: String,
         val startSeq: Long,
     ) : IBinder.DeathRecipient {
+        val packageDependencies = HashSet<String>()
         var ready = false
         val binder: IBinder = thread.asBinder()
         var exitReason = android.app.ApplicationExitInfo.REASON_UNKNOWN
@@ -353,26 +354,27 @@ class HostedActivityManagerService(private val context: android.content.Context?
 
     // ------------------------------------------------------------- attach
 
-    /** uid -> (package, process name) announced through IHostedInstaller.bindProcessPackage
+    /** (uid, pid) -> (package, process name) announced through IHostedInstaller.bindProcessPackage
      * (AOSP learns both from the zygote fork it requested; no zygote here). */
     private data class ProcessAnnouncement(
         val packageName: String,
         val processName: String,
         val configuration: Configuration?,
     )
-    private val announced = HashMap<Int, ProcessAnnouncement>()
+    private val announced = HashMap<Pair<Int, Int>, ProcessAnnouncement>()
+    private val startingProcesses = HashMap<Pair<String, String>, Any>()
 
     internal fun noteProcessPackage(uid: Int, packageName: String, processName: String,
         configuration: Configuration? = null) {
         synchronized(lock) {
-            announced[uid] = ProcessAnnouncement(packageName, processName, configuration?.let(::Configuration))
+            announced[uid to Binder.getCallingPid()] = ProcessAnnouncement(packageName, processName, configuration?.let(::Configuration))
         }
     }
 
     override fun attachApplication(app: IApplicationThread?, startSeq: Long) {
         val thread = checkNotNull(app) { "attachApplication without a thread" }
         val callingUid = Binder.getCallingUid()
-        val announcement = synchronized(lock) { announced[callingUid] }
+        val announcement = synchronized(lock) { announced[callingUid to Binder.getCallingPid()] }
             ?: if (callingUid == android.os.Process.SYSTEM_UID) ProcessAnnouncement("android", "system_server", null)
             else throw SecurityException("uid " + callingUid + " attached without announcing its package")
         val packageName = announcement.packageName
@@ -432,6 +434,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
         val drained = synchronized(lock) {
             if (processes[record.binder] !== record || record.ready) return
             record.ready = true
+            startingProcesses.remove(record.packageName to record.processName)
             buildList {
                 addAll(pendingByPackage.remove(record.packageName) ?: emptyList())
                 addAll(pendingByProcess.remove(record.packageName to record.processName) ?: emptyList())
@@ -601,7 +604,7 @@ class HostedActivityManagerService(private val context: android.content.Context?
                     pendingByProcess.getOrPut(packageName to processName) { ArrayList() }
                 }
                 pending.add(replay)
-                if (record != null || bringUpProcessLocked(packageName)) {
+                if (record != null || bringUpProcessLocked(packageName, processName)) {
                     true
                 } else {
                     pending.remove(replay)
@@ -650,7 +653,9 @@ class HostedActivityManagerService(private val context: android.content.Context?
      * then finds the attached process hosting that package. */
     private fun resolveServiceLocked(service: Intent, callingPackage: String?): Pair<ProcessRecord, android.content.pm.ServiceInfo>? {
         val info = packageService?.resolveServiceInfo(service) ?: return null
-        val process = processes.values.firstOrNull { it.ready && it.packageName == info.packageName } ?: return null
+        val process = processes.values.firstOrNull {
+            it.ready && it.packageName == info.packageName && it.processName == (info.processName ?: info.packageName)
+        } ?: return null
         return process to info
     }
 
@@ -661,10 +666,26 @@ class HostedActivityManagerService(private val context: android.content.Context?
     }
 
     /** Not attached: spawn the package's process; the pending op replays on attach. Requires `lock`. */
-    private fun bringUpProcessLocked(packageName: String): Boolean {
+    private fun bringUpProcessLocked(packageName: String, requestedProcess: String? = null): Boolean {
         val launcher = processLauncher ?: return false
         val apkPath = packageService?.getApkPathInternal(packageName) ?: return false
-        return launcher.launch(packageName, apkPath)
+        val processName = requestedProcess ?: packageService?.getApplicationInfo(packageName, 0L, 0)?.processName ?: packageName
+        val key = packageName to processName
+        if (key in startingProcesses || processes.values.any { it.packageName == packageName && it.processName == processName }) return true
+        // ProcessList.startProcessLocked reuses a pending start for the same process.
+        // The host uses exec rather than zygote; retain its launch until attach or exit.
+        val launch = Any()
+        startingProcesses[key] = launch
+        val started = launcher.launch(packageName, apkPath, processName) {
+            val pending = synchronized(lock) {
+                if (startingProcesses[key] !== launch) return@launch
+                startingProcesses.remove(key)
+                pendingByProcess.remove(key)?.toList() ?: emptyList()
+            }
+            for (operation in pending) operation()
+        }
+        if (!started) startingProcesses.remove(key)
+        return started
     }
 
     /**
@@ -726,9 +747,11 @@ class HostedActivityManagerService(private val context: android.content.Context?
         allowSpawn: Boolean = true,
     ): PostStart {
         val resolved = resolveServiceLocked(service, callingPackage) ?: run {
-            val pkg = targetPackageForLocked(service)
-            if (allowSpawn && pkg != null && (processes.values.any { it.packageName == pkg } || bringUpProcessLocked(pkg))) {
-                pendingByPackage.getOrPut(pkg) { ArrayList() }.add {
+            val target = packageService?.resolveServiceInfo(service)
+            val pkg = target?.packageName
+            val processName = target?.processName ?: pkg
+            if (allowSpawn && pkg != null && processName != null && bringUpProcessLocked(pkg, processName)) {
+                pendingByProcess.getOrPut(pkg to processName) { ArrayList() }.add {
                     // allowSpawn=false on replay: the process has attached, so a
                     // still-unresolved service is genuinely absent, not un-spawned.
                     val p = synchronized(lock) { doStartLocked(callingUid, service, callingPackage, false) }
@@ -835,10 +858,12 @@ class HostedActivityManagerService(private val context: android.content.Context?
             // BIND_AUTO_CREATE; the connection is retained and completed when
             // the spawned process attaches.
             val autoCreate = (flags and android.content.Context.BIND_AUTO_CREATE) != 0
-            val pkg = targetPackageForLocked(service)
-            if (allowSpawn && autoCreate && pkg != null && (processes.values.any { it.packageName == pkg } || bringUpProcessLocked(pkg))) {
-                Log.i(TAG, "bindService: spawning host for " + pkg)
-                pendingByPackage.getOrPut(pkg) { ArrayList() }.add {
+            val target = packageService?.resolveServiceInfo(service)
+            val pkg = target?.packageName
+            val processName = target?.processName ?: pkg
+            if (allowSpawn && autoCreate && pkg != null && processName != null && bringUpProcessLocked(pkg, processName)) {
+                Log.i(TAG, "bindService: starting " + processName)
+                pendingByProcess.getOrPut(pkg to processName) { ArrayList() }.add {
                     // allowSpawn=false on replay (process now attached).
                     val p = synchronized(lock) {
                         doBindLocked(client, callingUid, service, connection, flags, callingPackage, false)
@@ -1489,7 +1514,33 @@ class HostedActivityManagerService(private val context: android.content.Context?
     override fun enableAppFreezer(enable: Boolean): Boolean = false
     override fun registerStrictModeCallback(binder: IBinder?) {}
     override fun handleApplicationStrictModeViolation(app: IBinder?, penaltyMask: Int, crashInfo: android.os.StrictMode.ViolationInfo?) {}
-    override fun addPackageDependency(packageName: String?) {}
+    /** Source: AMS.addPackageDependency / killPackageDependents and ProcessList's
+     * dependency test. Track the calling process; provider changes terminate every
+     * attached dependent so an old native library cannot survive a provider update. */
+    override fun addPackageDependency(packageName: String?) {
+        val name = packageName ?: return
+        val pid = Binder.getCallingPid()
+        val uid = Binder.getCallingUid()
+        if (pid == android.os.Process.myPid() || packageService?.getPackageUid(name, 0L, UserHandle.getUserId(uid)) == -1) return
+        synchronized(lock) {
+            processes.values.firstOrNull { it.pid == pid && it.uid == uid }?.packageDependencies?.add(name)
+        }
+    }
+    override fun killPackageDependents(packageName: String?, userId: Int) {
+        HostedPermissions(checkNotNull(packageService)).enforce(android.Manifest.permission.KILL_UID, "killPackageDependents")
+        val name = packageName ?: throw NullPointerException("Cannot kill dependents without a package name")
+        require(userId == 0 || userId == UserHandle.USER_ALL) { "Unknown hosted user: $userId" }
+        if (userId != UserHandle.USER_ALL && checkNotNull(packageService).getPackageUid(name, 0L, userId) == -1) {
+            throw IllegalArgumentException("Cannot kill dependents of non-existing package $name")
+        }
+        val targets = synchronized(lock) {
+            processes.values.filter { name in it.packageDependencies || it.packageName == name }.onEach {
+                it.exitReason = android.app.ApplicationExitInfo.REASON_DEPENDENCY_DIED
+                it.exitDescription = "dep: $name"
+            }.map { it.pid }
+        }
+        targets.forEach { android.os.Process.killProcess(it) }
+    }
     override fun updateServiceGroup(connection: IServiceConnection?, group: Int, importance: Int) {}
     /**
      * ActiveServices.setServiceForegroundInnerLocked: startForeground posts the

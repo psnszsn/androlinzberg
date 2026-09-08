@@ -577,6 +577,12 @@ public final class SystemServiceRegistry {
         registerService(Context.POWER_EXEMPTION_SERVICE, android.os.PowerExemptionManager.class,
                 new CachedServiceFetcher<android.os.PowerExemptionManager>() {
             @Override public android.os.PowerExemptionManager createService(ContextImpl ctx) { return new android.os.PowerExemptionManager(ctx.getOuterContext()); }});
+        // Pinned SystemServiceRegistry: caption preferences and observers use Settings.
+        registerService(Context.CAPTIONING_SERVICE, android.view.accessibility.CaptioningManager.class,
+                new CachedServiceFetcher<android.view.accessibility.CaptioningManager>() {
+            @Override public android.view.accessibility.CaptioningManager createService(ContextImpl ctx) {
+                return new android.view.accessibility.CaptioningManager(ctx);
+            }});
         registerService(Context.ACCESSIBILITY_SERVICE, android.view.accessibility.AccessibilityManager.class,
                 new NewServiceFetcher<android.view.accessibility.AccessibilityManager>() {
             @Override public android.view.accessibility.AccessibilityManager createService(ContextImpl ctx) throws ServiceNotFoundException {

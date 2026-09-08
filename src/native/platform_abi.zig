@@ -4,6 +4,25 @@ const std = @import("std");
 const art = @import("art");
 const jni = art.jni;
 
+// Source: bionic's upstream-openbsd getprogname.c. The host libc owns the
+// process-name storage and exposes the same __progname variable.
+extern "c" var __progname: [*:0]const u8;
+pub export fn getprogname() callconv(.c) [*:0]const u8 {
+    return __progname;
+}
+
+// The pinned Android EGL client and HWUI use one default display. Mesa's
+// implicit default may choose a different platform from the hosted window.
+extern "c" fn azk_hwui_default_egl_display() ?*anyopaque;
+extern "EGL" fn eglGetDisplay(?*anyopaque) ?*anyopaque;
+extern "EGL" fn eglGetProcAddress([*:0]const u8) ?*const anyopaque;
+pub export fn azk_host_egl_get_proc_address(name: [*:0]const u8) callconv(.c) ?*const anyopaque {
+    return eglGetProcAddress(name);
+}
+pub export fn bionic_eglGetDisplay(display: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return if (display == null) azk_hwui_default_egl_display() else eglGetDisplay(display);
+}
+
 var g_io: std.Io = undefined;
 
 const NativeMutex = struct {

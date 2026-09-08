@@ -58,9 +58,10 @@ pub const FixtureApks = struct {
     permissions: LazyPath,
     identity_a: LazyPath,
     identity_b: LazyPath,
+    webview: LazyPath,
 
-    pub fn all(self: FixtureApks) [6]LazyPath {
-        return .{ self.test_a, self.test_b, self.example, self.permissions, self.identity_a, self.identity_b };
+    pub fn all(self: FixtureApks) [7]LazyPath {
+        return .{ self.test_a, self.test_b, self.example, self.permissions, self.identity_a, self.identity_b, self.webview };
     }
 };
 
@@ -910,6 +911,7 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
         "org.example.permissions",
         "dev.artzig.identity.a",
         "dev.artzig.identity.b",
+        "dev.artzig.webviewtest",
     };
     var outputs: [packages.len]LazyPath = undefined;
     inline for (packages, 0..) |package, index| {
@@ -945,6 +947,7 @@ fn fixtureApks(b: *std.Build, aosp: *std.Build.Dependency, framework_res: LazyPa
         .permissions = outputs[3],
         .identity_a = outputs[4],
         .identity_b = outputs[5],
+        .webview = outputs[6],
     };
 }
 

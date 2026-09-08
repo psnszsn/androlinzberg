@@ -54,9 +54,10 @@ change source behavior.
 
 ## APK class loading
 
-The hosted APK class loader loads framework classes from the parent first. The
-loader treats `kotlin.*` as app-owned. An APK can therefore use its own Kotlin
-runtime. Missing Kotlin classes can come from the host runtime.
+The hosted APK class loader loads framework and runtime API classes from the
+parent first. APK implementation libraries, including Kotlin and Chromium, load
+from the APK first, with parent fallback for absent classes. This keeps bundled
+library versions together while preserving shared Android API class identities.
 
 Run this test after a class-loading or JVM-interface change:
 

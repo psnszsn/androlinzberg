@@ -3,8 +3,10 @@ package dev.artzig
 import dalvik.system.PathClassLoader
 
 /**
- * Keeps Android/framework classes parent-first while allowing an APK's bundled
- * Kotlin runtime to take precedence over the host's compiler-pinned stdlib.
+ * Source: LoadedApk's separation between boot/framework classes and APK code.
+ * The host framework jar also contains implementation libraries (Kotlin, Cronet,
+ * protobuf), which are not public Android framework classes. An APK's own copies
+ * of those libraries must link together, with fallback for absent classes.
  */
 internal class HostedApkClassLoader(
     dexPath: String,
@@ -12,7 +14,7 @@ internal class HostedApkClassLoader(
     parent: ClassLoader,
 ) : PathClassLoader(dexPath, librarySearchPath, parent) {
     override fun loadClass(name: String, resolve: Boolean): Class<*> {
-        if (!name.startsWith(KOTLIN_PACKAGE_PREFIX)) {
+        if (FRAMEWORK_PREFIXES.any(name::startsWith)) {
             return super.loadClass(name, resolve)
         }
 
@@ -31,6 +33,10 @@ internal class HostedApkClassLoader(
     }
 
     private companion object {
-        const val KOTLIN_PACKAGE_PREFIX = "kotlin."
+        val FRAMEWORK_PREFIXES = arrayOf(
+            "java.", "javax.", "jdk.", "sun.", "android.", "com.android.",
+            "dalvik.", "libcore.", "org.apache.harmony.", "org.apache.http.", "org.w3c.", "org.xml.",
+            "org.json.", "dev.artzig.",
+        )
     }
 }

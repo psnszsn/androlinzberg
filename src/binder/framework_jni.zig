@@ -10,6 +10,7 @@ const art = @import("art");
 const jni = art.jni;
 const ndk = @import("ndk.zig");
 const prop_area = @import("prop_area.zig");
+comptime { _ = @import("native_properties.zig"); }
 
 const JNIEnvPtr = [*c]jni.JNIEnv;
 const alloc = std.heap.c_allocator;
@@ -20,7 +21,7 @@ var g_props: prop_area.Reader = undefined;
 /// 0 = uninitialized, 1 = initializing, 2 = ready, 3 = unavailable.
 var g_props_state: std.atomic.Value(u8) = .init(0);
 
-fn props() ?*const prop_area.Reader {
+pub fn props() ?*const prop_area.Reader {
     switch (g_props_state.load(.acquire)) {
         2 => return &g_props,
         3 => return null,
@@ -1298,6 +1299,8 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("media_codec_jni.zig").register(env) catch return -1;
     @import("media_ndk.zig").register(env, &g_platform_library) catch return -1;
     @import("aaudio_ndk.zig").register(env, &g_platform_library) catch return -1;
+    @import("image_reader_capability.zig").register(env) catch return -1;
+    @import("surface_control_capability.zig").register(env) catch return -1;
     @import("runtime_init_jni.zig").register(env) catch return -1;
     @import("egl_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("egl_extensions_jni.zig").register(env) catch return -1;

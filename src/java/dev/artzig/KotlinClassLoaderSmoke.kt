@@ -4,11 +4,14 @@ internal object KotlinClassLoaderSmoke {
     @JvmStatic
     fun main(args: Array<String>) {
         check(args.size == 1) { "expected the Kotlin shadow fixture path" }
-        val loader = HostedApkClassLoader(
-            args[0],
-            null,
-            ClassLoader.getSystemClassLoader(),
-        )
+        val parent = HostedApkClassLoader(args[0], null, ClassLoader.getSystemClassLoader())
+        val loader = HostedApkClassLoader(args[0], null, parent)
+        check(loader.loadClass("android.content.Context") === android.content.Context::class.java)
+        check(loader.loadClass("java.lang.String") === String::class.java)
+        // Two versions of an implementation library may live in the host and APK.
+        // All APK-owned classes must stay with their own version, not just Kotlin.
+        val parentCaller = parent.loadClass("fixture.NewerKotlinCaller")
+        check(loader.loadClass("fixture.NewerKotlinCaller") !== parentCaller)
 
         val appKotlinVersion = loader.loadClass("kotlin.KotlinVersion")
         check(appKotlinVersion.classLoader === loader) {

@@ -116,6 +116,7 @@ pub const HostLoader = struct {
 pub const BionicLoader = struct {
     var lib: ?std.DynLib = null;
     var guest_dir: ?[*:0]const u8 = null;
+    var image_guest_dir: ?[*:0]const u8 = null;
     var host_lib_dir: ?[:0]const u8 = null;
     var host_lib_dir_buf: [4096]u8 = undefined;
     threadlocal var last_was_bionic = false;
@@ -145,6 +146,7 @@ pub const BionicLoader = struct {
             const debug_slot = l.lookup(*?*anyopaque, "_r_debug_ptr") orelse return Error.SymbolNotFound;
             debug_slot.* = host.dlsym(null, "_r_debug") orelse return Error.SymbolNotFound;
             guest_dir = host.getenv("ARTZIG_NATIVE_LIB_DIR");
+            image_guest_dir = host.getenv("ARTZIG_IMAGE_NATIVE_LIB_DIR");
             const persistent_dir = std.fmt.bufPrint(host_lib_dir_buf[0 .. host_lib_dir_buf.len - 1], "{s}/lib64", .{root}) catch return Error.OutOfMemory;
             host_lib_dir_buf[persistent_dir.len] = 0;
             host_lib_dir = host_lib_dir_buf[0..persistent_dir.len :0];
@@ -156,6 +158,10 @@ pub const BionicLoader = struct {
                 defer a.free(shim);
                 if (host.dlopen(shim.ptr, 2 | 0x100) == null) return Error.LibartLoadFailed; // RTLD_NOW|RTLD_GLOBAL
             }
+            const PathOverride = *const fn (*[*:0]u8) callconv(.c) bool;
+            const SetPathOverride = *const fn (PathOverride) callconv(.c) void;
+            const set_paths: SetPathOverride = @ptrCast(host.dlsym(null, "libc_bio_set_apply_path_overrides_func") orelse return Error.SymbolNotFound);
+            set_paths(&@import("bionic_paths.zig").override);
             lib = l;
         }
         return &loader;
@@ -164,12 +170,22 @@ pub const BionicLoader = struct {
     fn dlopen(path: ?[*:0]const u8, flags: c_int, library_path: ?[*:0]const u8) callconv(.c) ?*anyopaque {
         // ART itself loads host/glibc JNI libraries (libicu_jni, libjavacore,
         // etc.). Only APK libraries extracted into guest_dir are bionic ELF.
-        const guest = guest_dir;
-        const is_guest = if (guest) |dir|
-            (if (path) |p| std.mem.startsWith(u8, std.mem.span(p), std.mem.span(dir)) else false) or
-                (if (library_path) |p| std.mem.indexOf(u8, std.mem.span(p), std.mem.span(dir)) != null else false)
-        else
-            false;
+        var is_guest = false;
+        for ([_]?[*:0]const u8{ guest_dir, image_guest_dir }) |root| {
+            const dir = std.mem.span(root orelse continue);
+            if (path) |p| {
+                const name = std.mem.span(p);
+                if (std.mem.startsWith(u8, name, dir) and name.len > dir.len and name[dir.len] == '/') is_guest = true;
+            }
+            if (library_path) |p| {
+                if (path) |file_path| if (std.fs.path.isAbsolute(std.mem.span(file_path))) continue;
+                var entries = std.mem.splitScalar(u8, std.mem.span(p), ':');
+                while (entries.next()) |entry| {
+                    if (std.mem.eql(u8, entry, dir) or
+                        (std.mem.startsWith(u8, entry, dir) and entry.len > dir.len and entry[dir.len] == '/')) is_guest = true;
+                }
+            }
+        }
         last_was_bionic = is_guest;
         if (is_guest) return dlopen_fn(path, flags);
         // Conscrypt statically embeds BoringSSL, whose public symbol names

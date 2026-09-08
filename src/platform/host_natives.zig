@@ -10,7 +10,7 @@ const message_queue = @import("message_queue");
 pub const HwuiBridges = host_renderer.Bridges;
 
 pub fn register(io: std.Io, env: [*c]art.jni.JNIEnv, hwui: HwuiBridges) !void {
-    try message_queue.register(io, env);
+    message_queue.configure(hwui.looper_poll_fd);
     try host_renderer.register(io, env, hwui);
     try audio.register(io, env);
     try codec_jni.register(env);
@@ -18,7 +18,6 @@ pub fn register(io: std.Io, env: [*c]art.jni.JNIEnv, hwui: HwuiBridges) !void {
 
 pub const bindWayland = host_renderer.bindWayland;
 pub const looperWakeupFd = message_queue.hostQueueFd;
-pub const consumeLooperWakeup = message_queue.consumeHostWake;
 pub const rendererWakeupFd = host_renderer.wakeupFd;
 pub const consumeRendererWakeup = host_renderer.consumeWakeup;
 

@@ -427,7 +427,44 @@ pub fn build(b: *std.Build, o: Options) Result {
     // These pinned files rely on Bionic/transitive includes for all_of, ioctl
     // and EXT4_SUPER_MAGIC. Declare those headers explicitly for host libc++.
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{});
+    // Match the Ganesh/OpenGL configuration of the linked Skia library.
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{ "-DSK_GANESH", "-DSK_GL" });
+    g.add(o.aosp.path(b, "bionic/libc"), &.{"bionic/fortify.cpp"},
+        &.{ o.aosp.path(b, "bionic/libc"), o.aosp.path(b, "bionic/libc/async_safe/include") },
+        &.{"-DARTZIG_HOST_FORTIFY"});
+    const input_transport_headers = b.addWriteFiles();
+    _ = input_transport_headers.addCopyFile(o.aosp.path(b, "external/rust/cxx/include/cxx.h"), "rust/cxx.h");
+    _ = input_transport_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/ashmem.h"), "linux/ashmem.h");
+    const webview_includes = &.{
+        input_transport_headers.getDirectory(),
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/base/libs/hwui/jni"),
+        o.aosp.path(b, "frameworks/base/native/webview/plat_support"),
+        apex_inc,
+    };
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{ "looper.cpp", "input.cpp", "native_window_jni.cpp", "trace.cpp" }, webview_includes, &.{ "-include", "utils/Timers.h" });
+    // The NDK uses original sealed-memfd operations; Binder retains its existing backing.
+    const ndk_ashmem_flags = &.{
+        "-DARTZIG_HOST_MEMFD",
+        "-Dashmem_create_region=azk_ndk_ashmem_create_region",
+        "-Dashmem_valid=azk_ndk_ashmem_valid",
+        "-Dashmem_get_size_region=azk_ndk_ashmem_get_size_region",
+        "-Dashmem_set_prot_region=azk_ndk_ashmem_set_prot_region",
+        "-Dashmem_pin_region=azk_ndk_ashmem_pin_region",
+        "-Dashmem_unpin_region=azk_ndk_ashmem_unpin_region",
+        "-Dhas_memfd_support=azk_ndk_has_memfd_support",
+    };
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sharedmem.cpp"}, webview_includes, ndk_ashmem_flags);
+    g.add(o.aosp.path(b, "system/core/libcutils"), &.{"ashmem-dev.cpp"}, webview_includes, ndk_ashmem_flags);
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_os_MessageQueue.cpp", "android_view_InputQueue.cpp", "core_jni_helpers.cpp" }, webview_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_view_Surface.cpp"}, webview_includes, &.{ "-include", "utils/Timers.h" });
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui/apex"), &.{"android_bitmap.cpp"}, webview_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/native/graphics/jni"), &.{"bitmap.cpp"}, webview_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{ "draw_functor.cpp", "draw_gl_functor.cpp", "functor_utils.cpp", "graphics_utils.cpp" }, webview_includes, &.{"-D__unused=__attribute__((unused))"});
+    g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{"jni_entry_point.cpp"}, webview_includes, &.{"-DJNI_OnLoad=azk_webview_JNI_OnLoad"});
+    g.add(b.path("src/native"), &.{"WebViewGraphicBuffer.cpp"}, webview_includes, &.{"-fexceptions"});
+
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });

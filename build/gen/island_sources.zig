@@ -289,6 +289,8 @@ pub const hwui_srcs = [_][]const u8{
     "effects/GainmapRenderer.cpp",
     "pipeline/skia/BackdropFilterDrawable.cpp",
     "pipeline/skia/HolePunch.cpp",
+    "pipeline/skia/GLFunctorDrawable.cpp",
+    "utils/GLUtils.cpp",
     "pipeline/skia/SkiaCpuPipeline.cpp",
     "pipeline/skia/SkiaDisplayList.cpp",
     "pipeline/skia/SkiaPipeline.cpp",
@@ -361,7 +363,7 @@ pub const hwui_srcs = [_][]const u8{
     "platform/host/renderthread/RenderThread.cpp",
     "platform/host/ProfileDataContainer.cpp",
     "platform/host/Readback.cpp",
-    "platform/host/WebViewFunctorManager.cpp",
+    "WebViewFunctorManager.cpp",
 };
 
 pub const libbase_srcs = [_][]const u8{

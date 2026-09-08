@@ -11,6 +11,61 @@ zig build -j10 cpp-audit
 
 ## Zig-owned code
 
+- `src/binder/native_properties.zig` supplies seven bionic-loader property hooks.
+  Opaque native handles point to stable slots in the same broker-owned property
+  area used by Java `SystemProperties`. Callback reads copy a value and its serial
+  together and invoke callers without holding a property lock. Long values use
+  the full callback form; legacy reads return the pinned bionic explanatory text.
+  Writes go through the existing broker permission policy. These hooks keep the
+  bionic adapter's old name-pointer handles out of libbase's unrelated host map.
+- `src/platform/message_queue.zig` exposes only a borrowed readiness descriptor.
+  The original native MessageQueue and public NDK ALooper share the original
+  C++ Looper on the Java thread. A host-only accessor exposes its epoll descriptor;
+  only stock `pollOnce` consumes readiness and dispatches callbacks. The host
+  renderer observes that descriptor through its existing event loop.
+- Stock WebView platform-support JNI loads in the provider class loader through
+  `src/platform/webview_support.zig`. The original HWUI functor manager owns
+  callback lifetime and the original GL drawable records and draws the functor.
+  A packaging patch disables SurfaceFlinger overlays on the host; it retains
+  ordinary GL drawing through the existing renderer. `WebViewGraphicBuffer.cpp`
+  implements the legacy provider's C++ buffer interface with the existing AOSP
+  host CPU GraphicBuffer. It does not provide device gralloc or GPU buffer import.
+  Original NDK bitmap, input, looper and native-window JNI wrappers are compiled
+  with their original bitmap and shared JNI helpers.
+- `src/platform/egl_support.zig` supplies the Android EGL library's display
+  boundary. Both direct and dynamic `eglGetDisplay` lookup select HWUI's existing
+  Wayland/GBM EGL display; other operations use the host EGL implementation.
+  HWUI requests the pinned EglManager's OpenGL ES context and wraps the actual
+  RGBA8 framebuffer. Chromium's texture EGLImages can consequently be consumed
+  by HWUI on the same display. No Wayland presentation backend is added.
+- `artzig/src/bionic_paths.zig` uses the compatibility loader's path callback to
+  map Android font configuration and font-file reads to the existing hosted font
+  inventory. This also covers native clients such as Chromium's Skia; it does not
+  create a global `/system` directory or change the vendored compatibility library.
+- Original NDK shared-memory wrappers use original libcutils memfd allocation,
+  immutable sizes and write seals. A packaging patch removes Android vendor
+  properties and ashmem-driver probing from this host-only variant, while retaining
+  the real memfd capability probe and failure results. Symbol names are isolated
+  from Binder's existing shared-memory implementation. Existing writable mappings
+  survive a write seal; subsequent writable mappings and restoring write access
+  fail as in the pinned implementation.
+- Three fortified libc functions absent from the hosted libc adapter compile
+  from pinned bionic `fortify.cpp`: `__memchr_chk`, `__pwrite64_chk`, and
+  `__sendto_chk`. A packaging patch selects those entry points, retaining their
+  bounds/count checks and libc results. Fatal reporting uses the existing Android
+  host logger and aborts; this does not claim bionic logd's async signal safety.
+- `src/binder/image_reader_capability.zig` supplies failure results for the
+  image-reader entry points imported by Chromium. There is no connected Android
+  BufferQueue producer: valid creation reports a structured unsupported issue
+  and returns `AMEDIA_ERROR_UNSUPPORTED`. It never supplies reader, image, window
+  or hardware-buffer handles. These exports are not an image-reader backend.
+- `src/binder/surface_control_capability.zig` exposes the SurfaceControl ABI
+  names required during Chromium initialization. The existing window backend
+  has no SurfaceFlinger transaction service. Factories return no handle, and
+  attempted operations emit structured unsupported diagnostics; no completion
+  callback or presentation statistic is fabricated. A transferred acquire-fence
+  descriptor is closed even when its buffer operation is rejected. These
+  exports do not implement compositor layers or successful transactions.
 - `src/platform/audio.zig` retains the PCM ring, PipeWire state and timing operations,
   registered on `dev.artzig.HostedPcmStream`. Verbatim AudioTrack Java calls the
   pinned 54-method interface in `src/binder/audio_track_jni.zig`, which checks all
@@ -46,7 +101,7 @@ zig build -j10 cpp-audit
   the pinned key/value converters. The libmediandk soname maps to the platform
   island and its Binder dependency so formats and codecs resolve together.
   Native window/secure configuration remains explicitly unavailable; this does
-  not claim the complete NDK media ABI or a working Android Chromium provider.
+  not claim the complete NDK media ABI.
 - MediaExtractor uses original AOSP Java/JNI, NuMediaExtractor, the native
   MediaExtractorService and its Binder protocols, data sources, metadata, and
   WAV/MP3/AAC parsers. The hosted system process publishes `media.extractor`.

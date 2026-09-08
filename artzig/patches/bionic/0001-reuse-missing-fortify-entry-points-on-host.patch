@@ -1,0 +1,107 @@
+From: artzig <artzig@localhost>
+Subject: [PATCH] libc: reuse missing fortified functions on the host
+
+Compile only the three entry points absent from the hosted libc adapter.
+Keep AOSP bounds/count validation and syscall results; other libc entry
+points remain supplied by the existing adapter. Fatal reporting uses the
+existing host Android log transport and aborts. It does not promise the
+bionic logd transport's async signal safety.
+
+--- a/libc/bionic/fortify.cpp
++++ b/libc/bionic/fortify.cpp
+@@ -67,6 +67,17 @@
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
++#if defined(ARTZIG_HOST_FORTIFY)
++#include <limits.h>
++#define __predict_false(x) __builtin_expect(!!(x), 0)
++#define __noreturn __attribute__((noreturn))
++#define __printflike(a, b) __attribute__((format(printf, a, b)))
++extern "C" {
++void* __memchr_chk(const void*, int, size_t, size_t);
++ssize_t __pwrite64_chk(int, const void*, size_t, off64_t, size_t);
++ssize_t __sendto_chk(int, const void*, size_t, size_t, int, const sockaddr*, socklen_t);
++}
++#endif
+ #include "private/bionic_fortify.h"
+ 
+ //
+@@ -78,6 +89,7 @@
+ //   http://gcc.gnu.org/ml/gcc-patches/2004-09/msg02055.html
+ //
+ 
++#if !defined(ARTZIG_HOST_FORTIFY)
+ int __FD_ISSET_chk(int fd, const fd_set* set, size_t set_size) {
+   __check_fd_set("FD_ISSET", fd, set_size);
+   return __FD_ISSET(fd, set);
+@@ -123,11 +135,14 @@
+   return getcwd(buf, len);
+ }
+ 
++#endif
++
+ void* __memchr_chk(const void* s, int c, size_t n, size_t actual_size) {
+   __check_buffer_access("memchr", "read from", n, actual_size);
+   return const_cast<void*>(memchr(s, c, n));
+ }
+ 
++#if !defined(ARTZIG_HOST_FORTIFY)
+ // Runtime implementation of __builtin____memmove_chk (used directly by compiler, not in headers).
+ extern "C" void* __memmove_chk(void* dst, const void* src, size_t len, size_t dst_len) {
+   __check_buffer_access("memmove", "write into", len, dst_len);
+@@ -184,6 +199,8 @@
+   return pread(fd, buf, count, offset);
+ }
+ 
++#endif
++
+ ssize_t __pwrite64_chk(int fd, const void* buf, size_t count, off64_t offset,
+                                   size_t buf_size) {
+   __check_count("pwrite64", "count", count);
+@@ -191,6 +208,7 @@
+   return pwrite64(fd, buf, count, offset);
+ }
+ 
++#if !defined(ARTZIG_HOST_FORTIFY)
+ ssize_t __pwrite_chk(int fd, const void* buf, size_t count, off_t offset,
+                                 size_t buf_size) {
+   __check_count("pwrite", "count", count);
+@@ -222,6 +240,8 @@
+   return recvfrom(socket, buf, len, flags, src_addr, addrlen);
+ }
+ 
++#endif
++
+ ssize_t __sendto_chk(int socket, const void* buf, size_t len, size_t buflen,
+                      int flags, const struct sockaddr* dest_addr,
+                      socklen_t addrlen) {
+@@ -229,6 +249,7 @@
+   return sendto(socket, buf, len, flags, dest_addr, addrlen);
+ }
+ 
++#if !defined(ARTZIG_HOST_FORTIFY)
+ // Runtime implementation of __builtin____stpcpy_chk (used directly by compiler, not in headers)..
+ extern "C" char* __stpcpy_chk(char* dst, const char* src, size_t dst_len) {
+   // TODO: optimize so we don't scan src twice.
+@@ -495,3 +516,5 @@
+   __check_buffer_access("mempcpy", "write into", count, dst_len);
+   return mempcpy(dst, src, count);
+ }
++
++#endif
+--- a/libc/private/bionic_fortify.h
++++ b/libc/private/bionic_fortify.h
+@@ -42,7 +42,12 @@
+ inline __noreturn __printflike(1, 2) void __fortify_fatal(const char* fmt, ...) {
+   va_list args;
+   va_start(args, fmt);
++#if defined(ARTZIG_HOST_FORTIFY)
++  // The host uses its existing Android log transport instead of bionic logd.
++  __android_log_vprint(ANDROID_LOG_FATAL, "FORTIFY", fmt, args);
++#else
+   async_safe_fatal_va_list("FORTIFY", fmt, args);
++#endif
+   va_end(args);
+   abort();
+ }

@@ -381,6 +381,7 @@ pub fn build(b: *std.Build) void {
     });
     const testkit = @import("build/testkit.zig").build(b, aosp_dep);
     const testkit_jars = testkit.jars.all();
+    const testkit_bundle = b.addWriteFiles();
     inline for (.{
         .{ testkit.jars.testkit, "azk-test/testkit.jar" },
         .{ testkit.jars.tests, "azk-test/tests.jar" },
@@ -391,7 +392,10 @@ pub fn build(b: *std.Build) void {
         .{ testkit.jars.kotlin_stdlib_jdk8, "azk-test/kotlin-stdlib-jdk8.jar" },
         .{ testkit.jars.kotlin_test, "azk-test/kotlin-test.jar" },
         .{ testkit.jars.kotlin_test_junit, "azk-test/kotlin-test-junit.jar" },
-    }) |entry| b.getInstallStep().dependOn(&b.addInstallFileWithDir(entry[0], .lib, entry[1]).step);
+    }) |entry| {
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(entry[0], .lib, entry[1]).step);
+        _ = testkit_bundle.addCopyFile(entry[0], std.fs.path.basename(entry[1]));
+    }
     b.installBinFile("tools/azk-test", "azk-test");
 
     // ABI-conformance check: the emitted .so must export every A* symbol the
@@ -577,8 +581,6 @@ pub fn build(b: *std.Build) void {
     const run_wayland_tests = b.addRunArtifact(wayland_tests);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
-    const message_queue_check = b.addTest(.{ .root_module = message_queue_mod });
-    const run_message_queue_tests = b.addRunArtifact(message_queue_check);
     const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
     const run_apk_optimizer_tests = b.addRunArtifact(apk_optimizer_check);
     const dexopt_transaction_test = b.addSystemCommand(&.{ "bash", "tools/test-dexopt-apk.sh" });
@@ -614,11 +616,35 @@ pub fn build(b: *std.Build) void {
     });
     const run_binder_broker_tests = b.addRunArtifact(binder_broker_tests);
     b.step("binder-broker-test", "Run broker protocol unit tests").dependOn(&run_binder_broker_tests.step);
+    // Loaded in the provider class loader so stock JNI_OnLoad resolves its classes.
+    const webview_support = b.addLibrary(.{
+        .name = "webviewchromium_plat_support",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/platform/webview_support.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "art", .module = art_mod }},
+        }),
+    });
+    webview_support.root_module.addObjectFile(island.file);
+    const egl_support = b.addLibrary(.{
+        .name = "azk_egl",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/platform/egl_support.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    egl_support.root_module.addObjectFile(island.file);
     const application_tree = @import("build/application.zig").build(b, .{
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
         .island = island.file,
         .stats_jni = stats_jni.getEmittedBin(),
+        .webview_support = webview_support.getEmittedBin(),
+        .egl_support = egl_support.getEmittedBin(),
         .binder_ndk = binder_ndk.getEmittedBin(),
         .binder_cpp = binder_cpp.getEmittedBin(),
         .art_runtime = artzig_dep.namedLazyPath("art-runtime"),
@@ -637,6 +663,7 @@ pub fn build(b: *std.Build) void {
         .framework_vdex = java.framework_vdex,
         .framework_resources = java.resources.apk,
         .download_provider = java.download_provider,
+        .webview_provider = aosp.path(b, "external/chromium-webview/133.0.6943.137/x86_64/webview.apk"),
     });
     b.getInstallStep().dependOn(&b.addInstallDirectory(.{
         .source_dir = application_tree,
@@ -721,7 +748,6 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&run_wayland_tests.step);
     native_test_step.dependOn(&codec_jni_check.step);
     native_test_step.dependOn(&host_renderer_check.step);
-    native_test_step.dependOn(&run_message_queue_tests.step);
     native_test_step.dependOn(&run_apk_optimizer_tests.step);
     native_test_step.dependOn(&dexopt_transaction_test.step);
     native_test_step.dependOn(&run_test_control.step);
@@ -761,6 +787,28 @@ pub fn build(b: *std.Build) void {
     framework_module_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
     framework_module_smoke.run.setName("run hosted framework module tests");
     jvm_test_step.dependOn(&framework_module_smoke.run.step);
+    const webview_smoke = @import("build/command.zig").create(b);
+    setApplicationEnvironment(webview_smoke, application_tree);
+    webview_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    webview_smoke.addArg("--javatest");
+    webview_smoke.setEnvironment("AZK_TEST_CLASS", "dev.artzig.StockWebViewSmoke");
+    webview_smoke.run.addArgs(&.{ "--env-path", "AZK_TEST_APK" });
+    webview_smoke.run.addFileArg(java.fixtures.example);
+    webview_smoke.setEnvironment("WAYLAND_DISPLAY", "azk-hermetic-none");
+    b.step("webview-test", "Run stock WebView against the bundled Android Chromium provider").dependOn(&webview_smoke.run.step);
+    const webview_ui = @import("build/command.zig").create(b);
+    setApplicationEnvironment(webview_ui, application_tree);
+    webview_ui.setEnvironment("WLR_RENDERER", "gles2");
+    webview_ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_bundle.getDirectory());
+    webview_ui.addArg("bash");
+    webview_ui.addFileArg(b.path("tools/shot.sh"));
+    webview_ui.addArg("zig-out/test-results/webview/screenshot.png");
+    webview_ui.addArg("--test");
+    webview_ui.addFileArg(b.path("tests/webview-ui"));
+    webview_ui.addArg("--");
+    webview_ui.addFileArg(application_tree.path(b, "bin/androlinzberg"));
+    webview_ui.addFileArg(java.fixtures.webview);
+    b.step("webview-ui-test", "Render and interact with stock WebView through ApkHost and Cage").dependOn(&webview_ui.run.step);
     const framework_compat_smoke = @import("build/command.zig").create(b);
     setApplicationEnvironment(framework_compat_smoke, application_tree);
     framework_compat_smoke.addFileArg(application_tree.path(b, "bin/androlinzberg"));

@@ -51,12 +51,16 @@ framework_patches = tuple(
         (34, "-permission-service-use-hosted-policy-at-startup.patch"),
         (35, "-init-thread-pool-use-hosted-failure-diagnostics.patch"),
         (36, "-media-metrics-use-portable-JNI-registration-table.patch"),
+        (37, "-HWUI-run-WebView-functors-without-SurfaceFlinger-overlays.patch"),
     )
 )
 
 packager.SOURCE_MANIFEST = HERE / "androlinzberg-files.txt"
 packager.PACKAGE_NAME = "androlinzberg"
 packager.PATCH_SERIES = framework_patches + (
+    ("system/core/libcutils", patch_root / "system/libcutils/0001-use-stock-memfd-operations-for-host-ndk-shared-memory.patch"),
+    ("bionic", patch_root / "bionic/0001-reuse-missing-fortify-entry-points-on-host.patch"),
+    ("system/core/libutils", patch_root / "system/libutils/0001-expose-borrowed-looper-readiness-descriptor-on-host.patch"),
     (
         "frameworks/av",
         patch_root / "frameworks-av/0001-register-host-linked-stock-extractors.patch",

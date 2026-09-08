@@ -8,7 +8,7 @@ const EventFd = @import("event_fd").EventFd;
 pub const ConfigureFn = *const fn (proxy: *anyopaque, display: ?*anyopaque, surface: ?*anyopaque, width: c_int, height: c_int) callconv(.c) void;
 pub const DestroyFn = *const fn (proxy: *anyopaque) callconv(.c) void;
 pub const RetainRenderNodeFn = *const fn (node: *anyopaque) callconv(.c) void;
-pub const Bridges = struct { bind_egl_display: RetainRenderNodeFn, configure: ConfigureFn, destroy: DestroyFn, retain_render_node: RetainRenderNodeFn, release_render_node: RetainRenderNodeFn };
+pub const Bridges = struct { looper_poll_fd: *const fn () callconv(.c) c_int, bind_egl_display: RetainRenderNodeFn, configure: ConfigureFn, destroy: DestroyFn, retain_render_node: RetainRenderNodeFn, release_render_node: RetainRenderNodeFn };
 
 var g_io: std.Io = undefined;
 var mutex: std.Io.Mutex = .init;

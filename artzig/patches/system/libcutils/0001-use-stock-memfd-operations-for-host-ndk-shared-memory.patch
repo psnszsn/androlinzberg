@@ -1,0 +1,101 @@
+From: artzig <artzig@localhost>
+Subject: [PATCH] ashmem: select original memfd operations for hosted NDK
+
+The host has Linux sealed memfds but no Android vendor partition or ashmem
+ioctl compatibility. Keep original allocation, size seals and write protection;
+select that backend through a separate compilation used by the NDK wrappers.
+
+--- a/ashmem-dev.cpp
++++ b/ashmem-dev.cpp
+@@ -98,6 +98,7 @@
+  * which will be cached by the caller.
+  */
+ static bool __has_memfd_support() {
++#ifndef ARTZIG_HOST_MEMFD
+     if (check_vendor_memfd_allowed() == false) {
+         return false;
+     }
+@@ -113,6 +114,7 @@
+         return false;
+     }
+ 
++#endif
+     // Check if kernel support exists, otherwise fall back to ashmem.
+     // This code needs to build on old API levels, so we can't use the libc
+     // wrapper.
+@@ -138,6 +140,7 @@
+      * Ensure that the kernel supports ashmem ioctl commands on memfds. If not,
+      * fall back to using ashmem.
+      */
++#ifndef ARTZIG_HOST_MEMFD
+     int ashmem_size = TEMP_FAILURE_RETRY(ioctl(fd, ASHMEM_GET_SIZE, 0));
+     if (ashmem_size != static_cast<int>(buf_size)) {
+         ALOGE("ioctl(ASHMEM_GET_SIZE): %d != buf_size: %zd , no ashmem-memfd compat support",
+@@ -145,6 +148,7 @@
+         return false;
+     }
+ 
++#endif
+     if (debug_log) {
+         ALOGD("memfd: device has memfd support, using it");
+     }
+@@ -271,7 +275,12 @@
+ }
+ 
+ static bool is_memfd_fd(int fd) {
++#ifdef ARTZIG_HOST_MEMFD
++    // Host descriptors are memfds, without Android's ashmem ioctl compatibility.
++    return fcntl(fd, F_GET_SEALS) >= 0;
++#else
+     return has_memfd_support() && !is_ashmem_fd(fd);
++#endif
+ }
+ 
+ int ashmem_valid(int fd) {
+@@ -279,7 +288,11 @@
+         return 1;
+     }
+ 
++#ifdef ARTZIG_HOST_MEMFD
++    return 0;
++#else
+     return __ashmem_is_ashmem(fd, false) >= 0;
++#endif
+ }
+ 
+ static int memfd_create_region(const char* name, size_t size) {
+@@ -323,6 +336,10 @@
+         return memfd_create_region(name, size);
+     }
+ 
++#ifdef ARTZIG_HOST_MEMFD
++    errno = ENOSYS;
++    return -1;
++#else
+     android::base::unique_fd fd(__ashmem_open());
+     if (!fd.ok() ||
+         TEMP_FAILURE_RETRY(ioctl(fd, ASHMEM_SET_NAME, name) < 0) ||
+@@ -330,6 +347,7 @@
+         return -1;
+     }
+     return fd.release();
++#endif
+ }
+ 
+ static int memfd_set_prot_region(int fd, int prot) {
+@@ -362,11 +380,15 @@
+ }
+ 
+ int ashmem_set_prot_region(int fd, int prot) {
++#ifdef ARTZIG_HOST_MEMFD
++    return memfd_set_prot_region(fd, prot);
++#else
+     if (is_memfd_fd(fd)) {
+         return memfd_set_prot_region(fd, prot);
+     }
+ 
+     return __ashmem_check_failure(fd, TEMP_FAILURE_RETRY(ioctl(fd, ASHMEM_SET_PROT_MASK, prot)));
++#endif
+ }
+ 
+ static int do_pin(int op, int fd, size_t offset, size_t length) {

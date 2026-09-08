@@ -1925,7 +1925,6 @@ F aosp frameworks/base/core/java/android/os/IpcDataCache.java
 F aosp frameworks/base/core/java/android/os/FileUtils.java
 F aosp frameworks/base/core/java/com/android/internal/util/SizedInputStream.java
 F aosp frameworks/base/core/java/android/util/DataUnit.java
-F aosp frameworks/base/native/android/aidl/com/android/internal/compat/IPlatformCompatNative.aidl
 F aosp frameworks/base/core/java/android/app/ForegroundServiceTypeException.java
 F aosp frameworks/base/media/java/android/media/tv/flags/media_tv.aconfig
 F aosp frameworks/base/core/java/android/app/supervision/flags.aconfig
@@ -7277,3 +7276,20 @@ F aosp frameworks/av/media/libaaudio/include/aaudio/AAudio.h
 F aosp frameworks/av/media/libaaudio/include/aaudio/AAudioTesting.h
 F aosp frameworks/av/media/libaaudio/include/system/aaudio/AAudio.h
 F aosp frameworks/av/media/libaudiofoundation/AudioContainers.cpp
+
+# Stock WebView clients and provider selection
+F aosp frameworks/base/core/java/android/webkit/WebIconDatabase.java
+F aosp frameworks/base/core/java/android/webkit/UserPackage.java
+F aosp frameworks/base/services/core/java/com/android/server/webkit/SystemInterface.java
+F aosp frameworks/base/services/core/java/com/android/server/webkit/WebViewUpdateServiceImpl2.java
+
+# Public NDK entry points and Chromium drawing bridge
+F aosp frameworks/base/native/graphics/jni/bitmap.cpp
+D aosp frameworks/base/native/webview/plat_support
+F aosp frameworks/native/libs/input/android/os/InputChannelCore.aidl
+F aosp external/rust/cxx/include/cxx.h
+
+F aosp bionic/libc/bionic/fortify.cpp
+F aosp bionic/libc/private/bionic_fortify.h
+D aosp frameworks/base/native/android
+F aosp bionic/libc/kernel/uapi/linux/ashmem.h

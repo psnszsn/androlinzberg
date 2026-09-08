@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 8 (budget 8). Survivors: 7. Total: 15.
+Pending: 6 (budget 6). Survivors: 5. Total: 11.
 
 ## Survivors
 
@@ -21,8 +21,6 @@ Pending: 8 (budget 8). Survivors: 7. Total: 15.
 | `android/view/SurfaceControl.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/view/SurfaceSession.java` | window seam (SurfaceFlinger; JNI natives) | blocked |
 | `android/view/TextureView.java` | window seam (HWUI layer natives; players use SurfaceView) | blocked |
-| `android/webkit/HostedWebViewProvider.kt` | host-only WebView provider (Chromium WebView is not available) | no-aosp-source |
-| `android/webkit/WebView.java` | WebView host seam (Chromium WebView provider is not available) | replaceable |
 
 ## Pending replacement
 
@@ -46,13 +44,6 @@ Pending: 8 (budget 8). Survivors: 7. Total: 15.
 | Stub | Audit | Closure |
 |---|---|---|
 | `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2569 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
-
-### webkit
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `android/webkit/CookieManager.kt` | replaceable | frameworks/base/core/java/android/webkit/CookieManager.java (1 to add) |
-| `android/webkit/WebSettings.kt` | blocked | frameworks/base/core/java/android/webkit/WebSettings.java (1 to add); android.webkit.WebSettings: existing host class android.webkit.WebView instantiates abstract class android.webkit.WebSettings (via WebSettings) |
 
 ## Hubs
 

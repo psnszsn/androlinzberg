@@ -27,6 +27,46 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- WebView, WebSettings, CookieManager and WebIconDatabase now use the original
+  AOSP Java sources, with their original supporting classes. The 750-line hosted
+  provider and its desktop Chromium/CDP path are deleted. The bundled Android
+  Chromium 133.0.6943.137 APK loads its actual provider and native library through
+  the APK class loader. Original WebViewUpdateServiceImpl2 owns provider selection,
+  signature/version checks and preparation ordering behind a hosted Binder facade.
+  The facade uses the package manager, settings and package-change broadcasts;
+  optional RELRO, WebView zygote and pinning optimizations are absent.
+  Service startup now preserves declared secondary process names, establishes
+  package identity before native Binder initialization and deduplicates pending
+  starts. Provider dependencies are tracked for termination on replacement.
+  Child processes retain Chromium's seccomp filter; glibc's optional rseq thread
+  optimization is disabled before exec. Android isolated/external-service UID and
+  per-instance semantics remain unfinished; renderer processes currently use the
+  provider package UID.
+
+  Original NDK looper, input, bitmap, native-window and shared-memory wrappers
+  are compiled. Java MessageQueue and NDK ALooper now share the original native
+  Looper. Shared memory uses original libcutils memfd allocation and seals; tests
+  cover descriptor ownership, immutable size, existing writable mappings and
+  rejection of later write access. Native property handles use the same broker
+  property area as Java, including long callback values and serial changes.
+  Native font paths resolve to the existing hosted font inventory. Original HWUI
+  functor ownership and drawing replace the host no-ops. An EGL adapter puts
+  Chromium and HWUI on the same display with an OpenGL ES context, allowing their
+  texture images to be shared. SurfaceFlinger overlays and image-reader producers
+  remain explicit unsupported boundaries; no new Wayland, PipeWire or FFmpeg
+  backend is introduced.
+
+  The actual provider passes HTML/JavaScript/title, secure-cookie lifecycle and
+  input-fallback tests. The Cage test clicks a DOM button, requires no structured
+  issues, and checks visible page pixels; the retained screenshot shows text and
+  the updated counter. JVM/system/native/Binder and build checks pass, as do 21
+  testkit tests. All 11 APK integration tests pass with 38 captured steps and zero
+  structured runtime issues, including visibly rendered fullscreen video. The
+  AOSP archive is rebuilt and repinned; the 12 selected WebView Java sources match
+  the pinned checkout verbatim. Both archive checksums are verified; ART is
+  unchanged. Inventory is 11 stubs (6 pending, 5 survivors). The registry,
+  window/client adaptations and remaining server closure are still unfinished.
+
 - AAudio now exports 42 C ABI entry points over stock Java AudioTrack and the
   existing PCM stream, including every AAudio import in the staged Chromium
   library. The build directly reuses AAudioStreamParameters, AAudioUtilities and

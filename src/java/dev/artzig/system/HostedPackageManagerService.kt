@@ -144,8 +144,8 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
         // Host seam (source note: installd creates the app data directories at
         // install; ContextImpl only creates subdirectories underneath). The
         // framework rides the app classpath here rather than the boot
-        // classpath, so an APK's bundled Kotlin runtime must win over the
-        // host's: packages load through HostedApkClassLoader unless the
+        // classpath, so an APK's bundled implementation libraries must win
+        // over the host's copies: packages load through HostedApkClassLoader unless the
         // manifest chose a class loader (ClassLoaderFactory knows the name).
         if (parsed.classLoaderName == null) {
             (parsed as com.android.internal.pm.parsing.pkg.PackageImpl).setClassLoaderName("dev.artzig.HostedApkClassLoader")
@@ -1143,7 +1143,7 @@ class HostedPackageManagerService : PackageManagerServiceBase(), Computer {
     override fun getHarmfulAppWarning(packageName: String?, userId: Int): CharSequence? = null
 
     private companion object {
-        val HOST_FEATURES: Set<String> = setOf(PackageManager.FEATURE_APP_WIDGETS, PackageManager.FEATURE_COMPANION_DEVICE_SETUP)
+        val HOST_FEATURES: Set<String> = setOf(PackageManager.FEATURE_APP_WIDGETS, PackageManager.FEATURE_COMPANION_DEVICE_SETUP, PackageManager.FEATURE_WEBVIEW)
 
         const val TAG = "HostedPackageManager"
     }

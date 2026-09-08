@@ -7,6 +7,8 @@ pub const Options = struct {
     broker: LazyPath,
     island: LazyPath,
     stats_jni: LazyPath,
+    webview_support: LazyPath,
+    egl_support: LazyPath,
     binder_ndk: LazyPath,
     binder_cpp: LazyPath,
     art_runtime: LazyPath,
@@ -20,6 +22,7 @@ pub const Options = struct {
     framework_vdex: LazyPath,
     framework_resources: LazyPath,
     download_provider: LazyPath,
+    webview_provider: LazyPath,
 };
 
 pub const NamedLibrary = struct {
@@ -34,6 +37,8 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyDirectory(options.art_runtime, "bin/art", .{});
     _ = tree.addCopyFile(options.island, "lib/libandroid_platform.so");
     _ = tree.addCopyFile(options.stats_jni, "lib/art/libstats_jni.so");
+    _ = tree.addCopyFile(options.webview_support, "lib/art/libwebviewchromium_plat_support.so");
+    _ = tree.addCopyFile(options.egl_support, "lib/art/libazk_egl.so");
     _ = tree.addCopyFile(options.binder_ndk, "lib/art/libbinder_ndk.so");
     _ = tree.addCopyFile(options.binder_cpp, "lib/art/libbinder.so");
     // Stock NetworkUtils loads this module name. Its hosted native is registered by the
@@ -61,6 +66,12 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.framework_vdex, "framework/oat/x86_64/framework.vdex");
     _ = tree.addCopyFile(options.framework_resources, "res/framework-res.apk");
     _ = tree.addCopyFile(options.download_provider, "apps/DownloadProvider.apk");
+    _ = tree.addCopyFile(options.webview_provider, "apps/WebView.apk");
+    // The bionic bridge needs a filesystem ELF instead of an apk!/lib path.
+    const webview_library = b.addSystemCommand(&.{ "unzip", "-p" });
+    webview_library.addFileArg(options.webview_provider);
+    webview_library.addArg("lib/x86_64/libwebviewchromium.so");
+    _ = tree.addCopyFile(webview_library.captureStdOut(.{}), "apps/lib/com.android.webview/libwebviewchromium.so");
     _ = tree.addCopyFile(b.path("tools/dexopt-apk.sh"), "share/androlinzberg/dexopt-apk.sh");
     _ = tree.addCopyFile(b.path("src/bionic_translation.cfg"), "share/bionic_translation/cfg.d/bionic_translation.cfg");
     return tree.getDirectory();

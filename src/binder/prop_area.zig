@@ -172,6 +172,14 @@ pub const Reader = struct {
         return readSlot(r.map, slot, buf);
     }
 
+    pub fn nameAt(r: *const Reader, slot: usize) []const u8 {
+        return fieldText(r.map[slot + 4 ..][0..name_max]);
+    }
+
+    pub fn snapshotAt(r: *const Reader, slot: usize, buf: *[long_value_max]u8) Snapshot {
+        return readSnapshot(r.map, slot, buf);
+    }
+
     pub fn globalSerial(r: *const Reader) u32 {
         return @atomicLoad(u32, atomicPtr(r.map, off_global_serial), .acquire);
     }
@@ -225,7 +233,13 @@ fn read(map: []align(std.heap.page_size_min) u8, name: []const u8, buf: *[long_v
     return readSlot(map, slot, buf);
 }
 
+pub const Snapshot = struct { value: []const u8, serial: u32 };
+
 fn readSlot(map: []align(std.heap.page_size_min) u8, slot: usize, buf: *[long_value_max]u8) []const u8 {
+    return readSnapshot(map, slot, buf).value;
+}
+
+fn readSnapshot(map: []align(std.heap.page_size_min) u8, slot: usize, buf: *[long_value_max]u8) Snapshot {
     const serial = atomicPtr(map, slot);
     // Bounded: a writer killed mid-write leaves the serial odd forever; a
     // possibly-torn (still NUL-terminated) value beats a hang.
@@ -243,7 +257,7 @@ fn readSlot(map: []align(std.heap.page_size_min) u8, slot: usize, buf: *[long_va
             @memcpy(buf[0..value_max], map[slot + 4 + name_max ..][0..value_max]);
             @memset(buf[value_max..], 0);
         }
-        if (@atomicLoad(u32, serial, .acquire) == before or attempt >= 1000) return fieldText(buf);
+        if (@atomicLoad(u32, serial, .acquire) == before or attempt >= 1000) return .{ .value = fieldText(buf), .serial = before };
     }
 }
 
