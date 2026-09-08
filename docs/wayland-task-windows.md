@@ -27,9 +27,10 @@ passing desktop gate in regression 400. Retained artifacts:
 `/tmp/wayland-rebase-399-artifacts/` and
 `/tmp/wayland-drag-400-artifacts/stock-desktop-launcher/`.
 
-The default JVM and complete APK suite still need rerunning on the combined
-package. Drag-and-drop and the remaining acceptance work are in progress;
-this rebase is not the default launcher cutover.
+Regression 404 passes the complete default JVM suite and all 16 current APK
+integration tests, with 48 clean steps. Artifacts:
+`/tmp/wayland-rebase-404-artifacts/integration/`. Drag-and-drop and the remaining
+acceptance work are in progress; this rebase is not the default launcher cutover.
 
 ## Stock drag contracts and cursor lock ordering (2026-09-08)
 
