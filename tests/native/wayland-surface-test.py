@@ -18,7 +18,7 @@ p.add_argument('--server', type=Path, required=True)
 p.add_argument('--producer', type=Path, required=True)
 p.add_argument('--library', type=Path, action='append', default=[])
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout', 'paced'], default='normal')
+p.add_argument('--scenario', choices=['normal', 'producer-crash', 'consumer-crash', 'broker-loss', 'backpressure', 'pointer-capture', 'pointer-capture-unavailable', 'cursor-animation', 'delayed-fence', 'fence-shutdown', 'fence-timeout', 'paced', 'paced-fallback'], default='normal')
 a = p.parse_args()
 out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -63,7 +63,7 @@ try:
                                       '--prop-area', env['AZK_PROP_AREA']))
     assert line(broker).startswith('ready')
     pressure = a.scenario == 'backpressure'
-    paced = a.scenario == 'paced'
+    paced = a.scenario.startswith('paced')
     delayed = a.scenario == 'delayed-fence' or a.scenario.startswith('fence-')
     early = False
     server = spawn(a.server, 'server', ('--hold-presentation',) if pressure else ('--' + a.scenario,) if a.scenario.startswith('pointer-capture') or a.scenario == 'cursor-animation' or paced else ())
@@ -197,6 +197,17 @@ try:
                 counts = result['pacing']
                 assert counts['submissions'] + counts['coalesced'] == 12 and counts['deferred'] > 0
                 assert counts['submissions'] <= counts['callbacks'] + 1
+                match = re.fullmatch(r'feedback supported=(true|false) observed=(\d+) discarded=(\d+) unobserved=(\d+) frame=(\d+) clock=(\d+) seconds=(\d+) nanoseconds=(\d+) refresh_ns=(\d+)', line(server))
+                assert match, 'Missing presentation observations'
+                supported = match[1] == 'true'
+                timing = dict(zip(['observed', 'discarded', 'unobserved', 'frame', 'clock', 'seconds', 'nanoseconds', 'refresh_ns'], map(int, match.groups()[1:])))
+                result['presentation_feedback'] = dict(supported=supported, **timing)
+                assert supported == (a.scenario == 'paced')
+                if supported:
+                    assert timing['frame'] == 12 and timing['seconds'] > 0 and timing['nanoseconds'] < 1_000_000_000
+                    assert timing['observed'] + timing['discarded'] + timing['unobserved'] == counts['submissions']
+                else:
+                    assert not any(timing.values()), 'Fallback fabricated actual presentation timing'
             assert line(server) == 'released all buffers'
             assert server.wait(timeout=5) == 0
             result['live_buffers_after_shutdown'] = 0

@@ -14,6 +14,7 @@
 using namespace android;
 int main(int argc, char **argv) {
   const bool pressure = argc == 2 && std::string(argv[1]) == "--pressure";
+  const bool paced = argc == 2 && std::string(argv[1]).starts_with("--paced");
   const bool fenceLoss = argc == 2 && (std::string(argv[1]) == "--fence-shutdown" ||
                                       std::string(argv[1]) == "--fence-timeout");
   const bool delayed = fenceLoss || (argc == 2 && std::string(argv[1]) == "--delayed-fence");
@@ -74,7 +75,7 @@ int main(int argc, char **argv) {
       }
     }
     std::cout << "queued " << frame + 1 << std::endl;
-    if (!(argc == 2 && std::string(argv[1]) == "--paced"))
+    if (!paced)
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   assert(!pressure || observedPressure);

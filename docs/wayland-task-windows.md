@@ -22,6 +22,34 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Presentation feedback checkpoint (2026-09-08)
+
+The session negotiates presentation-time v1/v2 and retains the compositor's
+declared clock domain. Each stock UI DMA-BUF child commit can request actual
+presentation feedback independently of its parent's frame callback and the
+buffer's release event. Observations retain the configuration generation, frame
+number, timestamp, output global identity, refresh prediction, sequence and flags.
+Refresh zero remains unknown; neither software callbacks nor Android's requested
+frame rate are reported as actual presentation timing.
+
+Each window retains at most four feedback records. When covered-window or resize
+pressure replaces an observation, the unobserved count records that loss without
+claiming the compositor discarded the content. Actual discarded events have their
+own counter. Late feedback cannot replace a newer submission's observation.
+Output identities are copied when received, avoiding references to removed output
+objects. Invalid nanoseconds and a changed connection clock fail explicitly.
+
+`surface-pacing-test` now checks both supported and absent presentation feedback.
+Regression 319 observes all 12 GPU frames in Cage's CLOCK_MONOTONIC domain, with
+unknown refresh prediction. The fallback still paces and renders the final image,
+while reporting no fabricated timestamps. Regression 320 passes all 7064 stock
+Wayland/native build steps and 25 tests, including all 13 surface scenarios,
+mixed outputs, suspension, tablet input and the desktop launcher. Regression 321
+passes the complete JVM and 15-test APK suites with no runtime issues.
+Artifacts: `/tmp/wayland-feedback-{319,320,321}-artifacts/`; logs:
+`/tmp/wayland-{318,319,320,321}.log`. Media/desktop bridges, remaining input/output
+acceptance cases and the M11 default cutover remain unfinished.
+
 ## Task frame pacing checkpoint (2026-09-08)
 
 Stock task output submission now follows each toplevel's compositor frame

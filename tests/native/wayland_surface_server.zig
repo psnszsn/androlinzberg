@@ -86,9 +86,11 @@ pub fn main(init: std.process.Init) !void {
 }
 fn run(init: std.process.Init) !void {
     const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const feedback_fallback = args.len > 1 and std.mem.eql(u8, args[1], "--paced-fallback");
     const queue = try Queue.init(init.gpa, io, 320, 240);
     defer queue.deinit();
-    const session = try Queue.Session.init(init.gpa, io);
+    const session = try Queue.Session.initWithOptions(init.gpa, io, .{ .presentation = !feedback_fallback });
     defer session.deinit();
     var sibling: ?*Queue.Window = try session.createWindow(160, 120, "Sibling task", false);
     defer if (sibling) |window| window.deinit();
@@ -103,9 +105,8 @@ fn run(init: std.process.Init) !void {
     const producer = queue.producer();
     defer AIBinder_decStrong(producer);
     if (AServiceManager_addService(producer, "dev.artzig.surface.v1") != 0) return error.PublishFailed;
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const unavailable = args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture-unavailable");
-    const paced = args.len > 1 and std.mem.eql(u8, args[1], "--paced");
+    const paced = args.len > 1 and std.mem.startsWith(u8, args[1], "--paced");
     queue.pace_frames = paced;
     var callbacks: usize = 0;
     const capture = unavailable or (args.len > 1 and std.mem.eql(u8, args[1], "--pointer-capture"));
@@ -161,6 +162,17 @@ fn run(init: std.process.Init) !void {
             return error.InvalidFramePacing;
         var message: [150]u8 = undefined;
         try Io.File.stdout().writeStreamingAll(io, try std.fmt.bufPrint(&message, "paced submissions={d} deferred={d} coalesced={d} callbacks={d}\n", .{ queue.submitted_frames, queue.deferred_frames, queue.coalesced_frames, callbacks }));
+        const feedback = &window.presentation_feedback;
+        const supported = session.presentation != null;
+        if (supported == feedback_fallback) return error.WrongPresentationCapability;
+        if (supported) {
+            const sample = feedback.last orelse return error.MissingPresentationFeedback;
+            if (sample.frame != 12 or sample.seconds == 0 or sample.output_global == null or
+                feedback.observed + feedback.discarded + feedback.unobserved != feedback.submitted or
+                feedback.submitted != queue.submitted_frames) return error.InvalidPresentationFeedback;
+        } else if (feedback.last != null or feedback.submitted != 0) return error.FabricatedPresentationFeedback;
+        var timing: [240]u8 = undefined;
+        try Io.File.stdout().writeStreamingAll(io, try std.fmt.bufPrint(&timing, "feedback supported={any} observed={d} discarded={d} unobserved={d} frame={d} clock={d} seconds={d} nanoseconds={d} refresh_ns={d}\n", .{ supported, feedback.observed, feedback.discarded, feedback.unobserved, if (feedback.last) |s| s.frame else 0, if (feedback.last) |s| s.clock_id else 0, if (feedback.last) |s| s.seconds else 0, if (feedback.last) |s| s.nanoseconds else 0, if (feedback.last) |s| s.refresh_ns else 0 }));
     }
 }
 

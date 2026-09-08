@@ -10,6 +10,7 @@ const zwp = wayland.client.zwp;
 const zwlr = wayland.client.zwlr;
 const CursorImage = @import("cursor_image.zig");
 pub const TabletSeat = @import("tablet_seat.zig");
+pub const PresentationFeedback = @import("presentation_feedback.zig");
 
 const drm_format_nv12: u32 = 0x3231564e;
 const drm_format_p010: u32 = 0x30313050;
@@ -36,6 +37,7 @@ fn selectDmabufImportModifier(formats: []const DmabufFormat, format: u32, modifi
 /// One owned decoded frame at the video-transport seam. Ownership transfers
 /// to pushDmabuf and is returned through release_fn after wl_buffer.release.
 pub const DmabufFrame = struct {
+    frame_number: u64 = 0,
     context: *anyopaque,
     release_fn: *const fn (*anyopaque) void,
     /// Teardown without wl_buffer.release must abandon a queue lease, not make
@@ -579,6 +581,9 @@ pub const Session = struct {
     shm: ?*wl.Shm = null,
     viewporter: ?*wp.Viewporter = null,
     fractional_scale_manager: ?*wp.FractionalScaleManagerV1 = null,
+    presentation: ?*wp.Presentation = null,
+    presentation_global_name: ?u32 = null,
+    presentation_clock: ?u32 = null,
     dmabuf: ?*zwp.LinuxDmabufV1 = null,
     dmabuf_feedback: ?*zwp.LinuxDmabufFeedbackV1 = null,
     dmabuf_table: ?[]align(@alignOf(DmabufTableEntry)) u8 = null,
@@ -625,6 +630,7 @@ pub const Session = struct {
         xdg_shell_max_version: u32 = 6,
         tablet: bool = true,
         fractional_scale: bool = true,
+        presentation: bool = true,
         cursor_shape: bool = true,
     };
 
@@ -1049,6 +1055,7 @@ pub const Session = struct {
         if (self.dmabuf) |dmabuf| dmabuf.destroy();
         if (self.viewporter) |viewporter| viewporter.destroy();
         if (self.fractional_scale_manager) |manager| manager.destroy();
+        if (self.presentation) |manager| manager.destroy();
         if (self.subcompositor) |subcompositor| subcompositor.destroy();
         for (&self.outputs) |*output| output.deinit();
         if (self.compositor) |compositor| compositor.destroy();
@@ -1091,6 +1098,10 @@ pub const Session = struct {
                     self.viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wp.FractionalScaleManagerV1.interface.name) == .eq and self.protocol_options.fractional_scale) {
                     self.fractional_scale_manager = registry.bind(g.name, wp.FractionalScaleManagerV1, 1) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wp.Presentation.interface.name) == .eq and self.protocol_options.presentation and self.presentation == null) {
+                    self.presentation = registry.bind(g.name, wp.Presentation, @min(g.version, 2)) catch return;
+                    self.presentation_global_name = g.name;
+                    self.presentation.?.setListener(*Session, presentationListener, self);
                 } else if (std.mem.orderZ(u8, g.interface, zwp.LinuxDmabufV1.interface.name) == .eq) {
                     const version = @min(g.version, 4);
                     self.dmabuf = registry.bind(g.name, zwp.LinuxDmabufV1, version) catch return;
@@ -1140,6 +1151,11 @@ pub const Session = struct {
                 }
             },
             .global_remove => |removed| {
+                if (self.presentation_global_name == removed.name) {
+                    if (self.presentation) |manager| manager.destroy();
+                    self.presentation = null;
+                    self.presentation_global_name = null;
+                }
                 for (&self.outputs, 0..) |*output, index| {
                     if (output.proxy == null or output.global_name != removed.name) continue;
                     output.deinit();
@@ -1195,6 +1211,22 @@ pub const Session = struct {
     fn tabletTarget(context: *anyopaque, surface: *wl.Surface) ?*anyopaque {
         const self: *Session = @ptrCast(@alignCast(context));
         return self.surfaceWindow(surface);
+    }
+    fn presentationListener(_: *wp.Presentation, event: wp.Presentation.Event, self: *Session) void {
+        switch (event) {
+            .clock_id => |clock| {
+                if (self.presentation_clock) |previous| if (previous != clock.clk_id) {
+                    self.output_failure = error.PresentationClockChanged;
+                    return;
+                };
+                self.presentation_clock = clock.clk_id;
+            },
+        }
+    }
+    fn presentationOutput(context: *anyopaque, proxy: *wl.Output) ?u32 {
+        const self: *Session = @ptrCast(@alignCast(context));
+        const index = self.outputIndex(proxy) orelse return null;
+        return self.outputs[index].global_name;
     }
     fn tabletEvent(context: *anyopaque, target: ?*anyopaque, event: TabletSeat.Event) void {
         const self: *Session = @ptrCast(@alignCast(context));
@@ -1411,6 +1443,7 @@ pub const Window = struct {
     base_attached: bool = false,
     ui_initialized: bool = false,
     presentation_dirty: bool = false,
+    presentation_feedback: PresentationFeedback = .{},
 
     pointer_x: f64 = 0,
     pointer_y: f64 = 0,
@@ -2137,6 +2170,16 @@ pub const Window = struct {
             return error.QueueAbandonmentRequired;
         }
         const buffer = try self.importDmabuf(frame, &self.ui_dmabuf_buffers);
+        if (self.session.presentation) |manager| if (self.session.presentation_clock) |clock| {
+            try self.presentation_feedback.request(manager, self.ui_surface, .{
+                .clock_id = clock,
+                .configuration = self.configuration_generation,
+                .frame = frame.frame_number,
+                .output_context = self.session,
+                .output_global = Session.presentationOutput,
+                .failure = &self.session.output_failure,
+            });
+        };
         self.ui_surface.attach(buffer, 0, 0);
         self.ui_viewport.setSource(wl.Fixed.fromDouble(0), wl.Fixed.fromDouble(0), wl.Fixed.fromDouble(@floatFromInt(frame.width)), wl.Fixed.fromDouble(@floatFromInt(frame.height)));
         self.ui_viewport.setDestination(self.width, self.height);
@@ -2568,6 +2611,7 @@ pub const Window = struct {
     /// Release all client-side resources before the process disconnects from
     /// the compositor. Video layers must be destroyed before calling this.
     pub fn deinit(self: *Window) void {
+        self.presentation_feedback.deinit();
         self.clearCursorImage();
         if (self.frame_cb) |callback| callback.destroy();
         self.frame_cb = null;

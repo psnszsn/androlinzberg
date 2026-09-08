@@ -285,6 +285,7 @@ fn presentFrame(self: *Self, window: *wayland.Window, frame: *Frame) !void {
     }
     std.log.info("surface-frame number={d} buffer={d} width={d} height={d}", .{ frame.number, info.id, info.width, info.height });
     try window.pushUiDmabuf(.{
+        .frame_number = frame.number,
         .context = frame,
         .release_fn = release,
         .abandon_fn = abandon,

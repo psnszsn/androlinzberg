@@ -93,6 +93,7 @@ pub fn build(b: *std.Build) void {
     const scanner = Scanner.create(b, .{});
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
+    scanner.addSystemProtocol("stable/presentation-time/presentation-time.xml");
     scanner.addSystemProtocol("staging/fractional-scale/fractional-scale-v1.xml");
     scanner.addSystemProtocol("stable/linux-dmabuf/linux-dmabuf-v1.xml");
     scanner.addSystemProtocol("stable/tablet/tablet-v2.xml");
@@ -108,6 +109,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("xdg_wm_base", 6);
     scanner.generate("wl_subcompositor", 1);
     scanner.generate("wp_viewporter", 1);
+    scanner.generate("wp_presentation", 2);
     scanner.generate("wp_fractional_scale_manager_v1", 1);
     scanner.generate("zwp_linux_dmabuf_v1", 4);
     scanner.generate("zwp_pointer_constraints_v1", 1);
@@ -496,7 +498,7 @@ pub fn build(b: *std.Build) void {
     const surface_fence_step = b.step("surface-fence-test", "Verify delayed GPU acquire fences without blocking Wayland dispatch");
     const surface_pacing_step = b.step("surface-pacing-test", "Verify bounded frame submission paced by real compositor callbacks");
     var previous_surface_run: ?*std.Build.Step = null;
-    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout", "paced" }) |scenario| {
+    for ([_][]const u8{ "normal", "producer-crash", "consumer-crash", "broker-loss", "backpressure", "pointer-capture-unavailable", "pointer-capture", "cursor-animation", "delayed-fence", "fence-shutdown", "fence-timeout", "paced", "paced-fallback" }) |scenario| {
         const output = b.pathResolve(&.{ "zig-out/test-results/wayland-surface", scenario });
         const surface_run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2" });
         if (std.mem.eql(u8, scenario, "pointer-capture")) {
@@ -519,7 +521,7 @@ pub fn build(b: *std.Build) void {
         surface_run.addArgs(&.{ "--output", output });
         surface_run.has_side_effects = true;
         surface_run.addArgs(&.{ "--scenario", scenario });
-        if (std.mem.eql(u8, scenario, "paced")) {
+        if (std.mem.startsWith(u8, scenario, "paced")) {
             surface_pacing_step.dependOn(&surface_run.step);
         } else if (std.mem.eql(u8, scenario, "delayed-fence") or std.mem.startsWith(u8, scenario, "fence-")) {
             surface_fence_step.dependOn(&surface_run.step);
