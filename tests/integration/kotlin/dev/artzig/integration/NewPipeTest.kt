@@ -77,7 +77,7 @@ class NewPipeTest {
     @Test
     fun revealingVideoControlsKeepsCompositorFullscreen() = app.run {
         dismissKeepAndroidOpenDialog()
-        waitFor(text = "LIVE")
+        waitForLiveFeed()
         // The YouTube live feed is dynamic. Exercise the first live card
         // instead of pinning the test to a channel that may leave the feed.
         click(text = "LIVE", index = 0)
@@ -104,7 +104,7 @@ class NewPipeTest {
     @Test
     fun fullscreenButtonExitsAndRestoresVideoDetails() = app.run {
         dismissKeepAndroidOpenDialog()
-        waitFor(text = "LIVE")
+        waitForLiveFeed()
         click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
         waitFor(text = "Background")
@@ -167,7 +167,7 @@ class NewPipeDesktopTest {
     @Test
     fun videoButtonEntersCompositorFullscreen() = app.run {
         dismissKeepAndroidOpenDialog()
-        waitFor(text = "LIVE")
+        waitForLiveFeed()
         click(text = "LIVE", index = 0)
         waitFor(description = "Comments")
         waitForFullscreen(false)
@@ -334,4 +334,18 @@ private fun AppSession.pausePlayer() {
         Thread.sleep(100)
     }
     throw AssertionError("player did not expose its play/pause control")
+}
+
+/** The live YouTube feed can return a transient extraction error. Retry that
+ * explicit application error once during setup; retain its screenshot and the
+ * ordinary issue-checked UI step before requiring the same live-card state. */
+private fun AppSession.waitForLiveFeed() {
+    try { waitFor(text = "LIVE") }
+    catch (failure: dev.artzig.testkit.VarlinkException) {
+        if (failure.response["error"]?.asString != "dev.artzig.androlinzberg.test1.Timeout" ||
+            !isVisible(text = "Could not parse website") || !isVisible(text = "RETRY")) throw failure
+        screenshot("live-feed-load-error.png")
+        click(text = "RETRY", settle = WaitKind.NOW)
+        waitFor(text = "LIVE")
+    }
 }
