@@ -29,8 +29,8 @@ class DragFixtureActivity : Activity() {
         val events = ArrayList<String>()
         var received: String? = null
         var sourceGesture = false
-        fun button(label: String, action: () -> Unit) {
-            content.addView(Button(this).apply { text = label; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, 36))
+        fun button(label: String, height: Int = 36, action: () -> Unit) {
+            content.addView(Button(this).apply { text = label; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, height))
         }
         button("Use drag text") { files = false; accept = true; status.text = "Drag text ready" }
         button("Use drag file") { files = true; status.text = "Drag file ready" }
@@ -97,8 +97,8 @@ class DragFixtureActivity : Activity() {
                         events.add("end")
                         check(events.first() == "start" && events.last() == "end")
                         if ("drop" !in events) {
-                            check(received == null && (!event.result || sourceGesture)) { "Unexpected foreign drag completion: $events" }
-                            status.text = if (event.result) "Drag exported" else "Drag cancelled"
+                            check(received == null) { "A view without DROP received data: $events" }
+                            status.text = if (!event.result) "Drag cancelled" else if (sourceGesture) "Drag exported" else "Drag completed elsewhere"
                         } else if (accept) {
                             check(events.indexOf("location") in 1 until events.indexOf("drop")) { events.toString() }
                             check(event.result && received != null) { "Drop was not consumed: $events" }
@@ -119,6 +119,17 @@ class DragFixtureActivity : Activity() {
         else button("Open drag task") {
             startActivity(android.content.Intent(this, DragFixtureActivity::class.java)
                 .putExtra("drag-target", true).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_MULTIPLE_TASK))
+        }
+        if (!targetTask) {
+            var removed = false
+            val toggle = Button(this).apply { text = "Remove drag protocol"; setPadding(0, 0, 0, 0) }
+            toggle.setOnClickListener {
+                removed = !removed
+                setTaskDescription(android.app.ActivityManager.TaskDescription.Builder()
+                    .setLabel("AZK CLIPBOARD:" + if (removed) "remove" else "restore").build())
+                toggle.text = if (removed) "Restore drag protocol" else "Remove drag protocol"
+            }
+            content.addView(toggle, LinearLayout.LayoutParams(-1, 24))
         }
         setContentView(content)
     }

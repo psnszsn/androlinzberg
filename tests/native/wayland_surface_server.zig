@@ -30,6 +30,9 @@ fn watchStdin(stop: *Stop) void {
 }
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len == 3 and (std.mem.eql(u8, args[1], "--native-drag-local-task") or std.mem.eql(u8, args[1], "--native-drag-local-target"))) {
+        return @import("native_drag_peer.zig").localTask(init, args[2], std.mem.eql(u8, args[1], "--native-drag-local-target"));
+    }
     if (args.len == 2 and std.mem.eql(u8, args[1], "--native-drag-cross-task")) {
         return @import("native_drag_peer.zig").crossTask(init);
     }

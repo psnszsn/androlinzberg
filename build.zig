@@ -1292,7 +1292,7 @@ pub fn build(b: *std.Build) void {
             desktop_launcher.setEnvironment("AZK_TEST_IME", "1");
             desktop_launcher.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
         }
-        if (clipboard_fixture) {
+        if (clipboard_fixture or drag_fixture) {
             desktop_launcher.setEnvironment("AZK_TEST_CLIPBOARD", "1");
             desktop_launcher.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
         }

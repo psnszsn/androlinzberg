@@ -39,7 +39,7 @@ internal class WaylandOutgoingDrag(private val handler: Handler, private val wm:
         onThread()
         // Unsupported input kinds and absent compositor capabilities retain the
         // stock local gesture. No serial from another device can be substituted.
-        val origin = host.origin(source) ?: return
+        val origin = host.origin(source) ?: run { wm.local(source); return }
         check(active == null)
         val request = Request(source, origin)
         active = request
@@ -120,6 +120,7 @@ internal class WaylandOutgoingDrag(private val handler: Handler, private val wm:
             if (result[1] == 2L) {
                 check(surface == null)
                 // Explicit rejection before takeover permits the old local drag.
+                wm.local(source)
                 request.terminal = true
                 retire(request)
                 return
@@ -135,6 +136,7 @@ internal class WaylandOutgoingDrag(private val handler: Handler, private val wm:
         catch (failure: android.os.RemoteException) { fail(request, failure) }
     }
     private fun finishBeforeExposure(request: Request) {
+        wm.local(request.source)
         request.terminal = true
         // The gesture may have naturally ended while a provider was preparing.
         // Never initiate native takeover with a stale task/grab generation.

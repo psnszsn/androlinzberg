@@ -11,6 +11,36 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Visible task-local drag fallback (2026-09-08)
+
+When native drag presentation is unavailable, the original WMS input stream now
+keeps its shadow in the source task's mirrored subtree. A translation container
+preserves pinned shadow position, alpha, transforms and animation in Android
+synthetic coordinates. It follows the source task's bounds; cleanup follows the
+stock shadow-removal and relinquishment lifetime. Drops outside that task are
+rejected because this input stream cannot identify another desktop task.
+
+The native claim checks data-device version and viewport availability before
+staging URI exports or consuming a gesture. Known rejection before takeover
+selects local presentation; uncertain completion still ends the gesture.
+
+Regression 470 reproduced a functional file drop with a missing shadow: 25
+clean actions passed, but captured pixels showed only the source background.
+Regression 472 passes all 29 drag steps, including visible fallback shadows in
+both task positions, rejection of a cross-task attempt without the protocol,
+and successful native cross-task transfer after protocol restoration. The
+fixture also now honors stock END broadcasts to interested views that did not
+receive DROP. Regression 473 passes the full JVM suite and all 16 APK tests
+with 49 clean steps. Regression 474 passes the 29-step drag, four-step video,
+21-step clipboard and both GPU icon gates, plus C++/graph audits. Artifacts:
+`/tmp/wayland-local-drag-470-artifacts/`,
+`/tmp/wayland-local-drag-472-artifacts/`,
+`/tmp/wayland-local-drag-473-artifacts/`, and
+`/tmp/wayland-local-drag-474-artifacts/`. Package 92 contains 96 patches.
+
+The complete drag policy, death/timeout and pressure matrix and the remaining
+M8–M11 acceptance and production cutover are still in progress.
+
 ## Original Android drag handoff and native export (2026-09-08)
 
 Stock `View.startDragAndDrop` now transfers its authorized drag to the native
@@ -57,8 +87,8 @@ gets successful completion, and the file recipient checks that its URI is the
 original Android URI, not a staged desktop export. Artifacts:
 `/tmp/wayland-cross-task-469-artifacts/stock-drag/`.
 
-The complete capability/death/timeout matrix, fallback shadow presentation, and
-the remaining M8–M11 acceptance and production cutover remain unfinished.
+The complete capability/death/timeout matrix and the remaining M8–M11
+acceptance and production cutover remain unfinished.
 
 ## Native source start acknowledgement (2026-09-08)
 

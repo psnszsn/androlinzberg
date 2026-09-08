@@ -317,13 +317,7 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8,
         if (accepted and !released and now - accepted_at >= 400) {
             // Capture the actual SF-mirrored stock drag shadow before releasing.
             // The harness verifies its blue pixels, text, bounds and hotspot.
-            const snapshot = try std.process.run(init.gpa, init.io, .{ .argv = &.{ "grim", "-t", "ppm", "-" }, .stdout_limit = .limited(4 * 1024 * 1024), .stderr_limit = .limited(4096), .timeout = .{ .duration = .{ .raw = .fromSeconds(3), .clock = .awake } } });
-            defer init.gpa.free(snapshot.stdout);
-            defer init.gpa.free(snapshot.stderr);
-            if (snapshot.term != .exited or snapshot.term.exited != 0) return error.DragIconCaptureFailed;
-            const screenshot = try std.fmt.allocPrint(init.gpa, "{s}.ppm", .{path});
-            defer init.gpa.free(screenshot);
-            try Io.Dir.cwd().writeFile(init.io, .{ .sub_path = screenshot, .data = snapshot.stdout });
+            try capturePpm(init, path);
             if (cancel) try window.testPointerAtOutput(.{ 1150, 600 }, .{ 1280, 720 }, null, false);
             try Queue.Window.releaseTestPointer(session);
             released = true;
@@ -341,12 +335,18 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8,
 /// Two explicitly placed Android tasks share the source's native drag identity.
 /// This peer supplies physical input only; WMS owns the complete Android drop.
 pub fn crossTask(init: std.process.Init) !void {
+    try taskGesture(init, .{ 160, 273 }, .{ 960, 273 }, null);
+}
+pub fn localTask(init: std.process.Init, path: []const u8, target: bool) !void {
+    try taskGesture(init, if (target) .{ 800, 273 } else .{ 160, 273 }, if (target) .{ 960, 273 } else .{ 480, 273 }, path);
+}
+fn taskGesture(init: std.process.Init, origin_point: [2]u32, destination_point: [2]u32, capture: ?[]const u8) !void {
     const session = try Queue.Session.init(init.gpa, init.io);
     defer session.deinit();
     const window = try session.createWindowWithAppId(100, 100, "Drag test input", "dev.artzig.drag-driver", false);
     defer window.deinit();
     try window.prepareTestInput();
-    try window.testPointerAtOutput(.{ 160, 273 }, .{ 1280, 720 }, null, true);
+    try window.testPointerAtOutput(origin_point, .{ 1280, 720 }, null, true);
     var released = false;
     defer if (!released) Queue.Window.releaseTestPointer(session) catch {};
     const begin = Io.Clock.awake.now(init.io).toMilliseconds();
@@ -357,7 +357,8 @@ pub fn crossTask(init: std.process.Init) !void {
         try session.dispatch(&.{}, &ready, 20);
         _ = window.takeEvents();
         if (!moved and now - begin >= 500) {
-            try window.testPointerAtOutput(.{ 960, 273 }, .{ 1280, 720 }, null, false);
+            if (capture) |path| try capturePpm(init, path);
+            try window.testPointerAtOutput(destination_point, .{ 1280, 720 }, null, false);
             moved = true;
         }
         if (moved and now - begin >= 1000) {
@@ -366,4 +367,14 @@ pub fn crossTask(init: std.process.Init) !void {
         }
     }
     if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+}
+
+fn capturePpm(init: std.process.Init, path: []const u8) !void {
+    const snapshot = try std.process.run(init.gpa, init.io, .{ .argv = &.{ "grim", "-t", "ppm", "-" }, .stdout_limit = .limited(4 * 1024 * 1024), .stderr_limit = .limited(4096), .timeout = .{ .duration = .{ .raw = .fromSeconds(3), .clock = .awake } } });
+    defer init.gpa.free(snapshot.stdout);
+    defer init.gpa.free(snapshot.stderr);
+    if (snapshot.term != .exited or snapshot.term.exited != 0) return error.DragIconCaptureFailed;
+    const screenshot = try std.fmt.allocPrint(init.gpa, "{s}.ppm", .{path});
+    defer init.gpa.free(screenshot);
+    try Io.Dir.cwd().writeFile(init.io, .{ .sub_path = screenshot, .data = snapshot.stdout });
 }

@@ -573,7 +573,13 @@ const Server = struct {
         const valid = entry != null and entry.?.inputGeometryReady() and entry.?.configuration_generation == configuration;
         if (request.code == 25) {
             try end(request.input);
-            const generation = if (valid and self.outbound == null) self.session.dragClaim(entry.?.window, kind, id) else null;
+            const available = if (self.session.clipboard) |device_owner|
+                device_owner.manager.getVersion() >= 3 and device_owner.device.getVersion() >= 3 and self.session.viewporter != null
+            else
+                false;
+            // Unsupported presentation must not stage URI exports or consume a
+            // held generation merely to discover the missing protocol later.
+            const generation = if (available and valid and self.outbound == null) self.session.dragClaim(entry.?.window, kind, id) else null;
             try ok(AParcel_writeInt32(request.output, 0));
             try ok(AParcel_writeInt64(request.output, @intCast(generation orelse 0)));
             return 0;

@@ -496,11 +496,46 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     sibling = next(window for window in multiple['windows'] if str(window['task_id']) != task)
                     target_task = str(sibling['task_id'])
                     control('wait', 'exists', '--task-id', target_task, '--text', 'Drag ready')
-                    for label, expected in [('USE DRAG TEXT', 'Android drag 😀 café'), ('USE DRAG FILE', 'Android file 😀 café')]:
-                        control('step', 'click', '--task-id', task, '--text', label, '--via', 'semantic', '--settle', 'idle')
+                    for button_label, expected in [('USE DRAG TEXT', 'Android drag 😀 café'), ('USE DRAG FILE', 'Android file 😀 café')]:
+                        control('step', 'click', '--task-id', task, '--text', button_label, '--via', 'semantic', '--settle', 'idle')
                         control('step', 'exec', '--wait', 'exists', '--task-id', target_task,
                                 '--text', 'Drag received=' + expected, '--', str(args.seat), '--native-drag-cross-task')
                         control('wait', 'exists', '--task-id', task, '--text', 'Drag exported')
+                    control('step', 'click', '--task-id', task, '--text', 'REMOVE DRAG PROTOCOL', '--via', 'semantic', '--settle', 'idle')
+                    deadline = time.monotonic() + 5
+                    while 'task clipboard available=false' not in (out / 'app.log').read_text(errors='replace'):
+                        if time.monotonic() > deadline: raise RuntimeError('Drag protocol removal was not delivered')
+                        time.sleep(.02)
+                    fallback = out / 'local-drag-shadow'
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Drag received=Android file 😀 café', '--', str(args.seat), '--native-drag-local-task', str(fallback))
+                    raw = Path(str(fallback) + '.ppm').read_bytes()
+                    magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
+                    width, height = map(int, dimensions.split())
+                    for x, y in [(130, 251), (189, 251), (130, 294), (189, 294)]:
+                        offset = (y * width + x) * 3
+                        r, g, b = pixels[offset:offset + 3]
+                        assert r < 100 and g < 100 and b > 200, ('Missing local drag shadow', x, y, r, g, b)
+                    fallback_target = out / 'local-drag-target-shadow'
+                    control('step', 'exec', '--wait', 'exists', '--task-id', target_task,
+                            '--text', 'Drag received=Android drag 😀 café', '--', str(args.seat), '--native-drag-local-target', str(fallback_target))
+                    control('wait', 'exists', '--task-id', task, '--text', 'Drag completed elsewhere')
+                    raw = Path(str(fallback_target) + '.ppm').read_bytes()
+                    magic, dimensions, maximum, pixels = raw.split(b'\n', 3)
+                    width, height = map(int, dimensions.split())
+                    for x, y in [(770, 251), (829, 251), (770, 294), (829, 294)]:
+                        offset = (y * width + x) * 3
+                        r, g, b = pixels[offset:offset + 3]
+                        assert r < 100 and g < 100 and b > 200, ('Local drag used global coordinates', x, y, r, g, b)
+                    # Without native offers, raw source coordinates must not
+                    # accidentally target the other synthetic Android rectangle.
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Drag cancelled', '--', str(args.seat), '--native-drag-cross-task')
+                    control('wait', 'exists', '--task-id', target_task, '--text', 'Drag cancelled')
+                    control('step', 'click', '--task-id', task, '--text', 'RESTORE DRAG PROTOCOL', '--via', 'semantic', '--settle', 'idle')
+                    control('step', 'exec', '--wait', 'exists', '--task-id', target_task,
+                            '--text', 'Drag received=Android file 😀 café', '--', str(args.seat), '--native-drag-cross-task')
+                    control('wait', 'exists', '--task-id', task, '--text', 'Drag exported')
                     control('step', 'click', '--task-id', target_task, '--text', 'CLOSE DRAG TASK', '--via', 'semantic', '--settle', 'idle')
                     for _ in range(16):
                         ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
@@ -512,7 +547,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                         time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 23 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 29 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']

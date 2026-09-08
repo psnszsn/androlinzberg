@@ -89,6 +89,7 @@ framework_patches = tuple(
         (64, "-Clipboard-connect-host-desktop-monitor.patch"),
         (65, "-WM-own-native-drag-lifecycle.patch"),
         (66, "-WM-transfer-stock-drag-to-native-presentation.patch"),
+        (67, "-WM-present-local-drag-fallback-in-source-task.patch"),
     )
 )
 

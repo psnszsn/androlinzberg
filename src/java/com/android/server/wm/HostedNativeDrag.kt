@@ -19,7 +19,7 @@ import dev.artzig.window.HostInputManagerBridge
  * use IWindow like START/DROP/END so a stationary enter cannot race START on a
  * separate input FD. ViewRootImpl.WindowInputEventReceiver.onDragEvent defines
  * the location payload; its dispatchDragEvent is also the IWindow destination.
- * No compositor IPC or provider work occurs while holding the WM lock. */
+ * No Wayland presenter IPC or provider work occurs while holding the WM lock. */
 class HostedNativeDrag(private val windows: WindowManagerService, private val handler: Handler,
     private val input: HostInputManagerBridge) {
     val context: android.content.Context get() = windows.mContext
@@ -95,6 +95,16 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
             window != null && window.mSession.mUid == source.uid && window.mSession.mPid == source.pid &&
             window.task?.mRemoteToken?.toWindowContainerToken()?.asBinder() == source.taskToken &&
             state.mSurfaceControl?.isValid == true
+    }
+    /** Known rejection before compositor takeover retains the original input
+     * stream. Its shadow and valid targets stay in the source task's space. */
+    fun local(source: Source) {
+        onThread()
+        synchronized(windows.mGlobalLock) {
+            if (outgoing !== source || !valid(source)) return
+            val task = windows.mWindowMap[source.client]?.task ?: return
+            (source.identity as DragState).useHostedLocalPresentationLocked(task)
+        }
     }
     fun handoff(source: Source): Boolean {
         onThread()

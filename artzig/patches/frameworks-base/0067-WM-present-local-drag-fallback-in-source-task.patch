@@ -1,0 +1,81 @@
+--- a/services/core/java/com/android/server/wm/DragState.java
++++ b/services/core/java/com/android/server/wm/DragState.java
+@@ -114,6 +114,8 @@
+     ClipDescription mDataDescription;
+     boolean mDragResult;
+     boolean mHostedNativePresentation;
++    private Task mHostedLocalDragTask;
++    private SurfaceControl mHostedLocalDragRoot;
+     boolean mRelinquishDragSurfaceToDropTarget;
+     float mAnimatedScale = 1.0f;
+     float mStartDragAlpha;
+@@ -220,6 +222,27 @@
+             .addWindowInfosReportedListener(() -> result.complete(null))
+             .apply();
+         return result;
++    }
++
++    // A compositor without a native drag grab can only target the originating
++    // host task. Keep pinned shadow transforms/animation in synthetic display
++    // coordinates, translated into that task's private composition subtree.
++    void useHostedLocalPresentationLocked(Task task) {
++        if (mHostedNativePresentation || mHostedLocalDragRoot != null) return;
++        mHostedLocalDragRoot = new SurfaceControl.Builder()
++                .setName("Hosted local drag root").setContainerLayer()
++                .setParent(task.getSurfaceControl()).build();
++        mHostedLocalDragTask = task;
++        updateHostedLocalDragRootLocked();
++        mTransaction.setLayer(mHostedLocalDragRoot, Integer.MAX_VALUE)
++                .show(mHostedLocalDragRoot)
++                .reparent(mSurfaceControl, mHostedLocalDragRoot).apply();
++    }
++
++    private void updateHostedLocalDragRootLocked() {
++        if (mHostedLocalDragRoot == null) return;
++        final Rect bounds = mHostedLocalDragTask.getBounds();
++        mTransaction.setPosition(mHostedLocalDragRoot, -bounds.left, -bounds.top);
+     }
+ 
+     // InputDispatcher.handoffHostedDrag must have succeeded before entering
+@@ -292,6 +315,19 @@
+ 
+         HostedNativeDrag.closed(this, mDragResult);
+ 
++        // A relinquished shadow keeps the same stock removal deadline. Its
++        // recipient may reparent it during DROP/END; never overwrite that parent.
++        if (mHostedLocalDragRoot != null) {
++            if (mRelinquishDragSurfaceToDropTarget || relinquishDragSurfaceToDragSource()) {
++                mDragDropController.sendTimeoutMessage(MSG_REMOVE_DRAG_SURFACE_TIMEOUT,
++                        mHostedLocalDragRoot, DragDropController.DRAG_TIMEOUT_MS);
++            } else {
++                mTransaction.remove(mHostedLocalDragRoot).apply();
++            }
++            mHostedLocalDragRoot = null;
++            mHostedLocalDragTask = null;
++        }
++
+         // Clear the internal variables.
+         if (mInputSurface != null) {
+             mTransaction.remove(mInputSurface).apply();
+@@ -387,6 +423,13 @@
+         }
+ 
+         final WindowState touchedWin = mService.mInputToWindowMap.get(token);
++        if (mHostedLocalDragTask != null
++                && (touchedWin == null || touchedWin.getTask() != mHostedLocalDragTask)) {
++            // The old pointer stream cannot identify a different desktop task.
++            // Do not reinterpret its coordinates as a global Android target.
++            endDragLocked(false, false);
++            return false;
++        }
+         if (!isWindowNotified(touchedWin)) {
+             final DragEvent unhandledDropEvent = createUnhandledDropEvent(inWindowX, inWindowY);
+             // Delegate to the unhandled drag listener as a first pass
+@@ -788,6 +831,7 @@
+             inputWindowHandle.displayId = displayId;
+             mTransaction.setInputWindowInfo(mInputSurface, inputWindowHandle);
+         }
++        updateHostedLocalDragRootLocked();
+         mTransaction.setPosition(mSurfaceControl, displayX - mThumbOffsetX,
+                 displayY - mThumbOffsetY).apply();
+         ProtoLog.i(WM_SHOW_TRANSACTIONS, "DRAG %s: displayId=%d, pos=(%d,%d)", mSurfaceControl,
