@@ -6726,3 +6726,10 @@ D aosp packages/providers/DownloadProvider/res
 F aosp frameworks/base/media/java/android/media/AudioMetadata.java
 F aosp frameworks/base/media/java/android/media/AudioMetadataMap.java
 F aosp frameworks/base/media/java/android/media/AudioMetadataReadMap.java
+
+# Stock ringtone, subtitle, media widget and accessibility shortcut closure.
+F aosp frameworks/base/core/java/android/widget/MediaController.java
+F aosp frameworks/base/core/java/android/widget/VideoView.java
+F aosp frameworks/base/core/java/com/android/internal/database/SortCursor.java
+F aosp frameworks/base/media/java/android/media/ExternalRingtonesCursorWrapper.java
+F aosp frameworks/base/media/java/android/media/RingtoneManager.java

@@ -5,14 +5,6 @@ const std = @import("std");
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
 
-// TrafficStats and MediaStore import MediaPlayer only for Javadoc. The pinned SDK header
-// satisfies javac; the audit forbids runtime use.
-// Compile-only imports and inlined constants; audited against runtime use.
-pub const javadoc_headers = .{
-    .archive = "prebuilts/sdk/current/public/android.jar",
-    .classes = [_][]const u8{"android/media/MediaPlayer"},
-};
-
 // MediaProvider's module SDK build resolves short parcelable names through
 // Soong's generated framework.aidl, including AssetFileDescriptor.
 pub const sdk_aidl = .{
@@ -377,6 +369,7 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .repo, .path = "aidl-compat/dev/artzig/system/IHostedAudioIds.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/media/libaudioclient/aidl/android/media/AudioMix.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/media/libaudioclient/aidl/android/media/AudioMixCallbackFlag.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/media/libaudioclient/aidl/android/media/AudioMixMatchCriterion.aidl" },

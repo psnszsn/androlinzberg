@@ -28,6 +28,27 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- RingtoneManager and AccessibilityShortcutController now compile verbatim with
+  their shared 39-file media, subtitle, widget and shortcut-dialog closure. The
+  two placeholders and the compile-only MediaPlayer SDK header are removed.
+  Original MediaPlayer Java now owns listener delivery, release cleanup and
+  PlayerBase tracking. Its hosted JNI adapter follows the pinned native client's
+  disconnected-service state and errors; it does not supply a MediaPlayer playback
+  service. Ringtone asset queries still need MediaProvider, and haptic asset
+  analysis remains explicitly unsupported at the audio-service boundary.
+  The hosted audio service allocates session/player IDs across processes and
+  tracks caller-owned playback configurations, Binder death, privileged snapshots
+  and anonymized public callbacks. Audio focus and the remaining AudioManager
+  adaptation still need replacement; this checkpoint does not claim audio-policy
+  or playback parity. Tests cover JNI DRM and data-source errors, descriptor
+  ownership, callback cleanup, snapshot isolation, cross-UID mutation rejection,
+  ringtone URI restoration and shortcut lock-screen settings. JVM, system, native,
+  Binder/C++ Binder and build checks pass; all 11 APK tests pass with 37 captured
+  steps and zero structured runtime issues. All 39 Java archive inputs match the
+  pinned checkout. AOSP is rebuilt and repinned; ART is unchanged and verified.
+  The inventory is 17 stubs (9 pending, 8 survivors).
+
+
 - Shared audio-client prerequisites now compile in one batch: 14 original HDMI
   client/model classes, the three AudioMetadata classes, and 19 generated AIDL
   inputs for HDMI callbacks/services and audio mix/offload transport. All 17 Java

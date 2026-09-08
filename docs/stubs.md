@@ -10,7 +10,7 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 11 (budget 11). Survivors: 8. Total: 19.
+Pending: 9 (budget 9). Survivors: 8. Total: 17.
 
 ## Survivors
 
@@ -27,18 +27,11 @@ Pending: 11 (budget 11). Survivors: 8. Total: 19.
 
 ## Pending replacement
 
-### accessibility
-
-| Stub | Audit | Closure |
-|---|---|---|
-| `com/android/internal/accessibility/AccessibilityShortcutController.java` | blocked | frameworks/base/core/java/com/android/internal/accessibility/AccessibilityShortcutController.java (45 to add); android.media.MediaPlayer.OnCompletionListener: JNI natives (via OnCompletionListener < VideoView < MediaPlayer < Ringtone < AccessibilityShortcutController); android.media.MediaPlayer.OnCo |
-
 ### audio
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (178 to add); android.hardware.cas.AidlCasPluginDescriptor: AIDL outside the configured include roots (via AidlCasPluginDescriptor < MediaCas < MediaExtractor < AudioManager); android.hardware.cas.DestinationBuffer: AIDL outside the configur |
-| `android/media/RingtoneManager.java` | blocked | frameworks/base/media/java/android/media/RingtoneManager.java (31 to add), not vendored; android.media.MediaPlayer.OnCompletionListener: JNI natives (via OnCompletionListener < VideoView < MediaPlayer < Ringtone < RingtoneManager); android.media.MediaPlayer.OnErrorListener: JNI natives (via OnErrorL |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (135 to add); android.hardware.cas.AidlCasPluginDescriptor: AIDL outside the configured include roots (via AidlCasPluginDescriptor < MediaCas < MediaExtractor < AudioManager); android.hardware.cas.DestinationBuffer: AIDL outside the configur |
 
 ### autofill
 
@@ -50,16 +43,16 @@ Pending: 11 (budget 11). Survivors: 8. Total: 19.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2782 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2780 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2874 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2793 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2709 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2707 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2801 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2720 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
 
 ### systemserver
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2780 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2707 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
 
 ### webkit
 
@@ -77,13 +70,7 @@ decides where to cut.
 
 | Class | Stubs blocked through it | Hops from the nearest stub |
 |---|---|---|
-| `android.media.Ringtone` | 7 | 1 |
-| `android.media.MediaPlayer` | 7 | 2 |
-| `android.media.SubtitleController` | 7 | 3 |
-| `android.widget.VideoView` | 7 | 3 |
-| `android.media.AudioMix` | 6 | 1 |
 | `android.media.MediaExtractor` | 6 | 1 |
-| `android.media.AudioMixMatchCriterion` | 6 | 2 |
 | `android.media.MediaCas` | 6 | 2 |
 | `android.os.IHwBinder` | 6 | 2 |
 | `android.hardware.cas.IMediaCasService` | 6 | 3 |
@@ -117,3 +104,9 @@ decides where to cut.
 | `com.android.server.art.IArtd` | 5 | 2 |
 | `com.android.server.art.model.DexoptParams` | 5 | 2 |
 | `com.android.server.criticalevents.CriticalEventLog` | 5 | 2 |
+| `com.android.server.input.KeyGestureController` | 5 | 2 |
+| `com.android.server.input.KeyboardLayoutManager` | 5 | 2 |
+| `com.android.server.net.NetworkPolicyManagerInternal` | 5 | 2 |
+| `com.android.server.om.OverlayReferenceMapper` | 5 | 2 |
+| `com.android.server.pm.PackageManagerShellCommandDataLoader` | 5 | 2 |
+| `com.android.server.pm.dex.ArtStatsLogUtils` | 5 | 2 |

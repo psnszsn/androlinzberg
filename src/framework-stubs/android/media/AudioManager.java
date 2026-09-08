@@ -47,8 +47,36 @@ public class AudioManager {
     public static final int PLAYBACK_OFFLOAD_GAPLESS_SUPPORTED = 2;
 
     public Spatializer getSpatializer() { return new Spatializer(this); }
-    private static int sNextAudioSession = 1000;
-    public int generateAudioSessionId() { synchronized (AudioManager.class) { return sNextAudioSession++; } }
+    public int generateAudioSessionId() {
+        int session = AudioSystem.newAudioSessionId();
+        if (session > 0) return session;
+        Log.e(TAG, "Failure to generate a new audio session ID");
+        return ERROR;
+    }
+    // Pinned AudioManager sentinel consumed by stock VideoView.
+    public static final int AUDIOFOCUS_NONE = 0;
+    /** Pinned AudioManager.getRingtonePlayer Binder delegation. */
+    public IRingtonePlayer getRingtonePlayer() {
+        try {
+            return getService().getRingtonePlayer();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    public static boolean isHapticPlaybackSupported() {
+        return AudioSystem.isHapticPlaybackSupported();
+    }
+    /** AudioManager.hasHapticChannels: MediaExtractor/CAS is not yet available in the
+     * client. Route the asset query to the service boundary, which reports that missing
+     * analysis explicitly instead of confusing it with output-device capability. */
+    public static boolean hasHapticChannels(Context context, android.net.Uri uri) {
+        Objects.requireNonNull(uri);
+        try {
+            return getService().hasHapticChannels(uri);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
     public static final int AUDIOFOCUS_GAIN = 1;
     public static final int AUDIOFOCUS_GAIN_TRANSIENT = 2;
     public static final int AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK = 3;
@@ -71,6 +99,39 @@ public class AudioManager {
     public int requestAudioFocus(OnAudioFocusChangeListener l, int streamType, int durationHint) {
         return AUDIOFOCUS_REQUEST_GRANTED;
     }
+    // Pinned legacy overload validation and AudioFocusRequest construction, with no policy.
+    public static final int AUDIOFOCUS_FLAGS_APPS = AUDIOFOCUS_FLAG_DELAY_OK
+            | AUDIOFOCUS_FLAG_PAUSES_ON_DUCKABLE_LOSS;
+    public int requestAudioFocus(OnAudioFocusChangeListener l,
+            @NonNull AudioAttributes requestAttributes,
+            int focusReqType,
+            int flags) throws IllegalArgumentException {
+        if (flags != (flags & AUDIOFOCUS_FLAGS_APPS)) {
+            throw new IllegalArgumentException("Invalid flags 0x"
+                    + Integer.toHexString(flags).toUpperCase());
+        }
+        if (requestAttributes == null) {
+            throw new IllegalArgumentException("Illegal null AudioAttributes argument");
+        }
+        if (!AudioFocusRequest.isValidFocusGain(focusReqType)) {
+            throw new IllegalArgumentException("Invalid duration hint");
+        }
+        if ((flags & AUDIOFOCUS_FLAG_DELAY_OK) != 0 && l == null) {
+            throw new IllegalArgumentException(
+                    "Illegal null focus listener when flagged as accepting delayed focus grant");
+        }
+        if ((flags & AUDIOFOCUS_FLAG_PAUSES_ON_DUCKABLE_LOSS) != 0 && l == null) {
+            throw new IllegalArgumentException(
+                    "Illegal null focus listener when flagged as pausing instead of ducking");
+        }
+        return requestAudioFocus(new AudioFocusRequest.Builder(focusReqType)
+                .setOnAudioFocusChangeListenerInt(l, null)
+                .setAudioAttributes(requestAttributes)
+                .setAcceptsDelayedFocusGain((flags & AUDIOFOCUS_FLAG_DELAY_OK) != 0)
+                .setWillPauseWhenDucked((flags & AUDIOFOCUS_FLAG_PAUSES_ON_DUCKABLE_LOSS) != 0)
+                .build());
+    }
+
     public int requestAudioFocus(AudioFocusRequest focusRequest) { return AUDIOFOCUS_REQUEST_GRANTED; }
     public int abandonAudioFocus(OnAudioFocusChangeListener l) { return AUDIOFOCUS_REQUEST_GRANTED; }
     public int abandonAudioFocusRequest(AudioFocusRequest focusRequest) { return AUDIOFOCUS_REQUEST_GRANTED; }

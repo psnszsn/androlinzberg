@@ -127,17 +127,23 @@ const AudioSystem = struct {
         unsupported(env, "android.media.AudioSystem", "isSourceActive");
         return 0;
     }
+    // Pinned AudioSystem JNI tags: sessions use 1; players and recorders share 7.
+    fn uniqueId(env: Env, use: jni.jint) jni.jint {
+        const cls = env.*.*.FindClass.?(env, "dev/artzig/system/HostedAudioIds") orelse return 0;
+        defer env.*.*.DeleteLocalRef.?(env, cls);
+        const next = env.*.*.GetStaticMethodID.?(env, cls, "nextId", "(I)I") orelse return 0;
+        const args = [_]jni.jvalue{.{ .i = use }};
+        return env.*.*.CallStaticIntMethodA.?(env, cls, next, &args);
+    }
     fn newAudioSessionId(env: Env, _: jni.jclass) callconv(.c) jni.jint {
-        unsupported(env, "android.media.AudioSystem", "newAudioSessionId");
-        return 0;
+        return uniqueId(env, 1);
     }
     fn newAudioPlayerId(env: Env, _: jni.jclass) callconv(.c) jni.jint {
-        unsupported(env, "android.media.AudioSystem", "newAudioPlayerId");
-        return 0;
+        const id = uniqueId(env, 7);
+        return if (id == 0) -1 else id;
     }
-    fn newAudioRecorderId(env: Env, _: jni.jclass) callconv(.c) jni.jint {
-        unsupported(env, "android.media.AudioSystem", "newAudioRecorderId");
-        return 0;
+    fn newAudioRecorderId(env: Env, cls: jni.jclass) callconv(.c) jni.jint {
+        return newAudioPlayerId(env, cls);
     }
     fn setParameters(env: Env, _: jni.jclass, _: jni.jstring) callconv(.c) jni.jint {
         unsupported(env, "android.media.AudioSystem", "setParameters");

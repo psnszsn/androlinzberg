@@ -123,6 +123,8 @@ internal object ActivityUriGrantSystemSmoke {
     private const val MOVE_BACK = 14
     private const val UI_DISPATCH = 15
     private const val FINISH_AFFINITY = 16
+    private const val AUDIO_PLAYER = 17
+    private var audioPlayer: android.media.MediaPlayer? = null
     private const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
     private const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
     val activities = HashMap<Int, UriGrantActivity>()
@@ -136,10 +138,11 @@ internal object ActivityUriGrantSystemSmoke {
         val handler = Handler.createAsync(Looper.getMainLooper())
         ServiceManager.addService(name, object : Binder() {
             override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-                if (code !in START..FINISH_AFFINITY) return false
+                if (code !in START..AUDIO_PLAYER) return false
                 data.enforceInterface(name)
                 val args = checkNotNull(data.readBundle())
                 val action = FutureTask {
+                    if (code == AUDIO_PLAYER) return@FutureTask audioControl(args)
                     val id = args.getInt("id", -1)
                     when (code) {
                         CALLER_APIS -> setCallerApis(args.getBoolean("enabled"))
@@ -509,6 +512,7 @@ internal object ActivityUriGrantSystemSmoke {
     fun verifyCallerIdentity() {
         val source = "dev.artzig.identity.a"
         val target = "dev.artzig.identity.b"
+        verifyAudioOwnership(source, target)
         fun identity(pkg: String, id: Int, kind: String = "initial") = call(pkg, IDENTITY,
             args(id).apply { putString("kind", kind) })
         fun launch(pkg: String, parent: Int, to: String, id: Int, shared: Boolean = false,
@@ -591,6 +595,64 @@ internal object ActivityUriGrantSystemSmoke {
     }
 
     fun stopIdentityHost() { call("dev.artzig.identity.b", STOP) }
+
+    private fun audioControl(args: Bundle): Bundle {
+        val service = android.media.IAudioService.Stub.asInterface(ServiceManager.getService(Context.AUDIO_SERVICE))
+        when (args.getString("action")) {
+            "create" -> {
+                check(audioPlayer == null)
+                audioPlayer = android.media.MediaPlayer()
+                // Exercise PlayerBase's service report independently of an unavailable decoder.
+                service.playerEvent(audioPlayer!!.playerIId,
+                    android.media.AudioPlaybackConfiguration.PLAYER_STATE_STARTED, intArrayOf())
+            }
+            "foreign" -> {
+                val id = args.getInt("player")
+                service.playerEvent(id, android.media.AudioPlaybackConfiguration.PLAYER_STATE_PAUSED, intArrayOf())
+                service.releasePlayer(id)
+                // A later oneway report on this Binder is an observable completion barrier.
+                service.playerEvent(checkNotNull(audioPlayer).playerIId,
+                    android.media.AudioPlaybackConfiguration.PLAYER_STATE_PAUSED, intArrayOf())
+            }
+            "release" -> { audioPlayer?.release(); audioPlayer = null }
+        }
+        val active = service.activePlaybackConfigurations
+        check(active.all { it.clientUid == -1 && it.clientPid == -1 && it.playerProxy == null })
+        return Bundle().apply {
+            putInt("player", audioPlayer?.playerIId ?: -1)
+            putInt("session", audioPlayer?.audioSessionId ?: -1)
+            putIntArray("active", active.map { it.playerInterfaceId }.toIntArray())
+        }
+    }
+
+    private fun verifyAudioOwnership(source: String, target: String) {
+        fun control(pkg: String, action: String, id: Int = -1) = call(pkg, AUDIO_PLAYER,
+            Bundle().apply { putString("action", action); putInt("player", id) })
+        fun awaitVisible(id: Int, visible: Boolean) {
+            repeat(100) {
+                if ((id in checkNotNull(control(source, "query").getIntArray("active"))) == visible) return
+                Thread.sleep(10)
+            }
+            error("Audio player $id visibility did not become $visible")
+        }
+        try {
+            val a = control(source, "create")
+            val b = control(target, "create")
+            check(a.getInt("session") != b.getInt("session"))
+            check(a.getInt("player") != b.getInt("player"))
+            val id = b.getInt("player")
+            awaitVisible(id, true)
+            control(source, "foreign", id)
+            awaitVisible(a.getInt("player"), false)
+            check(id in checkNotNull(control(source, "query").getIntArray("active")))
+            control(target, "release")
+            awaitVisible(id, false)
+            System.err.println("system-test: audio IDs are global; playback reports are anonymous and reject cross-UID mutation")
+        } finally {
+            control(source, "release")
+            control(target, "release")
+        }
+    }
 
     private fun verifyCallerSnapshots() {
         fun toggle(pkg: String, enabled: Boolean) = call(pkg, CALLER_APIS,

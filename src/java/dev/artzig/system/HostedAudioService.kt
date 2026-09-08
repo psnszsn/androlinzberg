@@ -17,6 +17,28 @@ import java.util.Objects
 internal class HostedAudioService(enforcer: PermissionEnforcer) : IAudioService.Stub(enforcer),
     IAudioService by unsupported<IAudioService>() {
     override fun asBinder(): IBinder = this
+    private val playback = HostedPlaybackRegistry(enforcer)
+    override fun trackPlayer(card: PlayerBase.PlayerIdCard): Int = playback.track(card)
+    override fun playerAttributes(id: Int, attributes: AudioAttributes) = playback.attributes(id, attributes)
+    override fun playerSessionId(id: Int, session: Int) {
+        require(session > AudioSystem.AUDIO_SESSION_ALLOCATE) { "invalid session Id $session" }
+        playback.session(id, session)
+    }
+    override fun playerEvent(id: Int, event: Int, devices: IntArray?) = playback.event(id, event, devices)
+    override fun releasePlayer(id: Int) = playback.release(id)
+    override fun getActivePlaybackConfigurations(): List<AudioPlaybackConfiguration> = playback.configurations()
+    override fun registerPlaybackCallback(callback: IPlaybackConfigDispatcher) = playback.register(callback)
+    override fun unregisterPlaybackCallback(callback: IPlaybackConfigDispatcher) = playback.unregister(callback)
+    override fun playerHasOpPlayAudio(id: Int, allowed: Boolean) {
+        // PlaybackActivityMonitor.playerHasOpPlayAudio only records this event.
+        android.util.Log.d("HostedAudioService", "player $id AppOps play-audio=$allowed")
+    }
+    @Volatile private var ringtonePlayer: IRingtonePlayer? = null
+    override fun getRingtonePlayer(): IRingtonePlayer? = ringtonePlayer
+    override fun setRingtonePlayer(player: IRingtonePlayer?) {
+        setRingtonePlayer_enforcePermission()
+        ringtonePlayer = player
+    }
     // AudioService.readCameraSoundForced: the host has no active SIM subscriptions.
     // Read the current host resource/property policy when legacy Camera asks for it.
     override fun isCameraSoundForced(): Boolean =

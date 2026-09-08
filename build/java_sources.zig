@@ -122,6 +122,46 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
 }
 
 fn collectStatic(c: *StaticCollector) !void {
+    // Stock ringtone, shortcut UI and their shared media/subtitle dependency closure.
+    try c.file("$CJ/android/provider/SettingsStringUtil.java");
+    try c.file("$CJ/android/widget/MediaController.java");
+    try c.file("$CJ/android/widget/VideoView.java");
+    try c.file("$CJ/com/android/internal/accessibility/AccessibilityShortcutController.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/AccessibilityActivityTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/AccessibilityServiceTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/AccessibilityTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/AccessibilityTargetHelper.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/InvisibleToggleAccessibilityServiceTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/InvisibleToggleAllowListingFeatureTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/OnTargetCheckedChangeListener.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/OnTargetSelectedListener.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/TargetAdapter.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/TargetOperations.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/ToggleAccessibilityServiceTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/ToggleAllowListingFeatureTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/dialog/VolumeShortcutToggleAccessibilityServiceTarget.java");
+    try c.file("$CJ/com/android/internal/accessibility/util/ShortcutUtils.java");
+    try c.file("$CJ/com/android/internal/database/SortCursor.java");
+    try c.file("$CJ/com/android/internal/widget/SubtitleView.java");
+    try c.file("$FB/media/java/android/media/Cea708CaptionRenderer.java");
+    try c.file("$FB/media/java/android/media/ClosedCaptionRenderer.java");
+    try c.file("$FB/media/java/android/media/ExternalRingtonesCursorWrapper.java");
+    try c.file("$FB/media/java/android/media/MediaPlayer.java");
+    try c.file("$FB/media/java/android/media/MediaTimeProvider.java");
+    try c.file("$FB/media/java/android/media/MediaTimestamp.java");
+    try c.file("$FB/media/java/android/media/Metadata.java");
+    try c.file("$FB/media/java/android/media/Ringtone.java");
+    try c.file("$FB/media/java/android/media/RingtoneManager.java");
+    try c.file("$FB/media/java/android/media/SRTRenderer.java");
+    try c.file("$FB/media/java/android/media/SubtitleController.java");
+    try c.file("$FB/media/java/android/media/SubtitleData.java");
+    try c.file("$FB/media/java/android/media/SubtitleTrack.java");
+    try c.file("$FB/media/java/android/media/SyncParams.java");
+    try c.file("$FB/media/java/android/media/TimedMetaData.java");
+    try c.file("$FB/media/java/android/media/TimedText.java");
+    try c.file("$FB/media/java/android/media/TtmlRenderer.java");
+    try c.file("$FB/media/java/android/media/WebVttRenderer.java");
+    try c.file("$FB/media/java/android/media/audiofx/HapticGenerator.java");
     // Stock HDMI clients and audio metadata shared by the remaining audio family.
     try c.file("$CJ/android/hardware/hdmi/DeviceFeatures.java");
     try c.file("$CJ/android/hardware/hdmi/HdmiAudioSystemClient.java");
@@ -140,8 +180,6 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/AudioMetadata.java");
     try c.file("$FB/media/java/android/media/AudioMetadataMap.java");
     try c.file("$FB/media/java/android/media/AudioMetadataReadMap.java");
-    // MediaHTTPConnection only uses an inlined MediaPlayer constant; the SDK header
-    // stays compile-only and the runtime bytecode audit enforces that boundary.
     try c.file("$FB/media/java/android/media/VolumeAutomation.java");
     try c.file("$FB/media/java/android/media/MediaHTTPConnection.java");
     try c.file("$FB/media/java/android/media/MediaHTTPService.java");
@@ -1328,7 +1366,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.add("$FB/core/java/android/tracing/perfetto", .{});
     try c.add("$FB/core/java/android/view/translation", .{ .max_depth = 1 });
     try c.add("$FB/core/java/android/view/inspector", .{ .max_depth = 1 });
-    try c.add("$FB/core/java/android/widget", .{ .max_depth = 1, .not_names = &.{ "VideoView.java", "RemoteViewsService.java", "MediaController.java", "QuickContactBadge.java", "DayPicker*.java", "DatePicker*.java", "TimePicker*.java", "RadialTimePickerView.java", "SimpleMonthView.java", "CalendarView*.java", "YearPickerView.java", "TextViewWithCircularIndicator.java", "DateTimeView.java", "TextInputTimePickerView.java", "ActivityChooserModel.java", "ActivityChooserView.java", "ShareActionProvider.java" } });
+    try c.add("$FB/core/java/android/widget", .{ .max_depth = 1, .not_names = &.{ "RemoteViewsService.java", "QuickContactBadge.java", "DayPicker*.java", "DatePicker*.java", "TimePicker*.java", "RadialTimePickerView.java", "SimpleMonthView.java", "CalendarView*.java", "YearPickerView.java", "TextViewWithCircularIndicator.java", "DateTimeView.java", "TextInputTimePickerView.java", "ActivityChooserModel.java", "ActivityChooserView.java", "ShareActionProvider.java" } });
     try c.add("$FB/core/java/android/text/method", .{});
     try c.add("$FB/core/java/android/window", .{ .max_depth = 1, .not_names = &.{ "TransitionInfo.java", "WindowContainerTransaction.java", "TaskFragment*.java", "RemoteTransition.java", "WindowContainerToken.java", "TransitionRequestInfo.java", "WindowOrganizer.java", "TaskOrganizer.java", "DisplayAreaOrganizer.java", "BackAnimation*.java", "TransitionFilter.java", "WindowAnimationState.java", "StartingWindowInfo.java", "TaskAppearedInfo.java", "RemoteTransitionStub.java", "DisplayAreaInfo.java", "DisplayAreaAppearedInfo.java", "TransitionMetrics.java", "PictureInPicture*.java", "SnapshotDrawerUtils.java", "SplashScreenView.java" } });
     try c.add("$FB/core/java/android/database", .{});
