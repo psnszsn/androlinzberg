@@ -1,0 +1,40 @@
+From: artzig <artzig@localhost>
+Subject: [PATCH] HWUI: preserve GL functor origin on imported host buffers
+
+Follow GLFunctorDrawable::onDraw offscreen composition when the host
+DMA-BUF canvas has top-left origin. DrawGlInfo expects bottom-left GL
+coordinates; Skia converts the intermediate image on composition.
+
+--- a/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp
++++ b/libs/hwui/pipeline/skia/GLFunctorDrawable.cpp
+@@ -35,6 +35,11 @@
+ #include "SkRect.h"
+ #include "renderthread/CanvasContext.h"
+ #include "utils/GLUtils.h"
++#ifdef ARTZIG_HOST_GRAPHICS
++#include "src/core/SkCanvasPriv.h"
++#include "src/gpu/ganesh/Device.h"
++#include "src/gpu/ganesh/SurfaceDrawContext.h"
++#endif
+ 
+ namespace android {
+ namespace uirenderer {
+@@ -96,8 +101,16 @@
+     canvas->temporary_internal_getRgnClip(&clipRegion);
+ 
+     sk_sp<SkSurface> tmpSurface;
+-    // we are in a state where there is an unclipped saveLayer
+-    if (fboID != 0 && !surfaceBounds.contains(clipBounds)) {
++    // DrawGlInfo describes a bottom-left GL framebuffer. Imported host DMA-BUF
++    // canvases use top-left storage; draw through the existing offscreen path
++    // so Skia converts the origin when compositing the functor result.
++    bool convertOrigin = false;
++#ifdef ARTZIG_HOST_GRAPHICS
++    auto* device = static_cast<skgpu::ganesh::Device*>(SkCanvasPriv::TopDevice(canvas));
++    convertOrigin = device->surfaceDrawContext()->origin() == kTopLeft_GrSurfaceOrigin;
++#endif
++    // Unclipped saveLayers also need an intermediate surface.
++    if (convertOrigin || (fboID != 0 && !surfaceBounds.contains(clipBounds))) {
+         // create an offscreen layer and clear it
+         SkImageInfo surfaceInfo =
+                 canvas->imageInfo().makeWH(clipBounds.width(), clipBounds.height());

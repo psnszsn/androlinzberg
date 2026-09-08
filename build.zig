@@ -1041,7 +1041,7 @@ pub fn build(b: *std.Build) void {
     native_test_step.dependOn(&media_format_test_run.run.step);
 
     const egl_backend_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/binder/egl_backend.zig"),
+        .root_source_file = b.path("src/native/egl_backend.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -1350,6 +1350,7 @@ pub fn build(b: *std.Build) void {
     setApplicationEnvironment(webview_ui, application_tree);
     webview_ui.setEnvironment("WLR_RENDERER", "gles2");
     webview_ui.setPathEnvironment("AZK_TESTKIT_ROOT", testkit_tree.getDirectory());
+    webview_ui.setPathEnvironment("AZK_TEST_SEAT", surface_server.getEmittedBin());
     webview_ui.addArg("bash");
     webview_ui.addFileArg(b.path("tools/shot.sh"));
     webview_ui.addArg("zig-out/test-results/webview/screenshot.png");

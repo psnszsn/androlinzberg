@@ -299,7 +299,6 @@ extern int register_android_view_Surface(JNIEnv*);
 extern int register_android_os_MessageQueue(JNIEnv*);
 extern int register_android_view_InputDevice(JNIEnv*);
 extern int register_android_view_InputChannel(JNIEnv*);
-extern int register_android_os_MessageQueue(JNIEnv*);
 extern int register_android_os_FileObserver(JNIEnv*);
 extern int register_android_view_InputEventReceiver(JNIEnv*);
 extern int register_android_view_InputEventSender(JNIEnv*);
@@ -740,7 +739,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_graphics_SurfaceTexture),
             E(android::register_android_view_TextureView),
             E(android::register_android_graphics_TextureLayer),
-            E(android::register_android_view_Surface),
             E(android::register_android_graphics_BLASTBufferQueue),
             E(register_android_hardware_display_DisplayManagerGlobal),
             E(android::register_com_android_server_display_DisplayControl),
@@ -912,7 +910,9 @@ extern "C" jint azk_camera_setup_vendor_tags(JNIEnv *env) {
 #include <utils/Looper.h>
 extern "C" __attribute__((visibility("default"))) int azk_host_looper_poll_fd() {
     auto looper = android::Looper::getForThread();
-    return looper ? looper->getPollFdForHost() : -1;
+    int fd = -1, timeoutMillis = -1;
+    if (looper) looper->getHostPollState(&fd, &timeoutMillis);
+    return fd;
 }
 
 #include <android/looper.h>

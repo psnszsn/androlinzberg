@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# The headless compositor needs a real Wayland keyboard device before it can
+# grant window focus. Reuse the stock task harness's virtual keyboard helper.
+coproc WEBVIEW_SEAT { exec "$AZK_TEST_SEAT" --keyboard-seat; }
+seat_pid=$WEBVIEW_SEAT_PID
+trap 'kill "$seat_pid" 2>/dev/null || true; wait "$seat_pid" 2>/dev/null || true' EXIT
+read -r -t 10 seat_ready <&"${WEBVIEW_SEAT[0]}"
+[[ "$seat_ready" == ready ]]
 tools/azk-test --timeout 60 wait ready >/dev/null
+tools/azk-test --timeout 60 wait exists --text "WebView input verified" >/dev/null
 tools/azk-test --timeout 60 wait exists --text "Count: 0" >/dev/null
 tools/azk-test diagnose | python3 -c 'import json,sys; d=json.load(sys.stdin); issues=d["diagnostics"]["runtime"]["issues"]; assert not issues, issues'
 tools/azk-test step click --text "Count: 0" --settle idle >/dev/null

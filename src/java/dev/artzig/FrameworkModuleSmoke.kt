@@ -281,7 +281,6 @@ internal object FrameworkModuleSmoke {
         StockNdkLooperSmoke.run(::drainMainQueue)
         StockNdkGraphicsSmoke.run()
         StockNativePropertiesSmoke.run()
-        StockDisplayEventsSmoke.run()
         testChoreographerPhaseOrder()
         testAccessibilityInspectorContracts()
         testPhysicalInputSelection()

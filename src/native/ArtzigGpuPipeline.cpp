@@ -70,6 +70,16 @@ uint32_t gSwapTraceSamples = 0;
 uint64_t gSwapTraceTotalUs = 0;
 uint64_t gSwapTraceMaxUs = 0;
 
+EGLDisplay hostEglDisplay(void* nativeDisplay) {
+    auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+            eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    if (!getPlatformDisplay) return EGL_NO_DISPLAY;
+    void* display = nativeDisplay ? nativeDisplay : artzig::hardwareBufferGbmDevice();
+    if (!display) return EGL_NO_DISPLAY;
+    return getPlatformDisplay(nativeDisplay ? EGL_PLATFORM_WAYLAND_KHR : EGL_PLATFORM_GBM_KHR,
+                              display, nullptr);
+}
+
 GrGLFuncPtr getEglProc(void *, const char name[]) {
   return reinterpret_cast<GrGLFuncPtr>(eglGetProcAddress(name));
 }
@@ -78,6 +88,12 @@ GrGLFuncPtr getEglProc(void *, const char name[]) {
 
 void ArtzigGpuPipeline::bindHostDisplay(void* display) {
     gHostDisplay.store(display, std::memory_order_release);
+}
+
+// Guest EGL_DEFAULT_DISPLAY and HWUI must name the same display so Chromium
+// functors can share EGLImages with the stock Android buffer pipeline.
+extern "C" void* azk_hwui_default_egl_display() {
+    return hostEglDisplay(gHostDisplay.load(std::memory_order_acquire));
 }
 
 ArtzigGpuPipeline::ArtzigGpuPipeline(renderthread::RenderThread &thread)
@@ -104,36 +120,19 @@ bool ArtzigGpuPipeline::ensureContext() {
     ALOGI("artzig: initializing %s HWUI EGL/OpenGL context",
           mNativeDisplay ? "Wayland" : "GBM offscreen");
 
-    auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
-            eglGetProcAddress("eglGetPlatformDisplayEXT"));
-    if (!getPlatformDisplay) {
-        ALOGE("artzig: EGL_EXT_platform_base is required for Wayland presentation");
-        return false;
-    }
-    void* platformDisplay = mNativeDisplay;
-    EGLenum platform = EGL_PLATFORM_WAYLAND_KHR;
-    mUsingGbmDisplay = !platformDisplay;
+    mUsingGbmDisplay = !mNativeDisplay;
     if (!mUsingGbmDisplay) {
-        // Host presentation seam: unlike SurfaceFlinger, the synchronized Wayland parent owns
-        // frame pacing. A Mesa swap interval of one throttles the child independently and fills
-        // its buffer queue before the parent transaction can publish it. AOSP EglManager likewise
-        // selects interval zero when HWUI's external pacing disables EGL vsync.
         gSwapInterval = 0;
         gOverrideSwapInterval = true;
     }
-    if (mUsingGbmDisplay) {
-        platformDisplay = artzig::hardwareBufferGbmDevice();
-        platform = EGL_PLATFORM_GBM_KHR;
-    }
-    if (!platformDisplay) return false;
-    mDisplay = getPlatformDisplay(platform, platformDisplay, nullptr);
+    mDisplay = hostEglDisplay(mNativeDisplay);
     if (mDisplay == EGL_NO_DISPLAY || !azk_graphics_egl_initialize(mDisplay, nullptr, nullptr)) {
         ALOGE("artzig: unable to initialize EGL display (0x%x)", eglGetError());
         destroyContext();
         return false;
     }
-    if (!eglBindAPI(EGL_OPENGL_API)) {
-        ALOGE("artzig: EGL does not expose desktop OpenGL (0x%x)", eglGetError());
+    if (!eglBindAPI(EGL_OPENGL_ES_API)) {
+        ALOGE("artzig: EGL does not expose OpenGL ES (0x%x)", eglGetError());
         destroyContext();
         return false;
     }
@@ -148,7 +147,7 @@ bool ArtzigGpuPipeline::ensureContext() {
             mUsingGbmDisplay ? (mSurfaceless ? 0 : EGL_PBUFFER_BIT)
                              : (EGL_WINDOW_BIT | (mSurfaceless ? 0 : EGL_PBUFFER_BIT)),
             EGL_RENDERABLE_TYPE,
-            EGL_OPENGL_BIT,
+            EGL_OPENGL_ES2_BIT,
             EGL_RED_SIZE,
             8,
             EGL_GREEN_SIZE,
@@ -156,6 +155,8 @@ bool ArtzigGpuPipeline::ensureContext() {
             EGL_BLUE_SIZE,
             8,
             EGL_ALPHA_SIZE,
+            8,
+            EGL_STENCIL_SIZE,
             8,
             EGL_NONE,
     };
@@ -167,7 +168,9 @@ bool ArtzigGpuPipeline::ensureContext() {
         return false;
     }
 
-    mEglContext = eglCreateContext(mDisplay, mConfig, EGL_NO_CONTEXT, nullptr);
+    // Match pinned EglManager and Chromium's Android GLES dispatch tables.
+    const EGLint contextAttributes[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+    mEglContext = eglCreateContext(mDisplay, mConfig, EGL_NO_CONTEXT, contextAttributes);
     if (mEglContext == EGL_NO_CONTEXT) {
         ALOGE("artzig: unable to create the EGL render context (0x%x)", eglGetError());
         destroyContext();
@@ -292,7 +295,7 @@ sk_sp<SkSurface> ArtzigGpuPipeline::makeWindowSurface(int width, int height) {
       GrBackendRenderTargets::MakeGL(width, height, 0, 8, framebufferInfo);
   return SkSurfaces::WrapBackendRenderTarget(
       mContext.get(), backendTarget, kBottomLeft_GrSurfaceOrigin,
-      mSurfaceColorType, mSurfaceColorSpace, nullptr);
+      kRGBA_8888_SkColorType, mSurfaceColorSpace, nullptr);
 }
 
 sk_sp<SkSurface> ArtzigGpuPipeline::makeLayerSurface(int width, int height) {

@@ -4,7 +4,6 @@
 //! backend owns host display and offscreen surface lifetime.
 const std = @import("std");
 const backend = @import("egl_backend.zig");
-const frameworkIo = @import("ndk.zig").frameworkIo;
 const jni = @import("art").jni;
 const Env = [*c]jni.JNIEnv;
 const Handle = ?*anyopaque;
@@ -123,7 +122,7 @@ fn initialize(env: Env, _: jni.jobject, dpy: jni.jobject, version: jni.jintArray
     const output = intArray(env, version, 0, "major_minor", "offset", true, 2) orelse return jni.JNI_FALSE;
     defer output.deinit(true);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    const result = backend.initialize(frameworkIo(), display, null, null);
+    const result = backend.initialize(display, null, null);
     if (result != 0) if (output.ptr()) |p| {
         p[0] = 1;
         p[1] = 0;
@@ -132,7 +131,7 @@ fn initialize(env: Env, _: jni.jobject, dpy: jni.jobject, version: jni.jintArray
 }
 fn initCount(env: Env, _: jni.jclass, dpy: jni.jobject) callconv(.c) jni.jint {
     if (dpy == null) return 0;
-    return backend.initCount(frameworkIo(), handle(env, .display, dpy));
+    return backend.initCount(handle(env, .display, dpy));
 }
 fn getDisplay(_: Env, _: jni.jobject, _: jni.jobject) callconv(.c) jni.jlong {
     return @bitCast(@intFromPtr(backend.defaultDisplay(get_gbm_device())));
@@ -163,18 +162,18 @@ fn queryString(env: Env, _: jni.jclass, dpy: jni.jobject, name: jni.jint) callco
 fn terminate(env: Env, _: jni.jclass, dpy: jni.jobject) callconv(.c) jni.jboolean {
     const dpy_handle = handle(env, .display, dpy);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.terminate(frameworkIo(), dpy_handle));
+    return boolean(backend.terminate(dpy_handle));
 }
 
 fn destroySurface(env: Env, _: jni.jclass, dpy: jni.jobject, surface: jni.jobject) callconv(.c) jni.jboolean {
     const dpy_handle = handle(env, .display, dpy);
     const surface_handle = handle(env, .surface, surface);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.destroySurface(frameworkIo(), dpy_handle, surface_handle));
+    return boolean(backend.destroySurface(dpy_handle, surface_handle));
 }
 
 fn releaseThread(_: Env, _: jni.jclass) callconv(.c) jni.jboolean {
-    return boolean(backend.releaseThread(frameworkIo()));
+    return boolean(backend.releaseThread());
 }
 
 fn destroyContext(env: Env, _: jni.jclass, dpy: jni.jobject, context: jni.jobject) callconv(.c) jni.jboolean {
@@ -190,7 +189,7 @@ fn makeCurrent(env: Env, _: jni.jclass, dpy: jni.jobject, draw: jni.jobject, rea
     const read_handle = handle(env, .surface, read);
     const context_handle = handle(env, .context, context);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.makeCurrent(frameworkIo(), dpy_handle, draw_handle, read_handle, context_handle));
+    return boolean(backend.makeCurrent(dpy_handle, draw_handle, read_handle, context_handle));
 }
 
 fn waitGL(_: Env, _: jni.jclass) callconv(.c) jni.jboolean {
@@ -201,7 +200,7 @@ fn swapBuffers(env: Env, _: jni.jclass, dpy: jni.jobject, surface: jni.jobject) 
     const dpy_handle = handle(env, .display, dpy);
     const surface_handle = handle(env, .surface, surface);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.swapBuffers(frameworkIo(), dpy_handle, surface_handle));
+    return boolean(backend.swapBuffers(dpy_handle, surface_handle));
 }
 
 fn waitNative(_: Env, _: jni.jobject, engine: jni.jint, _: jni.jobject) callconv(.c) jni.jboolean {
@@ -229,7 +228,7 @@ fn createPbuffer(env: Env, _: jni.jobject, dpy: jni.jobject, config: jni.jobject
     const values = attributes(env, attrs) orelse return 0;
     defer values.deinit(false);
     if (env.*.*.ExceptionCheck.?(env) != 0) return 0;
-    return @bitCast(@intFromPtr(backend.createPbuffer(frameworkIo(), display, cnf, values.ptr())));
+    return @bitCast(@intFromPtr(backend.createPbuffer(display, cnf, values.ptr())));
 }
 fn unsupportedWindow(env: Env) void {
     const cls = env.*.*.FindClass.?(env, "dev/artzig/ArtzigTestDiagnostics") orelse return;
@@ -295,7 +294,7 @@ fn querySurface(env: Env, _: jni.jobject, dpy: jni.jobject, obj: jni.jobject, at
     const output = intArray(env, value, 0, "value", "offset", false, 1) orelse return jni.JNI_FALSE;
     defer output.deinit(true);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.querySurface(frameworkIo(), h, object, attribute, output.one().?));
+    return boolean(backend.querySurface(h, object, attribute, output.one().?));
 }
 fn getConfigAttrib(env: Env, _: jni.jobject, dpy: jni.jobject, obj: jni.jobject, attribute: jni.jint, value: jni.jintArray) callconv(.c) jni.jboolean {
     const h = handle(env, .display, dpy);
@@ -351,7 +350,7 @@ fn nativeMethod(name: [*:0]const u8, signature: [*:0]const u8, function: anytype
     return .{ .name = @constCast(name), .signature = @constCast(signature), .fnPtr = @ptrCast(@constCast(function)) };
 }
 pub fn register(env: Env, platform: *std.DynLib) !void {
-    try backend.bindDisplayOwnership(platform);
+    try backend.bind(platform);
     get_gbm_device = platform.lookup(GetGbmDevice, "azk_graphics_gbm_device") orelse return error.NoMethod;
     const cls = env.*.*.FindClass.?(env, "com/google/android/gles_jni/EGLImpl") orelse return error.NoClass;
     defer env.*.*.DeleteLocalRef.?(env, cls);

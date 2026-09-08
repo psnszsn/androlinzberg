@@ -254,6 +254,7 @@ pub const core_jni_srcs = [_][]const u8{
     "android_view_InputDevice.cpp",
     "android_view_InputChannel.cpp",
     "android_os_MessageQueue.cpp",
+    "android_util_FileObserver.cpp",
     "android_view_InputEventReceiver.cpp",
     "android_view_InputEventSender.cpp",
     "android_view_VelocityTracker.cpp",
@@ -521,7 +522,6 @@ pub const texture_jni_srcs = [_][]const u8{
     "android_view_TextureView.cpp",
     "android_view_Surface.cpp",
     "android_graphics_BLASTBufferQueue.cpp",
-    "platform/host/native_window_jni.cpp",
     "android_hardware_display_DisplayManagerGlobal.cpp",
 };
 

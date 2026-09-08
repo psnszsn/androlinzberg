@@ -841,7 +841,6 @@ class HostedActivityManagerService(private val context: android.content.Context?
             if (processes[record.binder] !== record || record.ready) return
             processStarts.ready(HostedProcessStarts.Key(record.packageName, record.processName), record.startSeq)
             record.ready = true
-            startingProcesses.remove(record.packageName to record.processName)
             buildList {
                 addAll(pendingByPackage.remove(record.packageName) ?: emptyList())
                 addAll(pendingByProcess.remove(record.packageName to record.processName) ?: emptyList())

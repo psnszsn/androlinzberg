@@ -18,7 +18,11 @@ pub export fn azk_host_egl_get_proc_address(name: [*:0]const u8) callconv(.c) ?*
     return eglGetProcAddress(name);
 }
 pub export fn bionic_eglGetDisplay(display: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return if (display == null) azk_hwui_default_egl_display() else eglGetDisplay(display);
+    if (display != null) return eglGetDisplay(display);
+    // Register the GBM display for pbuffer translation while preserving a
+    // Wayland display selected by the legacy HWUI presentation path.
+    _ = egl_backend.defaultDisplay(azk_graphics_gbm_device());
+    return azk_hwui_default_egl_display();
 }
 
 comptime {
@@ -32,6 +36,7 @@ pub export fn azk_platform_bind_io(
     vtable: *const std.Io.VTable,
 ) callconv(.c) void {
     g_io = .{ .userdata = userdata, .vtable = vtable };
+    egl_backend.bindDisplayOwnership(&azk_graphics_egl_initialize, &azk_graphics_egl_release);
     @import("selinux_backend.zig").bindIo(g_io);
 }
 
@@ -101,4 +106,53 @@ pub export fn android_dlopen_ext(filename: ?[*:0]const u8, flags: c_int, info: ?
         }
     }
     return dlopen(filename, flags);
+}
+
+// Shared EGL state serves Java EGL and dynamically loaded Android clients.
+const egl_backend = @import("egl_backend.zig");
+const Handle = ?*anyopaque;
+extern fn azk_graphics_gbm_device() callconv(.c) Handle;
+extern fn azk_graphics_egl_initialize(Handle, ?*i32, ?*i32) callconv(.c) u32;
+extern fn azk_graphics_egl_release(Handle, ?*u64) callconv(.c) u32;
+pub export fn azk_egl_getError() callconv(.c) i32 {
+    return egl_backend.getError();
+}
+pub export fn azk_egl_chooseConfig(display: Handle, attributes: ?[*]const i32, configs: ?[*]Handle, size: i32, count: *i32) callconv(.c) u32 {
+    return egl_backend.chooseConfig(display, attributes, configs, size, count);
+}
+pub export fn azk_egl_getConfigAttrib(display: Handle, config: Handle, attribute: i32, value: *i32) callconv(.c) u32 {
+    return egl_backend.getConfigAttrib(display, config, attribute, value);
+}
+pub export fn azk_egl_createPbuffer(display: Handle, config: Handle, attributes: ?[*]const i32) callconv(.c) Handle {
+    return egl_backend.createPbuffer(g_io, display, config, attributes);
+}
+pub export fn azk_egl_querySurface(display: Handle, surface: Handle, attribute: i32, value: *i32) callconv(.c) u32 {
+    return egl_backend.querySurface(g_io, display, surface, attribute, value);
+}
+pub export fn azk_egl_surfaceAttrib(display: Handle, surface: Handle, attribute: i32, value: i32) callconv(.c) u32 {
+    return egl_backend.surfaceAttrib(g_io, display, surface, attribute, value);
+}
+pub export fn azk_egl_swapBuffers(display: Handle, surface: Handle) callconv(.c) u32 {
+    return egl_backend.swapBuffers(g_io, display, surface);
+}
+pub export fn azk_egl_destroySurface(display: Handle, surface: Handle) callconv(.c) u32 {
+    return egl_backend.destroySurface(g_io, display, surface);
+}
+pub export fn azk_egl_makeCurrent(display: Handle, draw: Handle, read: Handle, context: Handle) callconv(.c) u32 {
+    return egl_backend.makeCurrent(g_io, display, draw, read, context);
+}
+pub export fn azk_egl_releaseThread() callconv(.c) u32 {
+    return egl_backend.releaseThread(g_io);
+}
+pub export fn azk_egl_initialize(display: Handle, major: ?*i32, minor: ?*i32) callconv(.c) u32 {
+    return egl_backend.initialize(g_io, display, major, minor);
+}
+pub export fn azk_egl_terminate(display: Handle) callconv(.c) u32 {
+    return egl_backend.terminate(g_io, display);
+}
+pub export fn azk_egl_defaultDisplay(device: Handle) callconv(.c) Handle {
+    return egl_backend.defaultDisplay(device);
+}
+pub export fn azk_egl_initCount(display: Handle) callconv(.c) i32 {
+    return egl_backend.initCount(g_io, display);
 }

@@ -12,6 +12,27 @@ import java.time.Duration
 
 /** Public EGL 1.5 contracts against the existing real offscreen EGL context. */
 internal object StockEgl15Smoke {
+    private external fun nativePbufferInterop(library: String, display: Long, surface: Long): Boolean
+
+    private fun nativeInterop(display: EGLDisplay) {
+        val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
+        val count = IntArray(1)
+        check(EGL14.eglChooseConfig(display, intArrayOf(EGL14.EGL_SURFACE_TYPE,
+            EGL14.EGL_PBUFFER_BIT, EGL14.EGL_NONE), 0, configs, 0, 1, count, 0))
+        check(count[0] == 1)
+        // EGL's logical zero-size pbuffer is backed by at least one GBM pixel.
+        // Native clients must observe its Android dimensions and shared lifetime.
+        val surface = EGL14.eglCreatePbufferSurface(display, configs[0], intArrayOf(EGL14.EGL_NONE), 0)
+        check(surface != EGL14.EGL_NO_SURFACE)
+        try {
+            val library = checkNotNull(System.getenv("ARTZIG_INSTALL_ROOT")) + "/lib/art/libazk_egl.so"
+            check(nativePbufferInterop(library, display.nativeHandle, surface.nativeHandle))
+            val width = IntArray(1)
+            check(EGL14.eglQuerySurface(display, surface, EGL14.EGL_WIDTH, width, 0))
+            check(width[0] == 0) { "Native client termination consumed Java's display reference" }
+        } finally { check(EGL14.eglDestroySurface(display, surface)) }
+    }
+
     fun run(display: EGLDisplay, context: EGLContext) {
         check(EGL15.EGL_NO_DISPLAY == EGL14.EGL_NO_DISPLAY)
         check(EGL15.EGL_NO_CONTEXT == EGL14.EGL_NO_CONTEXT)
@@ -48,6 +69,7 @@ internal object StockEgl15Smoke {
         } finally {
             check(EGL15.eglDestroySync(display, sync))
         }
+        nativeInterop(display)
         image(display, context)
         val extensions = EGL14.eglQueryString(display, EGL14.EGL_EXTENSIONS).orEmpty().split(' ')
         if ("EGL_ANDROID_native_fence_sync" in extensions) {

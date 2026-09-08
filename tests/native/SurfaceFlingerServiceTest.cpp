@@ -121,5 +121,20 @@ int main() {
   std::cout << "READY_DEATH" << std::endl;
   std::unique_lock lock(death->mutex);
   assert(death->changed.wait_for(lock, 5s, [&] { return death->died; }));
-  std::cout << "PASS SurfaceFlinger service death" << std::endl;
+  lock.unlock();
+  // A lost host graphics process retires this session. Calls made while WMS
+  // tears down its original surfaces must report Binder death, not dereference
+  // an absent service or attach the old surface IDs to a replacement service.
+  for (int retry = 0; retry < 3; ++retry) {
+    assert(SurfaceComposerClient::Transaction().setAlpha(surface, 0.25f).apply() ==
+           DEAD_OBJECT);
+    auto retired = ComposerServiceAIDL::getComposerService();
+    assert(retired);
+    std::vector<int64_t> retiredIds;
+    assert(retired->getPhysicalDisplayIds(&retiredIds).transactionError() ==
+           DEAD_OBJECT);
+    assert(retiredIds.empty());
+  }
+  std::cout << "PASS SurfaceFlinger death retires legacy and AIDL clients with DEAD_OBJECT"
+            << std::endl;
 }

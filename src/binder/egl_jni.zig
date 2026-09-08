@@ -3,7 +3,6 @@
 //! remains separately owned by its existing backend.
 const std = @import("std");
 const backend = @import("egl_backend.zig");
-const frameworkIo = @import("ndk.zig").frameworkIo;
 const GetGbmDevice = *const fn () callconv(.c) Handle;
 var get_gbm_device: GetGbmDevice = undefined;
 const jni = @import("art").jni;
@@ -170,7 +169,7 @@ fn initialize(env: Env, _: jni.jclass, dpy: jni.jobject, major: jni.jintArray, m
     defer a.deinit(true);
     const b = intArray(env, minor, minor_offset, "minor", "minorOffset", true, 1) orelse return jni.JNI_FALSE;
     defer b.deinit(true);
-    return boolean(backend.initialize(frameworkIo(), display, a.one(), b.one()));
+    return boolean(backend.initialize(display, a.one(), b.one()));
 }
 fn queryString(env: Env, _: jni.jclass, dpy: jni.jobject, name: jni.jint) callconv(.c) jni.jstring {
     const display = handle(env, .display, dpy);
@@ -226,7 +225,7 @@ fn chooseConfig(env: Env, _: jni.jclass, dpy: jni.jobject, attribs: jni.jintArra
     defer attrs.deinit(false);
     return configurations(env, display, attrs.ptr(), true, configs, offset, size, count, count_offset);
 }
-fn queryValue(env: Env, dpy: jni.jobject, target: jni.jobject, kind: Kind, attribute: jni.jint, out: jni.jintArray, offset: jni.jint, comptime native: anytype) jni.jboolean {
+fn queryValue(env: Env, dpy: jni.jobject, target: jni.jobject, kind: Kind, attribute: jni.jint, out: jni.jintArray, offset: jni.jint, native: anytype) jni.jboolean {
     const display = handle(env, .display, dpy);
     const object_handle = handle(env, kind, target);
     const values = intArray(env, out, offset, "value", "offset", false, 1) orelse return jni.JNI_FALSE;
@@ -237,7 +236,7 @@ fn getConfigAttrib(env: Env, _: jni.jclass, dpy: jni.jobject, config: jni.jobjec
     return queryValue(env, dpy, config, .config, attribute, out, offset, backend.getConfigAttrib);
 }
 fn queryHostedSurface(display: Handle, surface: Handle, attribute: i32, value: *i32) u32 {
-    return backend.querySurface(frameworkIo(), display, surface, attribute, value);
+    return backend.querySurface(display, surface, attribute, value);
 }
 fn querySurface(env: Env, _: jni.jclass, dpy: jni.jobject, surface: jni.jobject, attribute: jni.jint, out: jni.jintArray, offset: jni.jint) callconv(.c) jni.jboolean {
     return queryValue(env, dpy, surface, .surface, attribute, out, offset, queryHostedSurface);
@@ -250,7 +249,7 @@ fn createPbufferSurface(env: Env, _: jni.jclass, dpy: jni.jobject, config: jni.j
     const cfg = handle(env, .config, config);
     const attrs = attributes(env, attribs, offset, "offset", true) orelse return null;
     defer attrs.deinit(false);
-    return wrapHandle(env, .surface, backend.createPbuffer(frameworkIo(), display, cfg, attrs.ptr()));
+    return wrapHandle(env, .surface, backend.createPbuffer(display, cfg, attrs.ptr()));
 }
 fn createContext(env: Env, _: jni.jclass, dpy: jni.jobject, config: jni.jobject, shared: jni.jobject, attribs: jni.jintArray, offset: jni.jint) callconv(.c) jni.jobject {
     const display = handle(env, .display, dpy);
@@ -333,14 +332,14 @@ fn createWindowTexture(env: Env, _: jni.jclass, dpy: jni.jobject, config: jni.jo
 fn terminate(env: Env, _: jni.jclass, dpy: jni.jobject) callconv(.c) jni.jboolean {
     const dpy_handle = handle(env, .display, dpy);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.terminate(frameworkIo(), dpy_handle));
+    return boolean(backend.terminate(dpy_handle));
 }
 
 fn destroySurface(env: Env, _: jni.jclass, dpy: jni.jobject, surface: jni.jobject) callconv(.c) jni.jboolean {
     const dpy_handle = handle(env, .display, dpy);
     const surface_handle = handle(env, .surface, surface);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.destroySurface(frameworkIo(), dpy_handle, surface_handle));
+    return boolean(backend.destroySurface(dpy_handle, surface_handle));
 }
 
 fn bindAPI(_: Env, _: jni.jclass, api: jni.jint) callconv(.c) jni.jboolean {
@@ -356,14 +355,14 @@ fn waitClient(_: Env, _: jni.jclass) callconv(.c) jni.jboolean {
 }
 
 fn releaseThread(_: Env, _: jni.jclass) callconv(.c) jni.jboolean {
-    return boolean(backend.releaseThread(frameworkIo()));
+    return boolean(backend.releaseThread());
 }
 
 fn surfaceAttrib(env: Env, _: jni.jclass, dpy: jni.jobject, surface: jni.jobject, attribute: jni.jint, value: jni.jint) callconv(.c) jni.jboolean {
     const dpy_handle = handle(env, .display, dpy);
     const surface_handle = handle(env, .surface, surface);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.surfaceAttrib(frameworkIo(), dpy_handle, surface_handle, attribute, value));
+    return boolean(backend.surfaceAttrib(dpy_handle, surface_handle, attribute, value));
 }
 
 fn bindTexImage(env: Env, _: jni.jclass, dpy: jni.jobject, surface: jni.jobject, buffer: jni.jint) callconv(.c) jni.jboolean {
@@ -399,7 +398,7 @@ fn makeCurrent(env: Env, _: jni.jclass, dpy: jni.jobject, draw: jni.jobject, rea
     const read_handle = handle(env, .surface, read);
     const context_handle = handle(env, .context, context);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.makeCurrent(frameworkIo(), dpy_handle, draw_handle, read_handle, context_handle));
+    return boolean(backend.makeCurrent(dpy_handle, draw_handle, read_handle, context_handle));
 }
 
 fn getCurrentContext(env: Env, _: jni.jclass) callconv(.c) jni.jobject {
@@ -426,14 +425,36 @@ fn swapBuffers(env: Env, _: jni.jclass, dpy: jni.jobject, surface: jni.jobject) 
     const dpy_handle = handle(env, .display, dpy);
     const surface_handle = handle(env, .surface, surface);
     if (env.*.*.ExceptionCheck.?(env) != 0) return jni.JNI_FALSE;
-    return boolean(backend.swapBuffers(frameworkIo(), dpy_handle, surface_handle));
+    return boolean(backend.swapBuffers(dpy_handle, surface_handle));
+}
+
+// Exercise the loaded Android EGL entry points against a Java-owned surface.
+fn nativePbufferInterop(env: Env, _: jni.jobject, path: jni.jstring, raw_display: jni.jlong, raw_surface: jni.jlong) callconv(.c) jni.jboolean {
+    const name = env.*.*.GetStringUTFChars.?(env, path, null) orelse return jni.JNI_FALSE;
+    defer env.*.*.ReleaseStringUTFChars.?(env, path, name);
+    var library = std.DynLib.open(std.mem.span(name)) catch return jni.JNI_FALSE;
+    defer library.close();
+    const get_proc = library.lookup(*const fn ([*:0]const u8) callconv(.c) ?*const anyopaque, "eglGetProcAddress") orelse return jni.JNI_FALSE;
+    const init = library.lookup(@TypeOf(backend.initialize), "eglInitialize") orelse return jni.JNI_FALSE;
+    const term = library.lookup(@TypeOf(backend.terminate), "eglTerminate") orelse return jni.JNI_FALSE;
+    const query = library.lookup(@TypeOf(backend.querySurface), "eglQuerySurface") orelse return jni.JNI_FALSE;
+    const swap = library.lookup(@TypeOf(backend.swapBuffers), "eglSwapBuffers") orelse return jni.JNI_FALSE;
+    if (get_proc("eglQuerySurface") != @as(?*const anyopaque, @ptrCast(query))) return jni.JNI_FALSE;
+    const display = pointer(raw_display);
+    const surface = pointer(raw_surface);
+    if (init(display, null, null) == 0) return jni.JNI_FALSE;
+    defer _ = term(display);
+    var width: i32 = -1;
+    var height: i32 = -1;
+    return boolean(@intFromBool(query(display, surface, 0x3057, &width) != 0 and width == 0 and
+        query(display, surface, 0x3056, &height) != 0 and height == 0 and swap(display, surface) != 0));
 }
 
 fn nativeMethod(name: [*:0]const u8, signature: [*:0]const u8, function: anytype) jni.JNINativeMethod {
     return .{ .name = @constCast(name), .signature = @constCast(signature), .fnPtr = @ptrCast(@constCast(function)) };
 }
 pub fn register(env: Env, platform: *std.DynLib) !void {
-    try backend.bindDisplayOwnership(platform);
+    try backend.bind(platform);
     get_gbm_device = platform.lookup(GetGbmDevice, "azk_graphics_gbm_device") orelse return error.NoMethod;
     const cls = env.*.*.FindClass.?(env, "android/opengl/EGL14") orelse return error.NoClass;
     defer env.*.*.DeleteLocalRef.?(env, cls);
@@ -477,4 +498,10 @@ pub fn register(env: Env, platform: *std.DynLib) !void {
         nativeMethod("eglCopyBuffers", "(Landroid/opengl/EGLDisplay;Landroid/opengl/EGLSurface;I)Z", &copyBuffers),
     };
     if (env.*.*.RegisterNatives.?(env, cls, &methods, methods.len) != 0) return error.RegisterFailed;
+    const smoke = env.*.*.FindClass.?(env, "dev/artzig/StockEgl15Smoke") orelse return error.NoClass;
+    defer env.*.*.DeleteLocalRef.?(env, smoke);
+    const smoke_methods = [_]jni.JNINativeMethod{
+        nativeMethod("nativePbufferInterop", "(Ljava/lang/String;JJ)Z", &nativePbufferInterop),
+    };
+    if (env.*.*.RegisterNatives.?(env, smoke, &smoke_methods, smoke_methods.len) != 0) return error.RegisterFailed;
 }

@@ -23,4 +23,3 @@ pub fn hostPollState() PollState {
 pub fn deinit() void {
     poll_state = null;
 }
-pub fn deinit() void { poll_fd = null; }

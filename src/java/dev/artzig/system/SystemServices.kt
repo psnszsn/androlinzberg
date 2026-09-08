@@ -481,6 +481,11 @@ internal object SystemServices {
                 builder.environment()["AZK_BINDER_PACKAGE"] = packageName
                 builder.environment()["AZK_APP_PROCESS_NAME"] = processName
                 builder.environment()["AZK_APP_START_SEQUENCE"] = request.sequence.toString()
+                // Chromium's Android seccomp policy rejects glibc's optional rseq
+                // registration. Disable it before exec, retaining all other tunables.
+                val tunables = builder.environment()["GLIBC_TUNABLES"].orEmpty().split(':')
+                    .filter { it.isNotEmpty() && !it.startsWith("glibc.pthread.rseq=") }
+                builder.environment()["GLIBC_TUNABLES"] = (tunables + "glibc.pthread.rseq=0").joinToString(":")
                 val child = builder.start()
                 spawnedProcesses.add(child)
                 try {

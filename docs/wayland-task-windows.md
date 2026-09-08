@@ -11,6 +11,61 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Stock WebView, NDK media and audio rebase (2026-09-08)
+
+The task branch is rebased onto main `efb51503`, including the stock Chromium
+provider, NDK MediaCodec and AAudio work. Duplicate native source entries and
+JNI registrations are reconciled. The pinned NDK native-window implementation
+now supplies both Surface conversion directions; WebView uses the original
+`graphic_buffer_impl.cpp` over the shared stock GraphicBuffer allocator.
+
+HWUI and dynamically loaded EGL clients select the same display and GLES API.
+Regression 484 passes all 32 drag actions and four stock video actions with no
+structured runtime issues, plus C++/graph audits. Regression 485 passes all
+three GPU fence gates and both drag-icon protocol versions. Artifacts:
+`/tmp/wayland-webview-rebase-484-artifacts/` and
+`/tmp/wayland-webview-rebase-485-artifacts/`.
+
+Stock WebView exposed native EGL calls bypassing the Java clients' GBM pbuffer
+adapter. The adapter now lives once in the native platform library, sharing
+surface ownership, deferred destruction and display references across both
+APIs. Regression 486 passes its EGL lifetime test and gets past Chromium's
+configuration-selection crash. The UI test now uses a real dialog and waits for
+layout and window focus before checking synthesized input. Regression 487 has
+no structured issues but times out without a headless keyboard device; its
+screenshot also exposes the GL functor's framebuffer-origin mismatch.
+
+The existing virtual-keyboard helper is now wired into the WebView test, and
+an AOSP GLFunctorDrawable adaptation uses its existing offscreen composition
+path to convert top-left host buffers to the bottom-left GL drawing contract.
+Regression 489 passes stock WebView's dialog input contracts, a physical click,
+and upright Chromium GPU pixels. The existing Cage harness now supplies its
+single-output placement to physical input tests before application launch.
+Regression 488 also passes all 32 drag actions and four stock video actions.
+Regression 490 passes the full default JVM suite, all 16 APK tests (52 clean
+steps), Java/native EGL interoperability, both WebView tests, and EGL/C++/graph
+checks. Artifacts: `/tmp/wayland-webview-rebase-489-artifacts/` and
+`/tmp/wayland-webview-rebase-490-artifacts/`.
+
+Shutdown inspection exposed two failures outside those UI steps. Existing
+composer clients attempted to reconnect their retired graphics session;
+regression 491 reproduces a hang when a transaction follows SurfaceFlinger
+death. A host-only libgui adaptation retains the dead service proxy so calls
+return `DEAD_OBJECT`. A windowless service's explicit exit-on-broker-loss policy
+now terminates before callbacks or object cleanup can attach new JVM threads
+under an application syscall sandbox. Regression 492 passes both changes: the repeated native calls return
+`DEAD_OBJECT`, the complete multi-process Binder suite passes, and stock WebView
+renders and accepts input with no structured issues or fatal shutdown markers.
+Its presenter releases all buffers. Artifacts:
+`/tmp/wayland-webview-rebase-492-artifacts/webview/`. Regression 493 passes
+the complete default JVM suite, all 16 APK tests (52 issue-free steps), EGL
+interoperability and both WebView tests with this final package. The WebView UI
+shutdown also has no fatal markers. Artifacts:
+`/tmp/wayland-webview-rebase-493-artifacts/`. The separate headless provider smoke
+can log Android `DeadSystemException` if its asynchronous Chromium startup races
+its test session's deliberate broker teardown; no native crash is observed.
+The remaining M8–M11 acceptance and production cutover work is still unfinished.
+
 ## Drag focus across asynchronous source preparation (2026-09-08)
 
 Provider preparation can outlast the first local drag motion. Pinned

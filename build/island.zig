@@ -495,9 +495,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
     // Match the Ganesh/OpenGL configuration of the linked Skia library.
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.hwui_srcs, &.{ apex_inc, b.path("src/native") }, &.{ "-DSK_GANESH", "-DSK_GL", "-DARTZIG_HOST_GRAPHICS" });
-    g.add(o.aosp.path(b, "bionic/libc"), &.{"bionic/fortify.cpp"},
-        &.{ o.aosp.path(b, "bionic/libc"), o.aosp.path(b, "bionic/libc/async_safe/include") },
-        &.{"-DARTZIG_HOST_FORTIFY"});
+    g.add(o.aosp.path(b, "bionic/libc"), &.{"bionic/fortify.cpp"}, &.{ o.aosp.path(b, "bionic/libc"), o.aosp.path(b, "bionic/libc/async_safe/include") }, &.{"-DARTZIG_HOST_FORTIFY"});
     const input_transport_headers = b.addWriteFiles();
     _ = input_transport_headers.addCopyFile(o.aosp.path(b, "external/rust/cxx/include/cxx.h"), "rust/cxx.h");
     _ = input_transport_headers.addCopyFile(o.aosp.path(b, "bionic/libc/kernel/uapi/linux/ashmem.h"), "linux/ashmem.h");
@@ -509,7 +507,7 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/base/native/webview/plat_support"),
         apex_inc,
     };
-    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{ "looper.cpp", "input.cpp", "trace.cpp" }, webview_includes, &.{ "-include", "utils/Timers.h" });
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{ "looper.cpp", "input.cpp", "trace.cpp", "native_window_jni.cpp" }, webview_includes, &.{ "-include", "utils/Timers.h" });
     // The NDK uses original sealed-memfd operations; Binder retains its existing backing.
     const ndk_ashmem_flags = &.{
         "-DARTZIG_HOST_MEMFD",
@@ -523,17 +521,15 @@ pub fn build(b: *std.Build, o: Options) Result {
     };
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sharedmem.cpp"}, webview_includes, ndk_ashmem_flags);
     g.add(o.aosp.path(b, "system/core/libcutils"), &.{"ashmem-dev.cpp"}, webview_includes, ndk_ashmem_flags);
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_view_InputQueue.cpp", "core_jni_helpers.cpp" }, webview_includes, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui/apex"), &.{"android_bitmap.cpp"}, webview_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_view_InputQueue.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/native/graphics/jni"), &.{"bitmap.cpp"}, webview_includes, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{ "draw_functor.cpp", "draw_gl_functor.cpp", "functor_utils.cpp", "graphics_utils.cpp" }, webview_includes, &.{"-D__unused=__attribute__((unused))"});
+    g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{ "draw_functor.cpp", "draw_gl_functor.cpp", "functor_utils.cpp", "graphics_utils.cpp", "graphic_buffer_impl.cpp" }, webview_includes, &.{"-D__unused=__attribute__((unused))"});
     g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{"jni_entry_point.cpp"}, webview_includes, &.{"-DJNI_OnLoad=azk_webview_JNI_OnLoad"});
-    g.add(b.path("src/native"), &.{"WebViewGraphicBuffer.cpp"}, webview_includes, &.{"-fexceptions"});
     g.add(b.path("src/native"), &.{"ArrayUtilsJniBridge.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_hardware_SerialPort.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_content_om_OverlayManagerImpl.cpp"}, webview_includes, &.{});
 
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{"-DARTZIG_HOST_GRAPHICS"});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
@@ -544,13 +540,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/av/media/libaaudio/include"),
         o.aosp.path(b, "frameworks/av/media/libaaudio/src"),
     }) catch @panic("OOM");
-    g.add(o.aosp.path(b, "frameworks/av/media/libaudiofoundation"), &.{"AudioContainers.cpp"},
-        bridge_includes.items, &.{});
+    g.add(o.aosp.path(b, "frameworks/av/media/libaudiofoundation"), &.{"AudioContainers.cpp"}, bridge_includes.items, &.{});
     // Original parameter contracts and pure format/channel conversion routines.
     // Unused service/MMAP routines are hidden sections removed by the island linker.
-    g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"),
-        &.{ "core/AAudioStreamParameters.cpp", "utility/AAudioUtilities.cpp" },
-        bridge_includes.items, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
+    g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &.{ "core/AAudioStreamParameters.cpp", "utility/AAudioUtilities.cpp" }, bridge_includes.items, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"core_jni_helpers.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.input_handle_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc }, &.{});
@@ -562,7 +555,6 @@ pub fn build(b: *std.Build, o: Options) Result {
     const texture_inc = o.aosp.path(b, "frameworks/native/libs/nativedisplay/include");
     g.add(o.aosp.path(b, "frameworks/native/libs/nativedisplay"), &gen.surface_texture_srcs, &.{ texture_inc, b.path("src/native/graphics/include") }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.texture_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc, texture_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "com_android_internal_content_FileSystemUtils.cpp", "com_android_internal_content_NativeLibraryHelper.cpp" }, &.{ zip_inc, o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{ "-include", "algorithm", "-include", "sys/ioctl.h", "-include", "linux/magic.h" });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
 
     const media_format_includes = &.{

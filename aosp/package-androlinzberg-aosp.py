@@ -90,6 +90,7 @@ framework_patches = tuple(
         (65, "-WM-own-native-drag-lifecycle.patch"),
         (66, "-WM-transfer-stock-drag-to-native-presentation.patch"),
         (67, "-WM-present-local-drag-fallback-in-source-task.patch"),
+        (68, "-HWUI-convert-host-GL-functor-origin.patch"),
     )
 )
 
@@ -98,7 +99,6 @@ packager.PACKAGE_NAME = "androlinzberg"
 packager.PATCH_SERIES = framework_patches + (
     ("system/core/libcutils", patch_root / "system/libcutils/0001-use-stock-memfd-operations-for-host-ndk-shared-memory.patch"),
     ("bionic", patch_root / "bionic/0001-reuse-missing-fortify-entry-points-on-host.patch"),
-    ("system/core/libutils", patch_root / "system/libutils/0001-expose-borrowed-looper-readiness-descriptor-on-host.patch"),
     (
         "frameworks/av",
         patch_root / "frameworks-av/0001-register-host-linked-stock-extractors.patch",
@@ -138,6 +138,10 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "frameworks/native",
         patch_root / "frameworks-native" / "0001-libgui-host-binder-transport.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0011-libgui-retire-host-composer-clients-after-death.patch",
     ),
     (
         "frameworks/native",

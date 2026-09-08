@@ -98,6 +98,19 @@ run_compositor sh -c '
     exit $?
   fi
   if [ -n "${SHOT_TEST_EXECUTABLE:-}" ]; then
+    # Cage puts its single fullscreen task at the sole headless output origin.
+    # Discover its actual dimensions inside the compositor, before the presenter
+    # reads the test-only placement. Stacking/multi-output runners supply theirs.
+    if [ "${SHOT_COMPOSITOR:-cage}" = cage ] &&
+       [ "${WLR_HEADLESS_OUTPUTS:-1}" = 1 ] &&
+       [ -z "${AZK_TEST_WINDOW_PLACEMENT:-}" ]; then
+      PLACEMENT_IMAGE="$AZK_TEST_SOCKET.placement.ppm"
+      grim -t ppm "$PLACEMENT_IMAGE" || exit 1
+      { read -r MAGIC; read -r WIDTH HEIGHT; } < "$PLACEMENT_IMAGE"
+      rm -f "$PLACEMENT_IMAGE"
+      [ "$MAGIC" = P6 ] || exit 1
+      export AZK_TEST_WINDOW_PLACEMENT="0,0,$WIDTH,$HEIGHT"
+    fi
     "$@" >"$SHOT_LOG_OUT" 2>&1 &
   else
     "$@" &

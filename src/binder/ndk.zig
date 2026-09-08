@@ -1404,6 +1404,13 @@ const Runtime = struct {
 
     fn onDisconnected(r: *Runtime) void {
         if (r.disconnected.swap(true, .acq_rel)) return;
+        // A windowless host explicitly opts into immediate process termination
+        // when its session disappears. Do this before releasing Java-backed
+        // objects or starting death callbacks: those may attach new ART threads
+        // after an application has installed a syscall sandbox. There is no
+        // surviving caller to notify in this mode. Ordinary Binder clients keep
+        // the complete failure, death notification and ownership cleanup below.
+        if (g_exit_on_disconnect.load(.monotonic)) g_process_exit.load(.acquire).?(0);
         var links = std.ArrayListUnmanaged(*DeathLink).empty;
         r.mu.lockUncancelable(g_io);
         var it = r.pending.valueIterator();
@@ -1442,8 +1449,6 @@ const Runtime = struct {
         r.join_mu.lockUncancelable(g_io);
         r.join_cv.broadcast(g_io);
         r.join_mu.unlock(g_io);
-        // A windowless service host exits when its session's broker drops.
-        if (g_exit_on_disconnect.load(.monotonic)) g_process_exit.load(.acquire).?(0);
     }
 
     // ---------------------------------------------------------- transact

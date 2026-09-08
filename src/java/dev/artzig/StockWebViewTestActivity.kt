@@ -7,8 +7,24 @@ class StockWebViewTestActivity : android.app.Activity() {
         super.onCreate(state)
         webView = android.webkit.WebView(this)
         webView.settings.javaScriptEnabled = true
-        webView.webViewClient = android.webkit.WebViewClient()
-        setContentView(webView)
+        val inputStatus = android.widget.TextView(this).apply { text = "Checking WebView input" }
+        var verified = false
+        webView.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                if (verified) return
+                verified = true
+                webView.post {
+                    StockWebViewSmoke.verifyUnhandledInput(this@StockWebViewTestActivity) {
+                        inputStatus.text = "WebView input verified"
+                    }
+                }
+            }
+        }
+        setContentView(android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            addView(webView, android.widget.LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(inputStatus, android.widget.LinearLayout.LayoutParams(-1, 24))
+        })
         webView.loadDataWithBaseURL("https://webview.example/", """
             <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
             <title>Stock Android WebView</title>
