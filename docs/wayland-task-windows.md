@@ -11,6 +11,22 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Native source start acknowledgement (2026-09-08)
+
+The native source now waits for compositor evidence of grab acceptance. A
+processed request alone is insufficient: source/offer events or ordered input
+takeover prove acceptance. Explicit compositor cancellation before input loss
+permits local fallback. A locally aborted request or one-second acknowledgement
+timeout is uncertain and cannot resume the consumed gesture.
+
+Regression 457 exercises rejected serials, locally aborted starts and fresh
+physical gesture recovery before all five native-to-Android transfers. All 12
+steps pass without structured issues. Regression 456 also passes both GPU icon
+protocol versions. Regression 458 passes the complete JVM suite and all 16 APK
+integration tests with 49 clean steps. Artifacts:
+`/tmp/wayland-start-456-artifacts/`, `/tmp/wayland-start-457-artifacts/`, and
+`/tmp/wayland-start-458-artifacts/`. Presenter/WMS invocation remains in progress.
+
 ## Stock dispatcher drag handoff (2026-09-08)
 
 The pinned InputDispatcher now exposes a host handoff that checks its current
@@ -30,7 +46,7 @@ Regression 454 passes the full JVM suite and all 16 APK tests with 49 clean
 steps; 455 passes all 12 stock/native drag steps. Artifacts:
 `/tmp/wayland-handoff-454-artifacts/` and
 `/tmp/wayland-handoff-455-artifacts/`. The package now includes native patch 0010.
-WMS invocation, compositor start acknowledgement, shadow mirroring and original
+WMS invocation, shadow mirroring and original
 state reuse across task/native targets remain the next integration work.
 
 ## GPU drag-icon presentation (2026-09-08)

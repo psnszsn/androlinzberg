@@ -107,7 +107,7 @@ pub fn startDrag(self: *Self, origin: *wl.Surface, serial: u32, icon: ?*wl.Surfa
         payload.destroy();
         return err;
     };
-    const source = try DragSource.init(self.gpa, self.io, self.manager, self.device, self.transfers, source_token, origin, serial, icon, payload, hooks);
+    const source = try DragSource.init(self.gpa, self.io, self.display, self.manager, self.device, self.transfers, source_token, origin, serial, icon, payload, hooks);
     self.outbound_drag = source;
     return source;
 }
@@ -384,6 +384,9 @@ fn deviceListener(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Self) vo
         .data_offer => |offer| self.newOffer(offer.id) catch |err| self.hooks.failure(self.hooks.context, err),
         .selection => |selection| self.selected(selection.id) catch |err| self.hooks.issue(self.hooks.context, err),
         .enter => |enter| {
+            if (self.outbound_drag) |source| if (enter.id) |id| if (self.find(id)) |offer| {
+                if (offer.mimes.contains(source.mime())) source.protocolAccepted();
+            };
             if (self.native_drag) |*drag| {
                 const surface = enter.surface orelse {
                     drag.leave();

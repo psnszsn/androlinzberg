@@ -966,6 +966,9 @@ pub const Session = struct {
         }
         if (self.pointer_focus) |window| Window.pointerListener(pointer, event, window);
         if (event == .leave) {
+            if (self.clipboard) |clipboard| if (clipboard.outbound_drag) |source| {
+                if (source.input_kind == .pointer and source.origin == event.leave.surface) source.inputLost();
+            };
             self.drag_grabs.clearPointer();
             self.pointer_focus = null;
             self.pointer_surface = null;
@@ -1193,7 +1196,12 @@ pub const Session = struct {
             }
         } else {
             if (event == .up) self.drag_grabs.touchUp(event.up.id);
-            if (event == .cancel) self.drag_grabs.clearTouch();
+            if (event == .cancel) {
+                if (self.clipboard) |clipboard| if (clipboard.outbound_drag) |source| {
+                    if (source.input_kind == .touch) source.inputLost();
+                };
+                self.drag_grabs.clearTouch();
+            }
             // Touch IDs belong to the seat. Only the window that accepted DOWN
             // has that ID, and keeps it through motion outside its own bounds.
             for (self.windows.items) |window| Window.touchListener(touch, event, window);
