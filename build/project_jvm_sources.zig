@@ -5,6 +5,8 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/StockAudioManagerSmoke.kt",
     "src/java/dev/artzig/StockAudioTrackSmoke.kt",
     "src/java/dev/artzig/StockMediaCodecSmoke.kt",
+    "src/java/dev/artzig/StockNdkMediaCodecSmoke.kt",
+    "src/java/dev/artzig/HostedNdkMediaCodec.kt",
     "src/java/dev/artzig/StockHidlTransportSmoke.kt",
     "src/java/dev/artzig/HostedRenderer.kt",
     "src/java/dev/artzig/HostedHardwareSnapshot.kt",

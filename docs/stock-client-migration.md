@@ -27,6 +27,24 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- The NDK codec boundary now exports 24 AMediaCodec entry points over verbatim
+  Java MediaCodec and the existing decoder. Native callers can create/configure
+  decoders, submit compressed buffers, read decoded output, query independent
+  formats, flush/restart, receive asynchronous callbacks and release ownership.
+  C++ conversion helpers use original AMessage/AMediaFormat and the pinned
+  key/value converters; JNI manages attachment for native caller threads.
+  Callback deletion drains delivery before releasing native caller data. The
+  libmediandk soname maps to the platform island, whose Binder dependency exports
+  codec calls. A single library handle resolves both the original format and new
+  codec symbols. Tests exercise the C ABI with synchronous/asynchronous MPEG-to-PCM
+  decoding, timestamps, EOS, callbacks, format snapshots and failure/cleanup paths.
+  Native window and secure-codec configuration remain explicit unsupported
+  operations; this is not the full NDK media ABI or an initialized Chromium provider.
+  JVM/system/native/Binder and build checks pass; all 11 APK tests pass with 37
+  captured steps and zero structured runtime issues. No AOSP/ART archive inputs
+  changed, and both tarballs remain current. Inventory remains 15 stubs (8 pending,
+  7 survivors). Chromium still needs AAudio and provider/runtime integration.
+
 - MediaCodec now compiles verbatim; the 833-line Java adaptation is deleted.
   Stock Java owns public validation, callback delivery and buffer invalidation.
   The pinned 48 outer JNI methods (including persistent-surface release) and four

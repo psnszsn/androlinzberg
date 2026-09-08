@@ -1,3 +1,34 @@
+#include "android_media_Streams.h"
+#include <media/NdkMediaFormatPriv.h>
+// NdkMediaCodec.cpp owns an AMessage snapshot across each NDK/codec call.
+// Only this C++ ABI conversion touches AMessage; codec behavior lives in Zig/Kotlin.
+extern "C" jobject azk_media_format_to_map(JNIEnv* env, const AMediaFormat* format) {
+    if (format == nullptr) return nullptr;
+    android::sp<android::AMessage> message;
+    android::AMediaFormat_getFormat(format, &message);
+    jobject result = nullptr;
+    if (android::ConvertMessageToMap(env, message->dup(), &result) != 0) return nullptr;
+    return result;
+}
+extern "C" AMediaFormat* azk_media_format_from_map(JNIEnv* env, jobject map) {
+    if (map == nullptr) return nullptr;
+    jclass mapClass = env->FindClass("java/util/Map");
+    jclass collectionClass = env->FindClass("java/util/Collection");
+    if (mapClass == nullptr || collectionClass == nullptr) return nullptr;
+    jmethodID keySet = env->GetMethodID(mapClass, "keySet", "()Ljava/util/Set;");
+    jmethodID values = env->GetMethodID(mapClass, "values", "()Ljava/util/Collection;");
+    jmethodID toArray = env->GetMethodID(collectionClass, "toArray", "()[Ljava/lang/Object;");
+    if (keySet == nullptr || values == nullptr || toArray == nullptr) return nullptr;
+    jobject keys = env->CallObjectMethod(map, keySet);
+    jobject entries = env->CallObjectMethod(map, values);
+    if (env->ExceptionCheck()) return nullptr;
+    auto keyArray = static_cast<jobjectArray>(env->CallObjectMethod(keys, toArray));
+    auto valueArray = static_cast<jobjectArray>(env->CallObjectMethod(entries, toArray));
+    if (env->ExceptionCheck()) return nullptr;
+    android::sp<android::AMessage> message;
+    if (android::ConvertKeyValueArraysToMessage(env, keyArray, valueArray, &message) != 0) return nullptr;
+    return android::AMediaFormat_fromMsg(&message);
+}
 #include "android_media_MediaMetricsJNI.h"
 #include "MediaExtractorService.h"
 #include <binder/PermissionCache.h>

@@ -1296,6 +1296,7 @@ export fn azk_register_binder_jni(env_opaque: ?*anyopaque) callconv(.c) c_int {
     @import("audio_system_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("audio_track_jni.zig").register(env) catch return -1;
     @import("media_codec_jni.zig").register(env) catch return -1;
+    @import("media_ndk.zig").register(env, &g_platform_library) catch return -1;
     @import("runtime_init_jni.zig").register(env) catch return -1;
     @import("egl_jni.zig").register(env, &g_platform_library) catch return -1;
     @import("egl_extensions_jni.zig").register(env) catch return -1;

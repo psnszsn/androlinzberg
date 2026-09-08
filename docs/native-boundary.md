@@ -30,6 +30,14 @@ zig build -j10 cpp-audit
   secure/block/encoder and additional surface/resource operations report explicit
   diagnostics or pinned failure results. The FFmpeg and presentation engines are
   unchanged.
+- `src/binder/media_ndk.zig` exports 24 NDK codec entry points. Its Kotlin module
+  `HostedNdkMediaCodec` shares the stock Java MediaCodec client, preserving codec
+  lifecycle and callback ownership across native calls. The C++ helpers in
+  `AospJniBridge.cpp` only convert original AMessage/AMediaFormat objects through
+  the pinned key/value converters. The libmediandk soname maps to the platform
+  island and its Binder dependency so formats and codecs resolve together.
+  Native window/secure configuration remains explicitly unavailable; this does
+  not claim the complete NDK media ABI or a working Android Chromium provider.
 - MediaExtractor uses original AOSP Java/JNI, NuMediaExtractor, the native
   MediaExtractorService and its Binder protocols, data sources, metadata, and
   WAV/MP3/AAC parsers. The hosted system process publishes `media.extractor`.

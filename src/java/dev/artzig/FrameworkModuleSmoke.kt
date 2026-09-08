@@ -278,6 +278,7 @@ internal object FrameworkModuleSmoke {
         StockAudioManagerSmoke.run(::drainMainQueue)
         StockAudioTrackSmoke.run()
         StockMediaCodecSmoke.run()
+        StockNdkMediaCodecSmoke.run()
         StockAudioFoundationSmoke.run()
         StockVoiceTypesSmoke.run()
         StockMainlineTypesSmoke.run()
