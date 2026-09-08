@@ -6,6 +6,7 @@ pub const Options = struct {
     launcher: LazyPath,
     broker: LazyPath,
     island: LazyPath,
+    idmap2: LazyPath,
     stats_jni: LazyPath,
     webview_support: LazyPath,
     egl_support: LazyPath,
@@ -36,6 +37,7 @@ pub fn build(b: *std.Build, options: Options) LazyPath {
     _ = tree.addCopyFile(options.broker, "bin/azk-binder-broker");
     _ = tree.addCopyDirectory(options.art_runtime, "bin/art", .{});
     _ = tree.addCopyFile(options.island, "lib/libandroid_platform.so");
+    _ = tree.addCopyFile(options.idmap2, "lib/art/libidmap2.so");
     _ = tree.addCopyFile(options.stats_jni, "lib/art/libstats_jni.so");
     _ = tree.addCopyFile(options.webview_support, "lib/art/libwebviewchromium_plat_support.so");
     _ = tree.addCopyFile(options.egl_support, "lib/art/libazk_egl.so");

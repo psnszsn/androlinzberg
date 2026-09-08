@@ -466,6 +466,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(b.path("src/native"), &.{"WebViewGraphicBuffer.cpp"}, webview_includes, &.{"-fexceptions"});
     g.add(b.path("src/native"), &.{"ArrayUtilsJniBridge.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_hardware_SerialPort.cpp"}, webview_includes, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_android_internal_content_om_OverlayManagerImpl.cpp"}, webview_includes, &.{});
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});

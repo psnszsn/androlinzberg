@@ -3,6 +3,12 @@
 Use Zig for application logic and Linux platform logic. Use C++ only where the
 AOSP graphics stack or an AOSP C++ interface requires it.
 
+Self-targeting overlays compile the original OverlayManagerImpl JNI and
+`libidmap2`, including its original self-targeting entry points and generated
+fabricated-overlay protobuf. The separate shared library uses the existing
+Android resource and Binder/libutils implementations. No overlay algorithm is
+reimplemented in repository-owned C++.
+
 Run the boundary check after a native change:
 
 ```sh

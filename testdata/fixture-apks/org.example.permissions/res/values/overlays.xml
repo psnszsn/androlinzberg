@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="stock_overlay_color">#ff112233</color>
+    <color name="stock_system_color">#ff112233</color>
+    <overlayable name="StockOverlay">
+        <policy type="signature"><item type="color" name="stock_overlay_color" /></policy>
+    </overlayable>
+    <overlayable name="StockSystemOnly">
+        <policy type="system"><item type="color" name="stock_system_color" /></policy>
+    </overlayable>
+</resources>

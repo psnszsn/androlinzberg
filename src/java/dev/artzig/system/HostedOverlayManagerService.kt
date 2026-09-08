@@ -12,8 +12,9 @@ import android.content.om.OverlayInfo
  * Source note: `com.android.server.om.OverlayManagerService` for a device with no
  * runtime resource overlays installed: every query is empty or null, and the
  * mutators keep the CHANGE_OVERLAY_PACKAGES gate and report false for an unknown
- * overlay, as `OverlayManagerServiceImpl` does. Fabricated (self-targeting)
- * overlay transactions need idmap2, which is not hosted, so `commit` stays unserved.
+ * overlay, as `OverlayManagerServiceImpl` does. Self-targeting transactions run
+ * in the caller through original OverlayManagerImpl/idmap2. System-wide overlay
+ * transactions still require the absent runtime-overlay installation service.
  */
 class HostedOverlayManagerService(private val permissions: HostedPermissions) : android.content.om.IOverlayManager.Stub(), android.content.om.IOverlayManager by unsupported<android.content.om.IOverlayManager>() {
     override fun asBinder(): android.os.IBinder = this

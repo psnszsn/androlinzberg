@@ -4663,4 +4663,5 @@ fn collectCronetApi(c: *StaticCollector) !void {
     try c.file("$MU/java/com/android/internal/util/IState.java");
     try c.file("$MU/java/com/android/internal/util/State.java");
     try c.file("$MU/java/com/android/internal/util/StateMachine.java");
+    try c.file("$CJ/com/android/internal/content/om/OverlayManagerImpl.java");
 }

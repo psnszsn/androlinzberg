@@ -289,6 +289,7 @@ internal object FrameworkModuleSmoke {
         StockHttpEngineSmoke.run()
         StockMediaStoreSmoke.run()
         StockServiceRegistrySmoke.run()
+        StockOverlaySmoke.run()
         StockCameraMetadataSmoke.run()
         StockCodecCatalogSmoke.run()
         StockRendererSmoke.run()

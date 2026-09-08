@@ -5,6 +5,12 @@ const std = @import("std");
 pub const Source = enum { aosp, repo };
 pub const SourcePath = struct { source: Source, path: []const u8 };
 
+pub const idmap2_proto = .{
+    .input = SourcePath{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/libidmap2/proto/fabricated_v1.proto" },
+    .source = "libidmap2/proto/fabricated_v1.pb.cc",
+    .header = "libidmap2/proto/fabricated_v1.pb.h",
+};
+
 // The pinned bp2a release inherits the AVF vendor-module flag from ap3a (true).
 // Follow avf-build-flags-java-gen's substitution in the original Java template.
 pub const java_templates = .{
@@ -1902,6 +1908,7 @@ pub const aidl = [_]SourcePath{
     .{ .source = .aosp, .path = "frameworks/base/apex/jobscheduler/framework/java/android/app/job/IJobCallback.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/apex/jobscheduler/framework/java/android/app/job/IJobService.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/apex/jobscheduler/framework/java/android/app/job/IUserVisibleJobObserver.aidl" },
+    .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/core/android/os/FabricatedOverlayInfo.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/core/android/os/FabricatedOverlayInternal.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/cmds/idmap2/idmap2d/aidl/core/android/os/FabricatedOverlayInternalEntry.aidl" },
     .{ .source = .aosp, .path = "frameworks/base/core/java/android/app/ICallNotificationEventCallback.aidl" },

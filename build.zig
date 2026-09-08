@@ -371,6 +371,18 @@ pub fn build(b: *std.Build) void {
         .aosp = aosp,
     });
     b.step("island", "Build libandroid_platform.so").dependOn(island.step);
+    const idmap2 = @import("build/idmap2.zig").build(b, .{
+        .aosp = aosp,
+        .target = target,
+        .optimize = optimize,
+        .island = island.file,
+        .binder_cpp = binder_cpp.getEmittedBin(),
+        .protobuf = protobuf.library,
+        .protoc = protobuf.protoc,
+        .host_include_roots = host_toolchain.island.include_roots,
+        .host_library_roots = host_toolchain.island.library_roots,
+    });
+    b.step("idmap2", "Build original self-targeting overlay compiler").dependOn(idmap2.step);
 
     // --- framework JVM jar (Java + Kotlin), framework-res.apk, generated Java
     const java = @import("build/java.zig").build(b, .{
@@ -642,6 +654,7 @@ pub fn build(b: *std.Build) void {
         .launcher = exe.getEmittedBin(),
         .broker = binder_broker.getEmittedBin(),
         .island = island.file,
+        .idmap2 = idmap2.file,
         .stats_jni = stats_jni.getEmittedBin(),
         .webview_support = webview_support.getEmittedBin(),
         .egl_support = egl_support.getEmittedBin(),
