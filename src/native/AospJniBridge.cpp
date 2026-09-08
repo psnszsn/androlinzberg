@@ -763,7 +763,6 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_com_android_internal_util_VirtualRefBasePtr),
             E(android::register_android_backup_BackupDataInput),
             E(android::register_android_backup_BackupDataOutput),
-            E(android::register_com_android_internal_os_ApplicationSharedMemory),
             E(android::register_com_android_internal_content_om_OverlayManagerImpl),
             E(android::register_android_net_LocalSocketImpl),
             E(register_android_opengl_jni_GLES20),

@@ -11,6 +11,35 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Stock registry and overlay framework rebase (2026-09-08)
+
+Rebased onto main `ba6bbba3`, including the original SystemServiceRegistry,
+its module client closure, production Ravenwood annotations and self-targeting
+idmap2 overlays. The isolated AOSP package contains the combined source selection
+and all 101 graphics/framework patches; its dependency hash is
+`N-V-__8AAHAV7k79JUhNWGZeri6VL_q_DLprpOGn_NRXLGZH`. Each generated AIDL and
+feature-flag package is declared once. ApplicationSharedMemory JNI remains in
+the early runtime registration phase. The live audit remains five pending stubs
+and two documented survivors.
+
+Regression 502 passes stock WMS/ATMS startup, desktop launch/close with 13 clean
+interaction steps, and C++/graph audits. Regression 503 passes the full default
+JVM suite and all 16 APK tests with 52 issue-free steps. Regression 504 passes
+stock video (4 steps), IME (22), clipboard (21), and all four idle service-loss
+cases; each controller retires in 114 ms with no surviving descendants or session
+directory. Artifacts are under `/tmp/wayland-registry-rebase-502-artifacts/`,
+`/tmp/wayland-registry-rebase-503-artifacts/`, and
+`/tmp/wayland-registry-rebase-504-artifacts/`.
+
+The same combined run exposed an intermittent drag stall: selecting “Use slow
+drag file” applied and updated the accessibility tree, but its scheduled
+traversal did not finish within 20 seconds and the displayed frame stayed at
+“Drag started.” No structured runtime issue was reported. The isolated regression
+505 passes all 41 drag steps, including slow provider transfer and GPU shadow
+updates. Its artifacts are in `/tmp/wayland-registry-rebase-505-artifacts/`.
+The stalled traversal remains an open pressure/recovery finding; a passing rerun
+is not a root-cause fix. The M8–M11 matrix and default cutover remain unfinished.
+
 ## Idle session retirement after service loss (2026-09-08)
 
 The desktop controller now watches the ATMS, presenter and SurfaceFlinger Binder
