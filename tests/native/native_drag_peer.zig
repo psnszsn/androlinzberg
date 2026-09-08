@@ -3,8 +3,6 @@ const std = @import("std");
 const Io = std.Io;
 const Queue = @import("surface_queue");
 const State = struct {
-    io: Io,
-    clipboard: ?*Queue.Clipboard = null,
     mime: [:0]const u8,
     bytes: []const u8,
     accepted: bool = false,
@@ -34,7 +32,7 @@ const State = struct {
 
 pub fn run(init: std.process.Init, args: []const [:0]const u8) !void {
     if (args.len != 6) return error.ExpectedMimePayloadResultAndAcceptance;
-    var state: State = .{ .io = init.io, .mime = args[2], .bytes = args[3] };
+    var state: State = .{ .mime = args[2], .bytes = args[3] };
     const consumed = std.mem.eql(u8, args[5], "accept");
     const cancelled = std.mem.eql(u8, args[5], "cancel");
     if (!consumed and !cancelled and !std.mem.eql(u8, args[5], "reject")) return error.InvalidExpectedResult;
@@ -63,20 +61,18 @@ fn exercise(init: std.process.Init, state: *State, consumed: bool, cancelled: bo
     const window = try session.createWindowWithAppId(320, 480, "Native drag source", "dev.artzig.drag-peer", false);
     defer window.deinit();
     try window.prepareTestInput();
-    state.clipboard = session.clipboard orelse return error.NoDataDevice;
     // The harness explicitly places this peer at (720,0), 320x480. These
     // output coordinates are test input, never inferred from Android bounds.
-    const previous = state.clipboard.?.serial;
     try window.testPointerAtOutput(.{ 800, 240 }, .{ 1280, 720 }, .{ 80, 240 }, true);
     if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
-    const serial = state.clipboard.?.serial orelse return error.NoPressedSerial;
-    if (serial == previous or session.pointer_focus != window) return error.PressDidNotReachSource;
+    const generation = session.dragClaim(window, .pointer, 0) orelse return error.NoPressedGesture;
     // No other input is emitted between that actual button event and start_drag.
     const plain = std.mem.startsWith(u8, state.mime, "text/plain");
     const html = std.mem.eql(u8, state.mime, "text/html");
     const uris = std.mem.eql(u8, state.mime, "text/uri-list");
     const payload = try Queue.Clipboard.Payload.initAll(init.gpa, if (plain) state.bytes else null, if (html) state.bytes else null, if (uris) state.bytes else null);
-    const source = try state.clipboard.?.startDrag(window.surface, serial, null, payload, .{ .context = state, .event = State.event, .issue = State.issue });
+    const source = try session.startDrag(window, .pointer, 0, generation, null, payload, .{ .context = state, .event = State.event, .issue = State.issue });
+    if (session.dragClaim(window, .pointer, 0) != null) return error.DragGestureNotConsumed;
     defer state.sends = source.sends;
     if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
     try window.testPointerAtOutput(.{ 480, 273 }, .{ 1280, 720 }, null, false);

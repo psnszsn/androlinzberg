@@ -11,6 +11,22 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Held native drag gesture validation (2026-09-08)
+
+The session records the exact pointer-enter or touch-down surface and the
+physical grab's serial. Android-facing callers snapshot a generation before
+payload preparation, then consume it once at handoff. Released, replaced,
+cross-window and already-used gestures fail validation. Pointer chords retain
+the first press serial; bounded button overflow fails closed. Reused touch IDs
+receive fresh generations, including when native drag consumed the previous UP.
+Origin removal and seat capability loss retire the corresponding ownership.
+
+Regression 444 passes the Wayland unit tests and all 12 native/stock drag steps
+through the session handoff API. The real compositor completes text, HTML and
+URI COPY, recipient rejection and pre-drop cancellation with no runtime issues.
+Artifacts: `/tmp/wayland-drag-grab-444-artifacts/`. WMS integration and the stock
+drag-shadow mirror remain the next outbound work.
+
 ## Outbound native source component (2026-09-08)
 
 The seat now owns an outbound COPY data-source component with immutable MIME

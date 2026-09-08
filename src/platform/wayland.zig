@@ -13,6 +13,9 @@ pub const TabletSeat = @import("tablet_seat.zig");
 pub const PresentationFeedback = @import("presentation_feedback.zig");
 pub const TextInput = @import("text_input.zig");
 pub const Clipboard = @import("clipboard.zig");
+const DragGrab = @import("drag_grab.zig");
+pub const DragKind = DragGrab.Kind;
+const HeldDrag = DragGrab.Held(Window, wl.Surface);
 
 const drm_format_nv12: u32 = 0x3231564e;
 const drm_format_p010: u32 = 0x30313050;
@@ -614,6 +617,8 @@ pub const Session = struct {
     io: std.Io,
     windows: std.ArrayList(*Window) = .empty,
     pointer_focus: ?*Window = null,
+    pointer_surface: ?*wl.Surface = null,
+    drag_grabs: HeldDrag = .{},
     keyboard_focus: ?*Window = null,
     seat_generation: i32 = 1,
     seat_capabilities: i32 = 0,
@@ -864,6 +869,7 @@ pub const Session = struct {
     }
 
     fn removeWindow(self: *Session, window: *Window) void {
+        self.drag_grabs.removeWindow(window);
         if (self.clipboard) |clipboard| {
             if (window.surface_created) clipboard.removeDragSurface(window.surface);
             if (window.ui_initialized) clipboard.removeDragSurface(window.ui_surface);
@@ -874,7 +880,10 @@ pub const Session = struct {
         }
         if (self.tablets) |tablets| tablets.detachTarget(window);
         if (self.ordered_events) |*events| events.removeWindow(window);
-        if (self.pointer_focus == window) self.pointer_focus = null;
+        if (self.pointer_focus == window) {
+            self.pointer_focus = null;
+            self.pointer_surface = null;
+        }
         if (self.keyboard_focus == window) {
             self.clipboard_serial = null;
             if (self.clipboard) |clipboard| clipboard.focus(false, 0);
@@ -889,10 +898,56 @@ pub const Session = struct {
     }
 
     fn pointerListener(pointer: *wl.Pointer, event: wl.Pointer.Event, self: *Session) void {
-        if (event == .enter) self.pointer_focus = self.surfaceWindow(event.enter.surface);
-        if (event == .button and event.button.state == .pressed) self.clipboardInputSerial(event.button.serial);
+        if (event == .enter) {
+            self.drag_grabs.clearPointer();
+            self.pointer_focus = self.surfaceWindow(event.enter.surface);
+            self.pointer_surface = if (self.pointer_focus != null) event.enter.surface else null;
+        }
+        if (event == .button) {
+            const origin: ?HeldDrag.Origin = if (self.pointer_focus) |window|
+                if (self.pointer_surface) |surface| .{ .window = window, .surface = surface } else null
+            else
+                null;
+            self.drag_grabs.pointerButton(origin, event.button.serial, event.button.button, event.button.state == .pressed);
+            if (event.button.state == .pressed) self.clipboardInputSerial(event.button.serial);
+        }
         if (self.pointer_focus) |window| Window.pointerListener(pointer, event, window);
-        if (event == .leave) self.pointer_focus = null;
+        if (event == .leave) {
+            self.drag_grabs.clearPointer();
+            self.pointer_focus = null;
+            self.pointer_surface = null;
+        }
+    }
+
+    /// Snapshot before asynchronous payload preparation, then revalidate at start.
+    /// Callers never provide a protocol serial or choose an unrelated surface.
+    pub fn dragClaim(self: *Session, window: *Window, kind: DragKind, id: i32) ?u64 {
+        if (window.session != self) return null;
+        return (self.drag_grabs.snapshot(window, kind, id) orelse return null).generation;
+    }
+
+    /// Consumes payload on every return. Android authorization precedes this seam.
+    pub fn startDrag(self: *Session, window: *Window, kind: DragKind, id: i32, generation: u64, icon: ?*wl.Surface, payload: *Clipboard.Payload, hooks: Clipboard.DragSource.Hooks) !*Clipboard.DragSource {
+        const clipboard = blk: {
+            errdefer payload.destroy();
+            if (window.session != self) return error.DragWindowNotOwned;
+            const clipboard = self.clipboard orelse return error.NoDataDevice;
+            if (clipboard.outbound_drag) |source| if (source.active()) return error.DragAlreadyActive;
+            break :blk clipboard;
+        };
+        const claim = self.drag_grabs.take(window, kind, id, generation) orelse {
+            payload.destroy();
+            return error.NativeDragGestureExpired;
+        };
+        const source = try clipboard.startDrag(claim.origin.surface, claim.serial, icon, payload, hooks);
+        source.input_kind = kind;
+        return source;
+    }
+
+    fn cancelInputDrag(self: *Session, kind: DragKind) void {
+        if (self.clipboard) |clipboard| if (clipboard.outbound_drag) |source| {
+            if (source.input_kind == kind) source.cancel();
+        };
     }
 
     fn keyboardListener(keyboard: *wl.Keyboard, event: wl.Keyboard.Event, self: *Session) void {
@@ -1079,8 +1134,13 @@ pub const Session = struct {
 
     fn touchListener(touch: *wl.Touch, event: wl.Touch.Event, self: *Session) void {
         if (event == .down) {
-            if (self.surfaceWindow(event.down.surface)) |window| Window.touchListener(touch, event, window);
+            if (self.surfaceWindow(event.down.surface)) |window| {
+                self.drag_grabs.touchDown(.{ .window = window, .surface = event.down.surface.? }, event.down.serial, event.down.id);
+                Window.touchListener(touch, event, window);
+            }
         } else {
+            if (event == .up) self.drag_grabs.touchUp(event.up.id);
+            if (event == .cancel) self.drag_grabs.clearTouch();
             // Touch IDs belong to the seat. Only the window that accepted DOWN
             // has that ID, and keeps it through motion outside its own bounds.
             for (self.windows.items) |window| Window.touchListener(touch, event, window);
@@ -1088,6 +1148,9 @@ pub const Session = struct {
     }
 
     fn releasePointer(self: *Session) void {
+        self.drag_grabs.clearPointer();
+        self.cancelInputDrag(.pointer);
+        self.pointer_surface = null;
         for (self.windows.items) |window| {
             window.setPointerCapture(false) catch unreachable;
             window.pointer_axis_frame.reset();
@@ -1114,6 +1177,8 @@ pub const Session = struct {
     }
 
     fn releaseTouch(self: *Session) void {
+        self.drag_grabs.clearTouch();
+        self.cancelInputDrag(.touch);
         for (self.windows.items) |window| window.cancelTouches();
         if (self.touch_device) |touch| touch.release();
         self.touch_device = null;
@@ -3468,6 +3533,7 @@ test "text input event budget counts borrowed batches and releases every owner" 
 
 test "clipboard protocol contracts" {
     _ = Clipboard;
+    _ = DragGrab;
 }
 
 test "clipboard event budget includes borrowed payloads and closes every owner" {
