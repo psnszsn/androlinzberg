@@ -611,10 +611,58 @@ object StockColdLaunchSmoke {
         println("RESTORE_TASK_SCALE_REQUESTED")
         System.out.flush()
         check(commands.readLine() == "scaled")
-        awaitGeometry("Scale restore did not present its own output generation") {
+        val restored = awaitGeometry("Scale restore did not present its own output generation") {
             it[10] > scaled[10] && it[12] > scaled[12] && it[14] == initial[14] && it[15] == initial[15]
         }
         pixels("SCALE_RESTORED_TASK_WINDOW_READY", taskId)
+        val resourcesBefore = presenter.testResources()
+        check(resourcesBefore.size == 5 && resourcesBefore[0] == 1L && resourcesBefore[1] == 1L)
+        val peaks = resourcesBefore.copyOf()
+        check(presenter.testHoldOutput(taskId, initial[0], true))
+        var latest = restored
+        repeat(64) { index ->
+            val state = if (index % 2 == 0) 2L else 0L
+            check(presenter.testWindowState(taskId, initial[0], state.toInt()))
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            var next: LongArray
+            do {
+                next = presenter.testWindow(taskId)
+                if (next.size == 16 && next[10] > latest[10] && next[9] == state) break
+                SystemClock.sleep(1)
+            } while (SystemClock.uptimeMillis() < deadline)
+            check(next.size == 16 && next[10] > latest[10] && next[9] == state) {
+                "Resize storm configure $index stalled: ${next.contentToString()}"
+            }
+            // Wait only for the compositor acknowledgement, not the Android
+            // sync or replacement frame, so newer configures can overtake both.
+            check(next[13] == restored[13]) { "A held replacement frame was presented" }
+            latest = next
+            val resources = presenter.testResources()
+            check(resources.size == 5 && resources[0] == 1L && resources[1] in 1L..2L &&
+                resources[2] in 0L..2L && resources[3] <= 32L &&
+                resources[4] <= resourcesBefore[4] + 64L) {
+                "Resize storm resources exceeded their bounded allowance: ${resources.contentToString()}"
+            }
+            resources.indices.forEach { peaks[it] = maxOf(peaks[it], resources[it]) }
+        }
+        val finalConfiguration = latest[10]
+        awaitGeometry("Resize storm did not commit its final configuration", presented = false) {
+            it[10] == finalConfiguration && it[13] == restored[13] &&
+                it.sliceArray(1..8).contentEquals(initial.sliceArray(1..8))
+        }
+        pixels("STORM_PENDING_TASK_WINDOW_READY", taskId)
+        check(presenter.testHoldOutput(taskId, initial[0], false))
+        awaitGeometry("Resize storm did not present its final generation") {
+            it[10] == finalConfiguration && it[14] == initial[14] && it[15] == initial[15]
+        }
+        pixels("STORM_TASK_WINDOW_READY", taskId)
+        val resourcesAfter = presenter.testResources()
+        check(resourcesAfter[0] == 1L && resourcesAfter[1] == 1L && resourcesAfter[2] <= 2L &&
+            resourcesAfter[3] <= resourcesBefore[3] + 4L && resourcesAfter[4] <= resourcesBefore[4] + 8L) {
+            "Resize storm leaked resources: before=${resourcesBefore.contentToString()} after=${resourcesAfter.contentToString()}"
+        }
+        println("Stock task resize storm: 64 acknowledged configures with held frames; " +
+            "resources before=${resourcesBefore.contentToString()} peak=${peaks.contentToString()} after=${resourcesAfter.contentToString()}")
         println("Stock task configuration generations: delayed replacement, fullscreen, maximize, restore, A-B-A stale input and fractional composition passed")
     }
 

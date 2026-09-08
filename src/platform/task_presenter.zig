@@ -309,6 +309,31 @@ const Server = struct {
         if (request.code == 10) return self.connectSeat(request);
         if (request.code == 6) return self.observeTestFrames(request);
         if (request.code == 7) return self.testWindow(request);
+        if (request.code == 14) {
+            if (!self.inspection_enabled) return -1;
+            try end(request.input);
+            var tasks: i64 = 0;
+            var queues: i64 = 0;
+            var imports: i64 = 0;
+            for (self.entries) |slot| if (slot) |entry| {
+                tasks += 1;
+                queues += 1 + @as(i64, @intFromBool(entry.pending_queue != null));
+                imports += @intCast(entry.window.ui_dmabuf_buffers.items.len);
+            };
+            var directory = try Io.Dir.cwd().openDir(self.io, "/proc/self/fd", .{ .iterate = true });
+            defer directory.close(self.io);
+            var iterator = directory.iterate();
+            var descriptors: i64 = 0;
+            while (try iterator.next(self.io)) |_| {
+                descriptors += 1;
+                if (descriptors > 65536) return error.DescriptorAccountingLimit;
+            }
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, 5));
+            for ([_]i64{ tasks, queues, imports, @intCast(azk_graphics_live_buffers()), descriptors }) |value|
+                try ok(AParcel_writeInt64(request.output, value));
+            return 0;
+        }
         if (request.code == 13) {
             if (!self.inspection_enabled) return -1;
             const key: Key = .{ .id = try readInt(request.input), .generation = try readLong(request.input) };
@@ -523,7 +548,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 13) return -38;
+    if (code < 1 or code > 14) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);

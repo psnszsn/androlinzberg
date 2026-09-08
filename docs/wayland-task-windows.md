@@ -22,6 +22,26 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Resize pressure checkpoint (2026-09-08)
+
+The labwc gate now sends 64 alternating maximize/restore requests while holding
+replacement frames. It waits for each compositor configure, allowing Android
+bounds synchronization and buffer production to lag behind. Every configure
+advances its generation; held frames never advance the presented generation.
+The final acknowledged generation commits and displays with correct pixels.
+
+An inspection-only resource snapshot reports live tasks, active/pending queues,
+Wayland imports, host graphics buffers and process descriptor count. Regression
+259 coalesces the 64 configures into two Android output updates. It starts at
+`[1,1,1,1,13]`, peaks at `[1,2,1,1,14]`, and returns to `[1,1,1,1,13]`.
+The gate enforces queue/import bounds throughout the storm and checks that
+buffers/descriptors return within their fixed post-presentation allowance.
+
+Regression 260 also passes Cage, the desktop launcher, native tests and graph
+audit. Logs: `/tmp/wayland-storm-{259,260}.log`; artifacts:
+`/tmp/wayland-storm-259-artifacts/`. This adds configure-pressure coverage; real
+delayed GPU fences, mixed-output task pixels and the other M8–M11 gates remain.
+
 ## Configure generation checkpoint (2026-09-08)
 
 The presenter now acknowledges each xdg-surface serial before publishing the

@@ -36,4 +36,6 @@ interface IWaylandTaskPresenter {
     boolean testWindowState(int taskId, long generation, int state);
     /** Inspection-only bounded consumer delay; the current compositor image remains visible. */
     boolean testHoldOutput(int taskId, long generation, boolean hold);
+    /** Inspection-only accounting: tasks, queues, Wayland imports, graphics buffers, descriptors. */
+    long[] testResources();
 }

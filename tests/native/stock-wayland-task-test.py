@@ -263,6 +263,8 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         process.stdin.write(b'scaled\n')
                         process.stdin.flush()
                         verify_pixels(marker, (0, 255, 255), name, scale=factor)
+                    verify_pixels('STORM_PENDING_TASK_WINDOW_READY', (0, 255, 255), 'storm-pending')
+                    verify_pixels('STORM_TASK_WINDOW_READY', (0, 255, 255), 'storm-restored')
 
                 for marker, operation in [('POINTER_DEVICE_CREATE', b'p'),
                                           ('POINTER_DEVICE_REMOVE', b'r'),
