@@ -27,6 +27,28 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- MediaCodec now compiles verbatim; the 833-line Java adaptation is deleted.
+  Stock Java owns public validation, callback delivery and buffer invalidation.
+  The pinned 48 outer JNI methods (including persistent-surface release) and four
+  LinearBlock methods are registered. HostedMediaCodecBackend owns the existing
+  decoder's state, bounded buffer queues, codec configuration, format snapshots,
+  flush/restart and asynchronous notifications. JNI gives each returned buffer an
+  independent view, with native byte order and read-only decoded output. Stop and
+  reset clear asynchronous mode as in AOSP. Timestamped video releases retain a
+  bounded number of frames until presentation; flush and release cancel them.
+  The eight existing decoder JNI operations move to HostedCodecEngine; FFmpeg and
+  presentation implementations are unchanged. Encoding, secure codecs, LinearBlock,
+  image/block queues, frame-render notifications and additional surface/resource
+  features retain explicit unsupported diagnostics or pinned capability failures.
+  Tests decode MPEG audio to PCM and check timestamps, independent buffer access,
+  invalidation, asynchronous flush ordering and stop/reset behavior. JVM/system,
+  native/Binder and build checks pass. All 11 APK tests pass with 39 captured steps
+  and zero structured runtime issues, including fullscreen playback. The original
+  MediaCodec source was already in the current AOSP archive, so neither archive
+  needs rebuilding. Inventory remains 15 stubs (8 pending, 7 survivors); this
+  adaptation was outside the inventory. WebView/provider and window/server work
+  remain unfinished.
+
 - AudioTrack now compiles verbatim; the 344-line Java adaptation and its separate
   typed-write placeholder are deleted. All 54 pinned JNI entry points are registered
   and their Kotlin bridge descriptors checked at startup. HostedAudioTrackBackend

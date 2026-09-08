@@ -21,7 +21,15 @@ zig build -j10 cpp-audit
   rate; downstream host-device latency is not measured. Native features outside the
   existing stream's capabilities retain explicit unsupported diagnostics or pinned
   failure results. The PipeWire backend implementation is unchanged.
-- `src/codec/jni.zig` connects MediaCodec JNI to the FFmpeg decoder.
+- `src/codec/jni.zig` registers the eight existing decoder operations on
+  `dev.artzig.HostedCodecEngine`. Verbatim MediaCodec Java enters the pinned JNI
+  interface in `src/binder/media_codec_jni.zig`. `HostedMediaCodecBackend` owns
+  codec lifetime, bounded queues, synchronous/asynchronous state, format changes
+  and timestamped video release. JNI returns independent direct-buffer views;
+  original Java controls their accessibility and callback delivery. Unsupported
+  secure/block/encoder and additional surface/resource operations report explicit
+  diagnostics or pinned failure results. The FFmpeg and presentation engines are
+  unchanged.
 - MediaExtractor uses original AOSP Java/JNI, NuMediaExtractor, the native
   MediaExtractorService and its Binder protocols, data sources, metadata, and
   WAV/MP3/AAC parsers. The hosted system process publishes `media.extractor`.

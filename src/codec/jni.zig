@@ -1,4 +1,4 @@
-//! JNI adapter for android.media.MediaCodec. The decoder implementation is
+//! JNI adapter for dev.artzig.HostedCodecEngine. The decoder implementation is
 //! already Zig; keep Java array/direct-buffer handling at the same seam.
 const art = @import("art");
 const codec = @import("azk_codec");
@@ -67,7 +67,7 @@ fn nativeClose(_: [*c]jni.JNIEnv, _: jni.jclass, handle: jni.jlong) callconv(.c)
 }
 
 pub fn register(env: [*c]jni.JNIEnv) !void {
-    const cls = env.*.*.FindClass.?(env, "android/media/MediaCodec") orelse return error.NoClass;
+    const cls = env.*.*.FindClass.?(env, "dev/artzig/HostedCodecEngine") orelse return error.NoClass;
     const methods = [_]jni.JNINativeMethod{
         .{ .name = "nativeOpen", .signature = "(Ljava/lang/String;)J", .fnPtr = @ptrCast(@constCast(&nativeOpen)) },
         .{ .name = "nativeConfigure", .signature = "(J[BII)I", .fnPtr = @ptrCast(@constCast(&nativeConfigure)) },

@@ -3134,6 +3134,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/media/java/android/media/MediaCasStateException.java");
     try c.file("$FB/media/java/android/media/MediaDescrambler.java");
     try c.file("$FB/media/java/android/media/MediaExtractor.java");
+    try c.file("$FB/media/java/android/media/MediaCodec.java");
     try c.file("$FB/media/java/android/media/RemoteController.java");
     try c.file("$FB/media/java/android/media/quality/PictureProfile.java");
     try c.file("$FB/media/java/android/media/tv/AdBuffer.java");

@@ -45,7 +45,7 @@ public final class CodecProbe {
                             codec.queueInputBuffer(idx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                             inputDone = true
                         } else {
-                            val `in`: ByteBuffer = codec.getInputBuffer(idx)
+                            val `in`: ByteBuffer = checkNotNull(codec.getInputBuffer(idx))
                             `in`.put(data, off, frame)
                             codec.queueInputBuffer(idx, 0, frame, off.toLong(), 0)
                             off += frame
@@ -79,7 +79,7 @@ public final class CodecProbe {
                 } else if (idx >= 0) {
                     if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outputDone = true
                     if (info.size > 0 && track != null) {
-                        val out: ByteBuffer = codec.getOutputBuffer(idx)
+                        val out: ByteBuffer = checkNotNull(codec.getOutputBuffer(idx))
                         totalSamples += info.size / 4
                         while (out.hasRemaining()) {
                             val n: Int = track.write(out, out.remaining(), AudioTrack.WRITE_NON_BLOCKING)

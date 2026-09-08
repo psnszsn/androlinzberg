@@ -98,7 +98,7 @@ public final class VideoHost {
                                 sInputDone = true
                             } else {
                                 val size: Int = sStream.getInt()
-                                val `in`: ByteBuffer = sCodec.getInputBuffer(idx)
+                                val `in`: ByteBuffer = checkNotNull(sCodec.getInputBuffer(idx))
                                 val tmp: ByteArray = ByteArray(size)
                                 sStream.get(tmp)
                                 `in`.put(tmp)

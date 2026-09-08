@@ -277,6 +277,7 @@ internal object FrameworkModuleSmoke {
         StockMediaMetricsSmoke.run()
         StockAudioManagerSmoke.run(::drainMainQueue)
         StockAudioTrackSmoke.run()
+        StockMediaCodecSmoke.run()
         StockAudioFoundationSmoke.run()
         StockVoiceTypesSmoke.run()
         StockMainlineTypesSmoke.run()
@@ -3853,10 +3854,11 @@ internal object FrameworkModuleSmoke {
 
     private fun testAsyncMediaCodecFlushRestartsOnePump() {
         drainMainQueue()
+        val inputIndices = ArrayList<Int>()
         val callbackHandler = Handler(checkNotNull(Looper.getMainLooper()))
         val codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_AUDIO_MPEG)
         codec.setCallback(object : MediaCodec.Callback() {
-            override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
+            override fun onInputBufferAvailable(codec: MediaCodec, index: Int) { inputIndices.add(index) }
             override fun onOutputBufferAvailable(
                 codec: MediaCodec,
                 index: Int,
@@ -3874,17 +3876,26 @@ internal object FrameworkModuleSmoke {
             0,
         )
         try {
-            // Each pair is the asynchronous lifecycle used by Media3 during a seek. There must
-            // be only one runnable producer left for the final execution, not one per flush.
+            // Media3's asynchronous seek sequence. Observe buffer ownership/callbacks,
+            // independently of the native producer thread or Java Handler message count.
             repeat(20) {
                 codec.start()
                 codec.flush()
             }
+            Thread.sleep(20)
+            drainMainQueue()
+            inputIndices.clear()
             codec.start()
-            val dispatched = drainMainQueueCounting()
-            check(dispatched == 1) {
-                "asynchronous MediaCodec accumulated $dispatched callback pumps across flushes"
+            val deadline = System.nanoTime() + 2_000_000_000L
+            while (inputIndices.isEmpty() && System.nanoTime() < deadline) {
+                drainMainQueue(); Thread.sleep(2)
             }
+            Thread.sleep(20); drainMainQueue()
+            check(inputIndices.isNotEmpty() && inputIndices.distinct().size == inputIndices.size) { inputIndices }
+            codec.flush()
+            Thread.sleep(20); drainMainQueue(); inputIndices.clear()
+            Thread.sleep(20); drainMainQueue()
+            check(inputIndices.isEmpty()) { "Flushed codec continued requesting buffers: $inputIndices" }
         } finally {
             codec.release()
             drainMainQueue()
