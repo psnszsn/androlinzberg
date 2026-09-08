@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--launcher', action='store_true')
 parser.add_argument('--video', action='store_true')
 parser.add_argument('--ime', action='store_true')
+parser.add_argument('--clipboard', action='store_true')
 parser.add_argument('--testkit', type=Path)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--seat', type=Path, required=True)
@@ -325,7 +326,62 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     assert any(node.get('text') == value and str(node.get('task_id')) == (task_id or task)
                                and (description is None or node.get('content_description') == description)
                                for node in current['nodes']), (value, current)
-                if args.ime:
+                if args.clipboard:
+                    clipboard_mark = control('mark')['mark']
+                    control('step', 'click', '--task-id', task, '--text', label('Show clipboard'),
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('wait', 'exists', '--text', 'Clipboard fixture ready')
+                    def clipboard_click(button, expected):
+                        control('step', 'click', '--task-id', task, '--text', button,
+                                '--via', 'semantic', '--settle', 'idle')
+                        control('wait', 'exists', '--task-id', task, '--text', expected)
+                    def native_paste(mime, expected):
+                        actual = subprocess.check_output(['wl-paste', '--no-newline', '--type', mime],
+                                                         env=environment, stdin=subprocess.DEVNULL, timeout=5).decode()
+                        assert actual == expected, (mime, actual, expected)
+                    clipboard_click('COPY UNICODE TEXT', 'Clipboard text=Android 😀 café html=none')
+                    native_paste('text/plain;charset=utf-8', 'Android 😀 café')
+                    clipboard_click('COPY HTML', 'Clipboard text=Android bold 😀 html=<b>Android bold 😀</b>')
+                    native_paste('text/plain;charset=utf-8', 'Android bold 😀')
+                    native_paste('text/html', '<b>Android bold 😀</b>')
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Clipboard text=Native 😀 café html=none', '--',
+                            'wl-copy', '--type', 'text/plain;charset=utf-8', 'Native 😀 café')
+                    clipboard_click('READ CLIPBOARD', 'Clipboard text=Native 😀 café html=none')
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Clipboard text=<b>Native rich 😀</b> html=<b>Native rich 😀</b>', '--',
+                            'wl-copy', '--type', 'text/html', '<b>Native rich 😀</b>')
+                    # wl-copy advertises text aliases containing the same bytes,
+                    # so retain its explicit plain representation alongside HTML.
+                    native_paste('text/plain;charset=utf-8', '<b>Native rich 😀</b>')
+                    clipboard_click('CLEAR CLIPBOARD', 'Clipboard is empty')
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Clipboard text=After clear html=none', '--',
+                            'wl-copy', '--type', 'text/plain', 'After clear')
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Clipboard is empty', '--', 'wl-copy', '--clear')
+                    control('step', 'click', '--task-id', task, '--text', 'REMOVE CLIPBOARD PROTOCOL',
+                            '--via', 'semantic', '--settle', 'idle')
+                    deadline = time.monotonic() + 5
+                    while 'task clipboard available=false' not in (out / 'app.log').read_text(errors='replace'):
+                        if time.monotonic() >= deadline: raise RuntimeError('clipboard manager removal not delivered')
+                        time.sleep(.02)
+                    clipboard_click('COPY HTML', 'Clipboard text=Android bold 😀 html=<b>Android bold 😀</b>')
+                    control('step', 'click', '--task-id', task, '--text', 'RESTORE CLIPBOARD PROTOCOL',
+                            '--via', 'semantic', '--settle', 'idle')
+                    native_paste('text/plain;charset=utf-8', 'Android bold 😀')
+                    native_paste('text/html', '<b>Android bold 😀</b>')
+                    assert 'task clipboard available=true' in (out / 'app.log').read_text(errors='replace')
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Clipboard text=After recreation html=none', '--',
+                            'wl-copy', '--type', 'text/plain;charset=utf-8', 'After recreation')
+                    diagnostics = control('diagnose', '--since', json.dumps(clipboard_mark))
+                    (out / 'clipboard-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
+                    assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
+                    steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
+                    assert len(steps) == 13 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    result['test_control'] = {'steps': len(steps), 'task': int(task)}
+                elif args.ime:
                     ime_mark = control('mark')['mark']
                     control('step', 'click', '--task-id', task, '--text', label('Show IME editor'),
                             '--via', 'semantic', '--settle', 'idle')

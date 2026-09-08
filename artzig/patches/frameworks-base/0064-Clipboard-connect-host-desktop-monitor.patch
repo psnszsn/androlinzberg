@@ -1,0 +1,27 @@
+From: Androlinzberg host integration
+Subject: [PATCH] Clipboard: connect stock access policy to the desktop monitor
+
+--- a/services/core/java/com/android/server/clipboard/ClipboardService.java
++++ b/services/core/java/com/android/server/clipboard/ClipboardService.java
+@@ -210,7 +210,20 @@
+         mAutofillInternal = LocalServices.getService(AutofillManagerInternal.class);
+         final IBinder permOwner = mUgmInternal.newUriPermissionOwner("clipboard");
+         mPermissionOwner = permOwner;
+-        if (Build.IS_EMULATOR) {
++        if (dev.artzig.system.HostedClipboardMonitor.isEnabled()) {
++            mClipboardMonitor = new dev.artzig.system.HostedClipboardMonitor((revision, clip) -> {
++                synchronized (mLock) {
++                    if (!dev.artzig.system.HostedClipboardMonitor.isCurrentRevision(revision)) {
++                        return;
++                    }
++                    Clipboard clipboard = getClipboardLocked(0, DEVICE_ID_DEFAULT);
++                    if (clipboard != null) {
++                        setPrimaryClipInternalLocked(clipboard, clip, android.os.Process.SYSTEM_UID,
++                                null);
++                    }
++                }
++            });
++        } else if (Build.IS_EMULATOR) {
+             mClipboardMonitor = new EmulatorClipboardMonitor((clip) -> {
+                 synchronized (mLock) {
+                     Clipboard clipboard = getClipboardLocked(0, DEVICE_ID_DEFAULT);

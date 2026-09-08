@@ -1,0 +1,57 @@
+--- a/src/server.c
++++ b/src/server.c
+@@ -444,6 +444,28 @@
+ 		request, view->capture.source);
+ }
+ 
++
++static struct wlr_data_device_manager *azk_clipboard_manager;
++
++/* Keep existing resources until display teardown while the test replaces
++ * the advertised manager. The normal compositor still owns selection state. */
++void
++azk_clipboard_command(const char *title)
++{
++    static bool removed;
++    if (!getenv("AZK_TEST_CLIPBOARD") || !title) {
++        return;
++    }
++    if (!strcmp(title, "AZK CLIPBOARD:remove") && !removed) {
++        wl_global_remove(azk_clipboard_manager->global);
++        removed = true;
++    } else if (!strcmp(title, "AZK CLIPBOARD:restore") && removed) {
++        azk_clipboard_manager = wlr_data_device_manager_create(server.wl_display);
++        assert(azk_clipboard_manager);
++        removed = false;
++    }
++}
++
+ void
+ server_init(void)
+ {
+@@ -680,6 +702,7 @@
+ 
+ 	struct wlr_data_device_manager *device_manager = NULL;
+ 	device_manager = wlr_data_device_manager_create(server.wl_display);
++	azk_clipboard_manager = device_manager;
+ 	if (!device_manager) {
+ 		wlr_log(WLR_ERROR, "unable to create data device manager");
+ 		exit(EXIT_FAILURE);
+--- a/src/xdg.c
++++ b/src/xdg.c
+@@ -3,6 +3,7 @@
+ #include <assert.h>
+ #include "input/ime.h"
+ extern void azk_ime_command(struct input_method_relay *, struct wlr_surface *, const char *);
++extern void azk_clipboard_command(const char *);
+ #include <string.h>
+ #include <wlr/interfaces/wlr_tablet_tool.h>
+ #include <wlr/types/wlr_tablet_v2.h>
+@@ -687,6 +688,7 @@
+ 	view_set_title(view, toplevel->title);
+ 	azk_tablet_command(toplevel);
+ 	azk_ime_command(server.seat.input_method_relay, toplevel->base->surface, toplevel->title);
++	azk_clipboard_command(toplevel->title);
+ }
+ 
+ static void

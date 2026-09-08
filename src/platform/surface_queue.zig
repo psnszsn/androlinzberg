@@ -7,6 +7,7 @@ pub const Window = wayland.Window;
 pub const Session = wayland.Session;
 pub const KeyboardLayout = wayland.KeyboardLayout;
 pub const TextInput = wayland.TextInput;
+pub const Clipboard = wayland.Clipboard;
 const c = struct {
     const AzkSurfaceQueue = opaque {};
     const AzkSurfaceFrame = opaque {};

@@ -143,6 +143,46 @@ class AzkTestCliCompatibilityTest {
     }
 
     @Test
+    fun nativeCommandStepsKeepArgumentBoundariesAndCollectDiagnostics() {
+        val mark = markJson()
+        val observation = """{"parameters":{"observation":{"mark":$mark}}}""" + '\u0000'
+        val diagnosis = """{"parameters":{"diagnostics":{"mark":$mark,"runtime":{"logs":[],"issues":[]}}}}""" + '\u0000'
+        val file = Files.createTempFile("azk-exec", ".txt")
+        val script = Files.createTempFile("azk-command", ".sh")
+        Files.writeString(script, "#!/bin/sh\nprintf '%s' \"\$1\" > \"\$2\"\n")
+        try {
+            withServer(listOf(observation, observation, diagnosis)) { socket, requests ->
+                val literal = "spaces; \$(not-a-command)"
+                val result = runCli(arrayOf("step", "exec", "--wait", "exists", "--text", "Native copied", "--",
+                    "/bin/sh", script.toString(), literal, file.toString()), mapOf("AZK_TEST_SOCKET" to socket.toString()))
+                assertEquals(0, result.status, result.errors)
+                assertEquals(literal, Files.readString(file))
+                assertEquals(listOf("Observe", "Observe", "Diagnose"), requests.map { it["method"].asString.substringAfterLast('.') })
+                assertEquals("exists", requests[1]["parameters"].asJsonObject["wait"].asJsonObject["kind"].asString)
+                assertEquals("host_exec", JsonParser.parseString(result.output).asJsonObject["action"].asJsonObject["kind"].asString)
+            }
+            withServer(listOf(observation, diagnosis)) { socket, _ ->
+                val result = runCli(arrayOf("step", "exec", "--", "/bin/sh", "-c", "exit 7"),
+                    mapOf("AZK_TEST_SOCKET" to socket.toString()))
+                assertEquals(3, result.status)
+                assertTrue(result.output.contains("Native command exited 7"))
+            }
+            val timeout = """{"error":"dev.artzig.androlinzberg.test1.Timeout","parameters":{"applied":false}}""" + '\u0000'
+            withServer(listOf(observation, timeout, diagnosis)) { socket, _ ->
+                val result = runCli(arrayOf("step", "exec", "--", "/bin/sh", "-c", "exit 0"),
+                    mapOf("AZK_TEST_SOCKET" to socket.toString()))
+                assertEquals(3, result.status)
+                val parameters = JsonParser.parseString(result.output).asJsonObject["action_error"].asJsonObject["parameters"].asJsonObject
+                assertTrue(parameters["applied"].asBoolean)
+                assertEquals("settle", parameters["stage"].asString)
+            }
+        } finally {
+            Files.deleteIfExists(script)
+            Files.deleteIfExists(file)
+        }
+    }
+
+    @Test
     fun transportFailuresUseExitCodeOne() {
         val missing = Files.createTempDirectory("azk-missing-socket").resolve("control.sock")
         val result = runCli(arrayOf("mark"), mapOf("AZK_TEST_SOCKET" to missing.toString()))

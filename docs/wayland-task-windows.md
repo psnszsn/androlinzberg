@@ -77,6 +77,51 @@ with 48 clean steps. Artifacts: `/tmp/wayland-ime-374-artifacts/` and
 In-flight invalidation/death stress, clipboard, drag-and-drop and the remaining
 M10/M11 work are still pending.
 
+## Clipboard text/HTML checkpoint (2026-09-08)
+
+Package 83 connects stock ClipboardService's monitor seam to the seat-owned
+Wayland data device. Stock app access checks, URI ownership validation,
+listeners, expiry and grant revocation remain in ClipboardService. Native
+imports bypass the outbound monitor; revisions checked under the stock
+clipboard lock reject a delayed native read after a newer Android copy.
+
+The native bridge negotiates UTF-8 text and HTML, preserves explicit plain
+representations and derives plain text with Android's HTML parser for an
+HTML-only offer. MIME negotiation preserves the offered spelling and rejects
+unsupported explicit charsets. Each representation is limited to 256 KiB.
+Eight concurrent FD transfers have absolute deadlines and cancel with their
+offer/source. All descriptor operations use std.Io, including setting incoming
+blocking descriptors nonblocking. Native event and Java callback budgets also
+include payloads awaiting delivery. An external selection replaces the old
+Android contents immediately while its new payload is read.
+
+Publication uses real seat serials and defers while unfocused. Manager/seat
+replacement retains the current revision and unpublished copy/clear request;
+manager recreation seeds focus from the latest real seat serial. A source marker
+avoids replacing stock ClipData with a roundtrip of its own native source.
+Peer cancellation/timeouts produce transfer warnings, not false missing-API
+reports. Unsupported URI/Intent and multiple-item export remain explicit gaps.
+
+The existing testkit now supports `step exec [observation options] -- COMMAND
+[ARG...]`: an argument-vector process with a deadline, followed by the same
+cursor-based diagnostics and step journal as UI actions. Regression 382 passes
+52 native tests and all 22 testkit tests. Regression 385 passes nine clean
+clipboard interoperability steps using real wl-copy/wl-paste. Regression 386
+passes 13 clean steps, adding protocol removal, Android copy while unavailable,
+manager recreation, native paste and a subsequent native import. Artifacts:
+`/tmp/wayland-clipboard-385-artifacts/` and
+`/tmp/wayland-clipboard-386-artifacts/`.
+
+Regression 387 passes the 22-step IME, 13-step desktop input, stock Cage launch
+and four-step video gates, plus C++ and graph audits. Regression 388 passes the
+complete JVM suite and all 16 APK integration tests with 48 clean steps. Artifacts:
+`/tmp/wayland-clipboard-387-artifacts/` and
+`/tmp/wayland-clipboard-388-artifacts/`. The fixture's compact controls and
+scroll container keep all primary actions visible in a 640-by-480 task window.
+
+Clipboard URI staging/grants, drag-and-drop and the remaining M10/M11 work are
+not completed by this text/HTML checkpoint.
+
 ## Stock decoded video checkpoint (2026-09-08)
 
 Stock MediaCodec surface output now queues independently owned GPU video frames

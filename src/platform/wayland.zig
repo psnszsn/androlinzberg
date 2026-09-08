@@ -12,6 +12,7 @@ const CursorImage = @import("cursor_image.zig");
 pub const TabletSeat = @import("tablet_seat.zig");
 pub const PresentationFeedback = @import("presentation_feedback.zig");
 pub const TextInput = @import("text_input.zig");
+pub const Clipboard = @import("clipboard.zig");
 
 const drm_format_nv12: u32 = 0x3231564e;
 const drm_format_p010: u32 = 0x30313050;
@@ -285,6 +286,9 @@ pub const Event = union(enum) {
     text_input_available: bool,
     text_input_focus: bool,
     text_input_batch: *TextInput.Batch,
+    clipboard_available: bool,
+    clipboard_changed: struct { revision: i64, payload: ?*Clipboard.Payload },
+    clipboard_issue: anyerror,
     close,
     configure: struct {
         width: i32,
@@ -336,6 +340,7 @@ pub const OrderedEvents = struct {
     const layout_source_limit = 32 * 1024 * 1024;
     retained_layouts: usize = 0,
     retained_text_batches: usize = 0,
+    retained_clipboards: usize = 0,
     retained_layout_source_bytes: usize = 0,
     pending: std.ArrayList(Item) = .empty,
     delivered: std.ArrayList(Item) = .empty,
@@ -346,7 +351,8 @@ pub const OrderedEvents = struct {
             (self.retained_layouts == layout_limit or
                 event.keyboard_layout.source_bytes > layout_source_limit - self.retained_layout_source_bytes);
         if (self.failed or self.pending.items.len == limit or layout_overflow or
-            (event == .text_input_batch and self.retained_text_batches == 128))
+            (event == .text_input_batch and self.retained_text_batches == 128) or
+            (event == .clipboard_changed and self.retained_clipboards == 8))
         {
             self.failed = true;
             release(event);
@@ -362,6 +368,7 @@ pub const OrderedEvents = struct {
             self.retained_layout_source_bytes += event.keyboard_layout.source_bytes;
         }
         if (event == .text_input_batch) self.retained_text_batches += 1;
+        if (event == .clipboard_changed) self.retained_clipboards += 1;
     }
 
     fn removeWindow(self: *OrderedEvents, window: *Window) void {
@@ -378,10 +385,12 @@ pub const OrderedEvents = struct {
     fn release(event: Event) void {
         if (event == .keyboard_layout) xkb.xkb_keymap_unref(event.keyboard_layout.keymap);
         if (event == .text_input_batch) event.text_input_batch.destroy();
+        if (event == .clipboard_changed) if (event.clipboard_changed.payload) |payload| payload.destroy();
     }
 
     fn releaseRetained(self: *OrderedEvents, event: Event) void {
         if (event == .text_input_batch) self.retained_text_batches -= 1;
+        if (event == .clipboard_changed) self.retained_clipboards -= 1;
         if (event == .keyboard_layout) {
             self.retained_layouts -= 1;
             self.retained_layout_source_bytes -= event.keyboard_layout.source_bytes;
@@ -615,6 +624,13 @@ pub const Session = struct {
     text_input_manager_global: ?u32 = null,
     text_input: ?*TextInput = null,
     text_input_failure: ?anyerror = null,
+    data_device_manager: ?*wl.DataDeviceManager = null,
+    data_device_manager_global: ?u32 = null,
+    clipboard: ?*Clipboard = null,
+    clipboard_failure: ?anyerror = null,
+    clipboard_revision: i64 = 0,
+    clipboard_serial: ?u32 = null,
+    clipboard_pending: ?Clipboard.Pending = null,
     pointer_constraints: ?*zwp.PointerConstraintsV1 = null,
     relative_pointer_manager: ?*zwp.RelativePointerManagerV1 = null,
     seat_global_name: ?u32 = null,
@@ -644,6 +660,7 @@ pub const Session = struct {
         xdg_shell_max_version: u32 = 6,
         tablet: bool = true,
         text_input: bool = true,
+        clipboard: bool = false,
         fractional_scale: bool = true,
         presentation: bool = true,
         cursor_shape: bool = true,
@@ -670,6 +687,7 @@ pub const Session = struct {
         if (self.output_failure) |failure| return failure;
         if (self.tablet_failure) |failure| return failure;
         if (self.text_input_failure) |failure| return failure;
+        if (self.clipboard_failure) |failure| return failure;
         if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         return self;
     }
@@ -695,6 +713,7 @@ pub const Session = struct {
         if (self.output_failure) |failure| return failure;
         if (self.tablet_failure) |failure| return failure;
         if (self.text_input_failure) |failure| return failure;
+        if (self.clipboard_failure) |failure| return failure;
         if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         var timeout = timeout_ms;
         if (self.pointer_focus) |window| {
@@ -718,6 +737,7 @@ pub const Session = struct {
             if (self.output_failure) |failure| return failure;
             if (self.tablet_failure) |failure| return failure;
             if (self.text_input_failure) |failure| return failure;
+            if (self.clipboard_failure) |failure| return failure;
             if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
             timeout = 0;
         }
@@ -736,8 +756,8 @@ pub const Session = struct {
             else => return error.FlushFailed,
         };
 
-        var storage: [66]std.Io.Operation.Storage = undefined;
-        var batch = std.Io.Batch.init(storage[0 .. wakes.len + 1]);
+        var storage: [67]std.Io.Operation.Storage = undefined;
+        var batch = std.Io.Batch.init(storage[0 .. wakes.len + 1 + @as(usize, if (self.clipboard != null) 1 else 0)]);
         defer batch.cancel(self.io);
         // The pinned std.Io.Threaded batches file operations behind readiness,
         // including a zero-byte read. This borrows the libwayland socket without
@@ -750,13 +770,20 @@ pub const Session = struct {
         };
         var empty: [0]u8 = .{};
         batch.addAt(0, .{ .file_read_streaming = .{ .file = borrowed, .data = &.{&empty} } });
-        var counters: [65]u64 = undefined;
-        var vectors: [65][1][]u8 = undefined;
+        var counters: [66]u64 = undefined;
+        var vectors: [66][1][]u8 = undefined;
         for (wakes, 0..) |file, index| {
             vectors[index][0] = std.mem.asBytes(&counters[index]);
             batch.addAt(@intCast(index + 1), .{ .file_read_streaming = .{
                 .file = file,
                 .data = &vectors[index],
+            } });
+        }
+        if (self.clipboard) |clipboard| {
+            vectors[wakes.len][0] = std.mem.asBytes(&counters[wakes.len]);
+            batch.addAt(@intCast(wakes.len + 1), .{ .file_read_streaming = .{
+                .file = clipboard.transfers.wake.file,
+                .data = &vectors[wakes.len],
             } });
         }
         const deadline: std.Io.Timeout = if (timeout < 0) .none else .{ .duration = .{
@@ -771,6 +798,7 @@ pub const Session = struct {
         // after cancellation so no consumed notification is lost.
         batch.cancel(self.io);
         var readable = false;
+        var clipboard_ready = false;
         while (batch.next()) |completion| {
             if (completion.index == 0) {
                 _ = try completion.result.file_read_streaming;
@@ -778,7 +806,7 @@ pub const Session = struct {
             } else {
                 const count = try completion.result.file_read_streaming;
                 if (count != @sizeOf(u64)) return error.InvalidWakeNotification;
-                ready[completion.index - 1] = true;
+                if (completion.index == wakes.len + 1) clipboard_ready = true else ready[completion.index - 1] = true;
             }
         }
         if (readable) {
@@ -788,8 +816,10 @@ pub const Session = struct {
             if (self.output_failure) |failure| return failure;
             if (self.tablet_failure) |failure| return failure;
             if (self.text_input_failure) |failure| return failure;
+            if (self.clipboard_failure) |failure| return failure;
             if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         }
+        if (clipboard_ready) if (self.clipboard) |clipboard| clipboard.drain();
         for (self.windows.items) |window| _ = window.emitKeyRepeatIfDue();
         if (self.ordered_events) |*events| if (events.failed) return error.SeatEventQueueOverflow;
     }
@@ -811,7 +841,11 @@ pub const Session = struct {
         if (self.tablets) |tablets| tablets.detachTarget(window);
         if (self.ordered_events) |*events| events.removeWindow(window);
         if (self.pointer_focus == window) self.pointer_focus = null;
-        if (self.keyboard_focus == window) self.keyboard_focus = null;
+        if (self.keyboard_focus == window) {
+            self.clipboard_serial = null;
+            if (self.clipboard) |clipboard| clipboard.focus(false, 0);
+            self.keyboard_focus = null;
+        }
         for (self.windows.items, 0..) |candidate, index| {
             if (candidate == window) {
                 _ = self.windows.orderedRemove(index);
@@ -822,6 +856,7 @@ pub const Session = struct {
 
     fn pointerListener(pointer: *wl.Pointer, event: wl.Pointer.Event, self: *Session) void {
         if (event == .enter) self.pointer_focus = self.surfaceWindow(event.enter.surface);
+        if (event == .button and event.button.state == .pressed) self.clipboardInputSerial(event.button.serial);
         if (self.pointer_focus) |window| Window.pointerListener(pointer, event, window);
         if (event == .leave) self.pointer_focus = null;
     }
@@ -866,14 +901,19 @@ pub const Session = struct {
                 if (self.keyboard_focus) |old| old.push(.keyboard_reset);
                 self.keyboard_focus = self.surfaceWindow(entered.surface);
                 self.keyboard_state = KeyboardFocus.entered(entered.keys.*.slice(u32));
+                self.clipboard_serial = if (self.keyboard_focus != null) entered.serial else null;
+                if (self.clipboard) |clipboard| clipboard.focus(self.keyboard_focus != null, entered.serial);
                 if (self.keyboard_focus) |window| window.push(.{ .keyboard_focus = self.keyboard_state });
             },
             .leave => {
                 if (self.keyboard_focus) |window| Window.keyboardListener(keyboard, event, window);
+                if (self.clipboard) |clipboard| clipboard.focus(false, 0);
+                self.clipboard_serial = null;
                 self.keyboard_focus = null;
                 self.keyboard_state = .{ .active = false };
             },
             .key => |key| {
+                if (key.state == .pressed) self.clipboardInputSerial(key.serial);
                 if (key.key < 768) {
                     const mask = @as(u64, 1) << @intCast(key.key % 64);
                     if (key.state == .pressed) self.keyboard_state.held[key.key / 64] |= mask else self.keyboard_state.held[key.key / 64] &= ~mask;
@@ -1027,6 +1067,8 @@ pub const Session = struct {
     }
 
     fn releaseKeyboard(self: *Session) void {
+        self.clipboard_serial = null;
+        if (self.clipboard) |clipboard| clipboard.focus(false, 0);
         for (self.windows.items) |window| {
             window.key_repeat = null;
             window.push(.keyboard_reset);
@@ -1055,6 +1097,12 @@ pub const Session = struct {
     }
 
     fn destroyGlobals(self: *Session) void {
+        if (self.clipboard) |clipboard| clipboard.deinit();
+        self.clipboard = null;
+        if (self.clipboard_pending) |pending| if (pending.payload) |payload| payload.destroy();
+        self.clipboard_pending = null;
+        if (self.data_device_manager) |manager| manager.destroy();
+        self.data_device_manager = null;
         if (self.text_input) |input| input.deinit();
         self.text_input = null;
         if (self.text_input_manager) |manager| manager.destroy();
@@ -1138,6 +1186,9 @@ pub const Session = struct {
                     } else {
                         self.dmabuf.?.setListener(*Session, dmabufListener, self);
                     }
+                } else if (std.mem.orderZ(u8, g.interface, wl.DataDeviceManager.interface.name) == .eq and self.protocol_options.clipboard and self.data_device_manager == null) {
+                    self.data_device_manager = registry.bind(g.name, wl.DataDeviceManager, @min(g.version, 3)) catch return;
+                    self.data_device_manager_global = g.name;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.TextInputManagerV3.interface.name) == .eq and self.protocol_options.text_input and self.text_input_manager == null) {
                     self.text_input_manager = registry.bind(g.name, zwp.TextInputManagerV3, 1) catch return;
                     self.text_input_manager_global = g.name;
@@ -1181,6 +1232,20 @@ pub const Session = struct {
                 }
             },
             .global_remove => |removed| {
+                if (self.data_device_manager_global == removed.name or self.seat_global_name == removed.name) {
+                    if (self.clipboard) |clipboard| {
+                        self.clipboard_revision = clipboard.revision;
+                        self.clipboard_pending = clipboard.takePending();
+                        clipboard.deinit();
+                    }
+                    self.clipboard = null;
+                    if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .clipboard_available = false });
+                }
+                if (self.data_device_manager_global == removed.name) {
+                    if (self.data_device_manager) |manager| manager.destroy();
+                    self.data_device_manager = null;
+                    self.data_device_manager_global = null;
+                }
                 if (self.text_input_manager_global == removed.name or self.seat_global_name == removed.name) {
                     if (self.text_input) |input| input.deinit();
                     self.text_input = null;
@@ -1258,7 +1323,42 @@ pub const Session = struct {
             };
             if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .text_input_available = self.text_input != null });
         };
+        if (self.clipboard == null) if (self.data_device_manager) |manager| if (self.seat) |seat| {
+            self.clipboard = Clipboard.init(self.gpa, self.io, manager, seat, .{
+                .context = self,
+                .changed = clipboardChanged,
+                .issue = clipboardIssue,
+                .failure = clipboardFailure,
+            }) catch |err| failed: {
+                self.clipboard_failure = err;
+                break :failed null;
+            };
+            if (self.clipboard) |clipboard| {
+                clipboard.revision = self.clipboard_revision;
+                if (self.clipboard_pending) |pending| clipboard.restorePending(pending);
+                self.clipboard_pending = null;
+                if (self.clipboard_serial) |serial| clipboard.focus(self.keyboard_focus != null, serial);
+            }
+            if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .clipboard_available = self.clipboard != null });
+        };
         self.publishSeatCapabilities();
+    }
+    fn clipboardChanged(context: *anyopaque, revision: i64, payload: ?*Clipboard.Payload) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .clipboard_changed = .{ .revision = revision, .payload = payload } }) else if (payload) |owned| owned.destroy();
+    }
+    fn clipboardInputSerial(self: *Session, serial: u32) void {
+        if (self.keyboard_focus == null) return;
+        self.clipboard_serial = serial;
+        if (self.clipboard) |clipboard| clipboard.inputSerial(serial);
+    }
+    fn clipboardIssue(context: *anyopaque, issue: anyerror) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .clipboard_issue = issue });
+    }
+    fn clipboardFailure(context: *anyopaque, failure: anyerror) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        self.clipboard_failure = failure;
     }
     fn textInputFocus(context: *anyopaque, surface: *wl.Surface, active: bool) void {
         const self: *Session = @ptrCast(@alignCast(context));
@@ -1898,6 +1998,7 @@ pub const Window = struct {
         switch (event) {
             .down => |down| {
                 if (down.surface == null) return;
+                self.session.clipboardInputSerial(down.serial);
                 const point = self.allocateTouchPoint(down.id) orelse {
                     std.debug.print("azk: ignoring touch id {d}: Android supports at most 10 hosted contacts\n", .{down.id});
                     return;
@@ -3243,4 +3344,26 @@ test "text input event budget counts borrowed batches and releases every owner" 
     events.removeWindow(&window);
     try std.testing.expectEqual(@as(usize, 0), events.retained_text_batches);
     try std.testing.expectEqual(@as(usize, 0), events.take().len);
+}
+
+test "clipboard protocol contracts" {
+    _ = Clipboard;
+}
+
+test "clipboard event budget includes borrowed payloads and closes every owner" {
+    var events: OrderedEvents = .{};
+    defer events.deinit(std.testing.allocator);
+    for (0..8) |i| events.push(std.testing.allocator, null, .{ .clipboard_changed = .{
+        .revision = @intCast(i),
+        .payload = try Clipboard.Payload.init(std.testing.allocator, "text", "<b>text</b>"),
+    } });
+    try std.testing.expectEqual(@as(usize, 8), events.take().len);
+    events.push(std.testing.allocator, null, .{ .clipboard_changed = .{
+        .revision = 9,
+        .payload = try Clipboard.Payload.init(std.testing.allocator, "overflow", null),
+    } });
+    try std.testing.expect(events.failed);
+    try std.testing.expectEqual(@as(usize, 8), events.retained_clipboards);
+    try std.testing.expectEqual(@as(usize, 0), events.take().len);
+    try std.testing.expectEqual(@as(usize, 0), events.retained_clipboards);
 }

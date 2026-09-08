@@ -86,6 +86,7 @@ framework_patches = tuple(
         (61, "-HWUI-process-hosted-texture-updates.patch"),
         (62, "-ATMS-complete-host-permission-operations.patch"),
         (63, "-WM-observe-host-task-presentation-after-layout.patch"),
+        (64, "-Clipboard-connect-host-desktop-monitor.patch"),
     )
 )
 

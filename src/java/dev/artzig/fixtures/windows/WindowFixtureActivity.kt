@@ -44,9 +44,10 @@ open class WindowFixtureActivity : Activity() {
         fun button(label: String, action: () -> Unit): Button {
             val widget = Button(this).apply {
                 text = label
+                setPadding(0, 0, 0, 0)
                 setOnClickListener { action() }
             }
-            content.addView(widget)
+            content.addView(widget, LinearLayout.LayoutParams(-1, 28))
             return widget
         }
         button("Finish this activity") { finish() }
@@ -72,6 +73,7 @@ open class WindowFixtureActivity : Activity() {
         }
         button("Show decoded video") { startActivity(Intent(this, VideoFixtureActivity::class.java)) }
         button("Show IME editor") { startActivity(Intent(this, ImeFixtureActivity::class.java)) }
+        button("Show clipboard") { startActivity(Intent(this, ClipboardFixtureActivity::class.java)) }
         button("Recreate activity") { recreate() }
         button("Show SurfaceView") {
             content.addView(SurfaceView(this).apply {
@@ -92,7 +94,7 @@ open class WindowFixtureActivity : Activity() {
             permissionState = permissionNames.map(::checkSelfPermission).toIntArray()
             requestPermissions(permissionNames, 71)
         }
-        setContentView(content)
+        setContentView(android.widget.ScrollView(this).apply { addView(content) })
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, names: Array<out String>, results: IntArray) {

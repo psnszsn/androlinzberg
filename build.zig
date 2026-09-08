@@ -106,6 +106,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_compositor", 6);
     scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 8);
+    scanner.generate("wl_data_device_manager", 3);
     scanner.generate("wl_output", 4);
     scanner.generate("xdg_wm_base", 6);
     scanner.generate("wl_subcompositor", 1);
@@ -803,6 +804,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("event_fd", event_fd_mod);
+    surface_queue_mod.addImport("event_fd", event_fd_mod);
     const host_renderer_mod = b.createModule(.{
         .root_source_file = b.path("src/platform/host_renderer.zig"),
         .target = target,
@@ -849,13 +851,24 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .link_libc = true,
-            .imports = &.{.{ .name = "wayland", .module = wayland_mod }},
+            .imports = &.{
+                .{ .name = "wayland", .module = wayland_mod },
+                .{ .name = "event_fd", .module = event_fd_mod },
+            },
         }),
     });
     wayland_tests.root_module.linkSystemLibrary("wayland-client", .{ .needed = true });
     wayland_tests.root_module.linkSystemLibrary("xkbcommon", .{ .needed = true });
     const run_wayland_tests = b.addRunArtifact(wayland_tests);
     b.step("wayland-unit-test", "Test Wayland event ownership and protocol state").dependOn(&run_wayland_tests.step);
+    const data_transfer_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/platform/data_transfers.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "event_fd", .module = event_fd_mod }},
+    }) });
+    b.step("data-transfer-test", "Test bounded Wayland offer streams, deadlines and cancellation")
+        .dependOn(&b.addRunArtifact(data_transfer_tests).step);
     const codec_jni_check = b.addTest(.{ .root_module = codec_jni_mod });
     const host_renderer_check = b.addTest(.{ .root_module = host_renderer_mod });
     const apk_optimizer_check = b.addTest(.{ .root_module = apk_optimizer_mod });
@@ -1208,6 +1221,7 @@ pub fn build(b: *std.Build) void {
     suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-suspension.patch"));
     suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-tablet.patch"));
     suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-ime.patch"));
+    suspension_compositor.run.addFileInput(b.path("testdata/wayland/labwc-clipboard.patch"));
     suspension_compositor.run.addFileInput(artzig_dep.path("flake.nix"));
     suspension_compositor.run.addFileInput(artzig_dep.path("flake.lock"));
     suspension_compositor.addArg("--out-link");
@@ -1257,9 +1271,10 @@ pub fn build(b: *std.Build) void {
         b.step(if (mixed_outputs) "stock-task-output-test" else if (tablet_fixture) "stock-task-tablet-test" else if (suspension_fixture) "stock-task-desktop-suspension-test" else if (legacy_shell) "stock-task-desktop-legacy-test" else if (std.mem.eql(u8, compositor, "cage")) "stock-task-wayland-test" else "stock-task-desktop-test", "Present two stock APK tasks through the session-owned Wayland service")
             .dependOn(&stock_task_wayland.run.step);
     }
-    for ([_][]const u8{ "desktop", "video", "ime" }) |fixture| {
+    for ([_][]const u8{ "desktop", "video", "ime", "clipboard" }) |fixture| {
         const video_fixture = std.mem.eql(u8, fixture, "video");
         const ime_fixture = std.mem.eql(u8, fixture, "ime");
+        const clipboard_fixture = std.mem.eql(u8, fixture, "clipboard");
         const desktop_launcher = @import("build/command.zig").create(b);
         setApplicationEnvironment(desktop_launcher, application_tree);
         desktop_launcher.setEnvironment("AZK_WINDOW_BACKEND", "stock");
@@ -1271,14 +1286,19 @@ pub fn build(b: *std.Build) void {
             desktop_launcher.setEnvironment("AZK_TEST_IME", "1");
             desktop_launcher.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
         }
+        if (clipboard_fixture) {
+            desktop_launcher.setEnvironment("AZK_TEST_CLIPBOARD", "1");
+            desktop_launcher.setFileEnvironment("SHOT_LABWC_BINARY", suspension_labwc.path(b, "bin/labwc"));
+        }
         desktop_launcher.addArg("env");
         desktop_launcher.addPrefixedFileArg("SHOT_LABWC_CONFIG=", b.path("testdata/wayland/launcher-desktop.xml"));
         desktop_launcher.addFileArg(b.path("tools/shot.sh"));
-        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else if (ime_fixture) "zig-out/test-results/stock-ime" else "zig-out/test-results/stock-desktop-launcher"});
+        const launcher_artifacts = b.pathResolve(&.{if (video_fixture) "zig-out/test-results/stock-video" else if (ime_fixture) "zig-out/test-results/stock-ime" else if (clipboard_fixture) "zig-out/test-results/stock-clipboard" else "zig-out/test-results/stock-desktop-launcher"});
         desktop_launcher.addArgs(&.{ b.pathResolve(&.{ launcher_artifacts, "screenshot.png" }), "--runner", "--", "python3" });
         desktop_launcher.addFileArg(b.path("tests/native/stock-wayland-task-test.py"));
         if (video_fixture) desktop_launcher.addArg("--video");
         if (ime_fixture) desktop_launcher.addArg("--ime");
+        if (clipboard_fixture) desktop_launcher.addArg("--clipboard");
         desktop_launcher.addArgs(&.{ "--launcher", "--testkit" });
         desktop_launcher.addDirectoryArg(testkit_tree.getDirectory());
         desktop_launcher.addArg("--seat");
@@ -1288,7 +1308,7 @@ pub fn build(b: *std.Build) void {
         desktop_launcher.addFileArg(window_fixture.apk);
         desktop_launcher.run.has_side_effects = true;
         desktop_launcher.run.setName("verify APK desktop launch and compositor close through ATMS");
-        b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
+        b.step(if (video_fixture) "stock-video-test" else if (ime_fixture) "stock-ime-test" else if (clipboard_fixture) "stock-clipboard-test" else "stock-desktop-launcher-test", "Launch an APK through ATMS and verify task-scoped UI through Wayland")
             .dependOn(&desktop_launcher.run.step);
     }
     const framework_module_smoke = @import("build/command.zig").create(b);

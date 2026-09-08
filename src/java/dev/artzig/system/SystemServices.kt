@@ -411,6 +411,7 @@ internal object SystemServices {
         android.os.ServiceManager.addService(Context.APPWIDGET_SERVICE, HostedAppWidgetService(context, hostedPermissions))
         stockWindows?.startWindows(manager, activityManager)
         // Reused AOSP clipboard service (publishes "clipboard" itself).
+        if (stockWindows != null) HostedClipboardMonitor.enable()
         manager.startService(com.android.server.clipboard.ClipboardService::class.java)
         manager.startService(com.android.server.NetworkScoreService.Lifecycle::class.java)
         manager.startService(com.android.server.texttospeech.TextToSpeechManagerService::class.java)

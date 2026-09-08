@@ -29,6 +29,8 @@ extern "c" fn AParcel_getDataPosition(*const Parcel) i32;
 extern "c" fn AParcel_getDataSize(*const Parcel) i32;
 extern "c" fn AParcel_readString(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool) i32;
 extern "c" fn AParcel_readStrongBinder(*const Parcel, *?*Binder) i32;
+extern "c" fn AParcel_readByteArray(*const Parcel, ?*anyopaque, *const fn (?*anyopaque, i32, ?*?[*]u8) callconv(.c) bool) i32;
+extern "c" fn AParcel_writeByteArray(*Parcel, ?[*]const u8, i32) i32;
 extern "c" fn AParcel_writeInt32(*Parcel, i32) i32;
 extern "c" fn AParcel_writeInt64(*Parcel, i64) i32;
 extern "c" fn AParcel_writeString(*Parcel, [*]const u8, i32) i32;
@@ -148,6 +150,20 @@ const Server = struct {
         if (self.session.ordered_events.?.failed) return error.SeatEventQueueOverflow;
         for (self.session.ordered_events.?.take()) |item| {
             switch (item.event) {
+                .clipboard_available => |available| {
+                    std.log.info("task clipboard available={any}", .{available});
+                    if (self.owner) |callback| try sendGlobal(callback, 23, .{available});
+                    continue;
+                },
+                .clipboard_changed => |change| {
+                    if (self.owner) |callback| try sendClipboard(callback, change.revision, change.payload);
+                    continue;
+                },
+                .clipboard_issue => |issue| {
+                    std.log.warn("task clipboard: {s}", .{@errorName(issue)});
+                    if (self.owner) |callback| try sendGlobal(callback, 25, .{@as([]const u8, @errorName(issue))});
+                    continue;
+                },
                 .text_input_available => |available| {
                     std.log.info("task text input available={any}", .{available});
                     if (self.owner) |callback| try sendGlobal(callback, 20, .{available});
@@ -438,10 +454,29 @@ const Server = struct {
             return 0;
         }
         if (self.owner_pid != 0 and self.owner_pid != request.pid) return -1;
-        if (request.code == 19) {
+        if (request.code == 19 or request.code == 21) {
             try end(request.input);
             try ok(AParcel_writeInt32(request.output, 0));
-            try ok(AParcel_writeInt32(request.output, @intFromBool(self.session.text_input != null)));
+            try ok(AParcel_writeInt32(request.output, @intFromBool(if (request.code == 19) self.session.text_input != null else self.session.clipboard != null)));
+            return 0;
+        }
+        if (request.code == 22) {
+            const revision = try readLong(request.input);
+            if (revision <= 0) return error.InvalidClipboardRevision;
+            var text: ClipboardBytes = .{ .gpa = self.gpa };
+            defer text.deinit();
+            var html: ClipboardBytes = .{ .gpa = self.gpa };
+            defer html.deinit();
+            try ok(AParcel_readByteArray(request.input, &text, ClipboardBytes.allocate));
+            try ok(AParcel_readByteArray(request.input, &html, ClipboardBytes.allocate));
+            try end(request.input);
+            if (text.bytes == null and html.bytes != null) return error.HtmlWithoutClipboardText;
+            if (self.session.clipboard) |clipboard| {
+                const payload = if (text.bytes) |bytes| try Queue.Clipboard.Payload.init(self.gpa, bytes, html.bytes) else null;
+                try clipboard.set(revision, payload);
+            }
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, @intFromBool(self.session.clipboard != null)));
             return 0;
         }
         const input = request.input;
@@ -699,7 +734,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 20) return -38;
+    if (code < 1 or code > 22) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -823,6 +858,36 @@ fn sendGlobal(callback: *Binder, code: u32, values: anytype) !void {
     try writeValues(input.?, values);
     try ok(AIBinder_transact(callback, code, &input, &output, 1));
 }
+const ClipboardBytes = struct {
+    gpa: std.mem.Allocator,
+    bytes: ?[]u8 = null,
+    fn deinit(self: *ClipboardBytes) void {
+        if (self.bytes) |bytes| self.gpa.free(bytes);
+    }
+    fn allocate(context: ?*anyopaque, length: i32, out: ?*?[*]u8) callconv(.c) bool {
+        const self: *ClipboardBytes = @ptrCast(@alignCast(context.?));
+        if (length < -1 or length > 256 * 1024 or self.bytes != null) return false;
+        if (length == -1) return true;
+        const destination = out orelse return false;
+        const bytes = self.gpa.alloc(u8, @intCast(length)) catch return false;
+        self.bytes = bytes;
+        destination.* = bytes.ptr;
+        return true;
+    }
+};
+fn sendClipboard(callback: *Binder, revision: i64, payload: ?*Queue.Clipboard.Payload) !void {
+    var input: ?*Parcel = null;
+    var output: ?*Parcel = null;
+    try ok(AIBinder_prepareTransaction(callback, &input));
+    defer if (input) |parcel| AParcel_delete(parcel);
+    defer if (output) |parcel| AParcel_delete(parcel);
+    try ok(AParcel_writeInt64(input.?, revision));
+    const text: ?[]const u8 = if (payload) |value| value.text else null;
+    const html: ?[]const u8 = if (payload) |value| value.html else null;
+    for ([_]?[]const u8{ text, html }) |bytes|
+        try ok(AParcel_writeByteArray(input.?, if (bytes) |value| value.ptr else null, if (bytes) |value| @intCast(value.len) else -1));
+    try ok(AIBinder_transact(callback, 24, &input, &output, 1));
+}
 fn writeValues(parcel: *Parcel, values: anytype) !void {
     inline for (values) |value| switch (@typeInfo(@TypeOf(value))) {
         .bool => try ok(AParcel_writeInt32(parcel, @intFromBool(value))),
@@ -860,6 +925,7 @@ fn run(init: std.process.Init) !void {
         2;
     const cursor_shape = !inspection_enabled or !std.mem.eql(u8, init.minimal.environ.getPosix("AZK_TEST_CURSOR_SHAPE") orelse "1", "0");
     const session = try Queue.Session.initWithOptions(init.gpa, io, .{
+        .clipboard = true,
         .virtual_pointer_max_version = pointer_version,
         .cursor_shape = cursor_shape,
         .xdg_shell_max_version = if (inspection_enabled)

@@ -91,12 +91,66 @@ class TestControlClient(
         stableFrames: Int,
         allowMissing: Boolean,
     ): StepResult {
+        val actionJson = JsonObject().apply {
+            add("selector", selector.toJson())
+            for ((name, value) in action.toJson().entrySet()) add(name, value)
+        }
+        return recordedStep(actionJson, allowMissing) { before -> perform(selector, action, settle, stableFrames, before) }
+    }
+
+    /** Native desktop tools participate in the same diagnostic cursor and
+     * retained step journal as Android UI actions. argv never passes a shell. */
+    internal fun stepExec(argv: List<String>, selector: dev.artzig.testkit.Selector,
+        wait: WaitKind, stableFrames: Int, allowMissing: Boolean): StepResult {
+        require(argv.isNotEmpty()) { "exec requires a command" }
+        val actionJson = JsonObject().apply {
+            addProperty("kind", "host_exec")
+            add("argv", gson.toJsonTree(argv))
+            add("selector", selector.toJson())
+        }
+        return recordedStep(actionJson, allowMissing) { before ->
+            val process = ProcessBuilder(argv).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD).start()
+            process.outputStream.close()
+            try {
+                check(process.waitFor(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    "Native command timed out: ${argv.first()}"
+                }
+                check(process.exitValue() == 0) { "Native command exited ${process.exitValue()}: ${argv.first()}" }
+            } finally {
+                if (process.isAlive) {
+                    process.descendants().use { children -> children.forEach { it.destroyForcibly() } }
+                    process.destroyForcibly()
+                    process.waitFor(1000, java.util.concurrent.TimeUnit.MILLISECONDS)
+                }
+                process.inputStream.close()
+                process.errorStream.close()
+            }
+            try {
+                observe(selector.takeUnless { it.isEmpty }, wait, includeTree = true, stableFrames, before)
+                    .apply { add("result", JsonObject().apply { addProperty("exit_code", 0) }) }
+            } catch (failure: VarlinkException) {
+                // Observe's timeout says it performed no Android action. The
+                // native command already succeeded; preserve that distinction
+                // so a settle failure cannot be mistaken for an unapplied copy.
+                val response = failure.response.deepCopy()
+                val parameters = response.objectOrEmpty("parameters")
+                parameters.addProperty("applied", true)
+                parameters.addProperty("stage", "settle")
+                response.add("parameters", parameters)
+                throw VarlinkException(response)
+            }
+        }
+    }
+
+    private fun recordedStep(actionJson: JsonObject, allowMissing: Boolean,
+        operation: (Mark) -> JsonObject): StepResult {
         val before = mark()
         val rawOffset = rawLogPath?.let { path -> runCatching { Files.size(path) }.getOrDefault(0) } ?: 0
         var actionParameters: JsonObject? = null
         var actionError: JsonElement? = null
         try {
-            actionParameters = perform(selector, action, settle, stableFrames, before)
+            actionParameters = operation(before)
         } catch (error: VarlinkException) {
             actionError = error.response
         } catch (error: Exception) {
@@ -114,10 +168,6 @@ class TestControlClient(
         val raw = readRawLog(rawOffset)
         val after = actionParameters?.let(::findMark) ?: findMark(diagnosticsJson)
         val ok = actionError == null && diagnosticError == null && (allowMissing || diagnostics.issues.isEmpty())
-        val actionJson = JsonObject().apply {
-            add("selector", selector.toJson())
-            for ((name, value) in action.toJson().entrySet()) add(name, value)
-        }
         val record = JsonObject().apply {
             addProperty("ok", ok)
             add("action", actionJson)

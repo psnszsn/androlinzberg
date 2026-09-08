@@ -72,7 +72,8 @@ object AzkTestCli {
             "mark" -> JsonObject().apply { add("mark", client.mark().toJson()) } to 0
             "diagnose" -> client.diagnose(args.since?.let { loadMark(client, it) }) to 0
             "step" -> {
-                val step = client.step(
+                val step = if (args.exec.isNotEmpty()) client.stepExec(args.exec, args.selector, args.wait, args.stableFrames, args.allowMissing)
+                else client.step(
                     args.selector,
                     args.action ?: throw UsageException("step requires an action"),
                     args.settle,
@@ -157,6 +158,7 @@ object AzkTestCli {
         var toXFraction: Double? = null
         var toYFraction: Double? = null
         val positional = mutableListOf<String>()
+        var exec = emptyList<String>()
 
         while (cursor < args.size) {
             val rawArgument = args[cursor++]
@@ -169,6 +171,11 @@ object AzkTestCli {
                 if (attachedValue != null) throw UsageException("$argument does not take a value")
             }
             when (argument) {
+                "--" -> {
+                    if (command != "step:exec") throw UsageException("-- command arguments require step exec")
+                    exec = args.drop(cursor)
+                    cursor = args.size
+                }
                 "--task-id" -> taskId = value().toIntOrNull()?.takeIf { it >= 0 }
                     ?: throw UsageException("--task-id requires a nonnegative integer")
                 "--window-id" -> windowId = value().toLongOrNull()?.takeIf { it > 0 }
@@ -212,6 +219,8 @@ object AzkTestCli {
         }
 
         val actualCommand = command.substringAfter("step:", command)
+        if (actualCommand == "exec" && (command != "step:exec" || exec.isEmpty()))
+            throw UsageException("use step exec [observation options] -- COMMAND [ARG...]")
         if (actualCommand != "drag" && listOf(toXFraction, toYFraction).any { it != null }) {
             throw UsageException("--to-x/--to-y require the drag command")
         }
@@ -291,6 +300,7 @@ object AzkTestCli {
             allowMissing = allowMissing,
             since = since,
             action = action,
+            exec = exec,
         )
     }
 
@@ -326,13 +336,14 @@ object AzkTestCli {
         val allowMissing: Boolean = false,
         val since: String? = null,
         val action: Action? = null,
+        val exec: List<String> = emptyList(),
     )
 
     private class UsageException(message: String) : IllegalArgumentException(message)
 
     private val COMMANDS = setOf(
         "observe", "wait", "notifications", "click", "drag", "scroll-forward", "scroll-backward",
-        "type", "set-text", "key", "mark", "diagnose",
+        "type", "set-text", "key", "mark", "diagnose", "exec",
     )
 
     private const val USAGE = """usage: azk-test [--socket PATH] [--timeout SECONDS] COMMAND ...
@@ -345,6 +356,7 @@ Commands:
   mark
   diagnose [--since JSON|@PATH]
   step click|drag|scroll-forward|scroll-backward|type|set-text|key [selector] [value] [settle options]
+  step exec [selector] [--wait now|ready|idle|exists|absent] -- COMMAND [ARG...]
 
 Selectors: --id ID --text TEXT --description TEXT --class CLASS --role ROLE
            --state-description TEXT --index N --visible true|false --all-windows

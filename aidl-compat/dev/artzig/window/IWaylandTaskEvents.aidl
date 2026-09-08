@@ -30,4 +30,7 @@ oneway interface IWaylandTaskEvents {
     void textInputEdit(int taskId, long generation, long editorGeneration, long sequence, int fields,
         String preedit, int cursorBegin, int cursorEnd, String committed,
         int beforeBytes, int afterBytes);
+    void clipboardAvailability(boolean available);
+    void clipboardChanged(long revision, in @nullable byte[] text, in @nullable byte[] html);
+    void clipboardIssue(String detail);
 }

@@ -59,6 +59,10 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         input.modifiers(state[6], state[7])
         publishCapabilities(state[1], state[2])
         textInput.availability(remote.textInputAvailable())
+        dev.artzig.system.HostedClipboardMonitor.current()?.connect(
+            object : dev.artzig.system.HostedClipboardMonitor.Publisher {
+                override fun publish(revision: Long, text: ByteArray?, html: ByteArray?) = remote.setClipboard(revision, text, html)
+            }, remote.clipboardAvailable())
     }
     private val capture = WaylandPointerCapture(object : WaylandPointerCapture.Host {
         override fun task(token: android.os.IBinder) = taskForToken(token)?.let { windows[it]?.task }
@@ -101,6 +105,34 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     // Binder serializes oneway calls per target object. One callback for the
     // whole seat preserves leave/enter/key chronology across different tasks.
     private val callback = object : IWaylandTaskEvents.Stub() {
+        private val queuedClipboard = java.util.concurrent.atomic.AtomicInteger()
+        private val clipboardOverflow = java.util.concurrent.atomic.AtomicBoolean()
+        override fun clipboardAvailability(available: Boolean) = deliverSeat {
+            dev.artzig.system.HostedClipboardMonitor.current()?.availability(available)
+        }
+        override fun clipboardChanged(revision: Long, text: ByteArray?, html: ByteArray?) {
+            if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
+                throw SecurityException("Only the session presenter may publish clipboard data")
+            require(revision >= 0 && (text?.size ?: 0) <= 256 * 1024 && (html?.size ?: 0) <= 256 * 1024)
+            if (queuedClipboard.incrementAndGet() > 8) {
+                queuedClipboard.decrementAndGet()
+                if (clipboardOverflow.compareAndSet(false, true)) check(handler.post {
+                    dev.artzig.system.HostedClipboardMonitor.issue("Clipboard callback capacity exceeded")
+                    clipboardOverflow.set(false)
+                })
+                return
+            }
+            if (!handler.post {
+                try { dev.artzig.system.HostedClipboardMonitor.current()?.changed(revision, text, html) }
+                finally { queuedClipboard.decrementAndGet() }
+            }) {
+                queuedClipboard.decrementAndGet()
+                error("Clipboard owner handler has stopped")
+            }
+        }
+        override fun clipboardIssue(detail: String) = deliverSeat {
+            dev.artzig.system.HostedClipboardMonitor.nativeIssue(detail)
+        }
         private fun deliverSeat(action: () -> Unit) {
             if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
                 throw SecurityException("Only the session presenter may publish seat state")
