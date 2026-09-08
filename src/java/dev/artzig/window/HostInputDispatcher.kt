@@ -66,6 +66,14 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
     fun setInputFilterEnabled(enabled: Boolean) = nativeSetInputFilterEnabled(handle, enabled)
     fun setInTouchMode(inTouchMode: Boolean, pid: Int, uid: Int, hasPermission: Boolean, displayId: Int): Boolean =
         nativeSetInTouchMode(handle, inTouchMode, pid, uid, hasPermission, displayId)
+    data class DragTarget(val token: IBinder, val x: Float, val y: Float)
+    fun hostedDragTarget(task: IBinder, previous: IBinder?, display: Int, x: Float, y: Float,
+        hover: Boolean): DragTarget? {
+        require(x.isFinite() && y.isFinite())
+        val local = FloatArray(2)
+        val token = nativeHostedDragTarget(handle, task, previous, display, x, y, hover, local) ?: return null
+        return DragTarget(token, local[0], local[1])
+    }
     fun transferTouch(from: IBinder, to: IBinder, isDragDrop: Boolean, entireGesture: Boolean): Boolean =
         nativeTransferTouch(handle, from, to, isDragDrop, entireGesture)
     fun transferTouchOnDisplay(to: IBinder, displayId: Int): Boolean = nativeTransferTouchOnDisplay(handle, to, displayId)
@@ -107,6 +115,8 @@ class HostInputDispatcher(callbacks: Callbacks) : AutoCloseable {
         @JvmStatic private external fun nativeSetKeyRepeatConfiguration(handle: Long, timeoutMillis: Int, delayMillis: Int, enabled: Boolean)
         @JvmStatic private external fun nativeSetInputFilterEnabled(handle: Long, enabled: Boolean)
         @JvmStatic private external fun nativeSetInTouchMode(handle: Long, inTouchMode: Boolean, pid: Int, uid: Int, hasPermission: Boolean, displayId: Int): Boolean
+        @JvmStatic private external fun nativeHostedDragTarget(handle: Long, task: IBinder, previous: IBinder?,
+            display: Int, x: Float, y: Float, hover: Boolean, local: FloatArray): IBinder?
         @JvmStatic private external fun nativeTransferTouch(handle: Long, from: IBinder, to: IBinder, isDragDrop: Boolean, entireGesture: Boolean): Boolean
         @JvmStatic private external fun nativeTransferTouchOnDisplay(handle: Long, to: IBinder, displayId: Int): Boolean
         @JvmStatic private external fun nativePilferPointers(handle: Long, token: IBinder)

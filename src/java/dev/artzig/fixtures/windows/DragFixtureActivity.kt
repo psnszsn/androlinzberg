@@ -27,9 +27,9 @@ class DragFixtureActivity : Activity() {
         val events = ArrayList<String>()
         var received: String? = null
         fun button(label: String, action: () -> Unit) {
-            content.addView(Button(this).apply { text = label; setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, 36))
+            content.addView(Button(this).apply { text = label; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, 36))
         }
-        button("Use drag text") { files = false; status.text = "Drag text ready" }
+        button("Use drag text") { files = false; accept = true; status.text = "Drag text ready" }
         button("Use drag file") { files = true; status.text = "Drag file ready" }
         button("Reject drag") { accept = false; status.text = "Drag rejection ready" }
         val area = object : View(this) {
@@ -68,7 +68,7 @@ class DragFixtureActivity : Activity() {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             setOnDragListener { _, event ->
                 when (event.action) {
-                    DragEvent.ACTION_DRAG_STARTED -> { events.add("start"); true }
+                    DragEvent.ACTION_DRAG_STARTED -> { events.clear(); received = null; events.add("start"); true }
                     DragEvent.ACTION_DRAG_ENTERED -> { events.add("enter"); true }
                     DragEvent.ACTION_DRAG_LOCATION -> { if ("location" !in events) events.add("location"); true }
                     DragEvent.ACTION_DRAG_EXITED -> { events.add("exit"); true }
@@ -77,6 +77,8 @@ class DragFixtureActivity : Activity() {
                         check(event.x >= width / 2f) { "Drop coordinates did not reach the target half" }
                         if (!accept) return@setOnDragListener false
                         val item = event.clipData.getItemAt(0)
+                        if (event.clipDescription.hasMimeType("text/html"))
+                            check(item.htmlText == "<b>Native rich 😀</b>") { "Drag HTML representation was lost" }
                         val permissions = if (item.uri != null) requestDragAndDropPermissions(event) else null
                         if (item.uri != null) checkNotNull(permissions) { "Missing stock drag URI permission object" }
                         try {
@@ -88,7 +90,10 @@ class DragFixtureActivity : Activity() {
                     DragEvent.ACTION_DRAG_ENDED -> {
                         events.add("end")
                         check(events.first() == "start" && events.last() == "end")
-                        if (accept) {
+                        if ("drop" !in events) {
+                            check(!event.result && received == null) { "Cancelled drag was consumed: $events" }
+                            status.text = "Drag cancelled"
+                        } else if (accept) {
                             check(events.indexOf("location") in 1 until events.indexOf("drop")) { events.toString() }
                             check(event.result && received != null) { "Drop was not consumed: $events" }
                             status.text = "Drag received=$received"

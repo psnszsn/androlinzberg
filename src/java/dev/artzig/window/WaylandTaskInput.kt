@@ -34,7 +34,7 @@ internal class WaylandTaskInput(private val android: Android,
     private val keys = linkedMapOf<Int, Pressed>()
     private val tablets = WaylandTabletInput(object : WaylandTabletInput.Android {
         override fun point(task: TaskGeometry.Task, x: Float, y: Float) =
-            windows[task.id]?.takeIf { it.task == task }?.tabletPoint(x, y)
+            windows[task.id]?.takeIf { it.task == task }?.surfacePoint(x, y)
         override fun metaState() = this@WaylandTaskInput.metaState()
         override fun dispatch(event: MotionEvent) = android.dispatch(event)
         override fun dispatchKey(event: KeyEvent, task: TaskGeometry.Task) = android.dispatch(event, false, task)
@@ -171,7 +171,7 @@ internal class WaylandTaskInput(private val android: Android,
         /** Surface-local coordinates use the same projection as TaskSurfaceOutput.
          * Gestures may extend beyond the surface, so do not clamp their samples.
          */
-        private fun point(x: Float, y: Float): Pair<Float, Float>? {
+        fun surfacePoint(x: Float, y: Float): Pair<Float, Float>? {
             if (!live() || !x.isFinite() || !y.isFinite()) return null
             val b = bounds ?: return null
             val s = output ?: return null
@@ -180,7 +180,6 @@ internal class WaylandTaskInput(private val android: Android,
             return if (px.isFinite() && py.isFinite()) px to py else null
         }
 
-        fun tabletPoint(x: Float, y: Float) = point(x, y)
         fun tablet(sample: WaylandTabletInput.Sample) { if (live()) tablets.sample(task, sample) }
         fun cancelTablet(deviceId: Int = -1) = tablets.cancel(task, deviceId)
 
@@ -190,7 +189,7 @@ internal class WaylandTaskInput(private val android: Android,
                 if (!live() || kind != POINTER_BUTTON) return
                 pointerX = 0f; pointerY = 0f
             } else {
-                val p = point(x, y) ?: return
+                val p = surfacePoint(x, y) ?: return
                 pointerX = p.first; pointerY = p.second
             }
             when (kind) {
@@ -243,7 +242,7 @@ internal class WaylandTaskInput(private val android: Android,
                 if (!live()) return
                 pointerX = 0f; pointerY = 0f
             } else {
-                val p = point(x, y) ?: return
+                val p = surfacePoint(x, y) ?: return
                 pointerX = p.first; pointerY = p.second
             }
             mouse(MotionEvent.ACTION_SCROLL, horizontal = horizontal, vertical = vertical)
@@ -360,7 +359,7 @@ internal class WaylandTaskInput(private val android: Android,
         }
 
         fun touch(action: Int, id: Int, x: Float, y: Float, major: Float, minor: Float, orientation: Float) {
-            val p = point(x, y) ?: return
+            val p = surfacePoint(x, y) ?: return
             if (!major.isFinite() || !minor.isFinite() || !orientation.isFinite() || major < 0 || minor < 0) return
             var contact = contacts[id]
             if (action == 0) {

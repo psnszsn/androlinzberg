@@ -461,7 +461,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
         .link_libcpp = true,
-        .imports = &.{.{ .name = "surface_queue", .module = surface_queue_mod }},
+        .imports = &.{ .{ .name = "surface_queue", .module = surface_queue_mod }, .{ .name = "wayland", .module = wayland_mod } },
     }) });
     surface_server.root_module.linkLibrary(gui_host);
     surface_server.root_module.linkLibrary(binder_cpp);

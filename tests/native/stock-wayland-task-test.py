@@ -427,10 +427,35 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     drag('Drag received=Android drag 😀 café')
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
                     drag('Drag received=Android file 😀 café')
+                    def native_drag(name, mime, payload, expected, consumed=True, cancel=False):
+                        report = out / ('native-drag-' + name + '.json')
+                        control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                                '--text', expected, '--', str(args.seat), '--native-drag-source',
+                                mime, payload, str(report), 'cancel' if cancel else 'accept' if consumed else 'reject')
+                        state = json.loads(report.read_text())
+                        assert state['failure'] is None and state['sends'] > 0 and state['dropped'] != cancel, state
+                        assert state['finished'] == consumed and state['cancelled'] != consumed, state
+                    native_drag('text', 'text/plain;charset=utf-8', 'Native drag 😀 café',
+                                'Drag received=Native drag 😀 café')
+                    native_drag('html', 'text/html', '<b>Native rich 😀</b>', 'Drag received=Native rich 😀')
+                    native_file = out / 'Native drag café.txt'
+                    native_file.write_text('Native file 😀 café')
+                    native_drag('file', 'text/uri-list', native_file.resolve().as_uri() + '\r\n',
+                                'Drag received=Native file 😀 café')
                     control('step', 'click', '--task-id', task, '--text', 'REJECT DRAG', '--via', 'semantic', '--settle', 'idle')
                     drag('Drag rejected')
+                    native_drag('rejected', 'text/plain;charset=utf-8', 'Rejected native drag', 'Drag rejected', False)
+                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG TEXT', '--via', 'semantic', '--settle', 'idle')
+                    native_drag('cancelled', 'text/plain;charset=utf-8', 'Cancelled native drag', 'Drag cancelled', False, True)
+                    ppm = subprocess.check_output(['grim', '-t', 'ppm', '-'], timeout=3)
+                    magic, dimensions, maximum, pixels = ppm.split(b'\n', 3)
+                    screen_width, screen_height = map(int, dimensions.split())
+                    for x, y, expected in [(50, 200, (220, 235, 255)), (400, 200, (210, 250, 220))]:
+                        offset = (y * screen_width + x) * 3
+                        actual = tuple(pixels[offset:offset + 3])
+                        assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 6 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 12 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']

@@ -113,6 +113,8 @@ proxy: *wl.DataOffer,
 token: u64,
 mimes: MimeTypes = .{},
 waiting: u3 = 0,
+source_actions: wl.DataDeviceManager.DndAction = .{},
+action: wl.DataDeviceManager.DndAction = .{},
 received: bool = false,
 text: ?[]u8 = null,
 html: ?[]u8 = null,
@@ -180,6 +182,7 @@ pub fn complete(self: *Self, completion: Transfers.Completion) !?*Payload {
 fn listener(_: *wl.DataOffer, event: wl.DataOffer.Event, self: *Self) void {
     switch (event) {
         .offer => |mime| self.mimes.add(std.mem.span(mime.mime_type)) catch |err| self.failure(self.context, err),
-        .source_actions, .action => {},
+        .source_actions => |event_actions| self.source_actions = event_actions.source_actions,
+        .action => |event_action| self.action = event_action.dnd_action,
     }
 }

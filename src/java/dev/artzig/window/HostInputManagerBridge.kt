@@ -99,6 +99,9 @@ class HostInputManagerBridge(private val context: Context, private val desktop: 
      * Wayland seat; it exposes no kernel double-tap control file to this client. */
     fun setPulseGestureEnabled(enabled: Boolean) {}
 
+    fun hostedDragTarget(task: IBinder, previous: IBinder?, display: Int, x: Float, y: Float,
+        hover: Boolean) = dispatcher.hostedDragTarget(task, previous, display, x, y, hover)
+
     fun createInputChannel(name: String): InputChannel = dispatcher.createInputChannel(name)
     fun removeInputChannel(token: IBinder) = dispatcher.removeInputChannel(token)
     fun monitorInput(name: String, displayId: Int): InputChannel =

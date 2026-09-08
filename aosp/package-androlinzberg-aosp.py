@@ -87,6 +87,7 @@ framework_patches = tuple(
         (62, "-ATMS-complete-host-permission-operations.patch"),
         (63, "-WM-observe-host-task-presentation-after-layout.patch"),
         (64, "-Clipboard-connect-host-desktop-monitor.patch"),
+        (65, "-WM-own-native-drag-lifecycle.patch"),
     )
 )
 
@@ -163,6 +164,10 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "frameworks/native",
         patch_root / "frameworks-native" / "0008-inputdispatcher-host-task-focus.patch",
+    ),
+    (
+        "frameworks/native",
+        patch_root / "frameworks-native" / "0009-inputdispatcher-host-native-drag.patch",
     ),
     (
         "system/libbase",

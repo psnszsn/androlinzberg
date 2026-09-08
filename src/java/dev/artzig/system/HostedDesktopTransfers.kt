@@ -21,7 +21,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Bounded asynchronous provider work. The source UID comes from stock
  * ClipboardService after checkDataOwner, never from a ClipData extra or client.
  */
-internal class HostedDesktopTransfers(private val context: Context, private val handler: Handler) {
+internal class HostedDesktopTransfers private constructor(private val context: Context, private val handler: Handler) {
+    companion object {
+        private var shared: HostedDesktopTransfers? = null
+        @Synchronized fun get(context: Context, handler: Handler): HostedDesktopTransfers {
+            val existing = shared
+            if (existing != null) {
+                check(existing.handler.looper === handler.looper)
+                return existing
+            }
+            return HostedDesktopTransfers(context, handler).also { shared = it }
+        }
+    }
     data class Staged(val token: String, val clip: ClipData, val uid: Int, val native: ByteArray)
     private val executor = ThreadPoolExecutor(2, 2, 0, TimeUnit.MILLISECONDS,
         ArrayBlockingQueue<Runnable>(4), { work -> Thread(work, "DesktopTransfer").apply { isDaemon = true } },

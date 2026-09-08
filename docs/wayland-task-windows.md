@@ -11,6 +11,42 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Native incoming drag and rendering lifetime (2026-09-08)
+
+Regression 419 passes 12 stock drag steps: Android text/file/rejection plus a
+separate native Wayland source sending Unicode text, HTML and a local file,
+observing rejection, and cancelling by leaving the destination. The native
+source uses a real held pointer serial and checks COPY negotiation and the
+terminal source event. The file recipient takes and releases stock
+DragAndDropPermissions. Both coloured drop regions remain visible in the
+compositor screenshot. Video (four steps), clipboard (19), desktop (13),
+Wayland ownership tests and C++/graph audits also pass. Artifacts:
+`/tmp/wayland-native-drag-419-artifacts/`.
+
+`HostedNativeDrag` adopts a stock WMS DragState for an external source, retaining
+recipient validation, URI grants, drop results and timeout. InputDispatcher's
+SF hit test, task ownership map and window transform resolve the recipient.
+Native locations use the same IWindow channel as START/DROP/END: sending the
+first location over a separate input FD raced START when the pointer stopped
+on entry. The Android View hierarchy still selects the receiving child.
+
+The seat owns one native offer, COPY acceptance and bounded asynchronous MIME
+streams. Offer IDs survive protocol recreation; late staging is matched to an
+attempt identity. Clipboard and drag share the provider's two-worker/four-queue
+staging budget. A file lease survives an attempted DROP because an app may hold
+its stock drag permissions beyond the gesture; the shared session storage limit
+still applies. Cancellation before DROP releases unpublished staging.
+
+The pixel gate exposed an HWUI lifetime error: imported EGL rendering objects
+were released after exporting completion and publishing the buffer. Their
+cleanup now precedes the exported fence, including the cancellation path, so
+the consumer waits for all producer work. Diagnostic readback and CPU waits
+were removed; regression 419 uses the asynchronous fence path.
+
+The combined package now contains 90 patches. This checkpoint covers incoming
+native COPY drags; outbound/cross-task drags, Android drag icons and the broader
+death/pressure/fallback matrix remain M10/M11 work.
+
 ## Main framework rebase (2026-09-08)
 
 Rebased onto main `1f84559`, incorporating its stock ringtone, MediaPlayer,

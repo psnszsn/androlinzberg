@@ -8,6 +8,7 @@ const Self = @This();
 const DataOffer = @import("data_offer.zig");
 pub const MimeTypes = DataOffer.MimeTypes;
 pub const Payload = DataOffer.Payload;
+pub const DragOffer = @import("drag_offer.zig");
 
 pub const Hooks = struct {
     context: *anyopaque,
@@ -15,6 +16,7 @@ pub const Hooks = struct {
     changed: *const fn (*anyopaque, i64, ?*Payload) void,
     issue: *const fn (*anyopaque, anyerror) void,
     failure: *const fn (*anyopaque, anyerror) void,
+    drag: ?DragOffer.Hooks = null,
 };
 pub const Pending = struct { payload: ?*Payload };
 const Offer = DataOffer;
@@ -40,6 +42,7 @@ hooks: Hooks,
 offers: [16]?*Offer = @splat(null),
 selection: ?*Offer = null,
 drag: ?*Offer = null,
+native_drag: ?DragOffer = null,
 source: ?*Source = null,
 pending: ?*Payload = null,
 has_pending: bool = false,
@@ -48,21 +51,23 @@ publication_confirmed: bool = true,
 publication_serial: ?u32 = null,
 serial: ?u32 = null,
 focused: bool = false,
-next_token: u64 = 8,
+next_token: *u64,
 revision: i64 = 0,
 
-pub fn init(gpa: std.mem.Allocator, io: std.Io, manager: *wl.DataDeviceManager, seat: *wl.Seat, hooks: Hooks) !*Self {
+pub fn init(gpa: std.mem.Allocator, io: std.Io, manager: *wl.DataDeviceManager, seat: *wl.Seat, next_token: *u64, hooks: Hooks) !*Self {
     const self = try gpa.create(Self);
     errdefer gpa.destroy(self);
     const transfers = try Transfers.init(gpa, io);
     errdefer transfers.deinit();
     const device = try manager.getDataDevice(seat);
-    self.* = .{ .gpa = gpa, .io = io, .manager = manager, .device = device, .transfers = transfers, .hooks = hooks };
+    self.* = .{ .gpa = gpa, .io = io, .manager = manager, .device = device, .transfers = transfers, .hooks = hooks, .next_token = next_token };
+    if (hooks.drag) |drag| self.native_drag = .{ .io = io, .hooks = drag };
     device.setListener(*Self, deviceListener, self);
     return self;
 }
 
 pub fn deinit(self: *Self) void {
+    if (self.native_drag) |*drag| drag.cancel();
     for (self.offers) |offer| if (offer) |live| self.destroyOffer(live);
     if (self.source) |source| self.destroySource(source);
     if (self.pending) |pending| pending.destroy();
@@ -72,9 +77,9 @@ pub fn deinit(self: *Self) void {
 }
 
 fn token(self: *Self) !u64 {
-    if (self.next_token > std.math.maxInt(u64) - 8) return error.ClipboardGenerationExhausted;
-    const result = self.next_token;
-    self.next_token += 8;
+    if (self.next_token.* > std.math.maxInt(i64) - 8) return error.ClipboardGenerationExhausted;
+    const result = self.next_token.*;
+    self.next_token.* += 8;
     return result;
 }
 
@@ -264,6 +269,7 @@ fn readSelection(self: *Self, offer: *Offer) !void {
 /// and callbacks remain on the Wayland thread.
 pub fn drain(self: *Self) void {
     while (self.transfers.take()) |completion| {
+        if (self.native_drag) |*drag| if (drag.complete(completion)) continue;
         const offer = self.selection;
         if (offer == null or (completion.token < offer.?.token or completion.token > offer.?.token + 2)) {
             if (completion.result) |bytes| self.gpa.free(bytes) else |err| self.hooks.issue(self.hooks.context, err);
@@ -303,17 +309,44 @@ fn deviceListener(_: *wl.DataDevice, event: wl.DataDevice.Event, self: *Self) vo
         .data_offer => |offer| self.newOffer(offer.id) catch |err| self.hooks.failure(self.hooks.context, err),
         .selection => |selection| self.selected(selection.id) catch |err| self.hooks.issue(self.hooks.context, err),
         .enter => |enter| {
-            if (self.drag) |old| self.destroyOffer(old);
-            if (enter.id) |id| {
-                self.drag = self.find(id);
-                id.accept(enter.serial, null);
-                self.hooks.issue(self.hooks.context, error.NativeDragBridgeUnavailable);
+            if (self.native_drag) |*drag| {
+                const surface = enter.surface orelse {
+                    drag.leave();
+                    if (enter.id) |id| if (self.find(id)) |offer| self.destroyOffer(offer);
+                    return;
+                };
+                if (enter.id) |id| {
+                    const offer = self.find(id) orelse {
+                        self.hooks.failure(self.hooks.context, error.UnknownDragOffer);
+                        return;
+                    };
+                    // Transfer ownership out of the registry before callbacks
+                    // can retire the drag. Clipboard ownership remains separate.
+                    for (&self.offers) |*slot| if (slot.* == offer) {
+                        slot.* = null;
+                    };
+                    drag.enter(offer, enter.serial, surface, enter.x.toDouble(), enter.y.toDouble()) catch |err|
+                        drag.hooks.issue(drag.hooks.context, err);
+                } else drag.leave();
+            } else {
+                if (self.drag) |old| self.destroyOffer(old);
+                if (enter.id) |id| {
+                    self.drag = self.find(id);
+                    id.accept(enter.serial, null);
+                    self.hooks.issue(self.hooks.context, error.NativeDragBridgeUnavailable);
+                }
             }
         },
-        .leave => if (self.drag) |offer| {
-            self.destroyOffer(offer);
+        .leave => {
+            if (self.native_drag) |*drag| drag.leave();
+            if (self.drag) |offer| self.destroyOffer(offer);
         },
-        .motion, .drop => {},
+        .motion => |motion| if (self.native_drag) |*drag| {
+            drag.motion(motion.x.toDouble(), motion.y.toDouble());
+        },
+        .drop => if (self.native_drag) |*drag| {
+            drag.drop();
+        },
     }
 }
 

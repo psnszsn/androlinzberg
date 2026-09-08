@@ -314,14 +314,15 @@ void ArtzigGpuPipeline::cancelWindowBuffer() {
     return;
   // Skia may have submitted writes before a later draw failure. Return their
   // fence with cancellation so another producer never overwrites live work.
+  const bool hadWindowBuffer = mWindowBufferSurface != nullptr;
+  mWindowBufferSurface.reset();
   auto completion = flush();
-  if (completion.get() < 0 && mWindowBufferSurface &&
+  if (completion.get() < 0 && hadWindowBuffer &&
       makeCurrent() != MakeCurrentResult::Failed) {
     // Export failed: finish actual GPU work before returning an unfenced
     // slot. This is an error path, not normal frame synchronization.
     glFinish();
   }
-  mWindowBufferSurface.reset();
   mAndroidWindow->cancelBuffer(mAndroidWindow, mDequeuedBuffer,
                                completion.release());
   mDequeuedBuffer = nullptr;
@@ -540,6 +541,10 @@ bool ArtzigGpuPipeline::swapBuffers(const Frame &,
       cancelWindowBuffer();
       return false;
     }
+    // Retire the imported rendering objects before exporting completion:
+    // image/texture destruction can itself enqueue driver work. The consumer
+    // must receive a fence covering every producer-side use of this storage.
+    mWindowBufferSurface.reset();
     auto completion = flush();
     if (completion.get() < 0) {
       ALOGE("artzig: Surface completion fence export failed");
@@ -554,7 +559,6 @@ bool ArtzigGpuPipeline::swapBuffers(const Frame &,
       cancelWindowBuffer();
       return false;
     }
-    mWindowBufferSurface.reset();
     mDequeuedBuffer = nullptr;
     if (gTraceFramePacing) ALOGI("artzig pacing: Surface %p queued", mAndroidWindow);
     return true;

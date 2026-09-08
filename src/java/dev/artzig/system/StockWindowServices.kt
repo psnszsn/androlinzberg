@@ -115,6 +115,7 @@ internal class StockWindowServices private constructor() {
         windows.enableScreenAfterBoot()
         if (System.getenv("AZK_TASK_WINDOWS") == "1") {
             check(android.view.HostedRootFrames.stockClients) { "Task windows require stock window clients" }
+            com.android.server.wm.HostedNativeDrag(windows, handler, input)
             shell = dev.artzig.window.SessionTaskShell.start(handler, input, devices::publishKeyboardMap,
                 devices::publishSeatCapabilities, devices::publishTabletDevice,
                 { id -> com.android.server.wm.HostedTaskInputTargets.taskToken(windows, id) },

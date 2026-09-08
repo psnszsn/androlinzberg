@@ -21,7 +21,7 @@ class HostedClipboardMonitor(context: android.content.Context, private val impor
     private data class Packet(val text: ByteArray?, val html: ByteArray?, val uris: ByteArray? = null, val lease: String? = null, var submitted: Boolean = false)
     private val handler = Handler(Looper.getMainLooper())
     private val lock = Any()
-    private val transfers = HostedDesktopTransfers(context, handler)
+    private val transfers = HostedDesktopTransfers.get(context, handler)
     private var operation = 0L
     private var imported: String? = null
     private data class Export(val token: Long, val clip: ClipData?, val uid: Int)
@@ -224,7 +224,7 @@ class HostedClipboardMonitor(context: android.content.Context, private val impor
                 throw IllegalArgumentException("Clipboard text contains an invalid Unicode scalar", failure)
             }
         }
-        private fun decode(bytes: ByteArray): String {
+        internal fun decode(bytes: ByteArray): String {
             require(bytes.size <= MAX_BYTES && bytes.none { it == 0.toByte() }) { "Invalid clipboard payload size or NUL" }
             return try {
                 Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)

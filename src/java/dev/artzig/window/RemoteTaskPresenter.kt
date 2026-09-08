@@ -14,6 +14,15 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     private val publishTablet: (WaylandTabletInput.Device, Boolean) -> Unit,
     acknowledgeCapture: (android.os.IBinder?, Int) -> Unit) : WaylandTaskShell.Presenter {
     private val windows = mutableMapOf<Int, Window>()
+    private val nativeDrag by lazy {
+        WaylandNativeDrag(handler, checkNotNull(com.android.server.LocalServices.getService(
+            com.android.server.wm.HostedNativeDrag::class.java)), object : WaylandNativeDrag.Host {
+            override fun point(task: TaskGeometry.Task, x: Float, y: Float) =
+                windows[task.id]?.takeIf { it.task == task }?.seat?.surfacePoint(x, y)
+            override fun accept(token: Long, accepted: Boolean) { remote.acceptNativeDrag(token, accepted) }
+            override fun finish(token: Long, consumed: Boolean) { remote.finishNativeDrag(token, consumed) }
+        })
+    }
     val textInput = WaylandInputMethod(handler, object : WaylandInputMethod.Host {
         override fun task(window: android.os.IBinder, uid: Int, pid: Int) =
             taskForEditor(window, uid, pid)?.let { windows[it]?.task }
@@ -105,6 +114,50 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
     // Binder serializes oneway calls per target object. One callback for the
     // whole seat preserves leave/enter/key chronology across different tasks.
     private val callback = object : IWaylandTaskEvents.Stub() {
+        private val queuedDrags = java.util.concurrent.atomic.AtomicInteger()
+        private val queuedDragPayloads = java.util.concurrent.atomic.AtomicInteger()
+        private val dragOverflow = java.util.concurrent.atomic.AtomicBoolean()
+        private fun dragEvent(payload: Boolean = false, action: () -> Unit) {
+            if (android.os.Binder.getCallingUid() != android.os.Process.SYSTEM_UID)
+                throw SecurityException("Only the session presenter may publish native drags")
+            val count = queuedDrags.incrementAndGet()
+            val payloads = if (payload) queuedDragPayloads.incrementAndGet() else 0
+            if (count > 128 || payloads > 8) {
+                queuedDrags.decrementAndGet()
+                if (payload) queuedDragPayloads.decrementAndGet()
+                if (dragOverflow.compareAndSet(false, true)) check(handler.post {
+                    nativeDrag.cancelCurrent()
+                    dev.artzig.ArtzigTestDiagnostics.reportIssue("runtime_exception", "WaylandDrag", "callbacks", "Native drag callback capacity exceeded")
+                    dragOverflow.set(false)
+                })
+                return
+            }
+            if (!handler.post {
+                try { action() } finally {
+                    queuedDrags.decrementAndGet()
+                    if (payload) queuedDragPayloads.decrementAndGet()
+                }
+            }) {
+                queuedDrags.decrementAndGet()
+                if (payload) queuedDragPayloads.decrementAndGet()
+                error("Native drag handler has stopped")
+            }
+        }
+        override fun nativeDragEntered(taskId: Int, generation: Long, token: Long, x: Float, y: Float) = dragEvent {
+            val window = windows[taskId]?.takeIf { it.task.generation == generation }
+            if (window == null) remote.finishNativeDrag(token, false)
+            else nativeDrag.entered(token, window.task, x, y)
+        }
+        override fun nativeDragMotion(token: Long, x: Float, y: Float) = dragEvent { nativeDrag.motion(token, x, y) }
+        override fun nativeDragPayload(token: Long, text: ByteArray?, html: ByteArray?, uris: ByteArray?) {
+            require(token > 0 && (text?.size ?: 0) <= 256 * 1024 && (html?.size ?: 0) <= 256 * 1024 && (uris?.size ?: 0) <= 256 * 1024)
+            dragEvent(true) { nativeDrag.payload(token, text, html, uris) }
+        }
+        override fun nativeDragDropped(token: Long) = dragEvent { nativeDrag.dropped(token) }
+        override fun nativeDragEnded(token: Long, consumed: Boolean) = dragEvent { nativeDrag.ended(token) }
+        override fun nativeDragIssue(detail: String) = dragEvent {
+            dev.artzig.ArtzigTestDiagnostics.reportIssue("runtime_exception", "WaylandDrag", "transfer", detail)
+        }
         private val queuedClipboard = java.util.concurrent.atomic.AtomicInteger()
         private val clipboardOverflow = java.util.concurrent.atomic.AtomicBoolean()
         override fun clipboardAvailability(available: Boolean) = deliverSeat {
@@ -269,6 +322,7 @@ internal class RemoteTaskPresenter(private val remote: IWaylandTaskPresenter,
         override fun close() {
             if (closed) return
             closed = true
+            nativeDrag.removed(task)
             textInput.removed(task)
             capture.closed(task)
             if (windows[task.id] === this) windows.remove(task.id)

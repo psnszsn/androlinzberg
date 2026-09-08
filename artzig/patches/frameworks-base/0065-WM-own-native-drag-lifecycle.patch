@@ -1,0 +1,58 @@
+--- a/services/core/java/com/android/server/wm/DragDropController.java
++++ b/services/core/java/com/android/server/wm/DragDropController.java
+@@ -134,6 +134,16 @@
+         return mDragState != null && mDragState.mRelinquishDragSurfaceToDropTarget;
+     }
+ 
++    // The host compositor owns incoming native gestures; the stock state still
++    // owns recipient validation, URI permissions, drop results and timeouts.
++    DragState hostedDragStateLocked() { return mDragState; }
++
++    boolean adoptHostedDragLocked(DragState state) {
++        if (mDragState != null) return false;
++        mDragState = state;
++        return true;
++    }
++
+     void registerCallback(IDragDropCallback callback) {
+         Objects.requireNonNull(callback);
+         mCallback.set(callback);
+--- a/services/core/java/com/android/server/wm/DragState.java
++++ b/services/core/java/com/android/server/wm/DragState.java
+@@ -113,6 +113,7 @@
+     ClipData mData;
+     ClipDescription mDataDescription;
+     boolean mDragResult;
++    boolean mHostedNativePresentation;
+     boolean mRelinquishDragSurfaceToDropTarget;
+     float mAnimatedScale = 1.0f;
+     float mStartDragAlpha;
+@@ -272,6 +273,8 @@
+             Trace.instant(TRACE_TAG_WINDOW_MANAGER, "DragDropController#DRAG_ENDED");
+         }
+ 
++        HostedNativeDrag.closed(this, mDragResult);
++
+         // Clear the internal variables.
+         if (mInputSurface != null) {
+             mTransaction.remove(mInputSurface).apply();
+@@ -686,7 +689,8 @@
+             return;
+         }
+         if (!mDragResult) {
+-            if (!isAccessibilityDragDrop() && !relinquishDragSurfaceToDragSource()) {
++            if (!mHostedNativePresentation && !isAccessibilityDragDrop()
++                    && !relinquishDragSurfaceToDragSource()) {
+                 mAnimator = createReturnAnimationLocked();
+                 return;  // Will call closeLocked() when the animation is done.
+             }
+@@ -698,7 +702,8 @@
+         if (mAnimator != null) {
+             return;
+         }
+-        if (!mDragInProgress || skipAnimation || isAccessibilityDragDrop()) {
++        if (!mDragInProgress || skipAnimation || mHostedNativePresentation
++                || isAccessibilityDragDrop()) {
+             // mDragInProgress is false if an app invokes Session#cancelDragAndDrop before
+             // Session#performDrag. Reset the drag state without playing the cancel animation
+             // because H.DRAG_START_TIMEOUT may be sent to WindowManagerService, which will cause

@@ -18,6 +18,9 @@ fn watchStdin(stop: *Stop) void {
 }
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "--native-drag-source")) {
+        return @import("native_drag_peer.zig").run(init, args);
+    }
     if (args.len >= 2 and std.mem.eql(u8, args[1], "--output-lifecycle")) {
         return outputLifecycle(init, args.len > 2 and std.mem.eql(u8, args[2], "fallback"));
     }

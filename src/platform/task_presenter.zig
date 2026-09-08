@@ -162,13 +162,39 @@ const Server = struct {
         if (self.session.ordered_events.?.failed) return error.SeatEventQueueOverflow;
         for (self.session.ordered_events.?.take()) |item| {
             switch (item.event) {
+                .native_drag_issue => |issue| {
+                    if (self.owner) |callback| try sendGlobal(callback, 31, .{@as([]const u8, @errorName(issue))});
+                    continue;
+                },
+                .native_drag => |event| {
+                    const callback = self.owner orelse continue;
+                    if (event == .ended) {
+                        try sendGlobal(callback, 30, .{ @as(i64, @intCast(event.ended.token)), event.ended.consumed });
+                        continue;
+                    }
+                    const entry = for (&self.entries) |*slot| {
+                        if (slot.*) |*candidate| if (candidate.window == item.window) break candidate;
+                    } else null;
+                    if (entry == null or !entry.?.inputGeometryReady()) {
+                        if (self.session.clipboard) |clipboard| if (clipboard.native_drag) |*drag| drag.cancel();
+                        continue;
+                    }
+                    switch (event) {
+                        .entered => |value| try sendGlobal(callback, 26, .{ entry.?.key.id, entry.?.key.generation, @as(i64, @intCast(value.token)), value.x, value.y }),
+                        .motion => |value| try sendGlobal(callback, 27, .{ @as(i64, @intCast(value.token)), value.x, value.y }),
+                        .payload => |value| try sendPayload(callback, 28, @intCast(value.token), value.value),
+                        .dropped => |token| try sendGlobal(callback, 29, .{@as(i64, @intCast(token))}),
+                        .ended => unreachable,
+                    }
+                    continue;
+                },
                 .clipboard_available => |available| {
                     std.log.info("task clipboard available={any}", .{available});
                     if (self.owner) |callback| try sendGlobal(callback, 23, .{available});
                     continue;
                 },
                 .clipboard_changed => |change| {
-                    if (self.owner) |callback| try sendClipboard(callback, change.revision, change.payload);
+                    if (self.owner) |callback| try sendPayload(callback, 24, change.revision, change.payload);
                     continue;
                 },
                 .clipboard_issue => |issue| {
@@ -513,6 +539,20 @@ const Server = struct {
             try ok(AParcel_writeInt32(request.output, @intFromBool(if (request.code == 19) self.session.text_input != null else self.session.clipboard != null)));
             return 0;
         }
+        if (request.code == 23 or request.code == 24) {
+            if (self.owner == null) return -1;
+            const token = try readLong(request.input);
+            const accepted = try readInt(request.input);
+            try end(request.input);
+            if (token <= 0 or (accepted != 0 and accepted != 1)) return error.InvalidDragResponse;
+            var applied = false;
+            if (self.session.clipboard) |clipboard| if (clipboard.native_drag) |*drag| {
+                applied = if (request.code == 23) drag.accept(@intCast(token), accepted != 0) else drag.finish(@intCast(token), accepted != 0);
+            };
+            try ok(AParcel_writeInt32(request.output, 0));
+            try ok(AParcel_writeInt32(request.output, @intFromBool(applied)));
+            return 0;
+        }
         if (request.code == 22) {
             const revision = try readLong(request.input);
             if (revision <= 0) return error.InvalidClipboardRevision;
@@ -790,7 +830,7 @@ fn transact(_: *Binder, code: u32, input: *const Parcel, output: *Parcel) callco
     defer _ = callbacks.fetchSub(1, .acq_rel);
     if (!accepting.load(.acquire)) return -32;
     if (AIBinder_getCallingUid() != 1000) return -1;
-    if (code < 1 or code > 22) return -38;
+    if (code < 1 or code > 24) return -38;
     const io = server.io;
     var request: Request = .{ .code = code, .pid = AIBinder_getCallingPid(), .input = input, .output = output };
     server.mutex.lockUncancelable(io);
@@ -931,7 +971,7 @@ const ClipboardBytes = struct {
         return true;
     }
 };
-fn sendClipboard(callback: *Binder, revision: i64, payload: ?*Queue.Clipboard.Payload) !void {
+fn sendPayload(callback: *Binder, code: u32, revision: i64, payload: ?*Queue.Clipboard.Payload) !void {
     var input: ?*Parcel = null;
     var output: ?*Parcel = null;
     try ok(AIBinder_prepareTransaction(callback, &input));
@@ -943,7 +983,7 @@ fn sendClipboard(callback: *Binder, revision: i64, payload: ?*Queue.Clipboard.Pa
     const uris: ?[]const u8 = if (payload) |value| value.uris else null;
     for ([_]?[]const u8{ text, html, uris }) |bytes|
         try ok(AParcel_writeByteArray(input.?, if (bytes) |value| value.ptr else null, if (bytes) |value| @intCast(value.len) else -1));
-    try ok(AIBinder_transact(callback, 24, &input, &output, 1));
+    try ok(AIBinder_transact(callback, code, &input, &output, 1));
 }
 fn writeValues(parcel: *Parcel, values: anytype) !void {
     inline for (values) |value| switch (@typeInfo(@TypeOf(value))) {
@@ -997,6 +1037,7 @@ fn run(init: std.process.Init) !void {
         std.log.info("task xdg shell protocol version={d}", .{session.wm_base.?.getVersion()});
     }
     session.ordered_events = .{};
+    session.enableNativeDrag();
     session.generate_key_repeats = false; // Stock InputDispatcher owns the timer.
     defer session.deinit();
     const death = AIBinder_DeathRecipient_new(onDeath);

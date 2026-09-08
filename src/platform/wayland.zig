@@ -289,6 +289,8 @@ pub const Event = union(enum) {
     clipboard_available: bool,
     clipboard_changed: struct { revision: i64, payload: ?*Clipboard.Payload },
     clipboard_issue: anyerror,
+    native_drag: Clipboard.DragOffer.Event,
+    native_drag_issue: anyerror,
     close,
     configure: struct {
         width: i32,
@@ -341,18 +343,31 @@ pub const OrderedEvents = struct {
     retained_layouts: usize = 0,
     retained_text_batches: usize = 0,
     retained_clipboards: usize = 0,
+    retained_drags: usize = 0,
+    retained_drag_payloads: usize = 0,
     retained_layout_source_bytes: usize = 0,
     pending: std.ArrayList(Item) = .empty,
     delivered: std.ArrayList(Item) = .empty,
     failed: bool = false,
 
     fn push(self: *OrderedEvents, gpa: std.mem.Allocator, window: ?*Window, event: Event) void {
+        if (event == .native_drag and event.native_drag == .motion and self.pending.items.len != 0) {
+            const last = &self.pending.items[self.pending.items.len - 1];
+            if (last.window == window and last.event == .native_drag and last.event.native_drag == .motion and
+                last.event.native_drag.motion.token == event.native_drag.motion.token)
+            {
+                last.event = event;
+                return;
+            }
+        }
         const layout_overflow = event == .keyboard_layout and
             (self.retained_layouts == layout_limit or
                 event.keyboard_layout.source_bytes > layout_source_limit - self.retained_layout_source_bytes);
         if (self.failed or self.pending.items.len == limit or layout_overflow or
             (event == .text_input_batch and self.retained_text_batches == 128) or
-            (event == .clipboard_changed and self.retained_clipboards == 8))
+            (event == .clipboard_changed and self.retained_clipboards == 8) or
+            (event == .native_drag and (self.retained_drags == 128 or
+                (event.native_drag == .payload and self.retained_drag_payloads == 8))))
         {
             self.failed = true;
             release(event);
@@ -369,6 +384,10 @@ pub const OrderedEvents = struct {
         }
         if (event == .text_input_batch) self.retained_text_batches += 1;
         if (event == .clipboard_changed) self.retained_clipboards += 1;
+        if (event == .native_drag) {
+            self.retained_drags += 1;
+            if (event.native_drag == .payload) self.retained_drag_payloads += 1;
+        }
     }
 
     fn removeWindow(self: *OrderedEvents, window: *Window) void {
@@ -386,11 +405,16 @@ pub const OrderedEvents = struct {
         if (event == .keyboard_layout) xkb.xkb_keymap_unref(event.keyboard_layout.keymap);
         if (event == .text_input_batch) event.text_input_batch.destroy();
         if (event == .clipboard_changed) if (event.clipboard_changed.payload) |payload| payload.destroy();
+        if (event == .native_drag and event.native_drag == .payload) event.native_drag.payload.value.destroy();
     }
 
     fn releaseRetained(self: *OrderedEvents, event: Event) void {
         if (event == .text_input_batch) self.retained_text_batches -= 1;
         if (event == .clipboard_changed) self.retained_clipboards -= 1;
+        if (event == .native_drag) {
+            self.retained_drags -= 1;
+            if (event.native_drag == .payload) self.retained_drag_payloads -= 1;
+        }
         if (event == .keyboard_layout) {
             self.retained_layouts -= 1;
             self.retained_layout_source_bytes -= event.keyboard_layout.source_bytes;
@@ -627,6 +651,8 @@ pub const Session = struct {
     data_device_manager: ?*wl.DataDeviceManager = null,
     data_device_manager_global: ?u32 = null,
     clipboard: ?*Clipboard = null,
+    data_offer_token: u64 = 8,
+    native_drag_enabled: bool = false,
     clipboard_failure: ?anyerror = null,
     clipboard_revision: i64 = 0,
     clipboard_serial: ?u32 = null,
@@ -707,7 +733,7 @@ pub const Session = struct {
     /// The caller must inspect every ready slot even when a Wayland event also
     /// arrives. Files are borrowed for this call; libwayland retains its socket.
     pub fn dispatch(self: *Session, wakes: []const std.Io.File, ready: []bool, timeout_ms: i32) !void {
-        if (wakes.len == 0 or wakes.len > 65 or ready.len != wakes.len) return error.InvalidWakeSources;
+        if (wakes.len > 65 or ready.len != wakes.len) return error.InvalidWakeSources;
         @memset(ready, false);
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
         if (self.output_failure) |failure| return failure;
@@ -716,6 +742,10 @@ pub const Session = struct {
         if (self.clipboard_failure) |failure| return failure;
         if (self.tablets) |tablets| if (tablets.failed) |failure| return failure;
         var timeout = timeout_ms;
+        if (self.clipboard) |clipboard| if (clipboard.native_drag) |*drag| {
+            const drag_timeout = drag.tick();
+            if (drag_timeout >= 0) timeout = if (timeout < 0) drag_timeout else @min(timeout, drag_timeout);
+        };
         if (self.pointer_focus) |window| {
             const cursor_timeout = window.updateCursorAnimation();
             if (cursor_timeout >= 0) timeout = if (timeout < 0) cursor_timeout else @min(timeout, cursor_timeout);
@@ -834,6 +864,10 @@ pub const Session = struct {
     }
 
     fn removeWindow(self: *Session, window: *Window) void {
+        if (self.clipboard) |clipboard| if (clipboard.native_drag) |*drag| {
+            if (window.surface_created) drag.removed(window.surface);
+            if (window.ui_initialized) drag.removed(window.ui_surface);
+        };
         if (self.text_input) |input| {
             if (window.surface_created) input.removeSurface(window.surface);
             if (window.ui_initialized) input.removeSurface(window.ui_surface);
@@ -1325,11 +1359,12 @@ pub const Session = struct {
             if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .text_input_available = self.text_input != null });
         };
         if (self.clipboard == null) if (self.data_device_manager) |manager| if (self.seat) |seat| {
-            self.clipboard = Clipboard.init(self.gpa, self.io, manager, seat, .{
+            self.clipboard = Clipboard.init(self.gpa, self.io, manager, seat, &self.data_offer_token, .{
                 .context = self,
                 .changed = clipboardChanged,
                 .issue = clipboardIssue,
                 .failure = clipboardFailure,
+                .drag = if (self.native_drag_enabled) self.nativeDragHooks() else null,
             }) catch |err| failed: {
                 self.clipboard_failure = err;
                 break :failed null;
@@ -1343,6 +1378,27 @@ pub const Session = struct {
             if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .clipboard_available = self.clipboard != null });
         };
         self.publishSeatCapabilities();
+    }
+    pub fn enableNativeDrag(self: *Session) void {
+        self.native_drag_enabled = true;
+        if (self.clipboard) |clipboard| clipboard.native_drag = .{ .io = self.io, .hooks = self.nativeDragHooks() };
+    }
+    fn nativeDragHooks(self: *Session) Clipboard.DragOffer.Hooks {
+        return .{ .context = self, .event = nativeDragEvent, .issue = nativeDragIssue };
+    }
+    fn nativeDragEvent(context: *anyopaque, event: Clipboard.DragOffer.Event) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        var window: ?*Window = null;
+        if (event == .entered) window = self.surfaceWindow(event.entered.surface) else if (event != .ended) {
+            if (self.clipboard) |clipboard| if (clipboard.native_drag) |drag| if (drag.active) |active| {
+                window = self.surfaceWindow(active.surface);
+            };
+        }
+        if (self.ordered_events) |*events| events.push(self.gpa, window, .{ .native_drag = event }) else if (event == .payload) event.payload.value.destroy();
+    }
+    fn nativeDragIssue(context: *anyopaque, issue: anyerror) void {
+        const self: *Session = @ptrCast(@alignCast(context));
+        if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .native_drag_issue = issue });
     }
     fn clipboardChanged(context: *anyopaque, revision: i64, payload: ?*Clipboard.Payload) void {
         const self: *Session = @ptrCast(@alignCast(context));

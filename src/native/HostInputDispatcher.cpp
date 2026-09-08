@@ -589,6 +589,21 @@ static jboolean transfer(JNIEnv *env, jclass, jlong handle, jobject from,
                       ibinderForJavaObject(env, from),
                       ibinderForJavaObject(env, to), drag, entire);
 }
+static jobject hostedDragTarget(JNIEnv *env, jclass, jlong handle, jobject task,
+                                 jobject previous, jint display, jfloat x, jfloat y,
+                                 jboolean hover, jfloatArray local) {
+  if (!local || env->GetArrayLength(local) != 2) {
+    jniThrowException(env, "java/lang/IllegalArgumentException", "Drag coordinates require two floats");
+    return nullptr;
+  }
+  auto owner = get(env, handle);
+  if (!owner) return nullptr;
+  auto target = owner->dispatcher.hostedDragTarget(ibinderForJavaObject(env, task),
+      ibinderForJavaObject(env, previous), ui::LogicalDisplayId{display}, x, y, hover);
+  const jfloat point[] = {target.x, target.y};
+  env->SetFloatArrayRegion(local, 0, 2, point);
+  return javaObjectForIBinder(env, target.token);
+}
 static jboolean transferDisplay(JNIEnv *env, jclass, jlong handle, jobject to,
                                 jint display) {
   auto owner = get(env, handle);
@@ -845,6 +860,8 @@ int registerNatives(JNIEnv *env) {
        reinterpret_cast<void *>(touchMode)},
       {"nativeTransferTouch", "(JLandroid/os/IBinder;Landroid/os/IBinder;ZZ)Z",
        reinterpret_cast<void *>(transfer)},
+      {"nativeHostedDragTarget", "(JLandroid/os/IBinder;Landroid/os/IBinder;IFFZ[F)Landroid/os/IBinder;",
+       reinterpret_cast<void *>(hostedDragTarget)},
       {"nativeTransferTouchOnDisplay", "(JLandroid/os/IBinder;I)Z",
        reinterpret_cast<void *>(transferDisplay)},
       {"nativePilferPointers", "(JLandroid/os/IBinder;)V",

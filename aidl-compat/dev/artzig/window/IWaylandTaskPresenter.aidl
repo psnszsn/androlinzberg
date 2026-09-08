@@ -59,4 +59,7 @@ interface IWaylandTaskPresenter {
     boolean clipboardAvailable();
     /** Bounded UTF-8 representations; all-null clears the native selection. */
     boolean setClipboard(long revision, in @nullable byte[] text, in @nullable byte[] html, in @nullable byte[] uris);
+    /** Copy acceptance and actual Android recipient result for one native offer. */
+    boolean acceptNativeDrag(long token, boolean accepted);
+    boolean finishNativeDrag(long token, boolean consumed);
 }
