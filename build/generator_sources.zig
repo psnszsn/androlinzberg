@@ -301,6 +301,7 @@ pub const CppAidl = struct {
 };
 
 pub const cpp_aidl = [_]CppAidl{
+    .{ .root = "frameworks/av/media/libmediametrics/aidl", .input = "android/media/IMediaMetricsService.aidl", .output = "android/media/IMediaMetricsService.cpp" },
     .{ .root = "frameworks/native/libs/input", .input = "android/os/IInputConstants.aidl" },
     .{ .root = "frameworks/native/libs/input", .input = "android/os/InputConfig.aidl" },
     .{ .root = "frameworks/native/libs/input", .input = "android/os/MotionEventFlag.aidl" },
@@ -322,6 +323,7 @@ pub const aconfig_device_paths = .{
 /// HIDL Java is generated from the pinned .hal declarations, matching Soong's
 /// hidl_interface backend. Only outputs required by framework clients are compiled.
 pub const hidl = [_]Hidl{
+    .{ .fqname = "android.hardware.tv.input@1.0", .language = .java_constants, .outputs = &.{"android/hardware/tv/input/V1_0/Constants.java"} },
     .{ .fqname = "android.hidl.base@1.0", .language = .java, .outputs = &.{
         "android/hidl/base/V1_0/DebugInfo.java",
         "android/hidl/base/V1_0/IBase.java",
@@ -456,6 +458,17 @@ pub const HidlCpp = struct {
 
 /// Soong libhidlbase's generated C++ protocol sources and headers.
 pub const hidl_cpp = [_]HidlCpp{
+    .{ .fqname = "android.hardware.cas.native@1.0", .sources = &.{
+        "android/hardware/cas/native/1.0/DescramblerAll.cpp",
+        "android/hardware/cas/native/1.0/types.cpp",
+    } },
+    .{ .fqname = "android.hardware.cas@1.0", .sources = &.{
+        "android/hardware/cas/1.0/CasAll.cpp",
+        "android/hardware/cas/1.0/CasListenerAll.cpp",
+        "android/hardware/cas/1.0/DescramblerBaseAll.cpp",
+        "android/hardware/cas/1.0/MediaCasServiceAll.cpp",
+        "android/hardware/cas/1.0/types.cpp",
+    } },
     .{ .fqname = "android.hidl.base@1.0", .sources = &.{
         "android/hidl/base/1.0/BaseAll.cpp",
         "android/hidl/base/1.0/types.cpp",
@@ -508,6 +521,22 @@ pub const versioned_aidl = [_]VersionedAidl{
 };
 
 pub const aidl = [_]SourcePath{
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/AidlCasPluginDescriptor.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/DestinationBuffer.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/ICas.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/ICasListener.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/IDescrambler.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/IMediaCasService.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/ScramblingControl.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/ScramblingMode.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/SessionIntent.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/SharedBuffer.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/Status.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/StatusEvent.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/cas/aidl/android/hardware/cas/SubSample.aidl" },
+    .{ .source = .aosp, .path = "hardware/interfaces/common/aidl/android/hardware/common/Ashmem.aidl" },
+    .{ .source = .aosp, .path = "frameworks/av/media/libmediametrics/aidl/android/media/IMediaMetricsService.aidl" },
+
     .{ .source = .repo, .path = "aidl-compat/dev/artzig/system/IHostedAudioIds.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/media/libaudioclient/aidl/android/media/AudioMix.aidl" },
     .{ .source = .aosp, .path = "frameworks/av/media/libaudioclient/aidl/android/media/AudioMixCallbackFlag.aidl" },

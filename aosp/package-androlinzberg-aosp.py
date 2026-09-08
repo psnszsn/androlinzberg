@@ -50,6 +50,7 @@ framework_patches = tuple(
         (33, "-camera-metadata-use-hosted-vendor-service-boundary.patch"),
         (34, "-permission-service-use-hosted-policy-at-startup.patch"),
         (35, "-init-thread-pool-use-hosted-failure-diagnostics.patch"),
+        (36, "-media-metrics-use-portable-JNI-registration-table.patch"),
     )
 )
 

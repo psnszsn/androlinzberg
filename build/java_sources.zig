@@ -3123,6 +3123,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/media/PublicFormatUtils.java");
     try c.file("$FB/media/java/android/media/MediaCrypto.java");
     try c.file("$FB/media/java/android/media/MediaMetadataRetriever.java");
+    try c.file("$FB/media/java/android/media/MediaMetrics.java");
     try c.file("$FB/media/java/android/media/MediaCryptoException.java");
     try c.file("$FB/media/java/android/media/MediaDrmThrowable.java");
     try c.file("$FB/media/java/android/media/RouteDiscoveryPreference.java");

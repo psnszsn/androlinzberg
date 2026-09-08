@@ -1,0 +1,18 @@
+From: Artzig contributors
+Subject: [PATCH] MediaMetrics JNI: use a portable const registration table
+
+Upstream Clang rejects function-pointer to void-pointer conversions in constant
+expressions. The JNI table only needs immutable static storage. Keep its entries
+and registration unchanged while dropping the constexpr requirement.
+
+--- a/media/jni/android_media_MediaMetricsJNI.cpp
++++ b/media/jni/android_media_MediaMetricsJNI.cpp
+@@ -222,7 +222,7 @@
+ 
+ // ----------------------------------------------------------------------------
+ 
+-static constexpr JNINativeMethod gMethods[] = {
++static const JNINativeMethod gMethods[] = {
+     {"native_submit_bytebuffer", "(Ljava/nio/ByteBuffer;I)I",
+             (void *)android_media_MediaMetrics_submit_bytebuffer},
+ };

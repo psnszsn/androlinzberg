@@ -1,3 +1,4 @@
+#include "android_media_MediaMetricsJNI.h"
 #include "com_android_internal_os_Zygote.h"
 #include <android-base/stringprintf.h>
 #include <nativehelper/ScopedUtfChars.h>
@@ -95,6 +96,7 @@ int register_android_os_HwBinder(JNIEnv*);
 int register_android_os_HwRemoteBinder(JNIEnv*);
 int register_android_os_HwBlob(JNIEnv*);
 int register_android_os_HwParcel(JNIEnv*);
+int register_android_media_MediaMetrics(JNIEnv*);
 int register_com_android_net_module_util_BpfMap(JNIEnv*, const char*);
 }
 // The pinned legacy DRM JNI owns its complete registration table. Rename its
@@ -118,6 +120,27 @@ extern int register_android_graphics_RuntimeXfermode(JNIEnv*);
 extern int register_android_graphics_Camera(JNIEnv*);
 extern int register_android_hardware_camera2_CameraMetadata(JNIEnv*);
 extern int register_android_media_MediaHTTPConnection(JNIEnv*);
+
+namespace {
+jobject nativeBundle(JNIEnv* env, jobject) {
+    android::os::PersistableBundle value;
+    value.putInt(android::String16("gain"), -2);
+    value.putString(android::String16("client"), android::String16("native focus"));
+    value.putLongVector(android::String16("times"), {17, 1LL << 40});
+    android::os::PersistableBundle nested;
+    nested.putBoolean(android::String16("active"), true);
+    value.putPersistableBundle(android::String16("nested"), nested);
+    return android::MediaMetricsJNI::nativeToJavaPersistableBundle(env, &value);
+}
+}
+
+extern "C" int azk_register_media_metrics_smoke(JNIEnv* env) {
+    const JNINativeMethod methods[] = {
+        {"nativeBundle", "()Landroid/os/PersistableBundle;", reinterpret_cast<void*>(nativeBundle)},
+    };
+    return jniRegisterNativeMethods(env, "dev/artzig/StockMediaMetricsSmoke", methods, 1);
+}
+
 extern int register_android_graphics_CreateJavaOutputStreamAdaptor(JNIEnv*);
 extern int register_android_graphics_Graphics(JNIEnv*);
 extern int register_android_graphics_Interpolator(JNIEnv*);
@@ -443,6 +466,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_os_HwRemoteBinder),
             E(android::register_android_os_HwBlob),
             E(android::register_android_os_HwParcel),
+            E(android::register_android_media_MediaMetrics),
+            E(azk_register_media_metrics_smoke),
             E(registerStockHidlMemorySmoke),
             E(registerHostedZygoteCommandBuffer),
             E(registerPerfettoTrace),

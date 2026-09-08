@@ -56,6 +56,16 @@ zig build -j10 cpp-audit
   with the other Android kernel headers. `AospJniBridge.cpp` supplies the pinned
   Binder exception-reporting flow because the main Binder JNI registration and
   its Java logging globals belong to the hosted Binder bridge.
+- MediaMetrics uses the original Java class, native metrics serialization and
+  Binder client, plus the generated `IMediaMetricsService` protocol. The native
+  JNI table uses `const` instead of `constexpr` for compatibility with upstream
+  Clang's function-pointer rules; the entries are unchanged. Native
+  PersistableBundle serialization is reused in `libbinder`. The shared Parcel
+  bridge supplies the pinned `Parcel.obtain()` helper, and module tests exercise
+  nested native-to-Java bundle conversion and the metrics C ABI. Absence of a
+  native `media.metrics` collector retains the original failed-record result.
+  CAS native HIDL and Java AIDL protocols and TV input constants are generated
+  from the pinned declarations; they do not supply hardware services.
 - `src/binder/debug_jni.zig` registers the stock `android.os.Debug` natives.
   `process_memory.zig` retains pinned Android heap classification and reads
   Linux procfs/sysfs through `std.Io`. Allocator reports use the host allocator's

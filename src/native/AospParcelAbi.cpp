@@ -20,6 +20,19 @@ jfieldID nativePtrField(JNIEnv *env) {
 }
 
 } // namespace
+// Pinned android_os_Parcel.cpp::createJavaParcelObject. The complete JNI unit
+// owns Android's Parcel storage, whereas this bridge shares hosted Zig storage.
+// Keep the original Java pool allocation and propagate any JNI exception.
+jobject createJavaParcelObject(JNIEnv *env) {
+  jclass cls = env->FindClass("android/os/Parcel");
+  if (!cls)
+    return nullptr;
+  jmethodID obtain = env->GetStaticMethodID(cls, "obtain", "()Landroid/os/Parcel;");
+  jobject parcel = obtain ? env->CallStaticObjectMethod(cls, obtain) : nullptr;
+  env->DeleteLocalRef(cls);
+  return parcel;
+}
+
 Parcel *parcelForJavaObject(JNIEnv *env, jobject object) {
   if (!object)
     return nullptr;

@@ -301,6 +301,21 @@ pub fn build(b: *std.Build, o: Options) Result {
         "android_os_HwBlob.cpp",      "android_os_HwParcel.cpp",
     }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_MediaHTTPConnection.cpp"}, &.{ o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
+    // Original media metrics serialization, Binder client, and JNI. Isolate the
+    // Android endian header so it does not replace the host libc header tree.
+    const metrics_headers = b.addWriteFiles();
+    _ = metrics_headers.addCopyFile(o.aosp.path(b, "bionic/libc/include/sys/endian.h"), "sys/endian.h");
+    const metrics_includes = &.{
+        o.aosp.path(b, "frameworks/av/media/libmediametrics/include"),
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        metrics_headers.getDirectory(),
+        o.aosp.path(b, "frameworks/base/media/jni"),
+    };
+    g.add(o.aosp.path(b, "frameworks/av/media/libmediametrics"), &.{
+        "ItemSerialize-ByteString.cpp", "ItemSerialize-Parcel.cpp", "MediaMetrics.cpp", "MediaMetricsItem.cpp",
+    }, metrics_includes, &.{"-D__BIONIC_CAST(kind,type,value)=kind<type>(value)"});
+    g.add(o.aosp.path(b, "frameworks/base/media/jni"), &.{"android_media_MediaMetricsJNI.cpp"}, metrics_includes, &.{});
     // Android's host-capable camera metadata library and C++ value containers.
     g.add(o.aosp.path(b, "frameworks/av/camera"), &.{ "CameraMetadata.cpp", "VendorTagDescriptor.cpp" }, &.{}, &.{});
     g.add(o.aosp.path(b, "system/media/camera/src"), &.{"camera_metadata.c"}, &.{}, &.{});
@@ -352,7 +367,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{ "apex/android_matrix.cpp", "apex/android_canvas.cpp" }, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
-    g.add(b.path(""), &our_srcs, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }, &.{});
+    g.add(b.path(""), &our_srcs, &.{ o.aosp.path(b, "frameworks/av/media/libmediametrics/include"), o.aosp.path(b, "frameworks/base/media/jni"), hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_PublicFormatUtils.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});
 

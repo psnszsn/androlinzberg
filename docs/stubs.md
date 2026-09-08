@@ -30,7 +30,7 @@ Pending: 9 (budget 9). Survivors: 7. Total: 16.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (121 to add); android.hardware.cas.AidlCasPluginDescriptor: AIDL outside the configured include roots (via AidlCasPluginDescriptor < MediaCas < MediaExtractor < AudioManager); android.hardware.cas.DestinationBuffer: AIDL outside the configur |
+| `android/media/AudioManager.java` | blocked | frameworks/base/media/java/android/media/AudioManager.java (106 to add); android.media.MediaCodec.BufferFlag: JNI natives (via BufferFlag < AdBuffer < PriorityHintUseCaseType < MediaCas < MediaExtractor < AudioManager); android.media.MediaDescrambler: JNI natives (via MediaDescrambler < BufferFlag < |
 
 ### autofill
 
@@ -42,16 +42,16 @@ Pending: 9 (budget 9). Survivors: 7. Total: 16.
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2693 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
-| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2691 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
-| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2785 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
-| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2704 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
+| `com/android/server/pm/Computer.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/Computer.java (2678 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < ActivityMana |
+| `com/android/server/pm/PackageArchiver.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageArchiver.java (2676 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Activ |
+| `com/android/server/pm/PackageManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/PackageManagerService.java (2770 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < RescueParty < CrashReco |
+| `com/android/server/pm/UserManagerService.java` | blocked | frameworks/base/services/core/java/com/android/server/pm/UserManagerService.java (2689 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < Ac |
 
 ### systemserver
 
 | Stub | Audit | Closure |
 |---|---|---|
-| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2691 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
+| `com/android/server/wm/WindowManagerInternal.java` | blocked | frameworks/base/services/core/java/com/android/server/wm/WindowManagerInternal.java (2676 to add), not vendored; android.aconfigd.Aconfigd.StorageRequestMessage: generated: proto generator (build/generator_sources.zig) (via StorageRequestMessage < SettingsToPropertiesMapper < ContentProviderHelper < |
 
 ### webkit
 
@@ -71,11 +71,8 @@ decides where to cut.
 |---|---|---|
 | `android.media.MediaExtractor` | 6 | 1 |
 | `android.media.MediaCas` | 6 | 2 |
-| `android.hardware.cas.IMediaCasService` | 6 | 3 |
 | `android.media.tv.TvInputService.PriorityHintUseCaseType` | 6 | 3 |
-| `android.hardware.cas.IDescrambler` | 6 | 4 |
 | `android.media.tv.AdBuffer` | 6 | 4 |
-| `android.media.tv.TvInputHardwareInfo` | 6 | 4 |
 | `android.media.MediaCodec.BufferFlag` | 6 | 5 |
 | `com.android.internal.app.ResolverActivity` | 5 | 1 |
 | `com.android.server.Watchdog` | 5 | 1 |
@@ -109,3 +106,6 @@ decides where to cut.
 | `com.android.server.sdksandbox.SdkSandboxVerifierReceiver` | 5 | 2 |
 | `com.android.server.wm.AccessibilityController` | 5 | 2 |
 | `com.android.server.wm.DisplayContent` | 5 | 2 |
+| `com.android.server.wm.DisplayRotation` | 5 | 2 |
+| `com.android.server.wm.InsetsSourceProvider` | 5 | 2 |
+| `com.android.server.wm.Task` | 5 | 2 |

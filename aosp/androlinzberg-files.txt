@@ -6869,3 +6869,25 @@ F aosp system/libhwbinder/include/hwbinder/Static.h
 
 F aosp system/libfmq/base/fmq/MQDescriptorBase.h
 F aosp bionic/libc/kernel/uapi/linux/android/binder.h
+
+# Stock media metrics and shared CAS/TV protocols.
+F aosp bionic/libc/include/sys/endian.h
+F aosp frameworks/av/media/libmediametrics/ItemSerialize-ByteString.cpp
+F aosp frameworks/av/media/libmediametrics/ItemSerialize-Parcel.cpp
+F aosp frameworks/av/media/libmediametrics/MediaMetrics.cpp
+F aosp frameworks/av/media/libmediametrics/MediaMetricsItem.cpp
+F aosp frameworks/av/media/libmediametrics/aidl/android/media/IMediaMetricsService.aidl
+F aosp frameworks/av/media/libmediametrics/include/MediaMetricsConstants.h
+F aosp frameworks/av/media/libmediametrics/include/media/MediaMetrics.h
+F aosp frameworks/av/media/libmediametrics/include/media/MediaMetricsItem.h
+F aosp frameworks/base/media/java/android/media/MediaMetrics.java
+F aosp frameworks/base/media/jni/android_media_MediaMetricsJNI.cpp
+F aosp frameworks/base/media/jni/android_media_MediaMetricsJNI.h
+F aosp hardware/interfaces/cas/native/1.0/IDescrambler.hal
+F aosp hardware/interfaces/cas/native/1.0/types.hal
+F aosp hardware/interfaces/tv/input/1.0/ITvInput.hal
+F aosp hardware/interfaces/tv/input/1.0/ITvInputCallback.hal
+F aosp hardware/interfaces/tv/input/1.0/types.hal
+F aosp hardware/interfaces/audio/common/2.0/types.hal
+F aosp frameworks/native/libs/binder/PersistableBundle.cpp
+F aosp frameworks/native/libs/binder/ParcelValTypes.h

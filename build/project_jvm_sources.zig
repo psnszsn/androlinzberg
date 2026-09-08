@@ -1,6 +1,7 @@
 //! Explicit repository-owned JVM source declarations.
 //! Add new sources here so graph membership changes with this Zig file.
 pub const framework = [_][]const u8{
+    "src/java/dev/artzig/StockMediaMetricsSmoke.kt",
     "src/java/dev/artzig/StockHidlTransportSmoke.kt",
     "src/java/dev/artzig/HostedRenderer.kt",
     "src/java/dev/artzig/HostedHardwareSnapshot.kt",

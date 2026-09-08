@@ -28,6 +28,27 @@ in force.
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
 
+- MediaMetrics now uses verbatim AOSP Java, the original native serialization
+  library and Binder client, and the original native PersistableBundle. Its JNI
+  registration table has one compiler-portability patch (`constexpr` to `const`);
+  the entries and runtime behavior are unchanged. The shared Parcel bridge uses
+  the pinned Java pool allocation path. CAS and common-memory AIDL, native CAS
+  HIDL protocols and TV input constants are generated from the pinned sources:
+  15 Java AIDL inputs, seven native HIDL sources and their headers, and one native
+  AIDL protocol. No native metrics collector or CAS hardware service is claimed.
+  Tests cover Java and C typed metadata, buffer growth/clear, copy and string
+  ownership, native serialized headers, service-absence and invalid-buffer errors,
+  CAS parceling, and native-to-Java nested PersistableBundle conversion. JVM,
+  system, native, Binder/C++ Binder and build checks pass; all 11 APK tests pass
+  with 38 captured steps and zero structured runtime issues. AOSP is rebuilt and
+  repinned; all 20 added archive inputs match the checkout plus the declared JNI
+  portability patch. ART is unchanged and verified. Inventory remains 16 stubs
+  (9 pending, 7 survivors). The remaining AudioManager/focus closure is 79 source
+  nodes, 34 AIDL inputs and three blockers: MediaExtractor, MediaDescrambler and
+  the nested MediaCodec API referenced by TV clients. This is a prerequisite
+  checkpoint, not completion of AudioManager or the overall migration.
+
+
 - The HIDL transport now uses the original eight Java runtime classes, five JNI
   translation units, libhidlbase and libhwbinder. The build generates 86 Java
   outputs for HIDL base/manager, CAS and GNSS protocols, plus the seven C++
