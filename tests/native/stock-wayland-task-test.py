@@ -437,6 +437,10 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                     drag('Drag received=Android drag 😀 café')
                     control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
                     drag('Drag received=Android file 😀 café')
+                    control('step', 'click', '--task-id', task, '--text', 'USE SLOW DRAG FILE', '--via', 'semantic', '--settle', 'idle')
+                    control('step', 'exec', '--wait', 'exists', '--task-id', task,
+                            '--text', 'Drag received=Android file 😀 café', '--', str(args.seat), '--native-drag-slow-task')
+                    control('step', 'click', '--task-id', task, '--text', 'USE DRAG FILE', '--via', 'semantic', '--settle', 'idle')
                     def native_drag(name, mime, payload, expected, consumed=True, cancel=False):
                         report = out / ('native-drag-' + name + '.json')
                         report.unlink(missing_ok=True)
@@ -481,9 +485,9 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         # Real stock shadow: 64x48, hotspot32,24, pointer800,240.
                         for x, y in [(770, 218), (829, 218), (770, 261), (829, 261)]:
                             r, g, b = pixel(x, y)
-                            assert r < 20 and g < 20 and b > 120, ('Missing Android drag icon', x, y, pixel(x, y))
+                            assert abs(r - 58) <= 2 and abs(g - 29) <= 2 and abs(b - 195) <= 2, ('Android drag alpha was flattened', x, y, pixel(x, y))
                         for x, y in [(767, 218), (832, 218), (800, 215), (800, 264)]:
-                            assert pixel(x, y) == (0, 0, 0), ('Drag icon bounds/hotspot', x, y, pixel(x, y))
+                            assert pixel(x, y) == (200, 100, 50), ('Drag icon bounds/hotspot', x, y, pixel(x, y))
                         assert sum(all(channel > 120 for channel in pixel(x, y))
                                    for y in range(230, 248) for x in range(774, 824)) > 20, 'Stock DRAG text is absent'
                     export_drag('text', 'Android drag 😀 café')
@@ -547,7 +551,7 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                             assert actual == expected, ('Drag content disappeared', x, y, actual, expected)
                         time.sleep(.05)
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 29 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 32 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.ime:
                     ime_mark = control('mark')['mark']

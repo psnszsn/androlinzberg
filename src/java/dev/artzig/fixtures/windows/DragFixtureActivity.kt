@@ -25,6 +25,7 @@ class DragFixtureActivity : Activity() {
         val status = TextView(this).apply { text = "Drag ready" }
         content.addView(status)
         var files = false
+        var slow = false
         var accept = true
         val events = ArrayList<String>()
         var received: String? = null
@@ -32,9 +33,10 @@ class DragFixtureActivity : Activity() {
         fun button(label: String, height: Int = 36, action: () -> Unit) {
             content.addView(Button(this).apply { text = label; setPadding(0, 0, 0, 0); setOnClickListener { action() } }, LinearLayout.LayoutParams(-1, height))
         }
-        button("Use drag text") { files = false; accept = true; status.text = "Drag text ready" }
-        button("Use drag file") { files = true; status.text = "Drag file ready" }
+        button("Use drag text") { files = false; slow = false; accept = true; status.text = "Drag text ready" }
+        button("Use drag file") { files = true; slow = false; status.text = "Drag file ready" }
         button("Reject drag") { accept = false; status.text = "Drag rejection ready" }
+        button("Use slow drag file") { files = true; slow = true; accept = true; status.text = "Slow drag file ready" }
         val area = object : View(this) {
             private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
             override fun onDraw(canvas: Canvas) {
@@ -49,6 +51,7 @@ class DragFixtureActivity : Activity() {
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 if (event.actionMasked == MotionEvent.ACTION_DOWN && event.x < width / 2f) {
                     events.clear(); received = null; status.text = "Drag started"
+                    ClipboardFileProvider.nextOpenDelayMillis.set(if (slow) 800 else 0)
                     val data = if (files) ClipData.newUri(contentResolver, "Drag file", ClipboardFileProvider.URI)
                         else ClipData.newPlainText("Drag text", "Android drag 😀 café")
                     val shadow = object : DragShadowBuilder(this) {
@@ -80,6 +83,9 @@ class DragFixtureActivity : Activity() {
                         events.add("drop")
                         check(event.x >= width / 2f) { "Drop coordinates did not reach the target half" }
                         if (!accept) return@setOnDragListener false
+                        if (slow && sourceGesture) check(events.count { it == "enter" } >= 2 && "exit" in events) {
+                            "Native takeover did not retire the previous local drag focus: $events"
+                        }
                         val item = event.clipData.getItemAt(0)
                         if (event.clipDescription.label == "Drag file")
                             check(item.uri == ClipboardFileProvider.URI) { "Original Android drag URI was replaced by an export" }
@@ -114,7 +120,7 @@ class DragFixtureActivity : Activity() {
                 }
             }
         }
-        content.addView(area, LinearLayout.LayoutParams(-1, 280))
+        content.addView(area, LinearLayout.LayoutParams(-1, 244))
         if (targetTask) button("Close drag task") { finish() }
         else button("Open drag task") {
             startActivity(android.content.Intent(this, DragFixtureActivity::class.java)

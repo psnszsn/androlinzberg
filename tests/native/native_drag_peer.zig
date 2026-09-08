@@ -283,6 +283,7 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8,
     defer session.deinit();
     const window = try session.createWindowWithAppId(320, 480, "Native drag destination", "dev.artzig.drag-peer", false);
     defer window.deinit();
+    try coloredBackground(session, window);
     const clipboard = session.clipboard.?;
     clipboard.native_drag = .{ .io = init.io, .hooks = .{ .context = state, .event = Destination.event, .issue = Destination.issue } };
     try window.prepareTestInput();
@@ -335,12 +336,15 @@ fn receiveAndroid(init: std.process.Init, state: *Destination, path: []const u8,
 /// Two explicitly placed Android tasks share the source's native drag identity.
 /// This peer supplies physical input only; WMS owns the complete Android drop.
 pub fn crossTask(init: std.process.Init) !void {
-    try taskGesture(init, .{ 160, 273 }, .{ 960, 273 }, null);
+    try taskGesture(init, .{ 160, 273 }, .{ 960, 273 }, null, false);
+}
+pub fn slowTask(init: std.process.Init) !void {
+    try taskGesture(init, .{ 160, 273 }, .{ 480, 273 }, null, true);
 }
 pub fn localTask(init: std.process.Init, path: []const u8, target: bool) !void {
-    try taskGesture(init, if (target) .{ 800, 273 } else .{ 160, 273 }, if (target) .{ 960, 273 } else .{ 480, 273 }, path);
+    try taskGesture(init, if (target) .{ 800, 273 } else .{ 160, 273 }, if (target) .{ 960, 273 } else .{ 480, 273 }, path, false);
 }
-fn taskGesture(init: std.process.Init, origin_point: [2]u32, destination_point: [2]u32, capture: ?[]const u8) !void {
+fn taskGesture(init: std.process.Init, origin_point: [2]u32, destination_point: [2]u32, capture: ?[]const u8, slow: bool) !void {
     const session = try Queue.Session.init(init.gpa, init.io);
     defer session.deinit();
     const window = try session.createWindowWithAppId(100, 100, "Drag test input", "dev.artzig.drag-driver", false);
@@ -351,17 +355,24 @@ fn taskGesture(init: std.process.Init, origin_point: [2]u32, destination_point: 
     defer if (!released) Queue.Window.releaseTestPointer(session) catch {};
     const begin = Io.Clock.awake.now(init.io).toMilliseconds();
     var moved = false;
+    var early_motion = false;
     while (!released) {
         const now = Io.Clock.awake.now(init.io).toMilliseconds();
         var ready: [0]bool = .{};
         try session.dispatch(&.{}, &ready, 20);
         _ = window.takeEvents();
-        if (!moved and now - begin >= 500) {
+        // The fixture provider takes 800ms. Establish local Android drag focus
+        // first, then move within the same View after native takeover.
+        if (slow and !early_motion and now - begin >= 100) {
+            try window.testPointerAtOutput(.{ origin_point[0] + 40, origin_point[1] }, .{ 1280, 720 }, null, false);
+            early_motion = true;
+        }
+        if (!moved and now - begin >= @as(i64, if (slow) 1100 else 500)) {
             if (capture) |path| try capturePpm(init, path);
             try window.testPointerAtOutput(destination_point, .{ 1280, 720 }, null, false);
             moved = true;
         }
-        if (moved and now - begin >= 1000) {
+        if (moved and now - begin >= @as(i64, if (slow) 1600 else 1000)) {
             try Queue.Window.releaseTestPointer(session);
             released = true;
         }
@@ -377,4 +388,23 @@ fn capturePpm(init: std.process.Init, path: []const u8) !void {
     const screenshot = try std.fmt.allocPrint(init.gpa, "{s}.ppm", .{path});
     defer init.gpa.free(screenshot);
     try Io.Dir.cwd().writeFile(init.io, .{ .sub_path = screenshot, .data = snapshot.stdout });
+}
+
+/// A static SHM backdrop makes GPU drag alpha observable. The changing shadow
+/// still comes from the APK's real stock Surface through SF and DMA-BUF.
+fn coloredBackground(session: *Queue.Session, window: *Queue.Window) !void {
+    const raw = std.os.linux.memfd_create("drag-peer-background", std.os.linux.MFD.CLOEXEC);
+    if (std.os.linux.errno(raw) != .SUCCESS) return error.BackgroundFileCreationFailed;
+    const file: Io.File = .{ .handle = @intCast(raw), .flags = .{ .nonblocking = false } };
+    defer file.close(session.io);
+    try file.writeStreamingAll(session.io, &.{ 50, 100, 200, 0 }); // XRGB, little endian.
+    const pool = try session.shm.?.createPool(file.handle, 4);
+    defer pool.destroy();
+    const buffer = try pool.createBuffer(0, 1, 1, 4, .xrgb8888);
+    window.surface.attach(buffer, 0, 0);
+    window.surface.damageBuffer(0, 0, 1, 1);
+    window.surface.commit();
+    window.base_buffer.destroy();
+    window.base_buffer = buffer;
+    if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 }

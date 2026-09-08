@@ -35,7 +35,7 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         var localX = 0f
         var localY = 0f
     }
-    private var active: Active? = null
+    @Volatile private var active: Active? = null
 
     init {
         check(LocalServices.getService(HostedNativeDrag::class.java) == null)
@@ -114,16 +114,31 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         if (!input.handoffNativeDrag(source.inputToken)) return false
         synchronized(windows.mGlobalLock) {
             if (!valid(source)) return false
-            (source.identity as DragState).handoffHostedPresentationLocked()
+            val state = source.identity as DragState
+            state.handoffHostedPresentationLocked()
+            // Pinned ViewRootImpl.handleDragEvent reports recipient ENTER only
+            // when its focused View changes. Provider preparation can leave a
+            // local drag focused before takeover. Retire that focus through
+            // the same IWindow stream as the upcoming native LOCATION; otherwise
+            // an offer over the same View is never accepted. EXIT is inert for
+            // notified windows without drag focus (ViewRootImpl.setDragFocus).
+            for (window in state.mNotifiedWindows)
+                dispatchLocation(window, DragEvent.ACTION_DRAG_EXITED, 0f, 0f)
         }
         return true
     }
     fun enterSource(source: Source, token: Long, taskId: Int, x: Float, y: Float, native: Native): Boolean {
         onThread()
-        if (outgoing !== source || !valid(source)) return false
+        if (outgoing !== source || !valid(source)) {
+            android.util.Log.d("WaylandDrag", "Own offer $token has a stale source")
+            return false
+        }
         synchronized(windows.mGlobalLock) {
             val state = source.identity as DragState
-            if (!state.mHostedNativePresentation || active != null) return false
+            if (!state.mHostedNativePresentation || active != null) {
+                android.util.Log.d("WaylandDrag", "Own offer $token before handoff or while offer ${active?.token} is active")
+                return false
+            }
             active = Active(token, state, native, source)
         }
         motion(token, taskId, x, y)
@@ -155,10 +170,16 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
         native: Native): Boolean {
         onThread()
         require(token > 0 && sourceUid >= 0 && x.isFinite() && y.isFinite())
-        if (active != null) return false
+        if (active != null) {
+            android.util.Log.d("WaylandDrag", "Refusing offer $token while offer ${active?.token} is active")
+            return false
+        }
         synchronized(windows.mGlobalLock) {
             val controller = windows.mDragDropController
-            if (controller.hostedDragStateLocked() != null) return false
+            if (controller.hostedDragStateLocked() != null) {
+                android.util.Log.d("WaylandDrag", "Refusing offer $token while a stock drag is active")
+                return false
+            }
             if (HostedTaskInputTargets.taskToken(windows, taskId) == null) return false
             val display = windows.mRoot.getDisplayContent(Display.DEFAULT_DISPLAY) ?: return false
             val state = DragState(windows, controller, Binder(), null,
@@ -202,7 +223,10 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
                 dispatchLocation(window, DragEvent.ACTION_DRAG_LOCATION, target.x, target.y)
             }
         }
-        if (drag.target == null) drag.native.accepted(token, false)
+        if (drag.target == null) {
+            android.util.Log.d("WaylandDrag", "Offer $token has no notified target in task $taskId at $x,$y (input=${target?.token})")
+            drag.native.accepted(token, false)
+        }
     }
 
     private fun dispatchLocation(window: WindowState, action: Int, x: Float, y: Float) {
@@ -243,9 +267,11 @@ class HostedNativeDrag(private val windows: WindowManagerService, private val ha
     }
 
     private fun recipient(client: IBinder, accepted: Boolean) {
+        // The callback carries a window but no offer token. Never apply a
+        // callback queued for one attempt to a subsequent offer in that window.
+        val drag = active ?: return
         check(handler.post {
-            val drag = active ?: return@post
-            if (!drag.dropped && drag.client == client) drag.native.accepted(drag.token, accepted)
+            if (active === drag && !drag.dropped && drag.client == client) drag.native.accepted(drag.token, accepted)
         })
     }
     private fun closedOnThread(state: DragState, consumed: Boolean) {

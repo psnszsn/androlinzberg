@@ -11,6 +11,36 @@ hosted libbinder facade merged into main. This document expands the original
 dependency-ordered implementation plan. It includes the BufferQueue milestone
 and the work needed to make task windows the normal APK presentation path.
 
+## Drag focus across asynchronous source preparation (2026-09-08)
+
+Provider preparation can outlast the first local drag motion. Pinned
+`ViewRootImpl.handleDragEvent` then retains a focused View and reports no new
+recipient ENTER when native motion arrives over that same View. Regression 478
+forces this ordering with an 800ms provider read and actual compositor motion
+before and after takeover; it reproduced a cancelled drop without a framework
+exception. Handoff now sends EXIT through the same IWindow stream used for native
+LOCATION. This clears old drag focus while preserving the original START, data,
+grants and END. Queued recipient callbacks also retain their original offer
+identity instead of selecting whichever offer is active when the handler runs.
+
+Regression 479 passes all 32 drag actions with no structured runtime issues,
+including the delayed-provider EXIT/ENTER sequence and subsequent native,
+cross-task and fallback drops. The native destination now has a colored backdrop:
+captured stock GPU shadow pixels prove alpha blending, bounds and hotspot rather
+than only a blue rectangle over black. Regression 477 also passes that alpha gate.
+Artifacts are retained in `/tmp/wayland-drag-focus-478-artifacts/`,
+`/tmp/wayland-drag-focus-479-artifacts/` and
+`/tmp/wayland-drag-alpha-477-artifacts/`.
+
+Shutdown after the earlier failed run exposed an uncaught DeadObjectException in
+icon retirement. Outgoing drag cleanup now attempts every resource owner even if
+the presenter dies; claim and cancellation failures still end the original WM
+drag. A dead presenter cannot be awaited for a terminal callback. Other failures
+remain in the structured diagnostic journal. Regression 480 passes the full JVM
+suite, all 16 APK tests (52 clean steps), Wayland unit tests and C++/graph audits.
+Artifacts: `/tmp/wayland-drag-focus-480-artifacts/integration/`. Deliberate
+process-death coverage and the remaining M8–M11 work are still in progress.
+
 ## Visible task-local drag fallback (2026-09-08)
 
 When native drag presentation is unavailable, the original WMS input stream now

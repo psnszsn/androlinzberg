@@ -39,7 +39,12 @@ internal class WaylandOutgoingDrag(private val handler: Handler, private val wm:
         onThread()
         // Unsupported input kinds and absent compositor capabilities retain the
         // stock local gesture. No serial from another device can be substituted.
-        val origin = host.origin(source) ?: run { wm.local(source); return }
+        val origin = try { host.origin(source) }
+        catch (failure: android.os.RemoteException) {
+            wm.finishSource(source, false)
+            report("claim", failure)
+            return
+        } ?: run { wm.local(source); return }
         check(active == null)
         val request = Request(source, origin)
         active = request
@@ -87,7 +92,7 @@ internal class WaylandOutgoingDrag(private val handler: Handler, private val wm:
         val request = active?.takeIf { it.source === source } ?: return
         request.wmClosed = true
         if (request.token == 0L || request.terminal) retire(request)
-        else if (!request.androidDrop) remote.cancelNativeDragSource(request.token)
+        else if (!request.androidDrop) cancelNative(request)
         // Own Android DROP has already finished its offer. Let the compositor
         // publish dnd_finished before destroying the source or retiring its icon.
     }
@@ -144,25 +149,43 @@ internal class WaylandOutgoingDrag(private val handler: Handler, private val wm:
     }
     private fun fail(request: Request, failure: Throwable?) {
         if (active !== request) return
-        if (request.token != 0L && !request.terminal) remote.cancelNativeDragSource(request.token)
+        android.util.Log.d("WaylandDrag", "Cancelling source task=${request.origin.task.id} token=${request.token} terminal=${request.terminal} wmClosed=${request.wmClosed}")
+        if (request.token != 0L && !request.terminal) cancelNative(request)
         wm.finishSource(request.source, false)
         if (request.token == 0L) request.terminal = true
         if (request.wmClosed && request.terminal) retire(request)
-        if (failure != null) {
-            android.util.Log.w("WaylandDrag", "Outgoing drag failed", failure)
-            dev.artzig.ArtzigTestDiagnostics.reportIssue("runtime_exception", "WaylandDrag", "source", failure.toString())
+        if (failure != null) report("source", failure)
+    }
+    private fun cancelNative(request: Request) {
+        try { remote.cancelNativeDragSource(request.token) }
+        catch (failure: android.os.RemoteException) {
+            // A dead presenter cannot send the terminal callback. Complete WM
+            // independently, then release the local shadow/output references.
+            request.terminal = true
+            report("cancel", failure)
+            if (request.wmClosed) retire(request)
         }
     }
     private fun retire(request: Request) {
         if (active !== request) return
         active = null
-        if (request.linked) request.source.client.unlinkToDeath(request.death, 0)
-        try { request.output?.close() }
-        finally {
-            request.surface?.release()
-            if (request.token != 0L) remote.retireNativeDragIcon(request.token)
-            if (!request.exposed) request.lease?.let { transfers.release(it, discard = true) }
-        }
+        // Each owner must retire even if a different service died during
+        // cleanup. Unbind SF before abandoning the presenter's consumer queue.
+        cleanup("unlink") { if (request.linked) request.source.client.unlinkToDeath(request.death, 0) }
+        cleanup("output") { request.output?.close() }
+        cleanup("surface") { request.surface?.release() }
+        cleanup("icon") { if (request.token != 0L) remote.retireNativeDragIcon(request.token) }
+        cleanup("lease") { if (!request.exposed) request.lease?.let { transfers.release(it, discard = true) } }
+    }
+    private inline fun cleanup(member: String, action: () -> Unit) {
+        try { action() }
+        catch (failure: android.os.RemoteException) { report(member, failure) }
+        catch (failure: RuntimeException) { report(member, failure) }
+    }
+    private fun report(member: String, failure: Throwable) {
+        android.util.Log.w("WaylandDrag", "Outgoing drag $member failed", failure)
+        if (failure !is android.os.DeadObjectException)
+            dev.artzig.ArtzigTestDiagnostics.reportIssue("runtime_exception", "WaylandDrag", member, failure.toString())
     }
     private fun onThread() { check(Looper.myLooper() === handler.looper) }
 }

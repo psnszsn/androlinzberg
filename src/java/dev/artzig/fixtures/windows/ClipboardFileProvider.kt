@@ -20,6 +20,7 @@ class ClipboardFileProvider : ContentProvider() {
     }
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         require(mode == "r")
+        android.os.SystemClock.sleep(nextOpenDelayMillis.getAndSet(0).toLong())
         return ParcelFileDescriptor.open(file(uri), ParcelFileDescriptor.MODE_READ_ONLY)
     }
     override fun getType(uri: Uri) = "text/plain"
@@ -31,5 +32,8 @@ class ClipboardFileProvider : ContentProvider() {
     override fun insert(uri: Uri, values: ContentValues?): Uri = throw UnsupportedOperationException()
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<String>?): Int = throw UnsupportedOperationException()
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?): Int = throw UnsupportedOperationException()
-    companion object { val URI: Uri = Uri.parse("content://dev.artzig.fixtures.windows.clipboard/Android%20caf%C3%A9.txt") }
+    companion object {
+        val URI: Uri = Uri.parse("content://dev.artzig.fixtures.windows.clipboard/Android%20caf%C3%A9.txt")
+        val nextOpenDelayMillis = java.util.concurrent.atomic.AtomicInteger()
+    }
 }
