@@ -101,10 +101,10 @@ pub fn build(b: *std.Build) void {
     scanner.addSystemProtocol("staging/cursor-shape/cursor-shape-v1.xml");
     scanner.addCustomProtocol(b.path("src/protocol/wlr-virtual-pointer-unstable-v1.xml"));
     scanner.addCustomProtocol(b.path("src/protocol/virtual-keyboard-unstable-v1.xml"));
-    scanner.generate("wl_compositor", 4);
+    scanner.generate("wl_compositor", 6);
     scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 8);
-    scanner.generate("wl_output", 2);
+    scanner.generate("wl_output", 4);
     scanner.generate("xdg_wm_base", 2);
     scanner.generate("wl_subcompositor", 1);
     scanner.generate("wp_viewporter", 1);
@@ -517,6 +517,22 @@ pub fn build(b: *std.Build) void {
         if (previous_surface_run) |previous| surface_run.step.dependOn(previous);
         previous_surface_run = &surface_run.step;
         surface_test_step.dependOn(&surface_run.step);
+    }
+    const output_lifecycle_step = b.step("wayland-output-test", "Track output scale, transform, removal and reappearance through the real compositor");
+    var previous_output_run: ?*std.Build.Step = null;
+    for ([_][]const u8{ "preferred", "fallback" }) |scenario| {
+        const output = b.pathResolve(&.{ "zig-out/test-results/wayland-output", scenario });
+        const run = b.addSystemCommand(&.{ "env", "WLR_RENDERER=gles2", "WLR_HEADLESS_OUTPUTS=2", "SHOT_COMPOSITOR=labwc" });
+        run.addFileArg(b.path("tools/shot.sh"));
+        run.addArgs(&.{ b.pathResolve(&.{ output, "screenshot.png" }), "--runner", "--", "python3" });
+        run.addFileArg(b.path("tests/native/wayland-output-test.py"));
+        run.addArg("--client");
+        run.addArtifactArg(surface_server);
+        run.addArgs(&.{ "--output", output, "--scenario", scenario });
+        run.has_side_effects = true;
+        if (previous_output_run) |previous| run.step.dependOn(previous);
+        previous_output_run = &run.step;
+        output_lifecycle_step.dependOn(&run.step);
     }
     const graphics_buffer_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/platform/graphics_buffer.zig"),

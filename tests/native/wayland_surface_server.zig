@@ -17,6 +17,9 @@ fn watchStdin(stop: *Stop) void {
 }
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "--output-lifecycle")) {
+        return outputLifecycle(init, args.len > 2 and std.mem.eql(u8, args[2], "fallback"));
+    }
     if (args.len == 2 and std.mem.eql(u8, args[1], "--keyboard-seat")) {
         const session = try Queue.Session.init(init.gpa, init.io);
         defer session.deinit();
@@ -144,4 +147,66 @@ fn verifyCapture(session: *Queue.Session, window: *Queue.Window, io: Io, wake: I
     }
     std.log.err("capture timeout phase={s} pointer={any} keyboard={any} requested={any} actual={any} size={d}x{d} cursor={d},{d}", .{ @tagName(phase), session.pointer_focus == window, session.keyboard_focus == window, window.pointer_capture_requested, window.hasPointerCapture(), window.width, window.height, window.pointer_x, window.pointer_y });
     return error.PointerCaptureTimeout;
+}
+
+// The existing shot.sh compositor is controlled by wlr-randr in the parent.
+// Each request pumps the real protocol before exposing one coherent snapshot.
+fn outputLifecycle(init: std.process.Init, fallback: bool) !void {
+    const session = try Queue.Session.initWithOptions(init.gpa, init.io, .{
+        .fractional_scale = !fallback,
+        .compositor_max_version = if (fallback) 4 else 6,
+    });
+    defer session.deinit();
+    const window = try session.createWindow(320, 240, "Output lifecycle", false);
+    defer window.deinit();
+    var probe: ?*Queue.Window = null;
+    defer if (probe) |value| value.deinit();
+    try Io.File.stdout().writeStreamingAll(init.io, "ready\n");
+    var command: [1]u8 = undefined;
+    while (try Io.File.stdin().readStreaming(init.io, &.{&command}) != 0) {
+        if (command[0] == 'q') return;
+        if (command[0] == 'n') {
+            if (probe != null) return error.DuplicateOutputProbe;
+            probe = try session.createWindow(160, 120, "Surviving output", false);
+            continue;
+        }
+        if (command[0] != 's') return error.InvalidOutputTestCommand;
+        for (0..3) |_| if (session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
+        if (session.output_failure) |failure| return failure;
+        _ = window.takeEvents();
+        try window.present();
+        var scales: [64]i32 = undefined;
+        var names: [64]u32 = undefined;
+        var labels: [64][]const u8 = undefined;
+        var transforms: [64]i32 = undefined;
+        var members: [64]bool = undefined;
+        var count: usize = 0;
+        for (&session.outputs, 0..) |*output, index| {
+            if (output.proxy == null) continue;
+            if (output.revision == 0) return error.IncompleteOutputState;
+            scales[count] = output.scale;
+            names[count] = output.global_name;
+            labels[count] = output.name_storage[0..output.name_length];
+            transforms[count] = @backingInt(output.transform);
+            members[count] = window.output_membership & (@as(u64, 1) << @intCast(index)) != 0;
+            count += 1;
+        }
+        const json = try std.json.Stringify.valueAlloc(init.gpa, .{
+            .probe_scale = if (probe) |value| value.scale_120 else 0,
+            .count = count,
+            .scale = window.scale_120,
+            .labels = labels[0..count],
+            .scales = scales[0..count],
+            .names = names[0..count],
+            .members = members[0..count],
+            .transforms = transforms[0..count],
+            .width = window.width,
+            .height = window.height,
+            .buffer_width = window.bufferWidth(),
+            .buffer_height = window.bufferHeight(),
+        }, .{});
+        defer init.gpa.free(json);
+        try Io.File.stdout().writeStreamingAll(init.io, json);
+        try Io.File.stdout().writeStreamingAll(init.io, "\n");
+    }
 }

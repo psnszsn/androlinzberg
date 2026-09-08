@@ -572,7 +572,7 @@ fn run(init: std.process.Init) !void {
         try std.fmt.parseInt(u32, init.minimal.environ.getPosix("AZK_TEST_VIRTUAL_POINTER_VERSION") orelse "2", 10)
     else
         2;
-    const session = try Queue.Session.initWithVirtualPointerVersion(init.gpa, io, pointer_version);
+    const session = try Queue.Session.initWithOptions(init.gpa, io, .{ .virtual_pointer_max_version = pointer_version });
     if (inspection_enabled) {
         const version = if (session.virtual_pointer_manager) |manager| manager.getVersion() else 0;
         std.log.info("task virtual pointer protocol version={d}", .{version});

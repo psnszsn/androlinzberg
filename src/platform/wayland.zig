@@ -455,6 +455,77 @@ const FullscreenState = struct {
     }
 };
 
+/// wl_output records have stable addresses until the session ends. A removed
+/// output's membership is cleared before its bounded slot can be reused.
+pub const Output = struct {
+    session: *Session = undefined,
+    proxy: ?*wl.Output = null,
+    global_name: u32 = 0,
+    name_storage: [256]u8 = undefined,
+    name_length: usize = 0,
+    scale: i32 = 1,
+    pending_scale: i32 = 1,
+    width: i32 = 0,
+    height: i32 = 0,
+    refresh_millihz: i32 = 0,
+    pending_width: i32 = 0,
+    pending_height: i32 = 0,
+    pending_refresh_millihz: i32 = 0,
+    transform: wl.Output.Transform = .normal,
+    pending_transform: wl.Output.Transform = .normal,
+    revision: u64 = 0,
+
+    fn commit(self: *Output) void {
+        self.scale = self.pending_scale;
+        self.width = self.pending_width;
+        self.height = self.pending_height;
+        self.refresh_millihz = self.pending_refresh_millihz;
+        self.transform = self.pending_transform;
+        self.revision += 1;
+        for (self.session.windows.items) |window| window.updatePreferredScale();
+    }
+
+    fn listener(proxy: *wl.Output, event: wl.Output.Event, self: *Output) void {
+        switch (event) {
+            .geometry => |geometry| self.pending_transform = geometry.transform,
+            .mode => |mode| if (mode.flags.current) {
+                self.pending_width = mode.width;
+                self.pending_height = mode.height;
+                self.pending_refresh_millihz = mode.refresh;
+            },
+            .scale => |scale| {
+                if (scale.factor < 1 or scale.factor > 128) {
+                    self.session.output_failure = error.InvalidOutputScale;
+                    return;
+                }
+                self.pending_scale = scale.factor;
+            },
+            .done => self.commit(),
+            .name => |named| {
+                const name = std.mem.span(named.name);
+                if (name.len > self.name_storage.len) {
+                    self.session.output_failure = error.OutputNameTooLong;
+                    return;
+                }
+                @memcpy(self.name_storage[0..name.len], name);
+                self.name_length = name.len;
+            },
+            .description => {},
+        }
+        // wl_output v1 has no done/scale; each update is complete on its own.
+        if (proxy.getVersion() < 2) self.commit();
+    }
+
+    fn deinit(self: *Output) void {
+        const proxy = self.proxy orelse return;
+        if (proxy.getVersion() >= 3) proxy.release() else {
+            const base: *wl.Proxy = @ptrCast(proxy);
+            base.destroy();
+        }
+        self.proxy = null;
+    }
+};
+
 /// One compositor connection, registry and seat for every task in the session.
 /// Protocol callbacks and surface mutations run on the owning event thread.
 /// Windows retain their own geometry, gestures and buffer leases.
@@ -479,7 +550,9 @@ pub const Session = struct {
     dmabuf_formats: std.ArrayList(DmabufFormat) = .empty,
     wm_base: ?*xdg.WmBase = null,
     seat: ?*wl.Seat = null,
-    output: ?*wl.Output = null,
+    outputs: [64]Output = @splat(.{}),
+    output_failure: ?anyerror = null,
+    protocol_options: ProtocolOptions = .{},
     pointer: ?*wl.Pointer = null,
     keyboard: ?*wl.Keyboard = null,
     touch_device: ?*wl.Touch = null,
@@ -491,7 +564,6 @@ pub const Session = struct {
     cursor_shape_manager: ?*wp.CursorShapeManagerV1 = null,
     cursor_device: ?*wp.CursorShapeDeviceV1 = null,
     virtual_pointer_manager: ?*zwlr.VirtualPointerManagerV1 = null,
-    virtual_pointer_max_version: u32 = 2,
     virtual_pointer: ?*zwlr.VirtualPointerV1 = null,
     virtual_keyboard_manager: ?*zwp.VirtualKeyboardManagerV1 = null,
     virtual_keyboard: ?*zwp.VirtualKeyboardV1 = null,
@@ -505,23 +577,31 @@ pub const Session = struct {
     generate_key_repeats: bool = true,
     ordered_events: ?OrderedEvents = null,
 
+    pub const ProtocolOptions = struct {
+        virtual_pointer_max_version: u32 = 2,
+        compositor_max_version: u32 = 6,
+        fractional_scale: bool = true,
+    };
+
     pub fn init(gpa: std.mem.Allocator, io: std.Io) !*Session {
-        return initWithVirtualPointerVersion(gpa, io, 2);
+        return initWithOptions(gpa, io, .{});
     }
 
-    /// Protocol-cap gate for the existing headless harness. Production binds
-    /// the highest supported version; tests can exercise a compositor's v1 API.
-    pub fn initWithVirtualPointerVersion(gpa: std.mem.Allocator, io: std.Io, version: u32) !*Session {
-        if (version < 1 or version > 2) return error.InvalidVirtualPointerVersion;
+    /// Capability caps let the existing harness exercise older compositor APIs.
+    pub fn initWithOptions(gpa: std.mem.Allocator, io: std.Io, options: ProtocolOptions) !*Session {
+        if (options.virtual_pointer_max_version < 1 or options.virtual_pointer_max_version > 2 or
+            options.compositor_max_version < 4 or options.compositor_max_version > 6)
+            return error.InvalidProtocolOptions;
         const self = try gpa.create(Session);
         errdefer gpa.destroy(self);
         const display = try wl.Display.connect(null);
         errdefer display.disconnect();
-        self.* = .{ .gpa = gpa, .io = io, .display = display, .registry = try display.getRegistry(), .virtual_pointer_max_version = version };
+        self.* = .{ .gpa = gpa, .io = io, .display = display, .registry = try display.getRegistry(), .protocol_options = options };
         errdefer self.destroyGlobals();
         self.registry.setListener(*Session, registryListener, self);
         if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
         self.requireGlobals();
+        if (self.output_failure) |failure| return failure;
         return self;
     }
 
@@ -543,6 +623,7 @@ pub const Session = struct {
         if (wakes.len == 0 or wakes.len > 65 or ready.len != wakes.len) return error.InvalidWakeSources;
         @memset(ready, false);
         if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        if (self.output_failure) |failure| return failure;
         var timeout = timeout_ms;
         if (self.ordered_events) |*events| {
             if (events.failed) return error.SeatEventQueueOverflow;
@@ -556,6 +637,7 @@ pub const Session = struct {
         }
         while (!self.display.prepareRead()) {
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            if (self.output_failure) |failure| return failure;
             timeout = 0;
         }
         var read_prepared = true;
@@ -622,6 +704,7 @@ pub const Session = struct {
             read_prepared = false;
             if (self.display.readEvents() != .SUCCESS) return error.DispatchFailed;
             if (self.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            if (self.output_failure) |failure| return failure;
         }
         for (self.windows.items) |window| _ = window.emitKeyRepeatIfDue();
         if (self.ordered_events) |*events| if (events.failed) return error.SeatEventQueueOverflow;
@@ -892,11 +975,7 @@ pub const Session = struct {
         if (self.viewporter) |viewporter| viewporter.destroy();
         if (self.fractional_scale_manager) |manager| manager.destroy();
         if (self.subcompositor) |subcompositor| subcompositor.destroy();
-        if (self.output) |output| {
-            const proxy: *wl.Proxy = @ptrCast(output);
-            // wl_output v2 has no protocol destructor.
-            proxy.destroy();
-        }
+        for (&self.outputs) |*output| output.deinit();
         if (self.compositor) |compositor| compositor.destroy();
         if (self.shm) |shm| shm.destroy();
         if (self.wm_base) |wm_base| wm_base.destroy();
@@ -927,14 +1006,15 @@ pub const Session = struct {
         switch (event) {
             .global => |g| {
                 if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
-                    self.compositor = registry.bind(g.name, wl.Compositor, 4) catch return;
+                    if (g.version < 4) std.debug.panic("required wl_compositor version 4 is unavailable", .{});
+                    self.compositor = registry.bind(g.name, wl.Compositor, @min(g.version, self.protocol_options.compositor_max_version)) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wl.Subcompositor.interface.name) == .eq) {
                     self.subcompositor = registry.bind(g.name, wl.Subcompositor, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wl.Shm.interface.name) == .eq) {
                     self.shm = registry.bind(g.name, wl.Shm, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, wp.Viewporter.interface.name) == .eq) {
                     self.viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
-                } else if (std.mem.orderZ(u8, g.interface, wp.FractionalScaleManagerV1.interface.name) == .eq) {
+                } else if (std.mem.orderZ(u8, g.interface, wp.FractionalScaleManagerV1.interface.name) == .eq and self.protocol_options.fractional_scale) {
                     self.fractional_scale_manager = registry.bind(g.name, wp.FractionalScaleManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.LinuxDmabufV1.interface.name) == .eq) {
                     const version = @min(g.version, 4);
@@ -948,7 +1028,7 @@ pub const Session = struct {
                 } else if (std.mem.orderZ(u8, g.interface, wp.CursorShapeManagerV1.interface.name) == .eq) {
                     self.cursor_shape_manager = registry.bind(g.name, wp.CursorShapeManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwlr.VirtualPointerManagerV1.interface.name) == .eq) {
-                    self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, self.virtual_pointer_max_version)) catch return;
+                    self.virtual_pointer_manager = registry.bind(g.name, zwlr.VirtualPointerManagerV1, @min(g.version, self.protocol_options.virtual_pointer_max_version)) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.VirtualKeyboardManagerV1.interface.name) == .eq) {
                     self.virtual_keyboard_manager = registry.bind(g.name, zwp.VirtualKeyboardManagerV1, 1) catch return;
                 } else if (std.mem.orderZ(u8, g.interface, zwp.PointerConstraintsV1.interface.name) == .eq and self.pointer_constraints == null) {
@@ -966,11 +1046,31 @@ pub const Session = struct {
                     self.seat = registry.bind(g.name, wl.Seat, 8) catch return;
                     self.seat_global_name = g.name;
                     self.seat.?.setListener(*Session, seatListener, self);
-                } else if (std.mem.orderZ(u8, g.interface, wl.Output.interface.name) == .eq and self.output == null) {
-                    self.output = registry.bind(g.name, wl.Output, @min(g.version, 2)) catch return;
+                } else if (std.mem.orderZ(u8, g.interface, wl.Output.interface.name) == .eq) {
+                    const output = for (&self.outputs) |*candidate| {
+                        if (candidate.proxy == null) break candidate;
+                    } else {
+                        self.output_failure = error.OutputLimitExceeded;
+                        return;
+                    };
+                    const proxy = registry.bind(g.name, wl.Output, @min(g.version, 4)) catch {
+                        self.output_failure = error.OutputBindFailed;
+                        return;
+                    };
+                    output.* = .{ .session = self, .proxy = proxy, .global_name = g.name };
+                    proxy.setListener(*Output, Output.listener, output);
                 }
             },
             .global_remove => |removed| {
+                for (&self.outputs, 0..) |*output, index| {
+                    if (output.proxy == null or output.global_name != removed.name) continue;
+                    output.deinit();
+                    for (self.windows.items) |window| {
+                        window.output_membership &= ~(@as(u64, 1) << @intCast(index));
+                        window.updatePreferredScale();
+                    }
+                    break;
+                }
                 if (self.seat_global_name == removed.name) {
                     self.releasePointer();
                     self.releaseKeyboard();
@@ -1089,14 +1189,26 @@ pub const Session = struct {
         if (self.ordered_events) |*events| events.push(self.gpa, null, .{ .seat_capabilities = .{ .generation = self.seat_generation, .mask = self.seat_capabilities } });
     }
 
+    pub fn firstOutput(self: *const Session) ?*wl.Output {
+        for (self.outputs) |output| if (output.proxy) |proxy| return proxy;
+        return null;
+    }
+
+    fn outputIndex(self: *const Session, proxy: ?*wl.Output) ?u6 {
+        if (proxy == null) return null;
+        for (self.outputs, 0..) |output, index| if (output.proxy == proxy) return @intCast(index);
+        return null;
+    }
+
     fn ensureVirtualPointer(self: *Session) !*zwlr.VirtualPointerV1 {
         if (self.virtual_pointer) |pointer| return pointer;
         const seat = self.seat orelse return error.VirtualPointerUnavailable;
         const manager = self.virtual_pointer_manager orelse return error.VirtualPointerUnavailable;
         // create_virtual_pointer_with_output was introduced in version 2.
         // Version 1 lets the compositor choose the output for the seat.
-        self.virtual_pointer = if (manager.getVersion() >= 2 and self.output != null)
-            try manager.createVirtualPointerWithOutput(seat, self.output.?)
+        const output = self.firstOutput();
+        self.virtual_pointer = if (manager.getVersion() >= 2 and output != null)
+            try manager.createVirtualPointerWithOutput(seat, output.?)
         else
             try manager.createVirtualPointer(seat);
         return self.virtual_pointer.?;
@@ -1175,6 +1287,12 @@ pub const Window = struct {
     height: i32,
     /// Preferred surface scale in 120ths, as defined by fractional-scale-v1.
     scale_120: u32 = 120,
+    output_membership: u64 = 0,
+    fractional_preference: ?u32 = null,
+    integer_preference: ?u32 = null,
+    /// A rendering hint; buffers remain normal-oriented and the compositor
+    /// applies the physical output transform.
+    preferred_transform: wl.Output.Transform = .normal,
     fullscreen: FullscreenState = .{},
     configured: bool = false,
     base_attached: bool = false,
@@ -1222,6 +1340,7 @@ pub const Window = struct {
         self.surface = try self.session.compositor.?.createSurface();
         errdefer self.surface.destroy();
         self.surface_created = true;
+        self.surface.setListener(*Window, surfaceListener, self);
         self.opaque_region = try self.session.compositor.?.createRegion();
         errdefer self.opaque_region.destroy();
         // fractional-scale-v1 deliberately leaves wl_surface.buffer_scale at
@@ -1275,6 +1394,7 @@ pub const Window = struct {
         if (self.session.display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
         self.ui_surface = try self.session.compositor.?.createSurface();
+        self.ui_surface.setListener(*Window, childSurfaceListener, self);
         errdefer self.ui_surface.destroy();
         // The task's toplevel owns the seat, including keyboard focus and
         // pointer constraints. The rendered child shares its origin/viewport;
@@ -1324,17 +1444,61 @@ pub const Window = struct {
         }
     }
 
+    fn updatePreferredScale(self: *Window) void {
+        var output_scale: u32 = 1;
+        for (self.session.outputs, 0..) |output, index| {
+            if (output.proxy != null and self.output_membership & (@as(u64, 1) << @intCast(index)) != 0)
+                output_scale = @max(output_scale, @as(u32, @intCast(output.scale)));
+        }
+        // wl_surface v6 defines the preferred integer scale as 1 until its
+        // first hint. Output-derived scaling is the older protocol fallback.
+        const integer_scale = if (self.surface_created and self.surface.getVersion() >= 6)
+            self.integer_preference orelse 1
+        else
+            output_scale;
+        const scale = self.fractional_preference orelse (integer_scale * 120);
+        if (scale == self.scale_120) return;
+        self.scale_120 = scale;
+        self.updateViewport();
+        self.presentation_dirty = true;
+        self.push(.{ .configure = .{ .width = self.width, .height = self.height } });
+    }
+
+    // Children use the toplevel's logical geometry and chosen buffer mapping.
+    // Scale/transform hints on their own proxies do not change that shared map.
+    fn childSurfaceListener(_: *wl.Surface, _: wl.Surface.Event, _: *Window) void {}
+
+    fn surfaceListener(_: *wl.Surface, event: wl.Surface.Event, self: *Window) void {
+        switch (event) {
+            .enter => |entered| if (self.session.outputIndex(entered.output)) |index| {
+                self.output_membership |= @as(u64, 1) << index;
+                self.updatePreferredScale();
+            },
+            .leave => |left| if (self.session.outputIndex(left.output)) |index| {
+                self.output_membership &= ~(@as(u64, 1) << index);
+                self.updatePreferredScale();
+            },
+            .preferred_buffer_scale => |preferred| {
+                if (preferred.factor < 1 or preferred.factor > 128) {
+                    self.session.output_failure = error.InvalidOutputScale;
+                    return;
+                }
+                self.integer_preference = @intCast(preferred.factor);
+                self.updatePreferredScale();
+            },
+            .preferred_buffer_transform => |preferred| self.preferred_transform = preferred.transform,
+        }
+    }
+
     fn fractionalScaleListener(_: *wp.FractionalScaleV1, event: wp.FractionalScaleV1.Event, self: *Window) void {
         switch (event) {
             .preferred_scale => |preferred| {
-                if (preferred.scale == 0 or preferred.scale == self.scale_120) return;
-                self.scale_120 = preferred.scale;
-                self.updateViewport();
-                self.presentation_dirty = true;
-                // A scale transition does not necessarily cause an xdg-shell
-                // size configure. Notify EGL so it rebuilds at the new
-                // physical pixel size.
-                self.push(.{ .configure = .{ .width = self.width, .height = self.height } });
+                if (preferred.scale == 0 or preferred.scale > 128 * 120) {
+                    self.session.output_failure = error.InvalidOutputScale;
+                    return;
+                }
+                self.fractional_preference = preferred.scale;
+                self.updatePreferredScale();
             },
         }
     }
@@ -2075,11 +2239,13 @@ pub const Window = struct {
         self.events.clearRetainingCapacity();
         while (self.events.items.len == 0) {
             if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+            if (self.session.output_failure) |failure| return failure;
             _ = self.emitKeyRepeatIfDue();
             if (self.events.items.len != 0) break;
 
             while (!self.session.display.prepareRead()) {
                 if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+                if (self.session.output_failure) |failure| return failure;
                 if (self.events.items.len != 0) return .{ .events = self.events.items };
             }
             var wait_for_write = false;
@@ -2132,6 +2298,7 @@ pub const Window = struct {
             if (wayland_readable) {
                 if (self.session.display.readEvents() != .SUCCESS) return error.DispatchFailed;
                 if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+                if (self.session.output_failure) |failure| return failure;
             } else {
                 self.session.display.cancelRead();
             }
@@ -2168,6 +2335,7 @@ pub const Window = struct {
     pub fn pollEvents(self: *Window) ![]const Event {
         self.events.clearRetainingCapacity();
         if (self.session.display.dispatchPending() != .SUCCESS) return error.DispatchFailed;
+        if (self.session.output_failure) |failure| return failure;
         _ = self.emitKeyRepeatIfDue();
         _ = self.session.display.flush();
         return self.events.items;
@@ -2338,6 +2506,7 @@ pub const Window = struct {
     pub fn createVideoLayer(self: *Window) !*VideoLayer {
         const sub = self.session.subcompositor orelse return error.NoSubcompositor;
         const vsurf = try self.session.compositor.?.createSurface();
+        vsurf.setListener(*Window, childSurfaceListener, self);
         const subsurf = try sub.getSubsurface(vsurf, self.surface);
         // State the complete parent < video < UI ordering explicitly. This is
         // the host equivalent of SurfaceView's SurfaceControl relative-layer

@@ -22,6 +22,43 @@ integration targets. The rebase exposed duplicate JNI Binder converters; their
 shared implementation now remains solely in `AospParcelAbi.cpp`. Log:
 `/tmp/wayland-rebase12-validation-135.log`.
 
+## Wayland output discovery checkpoint (2026-09-08)
+
+The shared session now tracks up to 64 output records with stable storage,
+committed mode/scale/transform metadata and bounded names. Surface enter/leave
+membership and registry removal update every window; removing an output clears
+its membership before its slot can be reused. Protocol destruction respects
+wl_output version. Output-capacity and malformed-state failures propagate through
+both session and legacy window event loops.
+
+Surface scale follows fractional preferences, then wl_surface v6 integer
+preferences (initially one), with the maximum entered-output scale as the older
+protocol fallback. Child surfaces use the toplevel's logical mapping. Physical
+output and preferred surface transforms are recorded as hints; buffers remain
+normal-oriented and the compositor handles output rotation. Shared Android
+configuration/density is not rewritten when desktop outputs change.
+
+The `wayland-output-test` target uses the existing shot.sh/labwc harness with two
+headless outputs and wlr-randr. It verifies 1.5x fractional preference, integer
+2x fallback with fractional/core-v6 hints disabled, removal, reappearance with a
+new registry identity, new windows on the survivor at 1.25x/2x, and rotation
+metadata. Labwc 0.20.1 retains an evacuated surface's old scale preference until
+it sends another hint, and can restore that window to a re-enabled output. The
+tests preserve those compositor choices rather than deriving desktop placement
+or overriding per-surface preferences from output metadata.
+
+Regression 242 passes both live output scenarios; 243 passes stock Cage/labwc,
+desktop launch, seven Surface scenarios, native tests and graph audit. After the
+final v6-default/error-propagation adjustment, 244 passes output tests, all 15 APK
+tests (46 steps, zero runtime issues), seven Surface scenarios, native tests and
+graph audit; 245 passes all three stock task-window gates (desktop: 13 steps,
+zero runtime issues). Logs are `/tmp/wayland-outputs-{242,243,244,245}.log`.
+Artifacts are retained under `/tmp/wayland-outputs-{244,245}-artifacts/`.
+
+This closes output discovery and scale-hint ownership. Higher-resolution stock
+task composition, configure/content generations, delayed-frame rejection and the
+remaining M8–M11 acceptance gates are still pending.
+
 ## Virtual-pointer v1 checkpoint (2026-09-08)
 
 The presenter now issues `create_virtual_pointer_with_output` only when the
