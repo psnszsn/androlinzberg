@@ -16,10 +16,10 @@ const unknown: i32 = -10000;
 const invalid_parameter: i32 = -10004;
 const BufferInfo = extern struct { offset: i32, size: i32, time_us: i64, flags: u32 };
 const Callbacks = extern struct { input: usize, output: usize, format: usize, err: usize };
-const Scope = struct {
+pub const Scope = struct {
     env: Env,
     attached: bool,
-    fn enter() ?Scope {
+    pub fn enter() ?Scope {
         if (vm == null or backend == null) return null;
         var raw: ?*anyopaque = null;
         const attached = vm.*.*.GetEnv.?(vm, &raw, jni.JNI_VERSION_1_6) != jni.JNI_OK;
@@ -32,7 +32,7 @@ const Scope = struct {
         }
         return .{ .env = env, .attached = attached };
     }
-    fn leave(self: Scope) void {
+    pub fn leave(self: Scope) void {
         self.env.*.*.ExceptionClear.?(self.env);
         _ = self.env.*.*.PopLocalFrame.?(self.env, null);
         if (self.attached) _ = vm.*.*.DetachCurrentThread.?(vm);

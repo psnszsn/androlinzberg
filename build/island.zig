@@ -434,6 +434,17 @@ pub fn build(b: *std.Build, o: Options) Result {
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
     bridge_includes.appendSlice(b.allocator, &.{ o.aosp.path(b, "frameworks/av/include"), o.aosp.path(b, "frameworks/av/media/libstagefright/include"), o.aosp.path(b, "frameworks/av/media/module/foundation/include"), o.aosp.path(b, "frameworks/av/services/mediaextractor"), o.aosp.path(b, "frameworks/av/media/libmedia/include"), o.aosp.path(b, "frameworks/av/media/libmediametrics/include"), o.aosp.path(b, "frameworks/base/media/jni"), hw_jni_inc, o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc, b.path("src/platform"), o.aosp.path(b, "system/media/audio/include") }) catch @panic("OOM");
+    bridge_includes.appendSlice(b.allocator, &.{
+        o.aosp.path(b, "frameworks/av/media/libaaudio/include"),
+        o.aosp.path(b, "frameworks/av/media/libaaudio/src"),
+    }) catch @panic("OOM");
+    g.add(o.aosp.path(b, "frameworks/av/media/libaudiofoundation"), &.{"AudioContainers.cpp"},
+        bridge_includes.items, &.{});
+    // Original parameter contracts and pure format/channel conversion routines.
+    // Unused service/MMAP routines are hidden sections removed by the island linker.
+    g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"),
+        &.{ "core/AAudioStreamParameters.cpp", "utility/AAudioUtilities.cpp" },
+        bridge_includes.items, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });
     g.add(b.path(""), &our_srcs, bridge_includes.items, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_PublicFormatUtils.cpp"}, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include") }, &.{});

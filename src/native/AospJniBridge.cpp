@@ -1,3 +1,22 @@
+#include "core/AAudioStreamParameters.h"
+// Reuse pinned AAudio validation and channel/format conversions at the host seam.
+extern "C" int azk_aaudio_channel_mask(int count) {
+    return AAudioConvert_channelCountToMask(count);
+}
+extern "C" int azk_aaudio_validate(const int* config) {
+    aaudio::AAudioStreamParameters params;
+    params.setChannelMask(config[0]);
+    params.setSampleRate(config[1]);
+    params.setFormat(AAudioConvert_aaudioToAndroidDataFormat(config[2]));
+    params.setDirection(config[3]);
+    params.setBufferCapacity(config[4]);
+    params.setUsage(config[5]);
+    params.setSharingMode(config[6]);
+    params.setInputPreset(config[7]);
+    params.setContentType(config[8]);
+    params.setDeviceIds({config[9]});
+    return params.validate();
+}
 #include "android_media_Streams.h"
 #include <media/NdkMediaFormatPriv.h>
 // NdkMediaCodec.cpp owns an AMessage snapshot across each NDK/codec call.

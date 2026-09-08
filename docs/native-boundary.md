@@ -30,6 +30,15 @@ zig build -j10 cpp-audit
   secure/block/encoder and additional surface/resource operations report explicit
   diagnostics or pinned failure results. The FFmpeg and presentation engines are
   unchanged.
+- `src/binder/aaudio_ndk.zig` exports 42 AAudio entry points over stock AudioTrack.
+  HostedAAudio owns callback submission and stream lifecycle; original native
+  AAudioStreamParameters, AAudioUtilities and AudioContainers validate parameters
+  and convert channel/format values. The shared JNI scope preserves calling-thread
+  attachment. Callback storage is allocated before publishing a stream and remains
+  owned until close drains delivery. PCM16/float playback uses the existing stream;
+  capture/MMAP/offload and unavailable formats/devices retain failure results.
+  Performance is NONE, sharing is SHARED, and the 10ms submission quantum is not a
+  measurement of the PipeWire device period. The PipeWire implementation is unchanged.
 - `src/binder/media_ndk.zig` exports 24 NDK codec entry points. Its Kotlin module
   `HostedNdkMediaCodec` shares the stock Java MediaCodec client, preserving codec
   lifecycle and callback ownership across native calls. The C++ helpers in

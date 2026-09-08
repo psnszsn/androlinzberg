@@ -27,6 +27,27 @@ in force.
 
 Follow-up milestones (newest first; earlier entries describe their state at that point):
 
+- AAudio now exports 42 C ABI entry points over stock Java AudioTrack and the
+  existing PCM stream, including every AAudio import in the staged Chromium
+  library. The build directly reuses AAudioStreamParameters, AAudioUtilities and
+  AudioContainers for native validation and channel/format conversion. HostedAAudio
+  owns stream handles, buffer allocation, PCM submission, callback threads and
+  lifecycle. It preserves callback-active write rejection, callback-close/stop
+  rejection, optional state-wait output, stop/flush frame accounting and 64-bit
+  extension of AudioTrack's wrapping positions. Fixed callback storage is allocated
+  before open succeeds; close drains callback delivery. Positive write timeouts use
+  the pinned legacy path's blocking behavior. PCM16 and float output use the same
+  unchanged backend. Capture, MMAP, offload, other PCM formats and unavailable
+  device selections retain failure results. Reported performance is NONE and sharing
+  is SHARED; the 10ms burst is a host submission quantum, not a measured physical
+  PipeWire period. Tests cover C ABI validation, real frame progress, timestamps,
+  bounded writes, callbacks and lifecycle. JVM/system/native/Binder and build checks
+  pass; all 11 APK tests pass with 38 captured steps and zero structured runtime
+  issues. The AOSP archive is rebuilt and repinned with nine original inputs;
+  ART is unchanged. Inventory remains 15 stubs (8 pending, 7 survivors). The native
+  entry points are prerequisites: Android Chromium has not yet been initialized,
+  and stock WebView/provider and window/server work remain unfinished.
+
 - The NDK codec boundary now exports 24 AMediaCodec entry points over verbatim
   Java MediaCodec and the existing decoder. Native callers can create/configure
   decoders, submit compressed buffers, read decoded output, query independent
