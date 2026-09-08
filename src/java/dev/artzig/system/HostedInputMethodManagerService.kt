@@ -162,6 +162,31 @@ internal class HostedInputMethodManagerService(private val context: android.cont
     override fun isImeTraceEnabled(): Boolean =
         com.android.internal.inputmethod.ImeTracing.getInstance().isEnabled
 
+    /** Pinned IMMS's selected-method/subtype lookup against an empty Android
+     * IME inventory. The compositor session is not an Android IME service. */
+    private fun enforceUser(userId: Int) {
+        if (android.os.UserHandle.getCallingUserId() != userId)
+            context.enforceCallingOrSelfPermission(android.Manifest.permission.INTERACT_ACROSS_USERS_FULL, null)
+    }
+    override fun getCurrentInputMethodInfoAsUser(userId: Int): InputMethodInfo? {
+        enforceUser(userId)
+        return null
+    }
+    override fun getLastInputMethodSubtype(userId: Int): InputMethodSubtype? {
+        enforceUser(userId)
+        return null
+    }
+
+    /** IMMS.getInputMethodWindowVisibleHeight checks client registration before
+     * querying WMS. No Android IME window exists; compositor panel geometry is
+     * not exposed by text-input-v3 and must not become a fabricated inset. */
+    override fun getInputMethodWindowVisibleHeight(client: IInputMethodClient): Int {
+        synchronized(lock) {
+            clients[client.asBinder()] ?: throw IllegalArgumentException("unknown client ${client.asBinder()}")
+        }
+        return 0
+    }
+
     override fun getInputMethodList(userId: Int, directBootAwareness: Int): InputMethodInfoSafeList =
         InputMethodInfoSafeList.empty()
 

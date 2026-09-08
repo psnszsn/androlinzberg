@@ -28,7 +28,7 @@
  				&& SAME_CLIENT(input, relay->focused_surface)) {
  			new_focused_surface = relay->focused_surface;
  		} else {
-@@ -627,3 +627,47 @@
+@@ -627,3 +627,65 @@
  	update_text_inputs_focused_surface(relay);
  	update_active_text_input(relay);
  }
@@ -40,12 +40,28 @@
 +        const char *title)
 +{
 +    static uint32_t old_editor_serial;
++    static bool protocol_removed;
 +    if (!getenv("AZK_TEST_IME") || !title || strncmp(title, "AZK IME:", 8)) return;
++    const char *command = title + 8;
++    if (!strcmp(command, "focus-away")) { seat_focus_surface(relay->seat, NULL); return; }
++    if (!strcmp(command, "focus-back")) { seat_focus_surface(relay->seat, surface); return; }
++    if (!strcmp(command, "remove-ime") && !protocol_removed) {
++        wl_global_remove(server.text_input_manager->global);
++        protocol_removed = true;
++        return;
++    }
++    if (!strcmp(command, "restore-ime") && protocol_removed) {
++        wl_list_remove(&relay->new_text_input.link);
++        server.text_input_manager = wlr_text_input_manager_v3_create(server.wl_display);
++        assert(server.text_input_manager);
++        wl_signal_add(&server.text_input_manager->events.new_text_input, &relay->new_text_input);
++        protocol_removed = false;
++        return;
++    }
 +    struct text_input *entry;
 +    wl_list_for_each(entry, &relay->text_inputs, link) {
 +        struct wlr_text_input_v3 *input = entry->input;
 +        if (input->focused_surface != surface || !input->current_enabled) continue;
-+        const char *command = title + 8;
 +        if (!strcmp(command, "preedit") || !strcmp(command, "leave-preedit")) {
 +            wlr_text_input_v3_send_preedit_string(input, "é拼", 2, 2);
 +            old_editor_serial = input->current_serial;
@@ -54,9 +70,11 @@
 +        } else if (!strcmp(command, "commit")) {
 +            wlr_text_input_v3_send_commit_string(input, "文");
 +            /* The older done still carries valid edits for this editor. */
-+            input->current_serial--;
-+            wlr_text_input_v3_send_done(input);
-+            input->current_serial++;
++            if (input->current_serial > old_editor_serial) {
++                input->current_serial--;
++                wlr_text_input_v3_send_done(input);
++                input->current_serial++;
++            }
 +        } else if (!strcmp(command, "delete")) {
 +            wlr_text_input_v3_send_delete_surrounding_text(input, 3, 3);
 +            wlr_text_input_v3_send_commit_string(input, "é");

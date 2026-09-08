@@ -53,9 +53,29 @@ physical-input gate with no running compositor input method. Artifacts:
 Regression 367 passes the complete JVM suite and all 16 APK integration tests,
 with 48 clean steps. Artifacts: `/tmp/wayland-ime-367-artifacts/`.
 
-Further IME acceptance work includes compositor focus loss/re-entry, protocol
-hotplug, explicit show/hide policy, editor actions and invalidation/death stress.
-Clipboard, drag-and-drop and the remaining M10/M11 work are still pending.
+Regression 373 expands the IME gate to 22 clean steps. Actual compositor focus
+loss removes preedit, re-entry starts a fresh editor generation, stock input
+invalidation advances its command header, and physical Enter reaches the editor
+action listener. Removing and recreating the protocol manager preserves physical
+typing and reactivates composition with a fresh query of the edited document.
+The callback test exposed an incorrect PID check: Binder intentionally reports
+PID zero for oneway transactions. Session callbacks now check their registered
+UID and Binder capability, with the window/process tuple still validated by WMS.
+Artifacts: `/tmp/wayland-ime-373-artifacts/`.
+
+Desktop software-IME visibility follows the existing empty-Android-IME branch:
+show/hide return false and do not claim an Android panel was shown. A compositor
+input method owns its native UI; text-input-v3 supplies no independent panel
+visibility or geometry contract. Android's selected-service/subtype inventory
+therefore remains empty and its IME window height is zero. Text editing and
+physical editor actions remain available independently of those panel APIs.
+Regression 374 passes the 22-step IME gate, stock Cage launch, C++ and graph
+audits, including the selected-service/subtype and IME-height Binder queries.
+Regression 375 passes the complete JVM suite and all 16 APK integration tests
+with 48 clean steps. Artifacts: `/tmp/wayland-ime-374-artifacts/` and
+`/tmp/wayland-ime-375-artifacts/`.
+In-flight invalidation/death stress, clipboard, drag-and-drop and the remaining
+M10/M11 work are still pending.
 
 ## Stock decoded video checkpoint (2026-09-08)
 

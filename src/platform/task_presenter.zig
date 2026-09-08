@@ -149,6 +149,7 @@ const Server = struct {
         for (self.session.ordered_events.?.take()) |item| {
             switch (item.event) {
                 .text_input_available => |available| {
+                    std.log.info("task text input available={any}", .{available});
                     if (self.owner) |callback| try sendGlobal(callback, 20, .{available});
                     continue;
                 },

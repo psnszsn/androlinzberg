@@ -47,8 +47,17 @@ class ImeFixtureActivity : Activity() {
         first = Editor().apply {
             contentDescription = "IME Unicode editor"
             inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = EditorInfo.IME_ACTION_GO
             setText("a😀中z")
             setSelection(3)
+        }
+        var submitted = 0
+        first.setOnEditorActionListener { _, action, event ->
+            if (action == EditorInfo.IME_ACTION_GO || event?.keyCode == android.view.KeyEvent.KEYCODE_ENTER) {
+                if (event == null || event.action == android.view.KeyEvent.ACTION_DOWN)
+                    status.text = "Editor submitted: ${++submitted}"
+                true
+            } else false
         }
         password = Editor().apply {
             contentDescription = "IME password editor"
@@ -57,9 +66,9 @@ class ImeFixtureActivity : Activity() {
             setSelection(length())
         }
         content.addView(status); content.addView(first); content.addView(password)
-        fun button(label: String, action: () -> Unit) {
-            content.addView(Button(this).apply { text = label; isFocusable = false; setOnClickListener { action() } })
-        }
+        fun button(label: String, action: () -> Unit): Button =
+            Button(this).apply { text = label; isFocusable = false; setPadding(0, 0, 0, 0); setOnClickListener { action() } }
+                .also { content.addView(it, LinearLayout.LayoutParams(-1, 32)) }
         fun command(value: String) {
             setTaskDescription(ActivityManager.TaskDescription.Builder().setLabel("AZK IME:$value").build())
         }
@@ -70,7 +79,26 @@ class ImeFixtureActivity : Activity() {
         button("Focus password") { password.requestFocus(); report() }
         button("Verify password context") { command("password") }
         button("Focus original editor") { first.requestFocus(); report() }
-        button("Compose then leave") { command("leave-preedit") }
+        button("Invalidate editor") {
+            getSystemService(android.view.inputmethod.InputMethodManager::class.java).invalidateInput(first)
+            report()
+        }
+        var focusPhase = 0
+        lateinit var focusButton: Button
+        focusButton = button("Compose then leave") {
+            when (focusPhase++ % 3) {
+                0 -> { command("leave-preedit"); focusButton.text = "Remove text focus" }
+                1 -> { command("focus-away"); focusButton.text = "Restore text focus" }
+                2 -> { command("focus-back"); focusButton.text = "Compose then leave" }
+            }
+        }
+        var protocolRemoved = false
+        lateinit var protocolButton: Button
+        protocolButton = button("Remove IME protocol") {
+            protocolRemoved = !protocolRemoved
+            command(if (protocolRemoved) "remove-ime" else "restore-ime")
+            protocolButton.text = if (protocolRemoved) "Restore IME protocol" else "Remove IME protocol"
+        }
         setContentView(android.widget.ScrollView(this).apply { addView(content) })
         first.requestFocus()
         report()

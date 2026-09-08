@@ -103,7 +103,10 @@ internal class WaylandInputMethod(private val handler: Handler, private val host
 
         private fun dispatch(action: () -> Unit) {
             val caller = Binder.getCallingUid()
-            if (caller != android.os.Process.SYSTEM_UID && (caller != uid || Binder.getCallingPid() != pid))
+            // Binder deliberately reports PID 0 for oneway session callbacks.
+            // The session capability and registered UID carry their authority;
+            // the original window/PID tuple is separately checked by stock WMS.
+            if (caller != android.os.Process.SYSTEM_UID && caller != uid)
                 throw SecurityException("Input session belongs to uid=$uid/pid=$pid")
             if (queued.incrementAndGet() > 128) {
                 queued.decrementAndGet()
@@ -169,14 +172,16 @@ internal class WaylandInputMethod(private val handler: Handler, private val host
             check(nextGeneration < Long.MAX_VALUE)
             generation = ++nextGeneration
             accepted = 0; applied = 0; enabled = true
-            publish(editor.getInitialSurroundingText(2000, 2000, 0), true)
+            // EditorInfo describes the original binding. Physical input may
+            // have changed the document while native focus/protocol was absent.
+            // Query before enabling the compositor, including on reactivation.
+            refresh(true)
             val cursor = AndroidFuture<Boolean>()
             cursorQuery = cursor
             cursor.orTimeout(1000, java.util.concurrent.TimeUnit.MILLISECONDS)
             cursor.whenComplete { _, _ -> handler.post { if (cursorQuery === cursor) cursorQuery = null } }
             connection.requestCursorUpdates(header, InputConnection.CURSOR_UPDATE_IMMEDIATE or
                 InputConnection.CURSOR_UPDATE_MONITOR, android.view.Display.DEFAULT_DISPLAY, cursor)
-            refresh(true)
         }
         fun suspendEditor(removePreedit: Boolean = true) {
             if (!enabled) return
@@ -328,10 +333,14 @@ internal class WaylandInputMethod(private val handler: Handler, private val host
             composingStart = candidatesStart; composingEnd = candidatesEnd
             refresh(true)
         }
-        override fun invalidateInput(info: EditorInfo, input: IRemoteInputConnection, sessionId: Int) = dispatch {
-            suspendEditor()
-            editor = info.createCopyInternal(); connection = input; header = InputConnectionCommandHeader(sessionId)
-            activate()
+        override fun invalidateInput(info: EditorInfo, input: IRemoteInputConnection, sessionId: Int) {
+            dispatch {
+                // RemoteInputConnectionImpl.scheduleInvalidateInput already
+                // finished the old composition before taking its text snapshot.
+                suspendEditor(removePreedit = false)
+                editor = info.createCopyInternal(); connection = input; header = InputConnectionCommandHeader(sessionId)
+                activate()
+            }
         }
         override fun finishInput() = dispatch { retire() }
         override fun finishSession() = dispatch { retire() }

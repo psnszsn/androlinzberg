@@ -339,19 +339,43 @@ with tempfile.TemporaryDirectory(prefix='azk-task-control-', dir='/tmp') as cont
                         ('VERIFY PASSWORD CONTEXT', 'Password length=15'),
                         ('FOCUS ORIGINAL EDITOR', 'IME text=a😀éz select=4:4 composing=-1:-1'),
                         ('COMPOSE THEN LEAVE', 'IME text=a😀éé拼z select=5:5 composing=4:6'),
+                        ('REMOVE TEXT FOCUS', 'IME text=a😀éz select=4:4 composing=-1:-1'),
+                        ('RESTORE TEXT FOCUS', 'IME text=a😀éz select=4:4 composing=-1:-1'),
+                        ('COMPOSE THEN LEAVE', 'IME text=a😀éé拼z select=5:5 composing=4:6'),
                         ('FOCUS PASSWORD', 'Password length=15'),
                         # Android closes the old InputConnection, finishing its
                         # composition while retaining text and cursor position.
                         ('FOCUS ORIGINAL EDITOR', 'IME text=a😀éé拼z select=5:5 composing=-1:-1'),
+                        ('INVALIDATE EDITOR', 'IME text=a😀éé拼z select=5:5 composing=-1:-1'),
+                        ('COMPOSE UNICODE', 'IME text=a😀ééé拼拼z select=6:6 composing=5:7'),
+                        ('COMMIT UNICODE', 'IME text=a😀éé文拼z select=6:6 composing=-1:-1'),
                     ]:
                         control('step', 'click', '--task-id', task, '--text', action,
                                 '--via', 'semantic', '--settle', 'idle')
                         control('wait', 'exists', '--task-id', task, '--text', expected)
+                    control('step', 'key', '--task-id', task, '--description', 'IME Unicode editor',
+                            'Enter', '--via', 'wayland', '--settle', 'idle')
+                    control('wait', 'exists', '--task-id', task, '--text', 'Editor submitted: 1')
+                    control('step', 'click', '--task-id', task, '--text', 'REMOVE IME PROTOCOL',
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('step', 'type', '--task-id', task, '--description', 'IME Unicode editor',
+                            'X', '--via', 'wayland', '--settle', 'idle')
+                    # Physical type first taps the selected editor; its center
+                    # lies after this short text, placing the caret at the end.
+                    settled_text('a😀éé文拼zX', 'IME Unicode editor')
+                    control('step', 'click', '--task-id', task, '--text', 'RESTORE IME PROTOCOL',
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('step', 'click', '--task-id', task, '--text', 'COMMIT UNICODE',
+                            '--via', 'semantic', '--settle', 'idle')
+                    control('wait', 'exists', '--task-id', task, '--text', 'IME text=a😀éé文拼zX文 select=10:10 composing=-1:-1')
+                    protocol_log = (out / 'app.log').read_text(errors='replace')
+                    assert 'task text input available=false' in protocol_log
+                    assert 'task text input available=true' in protocol_log
                     diagnostics = control('diagnose', '--since', json.dumps(ime_mark))
                     (out / 'ime-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
                     assert not diagnostics['diagnostics']['runtime']['issues'], diagnostics
                     steps = [json.loads(line) for line in (out / 'steps.jsonl').read_text().splitlines()]
-                    assert len(steps) == 11 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
+                    assert len(steps) == 22 and all(not step['diagnostics']['runtime']['issues'] for step in steps)
                     result['test_control'] = {'steps': len(steps), 'task': int(task)}
                 elif args.video:
                     video_mark = control('mark')['mark']

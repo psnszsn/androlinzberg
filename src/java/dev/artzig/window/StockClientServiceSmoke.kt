@@ -52,6 +52,13 @@ internal object StockClientServiceSmoke {
         // Null-window rejection precedes the client lookup in pinned IMMS.
         check(focus(client(), null) == InputBindResult.NULL.result)
         ime.addClient(registered, fallback, 1024)
+        check(ime.getCurrentInputMethodInfoAsUser(0) == null)
+        check(ime.getLastInputMethodSubtype(0) == null)
+        check(ime.getInputMethodWindowVisibleHeight(registered) == 0)
+        var unknownHeightRejected = false
+        try { ime.getInputMethodWindowVisibleHeight(client()) }
+        catch (_: IllegalArgumentException) { unknownHeightRejected = true }
+        check(unknownHeightRejected) { "Unknown IME client queried native window geometry" }
         var duplicateRejected = false
         try { ime.addClient(client(), fallback, 1024) }
         catch (_: SecurityException) { duplicateRejected = true }
