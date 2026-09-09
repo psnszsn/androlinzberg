@@ -12,6 +12,10 @@ import java.io.File
 
 /** Observes pixels from the stock Surface producer through stock SurfaceTexture's EGL consumer. */
 object SurfaceBufferSmoke {
+    @JvmStatic private external fun ndkCreateLayer(parent: android.view.SurfaceControl, surface: Surface?): Long
+    @JvmStatic private external fun ndkPaint(layer: Long, buffer: android.hardware.HardwareBuffer, color: Int): Long
+    @JvmStatic private external fun ndkHide(transaction: android.view.SurfaceControl.Transaction, layer: Long)
+    @JvmStatic private external fun ndkDestroyLayer(layer: Long)
     @JvmStatic private external fun liveBuffers(): Long
     @JvmStatic private external fun nativeBinderUid(): Int
     @JvmStatic private external fun foreignBinderThread(binder: android.os.IBinder): Boolean
@@ -170,6 +174,7 @@ object SurfaceBufferSmoke {
             val surface = Surface(texture)
             val source = android.view.SurfaceControl.Builder().setName("task-output-source-$id")
                 .setContainerLayer().build()
+            val ndkLayer = ndkCreateLayer(source, null)
             val content = android.view.SurfaceControl.Builder().setName("task-output-content-$id")
                 .setParent(source).setBLASTLayer().build()
             val output = dev.artzig.window.TaskSurfaceOutput("task-output-$id", source, surface, 1000 + id)
@@ -217,7 +222,37 @@ object SurfaceBufferSmoke {
                     }
                 }
             }
+            fun ndkColor(color: Int, restored: Int) {
+                val before = callbacks
+                android.hardware.HardwareBuffer.create(bounds.width, bounds.height,
+                    android.hardware.HardwareBuffer.RGBA_8888, 1,
+                    android.hardware.HardwareBuffer.USAGE_GPU_COLOR_OUTPUT or
+                        android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or
+                        android.hardware.HardwareBuffer.USAGE_COMPOSER_OVERLAY).use { buffer ->
+                    check(ndkPaint(ndkLayer, buffer, color) > 0)
+                }
+                await("NDK child GPU composition") {
+                    if (callbacks <= before) false else {
+                        activateReader(reader)
+                        texture.updateTexImage()
+                        pixel(reader) == color
+                    }
+                }
+                val painted = callbacks
+                android.view.SurfaceControl.Transaction().use {
+                    ndkHide(it, ndkLayer)
+                    it.apply()
+                }
+                await("NDK transaction borrowed from Java") {
+                    if (callbacks <= painted) false else {
+                        activateReader(reader)
+                        texture.updateTexImage()
+                        pixel(reader) == restored
+                    }
+                }
+            }
             override fun close() {
+                ndkDestroyLayer(ndkLayer)
                 output.close()
                 output.close()
                 android.view.SurfaceControl.Transaction().use { it.remove(content).remove(source).apply() }
@@ -239,6 +274,8 @@ object SurfaceBufferSmoke {
                 second.color(0xffff00ff.toInt(), secure = true)
                 second.color(0xff00ff00.toInt(), secure = false)
                 first.color(0xff0000ff.toInt(), resize = true)
+                first.ndkColor(0xffa739cc.toInt(), 0xff0000ff.toInt())
+                second.ndkColor(0xffcc8b23.toInt(), 0xff00ff00.toInt())
                 activateReader(second.reader)
                 check(pixel(second.reader) == 0xff00ff00.toInt()) { "Resizing a task changed its peer" }
                 check(com.android.server.display.DisplayControl.getPhysicalDisplayIds().contentEquals(physical))
@@ -329,6 +366,7 @@ object SurfaceBufferSmoke {
         val blast = android.graphics.BLASTBufferQueue("java-blast-queue", true)
         blast.update(layer, 32, 24, android.graphics.PixelFormat.RGBA_8888)
         val surface = blast.createSurfaceWithHandle()
+        val ndkLayer = ndkCreateLayer(layer, surface)
         try {
             check(surface.isValid && blast.isSameSurfaceControl(layer))
             val owner = Thread.currentThread()
@@ -354,6 +392,7 @@ object SurfaceBufferSmoke {
                 acquired = blast.lastAcquiredFrameNum
             }
         } finally {
+            ndkDestroyLayer(ndkLayer)
             surface.release()
             blast.destroy()
             android.view.SurfaceControl.Transaction().use { it.remove(layer).apply() }

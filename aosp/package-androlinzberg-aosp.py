@@ -89,6 +89,7 @@ framework_patches = tuple(
         (66, "-WM-transfer-stock-drag-to-native-presentation.patch"),
         (67, "-WM-present-local-drag-fallback-in-source-task.patch"),
         (68, "-HWUI-convert-host-GL-functor-origin.patch"),
+        (69, "-HWUI-and-NDK-stock-SurfaceControl-on-host.patch"),
     )
 )
 

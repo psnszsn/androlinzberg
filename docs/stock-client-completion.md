@@ -102,6 +102,41 @@ when rerun with `VK_DRIVER_FILES` selecting Mesa's Radeon ICD. All 28 fresh APK
 cases contain 88 steps with zero structured issues. WebView and desktop records
 have zero issues, and their screenshots plus fullscreen NewPipe were inspected.
 
+### Stock NDK SurfaceControl (2026-09-09)
+
+The original NDK SurfaceControl and display-LUT implementations replace the
+unsupported exports. All 52 functions in the three pinned public headers are
+exported. Native tests create children from both Java SurfaceControl and BLAST
+native-window parents, submit real GPU buffers and fences, observe commit before
+completion and valid transaction statistics, and verify pixels on two independent
+task outputs. Borrowed Java transactions, hiding, reparenting and teardown retain
+the original ownership contracts.
+
+HWUI now compiles its original SurfaceControl fields, root handoff and callbacks
+on the host, and WebViewFunctorManager.cpp is verbatim AOSP. This is not yet proof
+of Chromium overlay promotion: the host GL drawable's intermediate framebuffer
+still counts as a layer under the original overlay eligibility rule. That root
+framebuffer boundary remains open. A new, uncommitted canvas-video investigation
+also finds correct playing pixels but black paused frames with Chromium
+133.0.6943.137, even with overlays disabled. The provider's pinned
+[pause-copy implementation](https://chromium.googlesource.com/chromium/src/+/refs/tags/133.0.6943.137/third_party/blink/renderer/modules/mediastream/web_media_player_ms_compositor.cc)
+has explicit black-frame fallbacks; the exact failing branch is still being
+investigated. Neither finding is counted as completed video/overlay coverage.
+
+The framework archive is SHA-256
+`53a08fd25dad0a2472966893d27598d6fdcb45cdcf5db09bc8f04e8c605d8304`, pinned to
+`N-V-__8AAGAX8E6EYk87dZH0AKnglvpO47fCtonki-O-CE6N`. ART is unchanged. No new
+Wayland, PipeWire or FFmpeg backend was added. Static client differences remain
+22, with five tracked stubs.
+
+Validation passed with `-j10`: Java/build/native audits, task-output and
+surface-buffer smokes, JVM and system suites, full APK integration, headless
+WebView, desktop launcher, graphics budgets, surface fences and SurfaceFlinger
+composition. The existing WebView UI/input test passed before the new video
+probe was introduced. All 28 fresh APK cases passed with 88 steps and zero
+structured issues; desktop modal and NewPipe fullscreen screenshots were
+inspected. The new paused-canvas-video probe is not part of this verified commit.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

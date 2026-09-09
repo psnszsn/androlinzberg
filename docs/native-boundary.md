@@ -43,10 +43,11 @@ zig build -j10 cpp-audit
 - Stock WebView platform-support JNI loads in the provider class loader through
   `src/platform/webview_support.zig`. The original HWUI functor manager owns
   callback lifetime and the original GL drawable records and draws the functor.
-  A packaging patch disables SurfaceFlinger overlays on the host; it retains
-  ordinary GL drawing through the existing renderer. `WebViewGraphicBuffer.cpp`
-  implements the legacy provider's C++ buffer interface with the existing AOSP
-  host CPU GraphicBuffer. It does not provide device gralloc or GPU buffer import.
+  The original SurfaceControl callbacks and NDK transactions now reach the
+  existing compositor. Overlay promotion still needs validation at the host GL
+  drawable boundary: its intermediate framebuffer is classified as a layer by
+  stock HWUI. The original `graphic_buffer_impl.cpp` supplies the legacy provider
+  buffer interface over the existing GraphicBuffer and DMA-BUF mapper.
   Original NDK bitmap, input, looper and native-window JNI wrappers are compiled
   with their original bitmap and shared JNI helpers.
 - `src/platform/egl_support.zig` supplies the Android EGL library's display

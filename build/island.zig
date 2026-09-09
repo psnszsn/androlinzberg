@@ -508,6 +508,10 @@ pub fn build(b: *std.Build, o: Options) Result {
         apex_inc,
     };
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{ "looper.cpp", "input.cpp", "trace.cpp", "native_window_jni.cpp" }, webview_includes, &.{ "-include", "utils/Timers.h" });
+    g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{ "surface_control.cpp", "display_luts.cpp" }, &.{
+        o.aosp.path(b, "frameworks/base/core/jni/include"),
+        o.aosp.path(b, "frameworks/native/include/private"),
+    }, &.{});
     // The NDK uses original sealed-memfd operations; Binder retains its existing backing.
     const ndk_ashmem_flags = &.{
         "-DARTZIG_HOST_MEMFD",
