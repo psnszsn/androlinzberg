@@ -56,13 +56,11 @@ framework_patches = tuple(
         (33, "-UriMetricsHelper-allow-absent-host-statistics-service.patch"),
         (34, "-PackageUserState-match-nullable-splash-theme-contract.patch"),
         (35, "-WM-route-process-helpers-through-host-authority.patch"),
-        (36, "-ActivityManager-use-host-permission-and-memory-authorities.patch"),
         (37, "-ImageWriter-use-host-surface-query-adapter.patch"),
         (38, "-ProtoLog-use-stock-host-logging-backend.patch"),
         (39, "-WM-use-compositor-input-service-boundary.patch"),
         (40, "-PendingIntent-use-host-session-authorities.patch"),
         (41, "-WM-match-host-SF-capability-properties.patch"),
-        (42, "-AppOps-route-optional-module-queries-through-host.patch"),
         (43, "-ATMS-use-the-session-user-authority.patch"),
         (44, "-HWUI-initialize-host-context-for-offscreen-work.patch"),
         (45, "-HWUI-use-host-EGL-fences-for-stock-texture-layers.patch"),
@@ -210,12 +208,6 @@ packager.PATCH_SERIES = framework_patches + (
     (
         "frameworks/minikin",
         patch_root / "minikin" / "0001-Hyphenator-always-use-the-C-implementation-on-host-n.patch",
-    ),
-    (
-        "packages/modules/Wifi",
-        patch_root
-        / "packages-modules-Wifi"
-        / "0001-WifiSsid-keep-legacy-unknown-SSID-without-WifiManage.patch",
     ),
 )
 

@@ -100,8 +100,34 @@ object StockAppOpsSystemSmoke {
         }
         testRestrictions(context, service)
         testPrivacy(context)
+        testPrivacyUsage(context, service)
         testModePersistence(context)
         System.err.println("stock-appops-system: PASS modes, callbacks, nested accounting, privacy and persistence")
+    }
+
+    private fun testPrivacyUsage(context: Context, service: IAppOpsService) {
+        val client = checkNotNull(context.getSystemService(AppOpsManager::class.java))
+        val token = Binder()
+        val uid = Process.myUid()
+        val pkg = context.packageName
+        val op = AppOpsManager.OP_CAMERA
+        val previous = service.checkOperation(op, uid, pkg)
+        service.setMode(op, uid, pkg, AppOpsManager.MODE_ALLOWED)
+        try {
+            check(service.startOperation(token, op, uid, pkg, null,
+                false, false, null, false, 0, -1).opMode == AppOpsManager.MODE_ALLOWED)
+            try {
+                val usage = client.getPermissionGroupUsageForPrivacyIndicator(false).single {
+                    it.packageName == pkg && it.uid == uid &&
+                        it.permissionGroupName == android.Manifest.permission_group.CAMERA
+                }
+                check(usage.isActive && usage.lastAccessTimeMillis > 0)
+            } finally { service.finishOperation(token, op, uid, pkg, null) }
+        } finally { service.setMode(op, uid, pkg, previous) }
+        check(client.getPermissionGroupUsageForPrivacyIndicator(true).any {
+            it.packageName == pkg && it.permissionGroupName == android.Manifest.permission_group.CAMERA
+        })
+        System.err.println("stock-appops-system: PASS original privacy usage collection")
     }
 
     private fun testRestrictions(context: Context, service: IAppOpsService) {

@@ -78,13 +78,12 @@ zig build -j10 cpp-audit
   ownership are tested. The retired HIDL native-handle operation returns
   AOSP's `AMEDIA_ERROR_UNKNOWN` for an absent token manager; public native-window
   access works. All 29 pinned public image functions are exported.
-- `src/binder/surface_control_capability.zig` exposes the SurfaceControl ABI
-  names required during Chromium initialization. The existing stock SurfaceFlinger
-  service is present, but these NDK entry points are not connected to it yet. Factories return no handle, and
-  attempted operations emit structured unsupported diagnostics; no completion
-  callback or presentation statistic is fabricated. A transferred acquire-fence
-  descriptor is closed even when its buffer operation is rejected. These
-  exports do not implement compositor layers or successful transactions.
+- Original NDK `surface_control.cpp` and `display_luts.cpp` expose all 52 pinned
+  public SurfaceControl, JNI interoperability and LUT functions. Transactions
+  use the existing SurfaceComposerClient and SurfaceFlinger; tests observe real
+  GPU pixels, transferred fences, ordered commit/completion callbacks, latch
+  statistics and independent task outputs. The former unsupported exports were
+  deleted.
 - `src/platform/audio.zig` retains the PCM ring, PipeWire state and timing operations,
   registered on `dev.artzig.HostedPcmStream`. Verbatim AudioTrack Java calls the
   pinned 54-method interface in `src/binder/audio_track_jni.zig`, which checks all

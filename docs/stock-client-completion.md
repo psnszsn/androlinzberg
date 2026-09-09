@@ -1,6 +1,6 @@
 # Post-Wayland stock-client completion
 
-Status: implementation in progress; packaging and the first bulk client cleanup are verified.
+Status: implementation in progress; verified checkpoints are recorded below.
 Baseline: `3339fdf8`, inspected on 2026-09-09 after fetching `praz/main`.
 This continues [stock-client-migration.md](stock-client-migration.md) after the
 completed [Wayland task-window cutover](wayland-task-windows.md).
@@ -136,6 +136,37 @@ composition. The existing WebView UI/input test passed before the new video
 probe was introduced. All 28 fresh APK cases passed with 88 steps and zero
 structured issues; desktop modal and NewPipe fullscreen screenshots were
 inspected. The new paused-canvas-video probe is not part of this verified commit.
+
+### Bulk permission, logging and value clients (2026-09-09)
+
+ActivityManager, AppOpsManager, LocalePicker, ProtoLog and WifiSsid now match
+their pinned originals. Their dependencies were already selected: the original
+permission service, memory reader, backup client, Health Connect client,
+PermissionUsageHelper and WifiManager. The generated tracing flags already
+select ProtoLog's logcat backend. No replacement service or Java compatibility
+method was needed. Removed HostAppOpsOptionalServices and
+HostedComponentPermissions; the hosted AMS access check calls the original
+ActivityManager operation directly.
+
+The new AppOps regression starts a real camera-use record through the service
+and observes its active and recent usage through the original privacy-indicator
+client. The resource/client smoke also checks the original memory reader against
+Linux total-memory accounting. The exact static compiler source set includes all
+five originals. Modified static client sources decreased from 22 to 17; the five
+stub entries are unchanged.
+
+The rebuilt framework archive is SHA-256
+`c694f1cc2a67030318d806591b3234a82348f4c93c6f21cda24e49b57c5070b8`, pinned to
+`N-V-__8AAAUX8E5c351YyLSXtHzb2HxcFqLtBc0jtSDkzNJd`. ART is unchanged and both
+local archives match their current pins.
+
+Validation passed with `-j10`: Java/build/native audits, framework-module, full
+JVM, system, APK integration, headless WebView and desktop launcher suites.
+All 28 fresh APK cases contain 88 steps with zero structured issues; the desktop
+launcher contains 16 steps with zero issues. The new AppOps privacy test passes.
+The separate uncommitted WebView pause probe still fails, now also with directly
+generated I420 input. Playing pixels and input pass, but the earlier hypothesis
+of a canvas-format-only failure is insufficient; no paused-video fix is claimed.
 
 ## Objective and boundary
 

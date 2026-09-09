@@ -1,24 +1,10 @@
 From: Androlinzberg <host@androlinzberg.local>
 Subject: [PATCH] ProtoLog: use the stock host backend and retain WM state tracing
 
-Android Perfetto Java producer startup is absent. Use the pinned Ravenwood
-backend, keeping formatting and levels, and avoid legacy-backend casts when
-WM commands encounter that backend. Window state tracing remains independent.
+The generated tracing flags select the original logcat backend. Keep server
+diagnostics compatible with that backend without modifying ProtoLog callers.
+Window state tracing remains independent.
 
-diff --git a/core/java/com/android/internal/protolog/ProtoLog.java b/core/java/com/android/internal/protolog/ProtoLog.java
---- a/core/java/com/android/internal/protolog/ProtoLog.java
-+++ b/core/java/com/android/internal/protolog/ProtoLog.java
-@@ -85,7 +85,9 @@
- 
-     @RavenwoodReplace(reason = "Always use the Log backend on ravenwood, not Perfetto")
-     private static boolean logOnlyToLogcat() {
--        return !android.tracing.Flags.perfettoProtologTracing();
-+        // Use AOSP's host logging backend: Android's Perfetto Java producer
-+        // is not bootstrapped in this process. Preserve stock formatting and levels.
-+        return logOnlyToLogcat$ravenwood();
-     }
- 
-     private static boolean logOnlyToLogcat$ravenwood() {
 diff --git a/services/core/java/com/android/server/wm/WindowTracing.java b/services/core/java/com/android/server/wm/WindowTracing.java
 --- a/services/core/java/com/android/server/wm/WindowTracing.java
 +++ b/services/core/java/com/android/server/wm/WindowTracing.java

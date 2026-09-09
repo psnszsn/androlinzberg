@@ -42,7 +42,7 @@ object HostActivityManagerAccess {
         if (permission != null && synchronized(processes) {
                 processes[pid]?.denied?.contains(permission) == true
             }) return PackageManager.PERMISSION_DENIED
-        return HostedComponentPermissions.check(permission, uid, owningUid, exported)
+        return android.app.ActivityManager.checkComponentPermission(permission, uid, owningUid, exported)
     }
 
     @JvmStatic fun scheduleAsRegularPriority(tid: Int, suppressLogs: Boolean): Boolean =

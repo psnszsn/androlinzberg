@@ -12,6 +12,8 @@ internal object StockClientRestorationSmoke {
     fun run() {
         val base: Context = ActivityThread.currentActivityThread().systemContext
         val context = base.createPackageContext("org.example.permissions", 0)
+        val activityManager = checkNotNull(context.getSystemService(android.app.ActivityManager::class.java))
+        check(activityManager.totalRam == android.os.Process.getTotalMemory())
         val style = context.resources.getIdentifier(
             "StockUnresolvedAttributes", "style", context.packageName)
         check(style != 0)
