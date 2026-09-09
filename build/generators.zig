@@ -30,6 +30,7 @@ pub const GeneratedJvm = struct {
     sources: []const LazyPath,
     cronet_sources: []const LazyPath,
     aconfig_source_roots: []const LazyPath,
+    nano_source_root: LazyPath,
     resources: LazyPath,
     system_features_processor: LazyPath,
     system_features_processor_dependencies: LazyPath,
@@ -651,8 +652,20 @@ fn aconfigDevicePathsJava(b: *std.Build, aosp: *std.Build.Dependency) LazyPath {
     return run.run.captureStdOut(.{ .basename = std.fs.path.basename(declaration.output) });
 }
 
-fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile) []const LazyPath {
+const NanoJava = struct { java: []const LazyPath, root: LazyPath };
+
+fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile, package_rewriter: *std.Build.Step.Compile) NanoJava {
     var files: std.ArrayList(LazyPath) = .empty;
+    const tree = b.addWriteFiles();
+    const relocation = declarations.nano_runtime_relocation;
+    for (relocation.outputs) |file| {
+        const rewrite = b.addRunArtifact(package_rewriter);
+        rewrite.addFileArg(aosp.path(b.fmt("{s}/{s}", .{ relocation.root, file })));
+        const relocated = rewrite.addOutputFileArg(b.fmt("com/android/framework/protobuf/nano/{s}", .{file}));
+        rewrite.addArgs(&.{ relocation.from, relocation.to });
+        rewrite.addFileInput(aosp.path(relocation.rule));
+        files.append(b.allocator, tree.addCopyFile(relocated, b.fmt("com/android/framework/protobuf/nano/{s}", .{file}))) catch @panic("OOM");
+    }
     var index: usize = 0;
     for (declarations.nano) |declaration| {
         const input = declaration.input;
@@ -662,12 +675,22 @@ fn nanoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.
         run.addPrefixedDirectoryArg("-I", sourceDir(b, aosp, input));
         run.addFileArg(sourcePath(b, aosp, input));
         run.setName(b.fmt("generate nano Java {s}", .{std.fs.path.basename(input.path)}));
-        for (declaration.outputs) |file| files.append(b.allocator, output.path(b, file)) catch @panic("OOM");
+        for (declaration.outputs) |file| {
+            var java = output.path(b, file);
+            if (declaration.relocate_runtime) {
+                const rewrite = b.addRunArtifact(package_rewriter);
+                rewrite.addFileArg(java);
+                java = rewrite.addOutputFileArg(file);
+                rewrite.addArgs(&.{ relocation.from, relocation.to, "--references-only" });
+                rewrite.addFileInput(aosp.path(relocation.rule));
+            }
+            files.append(b.allocator, tree.addCopyFile(java, file)) catch @panic("OOM");
+        }
         index += 1;
     }
     const result = files.toOwnedSlice(b.allocator) catch @panic("OOM");
     _ = exposePaths(b, "gen-nano", "Generate javanano message sources", result);
-    return result;
+    return .{ .java = result, .root = tree.getDirectory() };
 }
 
 fn frameworkProtoJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Step.Compile, plugin: *std.Build.Step.Compile, package_rewriter: *std.Build.Step.Compile) []const LazyPath {
@@ -1217,7 +1240,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const aconfig_java = aconfigJava(b, o.aosp, runner);
     const sysprop_java = syspropJava(b, o.aosp, o.sysprop_tool);
     const incremental_sysprop = incrementalSyspropCpp(b, o.aosp, o.sysprop_cpp_tool);
-    const nano_java = nanoJava(b, o.aosp, o.protoc, o.javanano_tool);
+    const nano_java = nanoJava(b, o.aosp, o.protoc, o.javanano_tool, package_rewriter);
     const proto_java = protoJava(b, o.aosp, o.protoc, o.javastream_tool, package_rewriter);
     const stats_java = statsJava(b, o.aosp, stats_tool);
     const express_metric_ids_java = expressMetricIdsJava(b, o.aosp);
@@ -1229,7 +1252,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     const fixtures = fixtureApks(b, o.aosp, res.apk);
     const mime_resources = mimeResources(b, o.aosp);
     var java_files: std.ArrayList(LazyPath) = .empty;
-    inline for (.{ template_java, cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
+    inline for (.{ template_java, cronet_java, aidl_java, hidl_java, logtags_java, aconfig_java.java, sysprop_java, nano_java.java, proto_java, stats_java, xsd_java, res.java_sources }) |generated_set| {
         java_files.appendSlice(b.allocator, generated_set) catch @panic("OOM");
     }
     java_files.append(b.allocator, express_metric_ids_java) catch @panic("OOM");
@@ -1258,6 +1281,7 @@ pub fn build(b: *std.Build, o: Options) Result {
             .sources = java_files.toOwnedSlice(b.allocator) catch @panic("OOM"),
             .cronet_sources = cronet_java,
             .aconfig_source_roots = aconfig_java.java_roots,
+            .nano_source_root = nano_java.root,
             .resources = mime_resources,
             .system_features_processor = system_features_java.processor,
             .system_features_processor_dependencies = system_features_java.dependencies,

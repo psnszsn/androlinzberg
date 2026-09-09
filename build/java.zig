@@ -355,6 +355,8 @@ pub fn build(b: *std.Build, o: Options) Result {
     for (o.generated.jvm.aconfig_source_roots) |root| {
         kotlinc.addPrefixedDirectoryArg("-Xjava-source-roots=", root);
     }
+    // Relocated nano runtime and messages also need a package root for K2.
+    kotlinc.addPrefixedDirectoryArg("-Xjava-source-roots=", o.generated.jvm.nano_source_root);
     sources.addKotlincInputs(kotlinc.run);
     kotlinc_inputs.addInputs(kotlinc.run);
     kotlinc.run.step.dependOn(o.source_audit);

@@ -289,6 +289,10 @@ extern jobject android_view_KeyCharacterMap_create(JNIEnv*, int32_t,
                                                    std::unique_ptr<KeyCharacterMap>);
 extern int register_android_content_AssetManager(JNIEnv*);
 extern int register_android_content_res_ApkAssets(JNIEnv*);
+extern int register_android_content_res_ObbScanner(JNIEnv*);
+extern int register_android_os_storage_StorageManager(JNIEnv*);
+extern int register_com_android_internal_os_FuseAppLoop(JNIEnv*);
+
 extern int register_android_content_XmlBlock(JNIEnv*);
 extern int register_android_content_StringBlock(JNIEnv*);
 extern int register_android_view_RenderNode(JNIEnv*);
@@ -721,6 +725,10 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(android::register_android_util_PathParser),
             E(android::register_android_content_AssetManager),
             E(android::register_android_content_res_ApkAssets),
+            E(android::register_android_content_res_ObbScanner),
+            E(android::register_android_os_storage_StorageManager),
+            E(android::register_com_android_internal_os_FuseAppLoop),
+
             E(android::register_android_content_StringBlock),
             E(android::register_android_content_XmlBlock),
             E(android::register_android_view_RenderNode),

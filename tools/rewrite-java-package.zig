@@ -7,13 +7,18 @@ fn rewritePackage(allocator: std.mem.Allocator, source: []const u8, from: []cons
     defer allocator.free(declaration);
     if (std.mem.indexOf(u8, source, declaration) == null) return error.PackageDeclarationNotFound;
 
+    return rewriteReferences(allocator, source, from, to);
+}
+
+fn rewriteReferences(allocator: std.mem.Allocator, source: []const u8, from: []const u8, to: []const u8) ![]u8 {
+    if (from.len == 0) return error.EmptyPackage;
     // JarJar relocates both the declaration and all fully qualified references
     // emitted for cross-proto fields. Do the same literal package-prefix rewrite
     // rather than changing only the declaration.
     const occurrences = std.mem.count(u8, source, from);
     var output = try std.ArrayList(u8).initCapacity(
         allocator,
-        source.len + occurrences * (to.len - from.len),
+        source.len - occurrences * from.len + occurrences * to.len,
     );
     errdefer output.deinit(allocator);
     var remaining = source;
@@ -28,10 +33,11 @@ fn rewritePackage(allocator: std.mem.Allocator, source: []const u8, from: []cons
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len != 5) {
+    const references_only = args.len == 6 and std.mem.eql(u8, args[5], "--references-only");
+    if (args.len != 5 and !references_only) {
         try Io.File.stderr().writeStreamingAll(
             init.io,
-            "usage: rewrite-java-package <input.java> <output.java> <from> <to>\n",
+            "usage: rewrite-java-package <input.java> <output.java> <from> <to> [--references-only]\n",
         );
         return error.InvalidArguments;
     }
@@ -43,7 +49,10 @@ pub fn main(init: std.process.Init) !void {
     const source = try reader.interface.allocRemaining(init.gpa, .unlimited);
     defer init.gpa.free(source);
 
-    const rewritten = try rewritePackage(init.gpa, source, args[3], args[4]);
+    const rewritten = if (references_only)
+        try rewriteReferences(init.gpa, source, args[3], args[4])
+    else
+        try rewritePackage(init.gpa, source, args[3], args[4]);
     defer init.gpa.free(rewritten);
 
     const output = try Io.Dir.cwd().createFile(init.io, args[2], .{});
@@ -83,4 +92,16 @@ test "missing package is rejected" {
         error.PackageDeclarationNotFound,
         rewritePackage(std.testing.allocator, "public final class X {}", "a", "b"),
     );
+}
+
+test "relocate runtime references without changing the message package" {
+    const rewritten = try rewriteReferences(std.testing.allocator, "package android.stats; class X extends com.google.protobuf.nano.MessageNano {}", "com.google.protobuf.nano", "com.android.framework.protobuf.nano");
+    defer std.testing.allocator.free(rewritten);
+    try std.testing.expectEqualStrings("package android.stats; class X extends com.android.framework.protobuf.nano.MessageNano {}", rewritten);
+}
+
+test "shorter package relocation" {
+    const rewritten = try rewritePackage(std.testing.allocator, "package long.name; long.name.X x;", "long.name", "a");
+    defer std.testing.allocator.free(rewritten);
+    try std.testing.expectEqualStrings("package a; a.X x;", rewritten);
 }

@@ -207,7 +207,7 @@ pub const Hidl = struct {
     language: HidlLanguage,
     outputs: []const []const u8,
 };
-pub const Nano = struct { input: SourcePath, outputs: []const []const u8 };
+pub const Nano = struct { input: SourcePath, outputs: []const []const u8, relocate_runtime: bool = false };
 
 /// Pinned ChangeIdProcessor and Soong's compat-config merger.
 pub const compat_config = .{
@@ -2457,13 +2457,37 @@ pub const sysprop = [_]Sysprop{
     .{ .scope = "internal", .input = .{ .source = .aosp, .path = "system/libsysprop/srcs/android/sysprop/TelephonyProperties.sysprop" } },
 };
 
+// Soong devicepolicyprotosnano's Android jarjar rule. Keep the original runtime
+// for modules that use its unrelocated API, and generate this second namespace.
+pub const nano_runtime_relocation = .{
+    .root = "external/protobuf/javanano/src/main/java/com/google/protobuf/nano",
+    .rule = "frameworks/proto_logging/stats/enums/stats/devicepolicy/jarjar-rules.txt",
+    .from = "com.google.protobuf.nano",
+    .to = "com.android.framework.protobuf.nano",
+    .outputs = &[_][]const u8{
+        "CodedInputByteBufferNano.java",
+        "CodedOutputByteBufferNano.java",
+        "ExtendableMessageNano.java",
+        "Extension.java",
+        "FieldArray.java",
+        "FieldData.java",
+        "InternalNano.java",
+        "InvalidProtocolBufferNanoException.java",
+        "MapFactories.java",
+        "MessageNano.java",
+        "MessageNanoPrinter.java",
+        "UnknownFieldData.java",
+        "WireFormatNano.java",
+    },
+};
+
 pub const nano = [_]Nano{
     .{ .input = .{ .source = .aosp, .path = "build/make/tools/aconfig/aconfig_protos/protos/aconfig.proto" }, .outputs = &.{"android/aconfig/nano/Aconfig.java"} },
     .{ .input = .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/stats/devicepolicy/device_policy_enums.proto" }, .outputs = &.{"android/stats/devicepolicy/nano/DevicePolicyEnums.java"} },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/proto/src/windowmanager.proto" }, .outputs = &.{"com/android/server/wm/nano/WindowManagerProtos.java"} },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/proto/src/system_messages.proto" }, .outputs = &.{"com/android/internal/messages/nano/SystemMessageProto.java"} },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/proto/src/metrics_constants/metrics_constants.proto" }, .outputs = &.{"com/android/internal/logging/nano/MetricsProto.java"} },
-    .{ .input = .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/stats/devicepolicy/device_policy.proto" }, .outputs = &.{"android/stats/devicepolicy/nano/StringList.java"} },
+    .{ .input = .{ .source = .aosp, .path = "frameworks/proto_logging/stats/enums/stats/devicepolicy/device_policy.proto" }, .relocate_runtime = true, .outputs = &.{"android/stats/devicepolicy/nano/StringList.java"} },
     .{ .input = .{ .source = .aosp, .path = "frameworks/base/proto/src/criticalevents/critical_event_log.proto" }, .outputs = &.{
         "com/android/server/criticalevents/nano/CriticalEventLogProto.java",
         "com/android/server/criticalevents/nano/CriticalEventLogStorageProto.java",

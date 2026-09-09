@@ -168,6 +168,46 @@ The separate uncommitted WebView pause probe still fails, now also with directly
 generated I420 input. Playing pixels and input pass, but the earlier hypothesis
 of a canvas-format-only failure is insufficient; no paused-video fix is claimed.
 
+### Stock device policy and storage (2026-09-09)
+
+DevicePolicyManager, DevicePolicyEventLogger, PrivateDnsConnectivityChecker,
+StorageManager and VolumeInfo now match the pinned originals. Their closure
+includes ProvisioningIntentHelper, StringParceledListSlice, ObbScanner and
+FuseAppLoop. The device-policy and keychain Binder declarations also use their
+original parcelable imports. The build reproduces devicepolicyprotosnano's
+Soong runtime relocation and supplies its generated package root to Kotlin.
+
+The original OBB scanner, quota ioctl JNI and libappfuse client are compiled and
+registered. Invalid OBB files fail in the original scanner before Binder;
+missing files and corrupt files retain their distinct stock exception causes.
+Valid requests are queued and receive ERROR_COULD_NOT_MOUNT, unknown unmounts
+receive ERROR_NOT_MOUNTED, and path/header mismatches are rejected. An absent
+AppFuse bridge returns null from the service, letting the original client throw
+IOException before creating a callback/descriptor. Actual mounts still need
+vold; no new mount daemon or Wayland/PipeWire/FFmpeg backend was added.
+
+The x86_64 native tagging probes follow the pinned Zygote implementation. New
+system regressions verify NFC provisioning-intent parsing without NFC hardware,
+MTE capability reporting, relocated protobuf serialization, string-list Binder
+continuation, original OBB metadata parsing, asynchronous mount/unmount failures,
+and path ownership validation. The exact compiler source list now contains
+7,071 unchanged originals, 12 modified static client files and 40 modified server
+files. The five stub entries are unchanged; boot-library differences and the
+remaining runtime/graphics/service-instance work remain open.
+
+The framework archive is SHA-256
+`dcba799398842145298720584019343650683410354d8a666d80770759d56280`, pinned to
+`N-V-__8AADal8U6clqLFcIsf41wCXKsS9fZYHFILWksaz7Ne`. Packaging restored the
+isolated checkout. ART is unchanged and both local archives are current.
+
+Validation passed: Java and system-service tests with `-j24`, then build-tool,
+native/source/graph audits, full JVM and APK integration, WebView and desktop
+launcher tests with `-j10`. All 28 fresh APK cases contain 89 steps with zero
+structured runtime issues; the desktop launcher has 16 steps with zero issues.
+Desktop modal and NewPipe fullscreen screenshots were inspected. The separate
+uncommitted WebView paused-video probe remains failing and is not counted as
+completed coverage.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

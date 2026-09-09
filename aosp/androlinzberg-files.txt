@@ -9078,3 +9078,17 @@ F aosp frameworks/av/media/ndk/NdkImagePriv.h
 F aosp frameworks/av/media/ndk/include/media/NdkImageReader.h
 F aosp frameworks/av/media/ndk/include/media/NdkImage.h
 F aosp frameworks/av/media/ndk/include/media-vndk/VndkImageReader.h
+
+# Stock storage and device-policy closure.
+F aosp frameworks/base/core/java/android/app/admin/ProvisioningIntentHelper.java
+F aosp frameworks/base/core/java/android/content/pm/StringParceledListSlice.java
+F aosp frameworks/base/core/java/android/content/pm/StringParceledListSlice.aidl
+F aosp frameworks/base/core/java/android/content/res/ObbScanner.java
+F aosp frameworks/base/core/java/com/android/internal/os/FuseAppLoop.java
+F aosp frameworks/base/core/java/com/android/internal/os/FuseUnavailableMountException.java
+F aosp frameworks/base/core/jni/android_content_res_ObbScanner.cpp
+F aosp frameworks/base/core/jni/com_android_internal_os_FuseAppLoop.cpp
+F aosp frameworks/base/core/jni/android_os_storage_StorageManager.cpp
+F aosp frameworks/base/core/jni/filesystem_utils.h
+F aosp frameworks/proto_logging/stats/enums/stats/devicepolicy/jarjar-rules.txt
+D aosp system/core/libappfuse

@@ -1,5 +1,12 @@
 package dev.artzig.system
 
+import android.content.res.ObbInfo
+import android.os.ParcelFileDescriptor
+import android.os.RemoteException
+import android.os.storage.IObbActionListener
+import android.os.storage.OnObbStateChangeListener
+import com.android.internal.os.AppFuseMount
+import com.android.internal.os.BackgroundThread
 import android.os.Binder
 import android.os.Environment
 import android.os.ParcelableException
@@ -22,9 +29,9 @@ import java.io.IOException
  * Source note: this follows the query and validation boundary of AOSP
  * `StorageManagerService` (`getVolumeList`, `getVolumes`, `mkdirs`,
  * `getAllocatableBytes`, and CE-state queries). Android's vold, installd quota,
- * checkpoint, AppFuse, OBB, and disk-management backends do not exist on the host;
- * those methods deliberately remain on [unsupported] instead of returning
- * successful-looking defaults.
+ * checkpoint, AppFuse, OBB, and disk-management backends do not exist on the host.
+ * OBB and AppFuse use the original service failure contracts below; other absent
+ * daemon operations remain on [unsupported].
  *
  * The launcher exports `ARTZIG_DATA_DIR` and `EXTERNAL_STORAGE` beneath the
  * per-session root. The service never exposes or creates paths outside that root.
@@ -71,6 +78,62 @@ class HostedStorageManagerService @JvmOverloads constructor(
         enforceCallingPackage(callingPackage)
         if (userId != UserHandle.USER_SYSTEM) return emptyArray()
         return arrayOf(primaryVolume(userId))
+    }
+
+    // Source: StorageManagerService mount/openProxyFileDescriptor. An absent
+    // bridge returns null; the original client owns IOException and retry logic.
+    override fun mountProxyFileDescriptorBridge(): AppFuseMount? = null
+
+    override fun openProxyFileDescriptor(mountId: Int, fileId: Int, mode: Int): ParcelFileDescriptor? = null
+
+    // Source: validateObbInfo, MountObbAction and UnmountObbAction. Translate only
+    // the session's storage root; retain path/header ownership checks and async
+    // failure notification. No vold means no entry can enter the mounted state.
+    override fun mountObb(rawPath: String?, canonicalPath: String?, token: IObbActionListener?, nonce: Int, obbInfo: ObbInfo?) {
+        val raw = java.util.Objects.requireNonNull(rawPath, "rawPath cannot be null")!!
+        java.util.Objects.requireNonNull(canonicalPath, "canonicalPath cannot be null")
+        val callback = java.util.Objects.requireNonNull(token, "token cannot be null")!!
+        val info = java.util.Objects.requireNonNull(obbInfo, "obbInfo cannot be null")!!
+        val file = File(raw).canonicalFile
+        val obbRoot = File(canonicalExternalRoot, "Android/obb")
+        if (!contains(obbRoot, file) || UserHandle.getUserId(Binder.getCallingUid()) != UserHandle.USER_SYSTEM) {
+            throw SecurityException("Invalid path to Obb file : $file")
+        }
+        val parts = file.relativeTo(obbRoot).path.split(File.separatorChar)
+        if (parts.size < 2 || parts[0] != info.packageName) {
+            throw SecurityException("OBB path does not match package ${info.packageName}: $file")
+        }
+        val status = if (Binder.getCallingUid() == Process.SYSTEM_UID || info.packageName in callingPackages()) {
+            OnObbStateChangeListener.ERROR_COULD_NOT_MOUNT
+        } else {
+            OnObbStateChangeListener.ERROR_PERMISSION_DENIED
+        }
+        notifyObb(callback, raw, nonce, status)
+    }
+
+    override fun unmountObb(rawPath: String?, force: Boolean, token: IObbActionListener?, nonce: Int) {
+        val raw = java.util.Objects.requireNonNull(rawPath, "rawPath cannot be null")!!
+        if (token != null) notifyObb(token, raw, nonce, OnObbStateChangeListener.ERROR_NOT_MOUNTED)
+    }
+
+    override fun isObbMounted(rawPath: String?): Boolean {
+        java.util.Objects.requireNonNull(rawPath, "rawPath cannot be null")
+        return false
+    }
+
+    override fun getMountedObbPath(rawPath: String?): String? {
+        java.util.Objects.requireNonNull(rawPath, "rawPath cannot be null")
+        return null
+    }
+
+    private fun notifyObb(token: IObbActionListener, rawPath: String, nonce: Int, status: Int) {
+        BackgroundThread.getHandler().post {
+            try {
+                token.onObbResult(rawPath, nonce, status)
+            } catch (e: RemoteException) {
+                android.util.Log.w("HostedStorageManager", "OBB listener went away", e)
+            }
+        }
     }
 
     override fun getDisks(): Array<DiskInfo> = emptyArray()

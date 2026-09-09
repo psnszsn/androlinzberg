@@ -525,6 +525,9 @@ pub fn build(b: *std.Build, o: Options) Result {
     };
     g.add(o.aosp.path(b, "frameworks/base/native/android"), &.{"sharedmem.cpp"}, webview_includes, ndk_ashmem_flags);
     g.add(o.aosp.path(b, "system/core/libcutils"), &.{"ashmem-dev.cpp"}, webview_includes, ndk_ashmem_flags);
+    // Original OBB parser, quota ioctl and AppFuse client; no hosted mount daemon.
+    g.add(o.aosp.path(b, "system/core/libappfuse"), &.{ "FuseAppLoop.cc", "FuseBuffer.cc", "FuseBridgeLoop.cc", "EpollController.cc" }, &.{o.aosp.path(b, "system/core/libappfuse/include")}, &.{});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{ "android_content_res_ObbScanner.cpp", "android_os_storage_StorageManager.cpp", "com_android_internal_os_FuseAppLoop.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni/include"), o.aosp.path(b, "system/core/libappfuse/include") }, &.{ "-include", "sys/ioctl.h" });
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_view_InputQueue.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/native/graphics/jni"), &.{"bitmap.cpp"}, webview_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/base/native/webview/plat_support"), &.{ "draw_functor.cpp", "draw_gl_functor.cpp", "functor_utils.cpp", "graphics_utils.cpp", "graphic_buffer_impl.cpp" }, webview_includes, &.{"-D__unused=__attribute__((unused))"});

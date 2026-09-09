@@ -38,8 +38,6 @@ framework_patches = tuple(
         (21, "-ApplicationLoaders-the-system-class-loader-is-the-ba.patch"),
         (22, "-AlarmManager-time-zone-validation-without-ZoneInfoDb.patch"),
         (23, "-resources-make-early-RRO-constraint-flag-read-only.patch"),
-        (26, "-StorageManager-cut-unavailable-vold-OBB-and-AppFuse-.patch"),
-        (27, "-DevicePolicyManager-cut-unavailable-host-backends.patch"),
         (28, "-GLES-release-original-heap-buffer-array-pointers.patch"),
         (29, "-HWUI-preserve-hardware-buffer-RGBA-byte-order.patch"),
         (30, "-OverlayProperties-marshal-LUT-sampling-keys.patch"),

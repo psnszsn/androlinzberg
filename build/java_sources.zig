@@ -1322,7 +1322,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/opengl/java/android/opengl/EGLObjectHandle.java");
     try c.file("$FB/opengl/java/android/opengl/EGLSync.java");
     try c.add("$FB/libs/hwui/apex/java", .{});
-    try c.add("$FB/core/java/android/content/res", .{ .not_names = &.{ "ObbInfo.java", "ObbScanner.java" } });
+    try c.add("$FB/core/java/android/content/res", .{ .not_names = &.{ "ObbInfo.java" } });
     try c.add("$FB/core/java/android/text", .{ .not_paths = &.{ "*/method/*", "*/util/*", "*/format/*" }, .not_names = &.{"TranslationTransformationMethod.java"} });
     try c.add("$TS/src/org/ccil/cowan/tagsoup", .{ .not_paths = &.{"*/jaxp/*"} });
     try c.add("$FB/core/java/android/text/format", .{ .not_names = &.{ "Formatter.java", "Time.java", "TimeFormatter.java", "DateFormat.java", "TimeMigrationUtils.java" } });
@@ -2268,6 +2268,11 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/storage/VolumeInfo.java");
     try c.file("$CJ/android/os/storage/VolumeRecord.java");
     try c.file("$CJ/com/android/internal/os/AppFuseMount.java");
+    try c.file("$CJ/android/app/admin/ProvisioningIntentHelper.java");
+    try c.file("$CJ/android/content/pm/StringParceledListSlice.java");
+    try c.file("$CJ/com/android/internal/os/FuseAppLoop.java");
+    try c.file("$CJ/com/android/internal/os/FuseUnavailableMountException.java");
+
     try c.file("$CJ/com/android/internal/os/RoSystemProperties.java");
     // Real BroadcastReceiver; ArtzigBroadcastManager.Args extends its PendingResult (LoadedApk.ReceiverDispatcher.Args).
     try c.file("$CJ/android/content/BroadcastReceiver.java");

@@ -14,9 +14,9 @@ zig build -j10 java
 
 The pinned AOSP tree supplies the Kotlin compiler and standard library. OpenJDK
 21 runs Kotlin, `javac`, and D8. The build uses Kotlin language level 2.0 and JVM
-21 class files. Generated aconfig directories are also explicit Java source roots:
+21 class files. Generated aconfig and nano directories are also explicit Java source roots:
 K2 needs those package roots to resolve fully qualified flag constants in
-inherited AOSP annotations. The build uses only the generator's declared output
+inherited AOSP annotations and relocated protobuf references. The build uses only the generator's declared output
 directories, so this does not expose unselected AOSP sources.
 
 The output is `zig-out/framework/framework.jar`. This file is a multidex

@@ -85,10 +85,7 @@ internal object StorageManagerSystemSmoke {
             "StorageManager.mkdirs rejects another package's external directory"
         }
 
-        check(!storage.mountObb(File(expectedRoot, "missing.obb").path, null, object :
-            android.os.storage.OnObbStateChangeListener() {})) {
-            "OBB mounting reports that no vold-backed operation was queued"
-        }
+        testObb(context, storage, transport, expectedRoot)
 
         val proxyFailure = runCatching {
             storage.openProxyFileDescriptor(
@@ -100,6 +97,58 @@ internal object StorageManagerSystemSmoke {
                 },
             )
         }.exceptionOrNull()
-        check(proxyFailure is IOException) { "AppFuse proxy descriptors fail explicitly on the host" }
+        check(proxyFailure is IOException && proxyFailure.message == "Failed to mount proxy bridge") {
+            "the original client reports the absent AppFuse bridge: $proxyFailure"
+        }
+        check(storage.proxyFileDescriptorMountPointId == -1)
+    }
+
+    private fun testObb(context: Context, storage: StorageManager, transport: IStorageManager, root: File) {
+        val noCallback = object : android.os.storage.OnObbStateChangeListener() {
+            override fun onObbStateChange(path: String?, state: Int) { error("invalid OBB was queued") }
+        }
+        val missing = runCatching { storage.mountObb(File(root, "missing.obb").path, null, noCallback) }.exceptionOrNull()
+        check(missing is IllegalArgumentException && missing.cause == null &&
+            missing.message?.startsWith("OBB file does not exist:") == true)
+        val file = File(root, "Android/obb/${context.packageName}/main.7.${context.packageName}.obb")
+        check(file.parentFile!!.isDirectory || file.parentFile!!.mkdirs())
+        // Pinned androidfw ObbFile v1 footer, with an independent known payload.
+        val name = context.packageName.toByteArray(Charsets.UTF_8)
+        val fixture = java.nio.ByteBuffer.allocate(32 + name.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .putInt(1).putInt(7).putInt(0).putLong(0).putInt(name.size).put(name)
+            .putInt(24 + name.size).putInt(0x01059983).array()
+        try {
+            file.writeBytes(fixture.copyOf(12))
+            val truncated = runCatching { storage.mountObb(file.path, null, noCallback) }.exceptionOrNull()
+            check(truncated is IllegalArgumentException && truncated.cause is IOException)
+            file.writeBytes(fixture)
+            val info = android.content.res.ObbScanner.getObbInfo(file.path)
+            check(info.packageName == context.packageName && info.version == 7 && info.flags == 0)
+            check(!storage.isObbMounted(file.path) && storage.getMountedObbPath(file.path) == null)
+
+            // Use a callback-thread client so this system test need not pump the
+            // application's main looper while waiting for asynchronous results.
+            val thread = android.os.HandlerThread("obb-client-test").apply { start() }
+            try {
+                val client = StorageManager(context, thread.looper)
+                val results = java.util.concurrent.LinkedBlockingQueue<Pair<String?, Int>>()
+                val listener = object : android.os.storage.OnObbStateChangeListener() {
+                    override fun onObbStateChange(path: String?, state: Int) { results.add(path to state) }
+                }
+                check(client.mountObb(file.path, null, listener))
+                check(results.poll(5, java.util.concurrent.TimeUnit.SECONDS) ==
+                    (file.path to android.os.storage.OnObbStateChangeListener.ERROR_COULD_NOT_MOUNT))
+                check(client.unmountObb(file.path, false, listener))
+                check(results.poll(5, java.util.concurrent.TimeUnit.SECONDS) ==
+                    (file.path to android.os.storage.OnObbStateChangeListener.ERROR_NOT_MOUNTED))
+                val token = object : android.os.storage.IObbActionListener.Stub() {
+                    override fun onObbResult(path: String?, nonce: Int, status: Int) { results.add(path to status) }
+                }
+                info.packageName = "foreign.package"
+                check(runCatching { transport.mountObb(file.path, file.canonicalPath, token, 1, info) }.exceptionOrNull() is SecurityException)
+                check(results.isEmpty())
+            } finally { thread.quitSafely(); thread.join(5000); check(!thread.isAlive) }
+        } finally { check(file.delete()) }
+
     }
 }
