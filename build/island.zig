@@ -531,7 +531,7 @@ pub fn build(b: *std.Build, o: Options) Result {
 
     g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &.{"apex/android_matrix.cpp"}, &.{ apex_inc, hw_jni_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/services/core/jni"), &.{ "com_android_server_display_DisplayControl.cpp", "com_android_server_wm_TaskFpsCallbackController.cpp" }, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), binder_inc }, &.{});
-    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{hw_jni_inc}, &.{"-DARTZIG_HOST_GRAPHICS"});
+    g.add(o.aosp.path(b, "frameworks/base/libs/hwui"), &gen.jni_srcs, &.{ hw_jni_inc, o.aosp.path(b, "frameworks/av/media/ndk/include") }, &.{"-DARTZIG_HOST_GRAPHICS"});
     g.add(o.aosp.path(b, "libnativehelper"), &gen.nativehelper_srcs, &.{}, &.{ "-U_GNU_SOURCE", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE" });
     var bridge_includes: std.ArrayList(std.Build.LazyPath) = .empty;
     bridge_includes.appendSlice(b.allocator, extractor_includes) catch @panic("OOM");
@@ -557,7 +557,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &gen.texture_jni_srcs, &.{ o.aosp.path(b, "frameworks/base/core/jni"), o.aosp.path(b, "frameworks/base/core/jni/include"), apex_inc, texture_inc }, &.{});
     g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"com_google_android_gles_jni_GLImpl.cpp"}, &.{o.aosp.path(b, "frameworks/base/core/jni/include")}, &.{});
 
-    const media_format_includes = &.{
+    const media_format_includes = &[_]std.Build.LazyPath{
         o.aosp.path(b, "frameworks/av/media/module/foundation/include"),
         o.aosp.path(b, "frameworks/av/media/module/foundation/include/media/stagefright/foundation"),
         o.aosp.path(b, "frameworks/av/include"),
@@ -566,6 +566,11 @@ pub fn build(b: *std.Build, o: Options) Result {
     g.add(o.aosp.path(b, "frameworks/av/media/module/foundation"), &gen.media_format_foundation_srcs, media_format_includes, &.{});
     g.add(o.aosp.path(b, "frameworks/av/media/ndk"), &.{"NdkMediaFormat.cpp"}, media_format_includes, &.{"-DEXPORT=__attribute__((visibility(\"default\")))"});
     g.add(o.aosp.path(b, "frameworks/av/media/libmedia"), &.{"NdkMediaFormatPriv.cpp"}, media_format_includes, &.{});
+    const image_reader_includes = media_format_includes ++ &[_]std.Build.LazyPath{
+        o.aosp.path(b, "frameworks/base/core/jni"),
+        o.aosp.path(b, "frameworks/native/libs/nativewindow/include-private"),
+    };
+    g.add(o.aosp.path(b, "frameworks/av/media/ndk"), &.{ "NdkImageReader.cpp", "NdkImage.cpp" }, image_reader_includes, &.{ "-DARTZIG_HOST_GRAPHICS", "-DEXPORT=__attribute__((visibility(\"default\")))" });
     const legacy_drm_includes = &.{
         o.aosp.path(b, "frameworks/av/include"),
         o.aosp.path(b, "frameworks/av/drm/common/include"),

@@ -62,6 +62,46 @@ zero structured runtime issues. WebView and desktop launcher captured another
 fullscreen frame were inspected. Historical failure artifacts from earlier
 runs were excluded by timestamp, not deleted.
 
+### Stock image clients and NDK reader (2026-09-09)
+
+ImageReader, ImageWriter and HardwareRenderer now match the pinned sources
+byte-for-byte. ImageWriter uses the already-selected original SurfaceUtils;
+its native registration now names that original class. Stock media library
+initialization works through the installed `media_jni` module. The duplicate
+HostSurfaceInfo helper and two empty native NDK headers were deleted.
+
+The original NdkImageReader/NdkImage implementation replaces the unsupported
+image-reader exports over the existing BufferQueue and gralloc implementation.
+All 29 functions declared by the pinned public image headers are exported;
+the library also exports the deprecated native-handle entry point. Only that
+retired HIDL token-manager operation has a host branch, returning the same
+`AMEDIA_ERROR_UNKNOWN` that AOSP defines when the token service is absent.
+No new graphics, audio or media backend was added.
+
+The new NDK regression checks CPU/GPU pixels, real sync-file acquisition and
+release, plane strides, metadata, maxImages exhaustion/recovery, latest-frame
+replacement, callbacks and retained buffer/window references after reader
+teardown. Expectations follow the pinned implementation: replacement callbacks
+may coalesce, and AImage derives RGBA dataspace as UNKNOWN from PublicFormat.
+The Java image transfer and ownership tests also pass.
+
+The framework archive is now SHA-256
+`02b7a96bde8676ac09316532bdf818f074f624ac45cba97edbdb851cb9145df3`, pinned to
+`N-V-__8AAHIY8E4WGFfbsVVJIk3R5gU9MMCvlM97IeutjV9c`. Packaging restored the
+isolated checkout; ART is unchanged. The modified static client count is 22.
+The stub count remains five. NDK SurfaceControl, WebView overlay wiring and
+TunnelModeEnabledListener cleanup are still open within batch 2.
+
+Validation passed with `-j10`: source/build/native audits, `image-queue-jvm-test`,
+`jvm-test`, full `integration-test`, `system-test`, `webview-test`,
+`webview-ui-test`, `stock-desktop-launcher-test`, `graphics-budget-test`,
+`surface-buffer-jvm-test`, `surface-fence-test` and
+`surfaceflinger-composition-test`. The first combined command failed only the
+Vulkan fixtures because the driver manifest was unset; those targets passed
+when rerun with `VK_DRIVER_FILES` selecting Mesa's Radeon ICD. All 28 fresh APK
+cases contain 88 steps with zero structured issues. WebView and desktop records
+have zero issues, and their screenshots plus fullscreen NewPipe were inspected.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

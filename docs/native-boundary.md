@@ -71,14 +71,15 @@ zig build -j10 cpp-audit
   `__sendto_chk`. A packaging patch selects those entry points, retaining their
   bounds/count checks and libc results. Fatal reporting uses the existing Android
   host logger and aborts; this does not claim bionic logd's async signal safety.
-- `src/binder/image_reader_capability.zig` supplies failure results for the
-  image-reader entry points imported by Chromium. There is no connected Android
-  BufferQueue producer: valid creation reports a structured unsupported issue
-  and returns `AMEDIA_ERROR_UNSUPPORTED`. It never supplies reader, image, window
-  or hardware-buffer handles. These exports are not an image-reader backend.
+- Original `NdkImageReader.cpp` and `NdkImage.cpp` provide the public NDK image
+  API over the stock BufferQueue and hosted gralloc stack. CPU/GPU pixels,
+  real sync-file fences, callback delivery, maxImages and independent buffer
+  ownership are tested. The retired HIDL native-handle operation returns
+  AOSP's `AMEDIA_ERROR_UNKNOWN` for an absent token manager; public native-window
+  access works. All 29 pinned public image functions are exported.
 - `src/binder/surface_control_capability.zig` exposes the SurfaceControl ABI
-  names required during Chromium initialization. The existing window backend
-  has no SurfaceFlinger transaction service. Factories return no handle, and
+  names required during Chromium initialization. The existing stock SurfaceFlinger
+  service is present, but these NDK entry points are not connected to it yet. Factories return no handle, and
   attempted operations emit structured unsupported diagnostics; no completion
   callback or presentation statistic is fabricated. A transferred acquire-fence
   descriptor is closed even when its buffer operation is rejected. These
@@ -545,9 +546,8 @@ production registration, overlap, focus, transformed motion and window removal.
 Stock ImageReader/ImageWriter JNI uses the same GraphicBuffer/BufferQueue
 implementation. Its host build enables the real gralloc and HardwareBuffer
 branches. Layoutlib's zero CPU usage is inappropriate for this backend.
-`ImageWriter` queries surface geometry/format through `HostSurfaceInfo`, backed
-by the pinned native SurfaceUtils functions, without importing camera-session
-policy. Image queue transfer and transition border luminance pass through the
+`ImageWriter` uses the original SurfaceUtils Java class and native registration.
+ImageReader and ImageWriter retain stock `media_jni` library initialization. Image queue transfer and transition border luminance pass through the
 shared mapper, including IMapper's all-zero full-buffer rectangle contract.
 
 The WM-facing `HostInputManagerBridge` owns pinned filter installation,

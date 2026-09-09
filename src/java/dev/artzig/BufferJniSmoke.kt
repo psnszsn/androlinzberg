@@ -13,6 +13,7 @@ import com.android.window.flags.Flags as WindowFlags
 
 /** Public stock buffer contracts, including pixels across independent native/Parcel owners. */
 object BufferJniSmoke {
+    @JvmStatic private external fun ndkImageQueues()
     @JvmStatic private external fun liveBuffers(): Long
     @JvmStatic private external fun pixel(buffer: HardwareBuffer, x: Int, y: Int): Int
     @JvmStatic private external fun nativeCopy(buffer: HardwareBuffer): HardwareBuffer
@@ -32,6 +33,8 @@ object BufferJniSmoke {
         HostContexts.systemContext(System.getenv("ARTZIG_FRAMEWORK_RES"), 640, 480, 120, 0)
         val baseline = liveBuffers()
         imageQueues()
+        ndkImageQueues()
+        check(liveBuffers() == baseline) { "Leaked NDK image queue allocations" }
         val usage = HardwareBuffer.USAGE_CPU_READ_OFTEN or
             HardwareBuffer.USAGE_CPU_WRITE_OFTEN or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or
             HardwareBuffer.USAGE_GPU_COLOR_OUTPUT

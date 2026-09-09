@@ -9069,3 +9069,12 @@ F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamShellCo
 F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamUiEventLogger.java
 F aosp frameworks/base/services/core/java/com/android/server/dreams/DreamUiEventLoggerImpl.java
 F aosp frameworks/base/services/core/java/com/android/server/dreams/flags.aconfig
+
+# Stock NDK image reader and image ownership over BufferQueue.
+F aosp frameworks/av/media/ndk/NdkImageReader.cpp
+F aosp frameworks/av/media/ndk/NdkImage.cpp
+F aosp frameworks/av/media/ndk/NdkImageReaderPriv.h
+F aosp frameworks/av/media/ndk/NdkImagePriv.h
+F aosp frameworks/av/media/ndk/include/media/NdkImageReader.h
+F aosp frameworks/av/media/ndk/include/media/NdkImage.h
+F aosp frameworks/av/media/ndk/include/media-vndk/VndkImageReader.h

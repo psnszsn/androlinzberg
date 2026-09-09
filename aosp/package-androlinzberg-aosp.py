@@ -95,6 +95,7 @@ framework_patches = tuple(
 packager.SOURCE_MANIFEST = HERE / "androlinzberg-files.txt"
 packager.PACKAGE_NAME = "androlinzberg"
 packager.PATCH_SERIES = framework_patches + (
+    ("frameworks/av", patch_root / "frameworks-av/0002-NDK-image-reader-without-deprecated-HIDL-token-service.patch"),
     ("system/core/libcutils", patch_root / "system/libcutils/0001-use-stock-memfd-operations-for-host-ndk-shared-memory.patch"),
     ("bionic", patch_root / "bionic/0001-reuse-missing-fortify-entry-points-on-host.patch"),
     (

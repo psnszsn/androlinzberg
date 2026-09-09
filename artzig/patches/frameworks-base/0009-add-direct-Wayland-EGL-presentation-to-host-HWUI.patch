@@ -6,30 +6,6 @@ render-thread uploads/readback and live Ganesh DeviceInfo initialization.
 The session presenter owns Wayland; no RenderProxy or CanvasContext host-surface
 entry point is needed. Report concrete resource chunk types in LoadedArsc.
 
-diff --git a/graphics/java/android/graphics/HardwareRenderer.java b/graphics/java/android/graphics/HardwareRenderer.java
-index 3444f84c2..e2a4f2032 100644
---- a/graphics/java/android/graphics/HardwareRenderer.java
-+++ b/graphics/java/android/graphics/HardwareRenderer.java
-@@ -22,6 +22,7 @@ import android.annotation.NonNull;
- import android.annotation.Nullable;
- import android.app.Activity;
- import android.app.ActivityManager;
-+import android.app.IActivityManager;
- import android.content.Context;
- import android.content.pm.ActivityInfo;
- import android.content.res.Configuration;
-@@ -1340,7 +1341,10 @@ public class HardwareRenderer {
-         private void initSched(long renderProxy) {
-             try {
-                 int tid = nGetRenderThreadTid(renderProxy);
--                ActivityManager.getService().setRenderThread(tid);
-+                final IActivityManager activityManager = ActivityManager.getService();
-+                if (activityManager != null) {
-+                    activityManager.setRenderThread(tid);
-+                }
-             } catch (Throwable t) {
-                 Log.w(LOG_TAG, "Failed to set scheduler for RenderThread", t);
-             }
 diff --git a/libs/androidfw/LoadedArsc.cpp b/libs/androidfw/LoadedArsc.cpp
 index 7cebb6d79..687d25aad 100644
 --- a/libs/androidfw/LoadedArsc.cpp

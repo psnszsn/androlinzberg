@@ -1,47 +1,12 @@
 From: Androlinzberg <host@androlinzberg.local>
-Subject: [PATCH] ImageWriter: query host surfaces without camera-session policy
+Subject: [PATCH] Image JNI: enable stock gralloc and plane operations on the host
 
-Reuse the complete stock image reader/writer and native surface query code.
-The Java surface adapter follows the pinned error and public-format mapping.
-The host registers these natives from its platform island before Java starts;
-retain the class initialization while omitting the Android media DSO load.
+Keep ImageReader, ImageWriter and SurfaceUtils Java sources and registration
+unchanged. The installed media_jni library supports their stock initialization.
 Enable actual gralloc usage, HardwareBuffer and image-plane operations; the
 Layoutlib branches deliberately erase CPU usage and are unsuitable for GBM.
+Remove an unused camera header from the native surface queries.
 
-diff --git a/core/java/android/media/ImageWriter.java b/core/java/android/media/ImageWriter.java
---- a/core/java/android/media/ImageWriter.java
-+++ b/core/java/android/media/ImageWriter.java
-@@ -29,7 +29,9 @@
- import android.hardware.HardwareBuffer;
- import android.hardware.HardwareBuffer.Usage;
- import android.hardware.SyncFence;
--import android.hardware.camera2.utils.SurfaceUtils;
-+// Host surface queries reuse SurfaceUtils' native libgui operations. Its Java
-+// class also owns camera-session validation, which is not part of this host.
-+import dev.artzig.window.HostSurfaceInfo;
- import android.os.Handler;
- import android.os.Looper;
- import android.os.Message;
-@@ -266,8 +268,8 @@
-         if (useSurfaceImageFormatInfo) {
-             // nativeInit internally overrides UNKNOWN format. So does surface format query after
-             // nativeInit and before getEstimatedNativeAllocBytes().
--            mHardwareBufferFormat = hardwareBufferFormat = SurfaceUtils.getSurfaceFormat(surface);
--            mDataSpace = dataSpace = SurfaceUtils.getSurfaceDataspace(surface);
-+            mHardwareBufferFormat = hardwareBufferFormat = HostSurfaceInfo.getSurfaceFormat(surface);
-+            mDataSpace = dataSpace = HostSurfaceInfo.getSurfaceDataspace(surface);
-             imageFormat = PublicFormatUtils.getPublicFormat(hardwareBufferFormat, dataSpace);
-         }
- 
-@@ -277,7 +279,7 @@
-         // Only include memory for 1 buffer, since actually accounting for the memory used is
-         // complex, and 1 buffer is enough for the VM to treat the ImageWriter as being of some
-         // size.
--        Size surfSize = SurfaceUtils.getSurfaceSize(surface);
-+        Size surfSize = HostSurfaceInfo.getSurfaceSize(surface);
-         mWidth = width == -1 ? surfSize.getWidth() : width;
-         mHeight = height == -1 ? surfSize.getHeight() : height;
- 
 diff --git a/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp b/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
 --- a/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
 +++ b/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp
@@ -53,36 +18,6 @@ diff --git a/core/jni/android_hardware_camera2_utils_SurfaceUtils.cpp b/core/jni
  #include <utils/Errors.h>
  #include <utils/Log.h>
  #include <utils/Trace.h>
-@@ -39,7 +38,8 @@
- using namespace android;
- 
- // fully-qualified class name
--#define CAMERA_UTILS_CLASS_NAME "android/hardware/camera2/utils/SurfaceUtils"
-+// Retain stock native queries; the host Java adapter omits camera-session policy.
-+#define CAMERA_UTILS_CLASS_NAME "dev/artzig/window/HostSurfaceInfo"
- 
- #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
- 
-diff --git a/core/java/android/media/ImageReader.java b/core/java/android/media/ImageReader.java
---- a/core/java/android/media/ImageReader.java
-+++ b/core/java/android/media/ImageReader.java
-@@ -1528,4 +1528,5 @@
-     static {
--        System.loadLibrary("media_jni");
-+        // AOSP natives are registered by the host's libandroid_platform bootstrap.
-+        // Keep the stock field-cache initialization after that registration.
-         nativeClassInit();
-     }
-diff --git a/core/java/android/media/ImageWriter.java b/core/java/android/media/ImageWriter.java
---- a/core/java/android/media/ImageWriter.java
-+++ b/core/java/android/media/ImageWriter.java
-@@ -1325,4 +1325,5 @@
-     static {
--        System.loadLibrary("media_jni");
-+        // AOSP natives are registered by the host's libandroid_platform bootstrap.
-+        // Keep the stock field-cache initialization after that registration.
-         nativeClassInit();
-     }
 diff --git a/core/jni/android_media_ImageReader.cpp b/core/jni/android_media_ImageReader.cpp
 --- a/core/jni/android_media_ImageReader.cpp
 +++ b/core/jni/android_media_ImageReader.cpp

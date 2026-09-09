@@ -321,7 +321,6 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedProcessHistory.kt",
     "src/java/dev/artzig/systemtest/ProcessBoundaryChecks.kt",
     "src/java/dev/artzig/window/TaskSurfaceOutput.kt",
-    "src/java/dev/artzig/window/HostSurfaceInfo.kt",
     "src/java/dev/artzig/window/HostInputDispatcher.kt",
     "src/java/dev/artzig/window/HostInputManagerBridge.kt",
     "src/java/dev/artzig/window/LegacyWindowManagerClient.kt",
