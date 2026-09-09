@@ -263,6 +263,7 @@ internal object FrameworkModuleSmoke {
         StockMediaCodecSmoke.run()
         StockNdkMediaCodecSmoke.run()
         StockAAudioSmoke.run()
+        StockToneSmoke.run()
         StockAudioFoundationSmoke.run()
         StockVoiceTypesSmoke.run()
         StockMainlineTypesSmoke.run()

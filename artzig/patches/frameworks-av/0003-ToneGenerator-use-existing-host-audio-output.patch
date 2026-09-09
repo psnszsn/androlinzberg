@@ -1,0 +1,102 @@
+From: Androlinzberg host integration
+Subject: [PATCH] ToneGenerator: use existing hosted PCM output
+
+Keep the pinned tone descriptors, synthesizer and lifecycle. Native AudioTrack
+requires AudioFlinger; use the existing hosted PCM output at its boundary.
+
+--- a/media/libaudioclient/include/media/ToneGenerator.h
++++ b/media/libaudioclient/include/media/ToneGenerator.h
+@@ -19,8 +19,12 @@
+ 
+ #include <string>
+ 
++#ifdef ARTZIG_HOST_AUDIO
++#include "ToneOutput.h"
++#else
+ #include <media/AudioSystem.h>
+ #include <media/AudioTrack.h>
++#endif
+ #include <utils/Compat.h>
+ #include <utils/KeyedVector.h>
+ #include <utils/RefBase.h>
+@@ -28,7 +32,13 @@
+ 
+ namespace android {
+ 
+-class ToneGenerator : public AudioTrack::IAudioTrackCallback {
++#ifdef ARTZIG_HOST_AUDIO
++using ToneTrack = artzig::ToneOutput;
++#else
++using ToneTrack = AudioTrack;
++#endif
++
++class ToneGenerator : public ToneTrack::IAudioTrackCallback {
+ public:
+ 
+     // List of all available tones
+@@ -313,7 +323,7 @@
+     uint16_t mLoopCounter; // Current tone loopback count
+ 
+     uint32_t mSamplingRate;  // AudioFlinger Sampling rate
+-    sp<AudioTrack> mpAudioTrack;  // Pointer to audio track used for playback
++    sp<ToneTrack> mpAudioTrack;  // Pointer to audio track used for playback
+     Mutex mLock;  // Mutex to control concurent access to ToneGenerator object from audio callback and application API
+     Mutex mCbkCondLock; // Mutex associated to mWaitCbkCond
+     Condition mWaitCbkCond; // condition enabling interface to wait for audio callback completion after a change is requested
+@@ -322,7 +332,7 @@
+     unsigned int mProcessSize;  // Size of audio blocks generated at a time by audioCallback() (in PCM frames).
+     struct timespec mStartTime; // tone start time: needed to guaranty actual tone duration
+ 
+-    size_t onMoreData(const AudioTrack::Buffer& buffer) override;
++    size_t onMoreData(const ToneTrack::Buffer& buffer) override;
+     bool initAudioTrack();
+     static void audioCallback(int event, void* user, void *info);
+     bool prepareWave();
+--- a/media/libaudioclient/ToneGenerator.cpp
++++ b/media/libaudioclient/ToneGenerator.cpp
+@@ -28,7 +28,9 @@
+ 
+ namespace android {
+ 
++#ifndef ARTZIG_HOST_AUDIO
+ using android::content::AttributionSourceState;
++#endif
+ 
+ // Descriptors for all available tones (See ToneGenerator::ToneDescriptor class declaration for details)
+ const ToneGenerator::ToneDescriptor ToneGenerator::sToneDescriptors[] = {
+@@ -1307,6 +1309,17 @@
+ //
+ ////////////////////////////////////////////////////////////////////////////////
+ bool ToneGenerator::initAudioTrack() {
++#ifdef ARTZIG_HOST_AUDIO
++    audio_stream_type_t streamType = mStreamType;
++    if (streamType == AUDIO_STREAM_VOICE_CALL || streamType == AUDIO_STREAM_BLUETOOTH_SCO) {
++        streamType = AUDIO_STREAM_DTMF;
++    }
++    mpAudioTrack = sp<ToneTrack>::make(this, streamType);
++    if (!mpAudioTrack->isInited()) {
++        mpAudioTrack.clear();
++        return false;
++    }
++#else
+     // Open audio track in mono, PCM 16bit, default sampling rate.
+     // TODO b/182392769: use attribution source util
+     AttributionSourceState attributionSource = AttributionSourceState();
+@@ -1349,6 +1362,8 @@
+         return false;
+     }
+ 
++#endif
++
+     mSamplingRate = mpAudioTrack->getSampleRate();
+     // Generate tone by chunks of 20 ms to keep cadencing precision
+     mProcessSize = (mSamplingRate * 20) / 1000;
+@@ -1374,7 +1389,7 @@
+ //        The number of bytes we successfully wrote.
+ //
+ ////////////////////////////////////////////////////////////////////////////////
+-size_t ToneGenerator::onMoreData(const AudioTrack::Buffer& buffer) {
++size_t ToneGenerator::onMoreData(const ToneTrack::Buffer& buffer) {
+ 
+     int16_t *lpOut = reinterpret_cast<int16_t*>(buffer.data());
+     uint32_t lNumSmp = (buffer.size() / sizeof(int16_t) < UINT32_MAX) ?

@@ -9092,3 +9092,9 @@ F aosp frameworks/base/core/jni/android_os_storage_StorageManager.cpp
 F aosp frameworks/base/core/jni/filesystem_utils.h
 F aosp frameworks/proto_logging/stats/enums/stats/devicepolicy/jarjar-rules.txt
 D aosp system/core/libappfuse
+
+# Original tone client, JNI and synthesizer over the existing hosted audio output.
+F aosp frameworks/base/media/java/android/media/ToneGenerator.java
+F aosp frameworks/base/core/jni/android_media_ToneGenerator.cpp
+F aosp frameworks/av/media/libaudioclient/ToneGenerator.cpp
+F aosp frameworks/av/media/libaudioclient/include/media/ToneGenerator.h

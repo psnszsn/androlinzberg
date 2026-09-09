@@ -243,6 +243,8 @@ extern int register_android_opengl_jni_GLES32(JNIEnv*);
 
 extern int register_android_media_ImageReader(JNIEnv*);
 extern int register_android_media_ImageWriter(JNIEnv*);
+extern int register_android_media_ToneGenerator(JNIEnv*);
+extern "C" int azk_register_tone_smoke(JNIEnv*);
 extern int register_android_hardware_camera2_utils_SurfaceUtils(JNIEnv*);
 
 namespace android {
@@ -760,6 +762,8 @@ int azk_register_graphics_jni(JNIEnv* env) {
             E(register_android_hardware_camera2_utils_SurfaceUtils),
             E(register_android_media_ImageReader),
             E(register_android_media_ImageWriter),
+            E(register_android_media_ToneGenerator),
+            E(azk_register_tone_smoke),
             E(android::register_android_view_VelocityTracker),
             E(android::register_android_view_KeyCharacterMap),
             E(azk_register_dev_artzig_window_HostedInputDevices),

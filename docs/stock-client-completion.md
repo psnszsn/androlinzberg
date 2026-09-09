@@ -426,6 +426,47 @@ both local archives and the installed runtime are current. Seven modified
 static client files and five stubs remain; java.io.File's virtual-library
 adaptation is still open with the runtime/path batch.
 
+### Stock ToneGenerator and existing audio output (2026-09-09)
+
+The final client stub, ToneGenerator, is deleted. Its Java source is verbatim
+AOSP; the original native descriptors, oscillator, regional tone selection and
+sequencer now run through the existing AAudio/stock AudioTrack PCM output.
+The native adapter replaces the absent AudioFlinger track, preserves voice-call
+to DTMF routing and the original volume conversion, and waits for callback-stop
+completion before accepting a subsequent start. Closing the output joins its
+callback worker before freeing the synthesizer. No audio backend was added.
+
+AAudio now exposes original session allocation/reuse semantics, including the
+default no-session result and rejection of invalid session IDs. Tests observe
+generated output samples and submitted/played frame counters: DTMF frequency
+content, finite duration, the proprietary double-beep cadence, logarithmic volume
+and silence, stream/session identity, tone replacement, rapid restarts, explicit
+stop, active-callback release and stock calls-after-release exceptions all pass.
+The full framework-module smoke passes with the original tone client.
+
+The exact source inventory contains 7,077 unchanged AOSP files, seven modified
+static client files and 40 modified server files, with no missing reference.
+The regenerated audit has four pending server stubs and zero client survivors;
+the pending budget remains four. Runtime/path/loading differences, service
+isolation, package snapshots and recorded graphics/provider follow-ups remain
+open.
+
+The framework archive is SHA-256
+`a8278fdc73964ec38f6a9587be1283df9873448c4560c647c20c9c79b6c3dcf8`, pinned to
+`N-V-__8AAK7p804ZPwp9Y9bnqjR2dDpN_I4WxFrJSrBBaxSt`. Packaging restored the
+isolated checkout. ART remains at the trust-store checkpoint above. Both local
+archives and the installed runtime are current.
+
+Validation passed: focused framework-module tests with `-j24`; full JVM, system,
+APK, WebView, desktop launcher, session-loss and standalone certificate tests
+with `-j10`. The first combined gate failed only because ToneOutput.cpp was
+missing from the explicit C++ boundary declaration; `install cpp-audit
+build-tools-test graph-audit` passed after adding that declaration. All 28 APK
+cases contain 89 steps with zero structured issues; WebView's three and the
+desktop launcher's 16 steps also contain zero issues. All five session-loss
+cases passed. WebView pause, desktop modal and NewPipe fullscreen frames were
+inspected.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

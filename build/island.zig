@@ -548,6 +548,11 @@ pub fn build(b: *std.Build, o: Options) Result {
         o.aosp.path(b, "frameworks/av/media/libaaudio/src"),
     }) catch @panic("OOM");
     g.add(o.aosp.path(b, "frameworks/av/media/libaudiofoundation"), &.{"AudioContainers.cpp"}, bridge_includes.items, &.{});
+    // Original tone descriptors/sequencer/JNI, with AudioFlinger output replaced
+    // by the existing hosted AAudio/AudioTrack operation at the native boundary.
+    g.add(o.aosp.path(b, "frameworks/av/media/libaudioclient"), &.{"ToneGenerator.cpp"}, bridge_includes.items, &.{"-DARTZIG_HOST_AUDIO"});
+    g.add(o.aosp.path(b, "frameworks/base/core/jni"), &.{"android_media_ToneGenerator.cpp"}, bridge_includes.items, &.{"-DARTZIG_HOST_AUDIO"});
+    g.add(b.path("src/native"), &.{"ToneOutput.cpp"}, bridge_includes.items, &.{});
     // Original parameter contracts and pure format/channel conversion routines.
     // Unused service/MMAP routines are hidden sections removed by the island linker.
     g.add(o.aosp.path(b, "frameworks/av/media/libaaudio/src"), &.{ "core/AAudioStreamParameters.cpp", "utility/AAudioUtilities.cpp" }, bridge_includes.items, &.{ "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections" });

@@ -98,6 +98,13 @@ export fn AAudioStreamBuilder_setChannelCount(handle: Handle, value: i32) callco
 export fn AAudioStreamBuilder_setSamplesPerFrame(handle: Handle, value: i32) callconv(.c) void {
     set(handle, 12, value);
 }
+export fn AAudioStreamBuilder_setSessionId(handle: Handle, value: i32) callconv(.c) void {
+    set(handle, 13, value);
+}
+/// Native ToneGenerator's legacy stream attribution over the existing track.
+export fn azk_aaudio_set_legacy_stream(handle: Handle, value: i32) callconv(.c) void {
+    set(handle, 14, value);
+}
 fn callback(handle: Handle, is_error: bool, function: Handle, userdata: Handle) void {
     const scope = Scope.enter() orelse return;
     defer scope.leave();
@@ -197,6 +204,9 @@ export fn AAudioStream_getSharingMode(handle: Handle) callconv(.c) i32 {
 }
 export fn AAudioStream_getDirection(handle: Handle) callconv(.c) i32 {
     return @intCast(get(handle, 12));
+}
+export fn AAudioStream_getSessionId(handle: Handle) callconv(.c) i32 {
+    return @intCast(get(handle, 14));
 }
 export fn AAudioStream_setBufferSizeInFrames(handle: Handle, frames: i32) callconv(.c) i32 {
     const scope = Scope.enter() orelse return internal_error;
@@ -331,6 +341,18 @@ fn smoke() !void {
     AAudioStreamBuilder_setDirection(builder, 0);
     try check(AAudioStreamBuilder_openStream(builder, &stream) == 0 and stream != null);
     defer _ = AAudioStream_close(stream);
+    try check(AAudioStream_getSessionId(stream) == -1);
+    AAudioStreamBuilder_setSessionId(builder, -2);
+    var session_stream: Handle = null;
+    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == -898 and session_stream == null);
+    AAudioStreamBuilder_setSessionId(builder, 0);
+    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == 0);
+    const session = AAudioStream_getSessionId(session_stream);
+    try check(session > 0 and AAudioStream_close(session_stream) == 0);
+    AAudioStreamBuilder_setSessionId(builder, session);
+    try check(AAudioStreamBuilder_openStream(builder, &session_stream) == 0);
+    try check(AAudioStream_getSessionId(session_stream) == session and AAudioStream_close(session_stream) == 0);
+    AAudioStreamBuilder_setSessionId(builder, -1);
     try check(AAudioStream_getState(stream) == 2 and AAudioStream_getFormat(stream) == 1);
     try check(AAudioStream_getSampleRate(stream) == 8000 and AAudioStream_getChannelCount(stream) == 1);
     const burst = AAudioStream_getFramesPerBurst(stream);

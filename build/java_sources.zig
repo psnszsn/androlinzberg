@@ -154,6 +154,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/os/IHwInterface.java");
 
     // Stock ringtone, shortcut UI and their shared media/subtitle dependency closure.
+    try c.file("$FB/media/java/android/media/ToneGenerator.java");
     try c.file("$CJ/android/provider/SettingsStringUtil.java");
     try c.file("$CJ/android/widget/MediaController.java");
     try c.file("$CJ/android/widget/VideoView.java");
@@ -1322,7 +1323,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$FB/opengl/java/android/opengl/EGLObjectHandle.java");
     try c.file("$FB/opengl/java/android/opengl/EGLSync.java");
     try c.add("$FB/libs/hwui/apex/java", .{});
-    try c.add("$FB/core/java/android/content/res", .{ .not_names = &.{ "ObbInfo.java" } });
+    try c.add("$FB/core/java/android/content/res", .{ .not_names = &.{"ObbInfo.java"} });
     try c.add("$FB/core/java/android/text", .{ .not_paths = &.{ "*/method/*", "*/util/*", "*/format/*" }, .not_names = &.{"TranslationTransformationMethod.java"} });
     try c.add("$TS/src/org/ccil/cowan/tagsoup", .{ .not_paths = &.{"*/jaxp/*"} });
     try c.add("$FB/core/java/android/text/format", .{ .not_names = &.{ "Formatter.java", "Time.java", "TimeFormatter.java", "DateFormat.java", "TimeMigrationUtils.java" } });

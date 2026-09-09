@@ -10,13 +10,12 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 4 (budget 4). Survivors: 1. Total: 5.
+Pending: 4 (budget 4). Survivors: 0. Total: 4.
 
 ## Survivors
 
 | Stub | Reason | Audit |
 |---|---|---|
-| `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
 
 ## Pending replacement
 

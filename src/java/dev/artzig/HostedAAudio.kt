@@ -30,10 +30,12 @@ internal object HostedAAudio {
         // device, performance, frames/callback. Defaults follow original AAudio.
         val config = intArrayOf(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0)
         val callbacks = LongArray(4)
+        var sessionId = -1 // AAUDIO_SESSION_ID_NONE
+        var legacyStream: Int? = null
     }
     private class Stream(val track: AudioTrack, val rate: Int, val channels: Int,
         val format: Int, val burst: Int, val callbackFrames: Int, val callbacks: LongArray,
-        val callbackBuffer: ByteBuffer?) {
+        val callbackBuffer: ByteBuffer?, val sessionId: Int) {
         val lock = ReentrantLock()
         val changed = lock.newCondition()
         @Volatile var phase = 2
@@ -60,7 +62,14 @@ internal object HostedAAudio {
     @JvmStatic fun deleteBuilder(id: Long): Int = if (builders.remove(id) != null) 0 else NULL
     @JvmStatic fun set(id: Long, key: Int, value: Int) {
         val builder = builders[id] ?: return
-        synchronized(builder) { if (key == 12) builder.config[0] = channelMask(value) else builder.config[key] = value }
+        synchronized(builder) {
+            when (key) {
+                12 -> builder.config[0] = channelMask(value)
+                13 -> builder.sessionId = value
+                14 -> builder.legacyStream = value
+                else -> builder.config[key] = value
+            }
+        }
     }
     @JvmStatic fun callback(id: Long, error: Boolean, callback: Long, userdata: Long) {
         val builder = builders[id] ?: return
@@ -68,7 +77,11 @@ internal object HostedAAudio {
     }
     @JvmStatic fun open(id: Long): Long {
         val builder = builders[id] ?: return NULL.toLong()
-        val (config, callbacks) = synchronized(builder) { builder.config.copyOf() to builder.callbacks.copyOf() }
+        val (config, callbacks, identity) = synchronized(builder) {
+            Triple(builder.config.copyOf(), builder.callbacks.copyOf(), builder.sessionId to builder.legacyStream)
+        }
+        val (sessionId, legacyStream) = identity
+        if (sessionId < -1) return ARGUMENT.toLong()
         val validation = validate(config)
         if (validation != 0) return validation.toLong()
         if (config[10] !in 10..13) return ARGUMENT.toLong()
@@ -96,9 +109,14 @@ internal object HostedAAudio {
         val attributes = AudioAttributes.Builder().setUsage(config[5].takeIf { it != 0 } ?: AudioAttributes.USAGE_MEDIA)
             .setContentType(config[8])
         val track = try {
-            AudioTrack.Builder().setAudioAttributes(attributes.build()).setAudioFormat(audioFormat.build())
+            // ToneGenerator's native AudioTrack requests an Android legacy stream.
+            // Preserve the stock attribute mapping at this existing output seam.
+            if (legacyStream != null) attributes.setInternalLegacyStreamType(legacyStream)
+            val trackBuilder = AudioTrack.Builder().setAudioAttributes(attributes.build()).setAudioFormat(audioFormat.build())
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(config[4].coerceAtLeast(burst * 8) * frameBytes).build()
+                .setBufferSizeInBytes(config[4].coerceAtLeast(burst * 8) * frameBytes)
+            if (sessionId >= 0) trackBuilder.setSessionId(sessionId)
+            trackBuilder.build()
         } catch (_: IllegalArgumentException) { return ARGUMENT.toLong() }
         catch (_: UnsupportedOperationException) { return UNAVAILABLE.toLong() }
         catch (_: IllegalStateException) { return UNAVAILABLE.toLong() }
@@ -108,7 +126,8 @@ internal object HostedAAudio {
         val buffer = try {
             if (callbacks[0] == 0L) null else ByteBuffer.allocateDirect(frames * frameBytes).order(ByteOrder.nativeOrder())
         } catch (_: OutOfMemoryError) { track.release(); return -887L }
-        val stream = Stream(track, rate, channels, format, burst, frames, callbacks, buffer)
+        val stream = Stream(track, rate, channels, format, burst, frames, callbacks, buffer,
+            if (sessionId == -1) -1 else track.audioSessionId)
         val handle = ids.getAndIncrement()
         streams[handle] = stream
         if (callbacks[0] != 0L) {
@@ -201,6 +220,7 @@ internal object HostedAAudio {
                 11 -> 1L // legacy track sharing mode is always SHARED
                 12 -> 0L // output
                 13 -> if (stream.callbacks[0] != 0L && stream.phase in 3..4) 1L else 0L
+                14 -> stream.sessionId.toLong()
                 else -> ARGUMENT.toLong()
             }
         }
