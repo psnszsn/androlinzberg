@@ -436,7 +436,7 @@ public final class FrameworkCompatSmoke {
                 "Intent parcelable array list extra",
             )
             require(
-                android.content.res.HostedConfigurationController.resolveLandscape(
+                dev.artzig.testing.HostedConfigurationController.resolveLandscape(
                     android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
                     1280,
                     720,
@@ -444,7 +444,7 @@ public final class FrameworkCompatSmoke {
                 "unspecified orientation follows a wide desktop window",
             )
             require(
-                !android.content.res.HostedConfigurationController.resolveLandscape(
+                !dev.artzig.testing.HostedConfigurationController.resolveLandscape(
                     android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
                     420,
                     800,
@@ -452,7 +452,7 @@ public final class FrameworkCompatSmoke {
                 "unspecified orientation follows a tall phone window",
             )
             require(
-                !android.content.res.HostedConfigurationController.resolveLandscape(
+                !dev.artzig.testing.HostedConfigurationController.resolveLandscape(
                     android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
                     1280,
                     720,
@@ -460,7 +460,7 @@ public final class FrameworkCompatSmoke {
                 "fixed portrait orientation overrides window geometry",
             )
             require(
-                android.content.res.HostedConfigurationController.resolveLandscape(
+                dev.artzig.testing.HostedConfigurationController.resolveLandscape(
                     android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE,
                     420,
                     800,

@@ -23,7 +23,7 @@ object DesktopLauncher {
         android.util.Log.e("DesktopLauncher", "Desktop session lost: $service")
     }
     @JvmStatic fun main(args: Array<String>) {
-        check(WindowBackend.stock && android.view.HostedRootFrames.stockClients) {
+        check(WindowBackend.stock && dev.artzig.testing.HostedRootFrames.stockClients) {
             "Task presentation requires stock window services and compiled stock window clients"
         }
         val owner = when (args.single()) {

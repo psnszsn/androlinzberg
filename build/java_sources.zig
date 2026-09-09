@@ -96,7 +96,7 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     for (project_sources.framework) |path| {
         framework.files.addFile(project_root, path);
     }
-    framework.files.addFile(project_root, "src/java/dev/artzig/window/StockRootFrames.kt");
+    framework.files.addFile(project_root, "src/java/dev/artzig/testing/StockRootFrames.kt");
 
     var annotations = SourceFiles.Collector.init(b);
     // AnnotationValidations holds class literals for these annotations, so they
@@ -104,11 +104,20 @@ pub fn configure(b: *std.Build, aosp: *std.Build.Dependency) Set {
     inline for (.{
         "java/android/annotation/AppIdInt.java",
         "java/android/annotation/ColorInt.java",
+        "java/android/annotation/DrawableRes.java",
+        "java/android/annotation/FloatRange.java",
+        "java/android/annotation/IdRes.java",
+        "java/android/annotation/IntRange.java",
+        "java/android/annotation/LayoutRes.java",
+        "java/android/annotation/NonNull.java",
+        "java/android/annotation/Nullable.java",
+        "java/android/annotation/StringRes.java",
+        "java/android/annotation/StyleRes.java",
+        "java/android/annotation/XmlRes.java",
         "java/android/annotation/CurrentTimeMillisLong.java",
         "java/android/annotation/Size.java",
         "java/android/annotation/UserIdInt.java",
     }) |path| annotations.addFile(modules_utils, path);
-    for (project_sources.annotations) |path| annotations.addFile(project_root, path);
 
     // AOSP builds libprotobuf-java-lite against libcore_private.stubs. Keep
     // those compile-only Unsafe symbols out of the framework compiler and jar.
@@ -3705,6 +3714,7 @@ fn collectStatic(c: *StaticCollector) !void {
     try c.file("$CJ/android/speech/RecognizerIntent.java");
     try c.file("$CJ/android/util/TimingLogger.java");
     try c.file("$CJ/android/widget/inline/InlineContentView.java");
+    try c.file("$CJ/android/service/wallpaper/WallpaperService.java");
     try c.file("$CJ/android/widget/inline/InlinePresentationSpec.java");
     try c.file("$CJ/com/android/internal/graphics/palette/CelebiQuantizer.java");
     try c.file("$CJ/com/android/internal/graphics/palette/ColorCutQuantizer.java");

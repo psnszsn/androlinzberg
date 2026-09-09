@@ -1,35 +1,5 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Vlad Panazan <git@praznet.com>
-Date: Tue, 1 Sep 2026 11:15:23 +0200
-Subject: [PATCH 13/14] host hwui/view: uncommitted working-tree changes
- preserved before android-16.0.0_r1 re-pin
- (Bitmap/RenderThread/RenderProxy/ViewGroup host adjustments)
+Subject: [PATCH] Preserve host HWUI native adjustments
 
----
- core/java/android/view/ViewGroup.java         |  1 -
- libs/hwui/hwui/Bitmap.cpp                     | 15 ++++--
- libs/hwui/hwui/Bitmap.h                       | 10 ++--
- libs/hwui/jni/Bitmap.cpp                      | 44 ++++-----------
- libs/hwui/jni/HardwareBufferHelpers.cpp       |  9 +++-
- .../host/renderthread/RenderThread.cpp        | 54 ++++++++++++++++---
- libs/hwui/renderthread/CanvasContext.cpp      |  2 +-
- libs/hwui/renderthread/RenderProxy.cpp        | 17 +++++-
- libs/hwui/renderthread/RenderProxy.h          |  2 +
- libs/hwui/renderthread/RenderThread.h         |  4 ++
- 10 files changed, 103 insertions(+), 55 deletions(-)
-
-diff --git a/core/java/android/view/ViewGroup.java b/core/java/android/view/ViewGroup.java
-index 7e0818a0a..8ebc31420 100644
---- a/core/java/android/view/ViewGroup.java
-+++ b/core/java/android/view/ViewGroup.java
-@@ -2688,7 +2688,6 @@ public abstract class ViewGroup extends View implements ViewParent, ViewManager
-                 // so this view group continues to intercept touches.
-                 intercepted = true;
-             }
--
-             // If intercepted, start normal event dispatch. Also if there is already
-             // a view that is handling the gesture, do normal event dispatch.
-             if (intercepted || mFirstTouchTarget != null) {
 diff --git a/libs/hwui/hwui/Bitmap.cpp b/libs/hwui/hwui/Bitmap.cpp
 index c839a92ec..fbb56d8a6 100644
 --- a/libs/hwui/hwui/Bitmap.cpp

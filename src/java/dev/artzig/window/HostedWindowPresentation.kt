@@ -1,4 +1,9 @@
-package android.view
+package dev.artzig.window
+
+import android.view.View
+import android.view.Window
+import android.view.WindowInsets
+import android.view.WindowManager
 
 /**
  * Maps Android window presentation state onto the host compositor.

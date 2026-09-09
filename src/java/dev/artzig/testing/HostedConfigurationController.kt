@@ -1,4 +1,6 @@
-package android.content.res
+package dev.artzig.testing
+
+import android.content.res.Configuration
 
 import android.content.pm.ActivityInfo
 import kotlin.math.max
@@ -15,11 +17,11 @@ class HostedWindowConfiguration internal constructor(
 )
 
 /**
- * Calculates Android resource configuration from a host window.
+ * Calculates resource configurations for isolated compatibility fixtures.
  *
  * This follows AOSP Configuration.diff(), updateFrom(), resetScreenLayout(),
- * and reduceScreenLayout(). The platform display/WM controllers that normally
- * produce the delta are unavailable, so window geometry is the host seam.
+ * and reduceScreenLayout(). Production configuration is owned by the session
+ * display service and stock WM; this utility is used only by smoke tests.
  */
 object HostedConfigurationController {
     @JvmStatic

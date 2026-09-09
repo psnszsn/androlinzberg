@@ -92,13 +92,13 @@ object StockColdLaunchSmoke {
             events = state.getStringArrayList("events")
             frameCommitted = state.getBoolean("frameCommitted")
             if (events?.contains("resume") == true &&
-                (!android.view.HostedRootFrames.stockClients || frameCommitted)) break
+                (!dev.artzig.testing.HostedRootFrames.stockClients || frameCommitted)) break
             SystemClock.sleep(5)
         }
         check(events == arrayListOf("provider", "create", "start", "resume")) { "Cold callbacks: $events" }
         verifyGrammaticalConfiguration(context, pkg, grammar)
         verifyNightConfiguration(context, pkg)
-        if (android.view.HostedRootFrames.stockClients) {
+        if (dev.artzig.testing.HostedRootFrames.stockClients) {
             check(frameCommitted) { "Stock ViewRootImpl never committed an APK frame" }
             if (System.getenv("AZK_TASK_WINDOWS") == "1") verifyWaylandTask(pkg, running.pid, manager)
             else {
@@ -129,7 +129,7 @@ object StockColdLaunchSmoke {
             val callbacks = state.getStringArrayList("events").orEmpty()
             if (matches(state, android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE) &&
                 state.getBoolean("restoredState") && callbacks.lastIndexOf("resume") > callbacks.lastIndexOf("create") &&
-                (!android.view.HostedRootFrames.stockClients || state.getBoolean("frameCommitted"))) break
+                (!dev.artzig.testing.HostedRootFrames.stockClients || state.getBoolean("frameCommitted"))) break
             SystemClock.sleep(5)
         } while (SystemClock.uptimeMillis() < deadline)
         check(matches(state, android.content.res.Configuration.GRAMMATICAL_GENDER_MASCULINE)) {
@@ -183,13 +183,13 @@ object StockColdLaunchSmoke {
         awaitState("Original activity did not restore after closing the handled activity") {
             it.getString("activityClass") == "ColdProcessActivity" &&
                 matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_NEUTRAL) &&
-                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+                (!dev.artzig.testing.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
         }
         grammar.setRequestedApplicationGrammaticalGender(pkg, 0,
             android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED)
         awaitState("Clearing the package gender did not restore the inherited configuration") {
             matches(it, android.content.res.Configuration.GRAMMATICAL_GENDER_NOT_SPECIFIED) &&
-                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+                (!dev.artzig.testing.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
         }
         println("Stock grammatical configuration: cold override, WPC getter, relaunch/saved state, handled callback and clearing passed")
     }
@@ -225,7 +225,7 @@ object StockColdLaunchSmoke {
             matches(it, night) && it.getBoolean("restoredState") &&
                 callbacks.lastIndexOf("resume") > callbacks.lastIndexOf("create") &&
                 callbacks.contains("create") &&
-                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+                (!dev.artzig.testing.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
         }
         val callbacks = relaunched.getStringArrayList("events").orEmpty().drop(before)
         check(callbacks.indexOf("pause") >= 0 && callbacks.indexOf("save") > callbacks.indexOf("pause") &&
@@ -263,11 +263,11 @@ object StockColdLaunchSmoke {
         context.contentResolver.call(uri, "finish", null, null)
         awaitState("Original activity did not restore after night configuration") {
             it.getString("activityClass") == "ColdProcessActivity" && matches(it, night) &&
-                (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+                (!dev.artzig.testing.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
         }
         ui.setNightMode(android.app.UiModeManager.MODE_NIGHT_NO)
         awaitState("Cleared application override did not follow global day mode") {
-            matches(it, day) && (!android.view.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
+            matches(it, day) && (!dev.artzig.testing.HostedRootFrames.stockClients || it.getBoolean("frameCommitted"))
         }
         ui.setNightMode(originalMode)
         println("Stock night configuration: application override, WPC getter, relaunch/saved state, handled callback, global inheritance and clearing passed")

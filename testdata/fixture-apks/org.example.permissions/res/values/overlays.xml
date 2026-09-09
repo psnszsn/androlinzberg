@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="StockUnresolvedAttributes">
+        <item name="android:colorAccent">?android:attr/colorPrimary</item>
+    </style>
     <color name="stock_overlay_color">#ff112233</color>
     <color name="stock_system_color">#ff112233</color>
     <overlayable name="StockOverlay">

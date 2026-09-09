@@ -21,7 +21,7 @@ import android.os.Process
  */
 object HostContexts {
     init {
-        android.view.HostedWindowLogging.initialize()
+        dev.artzig.window.HostedWindowLogging.initialize()
     }
 
     private var processServiceCacheInitialized = false

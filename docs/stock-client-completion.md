@@ -1,6 +1,6 @@
 # Post-Wayland stock-client completion
 
-Status: implementation in progress; batch 0 packaging and baseline checks pass.
+Status: implementation in progress; packaging and the first bulk client cleanup are verified.
 Baseline: `3339fdf8`, inspected on 2026-09-09 after fetching `praz/main`.
 This continues [stock-client-migration.md](stock-client-migration.md) after the
 completed [Wayland task-window cutover](wayland-task-windows.md).
@@ -29,6 +29,38 @@ sources and 71 modified static sources: 40 server files and 31 client files
 (the previous 30 frameworks/base entries plus WifiSsid). There are seven owned
 client source files, with the ten runtime annotation files compiled separately.
 Build enforcement and the rest of the implementation batches remain open.
+
+### Bulk client cleanup (2026-09-09)
+
+Restored TypedArray, Display, Toast, ViewGroup, SyncFence and WindowOrganizer to
+verbatim AOSP sources. Imported the original WallpaperService and ten original
+runtime annotations. Moved configuration/resource fixtures, window presentation,
+logging and root inspection helpers into `dev.artzig`. The source audit now
+checks declared packages and rejects repository-owned client namespace classes
+outside the explicit stub inventory; generated compile-only SDK headers are
+excluded from this runtime rule.
+
+There are now 25 modified static client sources, down from 31. The stub inventory
+contains five entries: four pending server classes and the ToneGenerator client
+survivor. MessageQueue hooks, remaining client patches, NDK graphics and the other
+completion batches remain open. Wallpaper binding and Engine API behavior are
+tested; actual live-wallpaper attachment/presentation is still open.
+
+The framework archive was rebuilt and pinned to
+`N-V-__8AADQL7k6S_ZSpevB_mw5KFsOSzisPOYMs8xgxiJiP`, SHA-256
+`95fc9736edcc0800bd5fca1ad66f53a038e6ded689bd5908b6964db42e8b9bd8`.
+ART remains at the package-layout checkpoint above. Both local archives are
+current for this checkpoint.
+
+Validation passed with `-j10`: `java build-tools-test cpp-audit graph-audit`,
+`jvm-test`, focused NewPipe launch, and the complete `integration-test system-test
+webview-test webview-ui-test stock-desktop-launcher-test` gate. The new smoke
+checks stock unresolved TypedArray exceptions and original WallpaperService
+binding/Engine APIs. All 28 fresh APK cases passed with 88 captured steps and
+zero structured runtime issues. WebView and desktop launcher captured another
+17 records with zero issues. Their rendered screenshots and the NewPipe
+fullscreen frame were inspected. Historical failure artifacts from earlier
+runs were excluded by timestamp, not deleted.
 
 ## Objective and boundary
 

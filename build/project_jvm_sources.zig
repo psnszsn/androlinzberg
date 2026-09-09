@@ -46,14 +46,14 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/system/HostedDesktopDeviceStatePolicy.kt",
     "src/java/dev/artzig/system/DesktopDeviceStateSmoke.kt",
     "src/framework-stubs/android/media/ToneGenerator.java",
-    "src/framework-stubs/android/service/wallpaper/WallpaperService.java",
+    "src/java/dev/artzig/StockClientRestorationSmoke.kt",
     "src/framework-stubs/com/android/server/pm/Computer.java",
     "src/framework-stubs/com/android/server/pm/PackageArchiver.java",
     "src/framework-stubs/com/android/server/pm/PackageManagerService.java",
     "src/framework-stubs/com/android/server/pm/UserManagerService.java",
-    "src/framework/android/content/res/HostedConfigurationController.kt",
-    "src/framework/android/content/res/HostedResources.kt",
-    "src/framework/android/view/HostedWindowPresentation.kt",
+    "src/java/dev/artzig/testing/HostedConfigurationController.kt",
+    "src/java/dev/artzig/testing/HostedResources.kt",
+    "src/java/dev/artzig/window/HostedWindowPresentation.kt",
     "src/java/dev/artzig/window/HostedInputDevices.kt",
     "src/java/com/android/server/wm/StockSurfaceSyncSmoke.kt",
     "src/java/com/android/server/am/HostActivityPendingIntents.kt",
@@ -228,7 +228,7 @@ pub const framework = [_][]const u8{
     "src/java/dev/artzig/HostedServiceClient.kt",
     "src/java/dev/artzig/UnsupportedApplicationThread.kt",
     "src/java/dev/artzig/system/HostedBootstrapPermissionEnforcer.kt",
-    "src/java/android/view/HostedWindowLogging.kt",
+    "src/java/dev/artzig/window/HostedWindowLogging.kt",
     "src/java/dev/artzig/HostedApkClassLoader.kt",
     "src/java/dev/artzig/HostedDesktopIntents.kt",
     "src/java/dev/artzig/JvmExitSmoke.kt",
@@ -362,19 +362,6 @@ pub const framework = [_][]const u8{
     "src/java/com/android/server/pm/HostedKnownPackages.kt",
     "src/java/dev/artzig/systemtest/TestJobServices.kt",
     "src/java/dev/artzig/systemtest/TestProvider.kt",
-};
-
-pub const annotations = [_][]const u8{
-    "src/annotation-runtime/android/annotation/DrawableRes.java",
-    "src/annotation-runtime/android/annotation/FloatRange.java",
-    "src/annotation-runtime/android/annotation/IdRes.java",
-    "src/annotation-runtime/android/annotation/IntRange.java",
-    "src/annotation-runtime/android/annotation/LayoutRes.java",
-    "src/annotation-runtime/android/annotation/NonNull.java",
-    "src/annotation-runtime/android/annotation/Nullable.java",
-    "src/annotation-runtime/android/annotation/StringRes.java",
-    "src/annotation-runtime/android/annotation/StyleRes.java",
-    "src/annotation-runtime/android/annotation/XmlRes.java",
 };
 
 pub const testkit = [_][]const u8{

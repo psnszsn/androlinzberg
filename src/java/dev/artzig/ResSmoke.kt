@@ -31,7 +31,7 @@ public final class ResSmoke {
             dm.setToDefaults()
             val config: Configuration = Configuration()
             config.setToDefaults()
-            val res: Resources = android.content.res.HostedResources.create(am, dm, config)
+            val res: Resources = dev.artzig.testing.HostedResources.create(am, dm, config)
 
             System.out.println("4: getText(android.R.string.ok) = " + res.getText(android.R.string.ok))
             System.out.println("5: getText(android.R.string.cancel) = " + res.getText(android.R.string.cancel))
@@ -59,7 +59,7 @@ public final class ResSmoke {
             updatedMetrics.noncompatScaledDensity = updatedMetrics.density
             val updatedConfig: Configuration = Configuration(config)
             updatedConfig.densityDpi = updatedMetrics.densityDpi
-            android.content.res.HostedResources.update(res, updatedConfig, updatedMetrics)
+            dev.artzig.testing.HostedResources.update(res, updatedConfig, updatedMetrics)
             check(res.getConfiguration().densityDpi == 320)
             check(res.getDisplayMetrics().density == 2f)
 

@@ -1,15 +1,19 @@
-package android.content.res
+package dev.artzig.testing
+
+import android.content.res.AssetManager
+import android.content.res.Configuration
+import android.content.res.Resources
+import android.content.res.ResourcesImpl
 
 import android.util.DisplayMetrics
 import android.view.DisplayAdjustments
 
 /**
- * Builds and updates resources for the single-process host.
+ * Builds and updates isolated resource sets for resource smoke tests.
  *
  * This follows ResourcesManager.createResources/createResourcesImpl by pairing a
- * Resources instance with a ResourcesImpl. The full ResourcesManager flow cannot
- * be reused because it depends on Android process and display infrastructure that
- * is absent from the host.
+ * Resources instance with a ResourcesImpl. Production application resources use
+ * the stock ResourcesManager and display services; fixtures supply explicit assets.
  */
 public object HostedResources {
     @JvmStatic

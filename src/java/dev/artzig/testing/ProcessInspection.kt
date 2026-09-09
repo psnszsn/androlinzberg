@@ -29,7 +29,7 @@ object ProcessInspection {
     // contracts on their owner thread when a traversal remains pending.
     private fun inspectPendingFrames(idle: Boolean) {
         if (!traceFrames) return
-        val roots = android.view.HostedRootFrames.managedRoots()
+        val roots = dev.artzig.testing.HostedRootFrames.managedRoots()
         if (roots.isEmpty()) return
         val now = android.os.SystemClock.uptimeMillis()
         if (idle) { busySince = 0L; dumpedBusy = false; return }

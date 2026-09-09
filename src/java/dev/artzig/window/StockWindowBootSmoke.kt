@@ -98,7 +98,7 @@ object StockWindowBootSmoke {
         application.registerActivityLifecycleCallbacks(lifecycle)
         application.startActivity(checkNotNull(application.packageManager.getLaunchIntentForPackage(packageName)))
         val deadline = android.os.SystemClock.uptimeMillis() + 10_000
-        while ((resumed == null || (android.view.HostedRootFrames.stockClients && !frameCommitted.get())) &&
+        while ((resumed == null || (dev.artzig.testing.HostedRootFrames.stockClients && !frameCommitted.get())) &&
             android.os.SystemClock.uptimeMillis() < deadline) {
             val message = android.os.Looper.myQueue().`pollDueMessage$artzig`()
             if (message == null) android.os.SystemClock.sleep(1)
@@ -107,7 +107,7 @@ object StockWindowBootSmoke {
         }
         application.unregisterActivityLifecycleCallbacks(lifecycle)
         checkNotNull(resumed) { "Stock ATMS did not resume the fixture activity" }
-        if (android.view.HostedRootFrames.stockClients) check(frameCommitted.get()) { "Fixture window did not commit a frame" }
+        if (dev.artzig.testing.HostedRootFrames.stockClients) check(frameCommitted.get()) { "Fixture window did not commit a frame" }
         check(resumed!!.taskId > 0)
         android.app.ActivityManager.getMyMemoryState(memory)
         check(memory.processState == android.app.ActivityManager.PROCESS_STATE_TOP)
@@ -119,7 +119,7 @@ object StockWindowBootSmoke {
         }
         println("Stock AppOps: windowless access rejected, resumed activity access allowed")
         println("Stock ATMS resumed application task: ${resumed!!.taskId}")
-        if (android.view.HostedRootFrames.stockClients) verifyAccessibility(resumed!!)
+        if (dev.artzig.testing.HostedRootFrames.stockClients) verifyAccessibility(resumed!!)
         verifyClientWindow(session, resumed!!)
         resumed!!.finish()
         val backgroundDeadline = android.os.SystemClock.uptimeMillis() + 10_000
@@ -163,13 +163,13 @@ object StockWindowBootSmoke {
             drainDueMessages()
             snapshot = application.contentResolver.call(uri, "snapshot", null, null)
             if (snapshot?.getStringArrayList("events")?.contains("resume") == true &&
-                (!android.view.HostedRootFrames.stockClients || snapshot.getBoolean("frameCommitted"))) break
+                (!dev.artzig.testing.HostedRootFrames.stockClients || snapshot.getBoolean("frameCommitted"))) break
             android.os.SystemClock.sleep(5)
         }
         val state = checkNotNull(snapshot)
         check(state.getInt("pid") == running.pid && state.getInt("uid") == running.uid)
         check(state.getString("process") == processName)
-        if (android.view.HostedRootFrames.stockClients) check(state.getBoolean("frameCommitted")) {
+        if (dev.artzig.testing.HostedRootFrames.stockClients) check(state.getBoolean("frameCommitted")) {
             "Stock ViewRootImpl never committed an APK frame"
         }
         check(state.getStringArrayList("events") == arrayListOf("provider", "create", "start", "resume")) {
@@ -323,13 +323,13 @@ object StockWindowBootSmoke {
         settle()
         val dialog = snapshot()
         check(dialog.getJSONArray("windows").length() == 2) {
-            "Dialog roots=${android.view.HostedRootFrames.managedRoots().map { root ->
-                "${root.view}: stopped=${android.view.HostedRootFrames.stopped(root)}, shown=${root.view?.isShown}"
+            "Dialog roots=${dev.artzig.testing.HostedRootFrames.managedRoots().map { root ->
+                "${root.view}: stopped=${dev.artzig.testing.HostedRootFrames.stopped(root)}, shown=${root.view?.isShown}"
             }}; tree=$dialog"
         }
         val close = node(dialog, "Close dialog")
         check(close.getLong("window_id") != increment.getLong("window_id"))
-        val roots = android.view.HostedRootFrames.managedRoots()
+        val roots = dev.artzig.testing.HostedRootFrames.managedRoots()
         val host = roots.mapNotNull { it.view?.findViewByAccessibilityIdTraversal<android.view.View>(close.getInt("view_id")) }
             .single()
         val info = host.createAccessibilityNodeInfo()
@@ -350,7 +350,7 @@ object StockWindowBootSmoke {
         check(!bridge.perform(dismissed.getLong("revision"), close.getLong("window_id"),
             close.getInt("view_id"), close.getInt("virtual_id"),
             android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null))
-        check(activity.window.decorView.viewRootImpl in android.view.HostedRootFrames.managedRoots())
+        check(activity.window.decorView.viewRootImpl in dev.artzig.testing.HostedRootFrames.managedRoots())
         println("Stock accessibility: activity/dialog roots, actions, screen bounds and stale/removed targets verified")
     }
 

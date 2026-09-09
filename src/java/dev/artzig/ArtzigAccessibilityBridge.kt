@@ -85,7 +85,7 @@ object ArtzigAccessibilityBridge {
         val tree = snapshot()
         val tokens = Bundle()
         for (window in collectWindows()) {
-            tokens.putBinder(window.id.toString(), android.view.HostedRootFrames.windowToken(window.root))
+            tokens.putBinder(window.id.toString(), dev.artzig.testing.HostedRootFrames.windowToken(window.root))
         }
         return Bundle().apply {
             putString("snapshot", tree)
@@ -145,7 +145,7 @@ object ArtzigAccessibilityBridge {
                 !sameJson(node, current)) return null
         }
         val root = collectWindows().firstOrNull { it.id == windowId }?.root ?: return null
-        return android.view.HostedRootFrames.windowToken(root)
+        return dev.artzig.testing.HostedRootFrames.windowToken(root)
     }
 
     /** JSONObject key order is not part of the observation contract. */
@@ -177,13 +177,13 @@ object ArtzigAccessibilityBridge {
         // Pinned WindowManagerGlobal.getWindowViews snapshots the attached roots under
         // its lock. Stock View.getBoundsOnScreen already includes mWindowLeft/Top;
         // no additional frame translation is needed.
-        val roots = android.view.HostedRootFrames.managedRoots()
+        val roots = dev.artzig.testing.HostedRootFrames.managedRoots()
         for (index in roots.indices.reversed()) {
             val root = roots[index]
             val view = root.view ?: continue
-            if (android.view.HostedRootFrames.stopped(root) || !view.isShown) continue
+            if (dev.artzig.testing.HostedRootFrames.stopped(root) || !view.isShown) continue
             val params = view.layoutParams as android.view.WindowManager.LayoutParams
-            result += WindowRecord(windowId(root), root, android.view.HostedRootFrames.frame(root),
+            result += WindowRecord(windowId(root), root, dev.artzig.testing.HostedRootFrames.frame(root),
                 index, view.hasWindowFocus(),
                 params.type != android.view.WindowManager.LayoutParams.TYPE_BASE_APPLICATION)
         }
@@ -199,7 +199,7 @@ object ArtzigAccessibilityBridge {
             windows.put(JSONObject().put("id", window.id).put("z", window.z)
                 .put("active", window.active).put("overlay", window.overlay).put("bounds", rect(window.frame)))
             if (truncated[0]) continue
-            android.view.HostedRootFrames.inspectAccessibility(window.root) {
+            dev.artzig.testing.HostedRootFrames.inspectAccessibility(window.root) {
                 val root = window.root.view ?: return@inspectAccessibility
                 val parent = "w:${window.id}"
                 val seen = HashSet<String>()

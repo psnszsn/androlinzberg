@@ -10,14 +10,13 @@ the tool lists are added; `blocked` names the first classes of the real closure 
 need a host seam (JNI, an unvendored module tree, an AIDL/generator gap, or a
 member absent from a host replacement).
 
-Pending: 4 (budget 4). Survivors: 2. Total: 6.
+Pending: 4 (budget 4). Survivors: 1. Total: 5.
 
 ## Survivors
 
 | Stub | Reason | Audit |
 |---|---|---|
 | `android/media/ToneGenerator.java` | JNI tone synthesizer (libmedia ToneGenerator) | blocked |
-| `android/service/wallpaper/WallpaperService.java` | live-wallpaper engine drives the window session (IWindowSession relayout, transform hints, PixelCopy), a host seam this runtime lacks | replaceable |
 
 ## Pending replacement
 

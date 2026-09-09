@@ -60,7 +60,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.content.res.HostedConfigurationController
+import dev.artzig.testing.HostedConfigurationController
 import android.health.connect.HealthPermissions
 import android.health.connect.HealthPermissionCategory
 import android.health.connect.HealthDataCategory
@@ -119,7 +119,7 @@ import android.view.Choreographer
 import android.view.contentcapture.ContentCaptureEvent
 import android.view.contentcapture.IContentCaptureManager
 import android.view.contentprotection.ContentProtectionEventProcessor
-import android.view.HostedWindowPresentation
+import dev.artzig.window.HostedWindowPresentation
 import android.view.KeyCharacterMap
 import android.view.Display
 import android.view.View
@@ -270,6 +270,7 @@ internal object FrameworkModuleSmoke {
         StockMediaStoreSmoke.run()
         StockServiceRegistrySmoke.run()
         StockOverlaySmoke.run()
+        StockClientRestorationSmoke.run()
         StockCameraMetadataSmoke.run()
         StockCodecCatalogSmoke.run()
         StockRendererSmoke.run()

@@ -2,7 +2,7 @@ package com.android.server.wm
 
 import android.app.WindowConfiguration
 import android.os.IBinder
-import android.view.HostedWindowPresentation
+import dev.artzig.window.HostedWindowPresentation
 import java.util.function.Consumer
 
 /**

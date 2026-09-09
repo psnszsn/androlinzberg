@@ -127,6 +127,39 @@ fn moduleName(contents: []const u8) ?[]const u8 {
     return null;
 }
 
+fn jvmPackage(contents: []const u8) ?[]const u8 {
+    var in_comment = false;
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |raw| {
+        var line = std.mem.trim(u8, raw, " \t\r");
+        while (line.len != 0) {
+            if (in_comment) {
+                const end = std.mem.indexOf(u8, line, "*/") orelse break;
+                line = std.mem.trimStart(u8, line[end + 2 ..], " \t");
+                in_comment = false;
+            } else if (std.mem.startsWith(u8, line, "/*")) {
+                in_comment = true;
+                line = line[2..];
+            } else break;
+        }
+        if (in_comment or !std.mem.startsWith(u8, line, "package")) continue;
+        if (line.len == 7 or (line[7] != ' ' and line[7] != '\t')) continue;
+        const name = std.mem.trimStart(u8, line[7..], " \t");
+        var end: usize = 0;
+        while (end < name.len and (std.ascii.isAlphanumeric(name[end]) or
+            name[end] == '_' or name[end] == '.' or name[end] == '$')) : (end += 1)
+        {}
+        return name[0..end];
+    }
+    return null;
+}
+
+fn isClientPackage(package: []const u8) bool {
+    return std.mem.eql(u8, package, "android") or std.mem.startsWith(u8, package, "android.") or
+        std.mem.eql(u8, package, "com.android.internal") or
+        std.mem.startsWith(u8, package, "com.android.internal.");
+}
+
 fn jvmSource(init: std.process.Init, repo_root: []const u8, aosp_root: []const u8, stub_audit: []const u8, files: []const []const u8) !void {
     var forbidden = try generatedClasses(init.io, init.arena.allocator(), aosp_root);
     var failed = !(try stubAudit(init, repo_root, stub_audit, files));
@@ -139,6 +172,21 @@ fn jvmSource(init: std.process.Init, repo_root: []const u8, aosp_root: []const u
         if (!allowedJvmPath(relative)) {
             std.debug.print("repository-owned JVM source is not allowed here: {s}\n", .{relative});
             failed = true;
+        }
+        // Use the declared package, not a directory convention: moving a shim
+        // into src/java/dev/artzig must not evade the stock-client boundary.
+        // The only remaining client replacements are tracked by stubAudit.
+        const source_contents = try readFile(init, file);
+        if (jvmPackage(source_contents)) |package| {
+            // These generated SDK headers are compile-only inputs owned by
+            // Artzig's boot API generator, not runtime framework replacements.
+            const boot_headers = std.mem.startsWith(u8, relative, "artzig/src/gen/java/core-all/");
+            if (isClientPackage(package) and !boot_headers and
+                !std.mem.startsWith(u8, relative, "src/framework-stubs/"))
+            {
+                std.debug.print("repository-owned Android client class: {s} (package {s}); reuse pinned AOSP or move host behavior to dev.artzig\n", .{ relative, package });
+                failed = true;
+            }
         }
         const framework_relative = if (std.mem.startsWith(u8, relative, "src/framework/"))
             relative["src/framework/".len..]
@@ -394,6 +442,17 @@ fn graph(init: std.process.Init, files: []const []const u8) !void {
 test "JVM allowlist rejects arbitrary locations" {
     try std.testing.expect(allowedJvmPath("src/framework/android/View.java"));
     try std.testing.expect(!allowedJvmPath("tools/Accidental.java"));
+}
+
+test "client namespace audit follows Java and Kotlin packages instead of file locations" {
+    try std.testing.expectEqualStrings("android.view", jvmPackage("/* license */\npackage android.view;\nclass Host {}\n").?);
+    try std.testing.expectEqualStrings("com.android.internal.os", jvmPackage("package\tcom.android.internal.os\nobject Host\n").?);
+    try std.testing.expectEqualStrings("dev.artzig", jvmPackage("/*\npackage android.fake;\n*/\npackage dev.artzig\n").?);
+    try std.testing.expect(isClientPackage("android.view"));
+    try std.testing.expect(isClientPackage("com.android.internal.os"));
+    try std.testing.expect(!isClientPackage("androidx.annotation"));
+    try std.testing.expect(!isClientPackage("com.android.server.wm"));
+    try std.testing.expect(!isClientPackage("dev.artzig"));
 }
 
 test "firstLines is bounded" {
