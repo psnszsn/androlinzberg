@@ -40,12 +40,14 @@ pub fn build(b: *std.Build) void {
     });
     art_mod.addImport("jni_c", jni_mod);
 
+    const icu_native = @import("build/icu.zig").native(b, SourceSet.Root.dependency(b, aosp_dep, ""), target, optimize);
     const art_step = b.step("gen-art", "Build the whole ART host runtime from build/gen/art.zig with Zig");
     var art_opts: @import("build/gen/art.zig").Options = .{
         .target = target,
         .optimize = optimize,
         .vendor = aosp,
         .project = b.path(""),
+        .icu = icu_native.stable,
         .host = @import("build/host_toolchain.zig").discover(b),
     };
     // genrules ported to Zig (operator_out, mterp, asm_defines, vendored aconfig): no Soong out/ needed
@@ -98,22 +100,10 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    // core-icu4j: d8 of the vendored i18n SDK class jar
-    const icu4j_dex = blk: {
-        const d8run = b.addSystemCommand(&.{ "java", "-Xmx2048M", "-Dcom.android.tools.r8.emitRecordAnnotationsInDex", "-Dcom.android.tools.r8.emitPermittedSubclassesAnnotationsInDex", "-cp" });
-        d8run.addFileArg(aosp.path(b, "prebuilts/r8/r8.jar"));
-        d8run.addArgs(&.{ "com.android.tools.r8.D8", "--debug", "--min-api", "31", "--classpath" });
-        d8run.addFileArg(javalib.class_jars.get("core-all").?);
-        d8run.addArg("--output");
-        const dexdir = d8run.addOutputDirectoryArg("core-icu4j-dex");
-        d8run.addFileArg(aosp.path(b, "prebuilts/runtime/mainline/i18n/sdk/java/core-icu4j.jar"));
-        const mk = b.addSystemCommand(&.{ "jar", "--create", "--file" });
-        const out = mk.addOutputFileArg("core-icu4j.jar");
-        mk.addArg("-C");
-        mk.addDirectoryArg(dexdir);
-        mk.addArg(".");
-        break :blk out;
-    };
+    const icu_java = @import("build/icu.zig").java(b, SourceSet.Root.dependency(b, aosp_dep, ""), javalib);
+    const icu_jni = @import("build/icu.zig").jni(b, SourceSet.Root.dependency(b, aosp_dep, ""), target, optimize, icu_native, art_gen);
+    b.addNamedLazyPath("core-icu4j-classes", icu_java.classes);
+    java_step.dependOn(&b.addInstallFileWithDir(icu_java.dex, .{ .custom = "java" }, "core-icu4j.jar").step);
     // bionic_translation: the shim linker/libc for Android native libraries
     const bionic = @import("build/bionic.zig").build(b, .{
         .target = target,
@@ -138,7 +128,8 @@ pub fn build(b: *std.Build) void {
         .arts = art_gen,
         .bionics = &.{ bionic.dl_bio, bionic.pthread_bio, bionic.c_bio, bionic.stdcpp_bio },
         .jars = &javalib,
-        .core_icu4j_dex = icu4j_dex,
+        .core_icu4j_dex = icu_java.dex,
+        .icu_libraries = &.{ icu_native.common, icu_native.i18n, icu_native.stable, icu_native.android, icu_jni },
     });
     b.addNamedLazyPath("art-runtime", runtime);
 

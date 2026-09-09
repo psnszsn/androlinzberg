@@ -1201,7 +1201,7 @@ fn cronetJava(b: *std.Build, aosp: *std.Build.Dependency, protoc: *std.Build.Ste
 }
 
 pub fn build(b: *std.Build, o: Options) Result {
-    const runner = hostTool(b, "aosp-tool-runner", "tools/aosp-tool-runner.zig");
+    const runner = hostTool(b, "aosp-tool-runner", "artzig/tools/aosp-tool-runner.zig");
     const gui = @import("graphics.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
     const renderengine = @import("renderengine.zig").generate(b, o.aosp.path(""), runner, o.sysprop_cpp_tool);
     const perfetto = @import("perfetto.zig").generate(b, o.aosp.path(""), o.protobuf, o.protoc, o.perfetto_headers);

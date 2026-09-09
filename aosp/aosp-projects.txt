@@ -189,3 +189,5 @@ platform/tools/metalava
 platform/tools/tradefederation
 toolchain/pgo-profiles
 tools/platform-compat
+external/icu
+system/timezone

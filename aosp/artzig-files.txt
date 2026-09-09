@@ -1627,3 +1627,27 @@ L aosp system/core/include/system
 L aosp system/core/include/utils
 L aosp system/core/libutils/include/utils/Errors.h
 P aosp art/runtime/jni/artzig_native_loader.h
+
+# Pinned RuntimeI18n implementation and matching data (external/icu Android.bp).
+D aosp external/icu/android_icu4c/include
+D aosp external/icu/android_icu4j/src/main/java
+D aosp external/icu/android_icu4j/resources
+D aosp external/icu/android_icu4j/libcore_bridge/src
+D aosp external/icu/icu4c/source/common
+D aosp external/icu/icu4c/source/i18n
+D aosp external/icu/icu4c/source/stubdata
+D aosp external/icu/libandroidicuinit
+D aosp external/icu/libandroidicu/static_shim
+D aosp external/icu/libicu/src
+D aosp external/icu/libicu/ndk_headers
+D aosp system/timezone/output_data
+D aosp frameworks/base/core/java/android/annotation
+F aosp external/icu/LICENSE
+F aosp external/icu/Android.bp
+F aosp external/icu/icu.aconfig
+F aosp external/icu/android_icu4j/Android.bp
+F aosp external/icu/android_icu4j/jarjar-rules.txt
+F aosp prebuilts/build-tools/linux-x86/bin/aconfig
+D aosp build/release/aconfig/bp2a/com.android.icu
+D aosp system/core/libcutils/include
+F aosp system/core/libcutils/trace-host.cpp

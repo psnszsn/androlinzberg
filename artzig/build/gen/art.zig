@@ -108,6 +108,8 @@ pub const Options = struct {
     vendor: std.Build.LazyPath,
     project: std.Build.LazyPath,
     host: host_toolchain.Result,
+    /// Original external/icu stable shim, built with matching runtime data.
+    icu: *std.Build.Step.Compile,
     /// All required generated sources and headers. There is deliberately no
     /// fallback to a Soong out/ directory.
     generated: GeneratedArtifacts = undefined,
@@ -1235,7 +1237,7 @@ const inc_39 = [_]Inc{
     .{ .root = .vendor, .rel = "external/fmtlib/include" },
     .{ .root = .vendor, .rel = "libnativehelper/include_platform" },
     .{ .root = .vendor, .rel = "libnativehelper/include_platform_header_only" },
-    .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/i18n/sdk/common_os/include/external/icu/libicu/ndk_headers" },
+    .{ .root = .vendor, .rel = "external/icu/libicu/ndk_headers" },
     .{ .rel = "", .host = .libcap },
     .{ .root = .vendor, .rel = "external/expat/lib" },
     .{ .root = .vendor, .rel = "external/zlib" },
@@ -1254,7 +1256,7 @@ const inc_40 = [_]Inc{
     .{ .root = .vendor, .rel = "external/fmtlib/include" },
     .{ .root = .vendor, .rel = "libnativehelper/include_platform" },
     .{ .root = .vendor, .rel = "libnativehelper/include_platform_header_only" },
-    .{ .root = .vendor, .rel = "prebuilts/runtime/mainline/i18n/sdk/common_os/include/external/icu/libicu/ndk_headers" },
+    .{ .root = .vendor, .rel = "external/icu/libicu/ndk_headers" },
     .{ .root = .vendor, .rel = "external/zlib" },
     .{ .root = .vendor, .rel = "system/core/include" },
     .{ .root = .vendor, .rel = "system/logging/liblog/include" },
@@ -2923,7 +2925,7 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     libjavacore.root_module.linkLibrary(liblog);
     libjavacore.root_module.linkLibrary(libnativehelper);
     libjavacore.root_module.linkLibrary(libandroidio);
-    libjavacore.root_module.addObjectFile(o.vendor.path(b, "prebuilts/runtime/mainline/i18n/sdk/linux_glibc/x86_64/lib/libicu.so")); // NDK-stable ICU (unversioned symbols; system ICU is versioned)
+    libjavacore.root_module.linkLibrary(o.icu);
     libjavacore.root_module.linkLibrary(libexpat);
     libjavacore.root_module.linkLibrary(libz);
     libjavacore.setVersionScript(o.vendor.path(b, "libcore/libjavacore.map"));
@@ -2934,7 +2936,7 @@ pub fn build(b: *std.Build, o: Options) Artifacts {
     libopenjdk.root_module.linkLibrary(liblog);
     libopenjdk.root_module.linkLibrary(libnativehelper);
     libopenjdk.root_module.linkLibrary(libandroidio);
-    libopenjdk.root_module.addObjectFile(o.vendor.path(b, "prebuilts/runtime/mainline/i18n/sdk/linux_glibc/x86_64/lib/libicu.so")); // NDK-stable ICU (unversioned symbols; system ICU is versioned)
+    libopenjdk.root_module.linkLibrary(o.icu);
     libopenjdk.root_module.linkLibrary(libz);
     libopenjdk.root_module.linkLibrary(libopenjdkjvm);
     libandroidio.root_module.linkLibrary(liblog);

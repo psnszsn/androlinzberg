@@ -22,7 +22,6 @@ framework_patches = tuple(
     ("frameworks/base", patch_root / "frameworks-base" / f"{number:04d}{suffix}")
     for number, suffix in (
         (3, "-jni-honor-CriticalNative-on-host-under-real-ART-ARTZ.patch"),
-        (4, "-icu-compat-use-createCanonical-String-in-InputDevice.patch"),
         (5, "-SystemFonts-env-overridable-font-config-paths-for-ho.patch"),
         (6, "-androidfw-replace-CombinedIterator-merge-in-Theme-Ap.patch"),
         (7, "-host-fixes-for-app-playback-static-Display-null-Disp.patch"),
@@ -35,7 +34,6 @@ framework_patches = tuple(
         (19, "-Environment-session-data-root-from-ARTZIG_DATA_DIR-o.patch"),
         (20, "-ClassLoaderFactory-the-hosted-APK-class-loader-on-th.patch"),
         (21, "-ApplicationLoaders-the-system-class-loader-is-the-ba.patch"),
-        (22, "-AlarmManager-time-zone-validation-without-ZoneInfoDb.patch"),
         (23, "-resources-make-early-RRO-constraint-flag-read-only.patch"),
         (28, "-GLES-release-original-heap-buffer-array-pointers.patch"),
         (29, "-HWUI-preserve-hardware-buffer-RGBA-byte-order.patch"),

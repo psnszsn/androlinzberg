@@ -67,7 +67,8 @@ fn extractI18nCompileClasses(b: *std.Build, archive: LazyPath) LazyPath {
     const extract = b.addSystemCommand(&.{ "unzip", "-q" });
     extract.addFileArg(archive);
     extract.addArg("android/icu/*");
-    extract.addArg("com/android/i18n/timezone/*");
+    extract.addArg("com/android/i18n/*");
+    extract.addArg("com/android/icu/*");
     extract.addArg("-d");
     const output = extract.addOutputDirectoryArg("i18n-compile-classes");
     extract.setName("extract modular i18n compile classes");
@@ -87,7 +88,7 @@ pub fn build(b: *std.Build, o: Options) Result {
     // without repackaging them into framework.jar.
     const i18n_compile_classes = extractI18nCompileClasses(
         b,
-        aosp.path("prebuilts/runtime/mainline/i18n/sdk/java/core-icu4j.jar"),
+        dep.namedLazyPath("core-icu4j-classes"),
     );
     const sources = java_sources.configure(b, aosp);
     var kotlinc_input_collector = SourceFiles.Collector.init(b);

@@ -351,6 +351,46 @@ three and the desktop launcher's 16 steps also have zero issues. WebView pause,
 desktop modal and NewPipe fullscreen screenshots were inspected. Runtime/path,
 ICU, ToneGenerator, service-instance and package-snapshot work remains open.
 
+### Pinned ICU runtime and stock locale/time clients (2026-09-09)
+
+The old runtime used ICU 68 Java and native prebuilts despite the Android 16
+source pin. ART now builds the original ICU 76.1 Java, JNI, common and
+internationalization libraries and both stable native shims. It stages their
+matching Unicode 16 data and the pinned 2025a time-zone data, including format 9
+XML/ICU overlays. The boot image and framework compile classes use that same
+module. ICU flags are generated from the pinned declarations and Android 16
+release values; compile-only annotations stay outside the runtime jar. The
+existing AOSP prebuilt runner is shared with ART. JNI uses C++23 for the host
+compiler's C/C++ atomic-header compatibility; no ICU implementation is patched.
+
+InputDevice, InputMethodSubtype and AlarmManager now match their pinned originals.
+The new smoke verifies Java/native ICU, Unicode, CLDR and time-zone agreement;
+Unicode 16 characters; formatting, collation, native charset and regex behavior;
+DST offsets, country/network lookup data, locale canonicalization and the stock
+alarm client's validation-before-service-call behavior. Native export and
+relocation checks verify ICU 76 symbols and distribution-relative library lookup.
+
+The exact static inputs contain 7,076 unchanged AOSP sources, seven modified
+client files and 40 modified server files, with no missing reference. Five stubs
+remain. Runtime/path/loading clients, boot-library differences, ToneGenerator,
+service isolation, package snapshots and the recorded graphics/provider follow-ups
+remain open; this checkpoint does not claim completion of the whole plan.
+
+The framework archive is SHA-256
+`253a6f43d0db28dcf816f6dcbad8f38bea340392f0bfc1fde58b55593617cfd8`, pinned to
+`N-V-__8AAA2p8U4mxQho7_sN9opa7t--QtNp88mswkbagr7t`. ART is SHA-256
+`32f2f7a98477bd4d1322e7aeb2e3c151b80c3d0675efd5afd48ebe41a341363a`, pinned to
+`N-V-__8AAH6hSw3qAgNa2tjSaX2unmkZoVNojaTAz9ZVNUZf`. Both packaging runs restored
+the isolated checkout. Both local archives and the installed runtime are current.
+
+Validation passed: focused framework-module tests with `-j24`, then `-j10 install
+build-tools-test cpp-audit graph-audit jvm-test system-test integration-test
+webview-test webview-ui-test stock-desktop-launcher-test stock-session-loss-test`.
+All 28 fresh APK cases contain 88 steps with zero structured runtime issues;
+WebView's three and the desktop launcher's 16 steps also contain zero issues.
+All five session-loss scenarios passed. WebView pause, desktop modal and NewPipe
+fullscreen screenshots were inspected.
+
 ## Objective and boundary
 
 Restore the selected application-facing framework sources to the pinned

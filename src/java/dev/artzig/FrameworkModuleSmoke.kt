@@ -161,6 +161,7 @@ internal object FrameworkModuleSmoke {
         if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
         HostContexts.bootstrap(checkNotNull(System.getenv("ARTZIG_FRAMEWORK_RES")))
         permissionsFixtureApk = args.firstOrNull()
+        StockIcuSmoke.run(ActivityThread.currentActivityThread().systemContext)
         testPackageNames()
         testStockModuleClientContracts()
         testTaskInfoParcelableContracts()
